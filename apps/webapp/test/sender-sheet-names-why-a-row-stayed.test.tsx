@@ -1,15 +1,14 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import {
+  ACCOUNT, ISO, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
+  teardownScreeningWeb, tick, warmScreeningWeb,
+} from "./fixtures/screening-web.js";
+import { clickMounted } from "./fixtures/mounted-sender-sheet.js";
 
 /**
  * THE SPLIT SAYS WHY A ROW STAYED (the paying user's bare "News 1"). Once the rule's pass has
@@ -19,11 +18,10 @@ import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
  */
 const ADDR = "letters@vendor.example";
 const NOW = "2026-10-01T21:00:00.000Z";
-let seq = 0;
 
 function msg(id: string, folder: Folder, date: string): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null, subject: `Issue ${id}`,
+    id, accountId: ACCOUNT, mailboxId: "mb", threadId: null, messageIdHeader: null, subject: `Issue ${id}`,
     from: { name: null, address: ADDR }, to: [], cc: [], date, folder, snippet: "", unread: false,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
@@ -36,9 +34,8 @@ const rule = (doneAt: string | null): RuleDTO => ({
   retro: { requestedAt: NOW, doneAt },
 } as RuleDTO);
 
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-afterEach(() => { act(() => root?.unmount()); host?.remove(); root = null; host = null; });
+beforeAll(warmScreeningWeb, 30_000);
+afterEach(teardownScreeningWeb);
 
 async function render(o: {
   doneAt: string | null; why: Record<string, StayedWhy>; locale?: "en" | "de"; extra?: EngineMessage[];
@@ -49,33 +46,60 @@ async function render(o: {
     msg("news-a", "ohmail/News", "2026-09-28T09:00:00.000Z"), msg("news-b", "ohmail/News", "2026-09-27T09:00:00.000Z"),
     msg("news-c", "ohmail/News", "2026-09-26T09:00:00.000Z"), msg("rec-a", "ohmail/Receipts", "2026-09-25T09:00:00.000Z"),
   ];
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges([
-    ...rows.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: NOW, entity: m })),
-    { type: "rule", op: "create", id: "r-1", seq: ++seq, updatedAt: NOW, entity: rule(o.doneAt) },
-  ] as SyncChange[]);
-  const sender = senderScreening(store, "in-1")!;
-  const stayedFor = vi.fn(async (ids: readonly string[]) =>
-    new Map(ids.filter((id) => o.why[id]).map((id) => [id, o.why[id]!] as const)));
-  const onMoveToo = vi.fn();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(React.createElement(NextIntlClientProvider, {
-      locale: o.locale ?? "en", messages: o.locale === "de" ? de : en,
-      children: React.createElement(SenderMenu, {
-        state: { messageId: "in-1", x: 0, y: 0 } as never, sender,
-        onChoose: () => undefined, onOpenDetail: () => undefined, onClose: () => undefined, stayedFor, onMoveToo,
-      }),
-    }));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const standing = rule(o.doneAt);
+  const stayedFor = vi.fn();
+  let seq = rows.length + 1;
+  const moves: Array<{ id: string; folder: Folder }> = [];
+  installScreeningWeb("#/ohbox/m/in-1", (path, query, method, init) => {
+    if (path === "/api/mailboxes") return Response.json({ items: [{
+      id: "mb", address: ["fixture", "mailbox.example"].join("@"), status: "connected", organizerRole: "organizer", organizerChecked: true,
+      createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
+    }] });
+    if (path === "/api/sync") return query.get("types") === "rule"
+      ? syncScreeningWeb([{ type: "rule", op: "create", id: standing.id, seq: 1, updatedAt: NOW, entity: standing }], 1)
+      : syncScreeningWeb(rows.map((row, index) => ({
+        type: "message", op: "create", id: row.id, seq: index + 2, updatedAt: NOW, entity: row,
+      })), rows.length + 1);
+    if (path === "/api/screener/stayed") {
+      const ids = query.get("ids")?.split(",") ?? [];
+      stayedFor(ids);
+      return Response.json({ stayed: ids.flatMap((id) => o.why[id] ? [{ id, why: o.why[id] }] : []) }, {
+        headers: { "X-Ohmail-Account": ACCOUNT },
+      });
+    }
+    const move = /^\/api\/messages\/([^/]+)\/move$/.exec(path);
+    if (move && method === "POST") {
+      const id = move[1]!;
+      const row = byId.get(id);
+      if (!row) return new Response(null, { status: 404 });
+      const { folder } = JSON.parse(String(init?.body)) as { folder: Folder };
+      moves.push({ id, folder });
+      row.folder = folder;
+      return Response.json(row, {
+        headers: { "X-Ohmail-Account": ACCOUNT, "X-Sync-Seq": String(++seq) },
+      });
+    }
+    return undefined;
   });
-  await act(async () => { await Promise.resolve(); });
-  const lines = [...host.querySelectorAll(".sm-stayed-line")].map((l) => ({
-    text: l.querySelector("span")!.textContent!, move: l.querySelector("button")?.textContent ?? null,
+  vi.setSystemTime(new Date(NOW));
+
+  const words = o.locale === "de" ? de : en;
+  const frame = within(await mountScreeningWeb(o.locale));
+  await tick(4000);
+  const reader = within(frame.getByRole("region", { name: words.frame.landmark.reading }));
+  await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(ADDR) }));
+  const page = within(document.body);
+  const contact = page.getByRole("dialog", { name: words.message.contactAria.replace("{who}", ADDR) });
+  await clickMounted(within(contact).getByRole("menuitem", { name: words.screening.action }));
+  const el = page.getByRole("dialog", { name: words.screening.aria.replace("{sender}", ADDR) });
+  await tick(200);
+
+  const lines = [...el.querySelectorAll(".sm-stayed-line")].map((line) => ({
+    text: line.querySelector("span")!.textContent!,
+    move: within(line as HTMLElement).queryByRole("button", { name: /^(Move (them|it) too|Auch verschieben)$/ })?.textContent ?? null,
   }));
-  return { el: host, lines, stayedFor, onMoveToo };
+  return { el, lines, stayedFor, moves };
 }
 
 describe("the sender sheet names why a row stayed", () => {
@@ -88,8 +112,10 @@ describe("the sender sheet names why a row stayed", () => {
       { text: "1 stays in News: it failed the sender's sign-in checks.", move: null },
       { text: "1 stays in Receipts: filed in another mail app.", move: "Move it too" },
     ]);
-    await act(async () => { (r.el.querySelector(".sm-stayed-move") as HTMLButtonElement).click(); });
-    expect(r.onMoveToo).toHaveBeenCalledWith(["news-a", "news-b"], "ohbox");
+    const line = within(r.el).getByText("2 stay in News: you replied to them.").parentElement!;
+    await clickMounted(within(line).getByRole("button", { name: "Move them too" }));
+    await tick(1500);
+    expect(r.moves).toEqual([{ id: "news-a", folder: "INBOX" }, { id: "news-b", folder: "INBOX" }]);
   });
 
   it("a row the server names no reason for is not listed", async () => {
@@ -110,8 +136,9 @@ describe("the sender sheet names why a row stayed", () => {
     const r = await render({ doneAt: NOW, why, extra });
     expect(r.el.querySelector(".sm-now")!.textContent).toBe("156" + " messages — Receipts 151 · News 3 · Ohbox 2");
     expect(r.lines).toEqual([{ text: "151 stay in Receipts: filed in another mail app.", move: "Move them too" }]);
-    await act(async () => { (r.el.querySelector(".sm-stayed-move") as HTMLButtonElement).click(); });
-    expect((r.onMoveToo.mock.calls[0]![0] as string[]).length).toBe(151);
+    await clickMounted(within(r.el).getByRole("button", { name: "Move them too" }));
+    await tick(1500);
+    expect(r.moves).toHaveLength(151);
   });
 
   it("in German", async () => {

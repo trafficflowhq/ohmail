@@ -50,6 +50,16 @@ export interface MailDocInputs {
   frameWidth?: number;
 }
 
+interface MailPreviewInputs {
+  messageId: string;
+  html: string;
+  locale: string;
+  frameWidth?: never;
+  proxied?: never;
+}
+
+type CacheInputs = MailDocInputs | MailPreviewInputs;
+
 /** The width a document was resolved at, and the thresholds its sheets compared against. */
 export interface MailDocMedia {
   width: number;
@@ -71,8 +81,8 @@ interface Entry<T> {
 
 export interface MailDocCache<T> {
   /** The kept document for these inputs, or `undefined` (a miss, or a proxied one past the gate). */
-  read(inputs: MailDocInputs): { value: T } | undefined;
-  write(inputs: MailDocInputs, value: T, chars: number, media?: MailDocMedia): void;
+  read(inputs: CacheInputs): { value: T } | undefined;
+  write(inputs: CacheInputs, value: T, chars: number, media?: MailDocMedia): void;
   fitOf(frameKey: string): MailDocFit | undefined;
   setFit(frameKey: string, fit: MailDocFit): void;
   clear(): void;
@@ -92,8 +102,10 @@ function serialOf(o: object | undefined): number {
   return n;
 }
 
-function keyOf(i: MailDocInputs): string {
+function keyOf(i: CacheInputs): string {
+  if ("locale" in i) return JSON.stringify([i.messageId, i.locale]);
   return [
+    "body",
     i.messageId,
     i.proxied ? "p" : "-",
     i.imgSource ?? "",
@@ -129,20 +141,20 @@ class Cache<T> implements MailDocCache<T> {
     return this.entries.size;
   }
 
-  read(inputs: MailDocInputs): { value: T } | undefined {
+  read(inputs: CacheInputs): { value: T } | undefined {
     this.fresh();
     if (inputs.proxied && !syncMayRead(this.engine)) return undefined;
     const key = keyOf(inputs);
     const hit = this.entries.get(key);
     if (!hit || hit.html !== inputs.html) return undefined;
     const m = hit.media;
-    if (m !== undefined && inputs.frameWidth !== undefined && letterBand(inputs.frameWidth, m.breaks) !== letterBand(m.width, m.breaks)) return undefined;
+    if (m !== undefined && "frameWidth" in inputs && inputs.frameWidth !== undefined && letterBand(inputs.frameWidth, m.breaks) !== letterBand(m.width, m.breaks)) return undefined;
     this.entries.delete(key);
     this.entries.set(key, hit);
     return { value: hit.value };
   }
 
-  write(inputs: MailDocInputs, value: T, chars: number, media?: MailDocMedia): void {
+  write(inputs: CacheInputs, value: T, chars: number, media?: MailDocMedia): void {
     this.fresh();
     if (inputs.proxied && !syncMayRead(this.engine)) return;
     const key = keyOf(inputs);
@@ -198,4 +210,20 @@ export function mailDocCacheFor<T>(engine: OhmailEngine): MailDocCache<T> {
 /** Every engine's documents gone, at once: the browser is being handed back (`sign-out.ts`). */
 export function forgetMailDocs(): void {
   generation += 1;
+}
+
+const previewCaches = new WeakMap<OhmailEngine, Cache<unknown>>();
+
+/** A closed card keeps just its notice. A changed body or language gets its own notice. */
+export function cachedMailPreview<T>(engine: OhmailEngine, inputs: MailPreviewInputs, make: () => T): T {
+  let cache = previewCaches.get(engine);
+  if (!cache) {
+    cache = new Cache(engine);
+    previewCaches.set(engine, cache);
+  }
+  const kept = cache.read(inputs);
+  if (kept) return kept.value as T;
+  const value = make();
+  cache.write(inputs, value, inputs.html.length);
+  return value;
 }

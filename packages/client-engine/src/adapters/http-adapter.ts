@@ -45,6 +45,7 @@ import type {
   CalendarEventAct,
   CalendarPatchBody,
   CalendarRecord,
+  CalendarSettingsWire,
   CalendarSignInBody,
   CalendarWay,
   CalendarWriteAnswer,
@@ -81,7 +82,7 @@ import type {
   WaitingRequestWire,
 } from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
-import { calendarWaysOf } from "../calendar-connect.js";
+import { calendarWaysOf, type CalendarSetupTransport } from "../calendar-connect.js";
 import { calendarWindowOf } from "../calendar-window.js";
 import type { SnapshotParams } from "../engine/server-wire.js";
 
@@ -135,6 +136,8 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export interface HttpAdapterOptions {
   /** e.g. "" (same origin), "/api/v1", or "http://localhost" in tests. */
   baseUrl?: string;
+  /** Only the web host offers writes to account-wide calendar settings. */
+  saveCalendarSettings?: CalendarSetupTransport["saveCalendarSettings"];
   /** Injectable fetch — tests bridge it straight into `app.handle`; the future
    *  localhost engine points it at 127.0.0.1. Defaults to global fetch. */
   fetch?: FetchLike;
@@ -581,7 +584,10 @@ export class HttpAdapter implements EngineAdapter {
    */
   private readonly createAttempted = new Set<string>();
 
+  private readonly saveCalendarSettings: CalendarSetupTransport["saveCalendarSettings"];
+
   constructor(opts: HttpAdapterOptions = {}) {
+    this.saveCalendarSettings = opts.saveCalendarSettings;
     this.baseUrl = (opts.baseUrl ?? "").replace(/\/$/, "");
     const injected = opts.fetch;
     const global = globalThis.fetch as FetchLike | undefined;
@@ -903,6 +909,24 @@ export class HttpAdapter implements EngineAdapter {
     }
   }
 
+  calendarSetupTransport(): CalendarSetupTransport {
+    return {
+      calendarWays: this.calendarWays.bind(this),
+      connectCalendar: this.connectCalendar.bind(this),
+      removeCalendarConnection: this.removeCalendarConnection.bind(this),
+      checkCalendarConnection: this.checkCalendarConnection.bind(this),
+      signInCalendarAgain: this.signInCalendarAgain.bind(this),
+      setCalendar: this.setCalendar.bind(this),
+      ...(this.saveCalendarSettings ? { saveCalendarSettings: this.saveCalendarSettings } : {}),
+    };
+  }
+
+  async calendarSettings(): Promise<CalendarSettingsWire> {
+    const res = await this.call("GET /calendar/settings", {});
+    if (!res.ok) throw await this.rejectionOf(res);
+    return this.readAnswer<"GET /calendar/settings">(res);
+  }
+
   /**
    * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}. UNDER A DEADLINE, like the body
    * and attachment reads and for a sharper reason: the ring is the FIRST await of every pull gesture, so a stalled
@@ -918,22 +942,22 @@ export class HttpAdapter implements EngineAdapter {
    * its `CalendarWriteTransport`). Each sends the press's key on every attempt; our server makes one
    * row of one key. A refusal throws as every write's does.
    */
-  async writeCalendar(act: CalendarEventAct, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+  async writeCalendar(act: CalendarEventAct, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
     // The call's check of a body's names reads one member of a union at a time; the act is the wire's own type whole.
     const body = act as Extract<CalendarEventAct, { kind: "calendar_event_create" }>;
-    const res = await this.call("POST /calendar/writes", { body, idempotencyKey: key });
+    const res = await this.call("POST /calendar/writes", { body, idempotencyKey: key, ...(signal ? { signal } : {}) });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"POST /calendar/writes">(res), seq: this.noteSeq(res) };
   }
 
-  async retryCalendarWrite(writeId: string, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
-    const res = await this.call("POST /calendar/writes/:id/retry", { params: { id: writeId }, idempotencyKey: key });
+  async retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("POST /calendar/writes/:id/retry", { params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}) });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"POST /calendar/writes/:id/retry">(res), seq: this.noteSeq(res) };
   }
 
-  async dismissCalendarWrite(writeId: string, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
-    const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key });
+  async dismissCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}) });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"DELETE /calendar/writes/:id">(res), seq: this.noteSeq(res) };
   }
@@ -1923,7 +1947,13 @@ export class HttpAdapter implements EngineAdapter {
             // it. OMITTED when absent rather than sent as `null`: the server reads an absent `dest` as the two-folder
             // default it has always had, which is what keeps a client that predates this field working unchanged.
             ...(m.dest ? { dest: FOLDER_OF_VIEW[m.dest] } : {}),
-            ...(m.scope ? { scope: m.scope } : {}),
+            ...(m.confirmedIds !== undefined
+              ? {
+                  scope: m.scope === "domain" ? "confirmed_domain" : "confirmed_sender",
+                  confirmedIds: m.confirmedIds,
+                } as const
+              : m.scope ? { scope: m.scope } : {}),
+            ...(m.unsubscribeIds === undefined ? {} : { unsubscribeIds: m.unsubscribeIds }),
             // The past-mail answer, omitted when unstated on the line above's reasoning: an older
             // client that cannot ask keeps the server's default rather than silently declining.
             ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
@@ -2485,18 +2515,24 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * DISCARD — `DELETE /drafts/:id`.
-       *
-       * A 404 is SWALLOWED, on `rule_delete`'s reasoning one entity over: the user asked for this
-       * draft to be gone and it is gone. Reporting a failure would leave a rolled-back tombstone
-       * and the draft back on screen, which is the one outcome nobody wants from a Discard.
-       * Nothing else is swallowed — a 403 or a 500 means the row may well still be there.
+       * A delayed Discard must use the conditional route on every attempt. Older servers can
+       * ignore a query on the original DELETE and remove a newer draft. The conditional route
+       * answers 204 if the draft is already gone, so a missing route is a terminal refusal.
        */
       case "draft_discard": {
-        const res = await this.call("DELETE /drafts/:id", {
-          params: { id: m.draftId },
-          idempotencyKey: opts.idempotencyKey, ...sig,
-        });
+        const query = new URLSearchParams();
+        if (m.ifContentRevision !== undefined) query.set("ifContentRevision", m.ifContentRevision);
+        if (m.ifUpdatedAt !== undefined) query.set("ifUpdatedAt", m.ifUpdatedAt);
+        const conditional = query.size > 0;
+        const request = { params: { id: m.draftId }, idempotencyKey: opts.idempotencyKey, ...sig };
+        const res = conditional
+          ? await this.call("DELETE /drafts/:id/conditional", { ...request, query })
+          : await this.call("DELETE /drafts/:id", request);
+        if (conditional && (res.status === 404 || res.status === 405 || res.status === 501)) {
+          throw new MutationRejectedError("This server cannot safely discard this draft yet", {
+            status: res.status, code: "discard_unsupported", retryable: false,
+          });
+        }
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -2544,7 +2580,7 @@ export class HttpAdapter implements EngineAdapter {
       case "draft_resolve": {
         const res = await this.call("POST /drafts/:id/resolve", {
           params: { id: m.draftId },
-          body: { outcome: m.outcome },
+          body: { outcome: m.outcome, ...(m.ifUpdatedAt === undefined ? {} : { ifUpdatedAt: m.ifUpdatedAt }) },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
@@ -3253,6 +3289,8 @@ export class HttpAdapter implements EngineAdapter {
         ? Date.parse(wire.sentCopyUntil) : NaN;
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
+        ...(typeof wire.sentDraftId === "string" && wire.sentDraftId.length > 0 ? { sentDraftId: wire.sentDraftId } : {}),
+        ...(typeof wire.sentDraftThrough === "number" ? { sentDraftThrough: wire.sentDraftThrough } : {}),
         ...(firstSend ? { firstSend } : {}),
         ...(sentCopy ? { sentCopy } : {}),
         ...(sentCopyReason ? { sentCopyReason } : {}),

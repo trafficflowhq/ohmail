@@ -2,12 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { StreamCardToggled, StreamShell, type StreamHandle } from "../app/shell/StreamShell";
+import type { StreamScroll } from "@ohmail/app-logic/streams";
+import { StreamScrollFixture } from "./stream-scroll-fixture";
+import { within } from "@testing-library/react";
 
 /**
  * TRI-F2 (stream half) — A PROGRAMMATIC JUMP OWNS THE CURSOR WHILE IT LANDS.
  *
- * `StreamShell.scrollTo` animates, and every frame fired the scroll-spy, which reads
+ * `useStreamScroll().scrollTo` animates, and every frame fired the scroll-spy, which reads
  * "current" off geometry mid-flight. The killer was the pinned-to-end rule: a jump to a card
  * near the END of the pile bottoms the scroller out, the spy declared the pile's LAST card
  * current, and the search jump landed cursor and highlight on a message nobody clicked — a
@@ -68,7 +70,7 @@ async function flush(): Promise<void> {
 describe("the scroll-spy during a programmatic jump", () => {
   it("a jump that bottoms out keeps the CLICKED card current — never the pile's last", async () => {
     const onCurrentChange = vi.fn();
-    const ref = React.createRef<StreamHandle>();
+    const ref = React.createRef<StreamScroll>();
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -77,18 +79,16 @@ describe("the scroll-spy during a programmatic jump", () => {
     const card = (sid: string) => h("div", { className: "scast", "data-sid": sid, key: sid });
     await act(async () => {
       root.render(
-        h(StreamShell, {
+        h(StreamScrollFixture, {
           ref,
-          ariaLabel: "stream",
           onCurrentChange,
-          onSeen: () => {},
           contentKey: 1,
           children: [card("c1"), card("c2"), card("c3"), card("c4")],
         }),
       );
     });
 
-    const el = container.querySelector<HTMLElement>(".stream")!;
+    const el = within(container).getByRole("region", { name: "stream" });
     // The scroller: 600px viewport over 1200px of content, i.e. maximum scrollTop = 600.
     Object.defineProperty(el, "clientHeight", { configurable: true, value: 600 });
     Object.defineProperty(el, "scrollHeight", { configurable: true, value: 1200 });
@@ -141,19 +141,19 @@ describe("the scroll-spy during a programmatic jump", () => {
     // Collapsed receipt cards are one line high: parked at 14px, the target's next two neighbours
     // also start above the 90px line, and the spy handed the cursor to the second of them.
     const onCurrentChange = vi.fn();
-    const ref = React.createRef<StreamHandle>();
+    const ref = React.createRef<StreamScroll>();
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
     roots.push(root);
     const ids = ["c1", "c2", "c3", "c4", "c5", "c6"];
     await act(async () => {
-      root.render(h(StreamShell, {
-        ref, ariaLabel: "stream", onCurrentChange, onSeen: () => {}, contentKey: 1,
+      root.render(h(StreamScrollFixture, {
+        ref, onCurrentChange, contentKey: 1,
         children: ids.map((sid) => h("div", { className: "scast", "data-sid": sid, key: sid })),
       }));
     });
-    const el = container.querySelector<HTMLElement>(".stream")!;
+    const el = within(container).getByRole("region", { name: "stream" });
     Object.defineProperty(el, "clientHeight", { configurable: true, value: 600 });
     Object.defineProperty(el, "scrollHeight", { configurable: true, value: 2000 });
     let scrollTop = 0;
@@ -181,28 +181,21 @@ describe("the scroll-spy during a programmatic jump", () => {
 /* Five short cards sharing one Date bottom out the port; the landing opens its card, which raises the end. */
 const PILE = ["RC2", "RC1", "RC4", "RC0", "RC3"];
 const Activity = Reflect.get(React, "Activity") as React.ComponentType<{ mode: string; children: React.ReactNode }>;
-let pill: (sid: string) => void = () => {};
-function Card({ sid }: { sid: string }) {
-  const toggled = React.useContext(StreamCardToggled);
-  pill = (id) => toggled(id, true);
-  return h("div", { className: "scast", "data-sid": sid });
-}
-
 async function mountPile(cursor: string | null = null) {
   const onCurrentChange = vi.fn();
-  const ref = React.createRef<StreamHandle>();
+  const ref = React.createRef<StreamScroll>();
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
   const render = (cur: string | null, visible = true) => act(async () => {
-    root.render(h(Activity, { mode: visible ? "visible" : "hidden", children: h(StreamShell, {
-      ref, ariaLabel: "stream", onCurrentChange, onSeen: () => {}, contentKey: 1, cursor: cur,
-      children: PILE.map((sid) => h(Card, { sid, key: sid })),
-    } as never) }));
+    root.render(h(Activity, { mode: visible ? "visible" : "hidden", children: h(StreamScrollFixture, {
+      ref, onCurrentChange, contentKey: 1, cursor: cur,
+      children: PILE.map((sid) => h("div", { className: "scast", "data-sid": sid, key: sid })),
+    }) }));
   });
   await render(cursor);
-  const el = container.querySelector<HTMLElement>(".stream")!;
+  const el = within(container).getByRole("region", { name: "stream" });
   const open = new Set<string>();
   const height = (sid: string) => (open.has(sid) ? 400 : 180);
   const topOf = (sid: string) => {
@@ -281,7 +274,7 @@ describe("a later scroll frame after a landing that opened its card", () => {
     const p = await mountPile("RC1");
     await p.render(null);
     p.onCurrentChange.mockClear();
-    await act(async () => { pill("RC1"); });
+    await act(async () => { p.ref.current!.toggled("RC1", true); });
     expect(p.announced()).toEqual(["RC1"]);
   });
 });

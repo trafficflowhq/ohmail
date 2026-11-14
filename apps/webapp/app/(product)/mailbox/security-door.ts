@@ -29,7 +29,7 @@ export function securityRefusal(err: unknown, say: (err: unknown) => string): Re
  * removal (`DELETE /auth/2fa/totp`) are each one request, tried as they are: the server decides whether the factor
  * is asked. The enrolment's address for a scanner is dropped here; only its key leaves this file.
  */
-export function securityDoor(say: (err: unknown) => string): SecurityDoor {
+export function securityDoor(say: (err: unknown) => string, expectedOwner?: string | null): SecurityDoor {
   const tried = async <T>(call: () => Promise<T>): Promise<Answer<T>> => {
     try {
       return { ok: true, value: await call() };
@@ -40,7 +40,7 @@ export function securityDoor(say: (err: unknown) => string): SecurityDoor {
   return {
     async read() {
       try {
-        const { user } = await auth.session();
+        const { user } = await auth.session({ expectedOwner });
         const enrolled = user?.twofaEnrolled;
         return {
           ok: true,
@@ -54,23 +54,23 @@ export function securityDoor(say: (err: unknown) => string): SecurityDoor {
         return { ok: false, word: "said", said: say(err) };
       }
     },
-    newCodes: () => tried(async () => (await auth.recoveryCodes()).codes),
-    startAuthenticator: () => tried(async () => ({ key: (await auth.totpEnroll()).secret })),
+    newCodes: () => tried(async () => (await auth.recoveryCodes(expectedOwner)).codes),
+    startAuthenticator: () => tried(async () => ({ key: (await auth.totpEnroll(expectedOwner)).secret })),
     activate: (code) =>
       tried(async () => {
-        await auth.totpActivate({ code });
+        await auth.totpActivate({ code }, expectedOwner);
         return null;
       }),
     removeAuthenticator: () =>
       tried(async () => {
-        await auth.totpRemove();
+        await auth.totpRemove(expectedOwner);
         return null;
       }),
   };
 }
 
 /** The web's Security door, its refusals said in the reader's language. */
-export function useSecurityDoor(): SecurityDoor {
+export function useSecurityDoor(expectedOwner?: string | null): SecurityDoor {
   const say = useRefusalSentence();
-  return useMemo(() => securityDoor(say), [say]);
+  return useMemo(() => securityDoor(say, expectedOwner), [say, expectedOwner]);
 }

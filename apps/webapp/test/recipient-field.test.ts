@@ -1,26 +1,21 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { addressBook, type AddressBookEntry } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, within } from "@testing-library/react";
+import en from "../messages/en.json";
 import {
-  RecipientField,
-  RECIPIENT_DRAG_TYPE,
-  addressLabels,
   joinRecipients,
   moveRecipient,
   splitRecipients,
-  truncateAddress,
-  ADDRESS_MAX,
   type RecipientMove,
-  type RecipientRow,
-} from "../app/shell/RecipientField";
-import { composePlan, parseRecipients } from "@ohmail/app-logic/writing/compose";
+} from "@ohmail/app-logic/writing/recipient-lines";
+import { composePlan, parseRecipients, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
+import { act, message, stubDom } from "./_draft-shell.js";
+import { letter } from "./_handoff-steps.js";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./_write-1-writing.js"; // Write over parts that stay (share write-1): today's field leaves
 
 /**
  * THE RECIPIENT FIELD — chips over one wire string.
@@ -38,52 +33,81 @@ import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
  *  2. WHAT IT WRITES READS BACK. Accepting must produce something `parseRecipients` reads
  *     back as the address that was picked — otherwise the field looks right and the mail goes
  *     nowhere. (`packages/client-engine/test/address-book.test.ts` proves the ranking.)
+ *
+ * RE-POINTED (share write-1 of the older tests' sorting, 18 November): the field is Write's people lines
+ * (`packages/app/src/write/head/People.tsx` in the kit's `Recipients`) on Write's new letter, as the mail ground
+ * mounts it (`_write-1-writing.tsx`); the string is the composition's own `to` (`cc`, `bcc`); the address book is
+ * the one the mirror makes (`addressBook` over its letters, as Write's suggestions read it), so each book below is
+ * the letters that make it. The pure cases read the line model by its own path (`recipient-lines.ts`). The cases
+ * Write does not hold yet were moved as they stood to `recipient-field-gaps.test.ts`.
  */
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const W = en.write;
 
-const BOOK: AddressBookEntry[] = [
-  { address: "lena@atelier.invalid", name: "Lena Eichspan", count: 9, lastAt: Date.now(), evidence: "we_wrote" },
-  { address: "leon@example.invalid", name: "Leon Frei", count: 4, lastAt: Date.now(), evidence: "we_wrote" },
-  { address: "mara@example.invalid", name: "", count: 2, lastAt: Date.now(), evidence: "they_wrote" },
+/* Write's text is the ground's rich editor (ProseMirror): a drop asks the page which place is under the pointer,
+   which every browser answers and jsdom does not. Nothing is under it here. */
+if (typeof document.elementFromPoint !== "function") document.elementFromPoint = () => null;
+
+const ME = { address: "me@example.invalid", name: "Me" };
+/** A letter the account wrote to `address` (its Sent copy): who the account wrote to, by the name it used. */
+const wroteTo = (id: string, address: string, name: string, at = "2026-09-27T08:29:00.000Z"): EngineMessage =>
+  message(id, { folder: "Sent" as never /* the Sent copy: a mirror row the wire type does not name */, from: ME, to: [{ address, name }], date: at, updatedAt: at });
+/** A letter `address` wrote to the account. */
+const wroteMe = (id: string, address: string, name: string, at = "2026-09-27T08:29:00.000Z"): EngineMessage =>
+  message(id, { from: { address, name }, to: [ME], date: at, updatedAt: at });
+
+/** The book of today's field (Lena written to most, then Leon; Mara wrote to the account), as letters that make it. */
+const BOOK: EngineMessage[] = [
+  wroteTo("b1", "lena@atelier.invalid", "Lena Eichspan"),
+  wroteTo("b2", "lena@atelier.invalid", "Lena Eichspan"),
+  wroteTo("b3", "lena@atelier.invalid", "Lena Eichspan"),
+  wroteTo("b4", "leon@example.invalid", "Leon Frei"),
+  wroteMe("b5", "mara@example.invalid", ""),
 ];
 
-let host: HTMLDivElement;
-let root: Root | null = null;
-let value = "";
+let w: WritingWorld;
+/** The composition's three lines as they stand. */
+const rowsNow = (): { to: string; cc: string; bcc: string } => {
+  const c = w.now().compose;
+  return { to: c.to, cc: c.cc, bcc: c.bcc };
+};
+/** The To line's wire string: what the envelope is built from. */
+const wire = (): string => rowsNow().to;
 
-async function render(initial = "", book: readonly AddressBookEntry[] = BOOK): Promise<void> {
-  value = initial;
-  const Harness = (): React.ReactElement => {
-    const [v, setV] = React.useState(initial);
-    value = v;
-    return h(RecipientField, { id: "to", value: v, onChange: setV, book });
-  };
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-04T12:00:00.000Z"),
-        children: h(Harness),
-      }),
-    );
-  });
+/** Write's new letter over a mirror holding `book`, its To line standing at `initial` as the composition holds it. */
+async function render(initial = "", book: readonly EngineMessage[] = BOOK): Promise<void> {
+  w = await mountWriting({ view: true, messages: [...book] });
+  if (initial !== "") {
+    await act(async () => w.now().onComposeFields({ ...w.now().compose, to: initial }));
+  }
+  /* The page settles before a person acts in it: the new letter's text takes the keys once, at its mount, a
+     frame after it is drawn. */
+  await rounds(6);
 }
 
-const input = (): HTMLInputElement => host.querySelector<HTMLInputElement>("#to")!;
-const options = (): string[] =>
-  [...host.querySelectorAll(".rcp-opt")].map((li) => li.textContent ?? "");
-const chips = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>(".rcp-chip")];
-const chipEntries = (): string[] => chips().map((c) => c.dataset.entry ?? "");
+const lineOf = (name: string = W.to): HTMLElement => screen.getByRole("group", { name });
+/** The place to type on a line (a combobox where people are offered). */
+const input = (name: string = W.to): HTMLInputElement =>
+  within(lineOf(name)).getByRole(screen.queryByRole("combobox", { name }) ? "combobox" : "textbox", {
+    name,
+  }) as HTMLInputElement;
+/** The people on a line: each a button that opens the person's menu. */
+const chips = (name: string = W.to): HTMLElement[] =>
+  within(lineOf(name))
+    .queryAllByRole("button")
+    .filter((b) => b.getAttribute("aria-haspopup") === "menu");
+/** The wire entry each person on the line stands for (Write's person id: line, place, entry). */
+const chipEntries = (name: string = W.to): string[] =>
+  chips(name).map((c) => (c.getAttribute("data-person") ?? "").split("\u0000").slice(2).join("\u0000"));
+const chipOf = (entry: string, name: string = W.to): HTMLElement =>
+  chips(name)[chipEntries(name).indexOf(entry)]!;
+/** The offered people under the line. */
+const optionEls = (): HTMLElement[] => screen.queryAllByRole("option");
+const options = (): string[] => optionEls().map((li) => li.textContent ?? "");
 
 /** Type into the tail input — the input holds ONLY the entry being typed. */
 async function type(text: string, el: HTMLInputElement = input()): Promise<void> {
   await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    setter.call(el, text);
-    el.setSelectionRange(text.length, text.length);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    fireEvent.change(el, { target: { value: text } });
   });
 }
 
@@ -93,15 +117,27 @@ async function press(key: string, opts: KeyboardEventInit = {}, el: HTMLElement 
   });
 }
 
+/** The lines that are not shown yet (Cc, Bcc), opened as a person opens them. */
+async function openLines(): Promise<void> {
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: W.more }));
+  });
+}
+
 beforeEach(() => {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  try {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  } catch {
+    /* storage blocked */
+  }
+  stubDom();
+  Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
 });
 afterEach(async () => {
-  await act(async () => { root?.unmount(); });
-  root = null;
-  host.remove();
+  vi.restoreAllMocks();
+  await unmountWritings();
+  resetComposerForTest();
 });
 
 /* ══ the string ⇄ chips bijection ═══════════════════════════════════════════════════════ */
@@ -176,10 +212,14 @@ describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
 
   /** Rendered: the seeded value produces N chips and an EMPTY input, not N-1 and a torso. */
   it("renders every seeded recipient as a chip with an empty tail input", async () => {
-    await render(formatRecipientChips([
-      { name: null, address: "a@x.invalid" },
-      { name: null, address: "b@y.invalid" },
-    ]));
+    // Seeded as the composition seeds it: a reopened draft (`openDraft`, `formatRecipientChips(d.to)`).
+    const row = {
+      ...letter("d-seed", "Plans", "Shall we?"),
+      to: [{ name: null, address: "a@x.invalid" }, { name: null, address: "b@y.invalid" }],
+    };
+    w = await mountWriting({ view: true, drafts: [row as never] });
+    await act(async () => w.now().openDraft(row as never));
+    await rounds(4);
     expect(chipEntries()).toEqual(["a@x.invalid", "b@y.invalid"]);
     expect(input().value, "the last recipient is sitting in the input as text").toBe("");
   });
@@ -187,8 +227,10 @@ describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
   /**
    * THE SEAMS, STRUCTURALLY — a helper that is right and unused leaves the defect exactly as
    * it was. Every surface that seeds a recipient field from stored ADDRESSES goes through it:
-   * a reopened draft and the contact popover's Write (`shell-compose.ts`), an accepted AI draft
-   * (`ComposeView.takeDraft`), and the reply head opening for edit (`InlineReply.expand`).
+   * a reopened draft and the contact popover's Write (`shell-compose.ts`), and the reply head
+   * opening for edit (Write's reply: `writing-reply.ts`'s `seed`, which the reply's change
+   * press hands its lines). Today's composer's accepted AI draft has no surface in Write: its line
+   * was split out word for word to `recipient-field-gaps.test.ts`.
    */
   it("every address-seeding surface goes through formatRecipientChips", () => {
     const shell = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
@@ -197,11 +239,7 @@ describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
     expect(shell).toMatch(/cc: formatRecipientChips\(d\.cc\)/);
     expect(shell).toMatch(/bcc: formatRecipientChips\(d\.bcc\)/);
 
-    const view = readSource("app/views/ComposeView.tsx");
-    expect(view, "an accepted AI draft seeds To without the chips form")
-      .toMatch(/to: fields\.to \|\| formatRecipientChips\(draft\.to\)/);
-
-    const reply = readSource("app/shell/InlineReply.tsx");
+    const reply = readSource("../../packages/app-logic/src/writing/writing-reply.ts");
     expect(reply, "the opened reply audience no longer prefills through the shared chips form")
       .toMatch(/to: formatRecipientChips\(to\)/);
   });
@@ -234,29 +272,21 @@ describe("the name a suggestion carries onto the chip", () => {
     new Date(Date.now() - days * 86_400_000).toISOString();
 
   /** A mirror where Andreas signs his own mail, and a company's mail addresses him its way. */
-  const reader = {
-    get: () => undefined,
-    list: (type: string): unknown[] =>
-      type === "message"
-        ? [
-            {
-              id: "m1", folder: "INBOX", date: at(3), to: [], cc: [],
-              from: who("andi@bergerweb.invalid", "Andreas Ingold"),
-            },
-            {
-              id: "m2", folder: "INBOX", date: at(1), cc: [],
-              from: who("buero@bootsvermietung.invalid", "Bootsvermietung Enge"),
-              // The company's client exporting ITS name for him into a To header.
-              to: [who("andi@bergerweb.invalid", "Bootsvermietung Enge GmbH - Andreas Ingold")],
-            },
-          ]
-        : [],
-    entries: () => [],
-  } as unknown as Parameters<typeof addressBook>[0];
+  const mirror = (): EngineMessage[] => [
+    message("m1", {
+      folder: "INBOX", date: at(3), updatedAt: at(3), to: [], cc: [],
+      from: who("andi@bergerweb.invalid", "Andreas Ingold"),
+    } as never),
+    message("m2", {
+      folder: "INBOX", date: at(1), updatedAt: at(1), cc: [],
+      from: who("buero@bootsvermietung.invalid", "Bootsvermietung Enge"),
+      // The company's client exporting ITS name for him into a To header.
+      to: [who("andi@bergerweb.invalid", "Bootsvermietung Enge GmbH - Andreas Ingold")],
+    } as never),
+  ];
 
   it("accepting a suggestion chips the sender's OWN name beside their address", async () => {
-    const book = addressBook(reader);
-    await render("", book);
+    await render("", mirror());
     await type("andi");
     expect(options().join(" | ")).toContain("andi@bergerweb.invalid");
     await press("Enter");
@@ -265,11 +295,12 @@ describe("the name a suggestion carries onto the chip", () => {
     expect(chip?.querySelector("b")?.textContent,
       "the chip names somebody other than the person at this address")
       .toBe("Andreas Ingold");
-    expect(chip?.querySelector(".rcp-chip-addr")?.textContent).toBe("andi@bergerweb.invalid");
+    // The address beside the name: the person's button names both (`.rcp-chip-addr` was today's).
+    expect(chip?.textContent).toContain("andi@bergerweb.invalid");
 
     // …and the same name is what leaves the account: the chip is a rendering of the value, and
     // the value is what `composePlan` builds the To header from.
-    const parsed = parseRecipients(value);
+    const parsed = parseRecipients(wire());
     expect(parsed.invalid).toEqual([]);
     expect(parsed.addresses).toEqual([
       { name: "Andreas Ingold", address: "andi@bergerweb.invalid" },
@@ -292,21 +323,19 @@ describe("the name a suggestion carries onto the chip", () => {
    * the rule. Now there is one.
    */
   it("a display name the field's own splitter would tear is dropped, not written", async () => {
-    await render("", [
-      { address: "andi@bergerweb.invalid", name: "Ingold, Andreas", count: 4, lastAt: Date.now(), evidence: "we_wrote" },
-    ]);
+    await render("", [wroteTo("i1", "andi@bergerweb.invalid", "Ingold, Andreas")]);
     await type("andi");
     await press("Enter");
 
     expect(chipEntries(), "the accepted suggestion tore into two chips")
       .toEqual(["andi@bergerweb.invalid"]);
-    const parsed = parseRecipients(value);
+    const parsed = parseRecipients(wire());
     expect(parsed.invalid, "half a display name is being offered to SMTP as an address")
       .toEqual([]);
     expect(parsed.addresses).toEqual([{ name: null, address: "andi@bergerweb.invalid" }]);
     // The send is the thing that was broken: one invalid entry empties the whole envelope.
     const plan = composePlan(
-      { to: value, cc: "", bcc: "", subject: "s", body: "b", html: "", fromMailboxId: null },
+      { to: wire(), cc: "", bcc: "", subject: "s", body: "b", html: "", fromMailboxId: null },
       "mb-1",
     );
     expect(plan.mutation.to!.map((a) => a.address)).toEqual(["andi@bergerweb.invalid"]);
@@ -377,7 +406,7 @@ describe("chips: every settled recipient is one", () => {
     expect(chipEntries()).toEqual(["nadia@parc.invalid"]);
     expect(input().value).toBe("");
     // …and the envelope really carries it — add must reach the wire, not the pixels.
-    expect(parseRecipients(value).addresses.map((a) => a.address)).toEqual(["nadia@parc.invalid"]);
+    expect(parseRecipients(wire()).addresses.map((a) => a.address)).toEqual(["nadia@parc.invalid"]);
   });
 
   it("a comma commits too, exactly as it always did", async () => {
@@ -387,28 +416,20 @@ describe("chips: every settled recipient is one", () => {
     expect(input().value).toBe("");
   });
 
-  it("blur commits the tail — leaving the field finishes the entry", async () => {
-    await render();
-    await type("nadia@parc.invalid");
-    // `focusout`, not a hand-built `blur`: React 18 delegates onBlur through focusout, so a
-    // synthetic `blur` event never reaches the handler (the same note as the focus test).
-    await act(async () => { input().dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
-    expect(chipEntries()).toEqual(["nadia@parc.invalid"]);
-  });
-
   it("the × removes exactly that chip, and the ENVELOPE loses it", async () => {
     await render("a@x.invalid, b@y.invalid, c@z.invalid, ");
     expect(chipEntries()).toHaveLength(3);
-    const before = parseRecipients(value).addresses.map((a) => a.address);
+    const before = parseRecipients(wire()).addresses.map((a) => a.address);
     expect(before).toContain("b@y.invalid");
 
-    const x = chips()[1]!.querySelector<HTMLElement>(".rcp-chip-x")!;
+    // The × of the second person: its way off, said with its name (`.rcp-chip-x` was today's).
+    const x = within(lineOf()).getByRole("button", { name: W.remove.replace("{name}", "b@y.invalid") });
     await act(async () => { x.click(); });
 
     expect(chipEntries()).toEqual(["a@x.invalid", "c@z.invalid"]);
     // The removal reached the string the envelope is built from — remove must mutate the
     // wire, or the mail still goes to the person who was just deleted from the screen.
-    expect(parseRecipients(value).addresses.map((a) => a.address))
+    expect(parseRecipients(wire()).addresses.map((a) => a.address))
       .toEqual(["a@x.invalid", "c@z.invalid"]);
   });
 
@@ -416,7 +437,7 @@ describe("chips: every settled recipient is one", () => {
     await render("a@x.invalid, b@y.invalid, ");
     await press("Backspace");
     expect(chipEntries()).toEqual(["a@x.invalid"]);
-    expect(parseRecipients(value).addresses.map((a) => a.address)).toEqual(["a@x.invalid"]);
+    expect(parseRecipients(wire()).addresses.map((a) => a.address)).toEqual(["a@x.invalid"]);
   });
 
   it("Backspace with text in the input edits the TEXT — chips are not collateral", async () => {
@@ -428,46 +449,36 @@ describe("chips: every settled recipient is one", () => {
 
   it("pasting a list splits into chips — commas, semicolons and newlines all separate", async () => {
     await render();
-    const el = input();
-    await act(async () => {
-      const e = new Event("paste", { bubbles: true, cancelable: true });
-      Object.assign(e, {
-        clipboardData: { getData: () => "a@x.invalid, Lena <l@y.invalid>; c@z.invalid\nd@w.invalid" },
-      });
-      el.dispatchEvent(e);
+    const paste = (text: string) => act(async () => {
+      fireEvent.paste(input(), { clipboardData: { getData: () => text } });
     });
-    expect(chipEntries()).toEqual([
-      "a@x.invalid", "Lena <l@y.invalid>", "c@z.invalid", "d@w.invalid",
-    ]);
-    const parsed = parseRecipients(value);
+    await paste("a@x.invalid, Lena <l@y.invalid>; c@z.invalid\nd@w.invalid");
+    const first = ["a@x.invalid", "Lena <l@y.invalid>", "c@z.invalid", "d@w.invalid"];
+    expect(chipEntries()).toEqual(first);
+    const parsed = parseRecipients(wire());
     expect(parsed.invalid).toEqual([]);
     expect(parsed.addresses).toHaveLength(4);
+
+    await type("replacefrag");
+    input().setSelectionRange(0, "replace".length);
+    await paste("b@y.invalid\r\ne@z.invalid\t");
+    expect(chipEntries()).toEqual([...first, "b@y.invalid", "e@z.invalid"]);
+    expect(input().value).toBe("frag");
   });
 
   it("an entry that does not parse is a chip too — styled as the error idiom, kept verbatim", async () => {
     await render("nope, a@x.invalid, ");
     const [bad, good] = chips();
-    expect(bad!.classList.contains("bad")).toBe(true);
-    expect(bad!.dataset.entry).toBe("nope");
-    expect(good!.classList.contains("bad")).toBe(false);
+    // The error idiom is the person marked refused (today's `bad` class).
+    expect(bad!.getAttribute("aria-invalid")).toBe("true");
+    expect(chipEntries()[0]).toBe("nope");
+    expect(good!.getAttribute("aria-invalid")).toBeNull();
     // The bad entry still blocks the send — composePlan's rule is untouched by the rendering.
     const plan = composePlan(
-      { to: value, cc: "", bcc: "", subject: "s", body: "b", html: "", fromMailboxId: null }, "mb-1",
+      { to: wire(), cc: "", bcc: "", subject: "s", body: "b", html: "", fromMailboxId: null }, "mb-1",
     );
     expect(plan.invalid).toEqual(["nope"]);
     expect(plan.mutation.to).toEqual([]);
-  });
-
-  it("shows the DISPLAY-DECODED address on the chip face and keeps the wire form underneath", async () => {
-    // The IDN rule: decode for SHOW, never for the value. `xn--bcher-kva.example` reads
-    // `bücher.example`; the entry — what travels on drag, into the string, onto the wire — stays
-    // the stored A-label byte-for-byte.
-    await render("nora@xn--bcher-kva.example, ");
-    const chip = chips()[0]!;
-    expect(chip.textContent).toContain("nora@bücher.example");
-    expect(chip.dataset.entry).toBe("nora@xn--bcher-kva.example");
-    expect(value).toContain("xn--bcher-kva.example");
-    expect(value).not.toContain("bücher");
   });
 });
 
@@ -498,75 +509,63 @@ describe("keyboard: chips are reachable, removable and movable without a mouse",
     expect(document.activeElement).toBe(input());
   });
 
+  /*
+   * Today's field handed the move to its form (`onMove`); Write's lines apply it to the composition. Each move's
+   * expectation is the move as today's field handed it, read where it lands: the lines as `moveRecipient` makes
+   * them of that move. The Cc line is opened first, as a person sees it before moving a person onto it.
+   */
   it("Alt+arrows hand the chip to onMove — the keyboard drag", async () => {
-    const moves: RecipientMove[] = [];
-    await act(async () => {
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-04T12:00:00.000Z"),
-          children: h(RecipientField, {
-            id: "to", value: "a@x.invalid, b@y.invalid, ", onChange: () => {}, book: BOOK,
-            row: "to" as RecipientRow, onMove: (m: RecipientMove) => moves.push(m),
-          }),
-        }),
-      );
-    });
-    const chip = host.querySelectorAll<HTMLElement>(".rcp-chip")[0]!;
-    await press("ArrowRight", { altKey: true }, chip);
-    expect(moves.pop()).toEqual({ entry: "a@x.invalid", from: "to", to: "to", before: 2 });
-    await press("ArrowDown", { altKey: true }, chip);
-    expect(moves.pop()).toEqual({ entry: "a@x.invalid", from: "to", to: "cc", before: null });
+    await render("a@x.invalid, b@y.invalid, ");
+    await openLines();
+    /** The lines after a move are the lines `moveRecipient` makes of the move today's field handed. */
+    const landed = (m: RecipientMove, from: ReturnType<typeof rowsNow>): void =>
+      void expect(rowsNow()).toEqual(moveRecipient(from, m));
+    let from = rowsNow();
+    await press("ArrowRight", { altKey: true }, chipOf("a@x.invalid"));
+    landed({ entry: "a@x.invalid", from: "to", to: "to", before: 2 }, from);
+    from = rowsNow();
+    await press("ArrowDown", { altKey: true }, chipOf("a@x.invalid"));
+    landed({ entry: "a@x.invalid", from: "to", to: "cc", before: null }, from);
     // The first row has no row above it — Alt+↑ on To moves nothing rather than wrapping.
-    await press("ArrowUp", { altKey: true }, chip);
-    expect(moves).toHaveLength(0);
-  });
-
-  it("is announced: the chips ride a listbox, each one an option with its name", async () => {
-    await render("a@x.invalid, ");
-    const list = host.querySelector(".rcp-chips")!;
-    expect(list.getAttribute("role")).toBe("listbox");
-    const chip = chips()[0]!;
-    expect(chip.getAttribute("role")).toBe("option");
-    expect(chip.getAttribute("aria-label")).toContain("a@x.invalid");
+    from = rowsNow();
+    await press("ArrowUp", { altKey: true }, chips()[0]!);
+    expect(rowsNow()).toEqual(from);
   });
 });
 
 /* ══ drag and drop between rows ═════════════════════════════════════════════════════════ */
 
 describe("drag: a chip carries its wire entry between rows", () => {
-  /** Two rows sharing one state object, moves applied whole — `ComposeView.moveChip`'s shape. */
-  let rows = { to: "", cc: "", bcc: "" };
-  async function renderRows(initial: { to: string; cc: string; bcc: string }): Promise<void> {
-    rows = initial;
-    const Harness = (): React.ReactElement => {
-      const [v, setV] = React.useState(initial);
-      rows = v;
-      const onMove = (m: RecipientMove): void => {
-        const next = moveRecipient(v, m);
-        if (next) setV(next);
-      };
-      return h(
-        "div",
-        null,
-        h(RecipientField, {
-          id: "to", value: v.to, onChange: (to: string) => setV({ ...v, to }), book: [],
-          row: "to" as RecipientRow, onMove,
-        }),
-        h(RecipientField, {
-          id: "cc", value: v.cc, onChange: (cc: string) => setV({ ...v, cc }), book: [],
-          row: "cc" as RecipientRow, onMove,
-        }),
-      );
-    };
-    await act(async () => {
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-04T12:00:00.000Z"),
-          children: h(Harness),
-        }),
-      );
+  /*
+   * Write's lines are dragged with the pointer (the kit's `Recipients`): the lines one under the other, 32 high,
+   * 40 apart; a person 100 wide, one after the other from 60 (the kit's own drag case lays them out the same).
+   */
+  const layOut = (): void => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const lineOfEl = (el: Element | null) => el?.closest("[data-line-id]")?.getAttribute("data-line-id");
+      const row = ["to", "cc", "bcc"].indexOf(lineOfEl(this) ?? "") * 40;
+      const peers = [...(this.closest("[data-line-id]")?.querySelectorAll("[data-person]") ?? [])];
+      const whoEl = this.matches("[data-person]") ? this : this.querySelector(":scope > [data-person]");
+      const at = whoEl ? peers.indexOf(whoEl) : -1;
+      const [left, width] = at >= 0 ? [60 + at * 104, 100] : [0, 700];
+      return { left, top: row, right: left + width, bottom: row + 32, width, height: 32, x: left, y: row } as DOMRect;
     });
-  }
+  };
+  const point = async (el: Element, kind: string, x: number, y: number): Promise<void> => {
+    await act(async () => {
+      const event = new MouseEvent(kind, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      fireEvent(el, event);
+    });
+  };
+  /** A person lifted at (x0, y0) and let go at (x, y). */
+  const dragTo = async (el: Element, x0: number, y0: number, x: number, y: number): Promise<void> => {
+    await point(el, "pointerdown", x0, y0);
+    await point(el, "pointermove", x0 + 2, y0 + 1);
+    await point(el, "pointermove", x, y);
+    await point(el, "pointermove", x + 1, y);
+    await point(el, "pointerup", x + 1, y);
+  };
 
   /** The DataTransfer jsdom does not have: enough of one for the handlers under test. */
   function fakeDataTransfer(): DataTransfer {
@@ -583,20 +582,14 @@ describe("drag: a chip carries its wire entry between rows", () => {
   const drag = (type: string, dt: DataTransfer): Event =>
     Object.assign(new Event(type, { bubbles: true, cancelable: true }), { dataTransfer: dt });
 
+  /* Today's half "dragstart writes the entry and source row" (the HTML drag's payload, `RECIPIENT_DRAG_TYPE`) is
+     today's field's own carrier: Write's lines carry the person under the pointer and write no payload. */
   it("dragstart writes the entry and source row; drop on the other row moves it on the WIRE", async () => {
-    await renderRows({ to: "a@x.invalid, b@y.invalid, ", cc: "", bcc: "" });
-    const dt = fakeDataTransfer();
-    const chip = host.querySelectorAll<HTMLElement>("#to")[0]!
-      .closest(".rcp-box")!.querySelectorAll<HTMLElement>(".rcp-chip")[1]!;
-
-    await act(async () => { chip.dispatchEvent(drag("dragstart", dt)); });
-    expect(JSON.parse(dt.getData(RECIPIENT_DRAG_TYPE))).toEqual({
-      entry: "b@y.invalid", row: "to",
-    });
-
-    const ccBox = host.querySelector("#cc")!.closest(".rcp-box")!;
-    await act(async () => { ccBox.dispatchEvent(drag("dragover", dt)); });
-    await act(async () => { ccBox.dispatchEvent(drag("drop", dt)); });
+    await render("a@x.invalid, b@y.invalid, ");
+    layOut();
+    // b, the second person of To, lifted and let go over the Cc line (the lift opens the lines).
+    await dragTo(chipOf("b@y.invalid"), 170, 10, 400, 50);
+    const rows = rowsNow();
 
     expect(splitRecipients(rows.to).chips).toEqual(["a@x.invalid"]);
     expect(splitRecipients(rows.cc).chips).toEqual(["b@y.invalid"]);
@@ -609,25 +602,22 @@ describe("drag: a chip carries its wire entry between rows", () => {
   });
 
   it("dropping ON a chip inserts before it — reorder within one row", async () => {
-    await renderRows({ to: "a@x.invalid, b@y.invalid, c@z.invalid, ", cc: "", bcc: "" });
-    const dt = fakeDataTransfer();
-    const toChips = (): HTMLElement[] =>
-      [...host.querySelector("#to")!.closest(".rcp-box")!.querySelectorAll<HTMLElement>(".rcp-chip")];
+    await render("a@x.invalid, b@y.invalid, c@z.invalid, ");
+    layOut();
+    // c, the third, let go over the first half of a.
+    await dragTo(chipOf("c@z.invalid"), 275, 10, 70, 10);
 
-    await act(async () => { toChips()[2]!.dispatchEvent(drag("dragstart", dt)); });
-    await act(async () => { toChips()[0]!.dispatchEvent(drag("dragover", dt)); });
-    await act(async () => { toChips()[0]!.dispatchEvent(drag("drop", dt)); });
-
-    expect(splitRecipients(rows.to).chips).toEqual(["c@z.invalid", "a@x.invalid", "b@y.invalid"]);
+    expect(splitRecipients(rowsNow().to).chips).toEqual(["c@z.invalid", "a@x.invalid", "b@y.invalid"]);
   });
 
   it("a drop that is not ours moves nothing — the MIME type is the gate", async () => {
-    await renderRows({ to: "a@x.invalid, ", cc: "", bcc: "" });
+    await render("a@x.invalid, ");
+    await openLines();
     const dt = fakeDataTransfer();
     dt.setData("text/plain", "stray");
-    const ccBox = host.querySelector("#cc")!.closest(".rcp-box")!;
+    const ccBox = lineOf(W.cc);
     await act(async () => { ccBox.dispatchEvent(drag("drop", dt)); });
-    expect(rows).toEqual({ to: "a@x.invalid, ", cc: "", bcc: "" });
+    expect(rowsNow()).toEqual({ to: "a@x.invalid, ", cc: "", bcc: "" });
   });
 });
 
@@ -655,8 +645,8 @@ describe("the combobox", () => {
    */
   it("labels a correspondent the account has never written to, and only that one", async () => {
     await render("", [
-      { address: "nora@atelier.invalid", name: "Nora Lindt", count: 2, lastAt: Date.now(), evidence: "we_wrote" },
-      { address: "nora@elsewhere.invalid", name: "Nora Lindt", count: 9, lastAt: Date.now(), evidence: "they_wrote" },
+      wroteTo("n1", "nora@atelier.invalid", "Nora Lindt"),
+      ...Array.from({ length: 9 }, (_, i) => wroteMe(`n${i + 2}`, "nora@elsewhere.invalid", "Nora Lindt")),
     ]);
     await type("nora");
     expect(options()).toHaveLength(2);
@@ -667,7 +657,8 @@ describe("the combobox", () => {
   it("arrows move the highlight, and it wraps", async () => {
     await render();
     await type("le");
-    const sel = () => [...host.querySelectorAll(".rcp-opt")].findIndex((li) => li.classList.contains("sel"));
+    // The highlighted offer is the one marked selected (today's `sel` class).
+    const sel = () => optionEls().findIndex((li) => li.getAttribute("aria-selected") === "true");
     expect(sel()).toBe(0);
     await press("ArrowDown");
     expect(sel()).toBe(1);
@@ -681,7 +672,7 @@ describe("the combobox", () => {
     await render();
     await type("le");
     await press("Enter");
-    expect(value).toBe("Lena Eichspan <lena@atelier.invalid>, ");
+    expect(wire()).toBe("Lena Eichspan <lena@atelier.invalid>, ");
     expect(chipEntries()).toEqual(["Lena Eichspan <lena@atelier.invalid>"]);
     expect(input().value).toBe("");
   });
@@ -690,7 +681,7 @@ describe("the combobox", () => {
     await render();
     await type("mar");
     await press("Tab");
-    expect(value).toBe("mara@example.invalid, ");
+    expect(wire()).toBe("mara@example.invalid, ");
   });
 
   it("⌘↵ is NOT accept — Send belongs to the keymap registry", async () => {
@@ -700,7 +691,7 @@ describe("the combobox", () => {
     await render();
     await type("le");
     await press("Enter", { metaKey: true });
-    expect(value).toBe("le");
+    expect(wire()).toBe("le");
   });
 
   it("Escape dismisses the list and leaves the text alone", async () => {
@@ -709,13 +700,15 @@ describe("the combobox", () => {
     expect(options()).toHaveLength(2);
     await press("Escape");
     expect(options()).toEqual([]);
-    expect(value).toBe("le");
+    expect(wire()).toBe("le");
   });
 
   it("a comma commits what was typed and gets out of the way", async () => {
     await render();
     await type("le");
+    // The comma as a browser presses it: the key, and the character it writes into the line.
     await press(",");
+    await type("le,");
     expect(options()).toEqual([]);
   });
 
@@ -725,7 +718,7 @@ describe("the combobox", () => {
     await render();
     await type("le");
     await press("Enter");
-    const parsed = parseRecipients(value);
+    const parsed = parseRecipients(wire());
     expect(parsed.invalid).toEqual([]);
     expect(parsed.addresses.map((a) => a.address)).toEqual(["lena@atelier.invalid"]);
   });
@@ -736,87 +729,15 @@ describe("the combobox", () => {
     await press("Enter");
     await type("mar");
     await press("Enter");
-    const parsed = parseRecipients(value);
+    const parsed = parseRecipients(wire());
     expect(parsed.invalid).toEqual([]);
     expect(parsed.addresses.map((a) => a.address))
       .toEqual(["lena@atelier.invalid", "mara@example.invalid"]);
     expect(chipEntries()).toHaveLength(2);
   });
-
-  it("reports focus, so the form can hold back the error for a half-typed entry", async () => {
-    // The live symptom: typing "no" showed a red "Not an address" bar WHILE the suggestion
-    // popover for that same prefix was open above it — the field calling the user wrong and
-    // offering them four ways to be right, about the same two letters, at once.
-    // `ComposeView` owns the gate; this is the signal it needs.
-    const seen: boolean[] = [];
-    await act(async () => {
-      root!.render(
-        h(NextIntlClientProvider, {
-          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-04T12:00:00.000Z"),
-          children: h(RecipientField, {
-            id: "to", value: "", onChange: () => {}, book: BOOK,
-            onFocusChange: (f: boolean) => seen.push(f),
-          }),
-        }),
-      );
-    });
-    // `.focus()` and not a synthetic FocusEvent: React listens for `focusin` via delegation,
-    // so a hand-built `focus` event never reaches the handler.
-    await act(async () => { input().focus(); });
-    expect(seen).toEqual([true]);
-  });
-
-  it("renders the address with its domain in a span that CSS can protect", async () => {
-    await render();
-    await type("le");
-    // The domain rides in its own node so it can be refused shrink-space; the local part is the
-    // one that gives way. Both together still read back as the whole address.
-    const first = host.querySelector(".rcp-opt")!;
-    expect(first.querySelector(".rcp-domain")?.textContent).toBe("@atelier.invalid");
-    expect(first.querySelector(".rcp-addr")?.textContent).toBe("lena@atelier.invalid");
-  });
 });
 
 describe("the address is shown so recipients can be told apart", () => {
-  it("leaves a short address alone", () => {
-    expect(truncateAddress("lena@atelier.invalid")).toBe("lena@atelier.invalid");
-  });
-
-  it("middle-truncates the local part and keeps the whole domain", () => {
-    const label = truncateAddress("verylonglocalpartthatexceeds@company.example.com");
-    // The domain is the part that tells a work address from a personal one — it is never dropped.
-    expect(label.endsWith("@company.example.com")).toBe(true);
-    // …and the cut is in the MIDDLE of the local part, not at the end where the browser would put it.
-    expect(label).toContain("…");
-    expect(label.startsWith("very")).toBe(true);
-    expect(label.length).toBeLessThanOrEqual(ADDRESS_MAX + 1);
-  });
-
-  it("never shows two different addresses as the same string", () => {
-    // Same domain, same local head and tail, differing only in a middle that a lone truncation
-    // would drop — so on their own they collapse to one string. In a mail client that is a
-    // wrong-recipient risk, so the list must widen them until they are distinct.
-    const a = "abcdefghijXXXXXklmnopqrst@example.com";
-    const b = "abcdefghijYYYYYklmnopqrst@example.com";
-    expect(truncateAddress(a), "the premise: alone, these collide")
-      .toBe(truncateAddress(b));
-
-    const labels = addressLabels([a, b]);
-    expect(new Set(labels).size, "two recipients rendered as one string").toBe(2);
-    expect(labels).toContain(a);
-    expect(labels).toContain(b);
-  });
-
-  it("keeps addresses on different domains distinct, domains intact", () => {
-    const labels = addressLabels([
-      "jordan.the.very.long.name@work.example.org",
-      "jordan.the.very.long.name@home.example.org",
-    ]);
-    expect(new Set(labels).size).toBe(2);
-    expect(labels[0]!.endsWith("@work.example.org")).toBe(true);
-    expect(labels[1]!.endsWith("@home.example.org")).toBe(true);
-  });
-
   it("is announced as a combobox, with the highlighted option named", async () => {
     await render();
     await type("le");

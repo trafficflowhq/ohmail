@@ -58,6 +58,7 @@ export {
   monthName,
   sameMonth,
   weekdayNames,
+  weekTitle,
   yearOf,
 } from "./format.js";
 export { rowTime, type RowTime, type RowTimeInput } from "./rows.js";

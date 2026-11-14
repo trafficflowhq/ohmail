@@ -3,10 +3,10 @@
  * "about" how long, never before two minutes of samples. Leaving it does not end the run.
  */
 import type { ReactNode } from "react";
-import { Button, Count, Page } from "@ohmail/ui/base";
+import { Button, Count, Page, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import { useLocale } from "../../text/index.js";
-import { Foot, Said, StepForm, leadOf, type StepProps } from "./parts.js";
+import { Foot, StepForm, leadOf, type StepProps } from "./parts.js";
 
 /** "4 minutes" or "2 hours": the locale's own unit words; hours above ninety minutes. */
 function durationWords(ms: number, locale: string): string {
@@ -89,7 +89,9 @@ export function Pull({ run, say }: StepProps): ReactNode {
           />
         }
       >
-        <Said text={say("onboarding.pullTitle")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("onboarding.pullTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );

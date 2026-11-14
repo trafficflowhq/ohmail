@@ -1,4 +1,12 @@
-import type { CSSProperties, MouseEventHandler, PointerEvent, ReactNode, Ref, UIEventHandler } from "react";
+import type {
+  CSSProperties,
+  HTMLAttributes,
+  MouseEventHandler,
+  PointerEvent,
+  ReactNode,
+  Ref,
+  UIEventHandler,
+} from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { cx } from "../tone.js";
 import { NowLine } from "./NowLine.js";
@@ -48,10 +56,12 @@ export interface TimeGridProps {
   /** The first hour drawn, and one label for each hour line from it on: the last line is the last label. */
   firstHour: number;
   hourLabels: string[];
+  secondAxis?: { readonly label: string; readonly hours: readonly string[] };
   /** An hour's height in px. The app reads it from the room it has. */
   hourHeight: number;
   /** Now, in minutes of the day, and its time as it is written. Drawn on today, inside the hours. */
   now?: { minutes: number; label: string };
+  dragPreview?: { day: string; chip: ReactNode };
   /** A narrow window: titles and marks at the small size. */
   dense?: boolean;
   /** The unfolded phone: the index of the first day after the hinge. */
@@ -62,6 +72,10 @@ export interface TimeGridProps {
   onDayContextMenu?: (id: string, event: React.MouseEvent<HTMLDivElement>) => void;
   /** The hours' scroller: the app opens it on the hours it set. */
   scrollRef?: Ref<HTMLDivElement>;
+  scrollGestures?: Pick<
+    HTMLAttributes<HTMLDivElement>,
+    "onPointerDown" | "onPointerCancel" | "onPointerUp" | "onClickCapture"
+  >;
   onScroll?: UIEventHandler<HTMLDivElement>;
 }
 
@@ -141,12 +155,15 @@ function Column({
     >
       <div
         className="oh-tg-in"
+        data-cal-drop-day={day.id}
+        data-cal-drop-kind="time"
         role="group"
         aria-label={day.label}
         onPointerDown={onDayPointerDown ? (e) => onDayPointerDown(day.id, e) : undefined}
         onContextMenu={onDayContextMenu ? (e) => onDayContextMenu(day.id, e) : undefined}
       >
         {day.children}
+        {props.dragPreview?.day === day.id ? props.dragPreview.chip : null}
         {day.marks?.map((m) => (
           <button
             key={m.id}
@@ -191,10 +208,12 @@ export function TimeGrid(props: TimeGridProps) {
     allDay,
     firstHour,
     hourLabels,
+    secondAxis,
     hourHeight,
     now,
     dense,
     scrollRef,
+    scrollGestures,
     onScroll,
   } = props;
   const crease =
@@ -212,13 +231,14 @@ export function TimeGrid(props: TimeGridProps) {
   return (
     <div
       className={cx("oh-cal-sheet", "oh-tg")}
+      data-second-zone={secondAxis ? "" : undefined}
       data-dense={dense ? "" : undefined}
       data-crease={crease || undefined}
       style={style}
     >
       {heads ? <Heads days={days} crease={crease} onDayPress={props.onDayPress} /> : null}
       {allDay}
-      <div className="oh-tg-scroll" ref={scrollRef} onScroll={onScroll}>
+      <div className="oh-tg-scroll" ref={scrollRef} onScroll={onScroll} {...scrollGestures}>
         <Edge side="above" days={days} crease={crease} />
         <div className="oh-tg-grid">
           <div className="oh-tg-axis">
@@ -229,6 +249,15 @@ export function TimeGrid(props: TimeGridProps) {
                 </span>
               ),
             )}
+            {secondAxis ? (
+              <div role="group" aria-label={secondAxis.label}>
+                {secondAxis.hours.map((label, i) => (
+                  <span key={i} className="oh-tg-hr" data-second="" style={{ top: i * hourHeight }}>
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             {now !== undefined && nowAt !== null ? (
               <span className="oh-tg-hr" data-now="" style={{ top: minuteTop(nowAt, firstHour, hourHeight) }}>
                 {now.label}

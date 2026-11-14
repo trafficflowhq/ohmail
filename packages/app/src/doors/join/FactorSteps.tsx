@@ -70,7 +70,9 @@ function AuthenticatorStep(p: StepProps<"factor"> & { authenticator: Authenticat
         material={
           <DoorFields>
             <div className="way-join-qr">{door.slots.authenticatorQr()}</div>
-            <p className="way-join-key">{grouped(authenticator.key)}</p>
+            <p className="way-join-key">
+              <code className="way-join-key-value">{grouped(authenticator.key)}</code>
+            </p>
             <span className="way-join-row">
               <Button kind="two" size="s" onPress={door.copyKey}>
                 {authenticator.copied === "copied" ? join("totpCopied") : join("totpCopy")}

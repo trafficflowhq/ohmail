@@ -8,6 +8,14 @@
  * the order of the two hook calls decides which. `useShellCompose` is called below
  * `useShellOpenState` (ARCH-022, the L3 ruling) — mirror, then mailto — and the explicit action
  * stands. The old order let the mirror swallow the click, and it is the red arm below.
+ *
+ * SORTED BY THE OLDER TESTS' CHECKLIST (share write-1): today's `AppShell` and its open-state hook leave with today's
+ * shell. The two hook-order censuses over `AppShell.tsx` left with it (the new shell has one address door, which only
+ * the frame writes: `frame/writing-mount.test.tsx` holds a link's place standing); the census of where the mailto
+ * effect lives reads its caller now, `WritingMount.tsx`. The mail-link cases are read over Write's letter in the new
+ * shell (the region "New message", its line "Subject", its text "Message", its verbs "Send or discard"), and what
+ * the composition says is read where it is said, by role (status and alert); the cases that open a letter from
+ * Drafts wait for Drafts.
  */
 import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,7 +43,30 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const shellDir = resolve(process.cwd(), "apps/webapp/app/shell");
+const groundDir = resolve(process.cwd(), "packages/app/src/mail/ground");
 const read = (name: string): string => readFileSync(resolve(shellDir, name), "utf8");
+
+/* WRITE's LETTER in the new shell, by role and name (share write-1; today's `.view-compose`, `#compose-subject`,
+   `.rte-surface` and its send row). */
+const LETTER = '[role="region"][aria-label="New message"]';
+const letterSubject = (el: HTMLElement): HTMLInputElement | HTMLTextAreaElement | null =>
+  el.querySelector<HTMLTextAreaElement>(`${LETTER} textarea[aria-label="Subject"], ${LETTER} input[aria-label="Subject"]`);
+const letterText = (el: HTMLElement): HTMLElement | null =>
+  el.querySelector<HTMLElement>(`${LETTER} [role="textbox"][aria-label="Message"]`);
+const letterSend = (el: HTMLElement): HTMLButtonElement | undefined =>
+  [...el.querySelectorAll<HTMLButtonElement>(`${LETTER} [role="toolbar"][aria-label="Send or discard"] button`)]
+    .find((b) => b.getAttribute("aria-label") === "Send" || (b.textContent ?? "").trim() === "Send");
+/** What the app says, wherever it says it: every status and alert on the page (today's toasts among them). */
+const said = (): string =>
+  [...document.querySelectorAll('[role="status"], [role="alert"]')].map((n) => n.textContent ?? "").join(" | ");
+/** A line typed as a person types it: the native setter of its own kind, then the input event. */
+async function setLine(field: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  const proto = field instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 
 /**
  * The two writers as the shell registers them: one effect per hook, in the order the hooks are
@@ -78,27 +109,6 @@ describe("a mailto: click and a mirror write in one commit", () => {
 });
 
 describe("the order the shell registers them in", () => {
-  it("calls useShellCompose below useShellOpenState", () => {
-    const shell = read("AppShell.tsx");
-    const open = shell.indexOf("} = useShellOpenState({");
-    const compose = shell.indexOf("} = useShellCompose({");
-    expect(open, "useShellOpenState is not called in AppShell.tsx").toBeGreaterThan(0);
-    expect(compose, "useShellCompose is not called in AppShell.tsx").toBeGreaterThan(0);
-    expect(compose).toBeGreaterThan(open);
-  });
-
-  /* The same claim over a swapped copy of the source: the comparison above is what decides, not
-     the two names being present. */
-  it("refuses the swapped source", () => {
-    const shell = read("AppShell.tsx");
-    const swapped = shell
-      .replace("} = useShellOpenState({", "} = useShellZZZState({")
-      .replace("} = useShellCompose({", "} = useShellOpenState({")
-      .replace("} = useShellZZZState({", "} = useShellCompose({");
-    expect(swapped.indexOf("} = useShellCompose({"))
-      .toBeLessThan(swapped.indexOf("} = useShellOpenState({"));
-  });
-
   /* And the two effects are in the two frames the order is about — a mailto effect left behind
      in `AppShell.tsx` would be registered above the open state, whatever the call order says. */
   /* MAILTO-PARSER-HAS-THREE-HOMES: the one parser's draft reaches the composer whole — every
@@ -110,7 +120,9 @@ describe("the order the shell registers them in", () => {
     }
   });
 
-  it("holds the mailto effect in shell-compose.ts and the mirror write in shell-open-state.ts", () => {
+  /* RE-POINTED BY PATH (share write-1): the composition's caller is `WritingMount.tsx` now; today's open-state hook,
+     whose mirror write the case also read, left with today's shell (its row RETIRED: the frame's one address door). */
+  it("holds the mailto effect in shell-compose.ts, not in the composition's caller", () => {
     /* The effect's own BODY, not the file: `writeTo` navigates to the composer too, so a file-wide
        `toContain` would read its copy and pass over a mailto effect that had stopped navigating. */
     const compose = read("../../../../packages/app-logic/src/writing/shell-compose.ts");
@@ -120,8 +132,8 @@ describe("the order the shell registers them in", () => {
     const start = compose.lastIndexOf("useEffect(() => {", end);
     expect(compose.slice(start, end), "the mailto effect no longer navigates to the composer")
       .toContain('go("compose");');
-    expect(read("shell-open-state.ts")).toContain("reflectMessage(route, openOnScreen);");
-    expect(read("AppShell.tsx")).not.toContain(deps);
+    expect(readFileSync(resolve(groundDir, "WritingMount.tsx"), "utf8")).toContain("useShellCompose(");
+    expect(readFileSync(resolve(groundDir, "WritingMount.tsx"), "utf8")).not.toContain(deps);
   });
 });
 
@@ -130,14 +142,11 @@ describe("the order the shell registers them in", () => {
    first, never asked, and a link whose save was refused leaves them where they are. */
 describe("a mail link over a letter being written", () => {
   const LINK = { to: ["lena@example.invalid"], cc: [], bcc: [], subject: "Hello from a link", body: "" };
-  const subject = (s: DraftShell): HTMLInputElement | null => s.el.querySelector<HTMLInputElement>("#compose-subject");
+  const subject = (s: DraftShell): HTMLInputElement | HTMLTextAreaElement | null => letterSubject(s.el);
   const rows = (s: DraftShell): string[] => s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft")
     .map((d) => `${d.subject}|${(d.body ?? "").trim()}`);
   async function setSubject(s: DraftShell, value: string): Promise<void> {
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(subject(s)!, value);
-      subject(s)!.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await setLine(subject(s)!, value);
   }
   /** Rows on the account at the moment the composer first shows the link's letter. */
   async function rowsWhenLinkShows(s: DraftShell): Promise<string[]> {
@@ -155,10 +164,10 @@ describe("a mail link over a letter being written", () => {
   it("words typed inside the pause are saved as a draft before the link's letter opens", async () => {
     const s = await mountShell("#/ohbox", [message("m1")], []);
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
+    await waitFor(() => letterText(s.el) != null, "the composer");
     await settleEditor();
     await setSubject(s, "Notes from the meeting");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, "We agreed on three things."); });
+    await act(async () => { typeInto(letterText(s.el)!, "We agreed on three things."); });
     await s.mailto.open(LINK);
     expect(await rowsWhenLinkShows(s)).toEqual(["Notes from the meeting|We agreed on three things."]);
     expect(s.mailto.seeded).toBe(1);
@@ -226,7 +235,7 @@ describe("a mail link over a letter being written", () => {
     const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
     await rowsWhenLinkShows(s);
     await waitFor(() => rows(s).length > 0, "the first sync's drafts", 240);
-    expect(toasts()).not.toContain(en.drafts.reopenBlockedUnsaved);
+    expect(said()).not.toContain(en.drafts.reopenBlockedUnsaved);
     expect(rows(s)).toContain("Plans for Friday|Shall we meet at noon?");
   }, 60_000);
 
@@ -247,7 +256,7 @@ describe("a mail link over a letter being written", () => {
     await rounds(40);
     expect({ shown: subject(s)?.value, frozen: subject(s)?.readOnly, seeded: s.mailto.seeded, hash: window.location.hash })
       .toEqual({ shown: "Plans for Friday, typed offline", frozen: true, seeded: 1, hash: "#/compose" });
-    expect(s.el.querySelector(".view-compose .send-row")?.textContent ?? "").toContain(en.compose.waitingNotSaved);
+    expect(composeLine(s.el)).toContain(en.compose.waitingNotSaved);
   }, 60_000);
 
   it("a link while a letter's send waits over its saved row opens, and the send goes on", async () => {
@@ -281,26 +290,22 @@ describe("a mail link with no mailbox connected", () => {
   it("over words no row can hold, says at once that they stay, and keeps them", async () => {
     const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject") != null, "the composer");
+    await waitFor(() => letterSubject(s.el) != null, "the composer");
     await settleEditor();
-    await act(async () => {
-      const input = s.el.querySelector<HTMLInputElement>("#compose-subject")!;
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "Notes from the meeting");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await setLine(letterSubject(s.el)!, "Notes from the meeting");
     await s.mailto.open(LINK);
-    await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", AT_ONCE);
-    expect({ shown: composeSubject(s.el), seeded: s.mailto.seeded }).toEqual({ shown: "Notes from the meeting", seeded: 1 });
+    await waitFor(() => said().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", AT_ONCE);
+    expect({ shown: letterSubject(s.el)?.value ?? null, seeded: s.mailto.seeded }).toEqual({ shown: "Notes from the meeting", seeded: 1 });
   }, 60_000);
 
   it("opens the composer at once with the link's fields; Send cannot go, and the shell says no mailbox is connected", async () => {
     const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
     await s.mailto.open(LINK);
     await waitFor(() => window.location.hash === "#/compose" && s.mailto.seeded === 1, "the link opened", AT_ONCE);
-    await waitFor(() => composeSubject(s.el) === LINK.subject, "the link's letter", 240);
+    await waitFor(() => letterSubject(s.el)?.value === LINK.subject, "the link's letter", 240);
     expect({
-      to: s.el.querySelector(".view-compose")?.textContent?.includes("lena@example.invalid"),
-      sendDisabled: composeSend(s.el)?.disabled,
+      to: s.el.querySelector(LETTER)?.textContent?.includes("lena@example.invalid"),
+      sendDisabled: letterSend(s.el)?.disabled,
       said: s.el.textContent?.includes(en.frame.connection.noMailbox.title /* the strip's sentence, as the notice says the state */),
     }).toEqual({ to: true, sendDisabled: true, said: true });
   }, 60_000);

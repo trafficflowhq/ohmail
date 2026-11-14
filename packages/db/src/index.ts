@@ -14,9 +14,11 @@ export const DB_VERSION = "0.0.0";
  * put every Cloud table into every consumer of this package — including the desktop engine's
  * shipped bundle. Hosted tables live on `@trafficflow/db/cloud`. */
 export * from "./schema-mail.js";
+export { modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent } from "./model-consent.js";
+export { readAccountSettings, readSuggestionGrant, suggestionConsentGate } from "./suggestion-consent.js";
 // The one-time Quarantine→Junk sweep's candidate predicate — one clause the API's preview and
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
-export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
+export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE, queueJunkSweep, readJunkSweepCommand, clearJunkSweepCommand, retireLegacyJunkSweep, clearLegacyJunkSweepNotice } from "./junk-sweep.js";
 // Where a search document's body words came from (mail 0125) — the CHECK's one definition.
 export { SEARCH_SOURCES, isSearchSource, type SearchSource } from "./search-sources.js";
 export { SCREENER_ACT_REFUSALS, isScreenerActRefusal, type ScreenerActRefusal } from "./screener-act-refusal.js";
@@ -142,7 +144,7 @@ export { ACCOUNT_TABLES, type AccountRelations } from "./account-rows.js";
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
-  applyScreenerDecision, validateRequestPayload, PassMayNotAdmitError, readListClaimsFiledAlone,
+  applyScreenerDecision, validateRequestPayload, parseDecisionScope, confirmedScreenerRows, PassMayNotAdmitError, readListClaimsFiledAlone,
   fileImpersonationLetters, impersonationReturnedSenders, IMPERSONATION_FILING_FOLDER, IMPERSONATION_FILING_IDS_MAX,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type ImpersonationFilingResult, type UnconfirmedRerouteResult, type ValidatedRequestPayload,

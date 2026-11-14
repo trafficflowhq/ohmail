@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { fullDateTime } from "./format";
 import type { ReuseSweepLine } from "./reuse-sweeps";
+import type { FrameNotice } from "@ohmail/app/frame";
 import { RETURN_DEBOUNCE_MS } from "@ohmail/app-logic/doors/wall-lift";
 
 /** How often a shown notice asks the session again: OK on another device ends it here too. */
@@ -73,6 +74,31 @@ export function useSweepsAnswer(
     });
   };
   return { shown, ok };
+}
+
+/**
+ * THE SWEEPS AS THE FRAME'S NOTICE, on every host that mounts the frame: the sentence, the advice as its line (the
+ * one place a person whose sign-in somebody else copied is told to change the password), OK, and Details, behind
+ * which each swept sign-in stands with its client and its date. Null while none is shown.
+ */
+export function useSweepsFrameNotice(shown: readonly ReuseSweepLine[], ok: () => void): FrameNotice | null {
+  const t = useTranslations("settings");
+  if (shown.length === 0) return null;
+  return {
+    kind: "signInCopies",
+    title: t("reuseSweepsTitle", { count: shown.length }),
+    line: t("reuseSweepsBody"),
+    acts: [{ label: t("reuseSweepsOk"), onPress: ok }],
+    more: {
+      label: t("reuseSweepsDetails"),
+      rows: shown.map((s) =>
+        t("reuseSweepsLine", {
+          client: t(CLIENT_KEY.get(s.client ?? "") ?? "reuseClientUnknown"),
+          when: fullDateTime({ date: s.at }),
+        }),
+      ),
+    },
+  };
 }
 
 /**

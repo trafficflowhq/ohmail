@@ -14,11 +14,11 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
-import { enableDesktopDroppedFiles, installFileDropGuard } from "../../webapp/app/shell/dropped-files";
+import { enableDesktopDroppedFiles, installFileDropGuard } from "@ohmail/app-logic/write/dropped-files";
 import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 import { setRenderedLinksBatchSink } from "@ohmail/letter-body/links";
 import { stampColumns } from "@ohmail/app-logic/lists/column-store";
-import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
+import { installTextSizeApplier } from "@ohmail/app-logic/text/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";
 import { setUiVitalsInterval, setUiVitalsSink } from "@ohmail/app-logic/session/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";

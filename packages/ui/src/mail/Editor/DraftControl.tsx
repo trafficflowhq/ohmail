@@ -6,6 +6,8 @@ import "./draft-control.css";
 export interface DraftControlProps {
   /** What a press does now, whole: "Draft reply", "Draft from your text", "Drafting", "Draft again". */
   label: string;
+  /** Visible wording when the control is shown with its established accessible name. */
+  word?: string;
   /**
    * The same in fewer words: "Draft from text". They are drawn where the foot is narrow, so that it keeps one
    * line, and wherever the whole would still be cut, whatever the foot's width, the language and the text size:
@@ -27,6 +29,7 @@ export interface DraftControlProps {
 /** One press writes a draft into the editor. The word says what a press would do with what stands there. */
 export function DraftControl({
   label,
+  word = label,
   short,
   title,
   cost,
@@ -55,7 +58,7 @@ export function DraftControl({
       >
         <Icon name="spark" size={18} />
         <span ref={whole} className="oh-draft-word" data-short={short ? "" : undefined}>
-          {label}
+          {word}
         </span>
         {short ? <span className="oh-draft-short">{short}</span> : null}
       </button>

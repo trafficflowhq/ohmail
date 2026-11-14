@@ -11,162 +11,84 @@
  * And the inverse: a body failure recorded while the session was bad is re-asked on REVIVAL —
  * the 204-confirmed minting of a new session — so the failure does not outlive its cause.
  *
- * Harness follows `conversation.test.ts`: the real `MessagePane` through the real
- * `MessageChromeProvider`, with the chrome's body report as the mutation point.
+ * Over the new reader (the reader's own door, `packages/app/test/reader/support/mail.tsx`): the letter's body row is
+ * the mutation point, the engine's body asks are what a revival re-asks, and the sentences are the reader's catalogue's.
  */
+import { act, cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
+import { letter, mountReader } from "../../../packages/app/test/reader/support/mail.js";
+import reader from "../../../packages/app/messages/reader.en.json" with { type: "json" };
 import {
   markSessionAlive,
   markSessionDead,
   resetSessionTruthForTests,
 } from "@ohmail/app-logic/session/session-truth";
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const WORDS = reader.body;
+let asks: () => string[] = () => [];
 
-const NOW = new Date("2026-08-12T09:00:00.000Z");
-
-function msg(id: string): Record<string, unknown> {
-  return {
-    id,
-    accountId: "a",
-    mailboxId: "mb",
-    threadId: null,
-    messageIdHeader: null,
-    subject: `subject-${id}`,
-    from: { name: `Sender ${id}`, address: `${id}@example.invalid` },
-    to: [],
-    cc: [],
-    date: NOW.toISOString(),
-    folder: "INBOX",
-    snippet: `snippet-${id}`,
-    unread: false,
-    hasAttachments: false,
-    attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null,
-    labels: [],
-    remoteContent: "none",
-    updatedAt: NOW.toISOString(),
-  };
-}
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let retried: Array<[string, { retry?: boolean } | undefined]> = [];
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-async function mountPane(bodyState: "failed" | "full"): Promise<void> {
-  await unmount();
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(MessageChromeProvider as never, {
-          value: {
-            ownAddresses: [],
-            replyTo: null,
-            replyBody: { text: "", html: "" },
-            onReplyBody: () => {},
-            closeReply: () => {},
-            sendReply: () => {},
-            replySendState: () => ({ phase: "idle" }),
-            openSenderMenu: () => {},
-            conversationOf: () => [],
-            bodyOf: (m: Record<string, unknown>) => ({
-              text: m.snippet as string,
-              state: bodyState,
-              html: null,
-              loadedRemoteContent: false,
-              unsubscribe: "no_header",
-              unsubscribeUrl: null,
-            }),
-            hydrateBody: (id: string, opts?: { retry?: boolean }) => { retried.push([id, opts]); },
-            hydrateThread: () => {},
-            openSubjectRule: () => {},
-          },
-          children: h(MessagePane as never, {
-            message: msg("m1"),
-            tags: [],
-            now: NOW,
-            onAction: () => {},
-            onAddTag: () => {},
-          } as never),
-        } as never),
-      }),
-    );
+function mountPane(bodyState: "failed" | "full"): void {
+  const { mail } = mountReader({
+    letters: [letter("m1", { body: undefined, threadId: null } as never)],
+    open: "m1",
+    bodies: { m1: bodyState === "failed" ? { state: "failed" } : { state: "ready", text: "the whole text", html: null } },
+    host: { recover: () => {} },
   });
+  asks = () => mail.bodyAsks;
 }
 
 beforeEach(() => {
   resetSessionTruthForTests();
-  retried = [];
+  localStorage.clear();
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
 
-afterEach(async () => {
-  await unmount();
+afterEach(() => {
+  cleanup();
   resetSessionTruthForTests();
   vi.restoreAllMocks();
 });
 
-const note = (): HTMLElement | null => host!.querySelector<HTMLElement>(".msg-body-state");
+const note = (): HTMLElement | null => screen.queryByRole("alert");
+/** The note's way on stands beside its sentence, in the letter's text slot: the one letter on screen. */
+const way = () => within(screen.getByRole("article"));
+const retried = (): string[] => asks().filter((a) => a === "m1 retry");
 
 describe("the body-failure note tells auth loss apart from content failure", () => {
   it("session alive: a failed body is a content failure, with Retry", async () => {
-    await mountPane("failed");
+    mountPane("failed");
     expect(note()).not.toBeNull();
-    expect(note()!.textContent).toContain("Couldn't load the full message");
-    expect(note()!.querySelector("button"), "the human retry disappeared").not.toBeNull();
-    expect(note()!.querySelector('a[href="/login"]')).toBeNull();
+    expect(note()!.textContent).toContain(WORDS.kept.failed);
+    expect(way().queryByRole("button", { name: WORDS.kept.tryAgain }), "the human retry disappeared").not.toBeNull();
+    expect(way().queryByRole("button", { name: WORDS.signIn })).toBeNull();
   });
 
   it("session DEAD: the same failure names the session and offers sign-in, not a retry that re-401s", async () => {
-    await mountPane("failed");
+    mountPane("failed");
     await act(async () => {
       markSessionDead();
     });
     expect(note(), "the note vanished instead of re-labelling").not.toBeNull();
-    expect(note()!.textContent).toContain("Your session ended, so the full message couldn't load.");
-    expect(note()!.textContent).not.toContain("Couldn't load the full message");
-    expect(note()!.querySelector('a[href="/login"]'), "no sign-in path on the auth-loss note").not.toBeNull();
-    expect(note()!.querySelector("button"), "a Retry whose first press proves it a lie").toBeNull();
+    expect(note()!.textContent).toContain(WORDS.sessionEnded);
+    expect(note()!.textContent).not.toContain(WORDS.kept.failed);
+    expect(way().queryByRole("button", { name: WORDS.signIn }), "no sign-in path on the auth-loss note").not.toBeNull();
+    expect(way().queryByRole("button", { name: WORDS.kept.tryAgain }), "a Retry whose first press proves it a lie").toBeNull();
   });
 
   it("a REVIVAL re-asks a failed body once, as a retry — the failure must not outlive its cause", async () => {
-    await mountPane("failed");
-    expect(retried.filter(([, o]) => o?.retry === true)).toHaveLength(0);
+    mountPane("failed");
+    expect(retried()).toHaveLength(0);
     await act(async () => {
       markSessionAlive();
     });
-    expect(
-      retried.filter(([id, o]) => id === "m1" && o?.retry === true),
-      "the revival never re-asked the failed body",
-    ).toHaveLength(1);
+    expect(retried(), "the revival never re-asked the failed body").toHaveLength(1);
   });
 
   it("a revival does NOT touch a healthy body — the re-ask is bounded to failures", async () => {
-    await mountPane("full");
+    mountPane("full");
     await act(async () => {
       markSessionAlive();
     });
-    expect(retried.filter(([, o]) => o?.retry === true)).toHaveLength(0);
+    expect(retried()).toHaveLength(0);
   });
 });

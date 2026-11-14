@@ -2,7 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { waitFor, within } from "@testing-library/react";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { DesktopGate } from "../src/DesktopGate.js";
+import { CLOUD_URL } from "../src/doors.js";
+import { IntlProvider } from "use-intl";
 
 import en from "../../webapp/messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
@@ -11,7 +15,7 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
  * "ACT ON CONFIDENT SUGGESTIONS FOR ME" ON BOTH DESKTOP DOORS. Standalone: the pane
  * draws it under "Suggest for new senders automatically" over the engine's own consent route, and
  * a reader install shows it disabled with the organizer sentence. Hosted: the shared shell's row
- * over the bridge, as `AppShell` composes it. Real components over a scripted engine.
+ * through the same Settings route, over a scripted engine.
  */
 
 let FACTS: MailboxFacts[] | null = null;
@@ -50,6 +54,11 @@ function encode(status: number, body: string): Uint8Array {
 }
 
 type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
+window.matchMedia ??= ((query: string) => ({
+  matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
+  addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
+})) as typeof window.matchMedia;
+
 const shellHost = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } };
 
 /** The engine's stored answers; the scripted routes read and write these. */
@@ -61,13 +70,22 @@ let asked: Array<{ method: string; url: string; body?: string }>;
 /** The account's auto-apply and AI switches, as another device may have left them. */
 let peopleOnly: boolean;
 let aiOn: boolean;
+let pendingAiWrite: Promise<number> | undefined;
+let aiRead: "valid" | "offline" | "malformed";
 /** The impersonation filing switch the engine answers with; `undefined`: an engine from before it. */
 let impersonationOn: boolean | undefined;
 const AT = "2026-09-27T08:00:00.000Z";
 
+let engineDoor: "local" | "cloud" = "local";
+
 function engine(): void {
   shellHost.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
+      if (command === "engine_status") return {
+        state: "serving", mode: engineDoor, credentialState: "ready",
+        mailboxId: ORGANIZER.id, address: ORGANIZER.address,
+        cloudUrl: engineDoor === "cloud" ? CLOUD_URL : undefined,
+      };
       if (command !== "engine_request") return null;
       const method = String(payload?.method ?? "GET");
       const url = String(payload?.url ?? "");
@@ -75,6 +93,8 @@ function engine(): void {
       const body = bytes.byteLength > 0 ? new TextDecoder().decode(bytes) : undefined;
       asked.push({ method, url, ...(body ? { body } : {}) });
       const said = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+      if (url === "/health") return encode(200, '{"signedIn":true}');
+      if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: FACTS }));
       if (url === "/local/auto-suggest") {
         if (method === "PUT") {
           suggestOn = said.on === true;
@@ -105,7 +125,15 @@ function engine(): void {
         }
         return encode(200, "{}");
       }
-      if (url === "/account/ai") return encode(200, JSON.stringify({ aiEnabled: aiOn }));
+      if (url === "/account/ai") {
+        if (method === "PATCH" && pendingAiWrite) {
+          const status = await pendingAiWrite;
+          return encode(status, JSON.stringify({ aiEnabled: said.aiEnabled }));
+        }
+        if (aiRead === "offline") return encode(503, "{}");
+        if (aiRead === "malformed") return encode(200, "{}");
+        return encode(200, JSON.stringify({ aiEnabled: aiOn }));
+      }
       if (url === "/account/screening" && method === "PATCH" && typeof said.impersonationFiling === "boolean") {
         impersonationOn = said.impersonationFiling;
       }
@@ -122,20 +150,32 @@ const settle = async (): Promise<void> => {
   await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); });
 };
 
-async function mountPane(facts: MailboxFacts[], door: "local" | "cloud" = "local"): Promise<void> {
+async function mountPane(
+  facts: MailboxFacts[], door: "local" | "cloud" = "local", section: "screener" | "ai" = "screener",
+): Promise<void> {
   FACTS = facts;
-  const { DesktopScreening } = await import("../src/DesktopScreening.js");
-  const { DesktopAiAccount } = await import("../src/DesktopAiAccount.js");
+  engineDoor = door;
+  window.location.hash = `#/settings/${section}`;
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
+    root!.render(h(IntlProvider, {
       locale: "en", messages: en as never, timeZone: "UTC",
-      children: h("div", null, h(DesktopScreening, { door }), door === "cloud" ? h(DesktopAiAccount) : null),
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopGate) }) }),
     }));
   });
+  await within(hostEl).findByRole("region", { name: en.settings[section] });
+  const label = section === "ai" ? en.settings.aiLabel : en.desktopScreener.postureLabel;
+  await waitFor(() => expect(switchNamed(label)?.disabled).toBe(false));
   await settle();
+}
+
+async function closePane() {
+  if (root) await act(async () => { root!.unmount(); });
+  root = null;
+  hostEl?.remove();
+  window.location.hash = "";
 }
 
 const switchNamed = (label: string): HTMLButtonElement | null =>
@@ -144,13 +184,11 @@ const ACT = en.screener.suggest.actTitle;
 const SUGGEST = en.desktopScreener.autoSuggestLabel;
 
 beforeEach(() => {
-  suggestOn = true; actAt = null; carriesAxis = true; asked = []; peopleOnly = false; aiOn = true; impersonationOn = undefined;
+  suggestOn = true; actAt = null; carriesAxis = true; asked = []; peopleOnly = false; aiOn = true; aiRead = "valid"; impersonationOn = undefined;
   engine();
 });
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  hostEl?.remove();
+  await closePane();
   delete shellHost.__TAURI_INTERNALS__;
 });
 
@@ -216,9 +254,7 @@ describe("filing a held impersonation to Spam, on both desktop doors", () => {
       const write = asked.find((a) => a.method === "PATCH" && a.url === "/account/screening");
       expect(write?.body, door).toBe(JSON.stringify({ impersonationFiling: false }));
       expect(switchNamed(IMPERSONATION)!.getAttribute("aria-checked")).toBe("false");
-      await act(async () => { root!.unmount(); });
-      root = null;
-      hostEl.remove();
+      await closePane();
     }
   });
 
@@ -230,23 +266,8 @@ describe("filing a held impersonation to Spam, on both desktop doors", () => {
 
 describe("the hosted door: the shared shell's row over the bridge", () => {
   it("reads the act off the account's consent and writes it through the engine's forward", async () => {
-    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-    const { AutoActRow } = await import("../../webapp/app/shell/AutoActRow");
-    const { consentOverBridge } = await import("../src/local-consent.js");
-    /* `AppShell`'s own composition of the row, and nothing else of it. */
-    function Harness() {
-      const consent = useConsentState(true, null, consentOverBridge);
-      return consent.autoActStorable && consent.setAutoAct
-        ? h(AutoActRow, { on: consent.autoAct, suggestOn: consent.autoSuggest, reader: false, setAutoAct: consent.setAutoAct })
-        : null;
-    }
-    hostEl = document.createElement("div");
-    document.body.append(hostEl);
-    root = createRoot(hostEl);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: h(Harness) }));
-    });
-    await settle();
+    await mountPane([ORGANIZER], "cloud");
+    await waitFor(() => expect(switchNamed(ACT)?.disabled).toBe(false));
     expect(switchNamed(ACT), "the hosted door drew no act switch").not.toBeNull();
     await act(async () => { switchNamed(ACT)!.click(); });
     await settle();
@@ -256,26 +277,9 @@ describe("the hosted door: the shared shell's row over the bridge", () => {
 
   it("turning automatic suggestions off withdraws the act in the shell's own state", async () => {
     actAt = AT;
-    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-    const { AutoActRow } = await import("../../webapp/app/shell/AutoActRow");
-    const { consentOverBridge } = await import("../src/local-consent.js");
-    function Harness() {
-      const consent = useConsentState(true, null, consentOverBridge);
-      return h("div", null,
-        h("button", { className: "suggest-off", onClick: () => { void consent.setAutoSuggest(false); } }, "off"),
-        consent.autoActStorable && consent.setAutoAct
-          ? h(AutoActRow, { on: consent.autoAct, suggestOn: consent.autoSuggest, reader: false, setAutoAct: consent.setAutoAct })
-          : null);
-    }
-    hostEl = document.createElement("div");
-    document.body.append(hostEl);
-    root = createRoot(hostEl);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: h(Harness) }));
-    });
-    await settle();
-    expect(switchNamed(ACT)!.getAttribute("aria-checked")).toBe("true");
-    await act(async () => { hostEl.querySelector<HTMLButtonElement>(".suggest-off")!.click(); });
+    await mountPane([ORGANIZER], "cloud");
+    await waitFor(() => expect(switchNamed(ACT)?.getAttribute("aria-checked")).toBe("true"));
+    await act(async () => { switchNamed(en.screener.suggest.autoTitle)!.click(); });
     await settle();
     expect(switchNamed(ACT)!.getAttribute("aria-checked"), "the shell kept the act on after suggestions went off").toBe("false");
     expect(switchNamed(ACT)!.disabled).toBe(true);
@@ -287,26 +291,86 @@ describe("an open pane follows a change made on another device", () => {
   const AI = en.settings.aiLabel;
   const checked = (label: string): string | null | undefined => switchNamed(label)?.getAttribute("aria-checked");
 
-  it("the Screener and AI switches take the account's new values when the window comes back", async () => {
+  async function verifyRefresh(refresh: () => void) {
+    peopleOnly = false; aiOn = true;
     await mountPane([ORGANIZER], "cloud");
     expect(checked(POSTURE)).toBe("false");
-    expect(checked(AI)).toBe("true");
-    peopleOnly = true; aiOn = false;
-    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    peopleOnly = true;
+    await act(async () => { refresh(); });
     await settle();
     expect(checked(POSTURE), "the open Screener pane kept the old posture").toBe("true");
+    await closePane();
+
+    await mountPane([ORGANIZER], "cloud", "ai");
+    expect(checked(AI)).toBe("true");
+    aiOn = false;
+    await act(async () => { refresh(); });
+    await settle();
     expect(checked(AI), "the open AI pane kept the old switch").toBe("false");
+  }
+
+  it("the Screener and AI switches take the account's new values when the window comes back", async () => {
+    await verifyRefresh(() => { window.dispatchEvent(new Event("focus")); });
+    aiOn = true;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(checked(AI)).toBe("true");
+    for (const failure of ["offline", "malformed"] as const) {
+      aiRead = failure;
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(checked(AI)).toBe("false");
+      expect(switchNamed(AI)?.disabled).toBe(true);
+      expect(hostEl.textContent).toContain(en.settings.aiUnreadable);
+      await act(async () => { switchNamed(AI)?.click(); });
+      expect(asked.some(({ method, url }) => method === "PATCH" && url === "/account/ai")).toBe(false);
+
+      aiRead = "valid";
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(checked(AI)).toBe("true");
+      expect(switchNamed(AI)?.disabled).toBe(false);
+      expect(hostEl.textContent).not.toContain(en.settings.aiUnreadable);
+    }
+
+    const connection = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    try {
+      for (const status of [503, 200]) {
+        let settleWrite!: (status: number) => void;
+        pendingAiWrite = new Promise((resolve) => { settleWrite = resolve; });
+        const beforeWrite = asked.length;
+        await act(async () => { switchNamed(AI)!.click(); });
+        expect(asked.slice(beforeWrite).some(({ method, url }) => method === "PATCH" && url === "/account/ai")).toBe(true);
+
+        connection.mockReturnValue(false);
+        await act(async () => { window.dispatchEvent(new Event("offline")); });
+        expect(switchNamed(AI)?.disabled, "going offline during the write must clear the switch").toBe(true);
+
+        if (status === 200) {
+          // A reconnect during the write is reconciled only after the account could have stored it.
+          connection.mockReturnValue(true);
+          const beforeReconnect = asked.filter(({ method, url }) => method === "GET" && url === "/account/ai").length;
+          await act(async () => { window.dispatchEvent(new Event("online")); });
+          expect(asked.filter(({ method, url }) => method === "GET" && url === "/account/ai")).toHaveLength(beforeReconnect);
+          expect(switchNamed(AI)?.disabled).toBe(true);
+        }
+        await act(async () => { settleWrite(status); });
+        if (status === 503) {
+          expect(switchNamed(AI)?.disabled, "a late refusal must not restore On while offline").toBe(true);
+          expect(checked(AI)).toBe("false");
+          connection.mockReturnValue(true);
+          await act(async () => { window.dispatchEvent(new Event("online")); });
+        }
+        await waitFor(() => expect(checked(AI)).toBe("true"));
+        expect(switchNamed(AI)?.disabled).toBe(false);
+      }
+    } finally {
+      pendingAiWrite = undefined;
+      connection.mockRestore();
+    }
   });
 
   it("…and while the window stays in front, within 30 s", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
-      await mountPane([ORGANIZER], "cloud");
-      peopleOnly = true; aiOn = false;
-      await act(async () => { vi.advanceTimersByTime(30_000); });
-      await settle();
-      expect(checked(POSTURE)).toBe("true");
-      expect(checked(AI)).toBe("false");
+      await verifyRefresh(() => { vi.advanceTimersByTime(30_000); });
     } finally {
       vi.useRealTimers();
     }

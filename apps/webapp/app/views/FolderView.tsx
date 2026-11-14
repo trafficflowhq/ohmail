@@ -23,7 +23,7 @@ import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner, TAG_HUES } fro
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
-import { useSenderCheckWords } from "../shell/sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { folderLeafOf, folderParentOf } from "@ohmail/app-logic/lists/folders";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";

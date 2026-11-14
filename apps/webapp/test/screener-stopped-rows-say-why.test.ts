@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toStopped, toSkips } from "../app/shell/screener-suggest";
+import { toStopped, toSkips } from "@ohmail/app-logic/screener/screener-suggest";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 

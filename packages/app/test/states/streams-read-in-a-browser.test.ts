@@ -7,13 +7,15 @@
  */
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import { THREAD_READ_HOLD_MS } from "../../../../test/support/engine-fixtures.js";
+import { SEEN_MAX_LATENCY_MS } from "@ohmail/app-logic/reading/seen-batch";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
 type Page = Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newPage"]>>;
 
-const ORIGIN = "http://streams.states.invalid";
+const ORIGIN = "https://streams.states.invalid";
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 let html = "";
 
@@ -43,6 +45,20 @@ async function open(touch = false): Promise<{ page: Page; errors: string[] }> {
 /** Every id the place wrote read, in order. */
 const written = (page: Page): Promise<string[]> =>
   page.evaluate(() => ((globalThis as { streamWrites?: string[][] }).streamWrites ?? []).flat());
+
+/** The shared rule decides eligibility before the existing write batch dispatches. */
+const earned = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (globalThis as { streamReadEvidence?: string[] }).streamReadEvidence ?? []);
+
+async function expectWritten(page: Page, carried: readonly string[]): Promise<void> {
+  // Rest and displayed-text evidence can arrive in separate batches. Compare after both can drain.
+  await page.waitForTimeout(THREAD_READ_HOLD_MS + SEEN_MAX_LATENCY_MS + 100);
+  const later = await page.evaluate(() => {
+    const world = globalThis as { streamRestReads: string[]; streamDisplayedReads: string[] };
+    return [...world.streamRestReads, ...world.streamDisplayedReads];
+  });
+  expect((await written(page)).sort()).toEqual([...new Set([...carried, ...later])].sort());
+}
 
 /** The stream's scroller box, and the items whose foot stands at or above the line 90 px below its top. */
 const geometry = (page: Page) =>
@@ -77,6 +93,7 @@ describe("the stream's read rule in a real browser", () => {
     const { page, errors } = await open();
     await page.waitForTimeout(800);
     expect(await written(page)).toEqual([]);
+    expect(await earned(page)).toEqual([]);
     const at = await geometry(page);
     await page.mouse.move(at.x, at.y);
     await page.mouse.wheel(0, 900);
@@ -85,7 +102,7 @@ describe("the stream's read rule in a real browser", () => {
     expect(after.scrollTop).toBeGreaterThan(400);
     expect(after.above.length).toBeGreaterThan(0);
     // At once: exactly what was carried past the line.
-    expect([...(await written(page))].sort()).toEqual([...after.above].sort());
+    expect([...(await earned(page))].sort()).toEqual([...after.above].sort());
     // A second step stops an item's foot 150 px below the top: short of the line, so it stays unread.
     const short = await page.evaluate(() => {
       const sc = document.querySelector('[aria-label="News stream"] .oh-sheet-scroll') as HTMLElement;
@@ -102,11 +119,17 @@ describe("the stream's read rule in a real browser", () => {
     await settled(page);
     const stopped = await geometry(page);
     expect(stopped.above).not.toContain(short.id);
-    expect([...(await written(page))].sort()).toEqual([...stopped.above].sort());
+    expect([...(await earned(page))].sort()).toEqual([...stopped.above].sort());
     // After the rest: one more, the item the stream rests on, below the line.
-    await page.waitForTimeout(900);
-    const rested = (await written(page)).filter((id) => !stopped.above.includes(id));
+    await page.waitForFunction(
+      () => (globalThis as { streamRestReads?: string[] }).streamRestReads?.length,
+      undefined,
+      { timeout: 800 },
+    );
+    const rested = await page.evaluate(() => (globalThis as { streamRestReads: string[] }).streamRestReads);
     expect(rested).toHaveLength(1);
+    expect(stopped.above).not.toContain(rested[0]);
+    await expectWritten(page, stopped.above);
     expect(errors).toEqual([]);
     await page.close();
   }, 60_000);
@@ -131,8 +154,9 @@ describe("the stream's read rule in a real browser", () => {
     await settled(page);
     const after = await geometry(page);
     expect(after.scrollTop).toBeGreaterThan(300);
-    const now = await written(page);
+    const now = await earned(page);
     for (const id of after.above) expect(now).toContain(id);
+    await expectWritten(page, after.above);
     expect(errors).toEqual([]);
     await page.close();
   }, 60_000);
@@ -150,7 +174,15 @@ describe("the stream's read rule in a real browser", () => {
     });
     await page.click('[data-stream-item="n1"]');
     await settled(page);
-    await page.waitForTimeout(800);
+    // A read earned before End may still be queued in the stream's write batch.
+    await page.waitForFunction(
+      () => {
+        const ids = (globalThis as { streamWrites?: string[][] }).streamWrites?.flat() ?? [];
+        return ids.includes("n1") && ids.includes("n2");
+      },
+      undefined,
+      { timeout: 5_000 },
+    );
     const before = await written(page);
     const from = await geometry(page);
     await page.keyboard.press("End");
@@ -189,16 +221,23 @@ describe("the stream's read rule in a real browser", () => {
     const rest = await page.evaluate(() => {
       const sc = document.querySelector('[aria-label="News stream"] .oh-sheet-scroll') as HTMLElement;
       const box = sc.getBoundingClientRect();
-      const n1 = sc.querySelector<HTMLElement>('[data-stream-item="n1"]')!.getBoundingClientRect();
+      const inView = (id: string) => {
+        const card = sc.querySelector<HTMLElement>(`[data-stream-item="${id}"]`)?.getBoundingClientRect();
+        return card !== undefined && card.bottom > box.top && card.top < box.bottom;
+      };
       return {
         scrollTop: sc.scrollTop,
         screen: sc.clientHeight,
-        n1InView: n1.bottom > box.top && n1.top < box.bottom,
+        n1InView: inView("n1"),
+        finalCardInView: inView("n29"),
+        distanceFromEnd: sc.scrollHeight - sc.clientHeight - sc.scrollTop,
       };
     });
     expect(landed.scrollTop).toBeGreaterThan(from.scrollTop + 2 * rest.screen);
     expect(rest.scrollTop).toBeGreaterThanOrEqual(landed.scrollTop - 2);
     expect(rest.n1InView).toBe(false);
+    expect(rest.finalCardInView).toBe(true);
+    expect(rest.distanceFromEnd).toBeLessThanOrEqual(2);
     expect(errors).toEqual([]);
     await page.close();
   }, 60_000);

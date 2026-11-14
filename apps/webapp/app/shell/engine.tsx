@@ -27,6 +27,8 @@ import { cloudLane, cloudPushWakes, cloudWakeStream, createEngine, EngineUnarmed
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { accountCleanupOwed, finishRetiredComposeCleanup, isolateAccountScope, otherAccountCleanup, readIsolatedScope } from "../pending-sign-out-storage";
+import { readSessionFamily } from "../signed-out-signal";
 import { setDemoStorage } from "@ohmail/app-logic/storage/storage-owner";
 import { markStartup } from "@ohmail/app-logic/session/ui-vitals";
 import {
@@ -168,7 +170,7 @@ export function EngineProvider({
    * request that left as A could be re-judged as B. A prop, not an import: `app/shell/**` ships
    * in the desktop program, which has no session client. Absent on the desktop and the demo.
    */
-  onConfirmed?: (accountId: string) => void;
+  onConfirmed?: (accountId: string, address?: string, familyId?: string) => void;
   /**
    * The page's word for the first frame (`page.tsx`): `wait` when the edge did not ask the API whose session this is,
    * or when no word arrived. A remembered mirror then opens but is not DRAWN until the check names that account, or
@@ -260,8 +262,8 @@ export function EngineProvider({
    */
   if (browserPass && binding.status === "resolving" && !desired && !provided && resolveOwner) {
     const remembered = readOwner();
-    if (remembered !== null) {
-      setBinding({ status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered) });
+    if (remembered !== null && !accountCleanupOwed(remembered)) {
+      setBinding({ status: "warm", owner: remembered, engine: createEngine(false, undefined, remembered, readIsolatedScope(remembered, readSessionFamily())) });
     }
   }
 
@@ -376,6 +378,18 @@ export function EngineProvider({
           return;
         }
         const owner = outcome.accountId;
+        const retryOldCleanup = () => {
+          const family = outcome.familyId ?? readSessionFamily();
+          if (readOwner() === owner && readSessionFamily() === family) finishRetiredComposeCleanup();
+          if (otherAccountCleanup(owner).length === 0) return;
+          void import("../sign-out").then(({ finishOtherAccountCleanup }) => finishOtherAccountCleanup(owner, family))
+            .catch(() => undefined);
+        };
+        const confirm = () => {
+          if (outcome.familyId !== undefined) onConfirmed?.(owner, outcome.address, outcome.familyId);
+          else if (outcome.address === undefined) onConfirmed?.(owner);
+          else onConfirmed?.(owner, outcome.address);
+        };
         /**
          * A confirmed owner disproves a held session death — and the latch must be told,
          * because the death store is module state and a sign-in is a client-side navigation.
@@ -411,7 +425,8 @@ export function EngineProvider({
             confirmSyncOwner(warm.engine, owner);
             // AFTER the comparison and the cancellation check above: the client is bound to the account
             // this tab has decided it is for, not to whatever the last resolver happened to see.
-            onConfirmed?.(owner);
+            confirm();
+            retryOldCleanup();
           }
           setBinding(
             owner === warm.owner
@@ -423,10 +438,18 @@ export function EngineProvider({
         // The cold path builds the engine for the account the server just named, so the gate
         // opens with no comparison to make — but it still has to be OPENED, and before the
         // binding, for the same first-tick reason as the warm arm above.
-        const built = createEngine(false, undefined, owner);
+        const family = outcome.familyId ?? readSessionFamily();
+        const owed = accountCleanupOwed(owner);
+        const isolatedScope = owed ? isolateAccountScope(owner, family) : readIsolatedScope(owner, family);
+        const built = createEngine(false, undefined, owner, isolatedScope);
         confirmSyncOwner(built, owner);
-        onConfirmed?.(owner);
+        confirm();
         setBinding({ status: "ready", demo: false, engine: built });
+        retryOldCleanup();
+        if (owed) {
+          void import("../sign-out").then(({ finishAccountCleanup }) => finishAccountCleanup(owner, family))
+            .catch(() => undefined);
+        }
       })
       .catch((err: unknown) => {
         /*

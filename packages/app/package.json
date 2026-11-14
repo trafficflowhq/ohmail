@@ -46,23 +46,11 @@
       "node": "./dist/host/index.js",
       "default": "./src/host/index.ts"
     },
-    "./keys": {
-      "types": "./src/keys/index.ts",
-      "ohmail-source": "./src/keys/index.ts",
-      "node": "./dist/keys/index.js",
-      "default": "./src/keys/index.ts"
-    },
     "./mail": {
       "types": "./src/mail/index.ts",
       "ohmail-source": "./src/mail/index.ts",
       "node": "./dist/mail/index.js",
       "default": "./src/mail/index.ts"
-    },
-    "./mail/ground": {
-      "types": "./src/mail/ground/index.ts",
-      "ohmail-source": "./src/mail/ground/index.ts",
-      "node": "./dist/mail/ground/index.js",
-      "default": "./src/mail/ground/index.ts"
     },
     "./mail-state": {
       "types": "./src/mail-state/index.ts",
@@ -123,6 +111,12 @@
       "ohmail-source": "./src/settings/notifications/index.ts",
       "node": "./dist/settings/notifications/index.js",
       "default": "./src/settings/notifications/index.ts"
+    },
+    "./settings/browser": {
+      "types": "./src/settings/browser/index.ts",
+      "ohmail-source": "./src/settings/browser/index.ts",
+      "node": "./dist/settings/browser/index.js",
+      "default": "./src/settings/browser/index.ts"
     },
     "./settings/screener": {
       "types": "./src/settings/screener/index.ts",
@@ -448,6 +442,12 @@
       "node": "./dist/touch/index.js",
       "default": "./src/touch/index.ts"
     },
+    "./profile-import": {
+      "types": "./src/profile-import/index.ts",
+      "ohmail-source": "./src/profile-import/index.ts",
+      "node": "./dist/profile-import/index.js",
+      "default": "./src/profile-import/index.ts"
+    },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",
       "ohmail-source": "./src/ohbox/index.ts",
@@ -567,6 +567,7 @@
     "@tiptap/starter-kit": "3.31.3"
   },
   "devDependencies": {
+    "@ohmail/testing": "*",
     "react-dom": "19.2.3"
   }
 }

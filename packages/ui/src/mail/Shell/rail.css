@@ -42,6 +42,10 @@
     );
   }
 
+  .oh-rail-group:empty {
+    display: none;
+  }
+
   .oh-rail-group {
     display: flex;
     flex-direction: column;
@@ -76,7 +80,8 @@
     --oh-rail-in: 10px 10px 10px;
   }
 
-  :root[data-face="ohmarchy"] .oh-rail[data-focused] {
+  :root[data-face="ohmarchy"] .oh-rail[data-focused],
+  :root[data-face="ohmarchy"][data-zone="rail"] .oh-rail {
     --oh-rail-ring: var(--focus);
   }
 

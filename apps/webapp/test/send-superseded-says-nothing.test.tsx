@@ -9,7 +9,10 @@ import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
 import messages from "../messages/en.json";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
@@ -49,7 +52,6 @@ const drain = async (): Promise<void> => {
 describe("a superseded answer on the web", () => {
   it("leaves a queued lane queued: no failure, no settlement, no sentence", async () => {
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
     const settled: string[] = [];
     const toasts: string[] = [];
     const flushes: string[] = [];
@@ -67,7 +69,7 @@ describe("a superseded answer on the web", () => {
         engine as never,
         null,
         ((m: string) => { toasts.push(m); }) as never,
-        useMailSendText(), ((key: string) => { settled.push(key); }) as never,
+        useSendText(useTranslations() as unknown as Translator, scheduleLabel), ((key: string) => { settled.push(key); }) as never,
       ) as never;
       return null;
     };
@@ -90,7 +92,6 @@ describe("a superseded answer on the web", () => {
 
   it("from the restore collector: the lane's durable lock is kept and nothing is said", async () => {
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
     const { claimSendLock, recordForSendKey, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
     claimSendLock({ v: SEND_LOCK_FORMAT, lane: "m1", key: "k9", at: Date.now(), draftId: null, fp: "fp-1", subject: "Re: Werkstatt-Besuch?" } as never, NONE_OWED, null);
     expect(recordForSendKey("k9", Date.now(), null), "no record, so the collector would skip it and this measures nothing").not.toBeNull();
@@ -112,7 +113,7 @@ describe("a superseded answer on the web", () => {
       hasLateResults: () => late,
     };
     const Probe = (): null => {
-      useMailSend(engine as never, null, ((m: string) => { toasts.push(m); }) as never, useMailSendText(), (() => {}) as never);
+      useMailSend(engine as never, null, ((m: string) => { toasts.push(m); }) as never, useSendText(useTranslations() as unknown as Translator, scheduleLabel), (() => {}) as never);
       return null;
     };
     host = document.createElement("div");

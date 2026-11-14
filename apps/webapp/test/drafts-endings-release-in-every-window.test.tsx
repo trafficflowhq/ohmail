@@ -1,182 +1,124 @@
 /** @vitest-environment jsdom */
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { EngineDraft } from "@ohmail/wire";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
+import { readComposeRow, readComposeSession } from "@ohmail/app-logic/writing/compose";
+import { claimSendLock, holdOf, SEND_LOCK_FORMAT, sendRecordsNaming } from "@ohmail/app-logic/writing/send-lock";
 import messages from "../messages/en.json";
-import { composeRowKey } from "@ohmail/app-logic/writing/compose";
-import { sendLocksKey, SEND_LOCK_FORMAT } from "@ohmail/app-logic/writing/send-lock";
-import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
-import { settleFirstPaint } from "./_first-paint.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { mountShell, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
+import { typeInto } from "./fixtures/rich-editor-driver.js";
 
-/**
- * THE DRAFTS LIST'S ENDINGS RELEASE THE RECORD IN EVERY WINDOW (a high verifier finding, the
- * verifier's probe tracked). An unverified record naming a row is what a browser holds after a lost
- * answer; written AFTER this shell's outbox view it stands for another window's press. "Send again"
- * (the server's "not arrived"), "It was sent — dismiss" and Delete are endings the SERVER answered
- * for that row, which is knowledge, so the record goes whichever window pressed the send, and Send
- * is live on the message that opens. A record from an earlier session is the control.
- */
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-}
-
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
-const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
-const settle = async (n = 8): Promise<void> => {
-  for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
-};
-
-async function goto(hash: string): Promise<void> {
-  await act(async () => {
-    window.location.hash = hash;
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  });
-  await settle(6);
-  await settleFirstPaint();
-}
-
-/** The whole client on the fixture world. */
-async function mountShell(): Promise<void> {
-  await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-09-08T09:00:00.000Z"),
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
-        }),
-      }),
-    );
-  });
-  await settle(10);
-}
-
-/** Type into a controlled input the way React sees it. */
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype, "value",
-  )!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-/** Write a message on `#/compose` and let the autosave give it a row. Returns the row's id. */
-async function makeADraft(): Promise<string> {
-  await goto("#/compose");
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Bis Montag");
-  // The debounce is real time, deliberately: faking it here would put a second async machine
-  // between the press and the write, which is how a green harness comes to measure nothing.
-  await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
-  await settle(10);
-  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
-  expect(id, "the compose never wrote a row, so there is nothing to press Delete on").not.toBeNull();
-  return id!;
-}
-
-const rowOf = (id: string): HTMLElement | null => q<HTMLElement>(`.draft-row[data-id="${id}"]`);
-const toastText = (): string => q<HTMLElement>(".toast[role='status']")?.textContent ?? "";
-
-/** Press a row's Delete and then the confirm behind it. */
-async function pressDelete(id: string): Promise<void> {
-  await press(q<HTMLButtonElement>(`.draft-row[data-id="${id}"] .draft-discard`)!);
-  await settle(4);
-  // By its LABEL: Keep comes first in the confirm on purpose, so "the first button" is the wrong one.
-  const confirm = Array.from(host!.querySelectorAll<HTMLButtonElement>(".draft-confirm button"))
-    .find((b) => (b.textContent ?? "").trim() === messages.drafts.discardConfirm) ?? null;
-  expect(confirm, "the confirm behind Delete did not open, or lost its destructive button").not.toBeNull();
-  await press(confirm!);
-  await settle(10);
-}
+const OWNER = "acc-draft-endings";
+const SUBJECT = "Bis Montag";
+const BODY = "The saved words of this letter.";
+const ROW = { name: /Bis Montag/ };
+const records = (id: string) => sendRecordsNaming(COMPOSE_SEND_KEY, id, null, OWNER);
 
 beforeEach(() => {
-  window.location.hash = "";
-  try { window.localStorage.clear(); } catch { /* blocked storage; the in-memory half still runs */ }
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true, writable: true,
-    value: (query: string) => ({
-      matches: false, media: query, onchange: null,
-      addEventListener: () => {}, removeEventListener: () => {},
-      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
-    }),
-  });
-  (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
-  const el = Element.prototype as unknown as Record<string, () => void>;
-  el.scrollIntoView = () => {};
-  el.scrollTo = () => {};
-  (globalThis as Record<string, unknown>).IntersectionObserver = class {
-    observe(): void {} unobserve(): void {} disconnect(): void {}
-    takeRecords(): [] { return []; }
-  };
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  localStorage.clear();
+  sessionStorage.clear();
+  setStorageOwner(OWNER);
+  stubDom();
 });
 
 afterEach(async () => {
-  await unmount();
-  document.body.innerHTML = "";
-  delete (globalThis as Record<string, unknown>).IntersectionObserver;
-  delete (globalThis as Record<string, unknown>).CSS;
-  vi.restoreAllMocks();
+  vi.useRealTimers();
+  await unmountAll();
+  resetStorageOwnerForTest();
 });
 
-function parkAt(draftId: string, at: number): void {
-  window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
-    v: SEND_LOCK_FORMAT, lane: "compose", key: "KEY-HELD", at,
-    draftId, fp: "fp-held", subject: `draft:${draftId}`, unverified: true,
-  }]));
+async function saveLetter(s: DraftShell): Promise<string> {
+  const rail = within(await screen.findByRole("navigation", { name: /places/i }));
+  fireEvent.click(rail.getByRole("button", { name: /^Write/ }));
+  const recipient = await screen.findByRole("combobox", { name: messages.compose.to });
+  fireEvent.change(recipient, { target: { value: "lena@atelier.example" } });
+  fireEvent.keyDown(recipient, { key: "Enter" });
+  fireEvent.change(screen.getByRole("textbox", { name: messages.compose.subject }), {
+    target: { value: SUBJECT },
+  });
+  const body = await screen.findByRole("textbox", { name: "Message" });
+  await act(async () => { typeInto(body, BODY); });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Send" }).disabled,
+    "the original message was ready to send before it was held").toBe(false);
+  fireEvent.click(rail.getByRole("button", { name: /^Drafts/ }));
+  const saved = () => s.store.list<EngineDraft>("draft").find((row) => row.subject === SUBJECT);
+  await waitFor(() => saved() !== undefined, "the draft reached the account");
+  expect(saved()?.to).toHaveLength(1);
+  expect(saved()?.body).toBe(BODY);
+  return saved()!.id;
 }
-const verbBtn = (id: string, label: string): HTMLButtonElement | null =>
-  Array.from(host!.querySelectorAll<HTMLButtonElement>(`.draft-row[data-id="${id}"] button`))
-    .find((b) => (b.textContent ?? "").trim() === label) ?? null;
-const composeSend = (): HTMLButtonElement | null =>
-  Array.from(host!.querySelectorAll<HTMLButtonElement>("button"))
-    .find((b) => !b.closest(".draft-row") && /^Send(\b|Ctrl)/.test((b.textContent ?? "").trim()) && !/later/i.test(b.textContent ?? "")) ?? null;
+
+function installRecord(id: string, at: number): void {
+  claimSendLock({
+    v: SEND_LOCK_FORMAT, lane: COMPOSE_SEND_KEY, key: "held-by-another-window", fp: "held-attempt",
+    at, draftId: id, subject: `draft:${id}`, unverified: true,
+  }, () => false, OWNER);
+}
 
 describe("a row's server-answered ending releases its record, whichever window pressed the send", () => {
   for (const [label, when] of [["another window, after this view", "now"], ["an earlier session (the control)", "hour"]] as const) {
     for (const verb of ["Send again", "It was sent — dismiss", "Delete"] as const) {
       it(`${verb} over a record from ${label}`, async () => {
-        await mountShell();
-        const id = await makeADraft();
-        await goto("#/drafts");
-        parkAt(id, when === "now" ? Date.now() : Date.now() - 60 * 60 * 1000);
-        await goto("#/"); await goto("#/drafts");
-        if (verb === "Delete") await pressDelete(id);
-        else {
-          const b = verbBtn(id, verb);
-          expect(b, `the row offers no "${verb}"`).not.toBeNull();
-          await press(b!); await settle(20);
+        const s = await mountShell("#/ohbox", [], [], { versions: true });
+        const id = await saveLetter(s);
+        const saved = s.store.get<EngineDraft>("draft", id);
+        const revision = saved?.contentRevision;
+        expect(typeof revision).toBe("string");
+        expect(typeof saved?.updatedAt).toBe("string");
+        const rail = within(screen.getByRole("navigation", { name: /places/i }));
+        expect(await screen.findByRole("option", ROW)).toBeTruthy();
+        installRecord(id, when === "now" ? Date.now() : Date.now() - 60 * 60 * 1000);
+        expect(records(id)).toHaveLength(1);
+        fireEvent.click(rail.getByRole("button", { name: /^Ohbox/ }));
+        await waitFor(() => window.location.hash === "#/ohbox", "the Ohbox after leaving Drafts");
+        fireEvent.click(rail.getByRole("button", { name: /^Drafts/ }));
+        await waitFor(() => window.location.hash === "#/drafts", "the new Drafts visit");
+        fireEvent.click(await screen.findByRole("option", ROW));
+        expect(window.location.hash).toBe(`#/drafts/m/${id}`);
+
+        if (verb === "Delete") {
+          const list = within(screen.getByRole("listbox", { name: messages.drafts.title }));
+          vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+          fireEvent.click(list.getByRole("button", { name: messages.drafts.discard }));
+          await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+          expect(screen.getByRole("button", { name: messages.drafts.reportUndo })).toBeTruthy();
+          expect(records(id)).toHaveLength(1);
+          expect(s.sent.some((mutation) => mutation.kind === "draft_discard")).toBe(false);
+          await act(async () => { await vi.advanceTimersByTimeAsync(UNDO_MS); });
+          vi.useRealTimers();
+        } else {
+          const actions = within(await screen.findByRole("toolbar", { name: messages.drafts.heldActs }));
+          const name = verb === "Send again" ? messages.drafts.sendAgain : messages.drafts.heldItWasSent;
+          fireEvent.click(actions.getByRole("button", { name }));
         }
-        const jar = JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]") as Array<{ draftId?: string }>;
-        expect({ jarNamesRow: jar.filter((r) => r.draftId === id).length, rowStill: rowOf(id) !== null },
-          "the server answered for the row and this window kept its record").toEqual({ jarNamesRow: 0, rowStill: false });
+        await waitFor(() => records(id).length === 0, "the exact row's server answer released its record");
+
+        const endings = s.sent.filter((mutation) =>
+          mutation.kind === "draft_discard" || mutation.kind === "draft_resolve" || mutation.kind === "mail_send"
+        );
+        const outcome = verb === "Send again" ? "not_arrived" : "arrived";
+        expect(endings).toEqual([
+          verb === "Delete"
+            ? { kind: "draft_discard", draftId: id, ifContentRevision: revision }
+            : { kind: "draft_resolve", draftId: id, outcome, ifUpdatedAt: saved?.updatedAt },
+        ]);
         if (verb === "Send again") {
-          expect(window.location.hash, "Send again did not open the message").toBe("#/compose");
-          expect(composeSend()?.disabled, "the reopened message is parked with Send disabled").toBe(false);
-          expect(host!.textContent ?? "", "the reopened message says it may already have gone")
-            .not.toContain("We're not sure this was sent");
+          const editor = within(await screen.findByRole("region", { name: "New message" }));
+          expect(window.location.hash).toBe("#/compose");
+          expect(editor.getByRole<HTMLInputElement>("textbox", { name: messages.compose.subject }).value).toBe(SUBJECT);
+          expect(editor.getByRole("textbox", { name: "Message" }).textContent).toBe(BODY);
+          expect(s.store.get<EngineDraft>("draft", id)).toMatchObject({ status: "draft", contentRevision: revision });
+          expect(readComposeRow(OWNER)).toBe(id);
+          expect(holdOf(s.engine, { lane: COMPOSE_SEND_KEY, draftId: id, session: readComposeSession(OWNER) }, OWNER)).toEqual({ kind: "free" });
+          expect(editor.queryByText(/We're not sure this was sent/)).toBeNull();
+          expect(editor.queryByText(messages.compose.changedElsewhere)).toBeNull();
+          expect(editor.getByRole<HTMLButtonElement>("button", { name: "Send" }).disabled,
+            "the reopened message is ready to send").toBe(false);
+        } else {
+          expect(screen.queryByRole("option", ROW)).toBeNull();
         }
       }, 30_000);
     }

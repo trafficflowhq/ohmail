@@ -16,14 +16,19 @@ export type CopyAge = unknown;
 export type AccessAnswer = unknown;
 
 /** The away responder as stored, and what a save answers. */
-export type AwayState = unknown;
-export type AwayDraft = unknown;
-export type AwaySaved = unknown;
+export type {
+  AwayResponderRead as AwayState,
+  AwayResponderEdit as AwayDraft,
+  AwayResponderSaveReading as AwaySaved,
+} from "@ohmail/wire";
 
 /** The settings a mailbox arrived with, and the answers to taking them. */
-export type ProfileImportCandidate = unknown;
-export type ProfileImportApplied = unknown;
-export type ProfileImportStatus = unknown;
+export type {
+  ProfileImportCandidateWire as ProfileImportCandidate,
+  ProfileImportAppliedWire as ProfileImportApplied,
+  ProfileImportPendingWire as ProfileImportPending,
+  ProfileImportStatusWire as ProfileImportStatus,
+} from "../profile-import/wire.js";
 
 /** The consent row; a change that travelled with the mailbox; a read that failed. */
 export type ConsentState = unknown;
@@ -44,22 +49,35 @@ export type ScreenerSuggested = unknown;
 /** A draft reply as it is read back. */
 export type DraftReplyRead = unknown;
 
-/** The first run: a mailbox as typed in, and what probing and organizing it answer. */
-export type FirstRunMailbox = unknown;
-export type FirstRunProbed = unknown;
+/** What organizing and counting answer during the first run. */
 export type FirstRunOrganizeIntent = unknown;
 export type FirstRunOrganized = unknown;
 export type FirstRunCount = unknown;
 export type FirstRunStepUp = unknown;
 
 /** What reaches the Ohbox; what was filed automatically; who you write to; a folder's count; the own-model switch. */
-export type ScreeningPreference = unknown;
-export type ScreeningChange = unknown;
-export type AutoFiled = unknown;
-export type AutoFiledPutBack = unknown;
+export interface ScreeningPreference {
+  readonly ohboxPolicy: "people_only" | "people_and_replied" | null;
+  readonly ohboxBar: string | null;
+  readonly defaultBar: string;
+  readonly impersonationFiling?: boolean;
+  readonly pending?: true;
+  readonly change?: import("@ohmail/app-logic/consent/travelled-change").TravelledChangeWire;
+}
+export type ScreeningChange = Partial<
+  Pick<ScreeningPreference, "ohboxPolicy" | "ohboxBar" | "impersonationFiling">
+>;
+export interface AutoFiled {
+  readonly items: readonly Pick<
+    import("@ohmail/wire").AutoFiledItemWire,
+    "messageId" | "from" | "subject" | "to"
+  >[];
+  readonly more: boolean;
+}
+export type { AutoFiledUndoWire as AutoFiledPutBack } from "@ohmail/wire";
 export type SeedReview = unknown;
 export type SeedConfirmed = unknown;
-export type FolderSummary = unknown;
+export type FolderSummary = { folders: number; messages: number } | null;
 export type OwnModelAutoSuggest = unknown;
 
 /**

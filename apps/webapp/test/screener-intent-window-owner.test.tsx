@@ -3,7 +3,8 @@ import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine, MemoryMirrorStore, mutationEffects,
   type MirrorStore, type SyncChange,
@@ -110,7 +111,6 @@ const roots: Root[] = [];
 /** A TAB: its own mount, its own toast log, its own Undo button. */
 async function mountTab(engine: OhmailEngine): Promise<Tab> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const said: string[] = [];
   const undos: Array<() => void> = [];
   let latest: StateLike | null = null;
@@ -122,7 +122,7 @@ async function mountTab(engine: OhmailEngine): Promise<Tab> {
     latest = useScreenerState(engine, null, v, ((m: string, opts?: { onAction?: () => void }) => {
       said.push(m);
       if (opts?.onAction) undos.push(opts.onAction);
-    }) as never, useScreenerText()) as unknown as StateLike;
+    }) as never, useScreenerWords()) as unknown as StateLike;
     return null;
   }
   const host = document.createElement("div");
@@ -130,8 +130,8 @@ async function mountTab(engine: OhmailEngine): Promise<Tab> {
   const root = createRoot(host);
   roots.push(root);
   await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(Probe),
+    root.render(h(TextProvider, {
+      locale: "en", messages: en as never, timeZone: "UTC", children: h(Probe),
     }));
   });
   return {

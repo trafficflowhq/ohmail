@@ -18,13 +18,20 @@
  *     because the Ohbox's empty pick set then publishes `false` on every row.
  *   · `rowStamp`'s `timeSpoken: abs` → `""` — the stamp case goes red alone.
  *   · `useRowBadgeCopy`'s `spoken` dropped from the row — the read-state case goes red alone.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (`_mail-shell.tsx`: the frame
+ * over the mail ground, the seated Ohbox and the reader); the Ohbox's rows are the options of the frame's list
+ * section ("Messages"), and the reading column is the frame's reading section ("Reading"). Expectations as they stood.
+ * The case that read `useRowBadgeCopy` alone (one spoken object across renders) moved word for word to
+ * `row-copy-one-spoken-object.test.tsx`: the list places that draw their rows' words with it are not mounted yet.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import en from "../messages/en.json";
+import { readingColumn, seatedList } from "./ohbox/_finders.js";
 
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
@@ -53,7 +60,7 @@ async function unmount(): Promise<void> {
 /** The demo shell — `selection-pill.test.tsx`'s harness, without its cursor-priming keystroke. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -83,17 +90,17 @@ const click = async (el: Element): Promise<void> => {
  * be driven, so it refuses rather than pressing the first.
  */
 function option(name: string): HTMLElement {
-  const hits = [...host!.querySelectorAll<HTMLElement>('.view-ohbox [role="option"]')].filter(
+  const hits = rows().filter(
     (el) => el.getAttribute("aria-label") === name,
   );
   expect(hits.length, `options named ${JSON.stringify(name)}`).toBe(1);
   return hits[0]!;
 }
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>('.view-ohbox [role="option"]')];
+const rows = (): HTMLElement[] => [...(seatedList(host!)?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
 const chosen = (): HTMLElement[] => rows().filter((r) => r.getAttribute("aria-selected") === "true");
 /** What the reading column is showing — the effect a real selection has and nothing else does. */
-const readerText = (): string => host!.querySelector(".view-ohbox .read-col")?.textContent ?? "";
+const readerText = (): string => readingColumn(host!)?.textContent ?? "";
 
 beforeEach(mountShell);
 afterEach(unmount);
@@ -153,36 +160,5 @@ describe("a press by role publishes the selection it makes", () => {
     const stops = rows().filter((r) => r.getAttribute("tabindex") === "0");
     expect(stops).toHaveLength(1);
     expect(stops[0]!.getAttribute("aria-label")).toBe(name);
-  });
-});
-
-describe("the words the row takes are one object, not a fresh one per render", () => {
-  it("hands back the SAME spoken object across renders, which is what a row memo compares on", async () => {
-    const { useRowBadgeCopy } = await import("../app/shell/row-copy.js");
-    const seen: unknown[] = [];
-    function Probe({ tick }: { tick: number }) {
-      const copy = useRowBadgeCopy(useTranslations("message"));
-      seen.push(copy.spoken);
-      return h("i", null, String(tick));
-    }
-    const box = document.createElement("div");
-    document.body.appendChild(box);
-    const r = createRoot(box);
-    const render = async (tick: number): Promise<void> => {
-      await act(async () => {
-        r.render(h(NextIntlClientProvider, {
-          locale: "en", messages: en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-          children: h(Probe, { tick }),
-        }));
-      });
-    };
-    await render(1);
-    await render(2);
-    await render(3);
-    expect(seen).toHaveLength(3);
-    // One object across every render: a `spoken={{…}}` literal at a call site would be three.
-    expect(new Set(seen).size).toBe(1);
-    await act(async () => { r.unmount(); });
-    box.remove();
   });
 });

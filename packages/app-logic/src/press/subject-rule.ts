@@ -19,11 +19,14 @@ import {
   senderKey,
   type EntityReader,
   type MutationStatus,
+  ruleKeyOf,
   ruleMatchKey,
 } from "@ohmail/client-engine";
 import type { DecisionDestination } from "../screener/decision.js";
 import { RETRO_DEFAULT_ON, RETRO_VISIBLE_MOVES, type ScreeningDest } from "./sender-screening.js";
 import type { QueuedWait } from "./queued-sentence.js";
+
+export const subjectOrganizerMissing = "subjectOrgNobody";
 
 /**
  * The reply/forward decorations a subject accumulates, stripped before anything is extracted.
@@ -242,9 +245,10 @@ const byDateDesc = (a: EngineMessage, b: EngineMessage) =>
  * One pass over the messages for the sender's set, exactly as `senderScreening` does and for the
  * same reason: this is called on every render of an open sheet, and two `.filter()` calls would walk
  * every message in the account twice per keystroke.
+ * A caller with an optimistic view can supply its mirror separately for standing rules.
  */
 export function subjectRuleContext(
-  reader: EntityReader, messageId: string,
+  reader: EntityReader, messageId: string, standingRules: EntityReader = reader,
 ): SubjectRuleContext | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
@@ -273,7 +277,7 @@ export function subjectRuleContext(
     // indistinguishable from. A BARE sender rule is deliberately not here — it is the rule this
     // sheet exists to refine, not one it collides with. Either term counts (mail 0052): a body
     // rule is just as much "one of these" as a subject rule.
-    existing: rulesList(reader).filter(
+    existing: rulesList(standingRules).filter(
       (r) => r.enabled
         && r.kind === "sender"
         && ruleMatchKey(r.match) === address
@@ -295,6 +299,8 @@ export interface SubjectRulePlan {
   mutations: EngineMutation[];
   /** The rule mutation alone — the one the caller awaits before claiming anything. */
   ruleMutations: EngineMutation[];
+  /** The stored rule key, shared with pending rule requests. */
+  ruleKey: string;
   /** The two terms, as they will be stored. */
   match: string;
   term: string;
@@ -335,15 +341,16 @@ export function planSubjectRule(
   const match = ctx.address.trim().toLowerCase();
   const clean = term.trim();
 
-  // "Identical" means identical in the SAME field: a subject rule and a body rule carrying the
-  // same token are two different statements about two different slices of the sender's mail.
-  const termOf = (r: RuleDTO): string =>
-    ((field === "subject" ? r.subjectContains : r.bodyContains) ?? "").trim();
-  // An EMPTY term is never `already`: a body-only rule's absent `subjectContains` normalizes to
-  // "" too, so without this clause an emptied field compared equal to it, the confirm's go
-  // stayed pressable, and the press closed the sheet claiming an existing rule.
+  // A rule that also reads the other field narrows a different set of mail. Compare the
+  // complete stored key, including the absent conjunct, before allowing visible filing.
+  const key = ruleKeyOf({
+    kind: "sender",
+    match,
+    subjectContains: field === "subject" ? clean : null,
+    bodyContains: field === "body" ? clean : null,
+  });
   const already = clean !== "" && ctx.existing.some(
-    (r) => termOf(r).toLowerCase() === clean.toLowerCase() && r.destination === wanted,
+    (rule) => rule.destination === wanted && ruleKeyOf(rule) === key,
   );
 
   // For the body field this counts over what the mirror HOLDS (`bodyTextOf`), which is a floor
@@ -386,6 +393,7 @@ export function planSubjectRule(
   return {
     mutations,
     ruleMutations,
+    ruleKey: key,
     match,
     term: clean,
     field,

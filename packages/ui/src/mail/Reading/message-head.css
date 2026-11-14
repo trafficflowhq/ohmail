@@ -8,6 +8,7 @@
     --oh-messagehead-offset: 0.18em;
     --oh-messagehead-offset-fine: 0.2em;
     --oh-messagehead-short: 2ch;
+    --oh-messagehead-least: calc(var(--t-ui) * 2.5);
     --oh-messagehead-reach: -7px -3px -18px;
     --oh-messagehead-touch: 44px;
     --oh-messagehead-row-gap: 2px;
@@ -24,6 +25,16 @@
     column-gap: var(--s3);
     align-items: center;
     margin-bottom: var(--s4);
+  }
+
+  .oh-messagehead-check {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin: 0;
+    color: var(--ink2);
+    font-weight: var(--w-mid);
   }
 
   .oh-messagehead-sender {
@@ -43,11 +54,16 @@
     transition: background-color var(--d-hover) var(--e-std);
   }
 
-  .oh-messagehead-sender:hover {
+  :where(.oh-control).oh-messagehead-sender:hover {
     background: var(--oh-messagehead-over, var(--hover));
   }
 
-  .oh-messagehead-sender > .oh-avatar {
+  /* The circle and the lines beside it: the sender's own grid (one box only under a finger, below). */
+  .oh-messagehead-line {
+    display: contents;
+  }
+
+  .oh-messagehead-line > .oh-avatar {
     grid-row: 1 / span 2;
     align-self: center;
   }
@@ -71,9 +87,12 @@
     text-overflow: ellipsis;
   }
 
+  /* The name is the sender's to choose; the address is the evidence. Short of room the address leaves the name its
+     first letters and is cut in its local part, never in its domain; the name gives way to it. */
   .oh-messagehead-address {
-    flex: 0 2 auto;
+    flex: 0 0 auto;
     min-width: 0;
+    max-width: calc(100% - var(--oh-messagehead-least) - var(--s2));
     overflow: hidden;
     color: var(--ink2);
     font-size: var(--t-meta);
@@ -114,7 +133,7 @@
     display: contents;
   }
 
-  .oh-messagehead-stamp:hover {
+  :where(.oh-control).oh-messagehead-stamp:hover {
     color: var(--ink);
   }
 
@@ -133,15 +152,52 @@
     pointer-events: none;
   }
 
+  .oh-messagehead-to[data-folded] {
+    justify-self: stretch;
+  }
+
+  .oh-messagehead-to[data-folded] .oh-messagehead-field {
+    display: inline-flex;
+    max-inline-size: 100%;
+    align-items: baseline;
+    white-space: nowrap;
+  }
+
+  .oh-messagehead-to[data-folded] .oh-messagehead-field > .oh-messagehead-person:not([data-details]) {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .oh-messagehead[data-preview] .oh-messagehead-to[data-folded]:has(> .oh-messagehead-field:only-of-type) {
+    display: flex;
+    align-items: baseline;
+  }
+
+  .oh-messagehead[data-preview] .oh-messagehead-to[data-folded] > .oh-messagehead-field {
+    min-width: 0;
+  }
+
+  .oh-messagehead-to[data-folded] .oh-messagehead-field > :first-child {
+    margin-inline-end: var(--s1);
+  }
+
+  .oh-messagehead-to[data-folded] .oh-messagehead-field > [data-details] {
+    flex-shrink: 0;
+  }
+
   .oh-messagehead-person {
     display: inline;
     border-radius: var(--r-sq);
     font-weight: var(--w-mid);
-    cursor: pointer;
     pointer-events: auto;
   }
 
-  .oh-messagehead-person:hover {
+  .oh-control.oh-messagehead-person {
+    cursor: pointer;
+  }
+
+  .oh-control.oh-messagehead-person:hover {
     color: var(--ink);
     text-decoration: underline;
     text-decoration-thickness: var(--oh-messagehead-under);
@@ -218,7 +274,7 @@
   }
 
   /* ohmarchy rings the sender in place of a tint. */
-  :root[data-face="ohmarchy"] .oh-messagehead-sender:hover {
+  :root[data-face="ohmarchy"] :where(.oh-control).oh-messagehead-sender:hover {
     background: transparent;
     box-shadow: var(--oh-ring-line);
   }
@@ -236,15 +292,31 @@
     max-width: 100%;
   }
 
+  /* Under a finger the circle and the lines beside it are the head's own first row: an address whose domain takes a
+     second line puts who it went to under it. */
+  :root[data-touch="1"] .oh-messagehead-sender {
+    grid-template-rows: subgrid;
+  }
+
+  :root[data-touch="1"] .oh-messagehead-line {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    align-self: start;
+    display: grid;
+    grid-template-columns: var(--av) minmax(0, 1fr);
+    column-gap: var(--s3);
+    align-items: center;
+  }
+
   :root[data-touch="1"] .oh-messagehead-stamp {
     min-height: var(--oh-messagehead-touch);
   }
 
-  :root[data-touch="1"] .oh-messagehead-person {
+  :root[data-touch="1"] .oh-control.oh-messagehead-person {
     position: relative;
   }
 
-  :root[data-touch="1"] .oh-messagehead-person::after {
+  :root[data-touch="1"] .oh-control.oh-messagehead-person::after {
     content: "";
     position: absolute;
     inset: var(--oh-messagehead-reach);
@@ -313,7 +385,7 @@
     margin-top: var(--s1);
   }
 
-  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead-stamp::after {
+  :root[data-device="fold"]:not([data-pose="land"]) :where(.oh-control).oh-messagehead-stamp::after {
     content: "";
     position: absolute;
     inset: var(--oh-messagehead-reach-stamp);
@@ -334,4 +406,91 @@
   :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead > .oh-messagehead-to {
     max-width: calc(100% - var(--oh-messagehead-beside));
   }
+}
+
+/* On a receipt the name and timestamp keep their line before the address takes the spare room. */
+[data-stream-window][data-receipts] .oh-messagehead-name {
+  flex-shrink: 0;
+  max-inline-size: 100%;
+}
+
+[data-stream-window][data-receipts] .oh-messagehead-address {
+  container: receipt-address / inline-size;
+  flex: 1 1 0;
+  max-inline-size: 100%;
+}
+
+:root[data-touch="1"] [data-stream-window][data-receipts] .oh-messagehead-address {
+  flex: 0 0 auto;
+  inline-size: 100%;
+}
+
+@container receipt-address (inline-size < 14ch) {
+  [data-stream-window][data-receipts] .oh-messagehead-address > .oh-address {
+    position: absolute;
+    inline-size: var(--oh-hair);
+    block-size: var(--oh-hair);
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+@container stream-card (inline-size >= 600px) {
+  .oh-messagehead:has(> .oh-messagehead-delivery) {
+    grid-template-columns: var(--av) minmax(0, 1fr) fit-content(20%) auto;
+  }
+
+  .oh-messagehead:has(> .oh-messagehead-delivery) .oh-messagehead-tools {
+    grid-column: 4;
+  }
+
+  .oh-messagehead-delivery {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+@container stream-card (inline-size < 600px) {
+  [data-stream-window][data-receipts] .oh-messagehead-delivery:not([data-open]) {
+    display: none;
+  }
+
+  .oh-messagehead-delivery {
+    grid-column: 2 / -1;
+    grid-row: 4;
+  }
+}
+
+/* On the phone, a folded News card keeps its delivery badge beside the date. */
+@container stream-card (inline-size < 600px) {
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    [data-stream-item]:not([data-expanded])
+    .oh-messagehead:has(> .oh-messagehead-delivery) {
+    grid-template-columns: var(--av) minmax(0, 1fr) minmax(0, var(--h-l)) auto;
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    [data-stream-item]:not([data-expanded])
+    .oh-messagehead:has(> .oh-messagehead-delivery)
+    > .oh-messagehead-tools {
+    grid-column: 4;
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    [data-stream-item]:not([data-expanded])
+    .oh-messagehead-delivery {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+.oh-messagehead-delivery .oh-badge {
+  display: block;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

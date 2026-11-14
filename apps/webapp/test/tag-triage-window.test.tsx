@@ -1,14 +1,9 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
+import { cleanup, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { TagView } from "../app/views/TagView";
-import { TriageView } from "../app/views/TriageView";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { WithListGone } from "./_list-gone";
+import { letter } from "../../../packages/app/test/reader/support/fake-mail.js";
+import { listSeat } from "../../../packages/app/test/places/list-seat";
 import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -17,85 +12,48 @@ import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/
  * viewport's rows mount over thousands and the rest is reserved height. Counts, not timers.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  })) as never;
+afterEach(cleanup);
 
 const ISO = "2026-08-04T09:00:00.000Z";
-const NOW = new Date(ISO);
 const N = 1200;
 const ROWS_AT_TOP = Math.floor(FALLBACK_VIEWPORT_PX / ESTIMATED_ROW_PX) + 1 + 8;
-const tag: TagDTO = { id: "t1", name: "Studio" } as TagDTO;
+const tag: TagDTO = { id: "t1", accountId: "acct-1", name: "Studio", hue: "moss", createdAt: ISO } as TagDTO;
 
-const message = (i: number): EngineMessage =>
-  ({
-    id: `m${i}`, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `subject of m${i}`, from: { name: `Sender ${i}`, address: `s${i}@x.invalid` },
-    to: [], cc: [], date: ISO, folder: "INBOX", snippet: `snippet ${i}`, unread: false,
-    hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null,
-    labels: ["t1"], remoteContent: "none", updatedAt: ISO,
-  }) as unknown as EngineMessage;
-
-let roots: Root[] = [];
-afterEach(async () => {
-  for (const r of roots) await act(() => r.unmount());
-  roots = [];
-  document.body.innerHTML = "";
+const message = (i: number): EngineMessage => letter(`m${i}`, {
+  subject: `subject of m${i}`,
+  date: ISO,
+  arrivedAt: ISO,
+  labels: ["t1"],
 });
 
-async function mount(node: React.ReactElement): Promise<HTMLElement> {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={NOW} timeZone="UTC">
-        <KeymapProvider><WithListGone>{node}</WithListGone></KeymapProvider>
-      </NextIntlClientProvider>,
-    );
-  });
-  return host;
-}
-
-const common = {
-  onMarkSeen: () => {},
-  tags: [tag], now: NOW, onOpen: () => {}, hydrateBody: () => {}, onAction: () => {}, onAddTag: () => {},
-};
-
 describe("the Tag and Triage lists are windows", () => {
-  it("a long tag mounts a viewport's rows, and a short tag renders whole", async () => {
+  it("a long tag mounts a viewport's rows, and a short tag renders whole", () => {
     const all = Array.from({ length: N }, (_, i) => message(i));
-    const big = await mount(
-      <TagView settled owed={false} tag={tag} messages={all} onScreen={() => {}} canDelete={() => true} canReplyAll={() => true} {...common} />,
-    );
-    expect(big.querySelectorAll(".view-tag .row[data-id]").length).toBe(ROWS_AT_TOP);
-    const small = await mount(
-      <TagView settled owed={false} tag={tag} messages={all.slice(0, 30)} onScreen={() => {}} canDelete={() => true} canReplyAll={() => true} {...common} />,
-    );
-    expect(small.querySelectorAll(".view-tag .row[data-id]").length).toBe(30);
+    const view = (letters: EngineMessage[]) => listSeat({
+      first: "#/tag/t1", letters, more: { "tag:t1": tag },
+    });
+    view(all);
+    expect(screen.getAllByRole("option")).toHaveLength(ROWS_AT_TOP);
+    cleanup();
+    view(all.slice(0, 30));
+    expect(screen.getAllByRole("option")).toHaveLength(30);
   });
 
-  it("an Answer Later pile of 1 200 mounts a viewport's rows, and a short pile renders whole", async () => {
+
+  it("an Answer Later pile of 1 200 mounts a viewport's rows, and a short pile renders whole", () => {
     const all = Array.from({ length: N }, (_, i) => message(i));
-    const byId = new Map(all.map((m) => [m.id, m]));
-    const pile = (n: number) => ({
-      replyLater: all.slice(0, n).map((m) => ({ messageId: m.id, title: m.subject })),
-      setAside: [], resurface: [],
+    const view = (letters: EngineMessage[]) => listSeat({
+      first: "#/triage/reply",
+      letters,
+      more: Object.fromEntries(letters.map(({ id }) => [
+        `message_state:${id}`,
+        { messageId: id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO },
+      ])),
     });
-    const view = (n: number) => (
-      <TriageView settled owed={false}
-        piles={pile(n)} pile="reply" onPile={() => {}} frDone={new Set<string>()} onStartFR={() => {}}
-        messageOf={(id) => byId.get(id) ?? null} {...common}
-      />
-    );
-    const big = await mount(view(N));
-    expect(big.querySelectorAll(".view-triage .row[data-id]").length).toBe(ROWS_AT_TOP);
-    const small = await mount(view(30));
-    expect(small.querySelectorAll(".view-triage .row[data-id]").length).toBe(30);
+    view(all);
+    expect(screen.getAllByRole("option")).toHaveLength(ROWS_AT_TOP);
+    cleanup();
+    view(all.slice(0, 30));
+    expect(screen.getAllByRole("option")).toHaveLength(30);
   });
 });

@@ -8,10 +8,12 @@ import { ReportHost } from "../../src/frame/ReportHost.js";
 import { PLAIN_MS, useReportSlot } from "../../src/frame/report-slot.js";
 
 let report: ToastFn = () => undefined;
+let reportCalendar: (scope: symbol, message: string) => void = () => undefined;
 function Slot() {
   const slot = useReportSlot();
   useEffect(() => {
     report = slot.report;
+    reportCalendar = slot.reportCalendar;
   });
   return <ReportHost slot={slot} />;
 }
@@ -32,6 +34,41 @@ const wait = (ms: number) => act(() => vi.advanceTimersByTime(ms));
 const undoable = (onAction = vi.fn()) => ({ action: "Undo", actionKey: "z", onAction });
 
 describe("the one report slot", () => {
+  it("shows the first explicit mail failure while two Calendar reports are queued", () => {
+    const calendar = Symbol();
+    act(() => {
+      reportCalendar(calendar, "Calendar change refused");
+      report("Mail action failed");
+    });
+    expect(said()).toEqual(["Mail action failed"]);
+    act(() => {
+      reportCalendar(calendar, "Another calendar change refused");
+      report("Mail action saved");
+    });
+    expect(said()).toEqual(["Mail action saved"]);
+    wait(PLAIN_MS);
+    expect(said()).toEqual(["Calendar change refused"]);
+    wait(PLAIN_MS);
+    expect(said()).toEqual(["Another calendar change refused"]);
+  });
+
+  it("shows an explicit mail result waiting behind Undo before the Calendar queue", () => {
+    const calendar = Symbol();
+    say("Archived", undoable());
+    say("Mail action failed");
+    act(() => {
+      reportCalendar(calendar, "Calendar change refused");
+      reportCalendar(calendar, "Another calendar change refused");
+    });
+    expect(said()).toEqual(["ArchivedUndoz"]);
+    wait(UNDO_MS);
+    expect(said()).toEqual(["Mail action failed"]);
+    wait(PLAIN_MS);
+    expect(said()).toEqual(["Calendar change refused"]);
+    wait(PLAIN_MS);
+    expect(said()).toEqual(["Another calendar change refused"]);
+  });
+
   it("a report replaces the report that stands", () => {
     say("Parked");
     say("Moved to Later");
@@ -55,6 +92,22 @@ describe("the one report slot", () => {
     expect(said()).toEqual(["ArchivedUndoz"]);
     wait(1);
     expect(said()).toEqual([]);
+  });
+
+  it("removes Undo while the expired report is still fading", () => {
+    const animation = Object.assign(new EventTarget(), { cancel() {} }) as unknown as Animation;
+    const animate = vi.spyOn(Element.prototype, "animate").mockReturnValue(animation);
+    try {
+      say("Deleted", { ...undoable(), duration: 4000, actionDeadline: Date.now() + 4000 });
+      screen.getByRole("status").style.setProperty("--d-hush", "250ms");
+      wait(4000);
+      expect(screen.getByRole("status").textContent).toBe("Deleted");
+      expect(screen.queryByRole("button", { name: /Undo/ })).toBeNull();
+      act(() => animation.dispatchEvent(new Event("finish")));
+      expect(said()).toEqual([]);
+    } finally {
+      animate.mockRestore();
+    }
   });
 
   it("a plain report inside the Undo window waits, a newer one replaces it, and it is drawn when the window ends", () => {

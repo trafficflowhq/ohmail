@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 /**
- * ═══ THE FOUR CONTROLS THAT WERE STILL UNDER 44, AND WHAT EACH ONE PRESSES NOW ═══════════════
+ * ═══ THE FOLDER ROW'S TWO CONTROLS THAT WERE STILL UNDER 44, AND WHAT EACH ONE PRESSES NOW ═══
  *
- * `.msg-open` (26×26, on EVERY message), `.ftw` (14 wide), `.fmore` and `.infonote-sum` took
- * neither the drawn 44 nor a hit strip. They are the remainder of the touch-target pass, and the
- * reason they were left is the reason they need reading rather than a blanket rule: three of them
- * sit beside another control, and the strip rule forbids a strip that overlaps one.
+ * `.ftw` (14 wide) and `.fmore` took neither the drawn 44 nor a hit strip. They are the remainder
+ * of the touch-target pass, and the reason they were left is the reason they need reading rather
+ * than a blanket rule: each sits beside another control, and the strip rule forbids a strip that
+ * overlaps one. (The reader's open glyph and the (i) note's summary left with today's reader.)
  *
  * ── WHAT A "GEOMETRY CASE" IS IN JSDOM ───────────────────────────────────────────────────────
  *
@@ -30,6 +30,9 @@
  * reads the row's floor and the stretch together, because either alone is a control that presses
  * 14×20 while looking finished.
  */
+import { createRequire } from "node:module";
+import { renderToStaticMarkup } from "react-dom/server";
+import { FolderFold } from "../src/mail/Lists/FolderFold.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -103,20 +106,6 @@ const must = (all: Parsed[], selector: string, media: string | null): CSSStyleDe
 };
 
 /**
- * The TOP component of a box edge, whether the stylesheet wrote the longhand or the shorthand.
- *
- * `.msg-subject` writes `margin: 8px 0 0` and `.msg-sender` writes `padding: 3px 8px 3px 3px`;
- * jsdom expands neither into a `-top` longhand it will hand back. Reading the longhand alone
- * returns "" for both, and a measurement built on "" is a number nobody wrote.
- */
-const edgeTop = (style: CSSStyleDeclaration, edge: "margin" | "padding"): string => {
-  const long = val(style, `${edge}-top`);
-  if (long) return long;
-  const short = val(style, edge).trim().split(/\s+/)[0] ?? "";
-  return short;
-};
-
-/**
  * The strip's vertical extent, in pixels — or a throw naming the fact that is missing.
  *
  * Four facts make the extent real, and every one of them has a failure mode that renders as a
@@ -149,67 +138,8 @@ const pressableHeight = (all: Parsed[], host: string, strip: string): number => 
   return Number(px[1]);
 };
 
-describe("the per-message open-reader glyph presses 44 without drawing it", () => {
-  const all = rules(read("packages/ui/src/composites/message.css"));
-
-  it("`.msg-open` gains a centred 44px strip on phones", () => {
-    expect(pressableHeight(all, ".msg-open", ".msg-open::before")).toBeGreaterThanOrEqual(44);
-  });
-
-  it("and keeps its DRAWN 26×26 — the strip is the only thing that changed", () => {
-    const drawn = must(all, ".msg-open", null);
-    expect(val(drawn, "width")).toBe("26px");
-    expect(val(drawn, "height")).toBe("26px");
-    // No phone rule may resize it: a min-height here would be the drawn change this avoids.
-    expect(val(must(all, ".msg-open", PHONE), "min-height")).toBe("");
-  });
-
-  it("the strip stops clear of `.subj-rule`, the next control down the panel", () => {
-    /* The measurement, from the declarations rather than from a rendering: `.msg-from` is
-       `align-items:center`, its tallest item is `.msg-sender` — a 26px avatar (`.av.s`) plus
-       3px of padding at each end — so the line is 32 and the 26px glyph is centred in it. A
-       44px strip centred on the glyph reaches (44 - 32) / 2 = 6px past the line; `.msg-subject`
-       puts the subject's box 8px below it. 2px of clearance, and the sign is what matters. */
-    const strip = pressableHeight(all, ".msg-open", ".msg-open::before");
-    const sender = must(all, ".msg-sender", null);
-    const avatar = must(rules(read("packages/ui/src/primitives/avatar.css")), ".av.s", null);
-    const pad = /^(\d+)px/.exec(edgeTop(sender, "padding"))![1];
-    const lineHeight = Number(/^(\d+)px$/.exec(val(avatar, "height"))![1]) + Number(pad) * 2;
-    const overhang = (strip - lineHeight) / 2;
-
-    const subject = must(rules(read("apps/webapp/app/app.css")), ".msg-subject", null);
-    const gapBelow = Number(/^(\d+)px$/.exec(edgeTop(subject, "margin"))![1]);
-
-    expect(lineHeight, "the from-line's height, from the avatar and the sender's padding").toBe(32);
-    expect(overhang, "how far the strip reaches past the line at each end").toBe(6);
-    expect(gapBelow, "`.msg-subject`'s top margin").toBe(8);
-    expect(overhang, "the strip reaches the subject line's control").toBeLessThan(gapBelow);
-  });
-});
-
 describe("the folder row: the twisty gets the ROW, the ⋯ gets a strip", () => {
   const all = rules(read("packages/ui/src/composites/rail.css"));
-
-  it("`.ftw` presses the row's full 44 — the floor is declared, and the twisty fills it", () => {
-    /* Both halves, because either one alone is a 14×20 control that reads as finished: the row
-       has a 44px floor of its own, and the twisty stretches to the line rather than centring in
-       it. `.frow`'s floor is written in the phone block beside every other touch rule; it was
-       previously true only as a side effect of `.ritem`'s min-height, which is a sibling's
-       property. */
-    const row = must(all, ".frow", PHONE);
-    expect(val(row, "min-height")).toBe("44px");
-    expect(val(must(all, ".ftw", null), "align-self")).toBe("stretch");
-    expect(Number(/^(\d+)px$/.exec(val(row, "min-height"))![1])).toBeGreaterThanOrEqual(44);
-  });
-
-  it("and NO strip is written for it — a horizontal one would lie over `.ritem`", () => {
-    /* The rule's own exception. `.ritem` is `flex:1 1 auto` immediately to the twisty's right,
-       so a strip wide enough to help would overlap a control; and a VERTICAL strip would add
-       nothing the stretched box does not already have. */
-    expect(find(all, ".ftw::before", PHONE)).toBeNull();
-    const ftwPhone = find(all, ".ftw", PHONE);
-    expect(ftwPhone === null ? "" : val(ftwPhone, "position")).not.toBe("relative");
-  });
 
   it("`.fmore` gains a centred 44px strip, which is exactly the row it sits in", () => {
     const strip = pressableHeight(all, ".fmore", ".fmore::before");
@@ -223,50 +153,68 @@ describe("the folder row: the twisty gets the ROW, the ⋯ gets a strip", () => 
     expect(val(must(all, ".fmore", null), "padding")).toBe("2px 7px");
     expect(val(must(all, ".fmore", PHONE), "min-height")).toBe("");
   });
-});
 
-describe("the (i) disclosure's summary presses 44 while it is closed", () => {
-  const all = rules(read("packages/ui/src/primitives/info-note.css"));
-  const HOST = ".infonote:not([open]) > .infonote-sum";
-
-  it("the closed summary gains a centred 44px strip", () => {
-    expect(pressableHeight(all, HOST, `${HOST}::before`)).toBeGreaterThanOrEqual(44);
-  });
-
-  it("the OPEN note has no strip — the note's own paragraph sits 5px under the summary", () => {
-    /* `.infonote-more` is prose, and several callers fill it with prose that carries links. A
-       44px strip centred on a ~17px summary reaches ~13px past it, so an always-on strip would
-       lie over the first 8px of that paragraph and take presses meant for it. The alternative
-       the strip rule offers — grow the gap — would be a visible change on every phone with a
-       note open. Closed, the paragraph has no box; and closed is the state the big target is
-       for, because the press it takes is the one that opens the note. */
-    expect(edgeTop(must(all, ".infonote-more", null), "margin")).toBe("5px");
-    expect(find(all, ".infonote > .infonote-sum::before", PHONE)).toBeNull();
-    expect(find(all, ".infonote[open] > .infonote-sum::before", PHONE)).toBeNull();
-  });
-
-  it("and the summary's drawn line is untouched — no floor, no padding added", () => {
-    const drawn = must(all, ".infonote > .infonote-sum", null);
-    expect(val(drawn, "align-items")).toBe("baseline");
-    expect(val(must(all, HOST, PHONE), "min-height")).toBe("");
-    expect(val(must(all, HOST, PHONE), "padding")).toBe("");
-  });
-});
-
-describe("every strip in the pass stands under the phone block and nowhere else", () => {
   /* A strip outside the media block would be a 44px pressable area on the desktop, where the
      density is a design the wider layout was drawn around — and it would silently swallow the
-     rows above and below a control that is 26 tall by choice there. */
-  const files = [
-    "packages/ui/src/composites/message.css",
-    "packages/ui/src/composites/rail.css",
-    "packages/ui/src/primitives/info-note.css",
-  ];
-  it("no `height:44px` strip is declared at any other width", () => {
-    for (const f of files) {
-      const strips = rules(read(f)).filter((r) => r.selector.includes("::before") && val(r.style, "height") === "44px");
-      expect(strips.length, `${f} declares no 44px strip at all`).toBeGreaterThan(0);
-      for (const s of strips) expect(s.media, `${f}: \`${s.selector}\` stands outside the phone block`).toBe(PHONE);
+     rows above and below a control that is small there by choice. */
+  it("its strip stands under the phone block and nowhere else: no `height:44px` strip at any other width", () => {
+    const strips = all.filter((r) => r.selector.includes("::before") && val(r.style, "height") === "44px");
+    expect(strips.length, "rail.css declares no 44px strip at all").toBeGreaterThan(0);
+    for (const st of strips) expect(st.media, `rail.css: \`${st.selector}\` stands outside the phone block`).toBe(PHONE);
+  });
+});
+
+const require = createRequire(import.meta.url);
+const { chromium } = require("@playwright/test") as typeof import("@playwright/test");
+const touchCSS = [
+  "packages/tokens/src/design/tokens.css",
+  "packages/ui/src/base/base.css",
+  "packages/ui/src/mail/Shell/rail-entry.css",
+  "packages/ui/src/mail/Lists/folder-fold.css",
+].map(read).join("\n");
+
+describe("the folder branch under a finger", () => {
+  it("fills its row without taking the adjacent folder's target", async () => {
+    const markup = renderToStaticMarkup(
+      <FolderFold
+        label="All folders"
+        none="No folders"
+        groups={[{ folders: [{ id: "team", name: "Team", branch: { label: "Expand Team", expanded: false } }] }]}
+      />,
+    );
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+      await page.setContent(`<!doctype html><html data-device="phone" data-touch="1"><head>
+        <meta name="viewport" content="width=device-width,initial-scale=1"><style>${touchCSS}</style>
+        </head><body>${markup}</body></html>`);
+      const branch = page.getByRole("button", { name: "Expand Team" });
+      const folder = page.getByRole("button", { name: "Team", exact: true });
+      const folderBox = await folder.boundingBox();
+      expect(folderBox).not.toBeNull();
+      const target = await branch.evaluate((item) => {
+        const { left, right, top, bottom, height } = item.getBoundingClientRect();
+        const x = (left + right) / 2;
+        return {
+          top, right, height,
+          hits: [top + 1, bottom - 1].every((y) => item.contains(document.elementFromPoint(x, y))),
+        };
+      });
+      expect(target.height).toBeGreaterThanOrEqual(44);
+      expect(target.height).toBe(folderBox!.height);
+      expect(target.top).toBe(folderBox!.y);
+      expect(target.hits).toBe(true);
+      const boundary = await folder.evaluate((item, right) => {
+        const { top, height } = item.getBoundingClientRect();
+        const y = top + height / 2;
+        return {
+          underBranch: item.contains(document.elementFromPoint(right - 1, y)),
+          besideBranch: item.contains(document.elementFromPoint(right + 1, y)),
+        };
+      }, target.right);
+      expect(boundary).toEqual({ underBranch: false, besideBranch: true });
+    } finally {
+      await browser.close();
     }
   });
 });

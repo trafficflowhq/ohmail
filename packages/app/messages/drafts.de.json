@@ -31,6 +31,8 @@
     "waitingToSend": "Wartet auf den Versand.",
     "discardUnknownJar": "Nicht verworfen — dieser Browser kann seine eigenen Versand-Aufzeichnungen nicht lesen und weiß deshalb nicht, ob diese Nachricht noch unterwegs ist. Verwirf sie in einem Browser, der das kann.",
     "discardRefused": "Nicht verworfen: {reason}",
+    "discardChanged": "Dieser Entwurf wurde geändert und bleibt erhalten",
+    "discardUnsupported": "Dieser Server kann diesen Entwurf noch nicht sicher verwerfen",
     "discardRefusedUnnamed": "Das hat nicht geklappt, und der Server hat nicht gesagt warum. Der Entwurf liegt weiter hier.",
     "discardQueued": "Noch nicht verworfen: Dieser Browser konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
     "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim nächsten Durchlauf.",

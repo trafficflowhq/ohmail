@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, folderState, mailboxes, messageBodies, messages, routingDecisions,
+  accountSettings, accounts, folderState, mailboxes, messageBodies, messages, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
 import type { ClassifierResult } from "@trafficflow/core";
@@ -84,6 +84,7 @@ describe("a pressed purchase stores the fact that capped its suggestion", () => 
     const db = await makeTestDb();
     const accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `why-${accountId.slice(0, 8)}` });
+    await db.insert(accountSettings).values({ accountId, autoSuggestAt: NOW });
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`, organizerRole: "organizer",
     }).returning();

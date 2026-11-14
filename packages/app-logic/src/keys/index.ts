@@ -7,6 +7,7 @@ export {
   chordKeys,
   chordMatches,
   chordPrefix,
+  CURSOR_HINT_MS,
   enterActivatesTarget,
   groupedBindings,
   isTypingTarget,
@@ -27,14 +28,18 @@ export {
 export type { BindingScope, BoundKey, CursorPlacer, KeymapStore, PlacerScope } from "./keymap.js";
 export {
   currentZone,
+  leaveRail,
   leaveRailAfterGoTo,
   READER_SCROLL_STEP,
+  setBesideClose,
   setRailSummon,
+  setRailZone,
+  setReaderSheet,
   useZone,
   useZoneIs,
   useZoneNav,
   ZoneCursor,
 } from "./zone-nav.js";
-export type { Zone, ZoneListStep, ZoneNavConfig } from "./zone-nav.js";
+export type { RailZone, Zone, ZoneListStep, ZoneNavConfig } from "./zone-nav.js";
 export { FocusFollows, useFocusFollows } from "./focus-follows.js";
 export type { FocusFollowsOptions } from "./focus-follows.js";

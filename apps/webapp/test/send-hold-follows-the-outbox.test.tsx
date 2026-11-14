@@ -62,7 +62,8 @@ async function world() {
 /** One surface: compose (`inReplyTo: null`) or the inline reply to m-1. */
 async function mount(e: OhmailEngine, said: string[]) {
   const { useMailSend, COMPOSE_SEND_KEY } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  /* The send machine's words as the mail ground hands them (today's `app/shell/mail-send-text` leaves). */
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   let api!: {
     held: () => boolean; withdraw: () => Promise<string>;
     compose: (body: string) => Promise<void>; reply: (body: string) => Promise<void>;
@@ -248,6 +249,9 @@ describe("the composer's hold follows the outbox", () => {
       }
     };
     walk(root);
+    /* RE-POINTED BY PATH: the new shell's parts that can discard an unsaved change (Write, the ground's
+       list of the changes that did not go through) live in `packages/app/src`, which today's census never walked. */
+    walk(join(__dirname, "../../../packages/app/src"));
     walk(join(__dirname, "../../../packages/app-logic/src"));
     walk(join(__dirname, "../../../packages/letter-body/src"));
     expect(callers, "a discard that bypasses discardUnsavedChange").toEqual(["../../../packages/app-logic/src/writing/mail-send.ts"]);

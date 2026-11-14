@@ -49,7 +49,7 @@ export interface Invitations {
   readonly sources: ReturnType<typeof useSources>;
 }
 
-export function useInvitations(port: CalendarPort): Invitations | null {
+export function useInvitations(port: CalendarPort | typeof NONE): Invitations | null {
   const sources = useSources(port);
   const own = useOwnAddresses();
   const zone = useTimeZone();
@@ -57,9 +57,10 @@ export function useInvitations(port: CalendarPort): Invitations | null {
   const now = nowIn(Date.now(), zone, zones);
   const today = now === null ? null : isoOfDay(now.day);
   return useMemo(() => {
+    if (port === NONE || today === null) return null;
     const from = dayOfIso(today);
-    const to = today === null ? null : dayOfIso(addDays(today, port.held().window.daysAhead));
-    if (today === null || from === null || to === null) return null;
+    const to = dayOfIso(addDays(today, port.held().window.daysAhead));
+    if (from === null || to === null) return null;
     const occurrences = occurrencesIn({ ...sources, query: { from, to }, zone, zones }).shown;
     const groups = invitationsOf({
       occurrences,

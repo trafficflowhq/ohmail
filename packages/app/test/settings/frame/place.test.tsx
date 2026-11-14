@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { READER_SCROLL_STEP } from "@ohmail/app-logic/keys";
 import { Frame } from "../../../src/frame/Frame.js";
 import type { PaneProps, PlaceEntry } from "../../../src/frame/contract.js";
 import { NONE } from "../../../src/host/index.js";
@@ -32,7 +33,17 @@ const bodyOf = (id: PaneId) =>
     useEffect(() => {
       mounted.push(id);
     }, []);
-    return <p>the {id} pane</p>;
+    return (
+      <>
+        <p>the {id} pane</p>
+        {id === "general" ? (
+          <label>
+            Display name
+            <input />
+          </label>
+        ) : null}
+      </>
+    );
   };
 const ALL = Object.fromEntries(PANE_IDS.map((id) => [id, paneOf(id, { Body: bodyOf(id) })])) as SettingsPanes;
 const ohbox: PlaceEntry = {
@@ -73,7 +84,10 @@ function mount(
 ) {
   const address = fakeAddress(at);
   const shell = shellBeside(address);
-  const settings = settingsPlace(panes, () => shell.beside);
+  const settings: PlaceEntry = {
+    ...settingsPlace(panes, () => shell.beside),
+    rail: { group: "more", icon: "settings", label: "title" },
+  };
   const made = madeOf(SETTINGS[setting]!, { address, window: fakeWindow(room), places: { ohbox, settings } });
   render(
     <TextProvider locale="en" messages={WORDS} timeZone="Europe/Zurich">
@@ -84,6 +98,10 @@ function mount(
 }
 const menu = () => within(screen.getByRole("navigation", { name: settingsEn.settings.navAria }));
 const entry = (name: string) => menu().getByRole("button", { name });
+const section = (name: string) => screen.getByRole("region", { name });
+const settingsRail = () =>
+  within(screen.getByRole("navigation", { name: "Places" })).getByRole("button", { name: "Settings" });
+const key = (key: string): boolean => fireEvent.keyDown(document.activeElement ?? document.body, { key });
 
 beforeEach(() => {
   mounted.length = 0;
@@ -91,6 +109,110 @@ beforeEach(() => {
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
 afterEach(cleanup);
+
+describe("walking Settings with the keyboard", () => {
+  it("enters on General and walks the menu without going past either end", () => {
+    mount("#/settings");
+    const items = menu().getAllByRole("button");
+    expect(items.length).toBeGreaterThan(2);
+    expect(items[0]).toBe(entry("General"));
+    expect(items[0]?.getAttribute("aria-current")).toBe("page");
+
+    key("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    key("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    key("ArrowUp");
+    expect(document.activeElement).toBe(items[0]);
+    key("ArrowUp");
+    expect(document.activeElement).toBe(items[0]);
+    for (const _item of items) key("ArrowDown");
+    expect(document.activeElement).toBe(items.at(-1));
+    key("ArrowDown");
+    expect(document.activeElement).toBe(items.at(-1));
+  });
+
+  it("can move right from the rail through the current entry to a named, scrollable section", () => {
+    mount("#/settings/rules");
+    settingsRail().focus();
+    key("ArrowRight");
+    expect(document.activeElement).toBe(entry("Rules"));
+    const rules = section("Rules");
+    const reveal = vi.fn();
+    rules.scrollIntoView = reveal;
+    key("ArrowRight");
+    expect(document.activeElement).toBe(rules);
+    expect(rules.tabIndex).toBe(-1);
+    expect(reveal).toHaveBeenCalledWith({ block: "nearest" });
+    expect(rules.scrollTop).toBe(0);
+    key("ArrowDown");
+    expect(rules.scrollTop).toBe(READER_SCROLL_STEP);
+    key("ArrowUp");
+    expect(rules.scrollTop).toBe(0);
+  });
+
+  it("Escape and Left come back to the active menu row and then reach the rail", () => {
+    mount("#/settings");
+    key("ArrowDown");
+    key("ArrowRight");
+    expect(document.activeElement).toBe(section("General"));
+    key("Escape");
+    expect(document.activeElement).toBe(entry("General"));
+    key("Escape");
+    expect(document.activeElement).toBe(settingsRail());
+
+    key("ArrowRight");
+    expect(document.activeElement).toBe(entry("General"));
+    key("ArrowRight");
+    expect(document.activeElement).toBe(section("General"));
+    key("ArrowLeft");
+    expect(document.activeElement).toBe(entry("General"));
+    key("ArrowLeft");
+    expect(document.activeElement).toBe(settingsRail());
+  });
+
+  it("leaves the arrows with an input in the open section", () => {
+    mount("#/settings");
+    const input = screen.getByRole("textbox", { name: "Display name" });
+    const general = section("General");
+    input.focus();
+    for (const arrow of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+      expect(key(arrow)).toBe(true);
+      expect(document.activeElement).toBe(input);
+    }
+    expect(general.scrollTop).toBe(0);
+  });
+
+  it("opens the focused menu entry and returns to it on one column through the existing leave hold", () => {
+    const { address, hold, said } = mount("#/settings", "phone");
+    key("ArrowDown");
+    expect(document.activeElement).toBe(entry("General"));
+    key("ArrowDown");
+    expect(document.activeElement).toBe(entry("Notifications"));
+    key("ArrowRight");
+    expect(address.read()).toBe("#/settings/notifications");
+    expect(document.activeElement).toBe(section("Notifications"));
+
+    let leave: (() => void) | undefined;
+    const release = hold((go) => {
+      leave = go;
+    });
+    key("Escape");
+    expect(said.asked).toBe(1);
+    expect(address.read()).toBe("#/settings/notifications");
+    expect(document.activeElement).toBe(section("Notifications"));
+    act(() => leave?.());
+    expect(address.read()).toBe("#/settings");
+    expect(document.activeElement).toBe(entry("Notifications"));
+
+    release();
+    key("Enter");
+    expect(document.activeElement).toBe(section("Notifications"));
+    key("ArrowLeft");
+    expect(address.read()).toBe("#/settings");
+    expect(document.activeElement).toBe(entry("Notifications"));
+  });
+});
 
 describe("Settings as a place, over the fake host", () => {
   it("on two columns draws the menu beside the section the route names, that entry the current page", () => {

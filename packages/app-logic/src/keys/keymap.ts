@@ -45,6 +45,12 @@ export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener"
 export type CursorPlacer = (label: string) => boolean;
 
 /**
+ * How long a placer's sentence stands. Shorter than a report's own time: it carries nothing to press, and the
+ * second press is meant to follow it at once.
+ */
+export const CURSOR_HINT_MS = 2400;
+
+/**
  * WHICH LAYER A PLACER SPEAKS FOR — the placer's half of {@link BindingScope}, and for the same
  * reason: `view` beats `global`, whatever the component tree says. A view that holds its own list
  * cursor mounts BELOW the shell, so React runs its effect FIRST and the shell's claim is always
@@ -459,7 +465,7 @@ export function useKeymapStore(): Store {
          character, and one pressed behind a mounted composer is prose. Neither may place a
          cursor either, so the filter is shared rather than restated. */
       const reachable = (b: KeyBinding) =>
-        (b.inInput || !typing)
+        !b.helpOnly && (b.inInput || !typing)
         && !(writing && !typing && !b.inWriting && chordBelongsToWriting(b.chord));
       const live = all.filter((b) => !b.disabled && reachable(b));
       /**
@@ -551,7 +557,7 @@ export function useKeymapStore(): Store {
    */
   const press = useCallback((chord: string): boolean => {
     for (const b of ordered()) {
-      if (b.chord !== chord || b.disabled) continue;
+      if (b.chord !== chord || b.disabled || b.helpOnly) continue;
       b.run(new KeyboardEvent("keydown", { key: chord }));
       return true;
     }
@@ -673,7 +679,7 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
        cursor carries the sentence that says so), and it can move while `disabled` stays true —
        `⇧R` on a 1:1 message is disabled before AND after the cursor arrives, for two different
        reasons. Without it here the layer never re-registers and the sheet keeps the old title. */
-    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
   );
 
   useEffect(
@@ -708,7 +714,7 @@ export function useOptionalKeyBindings(
   // The same JSON shape key as `useKeyBindings`, `disabledReason` included, for the same
   // collision argument and the same staleness one.
   const shape = JSON.stringify(
-    now.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? ""]),
+    now.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
   );
   const register = ctx ? ctx.register : null;
   const reshaped = ctx ? ctx.reshaped : null;
@@ -783,9 +789,9 @@ const NO_PRESS = (): boolean => false;
 export function groupedBindings<B extends BoundKey>(bindings: B[]): Array<{ group: BindingGroup; items: B[] }> {
   const winner = new Map<string, B>();
   for (const b of bindings) {
-    const prev = winner.get(b.chord);
-    if (!prev) winner.set(b.chord, b);
-    else if (prev.disabled && !b.disabled) winner.set(b.chord, b);
+    const key = b.helpOnly ? JSON.stringify([b.chord, b.label]) : b.chord;
+    const prev = winner.get(key);
+    if (!prev || (prev.disabled && !b.disabled)) winner.set(key, b);
   }
   return BINDING_GROUPS.map((group) => ({
     group,

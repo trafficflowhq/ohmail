@@ -63,6 +63,7 @@ describe("the palette", () => {
       "New messagec",
       "Search everything",
       "Switch layout",
+      "Keyboard shortcuts",
       "Go to today",
     ]);
   });

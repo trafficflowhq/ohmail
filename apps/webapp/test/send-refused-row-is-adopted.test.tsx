@@ -3,7 +3,10 @@ import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, type HttpAdapterOptions, type MirrorStore,
 } from "@ohmail/client-engine";
@@ -144,7 +147,6 @@ interface Surface {
 /** The compose surface's two hooks over one engine, wired the way `shell-compose.ts` wires them. */
 async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
   const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
   const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
   writeComposeDraft(fieldsFor(body), null);
@@ -158,7 +160,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
       // effect's cleanup then cancels the retry timer for good.
       null,
       noToast as never,
-      useMailSendText(), (() => {}) as never,
+      useSendText(useTranslations() as unknown as Translator, scheduleLabel), (() => {}) as never,
       ((key: string, _m: unknown, accepted: boolean, _phase: unknown, detail?: { left?: { rowId: string; aboutThisCompose: boolean } }) => {
         const left = detail?.left;
         if (!accepted && left && key === "compose") {

@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef } from "react";
 import type { AccountDoor } from "@ohmail/app/account";
 import { ApiError, auth } from "../../api-client";
 // The one correct way out: it revokes at the server and wipes this browser's copy. Every logout goes through it.
-import { signOut } from "../../sign-out";
-import { signOutTrouble } from "../../sign-out-trouble";
+import { readSessionFamily } from "../../signed-out-signal";
+import { signOut, signOutStayReason } from "../../sign-out";
 import { useRefusalSentence } from "../refusal-sentence";
 
 /**
@@ -13,23 +13,23 @@ import { useRefusalSentence } from "../refusal-sentence";
  * names the address; an enrolment still open, or a 401 or 403, is nobody signed in; anything else is a read that
  * failed, said with no remedy (signing in again is not the remedy for a server that could not answer).
  *
- * Sign-out is not guarded by a factor, on purpose. It signs out the account that read named, as the press always
- * did. It leaves by a full load of `/`, so the server decides the next page; it does NOT leave while this browser
- * still holds the mail (another tab blocks the wipe) or will not say what it holds. A server that refused still
- * leaves: the browser is wiped and marked, and the sign-in page finishes it.
+ * Sign-out is not guarded by a factor. It ends the account this pane named. The landing page takes
+ * over once the mailbox is retired, including when the browser still owes cleanup or a server retry.
  *
  * The erase is the delete page's: this door only leaves for it. The way to the sign-in page is the shell's own way
  * back to a live session, handed in: this file names no second one.
  */
 export function accountDoor(say: (err: unknown) => string, toSignIn: () => void): AccountDoor {
   /** The account the last read named. Kept here for the one press that needs it; never handed to a pane. */
-  let named: string | undefined;
+  let named: { account: string; family: string | undefined } | undefined;
   return {
     async who() {
+      named = undefined;
+      const heldFamily = readSessionFamily();
       try {
-        const { user, scope } = await auth.session();
+        const { user, scope, familyId } = await auth.session();
         if (scope === "full" && user?.accountId) {
-          named = user.accountId;
+          named = { account: user.accountId, family: familyId ?? heldFamily ?? undefined };
           return { ok: true, value: { address: user.email } };
         }
         return { ok: false, word: "signed_out" };
@@ -41,10 +41,10 @@ export function accountDoor(say: (err: unknown) => string, toSignIn: () => void)
       }
     },
     async signOut() {
-      const trouble = signOutTrouble(await signOut(named));
-      if (trouble !== null && trouble.key !== "signOutServerRefused") {
-        return trouble.key === "signOutUnverified" ? "unverified" : "blocked";
-      }
+      if (named === undefined) return "unverified";
+      const outcome = await signOut(named.account, { expectedFamily: named.family });
+      const stay = signOutStayReason(outcome);
+      if (stay !== null) return stay;
       window.location.assign("/");
       return "left";
     },

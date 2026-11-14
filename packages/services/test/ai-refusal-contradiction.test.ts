@@ -4,7 +4,7 @@ import { accounts, mailboxes, messages, type AccessVerdict, type SpendOutcome } 
 import { makeTestDb } from "@trafficflow/db/testing";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, DraftInput, DraftPort } from "@trafficflow/core";
 import { DraftingService, ScreenerService, dbFor, type ServiceContext } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
 /**
@@ -82,7 +82,7 @@ const refusals = () => lines.filter((l) => l.event === "screener_suggest_refused
 const contradictions = () => lines.filter((l) => l.event === "refusal_contradicted_by_access");
 
 async function screenerPress(outcome: SpendOutcome, access?: ReturnType<typeof accessAnswering>) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "refusal" });
   await seedMessage(w.db, w.accountId, w.mailboxId, { from: "stranger@example.com" });
   const svc = new ScreenerService({

@@ -3,7 +3,7 @@ import { serviceContext } from "../context.js";
 import { presentedResumeMarker } from "../cookies.js";
 import { withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
-import { json, noContent, readBody } from "./shared.js";
+import { cookieSurface, json, noContent, readBody } from "./shared.js";
 import { auth, enrollmentSession } from "./shared-cloud.js";
 // The carved lifecycle pair — `/auth/logout` + `/auth/refresh` — spread back in below at their
 // old positions, as the same objects. See `session-lifecycle.ts` for the carve.
@@ -128,7 +128,9 @@ export const coreRoutes: Route[] = [
     handler: async (req, deps) => {
       // No `tf_owner`: an answer that crossed a Sign out press would name the account over it. The
       // web client puts a lost marker back from this body, where its jar says nothing.
-      return json(await auth(deps).getSession(serviceContext(deps, req)), 200);
+      const session = await auth(deps).getSession(serviceContext(deps, req));
+      return json({ ...session, ...(cookieSurface(deps) && deps.session?.via === "cookie"
+        ? { familyId: deps.session.familyId } : {}) }, 200);
     },
   },
   {

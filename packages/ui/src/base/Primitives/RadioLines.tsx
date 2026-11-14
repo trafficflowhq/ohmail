@@ -31,6 +31,19 @@ export interface RadioLinesProps<V extends string> {
 export function RadioLines<V extends string>({ label, options, value, onChange, kind }: RadioLinesProps<V>) {
   const group = useRef<HTMLDivElement | null>(null);
   const move = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter") {
+      const form = e.currentTarget.closest("form");
+      if (form === null || e.defaultPrevented) return;
+      e.preventDefault();
+      const controls = form.ownerDocument.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
+        'button, input[type="submit"], input[type="image"]',
+      );
+      /* Activate the default submitter so validation and a disabled Continue are respected. */
+      Array.from(controls)
+        .find((control) => control.form === form && (control.type === "submit" || control.type === "image"))
+        ?.click();
+      return;
+    }
     const step =
       e.key === "ArrowDown" || e.key === "ArrowRight"
         ? 1

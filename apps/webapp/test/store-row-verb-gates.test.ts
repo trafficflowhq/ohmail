@@ -12,11 +12,16 @@ import { sliceOfDeclaration } from "./source-anchor";
 
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-/** Each gate by the name it is declared under — `sliceOfDeclaration` refuses a stale anchor. */
+/**
+ * Each gate by the name it is declared under — `sliceOfDeclaration` refuses a stale anchor. RE-POINTED TO THE NEW SHELL
+ * (RULING-NEW-SHELL-FIRST D (3)): today's shell gates (`shell-verbs.ts` canDeleteMessage and planMoveToPlace,
+ * `shell-open-state.ts` verbHolds) leave with it; a seat's verbs plan their moves in the press
+ * (`press/move-to-place.ts`), and the Ohbox's cursor row asks whether its row may be deleted in its keys
+ * (`ohbox/live.ts` useOhboxKeys, `d` and ⌫ at one column).
+ */
 const GATES: Array<{ file: string; name: string }> = [
-  { file: "../app/shell/shell-verbs.ts", name: "canDeleteMessage" },
-  { file: "../app/shell/shell-verbs.ts", name: "planMoveToPlace" },
-  { file: "../app/shell/shell-open-state.ts", name: "verbHolds" },
+  { file: "../../../packages/app-logic/src/press/move-to-place.ts", name: "planMoveToPlace" },
+  { file: "../../../packages/app-logic/src/ohbox/live.ts", name: "useOhboxKeys" },
   { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateAndReport" },
   { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateSetAndReport" },
   { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "routing" },

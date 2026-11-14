@@ -203,7 +203,7 @@ export interface WorkerScope {
   alertReaders: AlertReaders;
   parkedAccountsReader: ParkedAccountsReader | null;
   classifierCircuit: ClassifierCircuit | undefined;
-  aiFor: (mailboxId: string, accountId: string) => Pick<SyncDeps, "classifier" | "credits">;
+  aiFor: (mailboxId: string, accountId: string) => Pick<SyncDeps, "classifier" | "credits" | "readModelConsent" | "consentRefunds">;
   storageCapFor: StorageCapResolver;
   signatureCheck: SignatureCheck;
   screeningFor: (accountId: string) => Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff" | "signatures">>;

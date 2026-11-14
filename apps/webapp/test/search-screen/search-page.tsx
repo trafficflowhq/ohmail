@@ -20,7 +20,7 @@ import {
 import { useSearchList } from "@ohmail/app-logic/search";
 import type { LayoutPlan, PaneProps } from "@ohmail/app/frame";
 import { NONE } from "@ohmail/app/host";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { SearchAbove, SearchList, searchBlankOf, type SearchBeside } from "@ohmail/app/search";
 import { fillOver, TextProvider, type Messages } from "@ohmail/app/text";
 import { Sheet } from "@ohmail/ui/mail";

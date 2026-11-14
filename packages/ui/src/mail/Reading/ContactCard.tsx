@@ -13,12 +13,17 @@ import "./contact-card.css";
 
 export interface ContactCardProps {
   open: boolean;
+  id?: string;
   onClose: () => void;
   /** The name that was pressed. Left out: the card comes up from the foot. */
   anchor?: MenuProps["anchor"];
   /** The card's name, said to a screen reader. */
   label: string;
+  onKey?: MenuProps["onKey"];
+  closeWhenFull?: MenuProps["closeWhenFull"];
   person: { name: string; address: string };
+  /** The sender check, before the choices it informs. */
+  notice?: ReactNode;
   copy?: { label: string; onPress?: () => void };
   /** Whose mail the card is about: this address, or everyone at the domain. */
   scope?: {
@@ -60,31 +65,38 @@ function marked(line: string, word: string): ReactNode {
 
 /** Who it is, where their mail goes, and the controls that change it. */
 export function ContactCard(props: ContactCardProps) {
-  const { open, onClose, anchor, label, person, copy, scope, now, goes, rules, switches, more, children } =
-    props;
-  const group = useRef<HTMLDivElement | null>(null);
-  const walk = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!goes) return;
-    const step =
-      event.key === "ArrowRight" || event.key === "ArrowDown"
-        ? 1
-        : event.key === "ArrowLeft" || event.key === "ArrowUp"
-          ? -1
-          : 0;
-    if (!step) return;
-    event.preventDefault();
-    event.stopPropagation();
-    /* The arrows move the keys only: a place is taken by a press, Enter or Space, since taking one
-       moves the sender's mail at once. */
-    const radios = [...(group.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? [])];
-    const n = radios.length;
-    if (!n) return;
-    const at = Math.max(0, radios.indexOf(document.activeElement as HTMLElement));
-    radios[(at + step + n) % n]!.focus();
-  };
-  const taken = goes?.places.some((p) => p.value === goes.value);
+  const {
+    open,
+    id,
+    onClose,
+    anchor,
+    label,
+    onKey,
+    closeWhenFull,
+    person,
+    notice,
+    copy,
+    scope,
+    now,
+    goes,
+    rules,
+    switches,
+    more,
+    children,
+  } = props;
   return (
-    <Menu open={open} onClose={onClose} anchor={anchor} label={label} kind="card">
+    <Menu
+      open={open}
+      id={id}
+      modal={goes !== undefined}
+      onClose={onClose}
+      anchor={anchor}
+      label={label}
+      kind="card"
+      onKey={onKey}
+      fit="whole"
+      closeWhenFull={closeWhenFull}
+    >
       <div className="oh-contactcard-head">
         <Avatar name={person.name} address={person.address} size="l" />
         <span className="oh-contactcard-who">
@@ -93,6 +105,7 @@ export function ContactCard(props: ContactCardProps) {
         </span>
         {copy ? <Button kind="quiet" size="s" icon="copy" label={copy.label} onPress={copy.onPress} /> : null}
       </div>
+      {notice}
       {scope ? (
         <RadioLines
           label={scope.label}
@@ -111,35 +124,7 @@ export function ContactCard(props: ContactCardProps) {
           ) : null}
         </p>
       ) : null}
-      {goes ? (
-        <>
-          <h4 className="oh-text oh-contactcard-title">{goes.label}</h4>
-          <div
-            ref={group}
-            className="oh-contactcard-places"
-            role="radiogroup"
-            aria-label={goes.label}
-            onKeyDown={walk}
-          >
-            {goes.places.map((place, i) => {
-              const checked = place.value === goes.value;
-              return (
-                <button
-                  key={place.value}
-                  type="button"
-                  className="oh-control oh-contactcard-place"
-                  role="radio"
-                  aria-checked={checked}
-                  tabIndex={checked || (!taken && i === 0) ? 0 : -1}
-                  onClick={() => goes.onChange?.(place.value)}
-                >
-                  {place.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
+      {goes ? <ContactDestinations goes={goes} /> : null}
       {rules?.length ? (
         <div className="oh-contactcard-rules">
           {rules.map((rule, i) => (
@@ -164,5 +149,57 @@ export function ContactCard(props: ContactCardProps) {
         </Fragment>
       ) : null}
     </Menu>
+  );
+}
+
+function ContactDestinations({ goes }: { goes: NonNullable<ContactCardProps["goes"]> }) {
+  const group = useRef<HTMLDivElement | null>(null);
+  const walk = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step) return;
+    event.preventDefault();
+    event.stopPropagation();
+    /* The arrows move the keys only: a place is taken by a press, Enter or Space, since taking one
+       moves the sender's mail at once. */
+    const radios = [...(group.current?.querySelectorAll<HTMLElement>('[role="radio"]') ?? [])];
+    const n = radios.length;
+    if (!n) return;
+    const at = Math.max(0, radios.indexOf(document.activeElement as HTMLElement));
+    radios[(at + step + n) % n]!.focus({ preventScroll: true });
+  };
+  const taken = goes.places.some((p) => p.value === goes.value);
+  return (
+    <>
+      <h4 className="oh-text oh-contactcard-title">{goes.label}</h4>
+      <div
+        ref={group}
+        className="oh-contactcard-places"
+        role="radiogroup"
+        aria-label={goes.label}
+        onKeyDown={walk}
+      >
+        {goes.places.map((place, i) => {
+          const checked = place.value === goes.value;
+          return (
+            <button
+              key={place.value}
+              type="button"
+              className="oh-control oh-contactcard-place"
+              role="radio"
+              aria-checked={checked}
+              tabIndex={checked || (!taken && i === 0) ? 0 : -1}
+              onClick={() => goes.onChange?.(place.value)}
+            >
+              {place.label}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }

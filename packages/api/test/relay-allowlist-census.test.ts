@@ -131,7 +131,8 @@ describe("the projection the sidecar reads matches the table", () => {
     // connect a calendar in the app, as `POST /mailboxes` adds a mailbox with its password. Each is a
     // signed-in session's route that reads every id with its account; none signs in, pairs or ends
     // a session; a typed sign-in rides in a body alone, as a mailbox's password does.
-    expect(RELAY_ALLOWLIST.length).toBe(210);
+    // 210 -> 211 with conditional Discard, the same draft write with a required precondition.
+    expect(RELAY_ALLOWLIST.length).toBe(211);
   });
 
   it("every pattern in the projection is a real route", () => {

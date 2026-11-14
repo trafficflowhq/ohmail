@@ -1,12 +1,10 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { HttpAdapter } from "@ohmail/client-engine";
+import { within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { HeldUnsubscribe } from "../app/views/ScreenerView";
-import { settleFirstPaint } from "./_first-paint.js";
+import { message } from "./_draft-shell.js";
+import { ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 
 /**
  * THE PREVIEW SAYS WHAT THE LIST ANSWERED. The press goes through the real
@@ -14,17 +12,13 @@ import { settleFirstPaint } from "./_first-paint.js";
  * link and no press left; a list that failed, or a press that never reached ohmail, keeps its
  * button. Read from the rendered text and the rendered controls.
  */
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+let held: HTMLElement;
 
-let host: HTMLDivElement | null = null;
-let root: Root | null = null;
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null;
+beforeEach(() => {
+  installShellEnv();
+  window.localStorage.clear();
 });
+afterEach(async () => { await teardownShellEnv(); });
 
 type Answer = { status: number; body: unknown } | "offline";
 const json = (status: number, body: unknown): Answer => ({ status, body });
@@ -43,27 +37,50 @@ async function mount(answers: Answer[]): Promise<{ calls: () => number }> {
       return new Response(JSON.stringify(a.body), { status: a.status, headers: { "content-type": "application/json" } });
     },
   });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      React.createElement(NextIntlClientProvider, {
-        locale: "en", messages: en,
-        children: React.createElement(HeldUnsubscribe, {
-          state: "one_click", url: null, onUnsubscribe: () => adapter.unsubscribe("m1"),
-        }),
-      }),
-    );
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const letter = message("m1", {
+    accountId: "acct_live_1", mailboxId: "mb_1", folder: "ohmail/Screened", subject: "Weekly list",
   });
+  await store.applyChanges([
+    { type: "message", op: "create", id: letter.id, seq: 1, updatedAt: ISO, entity: letter },
+    {
+      type: "message_body", op: "create", id: letter.id, seq: 2, updatedAt: ISO,
+      entity: {
+        messageId: letter.id, state: "ready", text: "The list's message", html: null, loadedRemoteContent: false,
+        unsubscribe: "one_click", unsubscribeUrl: null, withheld: null,
+      },
+    },
+  ]);
+  const engine = new OhmailEngine({
+    store,
+    adapter: {
+      sync: async () => ({
+        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        cursor: store.getCursor(), hasMore: false, serverTime: ISO,
+      }),
+      mutate: async () => ({ changes: [], seq: null }),
+      withdrawSend: async () => ({ outcome: "unsupported" }),
+      fetchBody: async () => null,
+      unsubscribe: (id) => adapter.unsubscribe(id),
+    },
+  });
+  window.location.hash = "#/screener/screened";
+  const host = await mountShell([mailbox({
+    id: "mb_1", lastSyncAt: ISO, organizerRole: "organizer", organizeConsentedAt: ISO,
+  })], { engine, suggestWire: "none", junkWire: "none" });
+  await tick(50);
+  const row = within(host).getByRole("option", { name: /Weekly list/ });
+  await act(async () => { row.click(); });
+  await tick(50);
+  held = within(host).getByRole("region", { name: "Reading" });
   return { calls: () => calls };
 }
 
 async function press(): Promise<void> {
-  const button = host!.querySelector("button");
-  expect(button, "a press must be on screen to press").not.toBeNull();
-  await act(async () => { button!.click(); });
-  await settleFirstPaint();
+  const button = within(held).getByRole("button", { name: S.unsubscribe });
+  await act(async () => { button.click(); });
+  await tick(0);
 }
 
 const S = en.screener;
@@ -72,20 +89,20 @@ describe("the Screened-out preview after a one-click press", () => {
   it("a list that refused reads as refused, offers the sender's site, and leaves no press", async () => {
     await mount([refusal("unsubscribe_list_refused", false, { status: 405, siteUrl: "https://list.example/leave?t=1" })]);
     await press();
-    const text = host!.textContent ?? "";
+    const text = held.textContent ?? "";
     expect(text).toContain(S.unsubListRefused);
     expect(text, "a refused request may not read as done").not.toContain(S.unsubAlready);
-    const link = host!.querySelector("a");
+    const link = within(held).queryByRole("link", { name: S.unsubExternal });
     expect(link?.getAttribute("href")).toBe("https://list.example/leave?t=1");
     expect(link?.textContent).toBe(S.unsubExternal);
-    expect(host!.querySelector("button"), "the list answered; asking again changes nothing").toBeNull();
+    expect(within(held).queryByRole("button", { name: S.unsubscribe }), "the list answered; asking again changes nothing").toBeNull();
   });
 
   it("a link that is not https is never drawn", async () => {
     await mount([refusal("unsubscribe_list_refused", false, { status: 405, siteUrl: "javascript:alert(1)" })]);
     await press();
-    expect(host!.textContent).toContain(S.unsubListRefused);
-    expect(host!.querySelector("a")).toBeNull();
+    expect(held.textContent).toContain(S.unsubListRefused);
+    expect(within(held).queryAllByRole("link")).toEqual([]);
   });
 
   it("a list that failed says so and keeps its press, and the retry is a real second request", async () => {
@@ -94,16 +111,16 @@ describe("the Screened-out preview after a one-click press", () => {
       json(200, { messageId: "m1", posted: true, status: 200, refusal: null, header: "one_click" }),
     ]);
     await press();
-    expect(host!.textContent).toContain(S.unsubListFailed);
+    expect(held.textContent).toContain(S.unsubListFailed);
     await press();
     expect(m.calls()).toBe(2);
-    expect(host!.textContent).toContain(S.unsubSent);
+    expect(held.textContent).toContain(S.unsubSent);
   });
 
   it("a press that never reached ohmail keeps its press", async () => {
     await mount(["offline"]);
     await press();
-    expect(host!.textContent).toContain("Something went wrong. Please try again.");
-    expect(host!.querySelector("button"), "a failed press keeps its button").not.toBeNull();
+    expect(held.textContent).toContain(S.place.unsubFailed);
+    expect(within(held).queryByRole("button", { name: S.unsubscribe }), "a failed press keeps its button").not.toBeNull();
   });
 });

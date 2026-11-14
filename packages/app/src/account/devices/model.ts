@@ -60,6 +60,7 @@ export interface MadeLink {
 export interface DevicesLists {
   readonly sessions: readonly DeviceSession[];
   readonly codes: readonly PairingCode[];
+  readonly onShown?: () => () => void;
 }
 
 /** How a host reaches the account's devices. Every call is one request, but `read`, which asks both lists together. */

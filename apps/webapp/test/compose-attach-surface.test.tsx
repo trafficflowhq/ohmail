@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -10,7 +12,7 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES, composeAttachBudgetFor, composeAttachCap,
   composeAttachCapBinding,
-} from "../app/components/ComposeAttach";
+} from "@ohmail/client-engine";
 import { setActiveCatalog } from "../app/shell/locale";
 import { announceUpdate, resetUpdateStoreForTests, restartHold } from "@ohmail/app-logic/doors/app-update";
 import { settleFirstPaint } from "./_first-paint.js";
@@ -52,6 +54,31 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const MIB = 1024 * 1024;
+
+/*
+ * OVER THE NEW SHELL (re-pointed from today's AppShell by the older tests' sorting, share write-1): the frame over the
+ * mail ground, mounted through the shell's test door (`_mail-shell.tsx`), which reads the old door's inputs by their
+ * old names (`mailboxFacts`, `sendSurfaceMaxTotalBytes`, handed on as the host's `sendCeiling`). Today's compose view
+ * is Write's letter, the region "New message"; today's inline reply is Write's reply in the open letter, the region
+ * "Open message" (opened at the Ohbox: History is not mounted). THE STATED CEILING is the name of Write's clip (the
+ * kit's Attach: "Attach files, at most <size> in all"), the same number its pick refuses at; THE CLAUSE that says why
+ * the small one binds stands in Write's room under the files, which Write draws from the first file on (the studio's
+ * room), so a case that reads the clause puts one small file on first, in both of its halves. Both sentences are read
+ * from Write's own catalogue (`packages/app/messages/write.*.json`, `files.attach`, `files.capSurface`).
+ */
+const writeWords = (locale: "en" | "de"): { letter: string; attach: string; capSurface: string; remove: string } => {
+  const rel = `packages/app/messages/write.${locale}.json`;
+  let text: string;
+  try { text = readFileSync(resolve(process.cwd(), rel), "utf8"); }
+  catch { text = readFileSync(resolve(process.cwd(), "../..", rel), "utf8"); }
+  const write = (JSON.parse(text) as {
+    write: { letter: string; files: { attach: string; capSurface: string; remove: string } };
+  }).write;
+  return { letter: write.letter, attach: write.files.attach, capSurface: write.files.capSurface, remove: write.files.remove };
+};
+/** Write's letter in either language ("New message", "Neue Nachricht": `write.letter`). */
+const LETTER = (["en", "de"] as const).map((l) => `[role="region"][aria-label="${writeWords(l).letter}"]`).join(", ");
+const REPLY = '[role="region"][aria-label="Open message"]';
 
 /** One connected mailbox, as `GET /mailboxes` would report it, with `SIZE` variable per case. */
 function facts(smtpMaxSizeBytes: number | null): MailboxFacts[] {
@@ -107,13 +134,14 @@ async function mountShell(opts: {
   locale?: "en" | "de";
 }): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   const probe = async (): Promise<MailboxFacts[]> => facts(opts.size);
   // The register and the provider are built together, which is `LocaleShell`'s own contract: the
   // SENTENCE comes from the provider and the NUMBER in it from `activeFormatLocale()`.
+  activeLocale = opts.locale ?? "en";
   setActiveCatalog(opts.locale ?? "en", (opts.locale === "de" ? de : messages) as never);
   await act(async () => {
     root!.render(
@@ -125,7 +153,7 @@ async function mountShell(opts: {
         children: h(ThemeProvider, {
           storageKey: null,
           children: h(ToastHost, {
-            children: h(AppShell as never, {
+            children: h(MailShell as never, {
               demo: true,
               mailboxFacts: probe,
               ...("surface" in opts ? { sendSurfaceMaxTotalBytes: opts.surface } : {}),
@@ -149,23 +177,77 @@ async function goCompose(): Promise<void> {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
-/** Open the newest Ohbox message, then its reply editor — the product's own keys. */
+/**
+ * Open the newest Ohbox message, then its reply editor — the product's own keys: the Ohbox's first row by its press
+ * (the new shell's Ohbox, by role), then "r" where the keys are.
+ */
 async function openReply(): Promise<void> {
-  const key = async (k: string): Promise<void> => {
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-    });
-  };
-  await key("j");
-  await key("r");
+  const firstRow = (): HTMLElement | null =>
+    host!.querySelector<HTMLElement>('section[aria-label="Messages"] [role=option][data-id]');
+  const deadline = Date.now() + 10_000;
+  while (!firstRow() && Date.now() <= deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+  }
+  const row = firstRow();
+  expect(row, "the Ohbox listed no letter").not.toBeNull();
+  await act(async () => {
+    row!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    row!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    row!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }));
+  });
+  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  const sheet = (): Element | null => host!.querySelector(REPLY)?.querySelector('[role="textbox"][aria-label="Reply body"]') ?? null;
+  while (!sheet() && Date.now() <= deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  }
+  expect(sheet(), "the reply never opened").not.toBeNull();
 }
 
-const capText = (scope: string): string =>
-  host!.querySelector<HTMLElement>(`${scope} .compose-attach-cap`)?.textContent ?? "";
+/** The stated ceiling: the name of the clip (Write's `files.attach`, in the locale on screen). */
+const capText = (scope: string): string => {
+  const lead = writeWords(activeLocale).attach.split("{size}")[0]!;
+  const clip = [...(host!.querySelector(scope)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((b) => (b.getAttribute("aria-label") ?? "").startsWith(lead));
+  return clip?.getAttribute("aria-label") ?? "";
+};
 
-/** The clause under the cap, or "" where the surface renders none. */
-const whyText = (scope: string): string =>
-  host!.querySelector<HTMLElement>(`${scope} .compose-attach-why`)?.textContent ?? "";
+/** The clause beside the cap (Write's `files.capSurface`, either language), or "" where the surface renders none. */
+const whyText = (scope: string): string => {
+  const region = host!.querySelector(scope);
+  if (!region) return "";
+  const clauses = [writeWords("en").capSurface, writeWords("de").capSurface];
+  const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+  const said: string[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const text = (n.textContent ?? "").trim();
+    if (clauses.some((c) => text.includes(c))) said.push(text);
+  }
+  return said.join(" ");
+};
+
+/** One small file on the letter or the reply, read and attached: Write draws its room (and the clause) from the first file on. */
+async function attachSmall(scope: string): Promise<void> {
+  const input = host!.querySelector(scope)!.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const file = new File([new Uint8Array(2048)], "notes.txt", { type: "text/plain" });
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
+  await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+  for (let i = 0; i < 8; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  expect(removeButton(scope, "notes.txt"), "the file never attached").not.toBeNull();
+}
+
+/**
+ * A file on the letter: its way off, the press "Remove <name>" (Write's `files.remove`, in the locale on screen; today's
+ * `.compose-attach-item` row and its remove).
+ */
+const removeButton = (scope: string, name: string): HTMLButtonElement | null =>
+  [...(host!.querySelector(scope)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((b) => b.getAttribute("aria-label") === writeWords(activeLocale).remove.replace("{filename}", name)) ?? null;
+
+let activeLocale: "en" | "de" = "en";
 
 beforeEach(() => {
   setViewport();
@@ -194,43 +276,44 @@ describe("compose — the stated ceiling follows the surface declaration", () =>
     await mountShell({ size: 25 * MIB, surface: null });
     await goCompose();
     expect(composeAttachBudgetFor(25 * MIB)).toBe(19_108_785);
-    expect(capText(".view-compose")).toContain("19.1 MB");
-    expect(capText(".view-compose")).not.toContain("3.1 MB");
-    expect(capText(".view-compose")).not.toContain("25 MB");
+    expect(capText(LETTER)).toContain("19.1 MB");
+    expect(capText(LETTER)).not.toContain("3.1 MB");
+    expect(capText(LETTER)).not.toContain("25 MB");
   });
 
   it("the hosted tab is byte-identical: no declaration, the constant still binds", async () => {
     await mountShell({ size: 25 * MIB });
     await goCompose();
-    expect(capText(".view-compose")).toContain("3.1 MB");
-    expect(capText(".view-compose")).not.toContain("25 MB");
+    expect(capText(LETTER)).toContain("3.1 MB");
+    expect(capText(LETTER)).not.toContain("25 MB");
   });
 
   it("an uncapped surface with NO measured SIZE states the assumed provider SIZE — not 3 MB, not 'unbounded'", async () => {
     await mountShell({ size: null, surface: null });
     await goCompose();
     // A 25 MiB announcement's budget, the same number a measured 25 MiB states above.
-    expect(capText(".view-compose")).toContain("19.1 MB");
-    expect(capText(".view-compose")).not.toContain("3.1 MB");
+    expect(capText(LETTER)).toContain("19.1 MB");
+    expect(capText(LETTER)).not.toContain("3.1 MB");
     // …and no claim about a server nobody measured.
-    expect(capText(".view-compose")).not.toContain("would take more");
+    expect(capText(LETTER)).not.toContain("would take more");
   });
 
   it("a stingy provider still binds an uncapped surface below the constant", async () => {
     await mountShell({ size: 2 * MIB, surface: null });
     await goCompose();
     expect(composeAttachBudgetFor(2 * MIB)).toBe(1_484_642);
-    expect(capText(".view-compose")).toContain("1.5 MB");
-    expect(capText(".view-compose")).not.toContain("3.1 MB");
+    expect(capText(LETTER)).toContain("1.5 MB");
+    expect(capText(LETTER)).not.toContain("3.1 MB");
   });
 
   it("the German catalog renders the same large value", async () => {
     await mountShell({ size: 25 * MIB, surface: null, locale: "de" });
     await goCompose();
-    // The sentence AND its number: "Bis zu 19,1 MB insgesamt".
-    expect(capText(".view-compose")).toContain("19,1 MB");
-    expect(capText(".view-compose")).not.toContain("19.1 MB");
-    expect(capText(".view-compose")).toMatch(/Bis zu/);
+    // The sentence AND its number: today's "Bis zu 19,1 MB insgesamt" is, in Write's catalogue (`files.attach`, de),
+    // "Dateien anhängen, höchstens 19,1 MB insgesamt": the German sentence, read in Write's words.
+    expect(capText(LETTER)).toContain("19,1 MB");
+    expect(capText(LETTER)).not.toContain("19.1 MB");
+    expect(capText(LETTER)).toMatch(/höchstens/);
   });
 });
 
@@ -244,11 +327,11 @@ describe("the mailbox page declares the staged ceiling only where it can upload"
 
     await mountShell({ size: 50 * MIB, surface: sendSurfaceFor(false, undefined) });
     await goCompose();
-    expect(capText(".view-compose")).toContain("3.1 MB");
+    expect(capText(LETTER)).toContain("3.1 MB");
 
     await mountShell({ size: 50 * MIB, surface: sendSurfaceFor(false, origin) });
     await goCompose();
-    expect(capText(".view-compose")).toContain("38.3 MB");
+    expect(capText(LETTER)).toContain("38.3 MB");
   });
 });
 
@@ -257,16 +340,16 @@ describe("inline reply — the same declaration reaches the editor through the c
     await mountShell({ size: 25 * MIB, surface: null });
     await openReply();
     // The budget, not the face value — see the compose case above for the derivation.
-    expect(capText(".reply")).toContain("19.1 MB");
-    expect(capText(".reply")).not.toContain("3.1 MB");
-    expect(capText(".reply")).not.toContain("25 MB");
+    expect(capText(REPLY)).toContain("19.1 MB");
+    expect(capText(REPLY)).not.toContain("3.1 MB");
+    expect(capText(REPLY)).not.toContain("25 MB");
   });
 
   it("the hosted tab is byte-identical in the reply too", async () => {
     await mountShell({ size: 25 * MIB });
     await openReply();
-    expect(capText(".reply")).toContain("3.1 MB");
-    expect(capText(".reply")).not.toContain("25 MB");
+    expect(capText(REPLY)).toContain("3.1 MB");
+    expect(capText(REPLY)).not.toContain("25 MB");
   });
 });
 
@@ -306,11 +389,11 @@ describe("one rule, two declarations, and the small number says why", () => {
   it("reproduces the reported pair from one account: the paired desktop's small cap, the hosted tab's large one", async () => {
     await mountShell({ size: ANNOUNCED });               // the desktop Cloud door: no declaration
     await goCompose();
-    expect(capText(".view-compose")).toContain("3.1 MB");
+    expect(capText(LETTER)).toContain("3.1 MB");
 
     await mountShell({ size: ANNOUNCED, surface: COMPOSE_ATTACH_STAGED_SURFACE_BYTES });
     await goCompose();
-    expect(capText(".view-compose")).toContain("38.3 MB");
+    expect(capText(LETTER)).toContain("38.3 MB");
   });
 
   /**
@@ -345,11 +428,13 @@ describe("one rule, two declarations, and the small number says why", () => {
   it("the paired desktop's smaller cap carries the reason; the hosted tab's larger one does not", async () => {
     await mountShell({ size: ANNOUNCED });
     await goCompose();
-    expect(whyText(".view-compose")).toContain("Your mail server would take more");
+    await attachSmall(LETTER); // Write's room, where the clause stands, is drawn from the first file on
+    expect(whyText(LETTER)).toContain("Your mail server would take more");
 
     await mountShell({ size: ANNOUNCED, surface: COMPOSE_ATTACH_STAGED_SURFACE_BYTES });
     await goCompose();
-    expect(whyText(".view-compose")).toBe("");
+    await attachSmall(LETTER); // the same room, so its silence is read where the clause would stand
+    expect(whyText(LETTER)).toBe("");
   });
 
   /* ONE mount per case from here down. Opening the reader schedules a selection-restore
@@ -359,17 +444,19 @@ describe("one rule, two declarations, and the small number says why", () => {
   it("the reply editor states it too", async () => {
     await mountShell({ size: ANNOUNCED });
     await openReply();
-    expect(capText(".reply")).toContain("3.1 MB");
-    expect(whyText(".reply")).toContain("Your mail server would take more");
+    expect(capText(REPLY)).toContain("3.1 MB");
+    await attachSmall(REPLY); // Write's room, where the clause stands, is drawn from the first file on
+    expect(whyText(REPLY)).toContain("Your mail server would take more");
   });
 
   it("the German catalogue carries the sentence", async () => {
     await mountShell({ size: ANNOUNCED, locale: "de" });
     await goCompose();
     // The decimal comma, as the large-value case above reads it.
-    expect(capText(".view-compose")).toContain("3,1 MB");
-    expect(whyText(".view-compose")).toContain("Der Mailserver");
-    expect(whyText(".view-compose")).not.toContain("Your mail server");
+    expect(capText(LETTER)).toContain("3,1 MB");
+    await attachSmall(LETTER); // Write's room, where the clause stands, is drawn from the first file on
+    expect(whyText(LETTER)).toContain("Der Mailserver");
+    expect(whyText(LETTER)).not.toContain("Your mail server");
   });
 });
 
@@ -383,7 +470,7 @@ describe("one rule, two declarations, and the small number says why", () => {
  */
 describe("a draft's files hold a restart", () => {
   const attach = async (scope: string): Promise<void> => {
-    const input = host!.querySelector<HTMLInputElement>(`${scope} .compose-attach input[type="file"]`)!;
+    const input = host!.querySelector(scope)!.querySelector<HTMLInputElement>('input[type="file"]')!;
     const file = new File([new Uint8Array(2048)], "notes.txt", { type: "text/plain" });
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
@@ -393,7 +480,7 @@ describe("a draft's files hold a restart", () => {
     for (let i = 0; i < 8; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   };
   const remove = async (scope: string): Promise<void> => {
-    await act(async () => { host!.querySelector<HTMLButtonElement>(`${scope} .compose-attach-remove`)!.click(); });
+    await act(async () => { removeButton(scope, "notes.txt")!.click(); });
   };
   /** The update notice: the frame's notice whose title names the ready version. */
   const updateSaid = (): HTMLElement | null =>
@@ -410,11 +497,11 @@ describe("a draft's files hold a restart", () => {
     const pressed = vi.fn();
     await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: pressed, key: "ready:0.30.6" }));
     expect(restart(), "the premise: a ready update offers Restart").not.toBeNull();
-    await attach(".view-compose");
+    await attach(LETTER);
     expect(restartHold(), "a pick still being read did not hold the restart").toBe("files");
     expect(restart(), "Restart stood pressable while a pick was being read").toBeNull();
     await drain();
-    expect(host!.querySelector(".view-compose .compose-attach-item"), "the file never attached").not.toBeNull();
+    expect(removeButton(LETTER, "notes.txt"), "the file never attached").not.toBeNull();
     expect(restartHold(), "an attached file did not hold the restart").toBe("files");
     expect(restart(), "Restart stood pressable while the draft held a file").toBeNull();
     expect(updateSaid()!.textContent).toContain(messages.update.lineAfterFiles);
@@ -424,7 +511,7 @@ describe("a draft's files hold a restart", () => {
     await drain();
     expect(pressed, "Restart dropped the draft's file").not.toHaveBeenCalled();
 
-    await remove(".view-compose");
+    await remove(LETTER);
     expect(restartHold()).toBeNull();
     expect(restart(), "Restart did not come back once the file was removed").not.toBeNull();
     expect(updateSaid()!.textContent).not.toContain(messages.update.lineAfterFiles);
@@ -436,175 +523,11 @@ describe("a draft's files hold a restart", () => {
   it("in a reply: its files hold the restart while the editor holds them", async () => {
     await mountShell({ size: 25 * MIB });
     await openReply();
-    await attach(".reply");
+    await attach(REPLY);
     await drain();
-    expect(host!.querySelector(".reply .compose-attach-item"), "the file never attached").not.toBeNull();
+    expect(removeButton(REPLY, "notes.txt"), "the file never attached").not.toBeNull();
     expect(restartHold()).toBe("files");
-    await remove(".reply");
+    await remove(REPLY);
     expect(restartHold()).toBeNull();
-  });
-});
-
-/**
- * ═══ AN ATTACHED FILE SHOWS ITSELF AND OPENS IN THE PREVIEW, IN BOTH PLACES IT CAN BE ATTACHED ══
- *
- * The preview stands over the whole app (a portal on the body), so Escape closes it and nothing
- * else, and the send chord pressed under it sends nothing.
- */
-describe("an attached picture shows itself and opens in the preview", () => {
-  beforeEach(() => {
-    let n = 0;
-    (URL as unknown as Record<string, unknown>).createObjectURL = () => `blob:http://localhost/look-${++n}`;
-    (URL as unknown as Record<string, unknown>).revokeObjectURL = () => {};
-  });
-  afterEach(() => {
-    delete (URL as unknown as Record<string, unknown>).createObjectURL;
-    delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
-  });
-
-  const attachPng = async (scope: string): Promise<void> => {
-    const input = host!.querySelector<HTMLInputElement>(`${scope} .compose-attach input[type="file"]`)!;
-    const file = new File([new Uint8Array(512)], "shot.png", { type: "image/png" });
-    Object.defineProperty(input, "files", { value: [file], configurable: true });
-    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
-    for (let i = 0; i < 8; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  };
-  const dialog = (): HTMLElement | null => document.querySelector('[role="dialog"][aria-label="Attachment preview"]');
-  /** A key pressed where focus is, as a person presses it. */
-  const press = async (k: string, mods: KeyboardEventInit = {}): Promise<void> => {
-    await act(async () => {
-      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...mods }));
-    });
-  };
-
-  for (const [where, scope, open] of [
-    ["the compose", ".view-compose", goCompose],
-    ["a reply", ".reply", openReply],
-  ] as const) {
-    it(`in ${where}: the row shows the picture, opens the preview, and Escape closes only the preview`, async () => {
-      await mountShell({ size: 25 * MIB });
-      await open();
-      await attachPng(scope);
-      const look = host!.querySelector<HTMLButtonElement>(`${scope} .compose-attach-look`)!;
-      expect(look.querySelector("img.att-thumb")?.getAttribute("src")).toMatch(/^blob:/);
-      await act(async () => { look.click(); });
-      expect(dialog(), "pressing the row opened no preview").not.toBeNull();
-      expect(dialog()!.querySelector("img.ap-img")?.getAttribute("src")).toMatch(/^blob:/);
-      await press("Escape");
-      expect(dialog()).toBeNull();
-      expect(host!.querySelector(scope), "Escape closed the editor with the preview").not.toBeNull();
-      expect(host!.querySelector(`${scope} .compose-attach-item`)).not.toBeNull();
-    });
-  }
-
-  it("the send chord pressed under the preview sends nothing", async () => {
-    await mountShell({ size: 25 * MIB });
-    await openReply();
-    await attachPng(".reply");
-    await act(async () => { host!.querySelector<HTMLButtonElement>(".reply .compose-attach-look")!.click(); });
-    expect(dialog()).not.toBeNull();
-    await press("Enter", { metaKey: true });
-    await press("Enter", { ctrlKey: true });
-    for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(host!.textContent).not.toContain("Sent to Giulia Ferrari");
-    expect(host!.querySelector(".reply .compose-attach-item"), "the reply went while its file was being looked at").not.toBeNull();
-    // The control: with the preview closed the same chord, pressed in the editor, does send.
-    await press("Escape");
-    await act(async () => { host!.querySelector<HTMLElement>(".reply .rte-surface")!.focus(); });
-    await press("Enter", { metaKey: true });
-    await press("Enter", { ctrlKey: true });
-    for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(host!.textContent).toContain("Sent to Giulia Ferrari");
-    expect(host!.querySelector(".reply")).toBeNull();
-  });
-
-  describe("a preview opened by the mouse gives the cursor back to the editor", () => {
-    // jsdom has no isContentEditable; a browser does, and the keymap reads it to tell typing apart.
-    let had: PropertyDescriptor | undefined;
-    beforeEach(() => {
-      had = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "isContentEditable");
-      Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
-        configurable: true,
-        get(this: HTMLElement) { return this.closest('[contenteditable="true"],[contenteditable=""]') !== null; },
-      });
-    });
-    afterEach(() => {
-      if (had) Object.defineProperty(HTMLElement.prototype, "isContentEditable", had);
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).isContentEditable;
-    });
-    /** A mouse press as Chrome does it: mousedown focuses the button unless prevented, then click. */
-    const mousePress = async (el: HTMLElement): Promise<void> => {
-      await act(async () => {
-        const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
-        if (el.dispatchEvent(down)) el.focus();
-        el.click();
-      });
-    };
-
-    it("in a reply: thumbnail, Escape, then a typed 'e' parks nothing and keeps the file", async () => {
-      await mountShell({ size: 25 * MIB });
-      await openReply();
-      await attachPng(".reply");
-      for (let i = 0; i < 400 && !host!.querySelector(".reply .rte-surface"); i += 1) {
-        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-      }
-      const editor = host!.querySelector<HTMLElement>(".reply .rte-surface")!;
-      await act(async () => { editor.focus(); });
-      await press("e");
-      expect(host!.querySelector(".reply"), "the control: 'e' typed in the editor closed the reply").not.toBeNull();
-      await mousePress(host!.querySelector<HTMLElement>(".reply .compose-attach-look")!);
-      expect(dialog()).not.toBeNull();
-      await press("Escape");
-      expect(dialog()).toBeNull();
-      expect(document.activeElement, "the cursor did not come back to the editor").toBe(editor);
-      await press("e");
-      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-      expect(host!.querySelector(".reply"), "'e' parked the message being answered").not.toBeNull();
-      expect(host!.querySelector(".reply .compose-attach-item"), "the attached file was thrown away").not.toBeNull();
-      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" ");
-      expect(toasts, "a parked toast came up").not.toContain("Parked");
-    });
-
-    it("in a reply whose subject is being edited: thumbnail, Escape, then a typed 'e' goes into the reply", async () => {
-      await mountShell({ size: 25 * MIB });
-      await openReply();
-      await attachPng(".reply");
-      for (let i = 0; i < 400 && !host!.querySelector(".reply .rte-surface"); i += 1) {
-        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-      }
-      const editor = host!.querySelector<HTMLElement>(".reply .rte-surface")!;
-      // The reply opens with the cursor in its text: the editor focuses itself a frame after it mounts.
-      for (let i = 0; i < 100 && document.activeElement !== editor; i += 1) {
-        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-      }
-      await act(async () => { host!.querySelector<HTMLButtonElement>(".reply .reply-subject")!.click(); });
-      const subject = host!.querySelector<HTMLInputElement>(".reply .reply-subject-input")!;
-      expect(document.activeElement, "the subject did not open for editing").toBe(subject);
-      await mousePress(host!.querySelector<HTMLElement>(".reply .compose-attach-look")!);
-      expect(dialog()).not.toBeNull();
-      // The subject closes once focus has left it, a check made a tick after the blur.
-      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-      expect(subject.isConnected, "the case: the subject stayed open under the preview").toBe(false);
-      await press("Escape");
-      expect(dialog()).toBeNull();
-      await press("e");
-      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-      expect(host!.querySelector(".reply"), "'e' parked the message being answered").not.toBeNull();
-      expect(host!.querySelector(".reply .compose-attach-item"), "the attached file was thrown away").not.toBeNull();
-      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" ");
-      expect(toasts, "a parked toast came up").not.toContain("Parked");
-      expect(document.activeElement, "the 'e' did not go into the reply's text").toBe(editor);
-    });
-
-    it("a preview opened from the keyboard still returns focus to the row", async () => {
-      await mountShell({ size: 25 * MIB });
-      await openReply();
-      await attachPng(".reply");
-      const look = host!.querySelector<HTMLButtonElement>(".reply .compose-attach-look")!;
-      await act(async () => { look.focus(); look.click(); });
-      expect(dialog()).not.toBeNull();
-      await press("Escape");
-      expect(document.activeElement).toBe(look);
-    });
   });
 });

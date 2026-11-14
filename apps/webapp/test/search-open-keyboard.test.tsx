@@ -3,7 +3,10 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { TextProvider } from "@ohmail/app/text";
+import { prepareSearchWindow, SearchSeat } from "./_search-mount";
+import { enterSearchRoute, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -12,9 +15,7 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { ShortcutSheet } from "../app/shell/ShortcutSheet";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * OPENING A SEARCH RESULT FROM THE KEYBOARD — the half of that fix nothing was watching.
@@ -44,7 +45,6 @@ import { ShortcutSheet } from "../app/shell/ShortcutSheet";
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -88,11 +88,13 @@ async function engineWith(rows: EngineMessage[]): Promise<OhmailEngine> {
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: (() => void) | undefined;
 /** Every message id `onOpen` was called with, in order. */
 let opened: string[];
 
 beforeEach(() => {
   window.localStorage.clear();
+  prepareSearchWindow();
   opened = [];
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -102,43 +104,25 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch?.();
+  leaveSearch = undefined;
 });
 
-/**
- * The view with the query held ABOVE it, the way the shell holds it — so Escape's `onQuery("")`
- * really empties the box instead of being swallowed by a spy. `sheet` mounts the `?` overlay
- * beside the view so the generated rows can be read without standing up the whole shell.
- */
-function Harness({ engine, initial, sheet }: { engine: OhmailEngine; initial: string; sheet: boolean }) {
-  const [query, setQuery] = React.useState(initial);
-  return h(KeymapProvider, {
-    children: [
-      h(SearchView, {
-        key: "view",
-        engine, version: 1, now: NOW, query,
-        onQuery: setQuery,
-        onOpen: (hit) => { opened.push(hit.message.id); },
-      }),
-      sheet ? h(ShortcutSheet, { key: "sheet", open: true, onClose: () => {} }) : null,
-    ],
+function draw(engine: OhmailEngine, query: string) {
+  return act(async () => {
+    root.render(
+      <TextProvider locale="en" messages={messages} timeZone="UTC" now={NOW}>
+        <KeymapProvider>
+          <SearchSeat engine={engine} initialQuery={query} onOpen={(hit) => { opened.push(hit.message.id); }} />
+        </KeymapProvider>
+      </TextProvider>,
+    );
   });
 }
 
-async function render(engine: OhmailEngine, query: string, sheet = false): Promise<void> {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(Harness, { engine, initial: query, sheet }),
-      }),
-    );
-  });
-  /* Past the archive debounce, so a settled screen is what the keys are pressed against. This
-     fixture's adapter offers no archive at all, which is the desktop's and the demo's state —
-     the merge is the local arm alone and the row order is the index's own. */
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 320));
-  });
+async function render(engine: OhmailEngine, query: string): Promise<void> {
+  await draw(engine, query);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 320)); });
 }
 
 const key = async (k: string): Promise<void> => {
@@ -153,8 +137,7 @@ const hits = (): string[] =>
 /** The row wearing the cursor, or null. */
 const focused = (): string | null =>
   host.querySelector('[data-hit][aria-current="true"]')?.getAttribute("data-hit") ?? null;
-const box = (): HTMLInputElement | null =>
-  host.querySelector<HTMLInputElement>(".view-search .search-box input");
+const box = () => searchField(host) as HTMLInputElement;
 
 /** Three subjects that all answer "invoice", so the exact tier holds more than one row. */
 const CORPUS = [
@@ -237,21 +220,12 @@ describe("a search result opens from the keyboard", () => {
     })));
     await put(CORPUS);
     const engine = new OhmailEngine({ adapter: baseAdapter(), store, now: () => NOW });
-    const draw = (version: number) => act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, { children: h(SearchView, {
-          engine, version, now: NOW, query: "invoice", onQuery: () => {},
-          onOpen: (hit) => { opened.push(hit.message.id); },
-        }) }),
-      }));
-    });
-    await draw(1);
+    await draw(engine, "invoice");
     const rows = hits();
     await key("ArrowDown");
     expect(focused()).toBe(rows[1]);
     await put([{ ...msg("inv-0", "Invoice 081 for the invoice run, invoice attached", "billing@erdton.example"), date: "2026-08-04T09:00:00.000Z" }]);
-    await draw(2);
+    await draw(engine, "invoice");
     expect(hits().indexOf("inv-0"), `listed above the cursor: ${hits().join(",")}`).toBeLessThan(hits().indexOf(rows[1]!));
     expect(focused()).toBe(rows[1]);
     await key("Enter");
@@ -262,10 +236,8 @@ describe("a search result opens from the keyboard", () => {
     const engine = await engineWith(CORPUS);
     await render(engine, "invoice");
 
-    // Focus starts in the box (`autoFocus`), and a hit press is what moves it away. The row is no
-    // longer one button: `data-hit` wraps a `<div class="hit">` whose focusable control is the
-    // `<button class="hit-open">` around the subject.
-    const first = host.querySelector<HTMLElement>("[data-hit] button.hit-open");
+    const first = within(host).getAllByRole("listitem")
+      .map((item) => within(item).getByRole("button"))[0];
     expect(first, "the result row exposes no focusable control").toBeTruthy();
     await act(async () => { first!.focus(); });
     expect(document.activeElement).not.toBe(box());
@@ -280,13 +252,15 @@ describe("a search result opens from the keyboard", () => {
 
   it("the `?` sheet lists the three keys while Search is the view — from the registry, not a list", async () => {
     const engine = await engineWith(CORPUS);
-    await render(engine, "invoice", true);
-
-    const rows = [...host.querySelectorAll(".ks li")].map((li) => ({
-      label: li.querySelector(".ks-lab")?.textContent ?? "",
-      caps: [...li.querySelectorAll("kbd")].map((k) => k.textContent ?? "").join(""),
-    }));
-    const capsFor = (label: string): string | undefined => rows.find((r) => r.label === label)?.caps;
+    leaveSearch = enterSearchRoute();
+    await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+    await act(async () => { typeSearch(host, "invoice"); });
+    await within(host).findByRole("button", { name: /Invoice 078/ });
+    await key("?");
+    const sheet = within(document.body).getByRole("dialog", { name: messages.shortcuts.title });
+    const capsFor = (label: string) =>
+      [...(within(sheet).getByText(label).closest("p")?.querySelectorAll("kbd") ?? [])]
+        .map((cap) => cap.textContent).join("");
 
     expect(capsFor(messages.search.keyOpen), "the sheet does not list opening a result").toBe("↵");
     expect(capsFor(messages.search.keyNext)).toBe("↓");

@@ -116,6 +116,8 @@ export function useHeldWindow({
   anchoredAt,
   reanchor,
   ready = true,
+  cardSelector = ".scn-mails .hmail",
+  openingAt,
 }: {
   /** The selected sender's whole bag, oldest to newest. */
   count: number;
@@ -129,8 +131,11 @@ export function useHeldWindow({
   reanchor: () => void;
   /** False while the letters are drawn without their bodies: their heights say nothing yet. */
   ready?: boolean;
+  cardSelector?: string;
+  /** A direct link can open a letter older than the default slice. */
+  openingAt?: number;
 }): { from: number; busy: boolean } {
-  const opening = Math.max(0, count - HELD_OPENING);
+  const opening = Math.min(openingAt ?? count, Math.max(0, count - HELD_OPENING));
   const [win, setWin] = useState<HeldWindowState>({ key: resetKey, from: opening, count, busy: false });
   let cur = win;
   if (win.key !== resetKey || (win.count === 0 && count > 0)) {
@@ -157,7 +162,7 @@ export function useHeldWindow({
     const el = readRef.current();
     const { from: at, resetKey: key } = live.current;
     if (!el || at <= 0 || !drawn.current || keep.current !== null) return;
-    const first = el.querySelector(".scn-mails .hmail");
+    const first = el.querySelector(cardSelector);
     if (!first) return;
     const sliceTop = cssRect(first).top - cssRect(el).top;
     const scrollTop = el.scrollTop;
@@ -223,6 +228,7 @@ export function useHeldWindow({
   const ro = useRef<ResizeObserver | null>(null);
   const sizes = useRef(new WeakMap<Element, number>());
   const observed = useRef<Set<Element>>(new Set());
+  const group = useRef<Element | null>(null);
   useLayoutEffect(() => {
     if (typeof ResizeObserver !== "function") return;
     const col = readRef.current();
@@ -230,10 +236,13 @@ export function useHeldWindow({
       // Any size change can leave the column room to spare: a sheet opening, a letter shrinking.
       schedule.current();
       const el = readRef.current();
-      if (!el || !(cssRect(el).height > 0)) return;
+      if (!el) return;
+      if (group.current && entries.some((entry) => entry.target === group.current)
+        && heldAnchored(anchoredAt.current, el.scrollTop)) reanchorRef.current();
+      if (!(cssRect(el).height > 0)) return;
       const changes: Array<{ bottom: number; delta: number }> = [];
       for (const en of entries) {
-        if (en.target === el) continue;
+        if (en.target === el || en.target === group.current) continue;
         const r = cssRect(en.target);
         const was = sizes.current.get(en.target);
         sizes.current.set(en.target, r.height);
@@ -256,6 +265,7 @@ export function useHeldWindow({
       observer.disconnect();
       ro.current = null;
       observed.current = new Set();
+      group.current = null;
     };
   }, [anchoredAt]);
   useLayoutEffect(() => {
@@ -263,7 +273,13 @@ export function useHeldWindow({
     const observer = ro.current;
     if (!el || !observer) return;
     const drawn = cssRect(el).height > 0;
-    const now = new Set<Element>(el.querySelectorAll(".scn-mails .hmail"));
+    const now = new Set<Element>(el.querySelectorAll(cardSelector));
+    const parent = now.values().next().value?.parentElement ?? null;
+    if (group.current !== parent) {
+      if (group.current) observer.unobserve(group.current);
+      if (parent && parent !== el) observer.observe(parent);
+      group.current = parent === el ? null : parent;
+    }
     for (const c of observed.current) if (!now.has(c)) observer.unobserve(c);
     for (const c of now) {
       if (observed.current.has(c)) continue;
@@ -271,7 +287,7 @@ export function useHeldWindow({
       observer.observe(c);
     }
     observed.current = now;
-  }, [from, resetKey, count]);
+  }, [from, resetKey, count, cardSelector, ready]);
 
   return { from, busy: cur.busy };
 }

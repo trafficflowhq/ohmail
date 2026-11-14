@@ -60,7 +60,8 @@ async function world() {
 /** One surface: compose (`inReplyTo: null`) or the inline reply to m-1. */
 async function mount(e: OhmailEngine, said: string[]) {
   const { useMailSend, COMPOSE_SEND_KEY } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  /* The send machine's words as the mail ground hands them (today's `app/shell/mail-send-text` leaves). */
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   let api!: { compose: (body: string) => Promise<void>; reply: (body: string) => Promise<void>; phase: (lane: string) => string; code: (lane: string) => string | null; lane: string };
   const Probe = (): null => {
     const mail = useMailSend(e as never, null, ((t: string) => { said.push(t); }) as never, useMailSendText(), (() => {}) as never, (() => false) as never);

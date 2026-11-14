@@ -6,9 +6,10 @@ import { useText } from "../text/index.js";
 
 export function HistoryAbove({ model, children }: { model: HistoryModel; children: ReactNode }) {
   const t = useText("history");
-  const blank = model.loading
-    ? null
-    : { label: model.empty ? t("emptyTitle") : t("metaCount", { count: model.count }), hot: false };
+  const blank =
+    model.loading || model.count === undefined
+      ? null
+      : { label: model.empty ? t("emptyTitle") : t("metaCount", { count: model.count }), hot: false };
   return (
     <HistoryModelContext.Provider value={model}>
       <PlaceMeeting visit={model.list.visit} blank={blank} steps={{ up: t("step.up"), down: t("step.down") }}>

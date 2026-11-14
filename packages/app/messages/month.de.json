@@ -5,6 +5,7 @@
     "moreLabel": "{count, plural, one {# weiterer} other {# weitere}} am {day}, Tag",
     "week": "Woche {number}",
     "weekLabel": "Woche {number}, Woche",
+    "today": "Heute",
     "nothing": "Nichts",
     "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
     "allDay": "ganztägig",

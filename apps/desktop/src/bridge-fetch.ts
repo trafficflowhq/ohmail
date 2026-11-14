@@ -553,6 +553,8 @@ export type DoorFlavorWire = "managed" | "selfhost" | "desktop-host";
 export interface EngineStatus {
   noticeDocument?: number;
   noticeSession?: number;
+  /** The native shell's version of the installed standalone door. */
+  localDoorVersion?: number;
   state:
     | "absent"
     | "not_configured"
@@ -907,7 +909,7 @@ export function waitingFor(door: EngineStatus): string | null {
  * {@link engineConfigure}), this install's key for the next account's credential, and the window's
  * changes still waiting for this account, which the answer counts (`waiting`).
  */
-export async function engineLogout(press: SignOutPress | null = null): Promise<SignedOut> {
+export async function engineLogout(press: SignOutPress | null = null, expectedLocalDoor?: number): Promise<SignedOut> {
   return alone("signing out", async () => {
     let stillListedFrom: EngineStatus | null = null;
     let waiting: SignedOut["waiting"] = null;
@@ -928,7 +930,9 @@ export async function engineLogout(press: SignOutPress | null = null): Promise<S
         /* Not asked in time: said as not confirmed. The shell's sign-out below runs either way. */
       }
     }
-    const status = (await shell().invoke(LOGOUT_COMMAND)) as EngineStatus;
+    const status = (expectedLocalDoor === undefined
+      ? await shell().invoke(LOGOUT_COMMAND)
+      : await shell().invoke(LOGOUT_COMMAND, { expectedLocalDoor })) as EngineStatus;
     return { status, stillListedFrom, waiting };
   });
 }

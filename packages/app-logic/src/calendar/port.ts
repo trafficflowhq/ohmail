@@ -5,23 +5,27 @@
  * A press is durable on this device when `press` resolves; what our server made of it is `verdict(key)` after
  * `flush`, and only then may a sentence be said. A view reads `events()` on every `version()` and keeps no copy.
  */
+import type { CalendarSetupPort } from "./setup/port.js";
 import type { EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type {
   CalendarAct,
-  CalendarReason,
   CalendarSettingsWire,
   CalendarWindow,
+  CalendarWriteFault,
   CalendarWriteReceipt,
 } from "@ohmail/wire";
 
-/** Every word a refusal of our server's can carry to a person: the door's own reasons and the route's refusals. */
-export type CalendarRefusalWord =
-  CalendarReason | "validation_failed" | "not_found" | "payload_too_large" | "idempotency_replay" | "unknown";
+import type { CalendarRefusalWord } from "@ohmail/client-engine/calendar-writes";
+export type { CalendarRefusalWord };
 
 /** What our server made of one press. */
 export type CalendarVerdict =
   | { readonly kind: "taken"; readonly write: CalendarWriteReceipt | null }
-  | { readonly kind: "refused"; readonly word: CalendarRefusalWord; readonly details: unknown };
+  | {
+      readonly kind: "refused";
+      readonly word: CalendarRefusalWord | CalendarWriteFault;
+      readonly details: unknown;
+    };
 
 /** A span of the device's mirror that was read, in milliseconds since the epoch. */
 export interface HeldSpan {
@@ -34,13 +38,33 @@ export interface CalendarPort {
   newId(): string;
   /** Makes the act durable on this device under a new key. It says nothing of our server's answer. */
   press(act: CalendarAct): Promise<{ readonly key: string }>;
+  /** A guest-free delete stays on this device until its Undo window expires. */
+  holdDelete?(
+    act: Extract<CalendarAct, { kind: "calendar_event_delete" }>,
+    delay: number,
+  ): Promise<{
+    readonly key: string;
+    readonly deadline: number;
+    readonly remainingMs: () => number;
+    readonly undo: () => Promise<boolean>;
+  }>;
+  /** Resume this account's pending queue while its host is present. */
+  activate?(): () => void;
   /** Sends what this device still owes; resolves when the queue has gone through once. */
   flush(): Promise<void>;
+  hasOwedWrites?(): boolean;
   /** Our server's answer to the press under `key`; `null` while this device still owes it. */
   verdict(key: string): CalendarVerdict | null;
+  /** Report a refusal still owed when the initial press returned. */
+  watchLateRefusal?(key: string): void;
+  subscribeLateRefusals?(
+    report: (word: CalendarRefusalWord | CalendarWriteFault) => void,
+    retire?: () => void,
+  ): () => void;
   /** Each event with its waiting writes laid over, as the engine's one selector makes them. */
   events(): readonly EventWithWrites[];
   settings(): Promise<CalendarSettingsWire>;
+  readonly setup?: CalendarSetupPort;
   /** The window our server serves, and the spans this device has read. */
   held(): { readonly window: CalendarWindow; readonly loaded: readonly HeldSpan[] };
   /** Reads a span before the served window; `none` where this shell has no way to ask for one. */

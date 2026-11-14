@@ -179,7 +179,8 @@ export const syncRoutes: Route[] = [
       const types = calendar ? parseTypes(url.searchParams.get("types")) : undefined;
       const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
 
-      const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
+      const context = serviceContext(deps, req);
+      const result = await sync(deps).getSnapshot(context, {
         ...(cursor ? { cursor } : {}),
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(phase ? { phase } : {}),
@@ -187,7 +188,13 @@ export const syncRoutes: Route[] = [
         ...(calendar ? { calendar } : {}),
         ...(span ? { span } : {}),
       });
-      return answer<"GET /sync/snapshot">()(result);
+      const response = answer<"GET /sync/snapshot">()(result);
+      // On this door the browser's storage scope identifies a pairing. The snapshot names the
+      // account that supplied its rows, from the same authenticated context that read them.
+      if (deps.hello?.flavor === "desktop-host" && context.accountId) {
+        response.headers.set("x-ohmail-mirror-account", context.accountId);
+      }
+      return response;
     },
   },
   /**

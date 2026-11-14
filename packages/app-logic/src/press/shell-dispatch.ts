@@ -11,8 +11,9 @@
  * unchanged (ARCH-022); it closes over nothing derived from the mirror.
  */
 import type { EngineMutation } from "@ohmail/wire";
-import { useMemo, useRef, type MutableRefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 import {
+  deleteIntentKey,
   inverseMutations,
   PRESS_THREW,
   pressVerdict,
@@ -20,6 +21,7 @@ import {
   undoInOrder,
   type EntityReader,
   type MutationRejectedError,
+  type MutationResult,
   type OhmailEngine,
   type PressVerdict,
 } from "@ohmail/client-engine";
@@ -41,8 +43,8 @@ import type { StorageScope } from "../storage/scope.js";
  * WHAT THE SPINE IS HANDED. Every field is required and none has a default: a forgotten `demo`
  * would leave the replay and the routing window enabled in the fixture world, which is the shape
  * of an absent configuration selecting the live branch. `refreshFacts` has a constant identity (a
- * ref at the provider), and `reader` is the render's own `engine.read()` — handed in rather than
- * re-read here, so a press asks the mirror the shell last rendered against.
+ * ref at the provider), and `reader` is the engine's one reader for its life; the seam reads none of
+ * it: its press watch asks the engine itself at a change, only while a press waits (`press-watch.ts`).
  */
 export interface ShellDispatchInput {
   engine: OhmailEngine;
@@ -77,6 +79,8 @@ function messageIdsOf(m: EngineMutation): string[] {
   return Array.isArray(r.messageIds) ? r.messageIds.filter((x): x is string => typeof x === "string") : [];
 }
 
+type PressOwner = { engine: OhmailEngine; report?: AbortController; pendingUndo?: UndoClaim };
+
 /** A press that stands: applied, or on this client's retry queue to land on the next drive. */
 const stands = (v: PressVerdict): boolean => v.kind === "applied" || (v.kind === "queued" && v.wait === "retry");
 
@@ -93,17 +97,27 @@ export interface ShellDispatch {
   /** A sender-sheet press waiting on its backlog pass, told once when it finishes. */
   pressWatch: PressWatch;
   refusalSentence: (err: MutationRejectedError | undefined) => string;
-  dispatchPress: (mutation: EngineMutation) => Promise<PressVerdict>;
+  dispatchPress: (
+    mutation: EngineMutation,
+    owner?: OhmailEngine,
+    onSettled?: (receipt: MutationResult, mutation: EngineMutation) => void,
+  ) => Promise<PressVerdict>;
   queuedSentence: (holder: string | null) => string;
   runArmedUndo: () => boolean;
   /** The toast every Undo offer is raised through, so `z` presses what the button presses. */
   undoToast: UndoToastFn;
   toastWithUndo: (
     sentence: string,
-    inverses: readonly EngineMutation[],
+    inverses: readonly EngineMutation[] | (() => EngineMutation[]),
     held?: { cancel: () => boolean; undone: string },
   ) => void;
-  mutateAndReport: (mutation: EngineMutation, okSentence: string | null) => Promise<boolean>;
+  /** A deferred observation carries the engine that saw it and offers no success or Undo. */
+  mutateAndReport: (
+    ...args: [mutation: EngineMutation, okSentence: string | null] |
+      [mutation: EngineMutation, okSentence: null, owner: OhmailEngine]
+  ) => Promise<boolean>;
+  /** Report an acknowledged write and offer only its origin-scoped Undo. */
+  mutateAndReportConfirmed: (mutation: EngineMutation, okSentence: string) => void;
   /** Answers how many of the presses stand: applied, or queued to be sent again. */
   mutateSetAndReport: (
     mutations: readonly EngineMutation[],
@@ -111,10 +125,16 @@ export interface ShellDispatch {
   ) => Promise<number>;
   /** Where the Ohbox registers its answer to an Undo — see {@link UndoLink}. */
   undoLink: MutableRefObject<UndoLink | null>;
+  /**
+   * The letters this seam's own verbs sent away this session (a delete once its window closed, a move to a folder):
+   * a tombstone one of them left is this tab's own, never another app's. Read at each call. Every seam this hook
+   * makes hands it; a seam a shell assembles of its own parts may not (then nothing reads as this tab's own).
+   */
+  ownGone?: { has(id: string): boolean };
 }
 
 export function useShellDispatch({
-  engine, reader, toast: show, t, placeLabel, demo, refreshFacts, scope,
+  engine, toast: show, t, placeLabel, demo, refreshFacts, scope,
 }: ShellDispatchInput): ShellDispatch {
   /* THE ONE UNDO DOOR (`undo-door.ts`), built once over the host's toast. Every sentence below
      goes out through it; only the ones marked `undo` arm `z`. */
@@ -122,6 +142,11 @@ export function useShellDispatch({
   const door = useMemo(() => createUndoDoor(showLatest), [showLatest]);
   const toast = door.toast;
   const undoLink = useRef<UndoLink | null>(null);
+  /* What this seam's presses moved away itself, for the session: written as the mutation leaves. */
+  const movedAway = useRef<Set<string>>(new Set()).current;
+  const sentAway = (m: EngineMutation): void => {
+    if (m.kind === "message_delete" || m.kind === "move") movedAway.add(m.messageId);
+  };
   /* A held window's Undo sends nothing, so it has taken back everything it names. Answers
      whether the person had moved on from one of them (the toast's sentence follows it). */
   const rowsUndone = useStableCallback((ids: readonly string[]): boolean => {
@@ -166,7 +191,9 @@ export function useShellDispatch({
        the only place that covers both, and `test/filing-refresh-on-decision.test.tsx` pins this
        line by name: nothing conflicts here, so a census that only read this file would have gone
        vacuous for `message_delete` instead of red. */
-    mutate: (messageId) => fileAndRefresh(engine.mutate({ kind: "message_delete", messageId })),
+    mutate: (messageId, pressId) => fileAndRefresh(
+      engine.mutate({ kind: "message_delete", messageId }, { key: deleteIntentKey(pressId, messageId) }),
+    ),
     toast,
     onUndone: rowsUndone,
     copy: {
@@ -300,7 +327,7 @@ export function useShellDispatch({
         )
       : undefined,
   });
-  const pressWatch = usePressWatch(reader);
+  const pressWatch = usePressWatch(engine);
   const refusalCopy = useMemo(
     () => ({
       named: (name: string) => t("screener.readerMoveRefused", { name }),
@@ -368,13 +395,19 @@ export function useShellDispatch({
    * is undone here — the overlay is the engine's own, already rolled back by the time this
    * resolves; the interface is simply told the truth about it.
    */
-  const dispatchPress = useStableCallback((mutation: EngineMutation): Promise<PressOutcome> =>
-    engine.mutate(mutation).then(
+  const dispatchPress = useStableCallback((
+    mutation: EngineMutation, owner = engine,
+    onSettled?: (receipt: MutationResult, mutation: EngineMutation) => void,
+  ): Promise<PressOutcome> => {
+    if (owner === engine) sentAway(mutation);
+    const started = onSettled ? owner.mutate(mutation, { onSettled }) : owner.mutate(mutation);
+    return started.then(
       pressVerdict,
       /* `mutate` resolves with a verdict rather than rejecting, so a throw here is this client
          failing — still a press that did nothing, and still owed a sentence. */
       () => PRESS_THREW,
-    ));
+    );
+  });
 
   /**
    * THE SENTENCE A WAIT GETS. `organizer` is a request the SERVER recorded for the install that
@@ -412,24 +445,32 @@ export function useShellDispatch({
    */
   const toastWithUndo = useStableCallback((
     sentence: string,
-    given: readonly EngineMutation[],
+    given: readonly EngineMutation[] | (() => EngineMutation[]),
     held?: { cancel: () => boolean; undone: string },
     claim?: UndoClaim,
+    owner?: { engine: OhmailEngine; signal: AbortSignal },
   ) => {
     // Several verbs' reversals name a row's pins more than once: each goes back up once, after the moves.
-    const inverses = undoInOrder(given);
-    if (inverses.length === 0 && !held) { if (claim) door.drop(claim); toast(sentence); return; }
+    const offer = typeof given === "function" ? given : undoInOrder(given);
+    if (typeof offer !== "function" && offer.length === 0 && !held) {
+      if (claim) door.drop(claim);
+      toast(sentence, owner && { signal: owner.signal });
+      return;
+    }
     const fire = () => {
+      if (owner?.signal.aborted) return;
       /* THE CANCEL GOES FIRST, and synchronously: the window is racing a timer, and a cancel
          behind an awaited dispatch is a cancel that can lose to it. */
       const cancelled = held ? held.cancel() : false;
+      const inverses = typeof offer === "function" ? undoInOrder(offer()) : offer;
       if (inverses.length === 0) {
         toast(cancelled && held ? held.undone : t("ohbox.toastUndoExpired"));
         return;
       }
       /* THE VIEW IS ASKED BEFORE THE ROW COMES BACK, so a re-held row lands in New, not Earlier. */
       const mine = undoLink.current?.ask([...new Set(inverses.flatMap(messageIdsOf))]) ?? null;
-      void Promise.all(inverses.map((mu) => dispatchPress(mu))).then((outs) => {
+      void Promise.all(inverses.map((mu) => dispatchPress(mu, owner?.engine))).then((outs) => {
+        if (owner?.signal.aborted) return;
         const tally = tallyVerdicts(outs);
         if (mine !== null) {
           undoLink.current?.settle(mine, inverses.some((mu, i) => messageIdsOf(mu).includes(mine) && stands(outs[i]!)));
@@ -444,17 +485,32 @@ export function useShellDispatch({
         toast(refusalSentence(tally.firstRefusal));
       });
     };
-    toast(sentence, { action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire, ...(claim ? { claim } : {}) });
+    toast(sentence, {
+      action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire,
+      ...(claim ? { claim } : {}), ...(owner ? { signal: owner.signal } : {}),
+    });
   });
 
-  const mutateAndReport = useStableCallback(
-    (mutation: EngineMutation, okSentence: string | null): Promise<boolean> => {
+  const committedOwner = useRef<PressOwner | null>(null);
+  useLayoutEffect(() => {
+    const owner: PressOwner = { engine };
+    committedOwner.current = owner;
+    return () => {
+      committedOwner.current = null;
+      owner.report?.abort();
+      if (owner.pendingUndo) door.drop(owner.pendingUndo);
+    };
+  }, [door, engine]);
+  const mutateAndReport = useStableCallback<ShellDispatch["mutateAndReport"]>(
+    (...[mutation, okSentence, owner]) => {
       /* Read before the dispatch — the inverse names the state this press is about to leave.
          Skipped on the silent paths (`okSentence === null`): no toast, nothing to carry Undo. */
       const inverses = okSentence !== null ? inverseMutations(engine.verbRead(), mutation) : [];
       // The undo is armed at the press: a `z` before the answer is kept for its offer (`undo-door.ts`).
       const claim = inverses.length > 0 ? door.expect() : undefined;
-      return dispatchPress(mutation).then((out) => {
+      return dispatchPress(mutation, owner).then((out) => {
+        // A departing engine can finish its queue without reporting over the replacement frame.
+        if (owner !== undefined && committedOwner.current?.engine !== owner) return out.kind === "silent" || stands(out);
         if (claim && (out.kind === "silent" || out.kind === "refused" || (out.kind === "queued" && out.wait === "organizer"))) {
           door.drop(claim);
         }
@@ -467,6 +523,32 @@ export function useShellDispatch({
       });
     },
   );
+
+  const mutateAndReportConfirmed = useStableCallback((mutation: EngineMutation, okSentence: string): void => {
+    const owner = committedOwner.current;
+    if (owner === null) return;
+    const inverses = inverseMutations(owner.engine.verbRead(), mutation);
+    const claim = inverses.length > 0 ? door.expect() : undefined;
+    if (claim) owner.pendingUndo = claim;
+    let answered = false;
+    const say = (out: PressVerdict): void => {
+      if (answered || committedOwner.current !== owner || (out.kind === "queued" && out.wait === "retry")) return;
+      answered = true;
+      if (claim) {
+        if (owner.pendingUndo === claim) delete owner.pendingUndo;
+        if (out.kind !== "applied") door.drop(claim);
+      }
+      if (out.kind === "silent") return;
+      owner.report?.abort();
+      owner.report = new AbortController();
+      const signal = owner.report.signal;
+      if (out.kind === "applied") toastWithUndo(okSentence, inverses, undefined, claim, { engine: owner.engine, signal });
+      else if (out.kind === "refused") toast(refusalSentence(out.refusal), { signal });
+      else if (out.kind === "queued") toast(queuedSentence(out.holder), { signal });
+    };
+    const settle = (receipt: MutationResult): void => say(pressVerdict(receipt));
+    void owner.engine.mutate(mutation, { onSettled: settle }).then(settle, () => say(PRESS_THREW));
+  });
 
   /**
    * THE SAME RULE OVER A SET, and the reason it is not a loop over the one above: a toast per
@@ -538,7 +620,10 @@ export function useShellDispatch({
     undoToast: toast,
     toastWithUndo,
     mutateAndReport,
+    mutateAndReportConfirmed,
     mutateSetAndReport,
     undoLink,
+    /* A delete is sent from its window, after it closed: the window's own record of what landed. */
+    ownGone: { has: (id) => movedAway.has(id) || deleting.landedIds.includes(id) },
   };
 }

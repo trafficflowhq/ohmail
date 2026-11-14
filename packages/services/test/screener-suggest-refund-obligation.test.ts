@@ -5,7 +5,7 @@ import { makeHaikuClassifier, type AnthropicLike, type ClassifierPort } from "@t
 import { ScreenerService } from "../src/index.js";
 import { fakeSpendPort, type FakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICES, PLANE_PRICING } from "./helpers/plane-pricing.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /**
  * THE PRESSED SCREENER OWES A REFUND BEFORE IT TRIES ONE. A declined sender and a sender whose
@@ -65,7 +65,7 @@ function gateInto(events: string[]): FakeSpendPort {
 }
 
 async function world() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "refund-obligation" });
   const alice = await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
   const events: string[] = [];

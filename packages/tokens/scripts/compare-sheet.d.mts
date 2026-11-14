@@ -34,7 +34,11 @@ export function compare(inputs: {
   /** The sheet's stylesheets by file name. */
   sheetCss: Record<string, Declaration[]>;
 }): { rows: Finding[]; compared: number; open: Finding[] };
-export function compareDirs(dirs: { sheetDir?: string; productDir: string }): ReturnType<typeof compare>;
+export function compareDirs(dirs: {
+  sheetDir?: string;
+  productDir: string;
+  supplement?: string;
+}): ReturnType<typeof compare>;
 export function toTsv(rows: Finding[]): string;
 /** The command: 0 nothing open, 1 a difference, 2 an input missing or unreadable. */
 export function main(argv: string[]): number;

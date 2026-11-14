@@ -28,5 +28,6 @@ export {
   type WebGroup,
 } from "./model.js";
 export { useDevices } from "./use-devices.js";
+export { devicesPane, type DevicesPaneParts } from "./pane.js";
 export { devicesStates, type DevicesShown } from "./states.js";
 export { DEVICES_NAMESPACE } from "./namespace.js";

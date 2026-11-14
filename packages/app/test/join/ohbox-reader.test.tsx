@@ -13,8 +13,11 @@ import { useCallback, useState, useSyncExternalStore, type ReactNode } from "rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import type { ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
-import { OhboxAbove, ohboxPlace } from "../../src/ohbox/index.js";
+import { OhboxAbove } from "../../src/ohbox/OhboxAbove.js";
+import { OhboxList } from "../../src/ohbox/OhboxList.js";
+import { ohboxPlace } from "../../src/ohbox/place.js";
 import { READER_DOM, scrollerOf } from "../../src/reader/read-dom.js";
 import { readerEntry } from "../../src/reader/index.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -93,7 +96,11 @@ function join(o: Joined) {
     engine: mail.engine,
     service: "self",
     scope: "acct-1",
-    places: { ohbox: ohboxPlace },
+    /* The Ohbox's registration without its seat and its rail count, which read the mail ground: this harness stands
+       the list's model above the frame itself, over a host that hands no ground. */
+    places: {
+      ohbox: { ...ohboxPlace, rail: null, panes: { kind: "columns", List: OhboxList, Reading: "reader" } },
+    },
     reader: readerEntry({
       body: bodyDouble().body,
       files: "none",
@@ -109,9 +116,12 @@ function join(o: Joined) {
   const over: Partial<OhboxListInput> = { newForYou: [...(o.listed ?? o.letters)], ...spies };
   render(
     <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
-      <Above address={address} said={said} over={over}>
-        <Frame host={host} />
-      </Above>
+      {/* The mirror as the lists present it, handed as it stands (no hold): the reading column reads no other. */}
+      <PresentedMirrorContext.Provider value={mail.engine.read()}>
+        <Above address={address} said={said} over={over}>
+          <Frame host={host} />
+        </Above>
+      </PresentedMirrorContext.Provider>
     </TextProvider>,
   );
   return { mail, address, spies };
@@ -218,11 +228,15 @@ describe("the Ohbox and the reader, joined through the frame", () => {
     expect(live.seams).toBe(1);
   });
 
-  it("an address naming a letter the list does not hold is read on the reader's own visit", () => {
+  it("a link outside the Ohbox list stays a preview until a press into the reader", () => {
     const outside = letter("z", { subject: "Not in the list" });
     const { mail, spies } = join({ letters: [...LETTERS, outside], listed: LETTERS, open: "z" });
-    expect(within(pane()).getByRole("article")).toBeTruthy();
+    const article = within(pane()).getByRole("article");
+    expect(within(pane()).getByText("Not in the list")).toBeTruthy();
     layOut("z");
+    pass(900);
+    expect(reads(mail.mutations)).toEqual([]);
+    fireEvent.pointerDown(article);
     pass(900);
     expect(reads(mail.mutations)).toEqual([{ ids: ["z"], unread: false }]);
     expect(spies.onMarkSeen).not.toHaveBeenCalled();

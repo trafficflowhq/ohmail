@@ -5,14 +5,8 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_LOCALE, activeTranslator, fillFrom, liveCopy, setActiveCatalog, setActiveFormatZone,
 } from "../app/shell/locale";
-import { AGO_COPY, PLACE_LABEL, resurfaceLabel } from "../app/shell/format";
+import { PLACE_LABEL, resurfaceLabel } from "../app/shell/format";
 import { COPY as MAIL_BODY_COPY } from "../../../packages/letter-body/src/MessageBody";
-import { COPY as BODY_TEXT_COPY } from "../../../packages/letter-body/src/BodyText";
-import { COPY as ATTACHMENT_COPY } from "../app/components/AttachmentStrip";
-import { COPY as PREVIEW_COPY } from "../app/components/AttachmentPreview";
-import { COPY as ICS_COPY } from "../app/components/IcsEventCard";
-import { AWAY_COPY } from "../app/shell/AwayResponderRow";
-import { AWAY_NOTICE_COPY } from "../app/shell/AwayNotice";
 
 /**
  * THE SURFACES THAT ARE NOT COMPONENTS — and the guard that keeps their English constant and the
@@ -32,6 +26,17 @@ import { AWAY_NOTICE_COPY } from "../app/shell/AwayNotice";
  * a copy edit made in `en.json` and not in the constant, or the other way round, produces one
  * sentence in the real app and a different one in every test that asserts on it.
  *
+ * ── RE-POINTED (share reader-1, the switch's older tests) ─────────────────────────────────────
+ *
+ * Today's attachment strip, preview and event card leave with today's reader: the new reader's files say their
+ * sentences through the reader's own words (`packages/app/messages/reader.*.json`, `useText`), so the halves of the
+ * cases below that read the strip's and the preview's German stand over those words in
+ * `locale-shim-parity-reader.test.tsx`. What stays here is the register itself: where a case used the strip's table
+ * as the register's client with an interpolated sentence, the client is the attachments namespace read through
+ * `liveCopy` as the strip read it (`ATTACHMENT_COPY` below, its English and its argument names as the strip declared
+ * them). The two table censuses and the away namespace's three cases (the away pane is not mounted yet) moved, as they
+ * stood, to `locale-shim-parity-tables.test.ts`.
+ *
  * So this file asserts, for each of them:
  *  1. the constant's key set is EXACTLY the catalogue namespace's;
  *  2. every plain string in the constant is EXACTLY the English sentence in `en.json`;
@@ -50,23 +55,15 @@ const DE = read("de");
 const GERMAN = fillFrom(EN as never, DE as never) as Record<string, Record<string, string>>;
 
 /**
- * The five tables, their namespace, and the English text each one is held against.
- *
- * `PLACE_LABEL` is the odd one out and is listed anyway: it is a `Record<string, string>` rather than
- * a table with function members, and it is the most-repeated copy in the product — the badge on
- * every search hit, the "→ News" in every move menu, the "Moved to Receipts." in every toast.
+ * The attachments namespace as a non-hook table over the register, as today's strip declared it
+ * (`AttachmentStrip.tsx`: `liveCopy("attachments", EN, { count: ["count"], idle: ["size"], … })`): the register's
+ * client with an ICU plural and an argument.
  */
-const TABLES: Array<{ name: string; ns: string; table: Record<string, unknown> }> = [
-  { name: "MessageBody.COPY", ns: "mailBody", table: MAIL_BODY_COPY },
-  { name: "BodyText.COPY", ns: "bodyText", table: BODY_TEXT_COPY },
-  { name: "AttachmentStrip.COPY", ns: "attachments", table: ATTACHMENT_COPY },
-  { name: "AttachmentPreview.COPY", ns: "attachmentPreview", table: PREVIEW_COPY },
-  { name: "IcsEventCard.COPY", ns: "icsEvent", table: ICS_COPY },
-  { name: "AwayResponderRow.AWAY_COPY", ns: "away", table: AWAY_COPY },
-  { name: "AwayNotice.AWAY_NOTICE_COPY", ns: "away", table: AWAY_NOTICE_COPY },
-  { name: "format.PLACE_LABEL", ns: "place", table: PLACE_LABEL },
-  { name: "format.AGO_COPY", ns: "relativeTime", table: AGO_COPY },
-];
+const ATTACHMENT_COPY = liveCopy(
+  "attachments",
+  { count: (n: number) => `${n} attachments`, idle: (size: string) => `${size} · in your mailbox` },
+  { count: ["count"], idle: ["size"] },
+);
 
 afterEach(() => {
   // Every case that sets a catalogue must put the register back, or the next test file in the same
@@ -76,108 +73,6 @@ afterEach(() => {
 });
 
 describe("the non-hook copy tables and the catalogue say the same thing", () => {
-  it.each(TABLES)("$name covers exactly the $ns namespace", ({ ns, table }) => {
-    const catalogue = EN[ns];
-    expect(catalogue, `en.json has no ${ns} namespace`).toBeDefined();
-    const inTable = Object.keys(table).sort();
-    const inCatalogue = Object.keys(catalogue!).sort();
-
-    // `away` is shared by two tables, so each covers a SUBSET and the union must be the whole.
-    if (ns === "away") {
-      const missing = inTable.filter((k) => !inCatalogue.includes(k));
-      expect(missing, `keys in the constant with no ${ns} entry: ${missing.join(", ")}`).toEqual([]);
-      return;
-    }
-    expect(inTable, `${ns}: the constant and en.json disagree about which keys exist`)
-      .toEqual(inCatalogue);
-  });
-
-  it("the two away tables together cover the whole away namespace", () => {
-    const union = [...Object.keys(AWAY_COPY), ...Object.keys(AWAY_NOTICE_COPY)].sort();
-    expect(union).toEqual(Object.keys(EN.away!).sort());
-  });
-
-  /**
-   * THE AWAY NAMESPACE, RENDERED — because nothing above runs the ICU compiler over it.
-   *
-   * Key presence plus the byte compare already imply the plain sentences match. What neither sees
-   * is whether a sentence FORMATS: a message the compiler refuses answers EMPTY through
-   * `getMessageFallback` and reaches the screen that way, and the four parameterised ones here
-   * (`notice`, `untilOn`, `untilPast`, `hostNote`) carry `select` rather than `plural`, so
-   * `locale-catalog.test.ts`'s formatting case skips every one of them. `away.applied` is what
-   * made the gap visible: a key the pane renders through `t("applied")` and the constants did not
-   * carry, which nothing had ever rendered to notice.
-   *
-   * So each key is rendered twice through `activeTranslator` — `createTranslator`, which is what
-   * `useTranslations` is built on — over the catalogue and over the kept constants, and the two
-   * must be the same non-empty sentence, in English and in German.
-   */
-  const AWAY_ARGS: Record<string, Record<string, unknown>> = {
-    /* Declared, not inferred: nothing can read an ICU argument list off a sentence, and a key
-       whose args were forgotten renders EMPTY on both sides, which would compare equal. The
-       non-empty assertion below is what refuses that. */
-    untilOn: { date: "5 Aug 2026" },
-    untilPast: { date: "5 Aug 2026" },
-    hostNote: { host: "the other computer" },
-    notice: { audience: "everyone", piles: "in Ohbox", throttle: "per_day" },
-  };
-
-  const renderAway = (
-    locale: "en" | "de", catalogue: unknown, keys: readonly string[],
-  ): Record<string, string> => {
-    // One translator per catalogue, so the two sides are taken one after the other: the register
-    // holds ONE catalogue and `setActiveCatalog` drops the per-namespace cache. The locale travels
-    // with the catalogue because ICU resolves plural and ordinal categories from it, not from the
-    // message.
-    setActiveCatalog(locale, { away: catalogue } as never);
-    const t = activeTranslator("away");
-    expect(t, "the register did not build an away translator").not.toBeNull();
-    const out: Record<string, string> = {};
-    for (const key of keys) out[key] = t!(key, AWAY_ARGS[key] ?? {});
-    return out;
-  };
-
-  it("every away key renders the SAME sentence from the catalogue and from the kept constants", () => {
-    const keys = Object.keys(EN.away!).sort();
-    const kept = { ...AWAY_COPY, ...AWAY_NOTICE_COPY };
-
-    const fromCatalogue = renderAway(DEFAULT_LOCALE, EN.away, keys);
-    const fromConstants = renderAway(DEFAULT_LOCALE, kept, keys);
-
-    // ANTI-VACUITY: an unrenderable message answers "" on BOTH sides and would compare equal, so
-    // the comparison is only worth its exit code with this in front of it.
-    const blank = keys.filter((k) => fromCatalogue[k] === "" || fromConstants[k] === "");
-    expect(blank, `these away messages rendered EMPTY: ${blank.join(", ")}`).toEqual([]);
-
-    const drift = keys.filter((k) => fromCatalogue[k] !== fromConstants[k]).map(
-      (k) => `away.${k}: catalogue "${fromCatalogue[k]}" vs constant "${fromConstants[k]}"`,
-    );
-    expect(drift, `the two render paths disagree:\n  ${drift.join("\n  ")}`).toEqual([]);
-  });
-
-  it("and it renders German, so a key the German catalogue lacks cannot hide behind English", () => {
-    const keys = Object.keys(EN.away!).sort();
-    const german = renderAway("de", (GERMAN as Record<string, unknown>).away, keys);
-    const blank = keys.filter((k) => german[k] === "");
-    expect(blank, `these away messages rendered EMPTY in German: ${blank.join(", ")}`).toEqual([]);
-    // The state the away pane reports after another install takes the edit — the key this case was
-    // written for — in the reader's own language.
-    expect(german.applied).toBe(DE.away!.applied);
-    expect(german.applied).not.toBe(EN.away!.applied);
-  });
-
-  it.each(TABLES)("$name's plain sentences are byte-identical to en.json", ({ ns, table }) => {
-    const catalogue = EN[ns]!;
-    const drift: string[] = [];
-    for (const [key, value] of Object.entries(table)) {
-      if (typeof value !== "string") continue; // interpolated entries are functions; see below
-      if (catalogue[key] !== value) {
-        drift.push(`${ns}.${key}: catalogue "${catalogue[key]}" vs constant "${value}"`);
-      }
-    }
-    expect(drift, `the fallback and the catalogue have drifted:\n  ${drift.join("\n  ")}`).toEqual([]);
-  });
-
   it("a MISSING argument-name list degrades to the English fallback rather than to a broken sentence", () => {
     /**
      * `liveCopy`'s `params` maps each function key to its ICU argument names in order. Forgetting one
@@ -207,16 +102,13 @@ describe("with a German catalogue set, the non-hook surfaces answer German", () 
     expect(MAIL_BODY_COPY.show).toBe(DE.mailBody!.show);
     expect(MAIL_BODY_COPY.show).toBe("Bilder anzeigen");
     expect(MAIL_BODY_COPY.darkAdapt).toBe("An Dunkel anpassen");
-    expect(ATTACHMENT_COPY.downloadAll).toBe("Alle herunterladen");
-    expect(PREVIEW_COPY.close).toBe("Schließen");
+    // The files' half (the strip's Download all, the look's Close): `locale-shim-parity-reader.test.tsx`.
   });
 
   it("an interpolated sentence keeps its number and takes the German plural", () => {
     setActiveCatalog("de", GERMAN as never);
-    expect(ATTACHMENT_COPY.count(1)).toBe("1 Anhang");
-    expect(ATTACHMENT_COPY.count(4)).toBe("4 Anhänge");
     expect(MAIL_BODY_COPY.blockedMany(3)).toContain("3");
-    expect(ATTACHMENT_COPY.idle("2,3 MB")).toContain("2,3 MB");
+    // The files' half (the count's plural, the size in the idle line): `locale-shim-parity-reader.test.tsx`.
   });
 
   it("the view names follow the glossary — Ohbox, Screener and Reads keep their names, the rest translate", () => {

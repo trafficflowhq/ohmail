@@ -140,7 +140,7 @@ export {
   type CreateMailboxBody, type UpdateMailboxBody, type TransportInput, type MailboxServiceDeps,
   // Cloud 0009 — the OAuth consent flow's write end. `connectOAuth` resolves its target row
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.
-  type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
+  DeviceGrantExpired, type ConnectOAuthMailboxInput, type ConnectOAuthOptions, type ConnectOAuthResult,
   type MailboxProbe, type MailboxProbeInput, type MailboxProbeVerdict,
   type SmtpProbe, type SmtpProbeInput, type ProbeTransport, type SendingProbe,
   type ProbeTlsDetail, type ProbeTlsFailureKind, type ProvenEndpoint,

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -135,20 +136,27 @@ const ids = (c: HTMLElement): string[] =>
   [...c.querySelectorAll("[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
 
 const toasts = (): string[] =>
-  [...document.querySelectorAll("[class*=toast]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+  [...document.querySelectorAll(".fr-report [role=status]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
 
-/** The reported gesture: expand the card, press Move, press the first destination (Ohbox). */
+/** Expand the Newsletter, press Move, then take the first destination. */
 async function pressMoveToOhbox(c: HTMLElement): Promise<string[]> {
-  const expand = c.querySelector<HTMLElement>(".sc-x");
-  if (expand) { await act(async () => { expand.click(); }); await tick(10); }
-  const move = c.querySelector<HTMLElement>(".abar-move");
-  expect(move, "the card offers no Move verb").toBeTruthy();
-  await act(async () => { move!.click(); });
+  const stream = within(c).getByRole("region", { name: "News stream" });
+  const expand = within(stream).getByRole("button", { name: "Expand" });
+  await act(async () => { expand.click(); });
   await tick(10);
-  const dests = [...c.querySelectorAll(".abar-panel .abar-solo")].map((b) => (b.textContent ?? "").trim());
-  const first = c.querySelector<HTMLElement>(".abar-panel .abar-solo");
-  expect(first, "the Move strip offers no destination").toBeTruthy();
-  await act(async () => { first!.click(); });
+  const panel = within(c).getByRole("toolbar", { name: "Actions" });
+  let move = within(panel).queryByRole("button", { name: "Move" });
+  if (move === null) {
+    await act(async () => { within(panel).getByRole("button", { name: "More" }).click(); });
+    move = within(c).getByRole("menuitem", { name: "Move" });
+  }
+  await act(async () => { move.click(); });
+  await tick(10);
+  const menu = within(c).getByRole("menu", { name: "Move" });
+  const destinations = within(menu).getAllByRole("menuitem");
+  const dests = destinations.map((button) => (button.textContent ?? "").trim());
+  expect(dests[0], "Ohbox is not the first destination").toContain("Ohbox");
+  await act(async () => { destinations[0]!.click(); });
   await tick(50);
   return dests;
 }

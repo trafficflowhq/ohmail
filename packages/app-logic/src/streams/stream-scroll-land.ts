@@ -104,6 +104,7 @@ function settler(core: StreamScrollCore, el: HTMLElement, f: Flight): () => void
       rest();
       f.onLanded?.();
     }
+    core.inputs.seam?.settled?.();
     flown();
   };
   const settle = (): void => {

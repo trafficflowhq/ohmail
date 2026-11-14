@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { useSeedOffer, type SeedOffer } from "../app/shell/seed-offer";
+import { useSeedOffer, type SeedOffer } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,10 +57,10 @@ describe("the seed offer on an account with no mailbox", () => {
   });
 
   it("the shell hands the offer whether a mailbox exists", async () => {
-    const shell = fs.readFileSync(path.join(HERE, "..", "app/shell/AppShell.tsx"), "utf8");
-    const call = shell.slice(shell.indexOf("useSeedOffer({"), shell.indexOf("useSeedOffer({") + 240);
+    const ground = fs.readFileSync(path.join(HERE, "../../../packages/app/src/mail/ground/first-run-owed.ts"), "utf8");
+    const call = ground.slice(ground.indexOf("useSeedOffer({"), ground.indexOf("useSeedOffer({") + 240);
     expect(call).toMatch(/hasMailbox: hasLiveMailbox\(facts\)/);
-    const { hasLiveMailbox } = await import("../app/shell/seed-offer");
+    const { hasLiveMailbox } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
     expect(hasLiveMailbox(null), "unread is not known").toBeNull();
     expect(hasLiveMailbox([])).toBe(false);
     expect(hasLiveMailbox([{ status: "disabled" }]), "a removed mailbox is none").toBe(false);

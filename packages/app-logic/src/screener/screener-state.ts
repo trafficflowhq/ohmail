@@ -22,7 +22,7 @@ import type {
   ScreenerWaitingSenderDTO,
   UnscreenedGroupDTO,
 } from "@ohmail/wire";
-import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import {
   FOLDER_OF_VIEW,
   cardReach,
@@ -50,6 +50,7 @@ import {
   type EntityReader,
   type OhmailEngine,
   type PressTally,
+  type StayVerdict,
   type ScreenerSegments,
   type UnsubscribeClaim,
   type AbandonedMutation,
@@ -82,8 +83,8 @@ import {
   releaseRules,
   senderScreening,
 } from "../press/sender-screening.js";
-import { screeningShown } from "../press/press-verdict.js";
-import { syncIdentityOf } from "../session/sync-scheduler.js";
+import { screeningShown, verdictSentence } from "../press/press-verdict.js";
+import { confirmedSyncEngine, mirrorOwnerOf, syncIdentityOf } from "../session/sync-scheduler.js";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "../text/idn.js";
 import type { UndoToastFn } from "../press/undo-door.js";
 import type { ScreenerReleaseWindow } from "../press/release-window.js";
@@ -133,10 +134,23 @@ export interface ScreenerText {
   zone: () => string;
 }
 
+/** The outcome from the confirmed account's presentation, or null if that account no longer holds. */
+export type DecisionVerdict = (engine: OhmailEngine, decision: ScreenerIntent, retro: boolean) => StayVerdict | null;
+
+export interface ConfirmedBulkDecision {
+  readonly scope: DecisionScope;
+  readonly dest: DecisionDestination;
+  readonly ids: readonly string[];
+  readonly unsubscribeIds: readonly string[];
+}
+export type ConfirmedSenders = ReadonlyMap<string, ConfirmedBulkDecision>;
+
 export interface DecideOptions {
   read: boolean;
   scope: DecisionScope;
   quiet?: boolean;
+  confirmedIds?: readonly string[];
+  unsubscribeIds?: readonly string[];
   /**
    * Whether the rule the decide promotes also reaches the mail already filed — the sender sheet's
    * second answer. Absent, the decide carries none, as every press from the list always has.
@@ -173,6 +187,8 @@ interface PendingEntry {
    * worked.
    */
   quiet: boolean;
+  confirmedIds?: readonly string[];
+  inboxIds?: string[];
   /** The sheet's past-mail answer, when the press came from the sheet — {@link DecideOptions}. */
   applyRetro?: boolean;
   /** The sheet's letter outside the bag — {@link DecideOptions}. */
@@ -254,6 +270,7 @@ export interface WaitingMore {
 }
 
 export interface ScreenerState {
+  readonly accountScope?: StorageScope;
   /** Waiting rows to render (rows mid-exit carry `pendingOut`). */
   waiting: ScreenerSenderDTO[];
   /** Waiting minus everything decided — rail badge, doorbell, meta. */
@@ -371,6 +388,7 @@ export interface ScreenerState {
   screenedOut: ScreenerSenderDTO[];
   spam: SpamRow[];
   isExiting: (id: string) => boolean;
+  leavingOf?: (id: string) => "rail" | "fade" | undefined;
   /**
    * Is this held message's body stalled for good, and why? Null while it may still arrive.
    * See {@link HeldBodyStall} — the preview renders a spinner ONLY on a null answer.
@@ -382,14 +400,18 @@ export interface ScreenerState {
    * waiting sender at that domain and how many of their letters move. The press moves that set.
    */
   reachOf: (sender: ScreenerSenderDTO, scope: DecisionScope) => CardReach;
+  /** The number of undecided senders at this domain if the waiting queue is fully known. */
+  domainWaitingCount?: (sender: ScreenerSenderDTO) => number | null;
   /**
    * What a Screen out or Spam press on this sender says about the one-click unsubscribe BEFORE it is
    * made (`unsubscribeClaim`), over the held letters the scope moves. `none` where nothing is sent.
    */
   unsubClaimOf: (sender: ScreenerSenderDTO, scope: DecisionScope) => UnsubscribeClaim;
-  applyAll: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope) => void;
+  bulkUnsubscribeIds?: (sender: ScreenerSenderDTO, scope: DecisionScope, ids: readonly string[]) => string[];
+  applyAll: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope, confirmed?: ConfirmedSenders) => void;
   /** `only` limits it to the senders a question named; absent, every undecided row. */
-  markAllSpam: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope, only?: (s: ScreenerSenderDTO) => boolean) => void;
+  markAllSpam: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope, only?: (s: ScreenerSenderDTO) => boolean,
+    confirmed?: ConfirmedSenders) => void;
   /** How many senders {@link markAllSpam} moves: the loaded undecided rows, never the store total. */
   spamAllCount: number;
   allowScreened: (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => void;
@@ -666,8 +688,16 @@ export function useScreenerState(
    * that builds no window.
    */
   releaseWindow?: ScreenerReleaseWindow,
+  decisionVerdict?: DecisionVerdict,
+  hostMirrorAccount?: string,
 ): ScreenerState {
   const owner = useRef(usePinnedScope(scope));
+  const mirrorAccount = hostMirrorAccount ?? mirrorOwnerOf(engine) ?? owner.current;
+  const activeMirror = useRef<{ engine: OhmailEngine; account: string | null } | null>(null);
+  useLayoutEffect(() => {
+    activeMirror.current = { engine, account: mirrorAccount };
+    return () => { activeMirror.current = null; };
+  }, [engine, mirrorAccount]);
   const t = text.screener;
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
      word the rail uses. See `decision-copy.ts`. */
@@ -839,14 +869,20 @@ export function useScreenerState(
   const heldMessageIds = (sender: ScreenerSenderDTO): string[] =>
     sender.derived ? sender.held.map((h) => h.id) : [];
 
+  const waitingInScope = (sender: ScreenerSenderDTO, scope: DecisionScope): ScreenerSenderDTO[] => {
+    if (scope === "sender") return [sender];
+    const own = senderKey(sender.from.address);
+    const domain = domainOfAddress(own);
+    return [sender, ...undecided.filter((row) => {
+      const key = senderKey(row.from.address);
+      return key !== own && domainOfAddress(key) === domain;
+    })];
+  };
+
   /** What a card press files ({@link cardReach}): its own row, then every other row still undecided on screen, off the RAW mirror. */
   const reachOf = (sender: ScreenerSenderDTO, scope: DecisionScope): CardReach => {
-    const own = senderKey(sender.from.address);
-    const rows = [
-      { address: sender.from.address, heldIds: heldMessageIds(sender) },
-      ...undecided.filter((x) => senderKey(x.from.address) !== own)
-        .map((x) => ({ address: x.from.address, heldIds: heldMessageIds(x) })),
-    ];
+    const rows = waitingInScope(sender, scope)
+      .map((row) => ({ address: row.from.address, heldIds: heldMessageIds(row) }));
     return cardReach(engine.read(), rows, sender.from.address, scope);
   };
 
@@ -1151,9 +1187,12 @@ export function useScreenerState(
     heldIds: entry.sender.derived === true && entry.read ? heldMessageIds(entry.sender) : [],
     from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
     ...(entry.applyRetro !== undefined ? { applyRetro: entry.applyRetro } : {}),
+    ...(entry.confirmedIds !== undefined ? {
+      confirmedIds: [...entry.confirmedIds], inboxIds: entry.inboxIds ?? [],
+    } : {}),
     ...(entry.seedMove ? { seed: { id: entry.seedMove.messageId, folder: entry.seedMove.folder, from: entry.seedMove.from ?? null } } : {}),
     // A card press: the INBOX letters its scope shows, the domain's other senders' included (`reachOf`).
-    ...(entry.applyRetro === undefined && entry.sender.derived === true
+    ...(entry.confirmedIds === undefined && entry.applyRetro === undefined && entry.sender.derived === true
       ? { inboxIds: reachOf(entry.sender, entry.scope).inboxIds }
       : {}),
   });
@@ -1173,7 +1212,9 @@ export function useScreenerState(
     // capsule is withdrawn rather than left standing above the decision's own outcome.
     if (entry.offer && entry.offer.ids.every((x) => !s.pending.has(x))) entry.offer.ends.abort();
     if (entry.dest === "spam") {
-      s.pins = [entry.sender, ...s.pins];
+      const ids = entry.confirmedIds === undefined ? null : new Set([...entry.confirmedIds, ...(entry.inboxIds ?? [])]);
+      const held = ids === null ? entry.sender.held : entry.sender.held.filter((letter) => ids.has(letter.id));
+      if (held.length) s.pins = [{ ...entry.sender, held }, ...s.pins];
     }
     s.overrides.delete(id);
     dispatchDecision(intentOf(id, entry));
@@ -1190,27 +1231,73 @@ export function useScreenerState(
    * ahead of the wire, but between press and settle the journal is the ONLY copy — dropping it
    * early reopens the defect at a narrower window.
    */
+  // Re-read the raw folder at dispatch, and narrow the journal on every observed queue change.
+  const confirmedAtGate = (ids: readonly string[], address: string, scope: DecisionScope, derived: boolean): string[] => {
+    const reader = engine.read();
+    const key = senderKey(address);
+    const matches = (from: string) => scope === "domain"
+      ? domainOfAddress(senderKey(from)) === domainOfAddress(key) : senderKey(from) === key;
+    return ids.filter((id) => {
+      const row = reader.get<EngineMessage>("message", id);
+      if (row) return physicalFolderOf(row) === FOLDER_OF_VIEW.screener && matches(row.from.address)
+        && (mirrorAccount === null || row.accountId === mirrorAccount);
+      return !derived || waitingNow.current.some((sender) => matches(sender.from.address)
+        && sender.held.some((letter) => letter.id === id) && atTheGate(id, true));
+    });
+  };
+
+  const bulkUnsubscribeIds = (sender: ScreenerSenderDTO, decisionScope: DecisionScope, ids: readonly string[]): string[] => {
+    if (!autoUnsubscribe || (decisionScope === "sender" && sender.checked?.claimsOnly === true)) return [];
+    const reader = engine.read();
+    return confirmedAtGate(ids, sender.from.address, decisionScope, sender.derived === true).filter((id) => {
+      const { posture, authVerdict } = unsubscribeLetterOf(reader, id);
+      return (posture === null || posture === "one_click") && (authVerdict == null || authVerdict === "pass");
+    });
+  };
+
   const dispatchDecision = (d: ScreenerIntent) => {
-    const id = d.id;
+    const done = () => disarmScreenerIntent(d.id, owner.current);
     const derived = d.derived;
     const heldIds = d.heldIds;
-    const done = () => disarmScreenerIntent(id, owner.current);
+    const confirmed = d.confirmedIds === undefined ? undefined
+      : confirmedAtGate(d.confirmedIds, d.from.address, d.scope, derived);
+    const mayReport = () => activeMirror.current?.engine === engine && activeMirror.current.account === mirrorAccount
+      && confirmedSyncEngine(engine) !== null;
+    const mayDispatch = () => confirmed === undefined || mayReport();
+    if (!mayDispatch()) { done(); return; }
+    const explainDecision = (retro: boolean): boolean => {
+      if (d.quiet || !mayReport()) return true;
+      const verdict = decisionVerdict?.(engine, d, retro);
+      // Withhold the generic success sentence too when the confirmed account has changed.
+      if (verdict === null || !mayReport()) return true;
+      if (verdict === undefined || verdict.key === "none") return false;
+      const domain = d.scope === "domain" ? domainOfAddress(d.from.address) : null;
+      const sender = domain === null ? displayAddress(d.from.address) : displayDomain(domain);
+      toast(verdictSentence(ts, verdict, sender, piles[d.dest]));
+      return true;
+    };
     /* THE CARD FILES WHAT IT SHOWS: no rule of this press reaches mail already
        filed elsewhere, and the INBOX letters the card listed move by id beside the decision, marked as
        its own (`pressRule`) so the next decision moves them too. A sheet
        press keeps its own past-mail answer, and a record from before the field the server's default. */
-    const card = d.applyRetro === undefined && d.inboxIds !== undefined;
+    const card = d.inboxIds !== undefined && (confirmed !== undefined || d.applyRetro === undefined);
     const retroOf = card ? false : d.applyRetro;
     const own = senderKey(d.from.address);
     const stillInInbox = (m: string): boolean => {
       const x = engine.read().get<EngineMessage>("message", m);
       if (x?.folder !== "INBOX" || x.placeDecided === true) return false;
       // Another sender's letter whose own decision is in flight here is that decision's to file.
-      return senderKey(x.from.address) === own || !decidedHere(x.from.address, id);
+      if (confirmed !== undefined && mirrorAccount !== null && x.accountId !== mirrorAccount) return false;
+      const key = senderKey(x.from.address);
+      return key === own || (confirmed === undefined || (d.scope === "domain" && domainOfAddress(key) === domainOfAddress(own)))
+        && !decidedHere(x.from.address, d.id);
     };
     // An Ohbox decision files them where they are: they are already there, and nothing moves.
     const cardTo = FOLDER_OF_VIEW[d.dest as ScreenDest];
     const cardFiled = card ? [...new Set(d.inboxIds ?? [])].filter(stillInInbox) : [];
+    const id = confirmed !== undefined && derived
+      ? (confirmed.includes(d.id) ? d.id : confirmed[0] ?? cardFiled[0]) : d.id;
+    if (id === undefined || (confirmed !== undefined && !confirmed.length && !cardFiled.length)) { done(); return; }
     const cardMoves: Array<Extract<EngineMutation, { kind: "move" }>> = cardTo === FOLDER_OF_VIEW.ohbox
       ? []
       : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox, pressRule: true as const }));
@@ -1277,15 +1364,21 @@ export function useScreenerState(
         dest: d.dest as ScreenDest,
         ...(decision === "yes" ? { read: d.read } : {}),
         scope: d.scope,
+
         ...(retroOf !== undefined ? { applyRetro: retroOf } : {}),
+        ...(confirmed !== undefined ? { confirmedIds: confirmed } : {}),
+        ...(confirmed !== undefined || d.unsubscribeIds !== undefined ? {
+          unsubscribeIds: (d.unsubscribeIds ?? []).filter((id) => confirmed === undefined || confirmed.includes(id)),
+        } : {}),
       }).then((res) => {
         done();
+        if (!mayDispatch()) return;
         // A wait keeps the sender out as an answer does: the decision still stands.
         settleOnward(pressVerdict(res).kind !== "refused");
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
         // The card's INBOX letters and the sheet's letter, by id, once the decision stands: refused
         // or replaced, none moves.
-        if (res.status !== "superseded") for (const mv of [...cardMoves, ...seedMoves]) void engine.mutate(mv);
+        const moves = res.status === "superseded" ? [] : [...cardMoves, ...seedMoves].map((m) => engine.mutate(m));
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
          * applying it: nothing moved, no rule written, the mail still in
@@ -1295,7 +1388,17 @@ export function useScreenerState(
          * carries no move (there was none), and the projection offers the
          * same sender again with nothing saying why. The mark is on the
          * ADDRESS because the overlay's row id is gone by then. */
-        if (res.pendingWith) markQueued(d, res.pendingWith.name);
+        if (res.pendingWith) {
+          if (mayReport()) markQueued(d, res.pendingWith.name);
+        }
+        else if (res.status === "confirmed") {
+          if (moves.length === 0) explainDecision(retroOf ?? true);
+          else void Promise.allSettled(moves).then((answers) => {
+            if (answers.every((answer) => answer.status === "fulfilled" && answer.value.status === "confirmed")) {
+              explainDecision(retroOf ?? true);
+            }
+          });
+        }
       }, () => { done(); settleOnward(false); refuse(d); });
     } else {
       // Past the gate: a rule, not a decide (#116). The sender's mail is
@@ -1311,7 +1414,7 @@ export function useScreenerState(
       const sender = senderScreening(engine.read(), id, undefined, undefined, over);
       if (sender) {
         const dest = d.dest;
-        const plan = planScreeningChange(sender, dest, d.scope, true, retroOf);
+        const plan = planScreeningChange(sender, dest, d.scope, true, retroOf, confirmed !== undefined ? "leave" : "decide");
         // The toast's subject, not the rule's — the rule was already written from `plan`.
         const who = d.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
         const place = text.places[dest] ?? dest;
@@ -1320,15 +1423,29 @@ export function useScreenerState(
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
+        const heldBy: { current: { name: string | null } | null } = { current: null };
         // A card press moves the INBOX letters it showed, a sheet press its own letter; a sheet's
         // backlog is the server pass's. Beside a decide they wait for its answer.
-        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(over ? outrankCoveringDomains(over, m) : m).then((r) => {
+        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], async (m) => {
+          if (!mayDispatch()) return { status: "superseded" };
+          const r = await engine.mutate(over ? outrankCoveringDomains(over, m) : m);
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
+          if (r.status === "confirmed" && r.pendingWith) {
+            heldBy.current = r.pendingWith;
+            return { ...r, status: "awaiting_organizer" as const };
+          }
           return r;
-        }), card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
+        }, card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
           done();
           // Replaced by a newer press about this sender: that press says the sentence.
           if (key === null) return;
+          if (key === "toastRuleOrganizer" && heldBy.current) {
+            if (!mayReport()) return;
+            const { name } = heldBy.current;
+            markQueued(d, name);
+            if (!d.quiet) toast(name ? t("pendingDecided", { name }) : t("pendingDecidedUnknown"));
+            return;
+          }
           // THE SENTENCE IS UNCHANGED — `toastRuleFailed` says "… moved, but the rule couldn't be
           // made. Future mail is unchanged.", which is strictly more informative than a generic
           // refusal and is true: the mail moved, only the rule was lost. What was missing is the
@@ -1336,6 +1453,9 @@ export function useScreenerState(
           // plans no `move` at all) the sender comes back into the queue, and it used to come back
           // looking untouched while the only record faded with the toast.
           if (key === "toastRuleFailed") markRefused(id);
+          if (key === "toastRuled" || key === "toastRetargeted" || key === "toastRuledMoved" || key === "toastRuledFuture") {
+            if (explainDecision(plan.retro)) return;
+          }
           const why = key === "toastRuleFailed" ? whyOf(refused) : null;
           toast(ts(key, { sender: who, place, count: pressGained(before, shownAt(subject, dest)) }) + (why ? ` ${why}` : ""));
         }, () => { done(); refuse(d); });
@@ -1410,6 +1530,39 @@ export function useScreenerState(
     toast(t("toastUndone", { count: restored }));
   };
 
+  const decisionMessage = (
+    sender: ScreenerSenderDTO,
+    dest: DecisionDestination,
+    opts: DecideOptions,
+    read: boolean,
+  ): string => {
+    const target = scopeText(sender, opts.scope);
+    /**
+     * The unsubscribe sentence, on the two demoting toasts only. `screened` and `spam` are the
+     * whole of the endpoint's `no`, which is the whole of what arms the pass
+     * (`screener-service.ts` calls `unsubscribe.onScreenOut` on `decision === "no"` and narrows
+     * to the two reject folders itself). The three mail destinations are a KEEP and must never
+     * carry this sentence — claiming it there would be false as well as alarming. Passed as an
+     * ICU `select` argument rather than two message keys, so the German catalogue cannot end up
+     * with the two halves of one sentence in different orders.
+     */
+    const claim = opts.unsubscribeIds?.length ? unsubClaimOf(sender, opts.scope) : "none";
+    const unsub = claim === "none" ? "none" : claim === "sends" ? "sent" : "maysent";
+    // A screen-out of a list's claims filed them alone: what it set aside, and no rule promised.
+    const claimsAlone = DECISION_QUIET.has(dest) && opts.scope === "sender" && sender.checked?.claimsOnly === true;
+    return claimsAlone
+        ? t("toastListClaims", { dest, target, brand: sender.checked!.brand })
+        : dest === "screened"
+        ? t("toastScreened", { target, read: read ? "true" : "false", unsub })
+        : dest === "spam"
+          ? t("toastSpam", { target: displayAddress(sender.from.address), unsub })
+          : t("toastFiled", {
+              dest: piles[dest],
+              read: read ? "true" : "false",
+              target,
+            });
+  };
+
   const decide = (
     sender: ScreenerSenderDTO,
     dest: DecisionDestination,
@@ -1438,13 +1591,25 @@ export function useScreenerState(
     // `entry.read` for both the wire `read` flag and the derived-row `mark_seen` batch, so a
     // false here stops both — the demote-stays-unread rule.
     const read = opts.read && !DECISION_QUIET.has(dest);
+    // A manual Spam press files the waiting mail in view at the press, as Apply All does.
+    // An explicit past-mail or outside-card choice still belongs to the sender sheet.
+    const inspectedIds = opts.confirmedIds ?? (
+      dest === "spam" && sender.derived === true && opts.applyRetro === undefined && opts.seedMove === undefined
+        ? [...new Set(waitingInScope(sender, opts.scope).flatMap(heldMessageIds))]
+        : undefined
+    );
+    const confirmed = inspectedIds === undefined ? null : new Set(inspectedIds);
     const entry: PendingEntry = {
-      sender,
+      sender: confirmed === null ? sender : { ...sender, held: sender.held.filter((letter) => confirmed.has(letter.id)) },
       dest,
       read,
       scope: opts.scope,
       quiet: opts.quiet === true,
       ...(opts.applyRetro !== undefined ? { applyRetro: opts.applyRetro } : {}),
+      ...(inspectedIds !== undefined ? {
+        confirmedIds: confirmedAtGate(inspectedIds, sender.from.address, opts.scope, sender.derived === true),
+        inboxIds: reachOf(sender, opts.scope).inboxIds.filter((id) => confirmed?.has(id)),
+      } : {}),
       ...(opts.seedMove ? { seedMove: opts.seedMove } : {}),
       at: Date.now(),
       outTimer: setTimeout(() => {
@@ -1473,7 +1638,8 @@ export function useScreenerState(
      * through a private window instead of through a crash. So the decision is sent at once and
      * the sentence says the undo is not on offer; `commit`'s own tail, minus the timers.
      */
-    const holds = written === "stored";
+    // An irreversible request belongs to the warned press. Only filing can wait for Undo.
+    const holds = written === "stored" && !opts.unsubscribeIds?.length;
     if (holds) {
       s.pending.set(id, entry);
       s.out.add(id);
@@ -1483,39 +1649,16 @@ export function useScreenerState(
     } else {
       clearTimeout(entry.outTimer);
       clearTimeout(entry.commitTimer);
-      if (dest === "spam") s.pins = [entry.sender, ...s.pins];
+      if (dest === "spam" && entry.sender.held.length) s.pins = [entry.sender, ...s.pins];
       s.overrides.delete(id);
-      dispatchDecision(intentOf(id, entry));
+      dispatchDecision({
+        ...intentOf(id, entry),
+        ...(opts.unsubscribeIds !== undefined ? { unsubscribeIds: [...opts.unsubscribeIds] } : {}),
+      });
     }
     bump();
     if (opts.quiet) return;
-    const target = scopeText(sender, opts.scope);
-    /**
-     * The unsubscribe sentence, on the two demoting toasts only. `screened` and `spam` are the
-     * whole of the endpoint's `no`, which is the whole of what arms the pass
-     * (`screener-service.ts` calls `unsubscribe.onScreenOut` on `decision === "no"` and narrows
-     * to the two reject folders itself). The three mail destinations are a KEEP and must never
-     * carry this sentence — claiming it there would be false as well as alarming. Passed as an
-     * ICU `select` argument rather than two message keys, so the German catalogue cannot end up
-     * with the two halves of one sentence in different orders.
-     */
-    const claim = DECISION_QUIET.has(dest) ? unsubClaimOf(sender, opts.scope) : "none";
-    // HELD, Undo stops the request with the decision; SENT AT ONCE, nothing can take it back.
-    const unsub = claim === "none" ? "none" : holds ? (claim === "sends" ? "sends" : "may") : (claim === "sends" ? "sent" : "maysent");
-    // A screen-out of a list's claims filed them alone: what it set aside, and no rule promised.
-    const claimsAlone = DECISION_QUIET.has(dest) && opts.scope === "sender" && sender.checked?.claimsOnly === true;
-    const message =
-      claimsAlone
-        ? t("toastListClaims", { dest, target, brand: sender.checked!.brand })
-        : dest === "screened"
-        ? t("toastScreened", { target, read: read ? "true" : "false", unsub })
-        : dest === "spam"
-          ? t("toastSpam", { target: displayAddress(sender.from.address), unsub })
-          : t("toastFiled", {
-              dest: piles[dest],
-              read: read ? "true" : "false",
-              target,
-            });
+    const message = decisionMessage(sender, dest, opts, read);
     if (!holds) {
       toast(`${message} ${tSession("noUndoHere")}`);
       return;
@@ -1537,6 +1680,22 @@ export function useScreenerState(
     const overridden = segments.spam.filter((x) => s.overrides.has(x.id));
     return [...segments.waiting, ...onwardRows, ...overridden].map(withSuggestion);
   }, [segments, onwardRows, version, s.overrides.size, suggestions]);
+  const waitingNow = useRef(waiting);
+  waitingNow.current = waiting;
+  useLayoutEffect(() => {
+    for (const [id, entry] of s.pending) {
+      if (entry.confirmedIds === undefined) continue;
+      const gate = confirmedAtGate(entry.confirmedIds, entry.sender.from.address, entry.scope, entry.sender.derived === true);
+      const inbox = (entry.inboxIds ?? []).filter((id) => {
+        const letter = engine.read().get<EngineMessage>("message", id);
+        return letter?.folder === "INBOX" && letter.placeDecided !== true;
+      });
+      if (gate.length === entry.confirmedIds.length && inbox.length === entry.inboxIds?.length) continue;
+      entry.confirmedIds = gate;
+      entry.inboxIds = inbox;
+      armScreenerIntent(intentOf(id, entry), owner.current);
+    }
+  });
   onwardIds.current = new Set(onwardLive.rows.map((r) => r.messageId));
 
   /**
@@ -1743,11 +1902,12 @@ export function useScreenerState(
     summary: (snaps: Array<{ id: string; dest: DecisionDestination; claim: UnsubscribeClaim }>) => string,
     /** Restricts the bulk to rows it can honestly speak for. Absent ⇒ every waiting row. */
     only?: (x: ScreenerSenderDTO) => boolean,
+    confirmed?: ConfirmedSenders,
   ) => {
     // `senderHeld` (inside `undecided`), not a per-id read: a bulk planned over a queue holding a
     // pending sender's re-minted row would walk it into a second decision for one sender.
     // `undecided`, the set the counts are taken over: also skips a sender another tab holds.
-    const items = undecided.filter((x) => (only ? only(x) : true));
+    const items = undecided.filter((x) => confirmed ? confirmed.has(senderKey(x.from.address)) : only?.(x) ?? true);
     if (!items.length || s.bulkBusy) return;
     s.bulkBusy = true;
     const total = items.length;
@@ -1758,17 +1918,21 @@ export function useScreenerState(
     s.applying = { done: 0, total };
     bump();
     const snaps: Array<{ id: string; dest: DecisionDestination; claim: UnsubscribeClaim }> = [];
+    const sendsNow = items.some((item) => confirmed?.get(senderKey(item.from.address))?.unsubscribeIds.length);
     items.forEach((item, i) => {
-      setTimeout(() => {
-        const dest = destOf(item);
-        decide(item, dest, { read: false, scope: scopeOf(item), quiet: true });
-        snaps.push({ id: item.id, dest, claim: DECISION_QUIET.has(dest) ? unsubClaimOf(item, scopeOf(item)) : "none" });
-        // `i + 1` and not `snaps.length`: they agree here, and the index is the one that stays
-        // true if a `decide` is ever allowed to decline a row — `done` counts rows this run has
-        // WALKED, which is what the denominator was taken from.
-        s.applying = { done: i + 1, total };
+      const apply = () => {
+        const snapshot = confirmed?.get(senderKey(item.from.address));
+        const dest = snapshot?.dest ?? destOf(item);
+        const decisionScope = snapshot?.scope ?? scopeOf(item);
+        decide(item, dest, { read: false, scope: decisionScope, quiet: true,
+          ...(snapshot ? { confirmedIds: snapshot.ids, unsubscribeIds: snapshot.unsubscribeIds } : {}),
+        });
+        snaps.push({ id: item.id, dest, claim: snapshot?.unsubscribeIds.length ? "may_send" : "none" });
+        s.applying = { done: snaps.length, total };
         bump();
-      }, i * BULK_STEP_MS);
+      };
+      if (sendsNow) apply();
+      else setTimeout(apply, i * BULK_STEP_MS);
     });
     setTimeout(() => {
       s.bulkBusy = false;
@@ -1783,16 +1947,18 @@ export function useScreenerState(
       // reports that number, so a partial press says how many came back and a fully expired one
       // takes the `toastUndoExpired` arm. Shortening the capsule to cover the FIRST row instead
       // would leave a forty-row bulk with no undo on screen at all, which is worse.
-      const offer = { ids: snaps.map((x) => x.id), ends: new AbortController() };
-      for (const x of snaps) { const e = s.pending.get(x.id); if (e) e.offer = offer; }
+      const ids = snaps.filter((x) => s.pending.has(x.id)).map((x) => x.id);
+      if (!ids.length && sendsNow) { toast(summary(snaps)); return; }
+      const offer = { ids, ends: new AbortController() };
+      for (const id of ids) s.pending.get(id)!.offer = offer;
       toast(summary(snaps), {
         action: t("toastUndo"),
         duration: UNDO_MS,
         undo: true,
-        onAction: () => undo(snaps.map((x) => x.id)),
+        onAction: () => undo(ids),
         signal: offer.ends.signal,
       });
-    }, items.length * BULK_STEP_MS + 160);
+    }, sendsNow ? 0 : items.length * BULK_STEP_MS + 160);
   };
 
   /**
@@ -1810,7 +1976,7 @@ export function useScreenerState(
    * from that suggestion with no default, and with no suggestions the set is empty — the surface additionally
    * declines to render the control (`ScreenerView.tsx`), because an inert button is its own small lie.
    */
-  const applyAll = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
+  const applyAll = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope, confirmed?: ConfirmedSenders) =>
     bulk(
       (x) => x.ai!.dest as DecisionDestination,   // `hold` is excluded by the predicate below
       scopeOf,
@@ -1853,10 +2019,11 @@ export function useScreenerState(
       // pile with "Not spam" verbs on every row, and `undo` covers the window. It is exactly as
       // reversible as the screen-out this control always performed. `markAllSpam` stays: it
       // answers a different question ("all of this is junk") and needs no suggestions.
-      (x) => x.ai != null && x.ai.dest !== "screener",
+      (x) => x.ai != null && x.ai.dest !== "screener", confirmed,
     );
 
-  const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope, only?: (x: ScreenerSenderDTO) => boolean) =>
+  const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope, only?: (x: ScreenerSenderDTO) => boolean,
+    confirmed?: ConfirmedSenders) =>
     bulk(
       () => "spam",
       scopeOf,
@@ -1865,7 +2032,7 @@ export function useScreenerState(
       (snaps) => t("toastBulkSpam", {
         count: snaps.length, unsub: snaps.some((x) => x.claim !== "none") ? "true" : "false",
       }),
-      only,
+      only, confirmed,
     );
 
   /**
@@ -2206,11 +2373,14 @@ export function useScreenerState(
     /* AND NOT A ROW WHOSE WINDOW IS STILL OPEN IN ANOTHER TAB. It stays in the journal and in this
        snapshot: whichever way that tab resolves it, this one learns from the release. */
     const owned = windows.elsewhere(Date.now(), COMMIT_MS);
-    const ready = queue.filter((r) => !owned.has(r.id)
-      && (!r.derived || raw.get<EngineMessage>("message", r.id) != null || screenerWaitingNames(raw, r.id)));
+    const named = (id: string) => raw.get<EngineMessage>("message", id) != null || screenerWaitingNames(raw, id);
+    const ready = queue.filter((r) => !owned.has(r.id) && (!r.derived || (
+      r.confirmedIds === undefined ? named(r.id)
+        : confirmedSyncEngine(engine) !== null && [...r.confirmedIds, ...(r.inboxIds ?? [])].some(named)
+    )));
     if (ready.length === 0) return;
     restoredIntents.current = queue.filter((r) => !ready.includes(r));
-    for (const r of ready) dispatchDecision(r);
+    for (const r of ready) dispatchDecision({ ...r, unsubscribeIds: [] });
   }, [version, tick]);
 
   /**
@@ -2415,6 +2585,8 @@ export function useScreenerState(
   const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked", spamMark, owner.current);
 
   return {
+    accountScope: scope,
+    bulkUnsubscribeIds,
     heldRelease,
     impersonationFiled,
     unscreened,
@@ -2422,6 +2594,13 @@ export function useScreenerState(
     fileFailed: guardMove((id: string, to: "spam" | "ohbox") => { void fileFailed(id, to); }),
     waiting: visibleWaiting,
     reachOf,
+    domainWaitingCount: (sender) => {
+      if (!queueSettled || firstPage?.page.copyBehind === true || nextWaitingCursor !== null ||
+        (segments.source !== "store" && engine.screenerWaitingAvailable()) ||
+        waitingCount !== undecided.length) return null;
+      const domain = domainOfAddress(senderKey(sender.from.address));
+      return undecided.filter((row) => domainOfAddress(senderKey(row.from.address)) === domain).length;
+    },
     unsubClaimOf,
     waitingCount,
     waitingSource: segments.source === "store" ? "store" : engine.screenerWaitingAvailable() ? "device" : "local",
@@ -2445,6 +2624,11 @@ export function useScreenerState(
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
+    leavingOf: (id) => {
+      const dest = s.pending.get(id)?.dest;
+      if (dest === undefined) return undefined;
+      return DECISION_QUIET.has(dest) ? "fade" : "rail";
+    },
     // The wire refused this row's decision, or the outbox gave it up: either way it did not land. A
     // row decided again says nothing about the old decision while the new one is in its window.
     refused: (id) => s.refused.has(id) || (givenUp.has(id) && !s.pending.has(id)),

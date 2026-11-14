@@ -173,9 +173,9 @@ export function storageFiguresOf(facts: StorageFacts, say: StorageSaying): Stora
 }
 
 /** The change's answer from the server's: an address leaves; none, or any refusal but the two read here, is "failed". */
-async function changeOver(lang: "de" | "en"): Promise<Answer<"left", StorageWord>> {
+async function changeOver(lang: "de" | "en", expectedOwner?: string | null): Promise<Answer<"left", StorageWord>> {
   try {
-    const url = (await account.manageLinkChange({ lang }))?.url;
+    const url = (await account.manageLinkChange({ lang }, expectedOwner))?.url;
     if (typeof url === "string" && url.length > 0) {
       leaveForManagePage(url);
       return { ok: true, value: "left" };
@@ -196,7 +196,7 @@ async function changeOver(lang: "de" | "en"): Promise<Answer<"left", StorageWord
  * that may change the plan (`POST /account/manage-link/change {lang}`) and leaves for it in this tab with no
  * referrer: the address never leaves this file.
  */
-export function useStorageDoor(scope: string | null): StorageDoor {
+export function useStorageDoor(scope: string | null, owner: string | null | undefined = scope ?? undefined): StorageDoor {
   const t = useTranslations("settings");
   const locale = useLocale();
   const lang = locale === "de" ? "de" : "en";
@@ -217,7 +217,7 @@ export function useStorageDoor(scope: string | null): StorageDoor {
   const signal = useMemo(() => ({ read: () => figures, subscribe: () => () => {} }), [figures]);
   const setMail = useCallback(async (on: boolean): Promise<boolean> => {
     try {
-      await account.storage({ mail: on });
+      await account.storage({ mail: on }, owner);
     } catch {
       return false;
     }
@@ -225,7 +225,7 @@ export function useStorageDoor(scope: string | null): StorageDoor {
       /* the switch holds what was written */
     });
     return true;
-  }, []);
-  const change = useCallback(() => changeOver(lang), [lang]);
+  }, [owner]);
+  const change = useCallback(() => changeOver(lang, owner), [lang, owner]);
   return useMemo(() => ({ figures: signal, setMail, change }), [signal, setMail, change]);
 }

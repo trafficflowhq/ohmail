@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import {
-  applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
+  applyScreenerDecision, confirmedScreenerRows, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
   applyMessageMove, validateMovePayload, validateFolderMovePayload, type MoveRefusal,
   resolveFolderDestination, type FolderDestinationRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
@@ -155,6 +155,7 @@ const KIND_HANDLERS: ReadonlyMap<string, KindHandler> = new Map(Object.entries<K
         // The reader's own past-mail answer, carried across the install boundary rather than
         // re-defaulted here: a decline made on one install must not become consent on another.
         applyRetro: decision.applyRetro,
+        ...(decision.confirmedIds ? { within: confirmedScreenerRows(decision.confirmedIds) } : {}),
         // A READER's press, carried across the install boundary: still the person's decision,
         // and it converges the sender's existing rule as the press does on its own install.
         decidedBy: "person", overExisting: "converge",

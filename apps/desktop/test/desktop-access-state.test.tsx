@@ -11,9 +11,10 @@ import { DesktopGate } from "../src/DesktopGate.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { ACCOUNT_ACCESS_PATH } from "../src/DesktopSubscription.js";
 /* One declaration from the session's door: the links' two functions, and the access window's reading of a lift. */
-import { enableExternalLinks, interceptLinkClicks, liftedAt } from "@ohmail/app-logic/session";
+import { liftedAt } from "@ohmail/app-logic/session/access-window";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import type { SuggestBatchControl } from "../../webapp/app/shell/screener-suggest";
+import { useScreenerSuggestions, type SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * ═══ A REFUSED ACCOUNT MEETS ONE SCREEN, AND A REFUSAL THAT LIFTS COMES DOWN ═══════════════
@@ -359,7 +360,6 @@ describe("the window's Screener refusal clears when access returns", () => {
   }
 
   async function mountProbe(): Promise<() => SuggestBatchControl> {
-    const { useScreenerSuggestions } = await import("../../webapp/app/shell/screener-suggest.js");
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({

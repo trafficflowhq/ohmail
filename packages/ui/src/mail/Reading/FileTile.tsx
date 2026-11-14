@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
 import { Button } from "../../base/index.js";
 import "./file-tile.css";
 
@@ -14,9 +14,13 @@ export interface FileTileProps {
    * The tile itself: a press looks at the file, or saves what cannot be looked at. The label says which.
    * Left out on a draft's file that cannot be looked at: the tile is no button.
    */
-  main?: { label: string; onPress?: () => void };
+  main?: {
+    label: string;
+    onPress?: MouseEventHandler<HTMLButtonElement>;
+    onMouseDown?: MouseEventHandler<HTMLButtonElement>;
+  };
   /** The arrow that saves it. `saved`: it was. */
-  save?: { label: string; saved?: boolean; onPress?: () => void };
+  save?: { label: string; saved?: boolean; busy?: boolean; onPress?: () => void };
   /** On a draft: the way off the letter, said with the file's name. */
   off?: { label: string; onPress?: () => void };
 }
@@ -39,6 +43,8 @@ export function FileTile({ kind, name, size, look, main, save, off }: FileTilePr
           type="button"
           className="oh-control oh-file-main"
           aria-label={main.label}
+          aria-busy={save?.busy || undefined}
+          onMouseDown={main.onMouseDown}
           onClick={main.onPress}
         >
           {face}
@@ -48,7 +54,14 @@ export function FileTile({ kind, name, size, look, main, save, off }: FileTilePr
       )}
       {save ? (
         <span className="oh-file-save" data-saved={save.saved ? "" : undefined}>
-          <Button kind="quiet" size="s" icon="download" label={save.label} onPress={save.onPress} />
+          <Button
+            kind="quiet"
+            size="s"
+            icon="download"
+            label={save.label}
+            busy={save.busy}
+            onPress={save.onPress}
+          />
         </span>
       ) : null}
       {off ? (

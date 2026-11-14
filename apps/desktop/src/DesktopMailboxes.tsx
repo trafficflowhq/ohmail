@@ -38,9 +38,8 @@ import { holderIsLive, holderStopped, organizerSituation, standingOf } from "@tr
 import { agoStamp, dayStamp, waterlineStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { storeRefusalsFigure } from "../../webapp/app/shell/store-refusals-figure";
-import { useEngineOrNull } from "../../webapp/app/shell/engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
-import { goFirstRun } from "../../webapp/app/shell/routing";
 import {
   type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,
 } from "@ohmail/app-logic/reading/reader-holder";
@@ -692,7 +691,7 @@ const signInEnded = (id: string): void => {
  * confirmation states the extra consequence only when it is true.
  */
 export function DesktopMailboxes(
-  { door, host, flavor, server, onShellStatus, scope }: {
+  { door, host, flavor, server, onShellStatus, scope, goToSetup, removalDoor }: {
     door?: string | null;
     /**
      * THE OTHER COMPUTER THIS INSTALL READS THROUGH, when it reads through one.
@@ -711,6 +710,8 @@ export function DesktopMailboxes(
     onShellStatus?: (next: EngineStatus) => void;
     /** The mounted mailbox's scope: whose choice to read along this pane reads and keeps. */
     scope: string;
+    removalDoor?: { readonly active: boolean; readonly version?: number };
+    goToSetup?(how: "add" | "again", mailbox?: string): void;
   },
 ) {
   const t = useTranslations("mailboxes");
@@ -1021,7 +1022,8 @@ export function DesktopMailboxes(
   const paired = cloud && !!host;
   /* SELF-HOSTED: a cloud door on a server the person runs. Its mailboxes are managed on THAT
      server's web app, never ohmail.app, where this install has no account. */
-  const selfHosted = cloud && !paired && flavor === "selfhost" && !!server;
+  const selfHosted = cloud && !paired && flavor === "selfhost";
+  const managedWeb = cloud && !paired && flavor === "managed";
   /* WHO FILES WHAT THIS DOOR SHOWS, for the heading and the one organizer sentence a hosted or
      paired row can carry — the refused stop. This computer on its own door; ohmail Cloud, the
      self-hosted server or the other computer on the rest. */
@@ -1294,11 +1296,13 @@ export function DesktopMailboxes(
     setProblem(null);
     setRemoveBusy(true);
     const last = isLastLive(m);
+    const stillHere = () => removalDoor?.active ?? true;
     void (async () => {
       try {
         const res = await bridgeFetch(`/local/mailboxes/${encodeURIComponent(m.id)}`, {
           method: "DELETE",
         });
+        if (!stillHere()) return;
         if (!res.ok) {
           /* ── THE ONE REFUSAL THIS PANE SAYS IN ITS OWN WORDS ──────────────────────────────
            * The engine refuses when it could not take this computer's copy of the mailbox's
@@ -1323,6 +1327,7 @@ export function DesktopMailboxes(
          * `true` released; `false` attempted and not completed; ABSENT is an engine that
          * predates the field — "older engine", not a claim left behind. */
         const outcome = await res.json().catch(() => null) as { claimReleased?: boolean } | null;
+        if (!stillHere()) return;
         if (outcome?.claimReleased === false) setProblem(t("desktopRemovedClaimLeftBehind"));
         /* ── AND THE WINDOW'S OWN MIRROR, BEFORE THE PANE SAYS THE REMOVAL HAPPENED ────────
          * The route deletes the mailbox's mail from the engine's store; this window renders a
@@ -1344,6 +1349,7 @@ export function DesktopMailboxes(
          * seed") — it would sign the whole install out while mailboxes were running, or skip
          * the sign-out once the seed was gone. `isLastLive` above is the roster's own answer,
          * and the sign-out it gates runs below, after the route rather than inside it. */
+        if (!stillHere()) return;
         setRemoving(null);
         /**
          * ── WHEN IT WAS THE LAST ONE, STOP BEING CONFIGURED FOR IT ──────────────────────
@@ -1355,14 +1361,17 @@ export function DesktopMailboxes(
          * the LAST, else it would remove mailboxes nobody asked about — and AFTER the route:
          * a stopped engine cannot release a claim or wipe a mirror.
          */
-        if (last) {
+        if (last && onShellStatus && removalDoor?.version !== undefined) {
           try {
-            onShellStatus?.((await engineLogout()).status);
+            const signedOut = await engineLogout(null, removalDoor.version);
+            if (!stillHere()) return;
+            onShellStatus(signedOut.status);
           } catch (logoutErr) {
             /* THE MAILBOX IS GONE EITHER WAY. The removal committed; what failed is the tidying
                that keeps it gone across a relaunch. Reported rather than swallowed, because the
                consequence is one a person can act on — the pane says so, and quitting and
                reopening is where the stale door would otherwise reappear. */
+            if (!stillHere()) return;
             setProblem(logoutErr instanceof Error ? logoutErr.message : String(logoutErr));
           }
         }
@@ -1371,9 +1380,10 @@ export function DesktopMailboxes(
         /* THE PANEL STAYS OPEN ON A FAILURE, on the browser pane's rule: dropping somebody back
            to a list that still shows the mailbox says nothing about whether the removal
            happened. The sentence goes to the pane's one problem line, above the rows. */
+        if (!stillHere()) return;
         setProblem(err instanceof Error ? err.message : String(err));
       } finally {
-        setRemoveBusy(false);
+        if (stillHere()) setRemoveBusy(false);
       }
     })();
   };
@@ -2177,14 +2187,14 @@ export function DesktopMailboxes(
         <p className="set-note-inline">
           {paired
             ? t("desktopNoneHost", { host: host! })
-            : selfHosted
-              ? t("desktopNoneServer", { host: server! })
-              : cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}
+            : selfHosted && server ? t("desktopNoneServer", { host: server })
+            : !cloud ? t("desktopNoneLocal")
+            : managedWeb ? t("desktopNoneCloud") : t("noneYet")}
         </p>
       ) : null}
       {/* SETUP IN THE BROWSER for a Cloud account with nothing connected. The page leads on to the
           purchase step, so a store build keeps the sentence alone. */}
-      {listed.length === 0 && cloud && !paired && !selfHosted && linksOutToBilling() ? (
+      {listed.length === 0 && managedWeb && linksOutToBilling() ? (
         <div className="join-actions">
           <Button
             variant="primary"
@@ -2209,7 +2219,7 @@ export function DesktopMailboxes(
           label={t("desktopAdd")}
           description={t("desktopAddWhy")}
           control={
-            <Button variant="primary" onClick={() => goFirstRun({ add: true })}>
+            <Button variant="primary" onClick={() => goToSetup?.("add")}>
               {t("desktopAddAction")}
             </Button>
           }
@@ -2346,7 +2356,7 @@ export function DesktopMailboxes(
                   {firstRunDoorFor(statusOf(door)) === "local" ? (
                     <Button
                       className="mbx-btn"
-                      onClick={() => goFirstRun({ rerun: true, mailboxId: shown.id })}
+                      onClick={() => goToSetup?.("again", shown.id)}
                     >
                       {t("setupAgainAction")}
                     </Button>
@@ -2648,7 +2658,7 @@ export function DesktopMailboxes(
           label={t("desktopManageOnHost", { host: host! })}
           description={t("desktopManageOnHostWhy", { host: host! })}
         />
-      ) : selfHosted ? (
+      ) : selfHosted && server ? (
         <SettingsRow
           label={t("desktopManageOnServer")}
           description={t("desktopManageOnServerWhy", { host: server! })}
@@ -2663,7 +2673,7 @@ export function DesktopMailboxes(
             </Button>
           }
         />
-      ) : cloud ? (
+      ) : managedWeb ? (
         <SettingsRow
           label={t("desktopManageOnWeb")}
           description={t("desktopManageOnWebWhy")}

@@ -7,7 +7,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ActionPanel } from "@ohmail/ui/mail";
+import { ActionPanel, BlankColumn } from "@ohmail/ui/mail";
 import { Frame } from "../../src/frame/Frame.js";
 import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -54,12 +54,13 @@ function drawn(
   room: { width: number; height: number; pointer: "coarse" | "fine" },
   at: string,
   above?: FakeHostInput["above"],
+  place = ohbox,
 ) {
   const { host } = fakeHost({
     engine: NO_ENGINE,
     service: "self",
     scope: "acct-1",
-    places: { ohbox },
+    places: { ohbox: place },
     stages: {},
     window: fakeWindow({ ...room, posture: "flat", reducedMotion: false }),
     address: fakeAddress(at),
@@ -96,6 +97,71 @@ async function opened(room: { width: number; height: number; pointer: "coarse" |
   await page.setContent(pageOf(drawn(room, at)));
   return page;
 }
+
+it("keeps only the beside Ohmarchy blank tile's ring outside the reading cell", async () => {
+  const blank: PlaceEntry = {
+    ...ohbox,
+    panes: { kind: "columns", List, Reading: () => <BlankColumn>Nothing open</BlankColumn> },
+  };
+  const measure = async (
+    room: (typeof ROOMS)[keyof typeof ROOMS],
+    face: "paper" | "ohmarchy",
+    place: PlaceEntry,
+    at: string,
+  ) => {
+    const page = await browser!.newPage({ viewport: { width: room.width, height: room.height } });
+    try {
+      await page.route("**/*", (route) => route.abort());
+      await page.setContent(
+        pageOf(drawn(room, at, undefined, place)).replace('data-face="paper"', `data-face="${face}"`),
+      );
+      return await page.evaluate(() => {
+        const region = document.querySelector<HTMLElement>(".fr-reading")!;
+        const tile = region.querySelector<HTMLElement>(":scope > .oh-blankcolumn");
+        const edges = (element: HTMLElement) => {
+          const { left, top, right, bottom } = element.getBoundingClientRect();
+          return { left, top, right, bottom };
+        };
+        return {
+          region: edges(region),
+          over: region.hasAttribute("data-over"),
+          tile: tile ? edges(tile) : null,
+          ring: tile ? getComputedStyle(tile).boxShadow : null,
+        };
+      });
+    } finally {
+      await page.close();
+    }
+  };
+
+  for (const room of [ROOMS.desktop, ROOMS.fold]) {
+    const ordinary = await measure(room, "ohmarchy", ohbox, "#/ohbox/m/a1");
+    const empty = await measure(room, "ohmarchy", blank, "#/ohbox");
+    expect(ordinary.over).toBe(false);
+    expect(empty.over).toBe(false);
+    expect(empty.tile).toEqual(ordinary.region);
+    expect(empty.region).toEqual({
+      left: ordinary.region.left - 2,
+      top: ordinary.region.top - 2,
+      right: ordinary.region.right + 2,
+      bottom: ordinary.region.bottom,
+    });
+    expect(empty.ring).toContain("0px 0px 0px 2px");
+  }
+
+  const paper = await measure(ROOMS.desktop, "paper", blank, "#/ohbox");
+  const phone = await measure(ROOMS.phone, "ohmarchy", blank, "#/ohbox/m/a1");
+  const paperOrdinary = await measure(ROOMS.desktop, "paper", ohbox, "#/ohbox/m/a1");
+  const phoneOrdinary = await measure(ROOMS.phone, "ohmarchy", ohbox, "#/ohbox/m/a1");
+  expect(paper.over).toBe(false);
+  expect(paper.region).toEqual(paperOrdinary.region);
+  expect(paper.tile).toEqual(paper.region);
+  expect(paper.ring).toBe("none");
+  expect(phone.over).toBe(true);
+  expect(phone.region).toEqual(phoneOrdinary.region);
+  expect(phone.tile).toEqual(phone.region);
+  expect(phone.ring).toBe("none");
+});
 
 describe("a phone's foot while a letter is open", () => {
   it("390 by 844: every control of the letter's panel is the control under its middle, and no dock is drawn", async () => {

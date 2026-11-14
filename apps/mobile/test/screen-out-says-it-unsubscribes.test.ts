@@ -53,7 +53,9 @@ describe("a screen-out on the phone says it unsubscribes, as the web does", () =
     for (const dest of ["screened", "spam"] as const) {
       const s = await scene({ autoUnsubscribe: () => true });
       try {
-        expect(await s.actions.decide(s.row, dest, false, "sender")).toBe(true);
+        const ids = s.actions.unsubscribeIdsOf(s.row, [], "sender");
+        expect(ids).toEqual(["s1"]);
+        expect(await s.actions.decide(s.row, dest, false, "sender", [], ids)).toBe(true);
         expect(says(s.toasts), `the ${dest} decide did not say it unsubscribes`).toBe(true);
       } finally { s.close(); }
     }
@@ -62,7 +64,9 @@ describe("a screen-out on the phone says it unsubscribes, as the web does", () =
   it("the open message's screen-out of a waiting sender says it too", async () => {
     const s = await scene({ autoUnsubscribe: () => true });
     try {
-      expect(await s.actions.screenSender("s1", "screened", "sender")).toBe(true);
+      const ids = s.actions.screeningUnsubscribeIds("s1", "sender");
+      expect(ids).toEqual(["s1"]);
+      expect(await s.actions.screenSender("s1", "screened", "sender", true, undefined, ids)).toBe(true);
       expect(says(s.toasts)).toBe(true);
     } finally { s.close(); }
   });
@@ -100,6 +104,6 @@ describe("a screen-out on the phone says it unsubscribes, as the web does", () =
     } finally { s.close(); }
     expect(DE.liveAlsoUnsubscribing("x.", "sends")).toContain("Ein-Klick-Abmeldung");
     expect(Copy.liveAlsoUnsubscribing("x.", "may"))
-      .toBe("x. Where they offer one-click unsubscribe, ohmail asks to unsubscribe you once Undo is gone, and again for their later mail; Undo stops it too.");
+      .toBe("x. Where the waiting mail offers one-click unsubscribe, ohmail asks to unsubscribe you. Sent requests cannot be taken back.");
   });
 });

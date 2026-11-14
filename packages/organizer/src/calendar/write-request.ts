@@ -4,7 +4,7 @@
  * refuses it before anything is sent. Nothing a person typed becomes an address, a header or an id
  * here: the writer is handed typed drafts and what a reading stored.
  */
-import { eventTimeOf, formatRRule, parseRRule, storedTimeOf, type EventTime, type RRule, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
+import { eventTimeOf, formatRRule, parseRRule, storedTimeOf, type DeleteMember, type EventTime, type RRule, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
 import {
   clockOf, continuedSeries, endedRule, movedRule, offItsClock, sameTime, seriesProven, untilSkipped, type EventChange, type EventDraft, type ProofPlace,
   type ProvenRepeats, type ProviderRefusal, type WriteRefusal, type WriteReply, type WriteTarget,
@@ -13,6 +13,7 @@ import {
   CONTINUED_FIELDS, someoneElses, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "@trafficflow/db/calendar";
+import { personalSeriesOf, confirmedDeleteAudience } from "@ohmail/cal-providers/series";
 import { timeOfKey } from "./map.js";
 
 type Act = CalendarWritePayload["act"];
@@ -39,6 +40,8 @@ export interface StoredEvent extends CalendarWriteRowFacts {
   readonly changedDays: number;
   /** The account's own address among the event's invitees, where it has one. */
   readonly ownInvitee: string | null;
+  /** The version's stored guest list for a Google or Microsoft deletion. */
+  readonly deleteGuests?: DeleteMember["guests"];
 }
 
 /** The start as the row keeps it: a series' first day. */
@@ -174,7 +177,7 @@ export function secondPartIsThePress(first: Extract<Act, { kind: "calendar_event
   const from = second.part?.from;
   if (made.kind !== "calendar_event_create" || first.scope.kind !== "following" || from === undefined) return false;
   const named = CONTINUED_FIELDS.filter((f) => first.change[f] !== undefined);
-  if (from.at !== first.scope.at || from.eventId !== first.eventId || [...from.named].sort().join() !== [...named].sort().join()) return false;
+  if (from.personalSeries !== first.personalSeries || from.at !== first.scope.at || from.eventId !== first.eventId || [...from.named].sort().join() !== [...named].sort().join()) return false;
   return !named.some((f) => JSON.stringify(made.event[f]) !== JSON.stringify(first.change[f]));
 }
 
@@ -242,17 +245,20 @@ export function writeCallOf(o: {
     if (o.continuation === undefined) return { kind: "create", draft };
     const { from, source } = o.continuation;
     if (source === null) return { kind: "refuse", reason: "event_gone" };
+    if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
     // A new series goes out under the series' own organizer, so only a series of the account's own is carried on.
     if (someoneElses(source, o.owners)) return { kind: "refuse", reason: "read_only" };
     const cut = timeOfKey(from.at);
     if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
     if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
     return {
-      kind: "continue", from: { id: source.providerId, version: source.versionTag, text: source.original, occurrence: cut },
+      kind: "continue", from: { id: source.providerId, version: source.versionTag, text: source.original, occurrence: cut, ...(from.personalSeries && { personalSeries: true }) },
       start: draft.start, end: draft.end, rule: draft.rule, change: namedChange(draft, from.named),
     };
   }
   if (o.event === null) return { kind: "refuse", reason: "event_gone" };
+  const personal = act.kind === "calendar_event_update" && act.personalSeries;
+  if (personal && (!o.place?.startsWith("caldav:") || o.event.myAnswer !== null || !personalSeriesOf(o.event.original))) return { kind: "refuse", reason: "version_stale" };
   // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. Someone else's
   // event takes the account's answer and nothing else, whatever the row says.
   const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners);
@@ -273,7 +279,13 @@ export function writeCallOf(o: {
   if ("scope" in act && act.scope.kind !== "record" && day === null) return { kind: "refuse", reason: "content_refused" };
   const whole = targetOf(o.event, o.base);
   if (whole === null) return { kind: "refuse", reason: "version_unknown" };
-  const target: WriteTarget = { ...whole, occurrence: day };
+  const deleteAudience = act.kind === "calendar_event_delete" && o.base === o.event.versionTag
+    ? confirmedDeleteAudience(o.place, o.event, stored !== null, act.scope, act.audience, o.zones)
+    : null;
+  if (act.kind === "calendar_event_delete" && deleteAudience === null) {
+    return { kind: "refuse", reason: "version_stale" };
+  }
+  const target: WriteTarget = { ...whole, occurrence: day, ...(personal && { personalSeries: true }) };
   // A day and the days after it: the series ends before that day. Changed, those days are the second part of the press, a new series.
   // The series as it stands after its end is a shape the place was proven to keep too: an end is a rule of its own.
   // The series' end is made on the copy the press was made on: where the store holds another now, the writer reads the member and
@@ -308,10 +320,13 @@ export function writeCallOf(o: {
       if (target.occurrence === null && unproven(change.rule === undefined ? stored : change.rule, change.start ?? first)) {
         return { kind: "refuse", reason: "repeat_unsupported" };
       }
-      return { kind: "change", target, change };
+      return { kind: "change", target: act.audience ? { ...target, audience: act.audience } : target, change };
     }
     case "calendar_event_delete":
-      return { kind: "remove", target };
+      // Cloud writers compare the live audience under this same provider version before deleting.
+      return { kind: "remove", target: deleteAudience && (o.place === "google" || o.place === "microsoft")
+        ? { ...target, audience: deleteAudience }
+        : target };
     case "calendar_event_answer":
       if (o.event.ownInvitee === null) return { kind: "refuse", reason: "content_refused" };
       return { kind: "answer", target, as: o.event.ownInvitee, reply: REPLY[act.answer] };

@@ -49,7 +49,12 @@ async function refusal(res: Response): Promise<Error> {
 
 async function readValue(res: Response): Promise<AutoSuggestState> {
   if (!res.ok) throw await refusal(res);
-  return (await res.json()) as AutoSuggestState;
+  const value = await res.json() as AutoSuggestState | null;
+  if (typeof value?.on !== "boolean" || typeof value.modelReady !== "boolean"
+    || (value.on ? typeof value.since !== "string" : value.since !== null)) {
+    throw new Error("The engine did not return a suggestion preference");
+  }
+  return value;
 }
 
 /** This install's setting, or the one absence that applies. */
@@ -75,3 +80,5 @@ export async function saveAutoSuggest(on: boolean): Promise<AutoSuggestState> {
     }),
   );
 }
+
+export const ownModelAutoSuggest = { read: readAutoSuggest, save: saveAutoSuggest } as const;

@@ -9,6 +9,7 @@ import { useSyncExternalStore, type ReactNode } from "react";
 import type { TriagePiles } from "@ohmail/client-engine";
 import type { PilesInput } from "@ohmail/app-logic/piles";
 import type { StreamInput, StreamLeaveCommit } from "@ohmail/app-logic/streams";
+import type { PlaceEntry } from "../../src/frame/contract.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { routeOf } from "../../src/frame/route.js";
 import { NewsAbove, newsPlace } from "../../src/news/index.js";
@@ -43,6 +44,18 @@ export const WORDS: Readonly<Record<"en" | "de", Messages>> = {
   en: { ...FRAME_WORDS.en, ...sharedEn, ...newsEn, ...receiptsEn, ...pilesEn, ...ohboxEn } as Messages,
   de: { ...FRAME_WORDS.de, ...sharedDe, ...newsDe, ...receiptsDe, ...pilesDe, ...ohboxDe } as Messages,
 };
+
+/**
+ * A place's registration without its seat and its rail count, which read the mail ground: this world stands the place's
+ * model above the frame itself, over a host that hands no ground.
+ */
+function standing(place: PlaceEntry): PlaceEntry {
+  return {
+    ...place,
+    rail: place.rail === null ? null : { ...place.rail, useCount: undefined },
+    panes: place.panes.kind === "columns" ? { ...place.panes, Above: undefined } : place.panes,
+  };
+}
 
 export interface StreamSaid {
   seen: string[][];
@@ -122,6 +135,7 @@ export function mountStream(o: {
   place: "news" | "receipts";
   input: Omit<StreamInput, "place" | "openId" | "open">;
   open?: string;
+  search?: PlaceEntry;
   window?: FakeWindow;
   lang?: "en" | "de";
 }) {
@@ -131,7 +145,10 @@ export function mountStream(o: {
     engine: NO_ENGINE,
     service: "self",
     scope: "acct-1",
-    places: o.place === "news" ? { news: newsPlace } : { receipts: receiptsPlace },
+    places: {
+      ...(o.place === "news" ? { news: standing(newsPlace) } : { receipts: standing(receiptsPlace) }),
+      ...(o.search ? { search: o.search } : {}),
+    },
     window: o.window ?? fakeWindow("desktop"),
     address,
   });
@@ -190,6 +207,13 @@ function PilesSeat({
     markSeen: (ids) => said.seen.push(ids),
     write: (id) => said.written.push(id),
     stamp: (iso) => `at ${iso.slice(11, 16)}`,
+    walk: {
+      columns: 2,
+      list: "the list",
+      labels: { next: "Next", prev: "Previous", open: "Open" },
+      say: () => undefined,
+    },
+    arrival: "rest",
   };
   return <PilesAbove input={full}>{children}</PilesAbove>;
 }
@@ -224,7 +248,11 @@ export function mountPiles(o: {
     engine: NO_ENGINE,
     service: "self",
     scope: "acct-1",
-    places: { later: laterPlace, parked: parkedPlace, resurface: resurfacePlace },
+    places: {
+      later: standing(laterPlace),
+      parked: standing(parkedPlace),
+      resurface: standing(resurfacePlace),
+    },
     window: o.window ?? fakeWindow("desktop"),
     address,
   });

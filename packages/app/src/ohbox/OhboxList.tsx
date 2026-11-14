@@ -8,6 +8,7 @@ import { useOhboxModel } from "@ohmail/app-logic/ohbox";
 import { JumpBack } from "@ohmail/ui/base";
 import { ListTail, Sheet } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
+import { MailboxProfileOffer } from "../profile-import/ground.js";
 import { useText } from "../text/index.js";
 import { ListTouch } from "../touch/index.js";
 import { useOhboxBeside } from "./beside.js";
@@ -37,6 +38,7 @@ export function OhboxList({ plan }: PaneProps) {
     return () => el.removeEventListener("scroll", look);
   }, [scroller]);
   const room = useSquaresRoom(scroller);
+  const showTaggedByline = plan.device === "phone";
 
   const rows = (
     <>
@@ -44,6 +46,7 @@ export function OhboxList({ plan }: PaneProps) {
         <OhboxGroup
           model={model}
           beside={beside}
+          showTaggedByline={showTaggedByline}
           name={t("resurfacedGroup")}
           rows={model.groupedResurfaced}
           from={0}
@@ -56,6 +59,7 @@ export function OhboxList({ plan }: PaneProps) {
         <OhboxGroup
           model={model}
           beside={beside}
+          showTaggedByline={showTaggedByline}
           name={t("newForYou")}
           rows={model.groupedNew}
           from={model.newFrom}
@@ -69,6 +73,7 @@ export function OhboxList({ plan }: PaneProps) {
         <OhboxGroup
           model={model}
           beside={beside}
+          showTaggedByline={showTaggedByline}
           name={t("previouslySeen")}
           rows={model.groupedPrev}
           from={model.prevFrom}
@@ -96,6 +101,7 @@ export function OhboxList({ plan }: PaneProps) {
       onPointerCancelCapture={model.pointer.onPointerCancelCapture}
       onContextMenuCapture={model.pointer.onContextMenuCapture}
     >
+      <MailboxProfileOffer />
       {beside.over}
       <OhboxHead model={model} beside={beside} plan={plan} onMarkAllRead={model.markAllRead} />
       {/* Focusable by the shell only (never a tab stop): where the keyboard stands when a verb left no row. */}
@@ -108,7 +114,13 @@ export function OhboxList({ plan }: PaneProps) {
         <ListTouch scroller={scroller} off={model.picked.size > 0} pull={beside.pull}>
           {beside.first}
           <SquaresRoomContext.Provider value={room}>
-            {plan.device === "phone" ? <Sheet kind="plain">{rows}</Sheet> : rows}
+            {plan.device === "phone" ? (
+              <Sheet kind="plain" phoneListPadding={model.picked.size > 0 ? "top" : "dock"}>
+                {rows}
+              </Sheet>
+            ) : (
+              rows
+            )}
           </SquaresRoomContext.Provider>
         </ListTouch>
       </div>

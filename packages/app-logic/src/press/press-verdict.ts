@@ -14,6 +14,9 @@ import {
   ruleMatchKey,
 } from "@ohmail/client-engine";
 import { shellConsentOptions, type FirstImports, type ShellConsentFacts } from "./consent-options.js";
+import { placeLabel } from "../text/format.js";
+import { displayDomain } from "../text/idn.js";
+import type { Translator } from "../text/translator.js";
 import {
   RETRO_VISIBLE_MOVES, senderScreening, type ScreeningDest, type ScreeningScope,
 } from "./sender-screening.js";
@@ -137,6 +140,15 @@ export function verdictArgs(
     case "stillLegacy": return { ...base, still: v.still, folder: v.folder, stillPlace: o.label(v.folder) };
     case "applying": return base;
   }
+}
+
+/** The screening catalogue's explanation of mail that stayed outside the destination. */
+export function verdictSentence(
+  t: Translator, v: Exclude<StayVerdict, { key: "none" }>, sender: string, place: string,
+): string {
+  return t(verdictKeyOf(v), verdictArgs(v, {
+    sender, place, history: t("placeHistory"), label: placeLabel, domain: displayDomain,
+  }));
 }
 
 const VERDICT_KEY = {

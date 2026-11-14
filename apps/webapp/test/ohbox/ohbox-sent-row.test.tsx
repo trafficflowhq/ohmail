@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { within } from "@testing-library/react";
+import { cleanup, within } from "@testing-library/react";
+import { ohboxList } from "../_ohbox-1-list.js";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -85,30 +86,21 @@ let host: HTMLDivElement | null = null;
 
 interface Props { newForYou?: Row[]; previouslySeen?: Row[] }
 
+/**
+ * RE-POINTED (share ohbox-1, the switch's older tests): the rows were handed to today's seated harness
+ * (`./_today.js`, `TodaysOhboxAbove` over the place: it leaves with today's shell); they are now handed to THE OHBOX's
+ * OWN LIST (`../_ohbox-1-list.tsx`: the list's behaviour hook and its rows as the seat draws them) with the row's
+ * words AS THE SEAT MAKES THEM (the sender's name and address, and `useSentLabel`'s "Me → <name>" over the place's
+ * own catalogue). Every expectation is as it stood.
+ */
 async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const view = h(OhboxView as never, {
-    owed: false,
-    demo: false, settled: true,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-    resurfacedRows: [],
-    newForYou: (props.newForYou ?? []).map(msg),
-    previouslySeen: (props.previouslySeen ?? []).map(msg),
-    replyDone: null,
-    tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-    selectedId: null, onSelect: () => {},
-    onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-    onMarkSeen: () => {},
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-  } as never);
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: view } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  cleanup();
+  const view = ohboxList({
+    newForYou: (props.newForYou ?? []).map(msg) as never,
+    previouslySeen: (props.previouslySeen ?? []).map(msg) as never,
+    now: new Date("2026-08-02T09:00:00.000Z"),
+  }, { seatWords: true });
+  host = view.container as HTMLDivElement;
 }
 
 /** The row holding `id`: its own, or the folded conversation it is a member of. */
@@ -117,6 +109,7 @@ const rowEl = (id: string): HTMLElement =>
     ?? [...host!.querySelectorAll<HTMLElement>("[role=option][data-ids]")].find((r) => (r.dataset.ids ?? "").split(" ").includes(id)))!;
 
 afterEach(async () => {
+  cleanup();
   if (root) await act(async () => { root!.unmount(); });
   host?.remove(); root = null; host = null;
 });
@@ -335,7 +328,7 @@ describe("a reply saved to a Sent folder made after connecting", () => {
       reads += 1;
       return [{ id: "mb_1", address: OWN.address, status: "connected", lastSyncAt: at(10), pendingMoves: 0, sentFolder: named }];
     };
-    const { AppShell } = await import("../_todays-shell.js");
+    const { MailShell: AppShell } = await import("../_mail-shell.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);

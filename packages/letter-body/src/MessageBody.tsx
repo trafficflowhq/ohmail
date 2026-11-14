@@ -50,7 +50,7 @@ import {
 } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
 import { useEngineOrNull } from "@ohmail/app-logic/engine";
-import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
+import { cachedMailPreview, mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
 import { foldSanitized, type SanitizedFold } from "./quoted-fold";
 import { holdLetterFocusWatch } from "./letter-focus";
 
@@ -4209,36 +4209,62 @@ interface BlockedSaid {
 }
 
 function sayBlocked(t: {
-  remote: readonly BlockedAsset[];
-  sheets: readonly string[];
+  remoteCount: number;
+  sheetCount: number;
   pixels: number;
   remoteShown: boolean;
   pixelsRefused: number;
 }): BlockedSaid {
-  const { remote, sheets, pixels, remoteShown, pixelsRefused } = t;
+  const { remoteCount, sheetCount, pixels, remoteShown, pixelsRefused } = t;
   let lead: string | null = null;
   let pixelSaid = false;
-  if (remote.length > 0) {
+  if (remoteCount > 0) {
     if (remoteShown) {
       /* The pictures are on screen; only the refused beacons are left to report. */
       if (pixelsRefused > 0) {
         lead = pixelsRefused === 1 ? COPY.pixelOnly : COPY.pixelsRefusedMany(pixelsRefused);
         pixelSaid = true;
       }
-    } else if (remote.length === pixels && pixels > 0) {
+    } else if (remoteCount === pixels && pixels > 0) {
       lead = COPY.pixelOnly;
       pixelSaid = true;
     } else {
-      lead = remote.length === 1 ? COPY.blockedOne : COPY.blockedMany(remote.length);
+      lead = remoteCount === 1 ? COPY.blockedOne : COPY.blockedMany(remoteCount);
     }
   }
   const hit =
-    !remoteShown && pixels > 0 && remote.length !== pixels
+    !remoteShown && pixels > 0 && remoteCount !== pixels
       ? pixels === 1 ? COPY.pixelOne : COPY.pixelMany(pixels)
       : null;
   const sheet =
-    sheets.length > 0 ? (sheets.length === 1 ? COPY.sheetOne : COPY.sheetMany(sheets.length)) : null;
-  return { lead, pixelSaid, hit, sheet, spaceBeforeSheet: remote.length > 0 };
+    sheetCount > 0 ? (sheetCount === 1 ? COPY.sheetOne : COPY.sheetMany(sheetCount)) : null;
+  return { lead, pixelSaid, hit, sheet, spaceBeforeSheet: remoteCount > 0 };
+}
+
+function noticeOf(said: BlockedSaid): BlockNotice | null {
+  const { lead, hit, sheet, pixelSaid } = said;
+  if (lead === null && hit === null && sheet === null) return null;
+  const kind: NoticeKind = pixelSaid || hit !== null ? "pixel" : lead !== null ? "images" : "sheet";
+  return {
+    kind,
+    caption: COPY[CAPTION_KEY[kind]],
+    text: [lead, hit, sheet].filter((word): word is string => word !== null).join(" "),
+  };
+}
+
+/** Describe what a closed preview keeps out, without mounting a document or offering to load it. */
+export function previewBlockNotice(
+  html: string,
+  scope?: { engine: NonNullable<ReturnType<typeof useEngineOrNull>>; messageId: string; locale: string },
+): BlockNotice | null {
+  if (scope) return cachedMailPreview(scope.engine, { ...scope, html }, () => blockNoticeOf(html));
+  return blockNoticeOf(html);
+}
+
+function blockNoticeOf(html: string): BlockNotice | null {
+  const { blocked, sheets } = sanitizeMailHtml(html);
+  const pixels = blocked.filter((asset) => asset.pixel).length;
+  return noticeOf(sayBlocked({ remoteCount: blocked.length, sheetCount: sheets.length, pixels, remoteShown: false, pixelsRefused: 0 }));
 }
 
 /** Stable empties for the renders where there is no sanitized document to read them from. */
@@ -5105,15 +5131,11 @@ export function MessageBody({
    * then the pictures, then the stylesheet; the glyph's text is the bar's sentences joined by a
    * space, in the bar's order.
    */
-  const said = hasBlocked ? sayBlocked({ remote, sheets, pixels, remoteShown, pixelsRefused }) : null;
-  const noticeKind: NoticeKind | null =
-    said === null ? null
-    : said.pixelSaid || said.hit !== null ? "pixel"
-    : said.lead !== null ? "images"
-    : "sheet";
-  const noticeCaption = noticeKind === null ? null : COPY[CAPTION_KEY[noticeKind]];
-  const noticeText =
-    said === null ? null : [said.lead, said.hit, said.sheet].filter((s): s is string => s !== null).join(" ");
+  const said = hasBlocked ? sayBlocked({ remoteCount: remote.length, sheetCount: sheets.length, pixels, remoteShown, pixelsRefused }) : null;
+  const notice = said === null ? null : noticeOf(said);
+  const noticeKind = notice?.kind ?? null;
+  const noticeCaption = notice?.caption ?? null;
+  const noticeText = notice?.text ?? null;
   /**
    * REPORT IT — see {@link MessageBodyProps.onNotice}. In an effect, for the reasons `onRenderMode`
    * gives, and keyed on the three STRINGS rather than on an object, so a host storing the answer is

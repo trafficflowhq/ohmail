@@ -291,7 +291,9 @@ export interface ScreeningAsk {
  * and `subject` is stored raw. The caller decides whether it may spend BEFORE calling this.
  */
 export async function askScreeningQuestion(
-  classifier: ClassifierPort, ask: ScreeningAsk, call?: AiCallOptions,
+  classifier: ClassifierPort,
+  ask: ScreeningAsk,
+  call: AiCallOptions & { beforeDispatch: () => Promise<void> },
 ): Promise<ClassifierResult> {
   const safe = redactForModel(ask.subject, ask.snippet);
   const put = classifier.screen?.bind(classifier) ?? classifier.classify.bind(classifier);
@@ -305,7 +307,8 @@ export async function askScreeningQuestion(
     ...(ask.ohboxBar ? { ohboxBar: ask.ohboxBar } : {}),
     ...(ask.senderFacts ? { senderFacts: ask.senderFacts } : {}),
   };
-  return call ? put(input, call) : put(input);
+  await call.beforeDispatch();
+  return put(input, call);
 }
 
 export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload {

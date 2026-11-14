@@ -52,10 +52,26 @@ export function CalendarRow(p: CalendarRowProps) {
       </button>
     );
   }
+  const name = (
+    <>
+      <span className="oh-calrow-word">
+        {p.name}
+        {p.defaultLabel ? (
+          <span title={p.defaultLabel}>
+            <Dot kind="ink" />
+          </span>
+        ) : null}
+      </span>
+      {p.viewOnlyLabel ? (
+        <Icon name="lock" size={16} label={p.viewOnlyLabel} className="oh-calrow-ico" />
+      ) : null}
+    </>
+  );
   return (
     <div className="oh-calrow" data-hidden={p.shown ? undefined : ""} data-quiet={p.quiet ? "" : undefined}>
       <button
         type="button"
+        disabled={p.onToggle === undefined}
         className="oh-control oh-calrow-sq"
         role="switch"
         aria-checked={p.shown}
@@ -64,26 +80,22 @@ export function CalendarRow(p: CalendarRowProps) {
       >
         {square}
       </button>
-      <button
-        type="button"
-        className="oh-control oh-calrow-name"
-        title={p.name}
-        aria-haspopup="menu"
-        aria-expanded={p.menuOpen ?? false}
-        onClick={p.onMenu}
-      >
-        <span className="oh-calrow-word">
-          {p.name}
-          {p.defaultLabel ? (
-            <span title={p.defaultLabel}>
-              <Dot kind="ink" />
-            </span>
-          ) : null}
+      {p.onMenu ? (
+        <button
+          type="button"
+          className="oh-control oh-calrow-name"
+          title={p.name}
+          aria-haspopup="menu"
+          aria-expanded={p.menuOpen ?? false}
+          onClick={p.onMenu}
+        >
+          {name}
+        </button>
+      ) : (
+        <span className="oh-calrow-name" title={p.name}>
+          {name}
         </span>
-        {p.viewOnlyLabel ? (
-          <Icon name="lock" size={16} label={p.viewOnlyLabel} className="oh-calrow-ico" />
-        ) : null}
-      </button>
+      )}
     </div>
   );
 }

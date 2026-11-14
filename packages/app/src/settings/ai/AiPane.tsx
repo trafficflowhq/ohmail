@@ -22,7 +22,7 @@ export function AiPane({ model, noModelSaid }: AiPaneProps) {
     <SettingsSheet
       wants={
         model.problem
-          ? { word: own(model.enabled === null ? "notRead" : "notChanged"), line: model.problem }
+          ? { word: own(model.enabled === null ? "notRead" : "notChanged"), line: model.problem, alert: true }
           : undefined
       }
     >

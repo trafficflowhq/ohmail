@@ -41,7 +41,8 @@ describe("the demo's partition", () => {
         h(ThemeProvider as never, { storageKey: null } as never,
           h(ToastHost as never, null, h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } })))));
     });
-    const subject = () => document.querySelector<HTMLInputElement>('input[aria-label="Subject"]');
+    // Write's letter draws its Subject as a field named "Subject" (a textarea that grows; today's was an input).
+    const subject = () => document.querySelector<HTMLInputElement | HTMLTextAreaElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]');
     await waitFor(() => subject() !== null, "the demo's composer");
     await act(async () => { fireEvent.change(subject()!, { target: { value: WORDS } }); });
     const holding = () => Object.keys(localStorage).filter((k) => (localStorage.getItem(k) ?? "").includes(WORDS));

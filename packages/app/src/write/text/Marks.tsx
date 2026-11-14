@@ -2,11 +2,19 @@
  * THE EDITOR'S MARKS, as the kit's strip draws them: the marks the editor names, each lit while it holds where the
  * caret is, and the link asked for in a card of the kit's own. A plain editor names none: no strip, no "Aa".
  */
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { Button, Field, Menu } from "@ohmail/ui/base";
 import type { ComposerMark, ComposerMarksProps, ComposerProps } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
-import type { EditorHandle, EditorMarks, MarkId } from "../ports.js";
+import type { EditorHandle, EditorLink, EditorMarks, MarkId } from "../ports.js";
 
 const NONE: ReadonlySet<MarkId> = new Set();
 const NEVER = (): (() => void) => () => undefined;
@@ -56,16 +64,36 @@ export interface MarksView {
   readonly card: ReactNode;
 }
 
-export function useMarks(handle: EditorHandle | null, editable: boolean): MarksView {
+export function useMarks(handle: EditorHandle | null, editable: boolean, initiallyShown = true): MarksView {
   const t = useText("write");
   const marks = handle !== null && handle.marks !== "none" ? handle.marks : null;
   const active = useActive(marks);
-  const [shown, setShown] = useState(true);
-  const [asking, setAsking] = useState(false);
+  const [shown, setShown] = useState(initiallyShown);
+  const [link, setLink] = useState<EditorLink | null>(null);
+  const opened = useRef<EditorLink | null>(null);
+  const restore = useRef<EditorLink | null>(null);
+  const close = useCallback(() => {
+    restore.current = opened.current;
+    opened.current = null;
+    setLink(null);
+  }, []);
+  const toggle = useCallback(() => {
+    if (!editable || !marks) return;
+    if (opened.current) close();
+    else {
+      opened.current = marks.link.open();
+      setLink(opened.current);
+    }
+  }, [editable, marks, close]);
   useEffect(() => {
-    if (!editable) setAsking(false);
-  }, [editable]);
-  useEffect(() => marks?.link.onKey(() => setAsking((open) => !open)), [marks]);
+    if (!editable) close();
+  }, [editable, close]);
+  useEffect(() => marks?.link.onKey(toggle), [marks, toggle]);
+  useLayoutEffect(() => {
+    if (link !== null) return;
+    restore.current?.restore();
+    restore.current = null;
+  }, [link]);
   if (marks === null) return { strip: undefined, format: undefined, card: null };
   const label: Record<MarkId, string> = {
     bold: t("marks.bold"),
@@ -87,9 +115,9 @@ export function useMarks(handle: EditorHandle | null, editable: boolean): MarksV
         label: label[id],
         glyph: GLYPH[id],
         icon: ICON[id],
-        pressed: id === "link" ? asking : active.has(id),
+        ...(id === "link" ? { dialogExpanded: link !== null } : { pressed: active.has(id) }),
         disabled: !editable,
-        onPress: id === "link" ? () => setAsking((open) => !open) : () => marks.run(id),
+        onPress: id === "link" ? toggle : () => marks.run(id),
       })),
   ).filter((group) => group.length > 0);
   return {
@@ -100,29 +128,31 @@ export function useMarks(handle: EditorHandle | null, editable: boolean): MarksV
       pressed: shown,
       onPress: () => setShown((s) => !s),
     },
-    card: asking ? (
-      <LinkCard
-        marks={marks}
-        onClose={() => {
-          setAsking(false);
-          handle?.focus();
-        }}
-      />
-    ) : null,
+    card: link ? <LinkCard link={link} onClose={close} /> : null,
   };
 }
 
-/** The link's address, asked in a card: Apply sets it, an empty address or Remove takes it off. */
-function LinkCard({ marks, onClose }: { marks: EditorMarks; onClose: () => void }) {
+/** The link's address, asked in a card: Apply sets it, an empty address or Remove (over a link) takes it off. */
+function LinkCard({ link, onClose }: { link: EditorLink; onClose: () => void }) {
   const t = useText("write");
-  const [href, setHref] = useState(() => marks.link.read() ?? "");
+  const address = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+  const [href, setHref] = useState(link.href ?? "");
+  /* Remove is offered only where a link stands at the caret: elsewhere it would be a press that does nothing. */
+  const [linked] = useState(link.href !== null);
   const [refused, setRefused] = useState(false);
   const apply = (value: string | null): void => {
-    if (marks.link.set(value) === "refused") setRefused(true);
+    if (link.set(value) === "refused") setRefused(true);
     else onClose();
   };
   return (
-    <Menu open onClose={onClose} label={t("link.title")} kind="card" title={t("link.title")}>
+    <Menu
+      open
+      onClose={onClose}
+      label={t("link.title")}
+      kind="card"
+      title={t("link.title")}
+      initialFocus={address}
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -130,6 +160,7 @@ function LinkCard({ marks, onClose }: { marks: EditorMarks; onClose: () => void 
         }}
       >
         <Field
+          ref={address}
           label={t("link.field")}
           value={href}
           type="url"
@@ -140,9 +171,11 @@ function LinkCard({ marks, onClose }: { marks: EditorMarks; onClose: () => void 
             setRefused(false);
           }}
         />
-        <Button kind="quiet" size="s" onPress={() => apply(null)}>
-          {t("link.remove")}
-        </Button>
+        {linked ? (
+          <Button kind="quiet" size="s" onPress={() => apply(null)}>
+            {t("link.remove")}
+          </Button>
+        ) : null}
         <Button kind="ink" size="s" onPress={() => apply(href)}>
           {t("link.apply")}
         </Button>

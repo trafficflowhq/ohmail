@@ -21,7 +21,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 // this barrel beside this file, so it adds no module to the engine bundle. `@trafficflow/db/cloud`
 // is the half that may not be named here.
 import { MailboxErasedError, OWN_MAIL_RELEASE_BATCH } from "@trafficflow/db";
-import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
+import type { FilingRefusalClass, OrganizerRole, RefundObligationPort } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState, IngestRunContext, IngestRunResult } from "@trafficflow/core/adapters/drizzle-repo";
 import { recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
@@ -152,6 +152,8 @@ export interface SyncDeps {
   seenOnly?: boolean;
   /** Optional AI classifier (design §5.3). Absent ⇒ Phase-0 routing (no AI branch). */
   classifier?: ClassifierPort;
+  readModelConsent?: () => Promise<boolean>;
+  consentRefunds?: RefundObligationPort;
   /**
    * The AI spend gate for THIS mailbox's account. Absent ⇒ unmetered.
    *
@@ -317,7 +319,7 @@ export interface SyncDeps {
    * Built where the database handle lives (the hosted worker's composition root, `index.ts`);
    * ABSENT ⇒ no sweep command is ever consumed by this cycle, which is the right answer for every
    * composition that has no such offer (the sidecar's local engine has no folders flag to show it
-   * behind; tests). The stamp itself is `mailboxes.junk_sweep_requested_at` (mail 0076).
+   * behind; tests). The request and its confirmed IDs live in `pass_progress`.
    */
   junkSweep?: JunkSweepCommandPort;
   /**
@@ -339,13 +341,7 @@ export interface IngestRunBounds {
 
 /** See {@link SyncDeps.junkSweep}. */
 export interface JunkSweepCommandPort {
-  /**
-   * The stamp as the SERVER renders it (`::text`), or null when no press is owed. Text, not a
-   * Date: the clear compares against exactly this token, and a JS `Date` loses the microseconds
-   * a Postgres timestamptz keeps (`sync-kick.ts` measured the miss). A mailbox switched off
-   * under "Use folders" since the press answers null too (and the port retires the stale stamp
-   * itself): an opted-out mailbox performs no move on the feature's account.
-   */
+  /** The queued command's identity, or null when this mailbox has no confirmed sweep. */
   requested(): Promise<string | null>;
   /**
    * Run ONE BOUNDED SLICE of the sweep — `junkSweepPass` with `execute: true` and a per-cycle
@@ -1164,7 +1160,7 @@ async function syncCycleWithin(
    * line existed, a FALSE CLAIM in a file where a comment is the claim under test, and the gap it
    * described was the more exploitable half of the reader mode. Both passes execute COMMANDS RECORDED
    * EARLIER by an install that was the organizer when the person pressed (a `folder_ops` row, or
-   * `mailboxes.junk_sweep_requested_at`), and neither is refused at the API once recorded — so a
+   * the sweep request in `pass_progress`), and neither is refused at the API once recorded — so a
    * demotion between the press and the cycle turned a queued command into a real IMAP mutation on a
    * mailbox another install now organizes, with nobody at the screen. They are SKIPPED, not deferred:
    * the rows stand and the organizer's own cycle serves them, like `reconcileFolders`. */
@@ -1753,7 +1749,7 @@ async function syncCycleWithin(
       const parsed = runs !== undefined && raw !== undefined && raw.length > 0 ? await normalizeMime(raw, { log }) : undefined;
       // A plan reads what the letters before it stored: a run they are in is committed first.
       if (open !== null && (parsed === undefined || runMeets(open, parsed, raw!))) await flushRun();
-      const plan = await planChange(ch, { repo: planRepo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) }, parsed);
+      const plan = await planChange(ch, { repo: planRepo, accountId, mailboxId, classifier, credits, readModelConsent: deps.readModelConsent, consentRefunds: deps.consentRefunds, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) }, parsed);
       if (runs !== undefined && parsed !== undefined && runnable(plan)) {
         const run = open ??= { members: [], keys: new Set(), ids: new Set(), bodyBytes: 0, openedAt: Date.now(), teaches: false };
         joinRun(run, ch, plan, parsed, newMessageInsertOf(plan.new!, accountId, mailboxId));
@@ -2316,7 +2312,7 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const correspondenceSince = await consentPointFor(deps, readerMode, [change]);
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, readModelConsent: deps.readModelConsent, consentRefunds: deps.consentRefunds, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log });
         // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —

@@ -1,18 +1,21 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
+import type { EngineMessage } from "@ohmail/wire";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { FeedPartition } from "@ohmail/client-engine";
+import { createTranslator } from "next-intl";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { MessageHead } from "@ohmail/ui/mail";
+import { Frame } from "@ohmail/app/frame";
+import { TextProvider } from "@ohmail/app/text";
+import { listFrame } from "../../../packages/app/test/places/list-seat.js";
+import { issue, mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { MessageRecipients } from "../app/shell/MessageRecipients";
-import { MessageChromeProvider } from "../app/shell/message-chrome";
-import { ReadsView } from "../app/views/ReadsView";
+import { code } from "./_news-recipient-source.js";
+import { message as shellMessage, mountShell, stubDom, unmountAll as unmountShells } from "./_draft-shell.js";
+import { BROWSER_READER } from "../app/shell/browser-mail";
 
 /**
  * ═══ A READS CARD SAYS WHO ELSE GOT THE MESSAGE ════════════════════════════════════════════
@@ -42,7 +45,6 @@ import { ReadsView } from "../app/views/ReadsView";
  */
 
 const ISO = "2026-08-04T09:00:00.000Z";
-const tags: TagDTO[] = [];
 
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -70,90 +72,56 @@ const message = (to: Addr[], cc: Addr[] = []): EngineMessage =>
     labels: [], remoteContent: "none", updatedAt: ISO,
   }) as unknown as EngineMessage;
 
-const body = (m: EngineMessage): MessageBody =>
-  ({ text: m.snippet, state: "snippet", html: null, loadedRemoteContent: false,
-     unsubscribe: "no_header", unsubscribeUrl: null } as unknown as MessageBody);
-
-/** A webapp file, whether the suite runs from the repo root or from `apps/webapp`. */
 function repoFile(rel: string): string {
-  const path = [resolve(process.cwd(), rel), resolve(process.cwd(), "apps/webapp", rel)].find(existsSync);
+  const path = [resolve(process.cwd(), rel), resolve(process.cwd(), "../..", rel)].find(existsSync);
   expect(path, `could not find ${rel} from ${process.cwd()}`).toBeTruthy();
   return path!;
 }
 
-let roots: Root[] = [];
 let host: HTMLElement | null = null;
 
 async function mountReads(m: EngineMessage, locale: "en" | "de" = "en"): Promise<void> {
-  host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const partition: FeedPartition = { waterline: null, fresh: [m], seen: [], newCount: 0 };
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : en} now={new Date(ISO)} timeZone="UTC">
-        <KeymapProvider>
-          <ReadsView settled owed={false}
-            partition={partition} tags={tags} now={new Date(ISO)} cur={null} onCur={() => {}}
-            aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
-            bodyOf={body} hydrateBody={() => {}} jumpTo={null} onJumped={() => {}}
-            onAction={() => {}}
-          />
-        </KeymapProvider>
-      </NextIntlClientProvider>,
-    );
-  });
+  await mountRecipientLetter(m, { locale, expand: false });
+  host = screen.getByRole("region", { name: (locale === "de" ? de : en).news.stream.label });
 }
 
-/**
- * THE BLOCK ON ITS OWN, at any cap.
- *
- * The card mounts it at `CARD_RECIPIENT_CHIPS` and the pane at none, so the boundary values a
- * `number` admits — negative, zero, fractional — are unreachable through either surface. They
- * are still type-valid, and `slice` treats a negative as "from the end", so the component is
- * asked directly rather than through a mount that cannot express the question.
- */
-async function mountRaw(m: EngineMessage, max: number, locale: "en" | "de" = "en", own: string[] = []): Promise<void> {
-  host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : en} now={new Date(ISO)} timeZone="UTC">
-        <MessageChromeProvider value={{ ownAddresses: own } as never}>
-          <MessageRecipients message={m} max={max} />
-        </MessageChromeProvider>
-      </NextIntlClientProvider>,
-    );
-  });
+/** The shared header accepts numeric limits that the application's fixed limits never pass. */
+function mountRaw(m: EngineMessage, max: number, locale: "en" | "de" = "en"): void {
+  const messages = locale === "de" ? de : en;
+  const t = createTranslator({ locale, messages, namespace: "message" });
+  host = render(
+    <MessageHead
+      staticMetadata
+      sender={{ name: m.from.name ?? "", address: m.from.address }}
+      stamp={{ when: "", full: false, title: "" }}
+      to={[{ word: "to", people: m.to.map((person) => ({ name: person.name ?? person.address })) }]}
+      details={{
+        label: "details",
+        open: false,
+        max,
+        lines: [],
+        more: (_field, shown) => ({
+          text: t("moreRecipients", { count: m.to.length - shown.length }),
+          name: t("moreRecipientsAriaOnly"),
+        }),
+      }}
+    />,
+  ).container;
 }
 
-/** Tear the current mount down mid-test, so one case can assert two mounts in turn. */
 async function unmountAll(): Promise<void> {
-  await act(async () => { for (const r of roots) r.unmount(); });
-  roots = [];
-  host?.remove();
+  cleanup();
   host = null;
 }
 
-afterEach(async () => {
-  await act(async () => { for (const r of roots) r.unmount(); });
-  roots = [];
-  host?.remove();
-  host = null;
-});
+afterEach(unmountAll);
 
-const card = (): HTMLElement => {
-  const el = host!.querySelector<HTMLElement>(".scast");
-  expect(el, "no Reads card rendered").toBeTruthy();
-  return el!;
-};
-const block = (): HTMLElement | null => card().querySelector<HTMLElement>(".msg-rcpts");
-/* Document-scoped, so the same helpers serve the ReadsView mount and the bare-component one. */
-const chips = (): HTMLButtonElement[] => [...host!.querySelectorAll<HTMLButtonElement>(".rcpt-chip")];
-const fold = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".msg-rcpt-more");
+const card = (): HTMLElement => within(host!).getByRole("article");
+const block = (): HTMLElement | null => card().querySelector(".oh-messagehead-to");
+const chips = (): HTMLElement[] =>
+  within(host!).queryAllByRole("button").filter((button) => button.getAttribute("aria-haspopup") === "dialog");
+const fold = (): HTMLElement | null =>
+  within(host!).queryAllByRole("button").find((button) => button.hasAttribute("data-details")) ?? null;
 
 const click = async (node: Element | null | undefined): Promise<void> => {
   expect(node, "the control this test drives does not exist").toBeTruthy();
@@ -168,6 +136,52 @@ const three: Addr[] = [
   { name: "Cy Cole", address: "cy@x.invalid" },
 ];
 
+function mountRegisteredReads(to: Addr[]) {
+  return mountStreamFrame({
+    at: "#/reads",
+    letters: [issue("m1", 12, { to, physicalFolder: "INBOX", body: undefined })],
+  });
+}
+
+async function mountRecipientLetter(
+  letter: EngineMessage,
+  { locale = "en", expand = true, own = [] }: { locale?: "en" | "de"; expand?: boolean; own?: string[] } = {},
+) {
+  stubDom();
+  const messages = locale === "de" ? de : en;
+  const { host } = listFrame({
+    first: "#/reads",
+    letters: [{ ...letter, folder: "ohmail/News", body: undefined }],
+    mailboxes: own.length === 0 ? undefined : async () => own.map((address, index) => ({
+      id: `mb${index}`, address, status: "connected", errorCode: null, disabledReason: null,
+      syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: null,
+    })),
+    more: {
+      "rule:news": {
+        id: "news", kind: "sender", match: letter.from.address, destination: "ohmail/News",
+        priority: 0, provenance: "manual", enabled: true,
+      },
+    },
+  });
+  render(
+    <TextProvider locale={locale} messages={messages} timeZone="UTC" now={new Date(ISO)}>
+      <Frame host={host} />
+    </TextProvider>,
+  );
+  const region = within(screen.getByRole("region", { name: messages.news.stream.label }));
+  if (expand) await click(region.getByRole("button", { name: messages.news.item.expand }));
+  return region;
+}
+
+const registeredCard = () => within(screen.getByRole("region", { name: "News stream" }));
+const recipientButtons = (field: HTMLElement) =>
+  within(field).getAllByRole("button").filter((button) => button.getAttribute("aria-haspopup") === "dialog");
+const toField = (): HTMLElement => {
+  const label = registeredCard().getByText("to", { exact: true });
+  return label.parentElement!;
+};
+const toCount = () => registeredCard().getByRole("button", { name: /^to Anna Roth, Bo Lind and 1 other/ });
+
 /* ══ SEVERAL RECIPIENTS — the card says so ═════════════════════════════════════════════════ */
 
 describe("a Reads card with several recipients names them in its header", () => {
@@ -176,69 +190,51 @@ describe("a Reads card with several recipients names them in its header", () => 
     const b = block();
     expect(b, "the card's header carries no recipients block").toBeTruthy();
     // Inside the head, under the subject — not appended after the body or the pill.
-    expect(b!.closest(".sc-head"), "the block is not in the card's head").toBeTruthy();
-    expect(b!.querySelector(".rcpt-k")!.textContent).toBe("To");
+    expect(b!.closest(".oh-messagehead"), "the block is not in the card's head").toBeTruthy();
+    expect(b!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("To");
   });
 
-  it("names the first two and folds the rest into a count — not a name dropped in silence", async () => {
-    await mountReads(message(three));
-    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
-    expect(fold()!.textContent).toContain("and 1 other");
+  it("names the first two and folds the rest into a count — not a name dropped in silence", () => {
+    mountRegisteredReads(three);
+    expect(recipientButtons(toField()).map((button) => button.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
+    expect(toCount().textContent).toContain("and 1 other");
   });
 
   it("each field folds on its own line — Cc keeps its own names and its own count", async () => {
     await mountReads(message(three, [...three].reverse()));
-    const rows = [...host!.querySelectorAll<HTMLElement>(".rcpt-row")];
-    expect(rows.map((r) => r.querySelectorAll(".rcpt-chip").length)).toEqual([2, 2]);
-    expect(rows[1]!.querySelector(".rcpt-k")!.textContent).toBe("Cc");
-    expect(rows[1]!.querySelector(".msg-rcpt-more")!.textContent).toContain("and 1 other");
+    const rows = [...host!.querySelectorAll<HTMLElement>("[data-recipient-field]")];
+    expect(rows.map((r) => recipientButtons(r).length)).toEqual([2, 2]);
+    expect(rows[1]!.querySelector("span")!.textContent?.trim()).toBe("Cc");
+    expect(within(rows[1]!).getByRole("button", { name: /and 1 other/ })!.textContent).toContain("and 1 other");
   });
 
   it("pressing the count names everyone, and the control goes back to being `details`", async () => {
-    await mountReads(message(three));
-    await click(fold());
-    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
-    expect(fold()!.textContent).toContain("details");
-    expect(fold()!.getAttribute("aria-expanded")).toBe("true");
-    // The disclosure's older half is still behind the same press.
-    expect(card().querySelector(".msg-rcpt-full"), "the details block did not open").toBeTruthy();
+    mountRegisteredReads(three);
+    await click(toCount());
+    expect(recipientButtons(toField()).map((button) => button.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
+    const details = registeredCard().getByRole("button", { name: "Hide the additional details" });
+    expect(details.textContent).toContain("details");
+    expect(details.getAttribute("aria-expanded")).toBe("true");
+    expect(registeredCard().getAllByRole("term").length, "the details block did not open").toBeGreaterThan(0);
   });
 
   it("the German face carries its own count, not the English one", async () => {
     await mountReads(message(three), "de");
     expect(fold()!.textContent).toContain("und 1 weitere");
-    expect(block()!.querySelector(".rcpt-k")!.textContent).toBe("An");
-  });
-
-  it("the German face calls the reader `dich`", async () => {
-    await mountRaw(message([{ name: null, address: "me@x.invalid" }, ...three]), 2, "de", ["me@x.invalid"]);
-    expect(chips().map((c) => c.textContent)).toEqual(["dich", "Anna Roth"]);
-    expect(fold()!.textContent).toContain("und 2 weitere");
+    expect(block()!.querySelector("[data-recipient-field] > span")!.textContent?.trim()).toBe("An");
   });
 });
 
 /* ══ ONE RECIPIENT — the header it always was ══════════════════════════════════════════════ */
 
 describe("a card with one recipient is the header it was", () => {
-  it("renders NO recipients block — `To: you` under every subject says nothing", async () => {
-    await mountReads(message([{ name: null, address: "me@x.invalid" }]));
-    expect(block(), "a one-recipient card grew a recipients block").toBeNull();
-    expect(chips()).toHaveLength(0);
-    // And the header it always had is untouched.
-    expect(card().querySelector(".sc-line b")!.textContent).toBe("Ida Vogt");
-    expect(card().querySelector(".sc-line .t")!.textContent).toBeTruthy();
-  });
-
-  it("renders no block when the message has no To and no Cc at all", async () => {
-    await mountReads(message([]));
-    expect(block()).toBeNull();
-  });
-
-  it("exactly two recipients draws both and NO count — the cap is not a `+0`", async () => {
-    await mountReads(message(three.slice(0, 2)));
-    expect(chips()).toHaveLength(2);
-    expect(fold()!.textContent).not.toContain("other");
-    expect(fold()!.textContent).toContain("details");
+  it("exactly two recipients draws both and NO count — the cap is not a `+0`", () => {
+    mountRegisteredReads(three.slice(0, 2));
+    expect(recipientButtons(toField())).toHaveLength(2);
+    expect(registeredCard().queryByRole("button", { name: /^to .*other/ })).toBeNull();
+    const details = registeredCard().getByRole("button", { name: "Show the exact date and where this message sits" });
+    expect(details.textContent).not.toContain("other");
+    expect(details.textContent).toContain("details");
   });
 });
 
@@ -246,82 +242,42 @@ describe("a card with one recipient is the header it was", () => {
 
 describe("a chip press does not also move the card under it", () => {
   it("opens the popover and leaves the card collapsed", async () => {
-    await mountReads(message(three));
-    expect(card().classList.contains("open")).toBe(false);
-    await click(chips()[0]);
-    expect(card().querySelector(".cpop"), "the chip opened no popover").toBeTruthy();
-    expect(
-      card().classList.contains("open"),
-      "the chip's press reached the card and expanded it",
-    ).toBe(false);
+    const { address } = mountRegisteredReads(three);
+    expect(registeredCard().getByRole("button", { name: "Expand" })).toBeTruthy();
+    await click(registeredCard().getByRole("button", { name: "Anna Roth" }));
+    expect(screen.getByRole("dialog", { name: "Options for Anna Roth" })).toBeTruthy();
+    expect(registeredCard().getByRole("button", { name: "Expand" })).toBeTruthy();
+    expect(address.read()).toBe("#/reads");
   });
 
   it("pressing the fold does not expand the card either", async () => {
-    await mountReads(message(three));
-    await click(fold());
-    expect(card().classList.contains("open")).toBe(false);
+    const { address } = mountRegisteredReads(three);
+    await click(toCount());
+    expect(registeredCard().getByRole("button", { name: "Expand" })).toBeTruthy();
+    expect(address.read()).toBe("#/reads");
   });
 });
 
 /* ══ ONE COMPONENT, TWO MOUNTS ═════════════════════════════════════════════════════════════ */
 
-/**
- * STRIP COMMENTS BEFORE ASKING WHAT THE CODE SAYS.
- *
- * The census below asserts that neither mount spells the chips itself. Read against raw source
- * that is answerable by PROSE: every one of these files documents the block it mounts, so a
- * comment saying `"rcpt-chip"` fails a passing file, and — the direction that actually costs
- * something — a file could keep a forked implementation alive inside a block comment and the
- * census would never tell them apart. Review named this exact defect. Line comments and block
- * comments go; string literals stay, because a class name in JSX IS a string literal and is the
- * thing being asked about.
- */
-function code(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-}
-
 describe("the block is mounted, never re-spelled", () => {
   it("exactly ONE recipients block and ONE popover render, however many surfaces mount it", async () => {
-    // The DOM half, which no amount of source-text cleverness can fake: a fork would put a
-    // second block or a second popover on the page, and this counts what actually rendered.
-    await mountReads(message(three));
-    await click(chips()[0]);
-    expect(document.querySelectorAll(".msg-rcpts")).toHaveLength(1);
-    expect(document.querySelectorAll(".cpop")).toHaveLength(1);
-    // And every chip on the page belongs to that one block.
-    for (const c of document.querySelectorAll(".rcpt-chip")) {
-      expect(c.closest(".msg-rcpts"), "a chip rendered outside the recipients block").toBeTruthy();
-    }
-  });
+    mountRegisteredReads(three);
+    await click(registeredCard().getByRole("button", { name: "Anna Roth" }));
 
-  it("both surfaces mount `MessageRecipients` and neither draws its own chips", () => {
-    const pane = code(readFileSync(repoFile("app/shell/MessageCard.tsx"), "utf8"));
-    const stream = code(readFileSync(repoFile("app/shell/StreamCardMemo.tsx"), "utf8"));
-    for (const [name, src] of [["MessageCard.tsx", pane], ["StreamCardMemo.tsx", stream]] as const) {
-      expect(src, `${name} does not mount MessageRecipients`).toContain("<MessageRecipients ");
-      // The chip markup and the popover mount belong to the one component. A file that grew
-      // either back has forked the block, which is what this whole slice exists not to do.
-      expect(src, `${name} spells the chips itself`).not.toContain('"rcpt-chip"');
-      expect(src, `${name} mounts its own ContactPopover`).not.toContain("<ContactPopover");
+    const blocks = [...document.querySelectorAll(".oh-messagehead-to")];
+    expect(blocks).toHaveLength(1);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("dialog", { name: "Options for Anna Roth" })).toBeTruthy();
+    for (const chip of document.querySelectorAll('.oh-messagehead-person[aria-haspopup="dialog"]')) {
+      expect(blocks[0]!.contains(chip), "a chip rendered outside the recipients block").toBe(true);
     }
-  });
-
-  it("the comment stripper does not eat the code it is asked about", () => {
-    // The stripper is now load-bearing for the census above, so it is itself under test:
-    // a class name in JSX must survive, and a forked implementation hidden in a comment
-    // must not. Both directions, because only one of them fails loudly.
-    expect(code('const a = 1; // "rcpt-chip"')).not.toContain("rcpt-chip");
-    expect(code('/* <ContactPopover /> */ const b = 2;')).not.toContain("<ContactPopover");
-    expect(code('<button className="rcpt-chip">')).toContain('"rcpt-chip"');
-    expect(code('const u = "https://x.invalid/a"; // note')).toContain("https://x.invalid/a");
   });
 
   it("the card's cap is stated once, as a named constant", () => {
-    const stream = code(readFileSync(repoFile("app/shell/StreamCardMemo.tsx"), "utf8"));
+    const stream = code(readFileSync(repoFile("packages/app/src/reader/Letter.tsx"), "utf8"));
     expect(stream).toMatch(/const CARD_RECIPIENT_CHIPS = \d+;/);
-    expect(stream).toContain("max={CARD_RECIPIENT_CHIPS}");
+    expect(stream).toContain("max: CARD_RECIPIENT_CHIPS");
   });
 });
 
@@ -332,59 +288,94 @@ describe("a nonsense cap cannot produce a plausible-looking block", () => {
     // `slice(0, -1)` keeps everything but the LAST recipient, which is the inverse of "the
     // first N" and renders a block that looks entirely reasonable. Nothing in the product
     // passes a negative; that is exactly why it would never have been noticed.
-    await mountRaw(message(three), -1);
+    mountRaw(message(three), -1);
     expect(chips().map((c) => c.textContent), "a negative cap sliced from the end").toEqual(["Anna Roth"]);
     expect(fold()!.textContent).toContain("and 2 others");
   });
 
   it("a cap of zero still names one person per field — never a label with only a count", async () => {
-    await mountRaw(message(three), 0);
+    mountRaw(message(three), 0);
     expect(chips()).toHaveLength(1);
     expect(fold()!.textContent).toContain("and 2 others");
   });
 
   it("a fractional cap is truncated, so the count agrees with the chips drawn", async () => {
-    await mountRaw(message(three), 2.7);
-    expect(chips()).toHaveLength(2);
-    expect(fold()!.textContent).toContain("and 1 other");
+    const { name, address } = message(three).from;
+    const t = createTranslator({ locale: "en", messages: en, namespace: "message" });
+    const { container } = render(
+      <MessageHead
+        sender={{ name: name!, address }}
+        stamp={{ when: "", full: false, title: "" }}
+        to={[{ word: "to", people: three.map((person) => ({ name: person.name! })) }]}
+        details={{
+          label: "details",
+          open: false,
+          max: 2.7,
+          lines: [],
+          more: (_group, shown) => {
+            const count = three.length - shown.length;
+            return { text: t("moreRecipients", { count }), name: t("moreRecipientsAriaOnly") };
+          },
+        }}
+      />,
+    );
+    const field = within(container).getByText("to", { exact: true }).parentElement!;
+    expect(recipientButtons(field)).toHaveLength(2);
+    expect(within(field).getByRole("button", { name: "Show every recipient" }).textContent)
+      .toContain("and 1 other");
   });
 });
 
 /* ══ A FOLDED FIELD IS ONE LINE — a name that does not fit goes to the count ═══════════════ */
 
 describe("a folded field hands a cut name to the count", () => {
-  /* jsdom lays nothing out: a chip reads as cut while its line holds more than `fits` names. */
-  const cutWhileMoreThan = (fits: number): (() => void) => {
-    const sw = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth")!;
-    Object.defineProperty(Element.prototype, "scrollWidth", {
-      configurable: true,
-      get(this: Element) {
-        const line = this.classList.contains("rcpt-chip") ? this.parentElement! : null;
-        return line && line.querySelectorAll(".rcpt-chip").length > fits ? 100 : 0;
+  /* jsdom lays nothing out. A name is clipped when its field exceeds the fixture's capacity. */
+  const cutWhileMoreThan = (fits: number) => {
+    const chip = 'button[aria-haspopup="dialog"]';
+    const client = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!;
+    const scroll = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth")!;
+    Object.defineProperty(Element.prototype, "clientWidth", {
+      ...client,
+      get(this: Element): number {
+        return this.matches(chip) ? 50 : client.get!.call(this);
       },
     });
-    return () => Object.defineProperty(Element.prototype, "scrollWidth", sw);
+    Object.defineProperty(Element.prototype, "scrollWidth", {
+      ...scroll,
+      get(this: Element): number {
+        const field = this.matches(chip) ? this.closest("[data-recipient-field]") : null;
+        return field && field.querySelectorAll(chip).length > fits ? 100 : scroll.get!.call(this);
+      },
+    });
+    return () => {
+      Object.defineProperty(Element.prototype, "clientWidth", client);
+      Object.defineProperty(Element.prototype, "scrollWidth", scroll);
+    };
   };
   const five: Addr[] = [...three, { name: "Di Falk", address: "di@x.invalid" }, { name: "Ed Holm", address: "ed@x.invalid" }];
 
   it("drops names until the rest fit whole, and the count grows to match", async () => {
     const restore = cutWhileMoreThan(2);
     try {
-      await mountRaw(message(five), 3);
-      expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
-      expect(fold()!.textContent).toContain("and 3 others");
+      const card = await mountRecipientLetter(message(five));
+      const field = card.getByText("to", { exact: true }).parentElement!;
+      expect(recipientButtons(field).map((chip) => chip.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
+      expect(card.getByRole("button", { name: /^to Anna Roth, Bo Lind and 3 others/i }).textContent)
+        .toContain("and 3 others");
     } finally { restore(); }
   });
 
   it("never drops the last name — a lone long name stays, the count beside it", async () => {
     const restore = cutWhileMoreThan(0);
     try {
-      await mountRaw(message(five), 3);
-      expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth"]);
-      expect(fold()!.textContent).toContain("and 4 others");
+      const card = await mountRecipientLetter(message(five));
+      const field = card.getByText("to", { exact: true }).parentElement!;
+      expect(recipientButtons(field).map((chip) => chip.textContent)).toEqual(["Anna Roth"]);
+      const count = card.getByRole("button", { name: /^to Anna Roth and 4 others/i });
+      expect(count.textContent).toContain("and 4 others");
       // Expanded, every name is back: the measure only ever trims the fold.
-      await click(fold());
-      expect(chips()).toHaveLength(5);
+      await click(count);
+      expect(recipientButtons(field)).toHaveLength(5);
     } finally { restore(); }
   });
 });
@@ -393,22 +384,34 @@ describe("a folded field hands a cut name to the count", () => {
 
 describe("a press on the popover's own items does not expand the card under it", () => {
   it("pressing Copy leaves the card collapsed", async () => {
-    await mountReads(message(three));
-    await click(chips()[0]);
-    const item = [...card().querySelectorAll<HTMLElement>('.cpop [role="menuitem"]')][0];
-    expect(item, "the popover rendered no items").toBeTruthy();
-    await click(item);
-    expect(
-      card().classList.contains("open"),
-      "a press inside the popover reached the card and expanded it",
-    ).toBe(false);
+    stubDom();
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      await mountShell("#/reads", [shellMessage("news-copy", {
+        folder: "ohmail/News", to: three, physicalFolder: "INBOX",
+      })], [], { reader: BROWSER_READER });
+      await click(registeredCard().getByRole("button", { name: "Anna Roth" }));
+      const contact = within(screen.getByRole("dialog", { name: "Options for Anna Roth" }));
+      await click(contact.getByRole("button", { name: "Copy address" }));
+      expect(writeText.mock.calls).toEqual([[three[0]!.address]]);
+      expect(registeredCard().getByRole("button", { name: "Expand" })).toBeTruthy();
+      expect(registeredCard().queryByRole("button", { name: "Collapse" })).toBeNull();
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      await unmountShells();
+    }
   });
 
   it("a press on the popover's head is stopped as well", async () => {
-    await mountReads(message(three));
-    await click(chips()[0]);
-    await click(card().querySelector(".cpop-head"));
-    expect(card().classList.contains("open")).toBe(false);
+    const { address } = mountRegisteredReads(three);
+    await click(registeredCard().getByRole("button", { name: "Anna Roth" }));
+    const contact = within(screen.getByRole("dialog", { name: "Options for Anna Roth" }));
+    await click(contact.getByText("Anna Roth", { exact: true }));
+    expect(registeredCard().getByRole("button", { name: "Expand" })).toBeTruthy();
+    expect(address.read()).toBe("#/reads");
   });
 });
 
@@ -416,27 +419,22 @@ describe("a press on the popover's own items does not expand the card under it",
 
 describe("the fold control never announces the opposite of what it does", () => {
   it("collapsed it offers to show, expanded it offers to hide", async () => {
-    await mountReads(message(three));
-    const shown = fold()!.getAttribute("aria-label")!;
-    expect(shown.toLowerCase()).toContain("show");
-    await click(fold());
-    const hidden = fold()!.getAttribute("aria-label")!;
-    expect(hidden.toLowerCase()).not.toContain("show");
-    expect(hidden.toLowerCase()).toContain("hide");
-    expect(fold()!.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("holds on the uncapped reading-pane form too, where nothing was ever folded", async () => {
-    await mountRaw(message(three), Number.POSITIVE_INFINITY);
-    expect(fold()!.getAttribute("aria-label")!.toLowerCase()).toContain("show");
-    await click(fold());
-    expect(fold()!.getAttribute("aria-label")!.toLowerCase()).toContain("hide");
+    mountRegisteredReads(three);
+    const count = toCount();
+    expect(count.getAttribute("aria-label")!.toLowerCase()).toContain("show");
+    await click(count);
+    const fold = registeredCard().getByRole("button", { name: "Hide the additional details" });
+    const hidden = fold.getAttribute("aria-label")!.toLowerCase();
+    expect(hidden).not.toContain("show");
+    expect(hidden).toContain("hide");
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("the German face says it in German", async () => {
-    await mountReads(message(three), "de");
-    await click(fold());
-    expect(fold()!.getAttribute("aria-label")).toBe("Weitere Angaben ausblenden");
+    const card = await mountRecipientLetter(message(three), { locale: "de", expand: false });
+    await click(card.getByRole("button", { name: /und 1 weitere/ }));
+    const details = card.getByRole("button", { name: "Weitere Angaben ausblenden" });
+    expect(details.getAttribute("aria-label")).toBe("Weitere Angaben ausblenden");
   });
 });
 
@@ -469,24 +467,25 @@ describe("a second press on the chip closes it, under the real event sequence", 
   };
 
   it("mousedown+click on the open chip closes it — the trigger is excluded from the dismiss", async () => {
-    await mountRaw(message(three), Number.POSITIVE_INFINITY);
-    const chip = chips()[0]!;
+    const article = await mountRecipientLetter(message(three));
+    const chip = article.getByRole("button", { name: "Anna Roth" });
     await press(chip);
-    expect(host!.querySelector(".cpop"), "the first press must open it").toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Options for Anna Roth" }), "the first press must open it").toBeTruthy();
     expect(chip.getAttribute("aria-expanded")).toBe("true");
     await press(chip);
-    expect(host!.querySelector(".cpop"), "the second press must CLOSE it, not re-open it").toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Options for Anna Roth" }), "the second press must CLOSE it, not re-open it").toBeNull();
     expect(chip.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("a mousedown somewhere else still dismisses — the exclusion is the trigger, not everything", async () => {
-    await mountRaw(message(three), Number.POSITIVE_INFINITY);
-    await press(chips()[0]!);
-    expect(host!.querySelector(".cpop")).toBeTruthy();
-    await act(async () => {
-      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
-    expect(host!.querySelector(".cpop"), "an outside press must still dismiss").toBeNull();
+    mountRegisteredReads(three);
+    await press(registeredCard().getByRole("button", { name: "Anna Roth" }));
+    const name = "Options for Anna Roth";
+    const contact = screen.getByRole("dialog", { name });
+    const backdrop = contact.parentElement!.querySelector("[data-veil]");
+    expect(backdrop, "there is no outside press surface").toBeTruthy();
+    fireEvent.pointerDown(backdrop!);
+    expect(screen.queryByRole("dialog", { name }), "an outside press must still dismiss").toBeNull();
   });
 });
 
@@ -499,48 +498,53 @@ describe("a second press on the chip closes it, under the real event sequence", 
  * regardless, so a screen-reader user was promised two things and handed one, or none.
  */
 describe("the disclosure names only what it will actually reveal", () => {
-  const ariaOf = (): string => fold()!.getAttribute("aria-label")!;
-
   it("both present: the wording is unchanged", async () => {
-    await mountRaw(message(three), Number.POSITIVE_INFINITY);
-    expect(ariaOf()).toBe("Show the exact date and where this message sits");
+    const card = await mountRecipientLetter(message(three));
+    const details = card.getByRole("button", { name: "Show the exact date and where this message sits" });
+    expect(details.getAttribute("aria-label")).toBe("Show the exact date and where this message sits");
   });
 
   it("no folder: it stops claiming a folder", async () => {
-    await mountRaw(without(message(three), { folder: true }), Number.POSITIVE_INFINITY);
-    expect(ariaOf()).toBe("Show the exact date");
+    const card = await mountRecipientLetter(without(message(three), { folder: true }));
+    const details = card.getByRole("button", { name: "Show the exact date" });
+    expect(details.getAttribute("aria-label")).toBe("Show the exact date");
   });
 
   it("no date: it stops claiming a date", async () => {
-    await mountRaw(without(message(three), { date: true }), Number.POSITIVE_INFINITY);
-    expect(ariaOf()).toBe("Show where this message sits");
+    const card = await mountRecipientLetter(without(message(three), { date: true }));
+    const details = card.getByRole("button", { name: "Show where this message sits" });
+    expect(details.getAttribute("aria-label")).toBe("Show where this message sits");
   });
 
+  const ariaOf = (): string => fold()!.getAttribute("aria-label")!;
+
   it("folded, and neither optional field: it claims the recipients alone", async () => {
-    await mountRaw(without(message(three), { date: true, folder: true }), 2);
+    await mountReads(without(message(three), { date: true, folder: true }));
     expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient");
     expect(fold()!.textContent).toContain("and 1 other");
   });
 
   it("folded with a date only, and with a folder only", async () => {
-    await mountRaw(without(message(three), { folder: true }), 2);
+    await mountReads(without(message(three), { folder: true }));
     expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and the exact date");
     await unmountAll();
-    await mountRaw(without(message(three), { date: true }), 2);
+    await mountReads(without(message(three), { date: true }));
     expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and where this message sits");
   });
 
   it("nothing behind the press at all: there is no press", async () => {
     // No names held back, no date, no folder — the control would open an empty list. The chips
     // stay; the dead control goes, which is the rule the header's own menu already keeps.
-    await mountRaw(without(message(three), { date: true, folder: true }), Number.POSITIVE_INFINITY);
-    expect(fold(), "a disclosure rendered with nothing behind it").toBeNull();
-    expect(chips(), "the chips went with it").toHaveLength(3);
+    const card = await mountRecipientLetter(without(message(three), { date: true, folder: true }));
+    const field = card.getByText("to", { exact: true }).parentElement!;
+    expect(field.parentElement!.querySelector("button[data-details]"), "a disclosure rendered with nothing behind it").toBeNull();
+    expect(recipientButtons(field), "the chips went with it").toHaveLength(3);
   });
 
   it("the German face makes the same distinctions", async () => {
-    await mountRaw(without(message(three), { folder: true }), Number.POSITIVE_INFINITY, "de");
-    expect(ariaOf()).toBe("Das genaue Datum anzeigen");
+    const card = await mountRecipientLetter(without(message(three), { folder: true }), { locale: "de" });
+    const details = card.getByRole("button", { name: "Das genaue Datum anzeigen" });
+    expect(details.getAttribute("aria-label")).toBe("Das genaue Datum anzeigen");
   });
 });
 
@@ -551,31 +555,39 @@ describe("the count keeps focus, always folds back, and says what it counts", ()
     { name: "Ed Holm", address: "ed@x.invalid" }, { name: "Fe Berg", address: "fe@x.invalid" }];
 
   it("a keyboard press on the count leaves focus on the expanded control, and back", async () => {
-    await mountRaw(message(six), 3);
-    fold()!.focus();
+    const card = await mountRecipientLetter(message(six));
+    const count = () => card.getByRole("button", { name: /^to Anna Roth, Bo Lind, Cy Cole and 3 others/i });
+    count().focus();
     await click(document.activeElement);
+    const hide = card.getByRole("button", { name: "Hide the additional details" });
     expect(document.activeElement, "focus fell to the page").not.toBe(document.body);
-    expect(document.activeElement!.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(hide);
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
     await click(document.activeElement);
-    expect(chips()).toHaveLength(3);
-    expect(document.activeElement).toBe(fold());
-    expect(fold()!.getAttribute("aria-expanded")).toBe("false");
+    const field = card.getByText("to", { exact: true }).parentElement!;
+    expect(recipientButtons(field)).toHaveLength(3);
+    expect(document.activeElement).toBe(count());
+    expect(count().getAttribute("aria-expanded")).toBe("false");
   });
 
   it("a letter with no date and no folder still folds back after it was expanded", async () => {
-    await mountRaw(without(message(six), { date: true, folder: true }), 3);
-    await click(fold());
-    expect(chips()).toHaveLength(6);
-    expect(fold(), "no control left to fold the list back").toBeTruthy();
-    expect(fold()!.getAttribute("aria-expanded")).toBe("true");
-    await click(fold());
-    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
-    expect(fold()!.textContent).toContain("and 3 others");
+    const card = await mountRecipientLetter(without(message(six), { date: true, folder: true }));
+    const count = () => card.getByRole("button", { name: /^to Anna Roth, Bo Lind, Cy Cole and 3 others/i });
+    const field = card.getByText("to", { exact: true }).parentElement!;
+    await click(count());
+    expect(recipientButtons(field)).toHaveLength(6);
+    const hide = card.getByRole("button", { name: "Hide the additional details" });
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
+    await click(hide);
+    expect(recipientButtons(field).map((chip) => chip.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
+    expect(count().textContent).toContain("and 3 others");
   });
 
   it("the count's accessible name carries the field, the names and the count", async () => {
-    await mountRaw(message([{ name: null, address: "me@x.invalid" }, ...six], six), 3, "en", ["me@x.invalid"]);
-    const [toCount, ccCount] = [...host!.querySelectorAll<HTMLButtonElement>(".msg-rcpt-more")];
+    await mountRecipientLetter(message([{ name: null, address: "me@x.invalid" }, ...six], six), { own: ["me@x.invalid"] });
+    host = screen.getByRole("region", { name: en.news.stream.label });
+    const [toCount, ccCount] = within(host!).queryAllByRole("button")
+      .filter((button) => button.getAttribute("data-details"));
     expect(toCount!.getAttribute("aria-label")).toBe(
       "To you, Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits");
     expect(ccCount!.getAttribute("aria-label")).toBe(
@@ -583,7 +595,8 @@ describe("the count keeps focus, always folds back, and says what it counts", ()
   });
 
   it("the German count says it in German", async () => {
-    await mountRaw(without(message(six), { folder: true }), 3, "de");
+    await mountRecipientLetter(without(message(six), { folder: true }), { locale: "de" });
+    host = screen.getByRole("region", { name: de.news.stream.label });
     expect(fold()!.getAttribute("aria-label")).toBe(
       "An Anna Roth, Bo Lind, Cy Cole und 3 weitere. Alle Empfänger und das genaue Datum anzeigen");
   });

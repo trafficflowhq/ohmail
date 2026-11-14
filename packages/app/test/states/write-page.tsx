@@ -3,7 +3,8 @@
  * rich editor, `WriteAbove` standing over the frame as the seating step stands it, over a composition double that
  * holds the letter the reference shows (`write-world.ts`) and answers as the shell's composition answers. The
  * address carries the reference's words (`state`, `send`, `draft`, `note`, `line`, `fromnote`, `from`, `support`,
- * `device`, `face`, `scheme`) and `lang`. What a state needs a press for (the suggestions, the From menu, Send
+ * `device`, `face`, `scheme`) and `lang`. `discard=sent-elsewhere` adds the narrow-column check's discard reason.
+ * What a state needs a press for (the suggestions, the From menu, Send
  * later's card, a pick of files, the quality menu, the draft control) is pressed by the page once it stands, through
  * the same controls a person uses. Nothing is sent: every door of the double keeps its press in memory.
  *
@@ -282,7 +283,10 @@ function useWritingDouble(): Writing {
       maxMessageBytes: note === "servermore" ? 52_428_800 : null,
       domainMatched: q.get("fromnote") === "matched",
     },
-    composeElsewhere: null,
+    composeElsewhere:
+      q.get("discard") === "sent-elsewhere"
+        ? { why: "sent", typedSince: true, earlier: false, kept: false }
+        : null,
     composeSaveRefused: false,
     composeResumed: false,
     composeWaitNote: null,
@@ -309,8 +313,10 @@ function useWritingDouble(): Writing {
     replyForwardFiles: null,
     replyBook: [],
     replySendState: () => ({ phase: "idle" }),
+    showSend: () => nothing,
     heldReplyRow: () => null,
     sendReply: nothing,
+    sendReplyAndDone: () => null,
     openReply: nothing,
     openForward: nothing,
     confirmForward: nothing,

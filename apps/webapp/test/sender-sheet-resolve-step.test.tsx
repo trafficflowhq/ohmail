@@ -1,40 +1,31 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  FOLDER_OF_VIEW,
-  MemoryMirrorStore,
-  consentPartition,
-  pressForecast,
-  rulesInPlay,
-  type SyncChange,
-} from "@ohmail/client-engine";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
+import { clickMounted, withMountedSender } from "./fixtures/mounted-sender-sheet.js";
 import {
-  planScreeningChange, ruleMatchOf, screeningPath, senderScreening, withResolution,
-  type ScreeningDest, type ScreeningScope,
-} from "@ohmail/app-logic/press/sender-screening";
-import { shellSliceOf } from "./source-anchor";
+  ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
+  teardownScreeningWeb, tick, warmScreeningWeb,
+} from "./fixtures/screening-web.js";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
 
 /**
  * THE SHEET NAMES THE RULE THAT DISAGREES, AND THE PRESS WINS BY DEFAULT. A subject rule for the
  * pressed address filing elsewhere turns the press into a step: the rule is listed with the rows it
  * keeps, "All their mail" is chosen, Enter commits it, ↑/↓ changes the answer, and Escape goes back
  * to the list before it closes the sheet. No rule in the way: no step, the press commits.
+ *
+ * Which door a sheet press goes through (the planner alone, no sheet drawn) stands in
+ * `sender-sheet-resolve-step-plan.test.ts`.
  */
 const NOW = new Date("2026-09-25T13:00:00.000Z");
 const ADDR = "alerts@kestrel.example";
-let seq = 0;
 
 function msg(id: string, o: Partial<EngineMessage> = {}): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: "Invoice ready", from: { name: "Kestrel", address: ADDR }, to: [], cc: [],
     date: "2026-09-24T12:00:00.000Z", folder: "INBOX", snippet: "", unread: false,
     hasAttachments: false, attachmentCount: 0,
@@ -51,59 +42,73 @@ function rule(o: Partial<RuleDTO> & Pick<RuleDTO, "id" | "destination">): RuleDT
   } as RuleDTO;
 }
 
-async function mirror(messages: EngineMessage[], rules: RuleDTO[]) {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges([
-    ...messages.map((m) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
-    ...rules.map((r) => ({ type: "rule", op: "create", id: r.id, seq: ++seq, updatedAt: r.updatedAt, entity: r })),
-  ] as SyncChange[]);
-  return store;
-}
-
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-afterEach(() => { act(() => root?.unmount()); host?.remove(); root = null; host = null; });
+beforeAll(warmScreeningWeb, 30_000);
+let mounted = false;
+afterEach(async () => {
+  if (mounted) await teardownScreeningWeb();
+  mounted = false;
+});
 
 async function render(messages: EngineMessage[], rules: RuleDTO[], locale: "en" | "de" = "en") {
-  const store = await mirror(messages, rules);
-  const options = { now: NOW };
-  const placeOf = consentPartition(store, options).placeOf;
-  const sender = senderScreening(store, messages[0]!.id, undefined, placeOf)!;
-  const onChoose = vi.fn();
-  const backRef: { current: (() => boolean) | null } = { current: null };
-  const forecastFor = (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean, applyRetro: boolean) =>
-    pressForecast({
-      reader: store, options, subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
-      wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: NOW,
-    });
-  const rulesFor = (scope: ScreeningScope) => rulesInPlay({
-    reader: store, placeOf, subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
+  const seed = messages[0]!;
+  const words = locale === "de" ? de : en;
+  const writes: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
+  let seq = messages.length + rules.length;
+  installScreeningWeb(`#/ohbox/m/${seed.id}`, (path, query, method, init) => {
+    if (path === "/api/mailboxes") return Response.json({ items: [{
+      id: "mb", address: ["fixture", "mailbox.example"].join("@"), status: "connected",
+      organizerRole: "organizer", organizerChecked: true, createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
+    }] });
+    if (path === "/api/sync") return query.get("types") === "rule"
+      ? syncScreeningWeb(rules.map((rule, index) => ({
+        type: "rule", op: "create", id: rule.id, seq: index + 1, updatedAt: rule.updatedAt, entity: rule,
+      })), rules.length)
+      : syncScreeningWeb(messages.map((message, index) => ({
+        type: "message", op: "create", id: message.id, seq: index + rules.length + 1,
+        updatedAt: message.updatedAt, entity: message,
+      })), messages.length + rules.length);
+    if (method !== "GET" && /^\/api\/(rules|messages)(?:\/|$)/.test(path)) {
+      const headers = { "X-Ohmail-Account": ACCOUNT, "X-Sync-Seq": String(++seq) };
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      writes.push({ method, path, body });
+      if (method === "DELETE") return new Response(null, { status: 204, headers });
+      if (path.startsWith("/api/rules")) {
+        const id = path === "/api/rules" ? "new-rule" : path.split("/").at(-1)!;
+        return Response.json({ ...rule({ id, destination: "INBOX" }), ...body }, { status: 201, headers });
+      }
+      const message = messages.find(({ id }) => path === `/api/messages/${id}/move`);
+      if (message) return Response.json({ ...message, folder: body.folder }, { headers });
+    }
+    return undefined;
   });
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(React.createElement(NextIntlClientProvider, {
-      locale, messages: locale === "en" ? en : de,
-      children: React.createElement(SenderMenu, {
-        state: { messageId: messages[0]!.id, x: 0, y: 0 }, sender, onChoose, onOpenDetail: () => {},
-        forecastFor, rulesFor, backRef, onClose: () => {},
-      }),
-    }));
-  });
-  return { el: host, onChoose, backRef, sender };
+  mounted = true;
+  vi.setSystemTime(NOW);
+  const frame = within(await mountScreeningWeb(locale));
+  await tick(4000);
+  const reader = within(frame.getByRole("region", { name: words.frame.landmark.reading }));
+  await clickMounted(reader.getByRole("button", { name: /^Kestrel / }));
+  const page = within(document.body);
+  const contact = within(page.getByRole("dialog", { name: words.message.contactAria.replace("{who}", "Kestrel") }));
+  await clickMounted(contact.getByRole("menuitem", { name: words.screening.action }));
+  const name = words.screening.aria.replace("{sender}", ADDR);
+  const el = page.getByRole("dialog", { name });
+  return {
+    el,
+    open: () => page.queryByRole("dialog", { name }) !== null,
+    ruleWrites: () => writes.filter(({ path }) => path.startsWith("/api/rules")),
+  };
 }
 
-const press = async (node: Element | null | undefined) => {
-  expect(node, "the control this test drives does not exist").toBeTruthy();
-  await act(async () => { node!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+const press = clickMounted;
+const key = async (node: HTMLElement, k: string) => {
+  await act(async () => { node.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
 };
-const key = async (node: Element | null | undefined, k: string) => {
-  expect(node).toBeTruthy();
-  await act(async () => { node!.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
-};
-const ohbox = (el: HTMLElement) => el.querySelector('[data-dest="ohbox"]');
+const ohbox = (el: HTMLElement) => within(el).getByRole("option", { name: /^Ohbox/ });
+const choices = (el: HTMLElement) => within(el).getByRole("radiogroup", { name: en.screening.resolveChoiceAria });
+const tilesOf = (el: HTMLElement) => within(choices(el)).getAllByRole("radio");
+const ruleForOhbox = expect.objectContaining({
+  body: expect.objectContaining({ destination: "INBOX", applyRetro: true }),
+});
 
 const owner = () => [
   [msg("plain"), msg("mon", { subject: "[Monitor] disk at 91%", folder: "ohmail/News" })],
@@ -131,64 +136,68 @@ describe("the sheet lists the rules in play", () => {
 describe("the resolve step", () => {
   it("pressing the Ohbox over their subject rule asks, with All chosen, and Enter commits it", async () => {
     const [m, r] = owner();
-    const { el, onChoose } = await render([...m], [...r]);
+    const { el, ruleWrites } = await render([...m], [...r]);
     await press(ohbox(el));
-    expect(onChoose, "the press committed over a rule that disagrees").not.toHaveBeenCalled();
+    expect(ruleWrites(), "the press committed over a rule that disagrees").toEqual([]);
     const step = el.querySelector(".sm-resolve");
     expect(step?.querySelector("p")?.textContent).toBe("Ohbox — one of your rules says otherwise");
-    const tiles = [...el.querySelectorAll('.sm-choices [role="radio"]')];
+    const tiles = tilesOf(el);
     expect(tiles.map((n) => n.getAttribute("aria-checked"))).toEqual(["true", "false"]);
     expect(tiles[0]!.textContent).toContain("All their mail → Ohbox");
     expect(tiles[0]!.textContent).toContain("2 messages");
     expect(tiles[1]!.textContent).toContain("Keep the split");
     expect(document.activeElement, "focus is on the chosen tile").toBe(tiles[0]);
-    await key(el.querySelector(".sm-choices"), "Enter");
-    expect(onChoose).toHaveBeenCalledTimes(1);
-    const [dest, scope, , , answer] = onChoose.mock.calls[0]!;
-    expect([dest, scope, answer.resolution, answer.shown.map((x: RuleDTO) => x.id)]).toEqual(["ohbox", "sender", "remove", ["term"]]);
+    await key(choices(el), "Enter");
+    await tick(UNDO_MS + 500);
+    expect(ruleWrites().filter(({ method }) => method === "DELETE"))
+      .toEqual([{ method: "DELETE", path: "/api/rules/term", body: {} }]);
+    expect(ruleWrites().filter(({ method }) => method !== "DELETE")).toHaveLength(1);
   });
 
   it("↓ chooses Keep the split, and it is what commits", async () => {
     const [m, r] = owner();
-    const { el, onChoose } = await render([...m], [...r]);
+    const { el, ruleWrites } = await render([...m], [...r]);
     await press(ohbox(el));
-    await key(el.querySelector(".sm-choices"), "ArrowDown");
-    expect([...el.querySelectorAll('.sm-choices [role="radio"]')].map((n) => n.getAttribute("aria-checked"))).toEqual(["false", "true"]);
-    await press(el.querySelector(".sm-confirm-row .go"));
-    expect(onChoose.mock.calls[0]![4].resolution).toBe("keep");
+    await key(choices(el), "ArrowDown");
+    expect(tilesOf(el).map((n) => n.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    await press(within(el).getByRole("button", { name: "File to Ohbox" }));
+    await tick(UNDO_MS + 500);
+    expect(ruleWrites().filter(({ method }) => method === "DELETE")).toEqual([]);
   });
 
   it("Escape steps back to the list and hands focus back to the destination; a second Escape closes", async () => {
     const [m, r] = owner();
-    const { el, backRef } = await render([...m], [...r]);
+    const { el, open } = await render([...m], [...r]);
     await press(ohbox(el));
-    let first = false;
-    await act(async () => { first = backRef.current!(); await Promise.resolve(); });
-    expect(first, "Escape in the step closed the sheet").toBe(true);
+    await key(tilesOf(el)[0]!, "Escape");
+    expect(open(), "Escape in the step closed the sheet").toBe(true);
     expect(el.querySelector(".sm-resolve")).toBeNull();
     expect(document.activeElement).toBe(ohbox(el));
-    let second = true;
-    await act(async () => { second = backRef.current!(); });
-    expect(second, "Escape on the list must close the sheet").toBe(false);
+    await key(ohbox(el), "Escape");
+    expect(open(), "Escape on the list must close the sheet").toBe(false);
   });
 
   it("no rule in the way: no step, the press commits at once", async () => {
-    const { el, onChoose } = await render([msg("plain")], [rule({ id: "bare", destination: "ohmail/News" })]);
+    const { el, ruleWrites } = await render([msg("plain")], [rule({ id: "bare", destination: "ohmail/News" })]);
     await press(ohbox(el));
     expect(el.querySelector(".sm-resolve")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("ohbox", "sender", true, true);
+    expect(within(document.body).getByRole("button", { name: "Undo" })).toBeTruthy();
+    await tick(UNDO_MS + 500);
+    expect(ruleWrites()).toEqual([ruleForOhbox]);
   });
 
   it("a higher-priority domain rule: the exception is the default, and says who stays", async () => {
     const wide = rule({ id: "dom", kind: "domain", match: "kestrel.example", destination: "ohmail/Screened", priority: 5 });
-    const { el, onChoose } = await render([msg("m1")], [wide]);
+    const { el, ruleWrites } = await render([msg("m1")], [wide]);
     await press(ohbox(el));
-    const tiles = [...el.querySelectorAll('.sm-choices [role="radio"]')];
+    const tiles = tilesOf(el);
     expect(tiles[0]!.textContent).toContain("Only this address → Ohbox");
     expect(tiles[0]!.textContent).toContain("Everyone else at kestrel.example stays in Screened out");
-    await key(el.querySelector(".sm-choices"), "Enter");
-    expect(onChoose.mock.calls[0]!.slice(0, 2)).toEqual(["ohbox", "sender"]);
-    expect(onChoose.mock.calls[0]![4].resolution).toBe("keep");
+    await key(choices(el), "Enter");
+    await tick(UNDO_MS + 500);
+    expect(ruleWrites()).toEqual([expect.objectContaining({
+      method: "POST", body: expect.objectContaining({ kind: "sender", match: ADDR, destination: "INBOX" }),
+    })]);
   });
 
   it("the German step at the longest title", async () => {
@@ -200,45 +209,40 @@ describe("the resolve step", () => {
 });
 
 describe("no address press past the gate reaches the wire outside the window", () => {
-  it("changeScreening hands the window path to the held press before any dispatch", () => {
-    const body = shellSliceOf("changeScreening");
-    const held = body.indexOf('if (path === "window" && !demo');
-    const hold = body.indexOf("holdScreenPress(", held);
-    const back = body.indexOf("return;", hold);
-    const dispatch = body.indexOf("dispatchScreeningChange(plan");
-    expect(held, "the window path is not decided in changeScreening").toBeGreaterThan(0);
-    expect(hold, "the window path does not hold the press").toBeGreaterThan(held);
-    expect(back, "the held press falls through to a dispatch").toBeGreaterThan(hold);
-    expect(dispatch, "the other doors' dispatch is not after the held press").toBeGreaterThan(back);
-    expect(body.match(/dispatchScreeningChange\(/g) ?? [], "changeScreening dispatches a plan twice").toHaveLength(1);
+  it("changeScreening hands the window path to the held press before any dispatch", async () => {
+    await withMountedSender(async ({ sheet, writes, sender }) => {
+      await clickMounted(sheet.getByRole("option", { name: /^Ohbox/ }));
+      expect(within(document.body).getByRole("button", { name: "Undo" })).toBeTruthy();
+      expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([]);
+      await tick(UNDO_MS + 500);
+      expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([{
+        method: "POST", path: "/api/rules",
+        body: expect.objectContaining({ kind: "sender", match: sender, destination: "INBOX", applyRetro: true }),
+      }]);
+    });
+
+    await withMountedSender(async ({ sheet, writes }) => {
+      await clickMounted(sheet.getByRole("radio", { name: /^Everyone at sender\.example/ }));
+      await clickMounted(sheet.getByRole("option", { name: /^News/ }));
+      await clickMounted(sheet.getByRole("radio", { name: /Changes that rule too/ }));
+      expect(writes).toEqual([]);
+      await clickMounted(sheet.getByRole("button", { name: "File to News" }));
+      await tick(500);
+      expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([
+        { method: "POST", path: "/api/rules", body: expect.objectContaining({
+          kind: "domain", match: "sender.example", destination: "ohmail/News", applyRetro: true,
+        }) },
+        { method: "DELETE", path: "/api/rules/subject-rule", body: {} },
+      ]);
+    }, { subjectRule: true });
   });
 
-  it("the held press dispatches its rules only through the window", () => {
-    const body = shellSliceOf("holdScreenPress");
-    expect(body).toMatch(/routing\.holdScreen\(/);
-    expect(body, "a rule write left the held press directly").not.toMatch(/ruleMutations|dispatchScreeningChange/);
-  });
-});
-
-describe("which door a sheet press goes through", () => {
-  it("an address press past the gate that makes a rule is held; a domain press and a move-only go at once", async () => {
-    const store = await mirror([msg("m1")], []);
-    const s = senderScreening(store, "m1")!;
-    expect(screeningPath(s, "sender", true)).toBe("window");
-    expect(screeningPath(s, "domain", true)).toBe("immediate");
-    expect(screeningPath(s, "sender", false)).toBe("immediate");
-    const held = await mirror([msg("h1", { folder: "ohmail/Screener" })], []);
-    expect(screeningPath(senderScreening(held, "h1")!, "sender", true)).toBe("decide");
-  });
-
-  it("the step's removals ride a decide ahead of it, and a ladder after it", async () => {
-    const store = await mirror([msg("h1", { folder: "ohmail/Screener" })], []);
-    const plan = planScreeningChange(senderScreening(store, "h1")!, "ohbox", "sender", true, true);
-    const del = { kind: "rule_delete" as const, ruleId: "term" };
-    const out = withResolution(plan, [del]);
-    expect(out.mutations[0]).toBe(del);
-    expect(out.ruleMutations).toEqual([del]);
-    expect(out.mutations.filter((m) => m.kind === "screener_decide")).toHaveLength(1);
+  it("the held press dispatches its rules only through the window", async () => {
+    await withMountedSender(async ({ sheet, writes }) => {
+      await clickMounted(sheet.getByRole("option", { name: /^Ohbox/ }));
+      await clickMounted(within(document.body).getByRole("button", { name: "Undo" }));
+      await tick(UNDO_MS + 500);
+      expect(writes.filter(({ path }) => /\/rules|\/move$|\/screener/.test(path))).toEqual([]);
+    });
   });
 });
-

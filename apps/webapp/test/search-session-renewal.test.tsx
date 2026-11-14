@@ -3,7 +3,8 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
@@ -12,8 +13,6 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,
 } from "@ohmail/app-logic/session/session-truth";
@@ -25,7 +24,6 @@ import {
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,8 +63,10 @@ async function engineWith(status: () => number | null): Promise<{ engine: Ohmail
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -75,21 +75,18 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
   vi.restoreAllMocks();
   resetSessionTruthForTests();
 });
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, { children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) }),
-    }));
-  });
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await act(async () => { typeSearch(host, query); });
 }
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 320)); });
 const text = (): string => host.textContent ?? "";
-const hits = (): number => host.querySelectorAll(".hit").length;
+const hits = (): number => within(host).queryAllByRole("listitem").length;
 
 describe("Search over a session renewal", () => {
   it("a 401 asks the renewal, keeps searching, and asks the store again once it lands", async () => {

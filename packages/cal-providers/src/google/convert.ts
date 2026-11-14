@@ -34,6 +34,7 @@ import {
 } from "@ohmail/cal-core";
 import { addressOf, callLinkOf, filled as text, instantOfRfc3339, isRecord, leftOut, MAX_PROVIDER_ID_CHARS, pathSegment, type Json, type Left } from "../json-answers.js";
 import type { ChangeItem, LeftReason } from "../port.js";
+import { incompleteAudience } from "../write-compare.js";
 
 /** What one record is. A cancelled day of a series names its series by Google's id; the series' UID stands on it only sometimes. */
 export type Converted =
@@ -207,5 +208,5 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   const event: CalEvent = eventOf({ ...made, properties: [...made.properties, ...more] });
   // The entity tag is what a change is made against. A record without one (a recorded exchange keeps none) is told apart by its last change.
   const version = text(raw.etag) ?? text(raw.updated) ?? "";
-  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null } };
+  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
 }

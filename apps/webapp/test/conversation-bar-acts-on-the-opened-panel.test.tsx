@@ -4,6 +4,8 @@ import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
+import { fireEvent, within } from "@testing-library/react";
+import { typeInto } from "./fixtures/rich-editor-driver";
 import { barVerb, letterShown, lettersShown, menuItem, moreButton, readingColumn, readingScroller } from "./ohbox/_finders.js";
 
 /**
@@ -12,6 +14,10 @@ import { barVerb, letterShown, lettersShown, menuItem, moreButton, readingColumn
  * ringed panel is `a1`, and the bar's Delete reaches the wire for `a1` alone, Later for `a1` and the row's
  * own reply beside it (the row is taken whole). A wheel on the stack
  * moves nothing the bar reads. Mutation: rebind the bar to the conversation's last member — red at the id.
+ *
+ * RE-POINTED (share reader-1, the switch's older tests): the shell was already the new one through its test door
+ * (`fixtures/live-walk-shell.js` mounts the web's `MailShell`); the warm-up import is that door's, not today's
+ * `AppShell`, and the forward is read by what its send names on the wire, not by today's dock's mark.
  */
 
 const ME = "walker@example.invalid";
@@ -73,8 +79,24 @@ const anchored = (host: HTMLElement): string | null => {
   const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
   return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
 };
-const docked = (host: HTMLElement): string | null =>
-  readingColumn(host)?.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? null;
+/**
+ * The letter the open forward forwards. The new shell's forward is `write`'s sheet after the conversation (the kit's
+ * composer, a section named Forward), which carries no letter's id of its own: the forward is sent, as a person
+ * sends it (a recipient, a line, Send on the panel), and the id is the one its send names on the wire (`forwardOfMessageId`).
+ */
+const docked = async (host: HTMLElement): Promise<string | null> => {
+  const sheet = readingColumn(host)?.querySelector<HTMLElement>('section[aria-label="Forward"]') ?? null;
+  if (sheet === null) return null;
+  const to = within(sheet).getByRole("combobox", { name: "To" }) as HTMLInputElement;
+  await act(async () => { fireEvent.change(to, { target: { value: "mila@example.invalid, " } }); });
+  await act(async () => { typeInto(within(sheet).getByRole("textbox", { name: "Forward body" }), "For you"); });
+  /* An open reply's verbs stand in the letter's panel: Send is there. */
+  await click(barVerb(host, "Send"), "the forward's Send");
+  const sent = (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit | undefined]> } }).mock.calls
+    .flatMap(([, init]) => (typeof init?.body === "string" && init.body.includes("forwardOfMessageId") ? [init.body] : []))
+    .map((body) => (JSON.parse(body) as { forwardOfMessageId?: string | null }).forwardOfMessageId ?? null);
+  return sent.length === 1 ? sent[0]! : null;
+};
 /** Every request the engine made, as method and path. */
 const wire = (): Array<{ method: string; url: string }> =>
   (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit | undefined]> } }).mock.calls
@@ -111,7 +133,7 @@ async function mountOpenedAtA1(over: Record<string, unknown>): Promise<HTMLEleme
 }
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 
@@ -145,7 +167,7 @@ describe("the bar acts on the panel the conversation opened at", () => {
     const host = await mountOpenedAtA1(laterX2["our own reply"]!);
     const ringed = anchored(host);
     await click(barVerb(host, "Forward"), "the bar's Forward");
-    expect(docked(host)).toBe(ringed);
+    expect(await docked(host)).toBe(ringed);
     await pressBarDelete(host);
     expect(deletesOf(ringed!)).toBe(1);
     expect(deletesOf("x2")).toBe(0);

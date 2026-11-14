@@ -14,5 +14,6 @@ export {
   type StorageState,
 } from "./model.js";
 export { useStorage } from "./use-storage.js";
+export { storagePane, type StoragePaneParts } from "./pane.js";
 export { storageFactsStates, storageStates, type StorageStateAmounts } from "./states.js";
 export { STORAGE_NAMESPACE } from "./namespace.js";

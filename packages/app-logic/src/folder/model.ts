@@ -3,10 +3,22 @@
  * new for the person and what came before; an empty folder is an answer (it exists and holds nothing), and a folder
  * that left the mail server while it was open is said by name, never shown as an empty list.
  */
+import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
 import type { EngineMessage, FolderEntity } from "@ohmail/wire";
 import { createContext, useContext, useMemo, useRef } from "react";
+import type { OlderMail } from "../lists/older-mail.js";
 import { folderLeafOf } from "../lists/folders.js";
 import { newestFirst, usePlaceList, type PlaceList, type PlaceListInput } from "../place-list/place-list.js";
+import type { FolderToMoveInto } from "./move.js";
+
+/**
+ * A letter's Move into another of the mailbox's folders: the folders it may go to (`foldersToMoveInto`), and the one
+ * act a press sends (`moveIntoFolder`), each through the seat's path. Absent: no Move is offered.
+ */
+export interface FolderMove {
+  readonly into: (m: EngineMessage) => readonly FolderToMoveInto[];
+  readonly send: (source: string, m: EngineMessage, folder: FolderEntity) => void;
+}
 
 export interface FolderInput extends Omit<PlaceListInput, "rows"> {
   /** The folder the route names, as the mirror holds it; null where the mirror holds no such folder. */
@@ -19,9 +31,12 @@ export interface FolderInput extends Omit<PlaceListInput, "rows"> {
   readonly openFolder: (id: string) => void;
   /** The letters in it. */
   readonly messages: readonly EngineMessage[];
+  readonly older?: OlderMail;
+  readonly tail?: readonly EngineMessage[];
   readonly settled: boolean;
   readonly owed: boolean;
   readonly stamp: (iso: string) => string;
+  readonly move?: FolderMove;
 }
 
 export interface FolderModel {
@@ -33,20 +48,33 @@ export interface FolderModel {
   readonly way: readonly { readonly label: string; readonly open: (() => void) | null }[];
   readonly fresh: readonly EngineMessage[];
   readonly earlier: readonly EngineMessage[];
-  readonly count: number;
+  readonly older: OlderMail | null;
+  readonly count: number | undefined;
   readonly loading: boolean;
   readonly empty: boolean;
   /** The name of the folder that was open here and left the mail server; null otherwise. */
   readonly goneName: string | null;
   readonly stamp: (iso: string) => string;
+  /** A letter's Move into another folder, where the seat hands one. */
+  readonly move: FolderMove | null;
 }
 
 export function useFolderList(input: FolderInput): FolderModel {
   const { folder, folderId, messages, settled, owed } = input;
   const sorted = useMemo(() => [...messages].sort(newestFirst), [messages]);
-  const fresh = useMemo(() => sorted.filter((m) => m.unread), [sorted]);
-  const earlier = useMemo(() => sorted.filter((m) => !m.unread), [sorted]);
-  const rows = useMemo(() => [...fresh, ...earlier], [fresh, earlier]);
+  /* The open letter keeps the group it stood in while it stays open: read in place, it files under what came
+     before once it is left, and the row under the cursor never moves while it is read. */
+  const keptNew = useRef<string | null>(null);
+  const { openId } = input;
+  if (openId === null) keptNew.current = null;
+  else if (keptNew.current !== openId)
+    keptNew.current = sorted.some((m) => m.id === openId && m.unread) ? openId : null;
+  const kept = keptNew.current;
+  const fresh = useMemo(() => sorted.filter((m) => m.unread || m.id === kept), [sorted, kept]);
+  const earlier = useMemo(() => sorted.filter((m) => !m.unread && m.id !== kept), [sorted, kept]);
+  const tail = input.tail;
+  const previous = useMemo(() => (tail?.length ? [...earlier, ...tail] : earlier), [earlier, tail]);
+  const rows = useMemo(() => [...fresh, ...previous], [fresh, previous]);
   const list = usePlaceList({ ...input, rows: folder === null ? [] : rows });
   /* The folder seen under this route: its name stays to say it left. */
   const seen = useRef<{ id: string; name: string } | null>(null);
@@ -54,7 +82,8 @@ export function useFolderList(input: FolderInput): FolderModel {
   else if (seen.current !== null && seen.current.id !== folderId) seen.current = null;
   const goneName =
     folder === null && seen.current !== null && seen.current.id === folderId ? seen.current.name : null;
-  const none = folder !== null && rows.length === 0;
+  const facts = { settled, count: list.rows.length, pending: owed };
+  const surface = listSurface(facts);
   const path = useMemo(
     () => (folder === null ? [] : folder.name.split("/").filter((part) => part.length > 0)),
     [folder],
@@ -75,12 +104,14 @@ export function useFolderList(input: FolderInput): FolderModel {
     path,
     way,
     fresh: folder === null ? [] : fresh,
-    earlier: folder === null ? [] : earlier,
-    count: folder === null ? 0 : rows.length,
-    loading: (folder === null && goneName === null && (!settled || owed)) || (none && (!settled || owed)),
-    empty: none && settled && !owed,
+    earlier: folder === null ? [] : previous,
+    older: input.older ?? null,
+    count: countWhen(facts, facts.count),
+    loading: goneName === null && (surface === "skeleton" || surface === "pending"),
+    empty: folder !== null && saysEmpty(surface) && (!input.older?.available || input.older.exhausted),
     goneName,
     stamp: input.stamp,
+    move: input.move ?? null,
   };
 }
 

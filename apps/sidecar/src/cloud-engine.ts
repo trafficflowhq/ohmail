@@ -1610,9 +1610,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
          so a paired window's failed pull and failed consent read reached no log at all. */
       if (req.method === "POST" && (path === WINDOW_SYNC_FAILED_ROUTE || path === WINDOW_CONSENT_READ_FAILED_ROUTE)) {
         const deps = { authorized: async () => true, log: log ?? (() => undefined) };
-        return path === WINDOW_SYNC_FAILED_ROUTE
-          ? handleWindowSyncFailure(req, deps)
-          : handleWindowConsentReadFailure(req, deps);
+        if (path === WINDOW_SYNC_FAILED_ROUTE) return handleWindowSyncFailure(req, deps);
+        return handleWindowConsentReadFailure(req, deps);
       }
 
       /* THE WINDOW'S QUEUED CHANGES, kept on this machine (`window-outbox.ts`). Every write on this

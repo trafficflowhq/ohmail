@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -479,8 +480,14 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
     expect(rowCount(c), "the fixture never landed — nothing below would prove anything")
       .toBeGreaterThan(0);
 
-    for (const view of ["ohbox", "reads", "receipts", "screener"]) {
+    for (const [view, letter] of [
+      ["ohbox", "subject of ohb1"],
+      ["reads", "subject of rd1"],
+      ["receipts", "subject of rc1"],
+      ["screener", "Sender sc1"],
+    ]) {
       await goTo(view);
+      expect(text(c), `${view} did not show the fixture letter`).toContain(letter);
       expect(text(c), `${view} said nothing about a mailbox that is not being synced`)
         .toContain("ohmail cannot read its own folder");
       expect(text(c), `${view} did not name the mailbox`).toContain("desk@trafficflow.invalid");
@@ -910,11 +917,16 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
     expect(rowCount(c), "the Ohbox has rows — this is not the state under test").toBe(0);
     expect(text(c)).toContain("Nothing in your Ohbox yet");
     // The empty Ohbox's way on is the Screener (the kit's Empty, its one button); the doorbell above says how many wait.
-    expect([...c.querySelectorAll(".view-ohbox .oh-empty .oh-empty-acts :is(button, a)")].map((b) => b.textContent))
+    const emptyOhbox = [...c.querySelectorAll<HTMLElement>(".oh-empty")]
+      .find((pane) => text(pane).includes("Nothing in your Ohbox yet"));
+    expect(emptyOhbox).toBeDefined();
+    expect([
+      ...within(emptyOhbox!).queryAllByRole("button"),
+      ...within(emptyOhbox!).queryAllByRole("link"),
+    ].map((action) => action.textContent))
       .toEqual([messages.place.screener]);
     // The doorbell is drawn there and its name carries how many senders wait (a number, never zero).
-    expect(c.querySelector(".view-ohbox .oh-doorbell")?.getAttribute("aria-label") ?? "", "the doorbell says how many wait")
-      .toMatch(/^[1-9]\d* first-time senders waiting/);
+    expect(within(c).getByRole("button", { name: /^[1-9]\d* first-time senders waiting/ })).toBeTruthy();
     expect(text(c), "the pane editorialised").not.toMatch(/sorry|don't worry|oops/i);
   });
 

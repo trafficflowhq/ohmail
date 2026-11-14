@@ -51,6 +51,10 @@ export interface ScreenerIntent {
   derived: boolean;
   /** A derived row's held message ids, for the "&read" batch. `[]` on a fixture row. */
   heldIds: string[];
+  /** The held IDs named by an explicit bulk confirmation. */
+  confirmedIds?: string[];
+  /** The subset shown in the irreversible-send warning. */
+  unsubscribeIds?: string[];
   /** Enough of the sender to name them in a refusal toast, and no more. */
   from: { name: string | null; address: string };
   /** The sender sheet's past-mail answer, when the decision came from the sheet. Optional on disk. */
@@ -105,6 +109,8 @@ function isIntent(x: unknown): x is ScreenerIntent {
     && typeof r.at === "number"
     && typeof r.derived === "boolean"
     && Array.isArray(r.heldIds) && r.heldIds.every((h) => typeof h === "string")
+    && (r.confirmedIds === undefined || (Array.isArray(r.confirmedIds) && r.confirmedIds.every((h) => typeof h === "string")))
+    && (r.unsubscribeIds === undefined || (Array.isArray(r.unsubscribeIds) && r.unsubscribeIds.every((h) => typeof h === "string")))
     && (r.inboxIds === undefined || (Array.isArray(r.inboxIds) && r.inboxIds.every((h) => typeof h === "string")))
     && (r.seed === undefined || isSeed(r.seed))
     && typeof r.from === "object" && r.from !== null

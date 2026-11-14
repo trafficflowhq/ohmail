@@ -14,7 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { cssRect, cssViewport } from "@ohmail/ui";
 import type { BarVerb } from "@ohmail/app-logic/lists/bar-density";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
-import { OVERLAY_EDGE, OVERLAY_GAP } from "./overlay-clamp";
+import { OVERLAY_EDGE, OVERLAY_GAP } from "../screening/overlay-clamp";
 
 /**
  * THE MENU STAYS INSIDE THE VIEWPORT (DESIGN-FOLD-WIDTHS §7). The bar's menu opens UPWARD

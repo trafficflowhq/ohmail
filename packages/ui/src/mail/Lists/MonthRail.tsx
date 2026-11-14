@@ -19,7 +19,9 @@ export interface MonthRailProps {
   entries: readonly MonthRailEntry[];
   /** The step the list is at. */
   current?: string;
-  onPick?: (id: string) => void;
+  /** Leave breathing room beside rows and more space above the steps on a phone. */
+  spaced?: boolean;
+  onPick?: (id: string, keyboard?: true) => void;
   /** The list it steps through: the rows, and what the list says under them. */
   children?: ReactNode;
 }
@@ -29,18 +31,18 @@ export interface MonthRailProps {
  * the box the rows scroll in while they run under it, and the rows end where the rail starts. With no step to
  * take, the list stands as if alone: its boxes are there and draw nothing.
  */
-export function MonthRail({ label, entries, current, onPick, children }: MonthRailProps) {
+export function MonthRail({ label, entries, current, spaced, onPick, children }: MonthRailProps) {
   /* The same box with and without steps: rows that stand before the steps arrive keep their nodes, and the keys. */
   if (entries.length === 0)
     return (
-      <div className="oh-monthrail" data-bare="">
+      <div className="oh-monthrail" data-spaced={spaced ? "" : undefined} data-bare="">
         <div key="list" className="oh-monthrail-list">
           {children}
         </div>
       </div>
     );
   return (
-    <div className="oh-monthrail">
+    <div className="oh-monthrail" data-spaced={spaced ? "" : undefined}>
       <div key="keep" className="oh-monthrail-keep">
         <nav className="oh-monthrail-steps" aria-label={label}>
           {entries.map((entry) => (
@@ -52,7 +54,12 @@ export function MonthRail({ label, entries, current, onPick, children }: MonthRa
               aria-current={entry.id === current ? "true" : undefined}
               aria-label={entry.title}
               title={entry.title}
-              onClick={() => onPick?.(entry.id)}
+              onClick={(event) => {
+                const button = event.currentTarget;
+                if (event.detail === 0 && button === button.ownerDocument.activeElement)
+                  onPick?.(entry.id, true);
+                else onPick?.(entry.id);
+              }}
             >
               {entry.label}
             </button>

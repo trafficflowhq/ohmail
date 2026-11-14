@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * THE VIEW-SWITCH JOURNEY, IN A REAL ENGINE — keys 1, 2 and 3, and the rail's clicks, over a fixture
- * mailbox, through the page `scripts/perf/view-switch.mjs` measures (the real AppShell over a
+ * mailbox, through the page `scripts/perf/view-switch.mjs` measures (the mounted frame over a
  * FixturesAdapter, heavy newsletters in the streams). What it asserts is what the presses DID —
  * the pile's rows painted, the stream behind them, no sanitize pass and no request on a revisit,
  * no more framed documents at entry than one screen of cards — and never how long they took: a

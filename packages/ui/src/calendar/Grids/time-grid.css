@@ -5,8 +5,8 @@
     --oh-tg-gutter: var(--cgutter);
     --oh-tg-cols: var(--oh-tg-gutter) repeat(var(--oh-tg-days, 7), minmax(0, 1fr));
     --oh-tg-end: var(--s2);
-    --oh-tg-foot: 0px;
-    --oh-tg-air: 10px;
+    --oh-tg-foot: var(--cal-grid-foot);
+    --oh-tg-air: var(--cal-grid-air);
   }
   .oh-tg[data-dense] {
     --t-ev: var(--t-meta);
@@ -16,9 +16,6 @@
   }
   :root[data-face="ohmarchy"][data-device="fold"] .oh-tg {
     --oh-tg-gutter: 56px;
-  }
-  :root[data-device="phone"] .oh-tg {
-    --oh-tg-foot: 104px;
   }
   /* The unfolded phone: the days after the hinge start after it. */
   :root[data-device="fold"] .oh-tg[data-crease] {
@@ -278,5 +275,17 @@
     grid-row: 1;
     justify-content: flex-end;
     min-width: 0;
+  }
+}
+
+@layer oh {
+  .oh-tg[data-second-zone] {
+    --oh-tg-gutter: var(--cal-dual-gutter);
+  }
+  :root[data-device="fold"] .oh-tg[data-second-zone] {
+    --oh-tg-gutter: var(--cal-dual-gutter-fold);
+  }
+  .oh-tg-hr[data-second] {
+    inset-inline-end: calc(50% + var(--s1));
   }
 }

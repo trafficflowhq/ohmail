@@ -44,11 +44,11 @@ const MINTS: ReadonlyArray<{ name: string; lines: string[]; expect: number }> = 
      be the same lines. */
   { name: "sessionCookies, owner absent", lines: sessionCookies(TOKENS, "csrf-1", CFG, null), expect: 4 },
   /* Two set and two expired: the jar's earlier refresh cookie and resume marker go with it. */
-  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 4 },
+  { name: "enrollmentCookies", lines: enrollmentCookies("enroll-ghi", "csrf-2", CFG), expect: 5 },
   /* The CLEAR is in scope and it is not pedantry: a browser only replaces a cookie when the
      replacement matches on the attributes that scope it, so a clear that dropped `Secure` would
      leave the live cookie in the jar on the one door where it matters. */
-  { name: "clearSessionCookies", lines: clearSessionCookies(), expect: 5 },
+  { name: "clearSessionCookies", lines: clearSessionCookies(), expect: 6 },
 ];
 
 describe("condition 1 — every cookie the API mints is Secure, on every path", () => {
@@ -158,13 +158,13 @@ describe("condition 2 at the doors — a request that says it arrived over plain
       body: JSON.stringify({ email: EMAIL, password: PW, displayName: "T", inviteCode: "INVITE-OK" }),
     });
     expect(reg.status).toBe(201);
-    allSecure(reg, "POST /auth/register", 4);
+    allSecure(reg, "POST /auth/register", 5);
 
     // No factor yet: the password alone re-enters enrollment.
     const reentry = await H(deps, "POST", "/auth/login", { body: JSON.stringify({ email: EMAIL, password: PW }) });
     expect(reentry.status).toBe(200);
     expect((await reentry.clone().json()).status).toBe("enrollment");
-    const enrolling = allSecure(reentry, "POST /auth/login (enrollment)", 4);
+    const enrolling = allSecure(reentry, "POST /auth/login (enrollment)", 5);
 
     const enrollJar = { cookie: `tf_session=${enrolling.tf_session}; tf_csrf=${enrolling.tf_csrf}`, headers: { "x-csrf-token": enrolling.tf_csrf! } };
     const enroll = await H(deps, "POST", "/auth/2fa/totp/enroll", enrollJar);
@@ -174,7 +174,7 @@ describe("condition 2 at the doors — a request that says it arrived over plain
       ...enrollJar, body: JSON.stringify({ code: totpNow(secret, clock.now()) }),
     });
     expect(activate.status).toBe(200);
-    const full = allSecure(activate, "POST /auth/2fa/totp/activate (the exchange)", 5);
+    const full = allSecure(activate, "POST /auth/2fa/totp/activate (the exchange)", 6);
 
     const fullJar = { cookie: `tf_session=${full.tf_session}; tf_csrf=${full.tf_csrf}`, headers: { "x-csrf-token": full.tf_csrf! } };
     const codes = await H(deps, "POST", "/auth/2fa/recovery-codes", fullJar);
@@ -183,7 +183,9 @@ describe("condition 2 at the doors — a request that says it arrived over plain
 
     const renewed = await H(deps, "POST", "/auth/refresh", { cookie: `tf_refresh=${full.tf_refresh}` });
     expect(renewed.status).toBe(204);
-    const renewal = allSecure(renewed, "POST /auth/refresh", 4);
+    const renewal = allSecure(renewed, "POST /auth/refresh", 5);
+    expect(renewal.tf_family).toBe(full.tf_family);
+    expect(renewal.tf_family).not.toBe(enrolling.tf_family);
 
     const markerOnly = await H(deps, "POST", "/auth/refresh", { cookie: `tf_resume=${renewal.tf_resume}` });
     expect(markerOnly.status).toBe(401);
@@ -191,45 +193,51 @@ describe("condition 2 at the doors — a request that says it arrived over plain
 
     const refused = await H(deps, "POST", "/auth/refresh", { cookie: "tf_refresh=never-minted" });
     expect(refused.status).toBe(401);
-    allSecure(refused, "POST /auth/refresh (refused)", 5);
+    allSecure(refused, "POST /auth/refresh (refused)", 6);
 
     const signOut = await H(deps, "POST", "/auth/refresh/logout", { cookie: `tf_refresh=${renewal.tf_refresh}` });
     expect(signOut.status).toBe(204);
-    allSecure(signOut, "POST /auth/refresh/logout", 5);
+    allSecure(signOut, "POST /auth/refresh/logout (revoke)", 0);
+    const cleared = await H(deps, "POST", "/auth/refresh/logout", {
+      cookie: `tf_refresh=${renewal.tf_refresh}; tf_owner=signed_out_pending; tf_family=${renewal.tf_family}`,
+      headers: { "X-Ohmail-Clear-Logout": "1", "X-Ohmail-Expected-Family": renewal.tf_family! },
+    });
+    expect(cleared.status).toBe(204);
+    allSecure(cleared, "POST /auth/refresh/logout (clear)", 6);
 
     clock.advance(30_000); // past the step the activation spent
     const viaTotp = await H(deps, "POST", "/auth/2fa/totp/verify", {
       body: JSON.stringify({ loginToken: await login(), code: totpNow(secret, clock.now()) }),
     });
     expect(viaTotp.status).toBe(200);
-    const signedIn = allSecure(viaTotp, "POST /auth/2fa/totp/verify", 5);
+    const signedIn = allSecure(viaTotp, "POST /auth/2fa/totp/verify", 6);
 
     const out = await H(deps, "POST", "/auth/logout", {
       cookie: `tf_session=${signedIn.tf_session}; tf_csrf=${signedIn.tf_csrf}`, headers: { "x-csrf-token": signedIn.tf_csrf! },
     });
     expect(out.status).toBe(204);
-    allSecure(out, "POST /auth/logout", 5);
+    allSecure(out, "POST /auth/logout", 6);
 
     const viaCode = await H(deps, "POST", "/auth/2fa/recovery-codes/verify", {
       body: JSON.stringify({ loginToken: await login(), code }),
     });
     expect(viaCode.status).toBe(200);
-    const last = allSecure(viaCode, "POST /auth/2fa/recovery-codes/verify", 5);
+    const last = allSecure(viaCode, "POST /auth/2fa/recovery-codes/verify", 6);
 
     const unknown = await H(deps, "POST", "/auth/refresh/logout", { cookie: "tf_refresh=never-minted" });
     expect(unknown.status).toBe(401);
-    allSecure(unknown, "POST /auth/refresh/logout (refused)", 5);
+    allSecure(unknown, "POST /auth/refresh/logout (refused)", 0);
 
     const erase = await H(deps, "DELETE", "/account", {
       cookie: `tf_session=${last.tf_session}; tf_csrf=${last.tf_csrf}`, headers: { "x-csrf-token": last.tf_csrf! },
     });
     expect(erase.status).toBe(200);
-    allSecure(erase, "DELETE /account", 5);
+    allSecure(erase, "DELETE /account", 6);
 
     const erased = await H(deps, "POST", "/auth/refresh", {
       cookie: `tf_refresh=${last.tf_refresh}`, headers: { [ERASED_ANSWER_HEADER]: "account_erased" },
     });
     expect(erased.status).toBe(410);
-    allSecure(erased, "POST /auth/refresh (an erased account)", 5);
+    allSecure(erased, "POST /auth/refresh (an erased account)", 6);
   });
 });

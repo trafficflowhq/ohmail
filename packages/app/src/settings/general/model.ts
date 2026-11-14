@@ -4,6 +4,7 @@
  * kept on this device, and the consent row for the two image switches); the pane reaches nothing itself.
  */
 import type { ReactNode } from "react";
+import type { SubjectDisplay } from "../../reader/subject-display.js";
 
 export type ThemeChoice = "light" | "system" | "dark";
 export type LookFace = "paper" | "ohmarchy";
@@ -52,6 +53,7 @@ export interface GeneralModel {
     readonly choices: readonly string[];
     set(next: string): void;
   };
+  readonly subject: { readonly value: SubjectDisplay; set(next: SubjectDisplay): void };
   /**
    * Load images in messages. Withheld until the server's consent row has answered, and where no proxy fetches a
    * picture: it rests on "ask first", and a switch drawn before the answer would show an account the wrong state.

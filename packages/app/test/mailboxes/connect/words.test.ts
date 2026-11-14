@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONNECT_STATES, saidOfState } from "@ohmail/app-logic/mailboxes/connect/states";
+import { CONNECT_STATES, saidOfState } from "../../../../app-logic/test/mailboxes/connect/refusal-states.js";
 import { CONNECT_PURPOSES } from "@ohmail/app-logic/mailboxes/connect/types";
 import { CONNECT_NAMESPACES } from "../../../src/mailboxes/connect/index.js";
 import { EDIT_WORDS, FORM_WORDS, type Word } from "../../../src/mailboxes/connect/words.js";

@@ -77,6 +77,8 @@ export interface ConnectGuard {
 export interface ConnectAsk {
   readonly purpose: ConnectPurpose;
   onDone(result: ConnectResult): void;
+  /** The Mailboxes list takes over display and polling once the device sign-in starts. */
+  onCodeStarted?(): void;
   /** Typed words held by a caller that outlives the form; memory only, and never the password. */
   readonly kept?: ConnectKept;
   readonly guard?: ConnectGuard;

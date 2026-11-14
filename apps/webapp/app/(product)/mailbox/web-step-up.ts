@@ -37,11 +37,11 @@ export function stepUpRefusalOf(
 }
 
 /** The web's step-up door. `say` is the one renderer for a refusal this client raised, in the reader's language. */
-export function webStepUp(say: (err: unknown) => string): StepUpDoor {
+export function webStepUp(say: (err: unknown) => string, expectedOwner?: string | null): StepUpDoor {
   return {
     async factors() {
       try {
-        const { user } = await auth.session();
+        const { user } = await auth.session({ expectedOwner });
         const e = {
           webauthn: user.twofaEnrolled.webauthn, totp: user.twofaEnrolled.totp,
           recoveryCodes: user.twofaEnrolled.recoveryCodes === true,
@@ -55,7 +55,7 @@ export function webStepUp(say: (err: unknown) => string): StepUpDoor {
     },
     async verify(factor, code) {
       try {
-        await VERIFY[factor](code);
+        await VERIFY[factor](code, expectedOwner);
         return { ok: true };
       } catch (err) {
         if (isOwnerAbsent(err)) return { ok: false, refusal: { word: "owner_absent", said: say(err) } };
@@ -69,12 +69,12 @@ export function webStepUp(say: (err: unknown) => string): StepUpDoor {
  * The three verify bodies, the prompt's own, last in this file: nothing follows a verify here, because the act it
  * allows is the caller's. The code is sent trimmed, as typed.
  */
-const VERIFY: Readonly<Record<StepUpFactor, (code: string) => Promise<unknown>>> = {
-  code: (code) => auth.stepUpTotp({ code: code.trim() }),
-  recovery: (code) => auth.stepUpRecoveryCode({ code: code.trim() }),
-  passkey: async () => {
-    const { options } = await auth.stepUpWebauthnOptions();
+const VERIFY: Readonly<Record<StepUpFactor, (code: string, expectedOwner?: string | null) => Promise<unknown>>> = {
+  code: (code, owner) => auth.stepUpTotp({ code: code.trim() }, owner),
+  recovery: (code, owner) => auth.stepUpRecoveryCode({ code: code.trim() }, owner),
+  passkey: async (_code, owner) => {
+    const { options } = await auth.stepUpWebauthnOptions(owner);
     const credential = await assertPasskey(options);
-    await auth.stepUpWebauthnVerify({ credential });
+    await auth.stepUpWebauthnVerify({ credential }, owner);
   },
 };

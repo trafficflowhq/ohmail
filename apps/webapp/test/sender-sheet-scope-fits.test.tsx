@@ -8,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
@@ -65,9 +65,11 @@ async function measure(width: number, extra = ""): Promise<{ sideways: boolean; 
   try {
     await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${SHEETS}${extra}</style>
       <style>*{animation:none!important}</style></head><body class="mo-canvas">${sheet}</body></html>`);
-    return await page.evaluate(() => {
-      const box = document.querySelector(".senderm") as HTMLElement;
-      const card = [...document.querySelectorAll<HTMLElement>(".sm-scope button")].find((b) => b.textContent?.includes("Everyone at"))!;
+    const dialog = page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", `no-reply@${DOMAIN}`) });
+    const domain = dialog.getByRole("radio", { name: /^Everyone at/ });
+    const card = await domain.elementHandle();
+    if (card === null) throw new Error("The domain choice is missing");
+    return await dialog.evaluate((box, card) => {
       const b = box.getBoundingClientRect();
       const c = card.getBoundingClientRect();
       return {
@@ -75,7 +77,7 @@ async function measure(width: number, extra = ""): Promise<{ sideways: boolean; 
         cut: c.right > b.right + 0.5 || card.scrollWidth > card.clientWidth + 0.5,
         text: card.textContent ?? "",
       };
-    });
+    }, card);
   } finally {
     await page.close();
   }

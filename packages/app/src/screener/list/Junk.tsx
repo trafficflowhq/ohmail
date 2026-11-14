@@ -139,7 +139,7 @@ export function Junk({ junk, view }: { junk: ScreenerJunk; view: JunkView<Screen
       {/* A mailbox whose folder was not read, or that has none, is named under whatever did load. */}
       {absent.map((m) => (
         <ListLine key={m.id}>
-          {t(m.window === "no_junk_folder" ? "junkNoFolder" : "junkUnreachable", {
+          {t(m.window === "no_junk_folder" ? "quarantineMove.mailbox" : "junkUnreachable", {
             address: displayAddress(m.address),
           })}
         </ListLine>

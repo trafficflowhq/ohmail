@@ -18,12 +18,13 @@ import type {
   Secret, SignInProvider, SignInReturn, SignInWays,
 } from "@ohmail/app-logic/mailboxes/contract";
 import type { None } from "./contract.js";
+import type { ProfileImportTransport } from "../profile-import/wire.js";
 import type {
   AutoFiled, AutoFiledPutBack, AwayDraft, AwaySaved, AwayState, ConnectAllowance, ConsentReadFailure, ConsentState,
-  DraftReplyRead, FirstRunCount, FirstRunMailbox, FirstRunOrganizeIntent, FirstRunOrganized, FirstRunProbed,
+  DraftReplyRead, FirstRunCount, FirstRunOrganizeIntent, FirstRunOrganized,
   FirstRunStepUp, FolderSummary, JunkFound, JunkPage, JunkRescued, JunkSweep, MailboxErased, MailboxRow,
-  OrganizeAnswer, OrganizerPeek, OwnModelAutoSuggest, ProfileImportApplied, ProfileImportCandidate,
-  ProfileImportStatus, ReleaseAnswer, ScreenerPage, ScreenerSuggested, ScreeningChange, ScreeningPreference,
+  OrganizeAnswer, OrganizerPeek, OwnModelAutoSuggest,
+  ReleaseAnswer, ScreenerPage, ScreenerSuggested, ScreeningChange, ScreeningPreference,
   SeedConfirmed, SeedReview, TrashPage, TravelledChange,
 } from "./payloads.js";
 import type { Signal } from "./signals.js";
@@ -48,24 +49,20 @@ export type LiveBodyWire = (messageId: string) => Promise<
 /** The away responder. The shell's `AwayTransport`. */
 export interface AwayWire {
   state(): Promise<AwayState>;
+  initialState?(): Promise<AwayState>;
   save(next: AwayDraft): Promise<AwaySaved>;
 }
 
 /** Settings a mailbox arrived with. The shell's `ProfileImportTransport`. */
-export interface ProfileImportWire {
-  candidate(mailboxId: string): Promise<ProfileImportCandidate>;
-  apply(mailboxId: string, fingerprint: string, signatureReplaces?: string): Promise<ProfileImportApplied>;
-  status(mailboxId: string, fingerprint: string): Promise<ProfileImportStatus>;
-  decline(mailboxId: string, subject: { fingerprint?: string; v?: number }): Promise<unknown>;
-  replace(mailboxId: string, fingerprint: string): Promise<unknown>;
-}
+export type ProfileImportWire = ProfileImportTransport;
 
 /**
  * The consent row and its switches. The shell's `ConsentTransport`, without the fact it carries
  * beside its verbs: whether folders can be stored is the capability `foldersStorable`.
  */
 export interface ConsentWire {
-  state: () => Promise<ConsentState>;
+  retryColdRead?: boolean;
+  state: (relayGrant?: string | null) => Promise<ConsentState>;
   setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null; autoActAt?: string | null }>;
   setAutoAct?: (enabled: boolean) => Promise<{ autoActAt: string | null }>;
   setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") => Promise<{
@@ -112,7 +109,7 @@ export interface JunkWire {
   dismissRescue(rescueId: string): Promise<unknown>;
   search(q: string): Promise<JunkFound>;
   sweepPreview(): Promise<JunkSweep>;
-  sweepRequest(): Promise<JunkSweep>;
+  sweepRequest(confirmation: string): Promise<JunkSweep>;
   isGone(err: unknown): boolean;
   codeOf(err: unknown): string | null;
 }
@@ -159,8 +156,6 @@ export interface DraftReplyWire {
  */
 export interface FirstRunWire {
   ai: "unset" | "off" | "on-unconfigured" | "on";
-  probe(input: FirstRunMailbox): Promise<FirstRunProbed>;
-  connect(input: FirstRunMailbox, mode: "seed" | "add"): Promise<{ id: string }>;
   organize(mailboxId: string, body: {
     imap?: { pass: string };
     screening?: { dormancyDays?: number; scope?: "window" | "all_time" };
@@ -172,7 +167,6 @@ export interface FirstRunWire {
   complete: () => Promise<void>;
   setAiEnabled?: (enabled: boolean) => Promise<void>;
   forgetMailbox?: (mailboxId: string) => Promise<void>;
-  probeReason: (err: unknown) => string | null;
   probeMessage: (err: unknown) => string | null;
   probeLocalServer?: (err: unknown) => boolean;
   localServerWait?: boolean;
@@ -238,7 +232,13 @@ export interface ProviderSignInWire {
    * pace and only while something subscribes; `stop` forgets it. `none`: this shell runs no such ceremony here.
    */
   readonly code:
-    | { begin(provider: SignInProvider): Promise<Answered<null>>; readonly live: Signal<CodeCeremony | null>; stop(): void }
+    | {
+        begin(provider: SignInProvider, stillWanted?: () => boolean): Promise<Answered<null>>;
+        readonly live: Signal<CodeCeremony | null>;
+        /** Pick up a tab's earlier sign-in once its Mailboxes list can show it. */
+        resume?(): void;
+        stop(): void;
+      }
     | None;
 }
 
@@ -258,6 +258,8 @@ export interface ConnectWire {
   signIn: ProviderSignInWire | None;
   /** A server on this computer may take minutes to answer a test: the form says so while it waits. */
   readonly localServerWait: boolean;
+  /** The door accepts a manual incoming server without an outgoing one. */
+  readonly incomingOnly?: true;
 }
 
 /**

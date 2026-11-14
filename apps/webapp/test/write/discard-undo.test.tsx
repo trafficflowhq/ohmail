@@ -10,7 +10,7 @@ import { UNDO_MS } from "@ohmail/app-logic/press";
 import en from "../../messages/en.json";
 import { act, message, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
-import { mountWriting, rounds, unmountWritings } from "./writing-world.js";
+import { mountWriting, rounds, unmountWritings } from "../_write-1-writing.js";
 
 const LETTER = { ...EMPTY_COMPOSE, to: "lena@example.invalid, ", subject: "Friday", body: "Shall we meet at noon?" };
 

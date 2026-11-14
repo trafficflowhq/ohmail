@@ -11,9 +11,11 @@ import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
 import type { Translator } from "@ohmail/app-logic/text/translator";
 import { Frame, useFrame, usePress, type PlaceEntry } from "@ohmail/app/frame";
 import type { ConsentWire, HostCapabilities, HostWires, JunkWire, SuggestWire } from "@ohmail/app/host";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { MailGround } from "@ohmail/app/mail";
-import { ConsentMount, MailStateMount, PresentedMount } from "@ohmail/app/mail/ground";
+import { ConsentMount } from "../../../../packages/app/src/mail/ground/ConsentMount.js";
+import { MailStateMount } from "../../../../packages/app/src/mail/ground/MailStateMount.js";
+import { PresentedMount } from "../../../../packages/app/src/mail/ground/PresentedMount.js";
 import { useScreener, useScreenerBeside } from "@ohmail/app/screener";
 import { TextProvider, type Messages } from "@ohmail/app/text";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
@@ -565,7 +567,7 @@ const AWAY = { screener: false, third: false } as const;
 function OptInSeat({ wire, children }: { readonly wire: SuggestWire | "none"; readonly children: ReactNode }) {
   const { autoOptIn } = useScreenerLive({
     press: usePress(), scope: "acct-1", text: SEAT_WORDS, aiRefusal: sayKey, at: AWAY,
-    junkWire: "none", suggestWire: wire as unknown as ScreenerLiveInput["suggestWire"], suggestControl: true,
+    junkWire: "none", suggestWire: wire as unknown as ScreenerLiveInput["suggestWire"], suggestControl: true, unpressed: true,
   });
   return (
     <>

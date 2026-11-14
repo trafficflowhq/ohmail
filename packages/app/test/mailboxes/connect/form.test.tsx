@@ -5,6 +5,7 @@ import type {
   Answered,
   Connected,
   ConnectKept,
+  ConnectProbed,
   ConnectTyped,
 } from "@ohmail/app-logic/mailboxes/connect/types";
 import { NONE } from "../../../src/host/index.js";
@@ -66,6 +67,15 @@ const body = (imap: object, smtp: object) => ({ provider: "imap", address: ADDRE
 const leg = (host: string, more: object = {}) => ({ host, user: ADDRESS, pass: MARKER, ...more });
 
 describe("each purpose sends what its shipped form sent", () => {
+  it("the hosted join needs an outgoing server for a manual mailbox", () => {
+    const { door } = fakeDoor();
+    draw(door, { purpose: { kind: "join" } });
+    fillJoin(A, "");
+    expect(screen.getByRole("button", { name: J.connectMailbox })).toHaveProperty("disabled", true);
+    type(J.smtpHost, B);
+    expect(screen.getByRole("button", { name: J.connectMailbox })).toHaveProperty("disabled", false);
+  });
+
   it("the join connects a first mailbox: the body as typed, the mode `seed`, and the wire's id in the answer", async () => {
     const { door, of } = fakeDoor({ connect: [CONNECTED] });
     const view = draw(door, { purpose: { kind: "join" } });
@@ -121,6 +131,37 @@ describe("each purpose sends what its shipped form sent", () => {
     expect(view.done).toEqual([]);
     expect(screen.getByText(/answered\. Signed in as postbox7|answered\. Signed in as me@/)).toBeTruthy();
     expect((screen.getByLabelText(O.password) as HTMLInputElement).value).toBe(MARKER);
+  });
+
+  it("editing a server removes the pending test's host label while both presses wait", async () => {
+    const pending = later<Answered<ConnectProbed>>();
+    const { door, of } = fakeDoor({ probe: [pending.promise] });
+    draw(door, { purpose: { kind: "add" } });
+    type(O.address, ADDRESS);
+    press(P.otherLabel);
+    type(O.imapHost, A);
+    type(O.smtpHost, B);
+    type(O.password, MARKER);
+    press(O.test);
+    await settle();
+    const asking = (host: string) => O.testing.replace("{host}", host);
+    expect(screen.getByRole("button", { name: asking(A) })).toHaveProperty("disabled", true);
+
+    type(O.imapHost, C);
+    expect(screen.queryByRole("button", { name: asking(A) })).toBeNull();
+    expect(screen.queryByRole("button", { name: asking(C) })).toBeNull();
+    expect(screen.getByRole("button", { name: O.test })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: O.connect })).toHaveProperty("disabled", true);
+    press(O.test);
+    press(O.connect);
+    await settle();
+    expect(of("probe")).toHaveLength(1);
+    expect(of("connect")).toHaveLength(0);
+
+    await act(async () => pending.resolve({ ok: true, value: { host: A, user: ADDRESS, folders: 2 } }));
+    expect(screen.getByRole("button", { name: O.test })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: O.connect })).toHaveProperty("disabled", false);
+    expect(screen.queryByRole("button", { name: O.testAgain })).toBeNull();
   });
 
   it("the join has no test: a press there is a connect", () => {
@@ -508,6 +549,29 @@ describe("the second factor, asked in place and once", () => {
     press(J.connectMailbox);
     await settle();
     expect(screen.getByText(J.stepUpExpired)).toBeTruthy();
+    expect(of("connect")).toHaveLength(1);
+  });
+
+  it.each([
+    [401, "session_expired"],
+    [403, "enrollment_incomplete"],
+  ])("a session refusal (%s) still asks for sign-in after an edit", async (status, code) => {
+    const pending = later<Answered<Connected>>();
+    const { door, of } = fakeDoor({ connect: [pending.promise] });
+    draw(door, { purpose: { kind: "add" } });
+    type(O.address, ADDRESS);
+    press(P.otherLabel);
+    type(O.imapHost, A);
+    type(O.smtpHost, B);
+    type(O.password, MARKER);
+    press(O.connect);
+    await settle();
+    type(O.imapHost, C);
+    expect(screen.getByRole("button", { name: O.connecting })).toHaveProperty("disabled", true);
+
+    await act(async () => pending.resolve(no(refusal(code, {}, status))));
+    expect(screen.getByText(D.stepUpExpired)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(of("connect")).toHaveLength(1);
   });
 

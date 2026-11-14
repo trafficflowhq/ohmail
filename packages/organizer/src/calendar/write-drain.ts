@@ -222,7 +222,9 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         else tally.refused += 1;
         continue;
       }
-      const event = head.eventId === null ? undefined : await storedEventOf(tx, key.accountId, head.calendarId, head.eventId);
+      const provider = input.provider.reader.provider;
+      const readDeleteGuests = payload.act.kind === "calendar_event_delete" && (provider === "google" || provider === "microsoft");
+      const event = head.eventId === null ? undefined : await storedEventOf(tx, key.accountId, head.calendarId, head.eventId, readDeleteGuests);
       if (event === undefined && head.op !== "create") {
         // Its event is gone from the store: a removal is done; anything else has nothing left to change. And so has a removal of
         // days that a press of the queue gave a series of their own since it was recorded (the days from a day on; one day, where a
@@ -384,21 +386,28 @@ async function anotherMayHaveEnded(tx: Tx, accountId: string, head: { readonly i
  * (the rows of its UID in its calendar that each replace one of its days); `undefined` where the
  * store holds none.
  */
-async function storedEventOf(tx: Tx, accountId: string, calendarId: string, eventId: string): Promise<StoredEvent | undefined> {
-  const [held] = await tx.select({
-    providerId: calEvents.providerId, original: calEvents.original, uid: calEvents.uid, versionTag: calEvents.versionTag,
+async function storedEventOf(
+  tx: Tx, accountId: string, calendarId: string, eventId: string, readDeleteGuests = false,
+): Promise<StoredEvent | undefined> {
+  const query = tx.select({
+    providerId: calEvents.providerId, original: calEvents.original, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
     organizer: calEvents.organizer, myAnswer: calEvents.myAnswer,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone,
     endKind: calEvents.endKind, endLocal: calEvents.endLocal, endZone: calEvents.endZone,
   }).from(calEvents).where(and(eq(calEvents.id, eventId), eq(calEvents.accountId, accountId), eq(calEvents.calendarId, calendarId))).limit(1);
+  const [held] = await (readDeleteGuests ? dialect(tx).forUpdate(query, { mode: "update" }) : query);
   if (held === undefined) return undefined;
   // What the store keeps no field of is read off the stored text, as the door reads it.
   const event = { ...held, ...storedObjectFacts(held.original, held.organizer) };
   const [changed] = writeRowOf(event) !== "series" ? [] : await tx.select({ n: sql<number>`count(*)::int` }).from(calEvents).where(and(
     eq(calEvents.accountId, accountId), eq(calEvents.calendarId, calendarId), eq(calEvents.uid, event.uid), sql`${calEvents.recurrenceId} <> ''`,
   ));
-  return { ...event, changedDays: changedDaysOf(event, Number(changed?.n ?? 0)), ownInvitee: null };
+  const deleteGuests = readDeleteGuests && !held.partial
+    ? await tx.select({ address: calAttendees.address, name: calAttendees.name }).from(calAttendees)
+      .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, eventId)))
+    : undefined;
+  return { ...event, changedDays: changedDaysOf(event, Number(changed?.n ?? 0)), ownInvitee: null, deleteGuests };
 }
 
 /** The writer's call, made with no transaction open; a throw out of a writer is this program's fault and is answered `unknown`. */

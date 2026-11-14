@@ -457,6 +457,8 @@ describe("ScreenerService.suggest — gated on whether a decision could ever be 
   it("a CAPABLE holder lets the purchase through", async () => {
     const { db, accountId, mailboxId, ctx } = await makeReaderCtx();
     await seedMessage(db, accountId, mailboxId, { from: "person@example.com" });
+    const { accountSettings } = await import("@trafficflow/db");
+    await db.insert(accountSettings).values({ accountId, autoSuggestAt: ctx.now() });
     const classifier = countingClassifier();
 
     const out = await new ScreenerService({ classifier: classifier as never })

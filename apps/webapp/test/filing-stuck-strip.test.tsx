@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
@@ -48,6 +49,7 @@ const mailbox = (filing: Partial<FilingFacts>): MailboxFacts => ({
   id: "mb1", address: "person@example.invalid", status: "connected", errorCode: null,
   disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: ago(30_000),
   initialImportCompletedAt: ago(600_000), createdAt: ago(900_000),
+  pendingMoves: (filing.due ?? 0) + (filing.deferred ?? 0),
   filing: { ...resting, ...filing },
 });
 
@@ -77,6 +79,8 @@ async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise
     }));
   });
   /* Where the notice's one act leads: the strip's link became the frame's "Mailboxes", pressed here. */
+  const more = within(container).queryByRole("button", { name: /more notices?/i });
+  if (more) await act(async () => { more.click(); });
   const text = container.textContent ?? "";
   const goes = [...container.querySelectorAll("button")].filter((b) => b.textContent === en.frame.connection.act.mailboxes);
   const hrefs: string[] = [];

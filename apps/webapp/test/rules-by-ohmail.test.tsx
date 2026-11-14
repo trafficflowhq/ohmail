@@ -1,29 +1,25 @@
 /** @vitest-environment jsdom */
-import type { RuleEntity as RuleDTO } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { RuleEntity as RuleDTO, SyncResponse } from "@ohmail/wire";
+import { screen, within } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { splitByDecider } from "@ohmail/app-logic/press/rule-list";
 import messages from "../messages/en.json";
-import { SettingsView } from "../app/views/SettingsView";
-import { splitByDecider } from "../app/views/RulesView";
-
-/**
- * SETTINGS → RULES SAYS WHICH RULES OHMAIL WROTE. The act on suggestions' rules were listed
- * "from a Screener decision", a person's words. They carry `byOhmail` now and are drawn in their
- * own group, "Decided for you by ohmail", with the same Change and Revoke — through the real pane.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  })) as never;
+import {
+  ACCOUNT,
+  act,
+  installConfirmEnv,
+  ISO,
+  mountCloudShell,
+  refresh204,
+  rememberOwner,
+  scriptRefresh,
+  scriptSession,
+  scriptSync,
+  sessionFull,
+  teardownConfirmEnv,
+  tick,
+  warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
 const R = messages.rules;
 const rule = (id: string, match: string, over: Partial<RuleDTO> = {}): RuleDTO => ({
@@ -32,44 +28,60 @@ const rule = (id: string, match: string, over: Partial<RuleDTO> = {}): RuleDTO =
   createdAt: "2026-09-20T10:00:00.000Z", updatedAt: "2026-09-20T10:00:00.000Z", ...over,
 });
 
-let host: HTMLDivElement;
-let root: Root | null = null;
+let host: HTMLElement;
 let revoked: string[];
 
-async function open(rules: RuleDTO[]): Promise<void> {
-  const view = h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {},
-    rules: {
-      items: rules,
-      onRevoke: async (id: string) => { revoked.push(id); return { status: "confirmed" as const }; },
-      onRetarget: async () => ({ status: "confirmed" as const }),
-      pastMail: () => null,
-    },
-  });
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: new Date("2026-09-27T12:00:00.000Z"),
-      children: h(ThemeProvider, { children: h(ToastHost, { children: view }) }),
-    }));
-  });
-  const nav = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Rules")!;
-  await act(async () => { nav.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-}
-
-const lists = (): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('.rules-view [role="list"]')];
-const rowsIn = (list: HTMLElement): HTMLElement[] => [...list.querySelectorAll<HTMLElement>("[data-rule-id]")];
-
+beforeAll(warmCloudShell);
 beforeEach(() => {
   revoked = [];
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  installConfirmEnv();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
 });
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host.remove();
-  root = null;
-});
+afterEach(teardownConfirmEnv);
+
+async function open(rules: RuleDTO[]): Promise<void> {
+  scriptSync(() => Response.json({
+    changes: {
+      creates: rules.map((rule, index) => ({
+        type: "rule", op: "create", id: rule.id, seq: index + 1, updatedAt: ISO, entity: rule,
+      })),
+      updates: [],
+      moves: [],
+      deletes: revoked.map((id, index) => ({
+        type: "rule", op: "delete", id, seq: rules.length + index + 1, updatedAt: ISO, entity: null,
+      })),
+    },
+    cursor: `c${rules.length + revoked.length}`,
+    hasMore: false,
+    serverTime: ISO,
+  } satisfies SyncResponse));
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    if (path === "/api/mailboxes") return Response.json({
+      items: [{
+        id: "mb-1", address: ["reader", "example.invalid"].join("@"), status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO,
+        organizeConsentedAt: ISO, lastSyncAt: ISO, createdAt: ISO,
+      }],
+    }, { headers: { "X-Ohmail-Account": ACCOUNT } });
+    const rule = rules.find((rule) => path === `/api/rules/${rule.id}`);
+    if (init?.method === "DELETE" && rule) {
+      revoked.push(rule.id);
+      return new Response(null, { status: 204, headers: { "x-sync-seq": String(rules.length + revoked.length), "X-Ohmail-Account": ACCOUNT } });
+    }
+    return fetch(input, init);
+  };
+  window.location.hash = "#/settings/rules";
+  const frame = await mountCloudShell();
+  await tick(3000);
+  host = within(frame).getByRole("region", { name: messages.settings.rules });
+}
+
+const lists = (): HTMLElement[] => within(host).getAllByRole("list");
+const rowsIn = (list: HTMLElement): HTMLElement[] => [...list.querySelectorAll<HTMLElement>("[data-rule-id]")];
 
 describe("the act's rules in their own group", () => {
   it("draws them under their own label, each saying where it came from", async () => {
@@ -96,11 +108,13 @@ describe("the act's rules in their own group", () => {
 
   it("with the same undo", async () => {
     await open([rule("p1", "friend@press.example"), rule("a1", "news@act.example", { byOhmail: true })]);
-    const row = host.querySelector<HTMLElement>('[data-rule-id="a1"]')!;
-    const revoke = [...row.querySelectorAll("button")].find((b) => b.textContent?.trim() === R.revoke)!;
+    const row = within(host).getAllByRole("listitem")
+      .find((candidate) => candidate.textContent?.includes(R.origin.byOhmail))!;
+    const revoke = within(row).getByRole("button", { name: R.revoke });
     await act(async () => { revoke.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    const confirm = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === R.revokeConfirm)!;
+    const confirm = within(screen.getByRole("dialog")).getByRole("button", { name: R.revokeConfirm });
     await act(async () => { confirm.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await tick(500);
     expect(revoked).toEqual(["a1"]);
   });
 

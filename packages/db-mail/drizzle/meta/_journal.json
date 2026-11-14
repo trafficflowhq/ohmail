@@ -1359,6 +1359,13 @@
       "when": 1794942700000,
       "tag": "0212_devices_revoked_at",
       "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1795111215039,
+      "tag": "0213_calendar_availability_identity",
+      "breakpoints": true
     }
   ]
 }

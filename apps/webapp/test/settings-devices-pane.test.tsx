@@ -32,6 +32,12 @@
  *     self-host), only on rows the SERVER marks `named: false`, and never the current row or
  *     a paired device.
  */
+import { within } from "@testing-library/react";
+import { NONE, type FeatureEntry } from "@ohmail/app/host";
+import { mailSettings, NO_PANE_PARTS, type MailPaneParts } from "@ohmail/app/mail";
+import { fakeHost, SEAM_AT_REST } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
+import { MailFrame } from "../app/shell/browser-mail";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
@@ -46,6 +52,9 @@ import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine/cont
 import { NoticeCaller, noticeReadsOf, toldDevicesIn, type HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import messages from "../messages/en.json";
 import { decodeQr, matrixFromSvg } from "./fixtures/qr-decode";
+
+const DEVICE_ACCOUNT = "device-settings";
+let releaseOwner = () => {};
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -116,7 +125,7 @@ beforeEach(() => {
     if (a.held) await a.held;
     return new Response(a.body === undefined ? null : JSON.stringify(a.body), {
       status: a.status,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Ohmail-Account": DEVICE_ACCOUNT },
     });
   }) as unknown as typeof globalThis.fetch;
 });
@@ -127,6 +136,8 @@ afterEach(async () => {
   root = null;
   host = null;
   globalThis.fetch = originalFetch;
+  releaseOwner();
+  releaseOwner = () => {};
   vi.restoreAllMocks();
 });
 
@@ -147,9 +158,33 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
   return host;
 }
 
-async function mountSection(): Promise<HTMLElement> {
-  const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-  return mountNode(h(DevicesSection));
+function mountDevices(part: MailPaneParts["devices"], first: "general" | "devices", binding?: EngineBinding) {
+  const settings = mailSettings({ ...NO_PANE_PARTS, general: () => null, devices: part });
+  const devices: FeatureEntry | typeof NONE = part === NONE ? NONE : { name: "devices", render: () => null };
+  const empty = new MemoryMirrorStore();
+  const { host } = fakeHost({
+    engine: binding?.engine ?? { ...SEAM_AT_REST, read: () => empty } as unknown as EngineBinding["engine"],
+    service: "managed",
+    scope: DEVICE_ACCOUNT, account: DEVICE_ACCOUNT,
+    address: fakeAddress(`#/settings/${first}`),
+    places: { settings },
+    features: { devices },
+  });
+  const pairingHost = { ...host, capabilities: { ...host.capabilities, pairing: "account" as const } };
+  const frame = h(MailFrame, { host: pairingHost });
+  return mountNode(binding ? h(EngineContext.Provider, { value: binding }, frame) : frame);
+}
+
+async function mountSection(binding?: EngineBinding): Promise<HTMLElement> {
+  const { bindApiOwner } = await import("../app/api-client");
+  document.cookie = `tf_owner=${DEVICE_ACCOUNT}; Path=/`;
+  bindApiOwner(DEVICE_ACCOUNT);
+  releaseOwner = () => {
+    bindApiOwner(null);
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  };
+  const { WEB_PANE_PARTS } = await import("../app/(product)/mailbox/pane-parts");
+  return mountDevices(WEB_PANE_PARTS.devices, "devices", binding);
 }
 
 async function click(el: Element): Promise<void> {
@@ -168,8 +203,11 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
+const dialog = (c: HTMLElement) => within(c).getByRole("dialog");
+const factorPrompt = (c: HTMLElement) => within(c).queryByRole("dialog", { name: /^Confirm with / });
+
 const buttonByText = (c: ParentNode, text: string): HTMLButtonElement => {
-  const b = [...c.querySelectorAll("button")].find((x) => x.textContent?.trim() === text);
+  const b = within(c as HTMLElement).queryAllByRole<HTMLButtonElement>("button", { name: text })[0];
   expect(b, `a button reading "${text}"`).toBeTruthy();
   return b!;
 };
@@ -263,19 +301,13 @@ describe("useDevicePairing — the runtime gate, asked on the MANAGED build too"
 });
 
 describe("the Settings nav — a wired devicesSection is an entry, an absent one is none", () => {
-  async function mountSettings(withDevices: boolean): Promise<HTMLElement> {
-    const { SettingsView } = await import("../app/views/SettingsView.js");
-    return mountNode(
-      h(SettingsView, {
-        notifications: null, tags: [], tagCounts: {},
-        ...(withDevices ? { devicesSection: h("p", { className: "devices-probe" }, "the pane") } : {}),
-      }),
-    );
-  }
+  const mountSettings = (withDevices: boolean) =>
+    mountDevices(withDevices ? () => h("p", { className: "devices-probe" }, "the pane") : NONE, "general");
+  const nav = (c: HTMLElement) => within(within(c).getByRole("navigation", { name: messages.settings.navAria }));
 
   it("wired ⇒ a Devices entry that opens the node", async () => {
     const c = await mountSettings(true);
-    const entry = [...c.querySelectorAll(".set-nav button")].find((b) => b.textContent?.trim() === "Devices");
+    const entry = nav(c).queryByRole("button", { name: "Devices" });
     expect(entry, "the Devices nav entry").toBeTruthy();
     await click(entry!);
     expect(c.querySelector(".devices-probe")).toBeTruthy();
@@ -283,7 +315,7 @@ describe("the Settings nav — a wired devicesSection is an entry, an absent one
 
   it("absent ⇒ no entry, structurally", async () => {
     const c = await mountSettings(false);
-    expect([...c.querySelectorAll(".set-nav button")].map((b) => b.textContent?.trim())).not.toContain("Devices");
+    expect(nav(c).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim())).not.toContain("Devices");
   });
 });
 
@@ -300,7 +332,7 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
     });
 
     const c = await mountSection();
-    await type(c.querySelector<HTMLInputElement>(".invites-mint input")!, "Mila's phone");
+    await type(within(c).queryByRole<HTMLInputElement>("textbox", { name: messages.devices.addFor })!, "Mila's phone");
     await click(buttonByText(c, "Add a device"));
 
     const mint = calls.find((r) => r.method === "POST" && r.url.includes("/api/pair") && !r.url.includes("redeem"));
@@ -314,13 +346,13 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
     const link = `${API_ORIGIN}/pair#${TOKEN}`;
     expect(link).toMatch(/^https:\/\/api\.ohmail\.app\/pair#[A-Za-z0-9_-]{43}$/);
 
-    const svg = c.querySelector<SVGSVGElement>(".join-qr svg");
+    const svg = (within(c).queryByRole("img", { name: messages.devices.qrAria }) as unknown as SVGSVGElement | null);
     expect(svg, "the QR rendered").toBeTruthy();
     expect(decodeQr(matrixFromSvg(svg!))).toBe(link);
 
     // The raw link IS printed — typed entry for a device without a camera path. The deliberate
     // divergence from the invites pane's scan-or-copy rule; see the pane header.
-    const printed = c.querySelector('[data-testid="pair-link"]');
+    const printed = c.querySelector(".account-device-link");
     expect(printed, "the typed-entry line").toBeTruthy();
     expect(printed!.textContent).toBe(link);
 
@@ -345,10 +377,10 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
     await click(buttonByText(c, "Add a device"));
 
     // No dead-end sentence — the prompt is the answer.
-    const prompt = c.querySelector('[data-testid="step-up-prompt"]');
+    const prompt = factorPrompt(c);
     expect(prompt).toBeTruthy();
     expect(c.textContent).not.toContain("Sign in again");
-    expect(c.textContent).toContain("no need to sign in again");
+    expect(c.textContent).toContain("This continues right here once your second factor is verified.");
 
     // The factor verifies, the window reopens, the SAME mint re-runs and the QR arrives —
     // all without any sign-out.
@@ -357,13 +389,13 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
       status: 200,
       body: { id: "pt-9", token: TOKEN, grant: "device-pair", label: "", expiresAt: "2026-08-21T09:05:00.000Z" },
     };
-    const codeInput = c.querySelector<HTMLInputElement>("#stepup-code");
+    const codeInput = within(c).queryByRole<HTMLInputElement>("textbox", { name: messages.devices.stepUpTotpLabel });
     expect(codeInput).toBeTruthy();
     await type(codeInput!, "123456");
     await click(buttonByText(c, "Verify code"));
 
     expect(calls.some((r) => r.method === "POST" && r.url.includes("/api/auth/step-up/totp"))).toBe(true);
-    const link = c.querySelector('[data-testid="pair-link"]');
+    const link = c.querySelector(".account-device-link");
     expect(link, "the retried mint's QR block").toBeTruthy();
     expect(link!.textContent).toBe(`${API_ORIGIN}/pair#${TOKEN}`);
     expect(calls.some((r) => r.url.includes("/auth/logout") || r.url.includes("/auth/refresh/logout"))).toBe(false);
@@ -385,7 +417,7 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
     };
     const c = await mountSection();
     await click(buttonByText(c, "Add a device"));
-    const prompt = c.querySelector('[data-testid="step-up-prompt"]');
+    const prompt = factorPrompt(c);
     expect(prompt).toBeTruthy();
     expect(prompt!.textContent).toContain("Each code works once");
 
@@ -394,12 +426,12 @@ describe("mint → one link: the QR, the typed-entry line, the clipboard — all
       status: 423,
       body: { error: { code: "account_locked", message: "too many failed attempts", details: { retryAfter: 700 } } },
     };
-    const codeInput = c.querySelector<HTMLInputElement>("#stepup-code");
+    const codeInput = within(c).queryByRole<HTMLInputElement>("textbox", { name: messages.devices.stepUpTotpLabel });
     expect(codeInput).toBeTruthy();
     await type(codeInput!, "123456");
     await click(buttonByText(c, "Verify code"));
-    expect(prompt!.textContent).toContain("Try again in 12 minutes");
-    expect(prompt!.textContent).not.toContain("too many failed attempts");
+    expect(factorPrompt(c)?.textContent).toContain("try again in 12 minutes");
+    expect(factorPrompt(c)?.textContent).not.toContain("too many failed attempts");
   });
 });
 
@@ -442,15 +474,15 @@ describe("the open codes — live device-pair rows only, revocable by their own 
     answers["DELETE /api/pair/pt-1"] = { status: 204 };
     const c = await mountSection();
     await click(buttonByText(c, "Add a device"));
-    expect(c.querySelector('[data-testid="pair-link"]'), "the minted display is up").toBeTruthy();
+    expect(c.querySelector(".account-device-link"), "the minted display is up").toBeTruthy();
     expect(c.textContent).toContain("Codes not yet used");
 
     answers["GET /api/pair"] = { status: 200, body: { items: [] } };
     await click(buttonByText(c, "Revoke"));
     expect(calls.some((r) => r.method === "DELETE" && r.url.includes("/api/pair/pt-1"))).toBe(true);
     // The row is gone AND the credential display above it is gone with it.
-    expect(c.querySelector('[data-testid="pair-link"]'), "the dead credential stayed on screen").toBeNull();
-    expect(c.querySelector(".join-qr"), "the dead QR stayed on screen").toBeNull();
+    expect(c.querySelector(".account-device-link"), "the dead credential stayed on screen").toBeNull();
+    expect(within(c).queryByRole("img", { name: messages.devices.qrAria }), "the dead QR stayed on screen").toBeNull();
     expect(c.textContent).not.toContain(TOKEN);
 
     // …and revoking some OTHER row leaves a live minted display alone: the retirement is keyed
@@ -462,9 +494,9 @@ describe("the open codes — live device-pair rows only, revocable by their own 
     answers["GET /api/pair"] = { status: 200, body: { items: [{ ...LIVE_CODE, id: "pt-2", label: "Older code" }] } };
     answers["DELETE /api/pair/pt-2"] = { status: 204 };
     await click(buttonByText(c, "Add a device"));
-    expect(c.querySelector('[data-testid="pair-link"]')).toBeTruthy();
+    expect(c.querySelector(".account-device-link")).toBeTruthy();
     await click(buttonByText(c, "Revoke"));
-    expect(c.querySelector('[data-testid="pair-link"]'), "an unrelated revoke took down a live display").toBeTruthy();
+    expect(c.querySelector(".account-device-link"), "an unrelated revoke took down a live display").toBeTruthy();
   });
 });
 
@@ -479,15 +511,14 @@ describe("the signed-in list — the current row keeps its verb, every other row
 
     // Exactly ONE "Sign out" verb: the phone's. The current session's row must not wear one —
     // revoking yourself is signing out, a verb that already exists elsewhere.
-    const signOuts = [...c.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Sign out");
+    const signOuts = within(c).queryAllByRole("button", { name: "Sign out" });
     expect(signOuts).toHaveLength(1);
 
     await click(signOuts[0]!);
     expect(c.textContent).toContain("Sign out Mila's phone?");
 
     answers["GET /api/devices"] = { status: 200, body: { items: [THIS_BROWSER] } };
-    // The confirm row's primary button carries the same verb; it is now the only one.
-    await click(buttonByText(c, "Sign out"));
+    await click(buttonByText(dialog(c), "Sign out"));
     expect(calls.some((r) => r.method === "DELETE" && r.url.includes("/api/devices/dev-2"))).toBe(true);
     expect(c.textContent).not.toContain("Mila's phone");
     expect(c.textContent).toContain("This browser");
@@ -542,15 +573,15 @@ describe("the signed-in list — the current row keeps its verb, every other row
     };
     const c = await mountSection();
     await click(buttonByText(c, "Sign out"));
-    await click(buttonByText(c, "Sign out"));
+    await click(buttonByText(dialog(c), "Sign out"));
     // The prompt, not the dead end; the device is untouched underneath.
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeTruthy();
+    expect(factorPrompt(c)).toBeTruthy();
     expect(c.textContent).not.toContain("Sign in again");
     expect(c.textContent).toContain("Mila's phone");
     // Cancel abandons the parked revoke — nothing re-fires it.
     const deletesBefore = calls.filter((r) => r.method === "DELETE").length;
     await click(buttonByText(c, "Cancel"));
-    expect(c.querySelector('[data-testid="step-up-prompt"]')).toBeNull();
+    expect(factorPrompt(c)).toBeNull();
     expect(calls.filter((r) => r.method === "DELETE").length).toBe(deletesBefore);
   });
 });
@@ -576,7 +607,7 @@ describe("the collapsed web-session group — hosted flavor, server-discriminate
     expect(c.textContent).toContain("This browser");
     // The plain rows do NOT render individually: exactly one group verb, no per-row sign-out
     // beyond the named device's.
-    const signOuts = [...c.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Sign out");
+    const signOuts = within(c).queryAllByRole("button", { name: "Sign out" });
     expect(signOuts).toHaveLength(1); // the named phone's
     expect(buttonByText(c, "Sign out all")).toBeTruthy();
   });
@@ -592,7 +623,7 @@ describe("the collapsed web-session group — hosted flavor, server-discriminate
     expect(c.textContent).toContain("Sign out 2 web sessions?");
     // The refreshed list: the plain rows are gone.
     answers["GET /api/devices"] = { status: 200, body: { items: [CURRENT, NAMED_PHONE] } };
-    await click(buttonByText(c, "Sign out all"));
+    await click(buttonByText(dialog(c), "Sign out all"));
     expect(calls.some((r) => r.method === "POST" && r.url.includes("/api/devices/revoke-web-sessions"))).toBe(true);
     expect(c.textContent).not.toContain("other web session");
     expect(c.textContent).toContain("Mila's phone");
@@ -608,9 +639,9 @@ describe("the collapsed web-session group — hosted flavor, server-discriminate
     };
     const c = await mountSection();
     expect(c.textContent).not.toContain("other web session");
-    expect([...c.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Sign out all")).toBe(false);
+    expect((within(c).queryByRole("button", { name: "Sign out all" }) !== null)).toBe(false);
     // The plain rows render individually instead — every session stays visible and revocable.
-    const signOuts = [...c.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Sign out");
+    const signOuts = within(c).queryAllByRole("button", { name: "Sign out" });
     expect(signOuts).toHaveLength(3); // the named phone + the two plain rows
   });
 
@@ -688,9 +719,8 @@ describe("the list is live: a device paired while the pane is open appears in it
       atDevices: () => !behind,
       told,
     }));
-    const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
     const binding = { engine, demo: false, serverDemo: false, sync: { state: "idle" } } as unknown as EngineBinding;
-    const c = await mountNode(h(EngineContext.Provider, { value: binding }, h(DevicesSection)));
+    const c = await mountSection(binding);
     const settle = (): void => caller.settle("acct", copy);
     return {
       c, ring, settle, posted,

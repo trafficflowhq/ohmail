@@ -8,7 +8,7 @@
 
 /** What a stream knows when it is left. */
 export interface StreamLeaveState {
-  /** A hand (or a press in the stream) drove it this visit. */
+  /** A hand drove it this visit: a wheel, a moving finger or a scroll key. A press, `j`/`k`, a tap or an entered hit does not. */
   readonly drove: boolean;
   /** The newest item shown this visit. */
   readonly newestSeenId: string | null;
@@ -46,4 +46,34 @@ export function streamLeaveCommit(
 /** A commit that flips nothing and leaves the line where it stands is not sent. */
 export function leaveSaysSomething(commit: StreamLeaveCommit, heldUpToId: string | null): boolean {
   return commit.messageIds.length > 0 || heldUpToId !== commit.upToId;
+}
+
+/** Keep only the scans earned before a new viewport ends the current reading run. */
+export function createStreamLeave() {
+  const anchors = new Set<string>();
+  const readIds = new Set<string>();
+  return {
+    remember(
+      state: StreamLeaveState,
+      order: readonly { readonly id: string; readonly unread: boolean }[],
+    ): void {
+      const commit = streamLeaveCommit(state, order);
+      if (!commit) return;
+      anchors.add(commit.upToId);
+      for (const id of commit.messageIds) readIds.add(id);
+    },
+    read: (id: string) => readIds.has(id),
+    take(
+      order: readonly { readonly id: string; readonly unread: boolean }[],
+      keptUnread: (id: string) => boolean,
+    ): StreamLeaveCommit | null {
+      const anchor = order.find((m) => anchors.has(m.id));
+      const messageIds = anchor
+        ? order.filter((m) => m.unread && readIds.has(m.id) && !keptUnread(m.id)).map((m) => m.id)
+        : [];
+      anchors.clear();
+      readIds.clear();
+      return anchor ? { upToId: anchor.id, messageIds } : null;
+    },
+  };
 }

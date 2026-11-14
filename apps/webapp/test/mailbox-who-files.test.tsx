@@ -1,14 +1,16 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
+import { createElement } from "react";
 import { NextIntlClientProvider, createTranslator } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
-import { waterlineStamp } from "../app/shell/format";
-import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
+import type { MailboxDTO } from "../app/api-client";
+import { appointmentStamp } from "@ohmail/client-engine";
+import {
+  act, installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
 /**
  * SETTINGS → MAILBOXES SAYS WHO FILES THE MAILBOX. On the web the organizer is the server the page
@@ -20,57 +22,18 @@ import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
  * that reds them again is pointing the pane's filer back at "computer".
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const copy = en.mailboxes as unknown as Record<string, string>;
-const copyDe = (de as unknown as { mailboxes: Record<string, string> }).mailboxes;
+const copy: Record<string, string> = en.mailboxes;
+const copyDe: Record<string, string> = de.mailboxes;
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const QUIET: MailState = {
-  mailboxes: null, mirrored: 0, freshness: { state: "unknown", asOf: null },
-} as unknown as MailState;
-const healthy = { status: "active", plan: "pro", credits: 100 } as unknown as SubscriptionStatus;
-
-/** Which build the pane renders as — read at render time through the getter below. */
+/** Each build's service selection, handed through the real web entry. */
 const build = vi.hoisted(() => ({ selfHost: false }));
-vi.mock("../app/hello", async () => {
-  const actual = await vi.importActual<typeof import("../app/hello")>("../app/hello");
-  return {
-    ...actual,
-    get SELF_HOST_BUILD() { return build.selfHost; },
-    serverHello: async () => null,
-  };
-});
-
-let mockListed: MailboxDTO[] = [];
-let releaseOutcome: "requested" | "not_organizing" = "requested";
-
-vi.mock("../app/api-client", async () => {
-  const actual = await vi.importActual<typeof import("../app/api-client")>("../app/api-client");
-  return {
-    ...actual,
-    apiConfigured: () => true,
-    webauthnAvailable: () => false,
-    auth: {
-      session: async () => ({
-        user: { email: "person@example.test", emailVerified: true, accountId: "acc1" },
-        scope: "full",
-      }),
-    },
-    billing: { subscription: async () => ({ entitlements: null, subscription: healthy }) },
-    mailboxes: {
-      list: async () => ({ items: mockListed }),
-      organizer: async () => ({ holders: [], unreadable: 0 }),
-      organize: async () => ({ outcome: "authorized" }),
-      release: async () => ({ outcome: releaseOutcome }),
-    },
-  };
-});
-
-vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
-  useMailState: () => ({ state: QUIET, refresh: () => {} }),
+vi.mock("../app/hello", async () => ({
+  ...await vi.importActual<typeof import("../app/hello")>("../app/hello"),
+  get SELF_HOST_BUILD() { return build.selfHost; },
 }));
+
+let releaseOutcome: "requested" | "not_organizing" = "requested";
+let mounted = false;
 
 /** A mailbox this install organizes, consented, nothing pending. */
 const organizing = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
@@ -81,56 +44,65 @@ const organizing = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
   organizedBy: null,
   organizerState: null,
   organizeConsentedAt: "2026-08-01T10:05:00.000Z",
+  initialImportCompletedAt: "2026-08-01T10:05:00.000Z",
   organizerReleasedAt: null,
   releaseRequestedAt: null,
   ...over,
 } as MailboxDTO);
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+beforeAll(warmCloudShell);
+beforeEach(() => { releaseOutcome = "requested"; build.selfHost = false; });
+afterEach(unmount);
 
 async function unmount(): Promise<void> {
-  if (root) { const r = root; await act(async () => { r.unmount(); }); root = null; }
-  host?.remove();
-  host = null;
+  if (!mounted) return;
+  await teardownConfirmEnv();
+  (await import("../app/api-client")).bindApiOwner(null);
+  mounted = false;
 }
 
-async function settle(): Promise<void> {
-  await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-}
-
-async function mount(locale: "en" | "de", ...items: MailboxDTO[]): Promise<HTMLDivElement> {
+async function mount(locale: "en" | "de", ...items: MailboxDTO[]): Promise<HTMLElement> {
   await unmount();
-  mockListed = items;
-  const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale,
-      messages: (locale === "en" ? en : de) as never,
-      children: h(MailboxSection),
-    }));
-  });
-  await settle();
-  return host;
+  installConfirmEnv();
+  mounted = true;
+  (await import("../app/api-client")).bindApiOwner(null);
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    const method = init?.method ?? "GET";
+    if (path === "/api/account/access") return Response.json({ metered: false });
+    if (path === "/api/mailboxes" && method === "GET") return Response.json({ items });
+    if (path === `/api/mailboxes/${items[0]?.id}/release` && method === "POST") {
+      return Response.json({ outcome: releaseOutcome }, { status: releaseOutcome === "requested" ? 202 : 200 });
+    }
+    return fetch(input, init);
+  };
+
+  const words = locale === "de" ? de : en;
+  window.location.hash = "#/settings/mailboxes";
+  const frame = await mountCloudShell(locale === "de"
+    ? (shell) => createElement(NextIntlClientProvider, { locale, messages: de, timeZone: "UTC", children: shell })
+    : undefined);
+  await tick(3000);
+  const pane = within(frame).getByRole("region", { name: words.settings.mailboxes });
+  const row = within(pane).getByRole("button", { name: (name) => name.includes(items[0]!.address), expanded: false });
+  await press(row);
+  return pane;
 }
 
-const buttonExactly = (el: HTMLElement, label: string): HTMLButtonElement | null =>
-  [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === label) ?? null;
+const buttonExactly = (el: HTMLElement, name: string): HTMLElement | null =>
+  within(el).queryByRole("button", { name });
 
-async function press(b: HTMLButtonElement | null, what: string): Promise<void> {
-  expect(b, `no "${what}" control on the row`).not.toBeNull();
-  await act(async () => { b!.click(); });
-  await settle();
+async function press(button: HTMLElement | null, what = "expand the mailbox"): Promise<void> {
+  expect(button, `no "${what}" control on the row`).not.toBeNull();
+  await act(async () => button!.click());
+  await tick(100);
 }
 
-/** The organizer block's own text — the part of the row that names who files the mailbox. */
-const orgText = (el: HTMLElement): string => el.querySelector(".mbx-org")?.textContent ?? "";
-
-beforeEach(() => { mockListed = []; releaseOutcome = "requested"; build.selfHost = false; });
-afterEach(async () => { await unmount(); });
+const orgText = (el: HTMLElement): string => el.textContent ?? "";
 
 describe.each([
   { name: "ohmail Cloud (the managed build)", selfHost: false, arm: "Cloud" },
@@ -203,16 +175,15 @@ describe.each([
     de: createTranslator({ locale: "de", messages: de as never, namespace: "mailboxes" as never }) as unknown as
       (key: string, values?: Record<string, string | number>) => string,
   };
-  const SINCE = new Date(Date.now() - 50 * 60_000).toISOString();
+  const SINCE = new Date(Date.parse(ISO) - 50 * 60_000).toISOString();
   /** The time as the pane says it, through the pane's own formatter and register. */
-  const stamp = (): string => waterlineStamp(SINCE, new Date(), activeFormatLocale());
+  const stamp = (locale: "en" | "de" = "en"): string => appointmentStamp(new Date(SINCE), new Date(), "UTC", locale);
   const late = (over: Partial<MailboxDTO> = {}): MailboxDTO =>
     organizing({ lastSyncAt: SINCE, fetching: { behind: true, since: SINCE }, ...over } as Partial<MailboxDTO>);
   /** "Synced " — the healthy line's own words, whatever time follows them. */
   const synced = (locale: "en" | "de"): string => said[locale]("syncedAgo", { when: "" }).trim();
 
-  beforeEach(() => { build.selfHost = selfHost; setActiveFormatZone("UTC"); });
-  afterEach(() => { setActiveFormatZone(null); });
+  beforeEach(() => { build.selfHost = selfHost; });
 
   it("the row leads with not checked and since when, and no longer says synced", async () => {
     const el = await mount("en", late());
@@ -239,10 +210,16 @@ describe.each([
 
   it("it is calm and has no press of its own: the row's controls are the ones it had", async () => {
     const calm = await mount("en", organizing());
-    const before = [...calm.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+    const controls = (pane: HTMLElement): string[] => {
+      const row = within(pane).getByRole("button", { expanded: true });
+      // The same expander now includes the updated mailbox status in its name.
+      return within(pane).getAllByRole("button").map((button) =>
+        button === row ? "expanded mailbox" : (button.textContent ?? "").trim());
+    };
+    const before = controls(calm);
     const el = await mount("en", late());
-    expect([...el.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim())).toEqual(before);
-    expect(el.querySelector('[role="alert"]')).toBeNull();
+    expect(controls(el)).toEqual(before);
+    expect(within(el).queryByRole("alert")).toBeNull();
   });
 
   it("a mailbox with its own trouble keeps its own word and its own press, and gets no second explanation", async () => {
@@ -280,7 +257,7 @@ describe.each([
   it("…in German too", async () => {
     const el = await mount("de", late());
     const text = el.textContent ?? "";
-    const when = stamp();
+    const when = stamp("de");
     expect(text).toContain(said.de("notChecked", { hasSince: "yes", since: when }));
     expect(text).toContain(said.de(`notCheckedNote${arm}`, { hasSince: "yes", since: when }));
     expect(text).not.toContain(synced("de"));

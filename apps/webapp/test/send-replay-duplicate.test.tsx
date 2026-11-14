@@ -235,7 +235,8 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
   const {
     useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox,
   } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  // The send machine's words as the mail ground hands them (today's shell words leave with today's shell).
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
   const {
     clearComposeDraft, composeSessionId, writeComposeDraft,

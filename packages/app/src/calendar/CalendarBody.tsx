@@ -5,121 +5,74 @@
  *
  * A host whose port is `none` gets one line that says the calendar cannot be read here; nothing is guessed.
  */
-import { RefusalLine } from "@ohmail/ui/base";
-import { CalendarHead, ViewSwitch } from "@ohmail/ui/calendar";
+import { useState } from "react";
+import { useKeyBindings } from "@ohmail/app-logic/keys";
+import { Notice, RefusalLine } from "@ohmail/ui/base";
 import {
   addDays,
   isoOfDay,
-  monthName,
-  monthOfDay,
   readerZones,
-  yearOf,
   type CalendarPort,
   type HeldEdge,
   type PlainDate,
   type RangeActs,
   type RangeInput,
 } from "@ohmail/app-logic/calendar";
+import { fragmentOf } from "../frame/route.js";
+import { useEventBrowse } from "./use-event-browse.js";
+import { useGridKeys } from "./use-grid-keys.js";
+import { CalendarFrameHead } from "./CalendarFrameHead.js";
 import { useFrame } from "../frame/commands.js";
-import type { CalendarPlaceId, FrameCommands, LayoutPlan, PaneProps, Route } from "../frame/contract.js";
+import type { CalendarPlaceId, FrameCommands, PaneProps, Route } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
-import { useLocale, useText, useTimeZone } from "../text/index.js";
+import { useText, useTimeZone } from "../text/index.js";
 import { dayView } from "../day/index.js";
 import { weekView } from "../week/index.js";
 import { MonthView } from "../month/index.js";
+import { useMonthViewport } from "../month/MonthRunScope.js";
+import type { MonthRun } from "../month/use-month-run.js";
 import { YearView } from "../year/index.js";
 import { AgendaView } from "../agenda/index.js";
 import { SearchView } from "../calsearch/index.js";
-import { VIEWS, isView, useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
+import { useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
+import { useNewEvent } from "./use-new-event.js";
+import { DRAFT_EVENT } from "./event-draft.js";
+import type { CalendarEventFace } from "./faces.js";
+import type { CalendarViewProps } from "./view.js";
+import { NewEvent } from "./NewEvent.js";
+import { OpenEvent } from "./OpenEvent.js";
+import { EventActionQuestion } from "./EventActionQuestion.js";
+import { useEventActions } from "./use-event-actions.js";
+import { useEventDrag } from "./use-event-drag.js";
 import "./placement.css";
 
 export function CalendarBody(pane: PaneProps) {
   const { host } = useFrame();
   const t = useText("calendar");
   const port = host.wires.calendar;
+  const create = useNewEvent();
+  useKeyBindings(
+    create && port !== NONE && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new"
+      ? [{ chord: "c", group: "navigate", label: t("create.title"), run: create }]
+      : [],
+    "global",
+  );
   if (port === NONE) return <RefusalLine>{t("unreadable")}</RefusalLine>;
   return <CalendarOn port={port} {...pane} />;
 }
 
-/** The anchor a step before or after shows: a day, a week, a month or a year. */
-function shifted(place: CalendarPlaceId, anchor: string, n: number): string {
-  if (place === "month") return `${monthOfDay(addDays(`${monthOfDay(anchor)}-15`, n * 30))}-01`;
-  if (place === "year") return `${Number(yearOf(anchor)) + n}${anchor.slice(4)}`;
-  return addDays(anchor, n * (place === "day" ? 1 : 7));
-}
-
-interface HeadProps {
-  readonly where: Where;
-  readonly route: Route;
-  readonly plan: LayoutPlan;
-  readonly panelOn: boolean;
-  readonly go: (to: Partial<Route> & { place: CalendarPlaceId }) => void;
-  readonly commands: FrameCommands;
-}
-
-/** The head over every view: the span's name, before and after, today, the views, Search and the Agenda's panel. */
-function BodyHead({ where, route, plan, panelOn, go, commands }: HeadProps) {
-  const t = useText("calendar");
-  const locale = useLocale();
-  const { place, anchor, today, span } = where;
-  const stepped = place === "day" || place === "week" || place === "month" || place === "year";
-  const title =
-    place === "calsearch"
-      ? t("search")
-      : place === "year"
-        ? yearOf(anchor)
-        : monthName(monthOfDay(anchor), locale, yearOf(today));
-  return (
-    <CalendarHead
-      title={title}
-      hot={span.first <= today && today <= span.last}
-      {...(stepped
-        ? {
-            before: { label: t("before"), onPress: () => go({ place, sub: shifted(place, anchor, -1) }) },
-            after: { label: t("after"), onPress: () => go({ place, sub: shifted(place, anchor, 1) }) },
-          }
-        : {})}
-      today={{ label: t("today"), onPress: () => go({ place, sub: null }) }}
-      away={anchor !== today}
-      views={
-        <ViewSwitch
-          label={t("views")}
-          views={VIEWS.map((v) => ({ value: v, label: t(`view.${v}`) }))}
-          value={isView(place) ? place : null}
-          compact={plan.device === "phone"}
-          onChange={(v) => go({ place: v, sub: route.sub })}
-        />
-      }
-      search={{ label: t("search"), onPress: () => commands.go({ place: "calsearch" }) }}
-      {...(plan.device === "phone"
-        ? {}
-        : {
-            agenda: {
-              label: t("agenda"),
-              on: panelOn,
-              onPress: () =>
-                commands.go({
-                  place,
-                  sub: route.sub,
-                  open: route.open,
-                  words: panelOn ? {} : { panel: "agenda" },
-                }),
-            },
-          })}
-    />
-  );
-}
-
-function CalendarOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort }) {
-  const { host, commands } = useFrame();
+function CalendarOn({ port, route, plan, keysHere }: PaneProps & { readonly port: CalendarPort }) {
+  const { commands } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
   const zones = readerZones();
   const settings = useSettings(port);
   const where = useWhere(port, route, settings, zone, zones);
+  const [todayVisit, setTodayVisit] = useState(0);
   const panelOn = route.words.panel === "agenda" && plan.device !== "phone";
+  const monthRun = useMonthViewport();
   const sources = useSources(port);
-  const found = useFaces(port, sources, where?.span ?? null, where?.today ?? null, zone, zones);
+  const found = useFaces(port, sources, monthRun ?? where?.span ?? null, where?.today ?? null, zone, zones);
   /* The Agenda beside a view lists its own days, never only the view's. */
   const beside = useFaces(
     port,
@@ -129,18 +82,177 @@ function CalendarOn({ port, route, plan }: PaneProps & { readonly port: Calendar
     zone,
     zones,
   );
+  const openAgendaRow = useEventBrowse({
+    where,
+    route,
+    keysHere,
+    zone,
+    zones,
+    events: (panelOn ? beside : found)?.events ?? [],
+    panelOn,
+  });
+  const cursor = useGridKeys({
+    where,
+    events: found?.events ?? [],
+    route,
+    keysHere,
+    zone,
+    zones,
+    open: commands.event,
+  });
   if (where === null || found === null) return <RefusalLine>{t("noZone")}</RefusalLine>;
 
-  const { place, anchor, anchorDay, today, now, nowMs, span, agenda } = where;
+  return (
+    <CalendarSurface
+      route={route}
+      plan={plan}
+      port={port}
+      zone={zone}
+      zones={zones}
+      settings={settings}
+      where={where}
+      sources={sources}
+      found={found}
+      beside={beside}
+      panelOn={panelOn}
+      keysHere={keysHere}
+      monthRun={monthRun}
+      todayVisit={todayVisit}
+      onToday={() => {
+        if (!monthRun) setTodayVisit((visit) => visit + 1);
+      }}
+      cursor={cursor}
+      openAgendaRow={openAgendaRow}
+    />
+  );
+}
+
+interface CalendarSurfaceProps extends Pick<PaneProps, "route" | "plan" | "keysHere"> {
+  port: CalendarPort;
+  zone: string;
+  zones: ReturnType<typeof readerZones>;
+  settings: ReturnType<typeof useSettings>;
+  where: Where;
+  sources: ReturnType<typeof useSources>;
+  found: NonNullable<ReturnType<typeof useFaces>>;
+  beside: ReturnType<typeof useFaces>;
+  panelOn: boolean;
+  monthRun: MonthRun | null;
+  todayVisit: number;
+  onToday: () => void;
+  cursor: number | null;
+  openAgendaRow: (id: string, day: string) => void;
+}
+
+function CalendarSurface(props: CalendarSurfaceProps) {
+  const {
+    route,
+    plan,
+    keysHere,
+    port,
+    zones,
+    settings,
+    where,
+    sources,
+    found,
+    beside,
+    panelOn,
+    monthRun,
+    todayVisit,
+    onToday,
+    openAgendaRow,
+  } = props;
+  const { commands } = useFrame();
+  const t = useText("calendar");
+  const { anchor, today, now } = where;
+  const { actions, suppressClick, setPreview, go, closePanel, edge, input, acts, timeProps } =
+    useCalendarCanvas(props, commands);
+  const opened =
+    route.open === null
+      ? undefined
+      : (found.events.find((event) => event.id === route.open) ??
+        beside?.events.find((event) => event.id === route.open));
+
+  return (
+    <section className="cal-body" aria-label={t("landmark")}>
+      <CalendarFrameHead
+        where={where}
+        route={route}
+        plan={plan}
+        panelOn={panelOn}
+        go={go}
+        commands={commands}
+        keysHere={keysHere}
+        settings={settings}
+        port={port}
+        monthRun={monthRun}
+        onToday={onToday}
+      />
+      {port.hasOwedWrites?.() && <Notice place="bar" title={t("waiting.device")} />}
+      <div className="cal-body-views">
+        <div className="cal-body-view" onClickCapture={suppressClick}>
+          <CurrentView
+            key={todayVisit}
+            where={where}
+            monthRun={monthRun}
+            route={route}
+            keysHere={keysHere}
+            timeProps={timeProps}
+            input={input}
+            acts={acts}
+            edge={edge}
+          />
+          {route.words.panel === "new" && (
+            <NewEvent
+              port={port}
+              onPreview={setPreview}
+              anchor={anchor}
+              today={today}
+              minute={now.minutes}
+              calendars={sources.calendars}
+              connections={sources.connections}
+              preferred={settings.newEventsCalendarId}
+            />
+          )}
+          {opened && (
+            <OpenEvent key={opened.id} event={opened} zones={zones} today={today} actions={actions} />
+          )}
+          <EventActionQuestion actions={actions} />
+        </div>
+        <CalendarPanels
+          where={where}
+          route={route}
+          plan={plan}
+          keysHere={keysHere}
+          input={beside ? { ...input, events: beside.events } : input}
+          acts={acts}
+          edge={beside ? { ...beside.edge, load: port.load } : edge}
+          onClose={closePanel}
+          onAgendaRow={openAgendaRow}
+        />
+      </div>
+    </section>
+  );
+}
+
+function useCalendarCanvas(
+  { route, port, zones, where, found, zone, settings, plan, panelOn, cursor }: CalendarSurfaceProps,
+  commands: FrameCommands,
+) {
+  const actions = useEventActions(port, zones);
+  const { drag, preview: dragged, suppressClick } = useEventDrag(actions, fragmentOf(route));
+  const [preview, setPreview] = useState<CalendarEventFace | null>(null);
+  const { place, anchor, anchorDay, today, now, nowMs } = where;
   const go = (to: Partial<Route> & { place: CalendarPlaceId }) =>
     commands.go({ words: route.words.panel ? { panel: route.words.panel } : {}, ...to });
-  /* The invitations' panel is registered by its own feature; the body only stands it beside the view. */
-  const entry = host.features.calendar;
-  const Invitations = entry === NONE ? NONE : entry.panels.invitations;
   const closePanel = () => commands.go({ place, sub: route.sub, open: route.open, words: {} });
   const edge: HeldEdge = { ...found.edge, load: port.load };
+  const events = route.words.panel === "new" && preview ? [...found.events, preview] : found.events;
+  const open: FrameCommands["event"] = (ref) => {
+    if (ref?.event !== DRAFT_EVENT) commands.event(ref);
+  };
   const input: RangeInput = {
-    events: found.events,
+    events,
     anchor,
     today,
     nowMinute: now.minutes,
@@ -152,14 +264,21 @@ function CalendarOn({ port, route, plan }: PaneProps & { readonly port: Calendar
     device: plan.device,
   };
   const acts: RangeActs = {
-    event: (e) => commands.event(e === null ? null : e.ref),
+    event: (e) => open(e === null ? null : e.ref),
     pick: (day) => go({ place, sub: day }),
     view: (view, day) => go({ place: view, sub: day }),
     reveal: (e) => go({ place: "week", sub: e.ref.day, open: e.id }),
   };
-  const timeProps = {
+  const onDrag: CalendarViewProps["onDrag"] =
+    route.open === null && route.words.panel !== "new"
+      ? (id, press) => {
+          const face = found.events.find((event) => event.id === id);
+          if (face) drag(face, press);
+        }
+      : undefined;
+  const timeProps: CalendarViewProps = {
     anchor: anchorDay,
-    events: found.events,
+    events,
     capped: found.capped,
     edge,
     openId: route.open,
@@ -167,53 +286,114 @@ function CalendarOn({ port, route, plan }: PaneProps & { readonly port: Calendar
     settings,
     plan,
     panel: panelOn,
-    onOpen: commands.event,
+    cursor,
+    stepDay:
+      plan.device === "phone" && route.words.panel !== "new"
+        ? (direction: -1 | 1) => go({ place, sub: addDays(anchor, direction) })
+        : undefined,
+    onOpen: open,
+    ...(onDrag ? { onDrag } : {}),
+    ...(dragged ? { dragPreview: dragged } : {}),
     onDay: (day: PlainDate) => go({ place: "day", sub: isoOfDay(day) }),
   };
-  const view =
-    place === "week" ? (
-      <weekView.View {...timeProps} />
-    ) : place === "day" ? (
-      <dayView.View {...timeProps} />
-    ) : place === "month" ? (
-      <MonthView input={input} acts={acts} edge={edge} />
-    ) : place === "year" ? (
-      <YearView input={input} acts={acts} edge={edge} />
-    ) : place === "agenda" ? (
-      <AgendaView input={input} acts={acts} edge={edge} days={agenda.days} onMore={agenda.more} />
-    ) : place === "calsearch" ? (
-      <SearchView
+  return { actions, suppressClick, setPreview, go, closePanel, edge, input, acts, timeProps };
+}
+
+function CalendarPanels({
+  where,
+  route,
+  plan,
+  keysHere,
+  input,
+  acts,
+  edge,
+  onClose,
+  onAgendaRow,
+}: PaneProps & {
+  where: Where;
+  input: RangeInput;
+  acts: RangeActs;
+  edge: HeldEdge;
+  onClose: () => void;
+  onAgendaRow: (id: string, day: string) => void;
+}) {
+  const entry = useFrame().host.features.calendar;
+  const Invitations = entry === NONE ? NONE : entry.panels.invitations;
+  if (route.words.panel === "invitations" && Invitations !== NONE) {
+    return <Invitations route={route} plan={plan} keysHere={false} onClose={onClose} />;
+  }
+  if (route.words.panel !== "agenda" || plan.device === "phone" || where.place === "agenda") return null;
+  return (
+    <div className="cal-body-panel">
+      <AgendaView
         input={input}
         acts={acts}
-        query={route.words.q ?? ""}
-        onQuery={(q) => commands.go({ place: "calsearch", words: q === "" ? {} : { q } })}
-        held={{ from: span.first, to: span.last }}
+        edge={edge}
+        from={where.agenda.first}
+        days={where.agenda.days}
+        onMore={where.agenda.more}
+        onClose={onClose}
+        onRow={onAgendaRow}
+        keysHere={keysHere && route.open === null}
       />
-    ) : (
-      <RefusalLine>{t("notHere")}</RefusalLine>
-    );
+    </div>
+  );
+}
 
-  return (
-    <section className="cal-body" aria-label={t("landmark")}>
-      <BodyHead where={where} route={route} plan={plan} panelOn={panelOn} go={go} commands={commands} />
-      <div className="cal-body-views">
-        <div className="cal-body-view">{view}</div>
-        {route.words.panel === "invitations" && Invitations !== NONE ? (
-          <Invitations route={route} plan={plan} keysHere={false} onClose={closePanel} />
-        ) : null}
-        {panelOn && place !== "agenda" ? (
-          <aside className="cal-body-panel" aria-label={t("agenda")}>
-            <AgendaView
-              input={beside === null ? input : { ...input, events: beside.events }}
-              acts={acts}
-              edge={beside === null ? edge : { ...beside.edge, load: port.load }}
-              from={agenda.first}
-              days={agenda.days}
-              onMore={agenda.more}
-            />
-          </aside>
-        ) : null}
-      </div>
-    </section>
+function CurrentView({
+  where,
+  monthRun,
+  route,
+  keysHere,
+  timeProps,
+  input,
+  acts,
+  edge,
+}: {
+  readonly where: Where;
+  readonly monthRun: MonthRun | null;
+  readonly route: Route;
+  readonly keysHere: boolean;
+  readonly timeProps: CalendarViewProps;
+  readonly input: RangeInput;
+  readonly acts: RangeActs;
+  readonly edge: HeldEdge;
+}) {
+  const { place, agenda, span } = where;
+  const { commands } = useFrame();
+  const t = useText("calendar");
+  return place === "week" ? (
+    <weekView.View {...timeProps} />
+  ) : place === "day" ? (
+    <dayView.View {...timeProps} />
+  ) : place === "month" ? (
+    <MonthView
+      input={input}
+      acts={acts}
+      edge={edge}
+      run={monthRun}
+      {...(timeProps.onDrag ? { onDrag: timeProps.onDrag } : {})}
+    />
+  ) : place === "year" ? (
+    <YearView input={input} acts={acts} edge={edge} />
+  ) : place === "agenda" ? (
+    <AgendaView
+      input={input}
+      acts={acts}
+      edge={edge}
+      days={agenda.days}
+      onMore={agenda.more}
+      keysHere={keysHere && route.open === null}
+    />
+  ) : place === "calsearch" ? (
+    <SearchView
+      input={input}
+      acts={acts}
+      query={route.words.q ?? ""}
+      onQuery={(q) => commands.go({ place: "calsearch", words: q === "" ? {} : { q } })}
+      held={{ from: span.first, to: span.last }}
+    />
+  ) : (
+    <RefusalLine>{t("notHere")}</RefusalLine>
   );
 }

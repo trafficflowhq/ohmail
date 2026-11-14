@@ -1,14 +1,8 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, MessageBody, TagEntity as TagDTO } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { cleanup, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { estimateCardHeight, STREAM_CARD_FALLBACK_PX } from "@ohmail/ui";
-import type { FeedPartition } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { ReadsView } from "../app/views/ReadsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { issue, mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 
 /**
  * ═══ ONE WIDTH FOR THE COLUMN, READ ONCE ═════════════════════════════════════════════════════
@@ -27,101 +21,43 @@ import { KeymapProvider } from "@ohmail/app/keys";
  * the second case.
  */
 
-const ISO = "2026-08-04T09:00:00.000Z";
-const tags: TagDTO[] = [];
-/** The width the stubbed layout reports for a card — a real column width, not a round number. */
 const COLUMN_PX = 620;
 
-const message = (i: number): EngineMessage =>
-  ({
-    id: `m${i}`, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `subject of m${i}`, from: { name: `Sender ${i}`, address: `s${i}@x.invalid` },
-    to: [], cc: [], date: ISO, folder: "INBOX", snippet: `snippet of message ${i}`,
-    unread: false, hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null,
-    labels: [], remoteContent: "none", updatedAt: ISO,
-  }) as unknown as EngineMessage;
-
-const body = (): MessageBody =>
-  ({
-    text: "body", state: "snippet", html: null, loadedRemoteContent: false,
-    unsubscribe: "no_header", unsubscribeUrl: null,
-  } as unknown as MessageBody);
-
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-let roots: Root[] = [];
-let restoreWidth: (() => void) | null = null;
-
-/* The stream opens one screen of cards (`stream-window.ts`), sized by the window's height where
-   nothing lays out; a screen tall enough for forty is what lets this count forty mounted cards. */
-let innerHeight: PropertyDescriptor | undefined;
-beforeEach(() => {
-  innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
-  Object.defineProperty(window, "innerHeight", { configurable: true, value: 40 * 220 });
-});
-
-afterEach(async () => {
-  for (const r of roots) await act(() => r.unmount());
-  roots = [];
+let restoreWidth: (() => void) | undefined;
+beforeEach(() => vi.stubGlobal("innerHeight", 40 * 220));
+afterEach(() => {
+  cleanup();
   restoreWidth?.();
-  restoreWidth = null;
-  document.body.innerHTML = "";
-  if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
-  else delete (window as unknown as { innerHeight?: number }).innerHeight;
+  restoreWidth = undefined;
+  vi.unstubAllGlobals();
 });
 
-/** Give the cards a width, and count every card that is asked for its own. */
-function armWidth(): { reads: () => number } {
-  const proto = HTMLElement.prototype;
-  const original = Object.getOwnPropertyDescriptor(proto, "offsetWidth");
+function armWidth() {
   let n = 0;
+  const proto = HTMLElement.prototype;
+  const original = Object.getOwnPropertyDescriptor(proto, "offsetWidth")!;
   Object.defineProperty(proto, "offsetWidth", {
-    configurable: true,
+    ...original,
     get(this: HTMLElement) {
-      if (this.classList?.contains("scast")) {
-        n += 1;
-        return COLUMN_PX;
-      }
-      return 0;
+      if (!this.closest("[data-reading-scroll]")) return original.get!.call(this);
+      n += 1;
+      return COLUMN_PX;
     },
   });
-  restoreWidth = () => {
-    if (original) Object.defineProperty(proto, "offsetWidth", original);
-  };
-  return { reads: () => n };
+  restoreWidth = () => { Object.defineProperty(proto, "offsetWidth", original); };
+  return { reads: () => n, restore: restoreWidth };
 }
 
 async function mountReads(count: number): Promise<HTMLElement> {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const fresh = Math.floor(count / 4);
-  const partition: FeedPartition = {
-    waterline: null,
-    fresh: Array.from({ length: fresh }, (_, i) => message(i)),
-    seen: Array.from({ length: count - fresh }, (_, i) => message(i + fresh)),
-    newCount: 0,
-  };
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-        <KeymapProvider>
-          <ReadsView settled owed={false}
-            partition={partition} tags={tags} now={new Date(ISO)} cur={null} onCur={() => {}}
-            aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
-            bodyOf={body} hydrateBody={() => {}} jumpTo={null} onJumped={() => {}} onAction={() => {}}
-          />
-        </KeymapProvider>
-      </NextIntlClientProvider>,
-    );
-  });
-  return host;
+  const letters = Array.from({ length: count }, (_, i) => issue(`m${i}`, 40 - i, {
+    subject: `subject of m${i}`, snippet: "body", body: undefined, unread: false,
+  }));
+  mountStreamFrame({ at: "#/reads", letters });
+  return screen.getByRole("region", { name: "News stream" });
 }
 
 const cards = (host: HTMLElement): HTMLElement[] =>
-  [...host.querySelectorAll<HTMLElement>(".scast[data-sid]")];
+  [...host.querySelectorAll<HTMLElement>("[data-stream-window-item]")];
 
 describe("the stream measures its column once, not once per card", () => {
   it("costs the same width reads at forty cards as at twelve", async () => {
@@ -129,7 +65,8 @@ describe("the stream measures its column once, not once per card", () => {
     const hostSmall = await mountReads(12);
     expect(cards(hostSmall).length, "the fixture must mount the cards it claims").toBe(12);
     const atTwelve = small.reads();
-    restoreWidth?.();
+    cleanup();
+    small.restore();
 
     const big = armWidth();
     const hostBig = await mountReads(40);
@@ -144,7 +81,7 @@ describe("the stream measures its column once, not once per card", () => {
     armWidth();
     const host = await mountReads(12);
     const first = cards(host)[0]!;
-    const est = Number(/(\d+)px/.exec(first.style.getPropertyValue("--sc-est"))?.[1]);
+    const est = Number(/(\d+)px/.exec(first.style.containIntrinsicBlockSize)?.[1]);
     /* The same function the card calls, with the props this fixture gives it: a snippet body is
        PENDING, so the card lays out clamped and keeps its pill; no recipients block; the jsdom
        window is 1024 wide, so no touch sizing. */
@@ -167,7 +104,7 @@ describe("the stream measures its column once, not once per card", () => {
     // No width stub: jsdom answers 0 for every element, which is the case the fallback is for.
     const host = await mountReads(6);
     const first = cards(host)[0]!;
-    const est = Number(/(\d+)px/.exec(first.style.getPropertyValue("--sc-est"))?.[1]);
+    const est = Number(/(\d+)px/.exec(first.style.containIntrinsicBlockSize)?.[1]);
     expect(est).toBe(STREAM_CARD_FALLBACK_PX);
   });
 });

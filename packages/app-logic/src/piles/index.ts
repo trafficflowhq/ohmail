@@ -1,4 +1,4 @@
-/** The door of `piles`: the three piles' model and the Reply Run. */
+/** The door of `piles`: the three piles' model, the Reply Run, and the piles live over the mail ground. */
 export {
   PILE_IDS,
   PILE_OF,
@@ -18,3 +18,5 @@ export {
   type ReplyRunPorts,
   type ReplyRunState,
 } from "./reply-run.js";
+export { pileOf, usePilesLive, type PilesLiveOwn } from "./live.js";
+export { usePileCount } from "./rail-count.js";

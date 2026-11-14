@@ -3,7 +3,9 @@
  * instance of each and hands the same object every mount: the letter's body (the only part that loads the renderer),
  * the files of its letters, and its pictures. `none` is a real answer: no tiles, no pictures, never a guess.
  */
+import type { PdfLook } from "./look/FilePreview.js";
 import type { ComponentType } from "react";
+import type { SendPhase } from "@ohmail/app-logic/writing/mail-send";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import type { EmbeddedPictureSeam, LetterPictureInputs, PictureSeam } from "@ohmail/app-logic/reader";
 
@@ -27,6 +29,8 @@ export interface LetterNotice {
 
 /** One letter's body as the reader mounts it. `html` and `text` are the engine's, never built or edited here. */
 export interface LetterProps extends LetterPictureInputs {
+  /** A closed card needs only the notice from its cached HTML. */
+  readonly noticeOnly?: true;
   readonly messageId: string;
   readonly text: string;
   readonly html: string | null;
@@ -41,6 +45,14 @@ export interface LetterProps extends LetterPictureInputs {
 
 export type ReaderBody = ComponentType<LetterProps>;
 
+/** The current letter's invitation facts. A snippet is never read as a full invitation. */
+export interface ReaderInvitationProps {
+  readonly messageId: string;
+  readonly invitationWithoutEvent: boolean;
+  readonly text: string;
+  readonly full: boolean;
+}
+
 /** A file of a letter as the shell's file door lists it. */
 export interface ReaderFile {
   readonly id: string;
@@ -51,6 +63,8 @@ export interface ReaderFile {
   readonly inline: boolean;
   readonly calendarBody?: boolean;
   readonly objectUrl?: string;
+  readonly previewTooLarge?: boolean;
+  readonly saving?: boolean;
   readonly code?: string | null;
   readonly status?: number | null;
   readonly retryable?: boolean;
@@ -79,6 +93,8 @@ export interface ReaderFiles extends EmbeddedPictureSeam {
   open(messageId: string, attachmentId: string): void;
   /** Fetch and hold, no save; `retry` only on a person's press. */
   ensure(messageId: string, attachmentId: string, opts?: { retry?: boolean }): void;
+  blobOf?(messageId: string, attachmentId: string): Blob | undefined;
+  releasePreviews?(messageId: string): void;
   downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
   downloadingAll(messageId: string): boolean;
 }
@@ -88,11 +104,24 @@ export interface ReaderFiles extends EmbeddedPictureSeam {
  * that Reply, Reply all and Forward reach before anything else.
  */
 export interface ReaderReply {
-  readonly Sheet: ComponentType<{ readonly letters: readonly string[] }>;
+  /**
+   * `keysHere`: the reading column has the keys, so the reply binds its own while it stands, as the letter does
+   * (absent: it binds none, and its text's own keys still send and leave).
+   */
+  readonly Sheet: ComponentType<{ readonly letters: readonly string[]; readonly keysHere?: boolean }>;
   /** `from`: the press came from a letter's own menu: "answer THIS letter", which opens and never closes an editor. */
   readonly useOpen: () => (messageId: string, how: "reply" | "reply_all" | "forward", from?: "menu") => void;
+  /** The letter the open reply answers, including while the person reads on to another letter. */
+  readonly useTarget?: () => string | null;
+  /** Read the send still finishing after its inline editor has closed. */
+  readonly useSendPhase?: () => (lane: string) => SendPhase;
   /** The open reply's verbs, which the reading sheet's one panel shows in place of the letter's; null: none open. */
   readonly useVerbs: () => readonly PanelVerb[] | null;
+  /**
+   * DRAFT REPLY on a letter: the reply opened on it and the drafter asked, where the shell's composition has a
+   * drafter (the host hands a draft wire). Null, or absent: no drafter stands, and the letter's More offers none.
+   */
+  readonly useDraft?: () => ((messageId: string) => void) | null;
 }
 
 export interface ReaderParts {
@@ -100,7 +129,7 @@ export interface ReaderParts {
   readonly files: ReaderFiles | "none";
   readonly pictures: PictureSeam | "none";
   /** The shell's one look at a file's bytes; `none`: a press saves. */
-  readonly look: ((messageId: string, attachmentId: string) => void) | "none";
+  readonly look: ((messageId: string, attachmentId: string) => void) | { readonly usePdf: PdfLook } | "none";
   /**
    * What the shell says of the copy in Sent of a letter the account sent, where that copy is missing or still owed:
    * its sentence in `write`'s words, drawn as a note under the letter's recipients; null where there is nothing to
@@ -111,7 +140,12 @@ export interface ReaderParts {
   readonly reply: ReaderReply | "none";
   /**
    * What the shell says of a letter's invitation, drawn above the letter's text and outside it: the note where its
-   * event cannot be shown, and the event once. Found by the letter's id alone; `none`: nothing stands there.
+   * event cannot be shown, and the event once. `none`: nothing stands there.
    */
-  readonly invitation: ComponentType<{ readonly messageId: string }> | "none";
+  readonly invitation: ComponentType<ReaderInvitationProps> | "none";
+  /**
+   * The shell's clipboard, written inside the person's own press (a person's address, copied from their card): `true`
+   * only once the clipboard took it. `none`, or left out: the shell has none, and a copy is not offered.
+   */
+  readonly copy?: ((text: string) => Promise<boolean>) | "none";
 }

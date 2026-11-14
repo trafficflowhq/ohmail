@@ -147,21 +147,30 @@ export function awayStep(state: AwayState, event: AwayEvent, rules: AwayRules): 
         return { ...state, outcome: { kind: "expired" } };
       return { ...state, pending: true, outcome: null, asked: draft };
     }
-    case "echoed":
+    case "echoed": {
+      const editedMeanwhile =
+        state.draft !== null && state.asked !== null && awayUnsaved(state.draft, state.asked, rules);
       return {
         ...state,
         saved: event.row,
-        draft: event.row,
+        draft: editedMeanwhile ? state.draft : event.row,
         pending: false,
         outcome: { kind: event.travelled ? "asked" : "saved" },
       };
+    }
     case "refusedWrite":
       return { ...state, pending: false, outcome: { kind: "failed" } };
     case "heard": {
-      if (event.refused) return { ...state, outcome: { kind: "refused", by: event.refused } };
+      const edited =
+        state.draft !== null && state.saved !== null && awayUnsaved(state.draft, state.saved, rules);
+      if (event.refused) {
+        return {
+          ...state,
+          draft: edited ? state.draft : (state.asked ?? state.draft),
+          outcome: { kind: "refused", by: event.refused },
+        };
+      }
       if (!event.row || !state.saved || !state.draft) return state;
-      /* An edit made while the request travelled is kept: the draft is replaced only while it still equals the old row. */
-      const edited = awayUnsaved(state.draft, state.saved, rules);
       const applied = state.asked !== null && sameRow(event.row, state.asked);
       return {
         ...state,

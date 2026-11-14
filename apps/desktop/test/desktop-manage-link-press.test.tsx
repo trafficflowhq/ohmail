@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { queryByRole, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -176,13 +177,12 @@ async function open(status: EngineStatus, hash = "#/settings"): Promise<void> {
   await settle();
 }
 
-const nav = (): string[] =>
-  [...mountPoint!.querySelectorAll<HTMLElement>(".set-nav button")].map((b) => (b.textContent ?? "").trim());
+const subscriptionEntry = (): HTMLElement | null =>
+  within(within(mountPoint!).getByRole("navigation", { name: SETTINGS.navAria }))
+    .queryByRole("button", { name: SETTINGS.billing });
 
-function byText(selector: string, text: string): HTMLElement | null {
-  return [...mountPoint!.querySelectorAll<HTMLElement>(selector)]
-    .find((el) => (el.textContent ?? "").trim() === text) ?? null;
-}
+const manageButton = (): HTMLButtonElement | null =>
+  queryByRole<HTMLButtonElement>(mountPoint!, "button", { name: SETTINGS.subscriptionManage });
 
 async function press(el: HTMLElement): Promise<void> {
   await act(async () => { el.click(); });
@@ -191,10 +191,10 @@ async function press(el: HTMLElement): Promise<void> {
 
 /** Open the Subscription pane and answer the Manage control it draws. */
 async function manageControl(): Promise<HTMLButtonElement> {
-  const entry = byText(".set-nav button", SETTINGS.billing);
+  const entry = subscriptionEntry();
   expect(entry, "the Subscription entry is not in the nav, so there is nothing to press").not.toBeNull();
   await press(entry!);
-  const btn = byText("button.btn", SETTINGS.subscriptionManage) as HTMLButtonElement | null;
+  const btn = manageButton();
   expect(btn, "the Subscription pane drew no Manage control").not.toBeNull();
   return btn!;
 }
@@ -230,7 +230,7 @@ describe("the mount", () => {
       enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length,
       "the offer was read more than once for one door",
     ).toBe(1);
-    expect(nav(), "the pane is offered from the access answer").toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "the pane is offered from the access answer").not.toBeNull();
     localStorage.removeItem("ohmail.access.mbx-1");
   });
 
@@ -245,7 +245,7 @@ describe("the mount", () => {
     access = { status: 200, body: JSON.stringify({ metered: false }) };
     await open(CLOUD_SERVING);
 
-    expect(nav(), "a host with no program grew a Subscription entry").not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "a host with no program grew a Subscription entry").toBeNull();
     expect(enginePaths.filter((p) => p === MANAGE_LINK_PATH)).toEqual([]);
   });
 
@@ -260,14 +260,14 @@ describe("the mount", () => {
     access = { status: 402, body: JSON.stringify({ error: { code: "payment_required" } }) };
     await open(CLOUD_SERVING);
 
-    expect(nav(), "the lock took away the row that unlocks it").toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "the lock took away the row that unlocks it").not.toBeNull();
   });
 
   it("a read that refused offers nothing — a failure is not evidence a page exists", async () => {
     access = { status: 503, body: JSON.stringify({ error: { code: "offline_read_only" } }) };
     await open(CLOUD_SERVING);
 
-    expect(nav()).not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry()).toBeNull();
   });
 
   it("the standalone door asks nothing and offers nothing — there is no account to ask about", async () => {
@@ -277,13 +277,13 @@ describe("the mount", () => {
       enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH || p === MANAGE_LINK_PATH),
       "a standalone install asked about a subscription it has no account for",
     ).toEqual([]);
-    expect(nav()).not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry()).toBeNull();
   });
 });
 
 /** The minted address, drawn as the link the person presses, or null. */
 const mintedLink = (): HTMLAnchorElement | null =>
-  mountPoint!.querySelector<HTMLAnchorElement>(`a[href="${MANAGE_URL}"]`);
+  queryByRole<HTMLAnchorElement>(mountPoint!, "link", { name: SETTINGS.subscriptionOpen });
 
 /** The person's click on a drawn link, through the window's own interceptor. */
 async function follow(a: HTMLAnchorElement): Promise<void> {
@@ -305,12 +305,13 @@ describe("the press", () => {
     ).toBe(1);
     const link = mintedLink();
     expect(link, "the press drew no link to the minted address").not.toBeNull();
+    expect(link!.getAttribute("href")).toBe(MANAGE_URL);
     expect(link!.target).toBe("_blank");
     expect(link!.rel).toBe("noopener noreferrer");
     expect(document.activeElement, "the drawn link does not have the focus, so Enter does not open it")
       .toBe(link);
     expect(opened, "the press opened the page itself, with no click of its own behind it").toEqual([]);
-    expect(nav(), "the pane went away on a good answer").toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "the pane went away on a good answer").not.toBeNull();
 
     await follow(link!);
     expect(
@@ -324,7 +325,7 @@ describe("the press", () => {
     await press(await manageControl());
     await follow(mintedLink()!);
     // Followed, the link gives the control back.
-    const again = byText("button.btn", SETTINGS.subscriptionManage) as HTMLButtonElement | null;
+    const again = manageButton();
     expect(again, "the Manage control did not come back after the link was followed").not.toBeNull();
     await press(again!);
     await follow(mintedLink()!);
@@ -340,12 +341,12 @@ describe("the press", () => {
     await press(btn);
 
     expect(
-      byText("p.acct-warn", SETTINGS.subscriptionManageFailed),
+      within(mountPoint!).getByRole("alert").textContent,
       "the press was refused and the pane said nothing",
-    ).not.toBeNull();
+    ).toBe(SETTINGS.subscriptionManageFailed);
     expect(opened, "a refused mint opened something").toEqual([]);
     expect(btn.disabled, "the control stayed disabled after a refusal").toBe(false);
-    expect(nav(), "a refusal is not evidence there is no page").toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "a refusal is not evidence there is no page").not.toBeNull();
   });
 
   it("a 404 at the press withdraws the pane AND the nav entry", async () => {
@@ -354,8 +355,8 @@ describe("the press", () => {
     const btn = await manageControl();
     await press(btn);
 
-    expect(nav(), "the entry survived a 404 — it opens onto nothing now").not.toContain(SETTINGS.billing);
-    expect(byText("button.btn", SETTINGS.subscriptionManage), "the pane is still drawn").toBeNull();
+    expect(subscriptionEntry(), "the entry survived a 404 — it opens onto nothing now").toBeNull();
+    expect(manageButton(), "the pane is still drawn").toBeNull();
     expect(opened).toEqual([]);
   });
 
@@ -365,7 +366,7 @@ describe("the press", () => {
     const btn = await manageControl();
     await press(btn);
 
-    expect(nav()).not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry()).toBeNull();
     expect(opened, "an empty address was handed to the opener").toEqual([]);
   });
 });
@@ -394,12 +395,12 @@ describe("the offer after a failed read", () => {
     localStorage.setItem("ohmail.access.mbx-1", "open");
     access = { status: 503, body: JSON.stringify({ error: { code: "unavailable" } }) };
     await open(CLOUD_SERVING);
-    expect(nav(), "premise: a failed read offers nothing").not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "premise: a failed read offers nothing").toBeNull();
     const before = reads();
     access = { status: 200, body: JSON.stringify({ metered: true, canAddMailbox: true, mailboxes: 1 }) };
     await backToTheWindow();
     expect(reads() - before, "the return asked once").toBe(1);
-    expect(nav(), "the answer on the return did not bring the pane").toContain(SETTINGS.billing);
+    expect(subscriptionEntry(), "the answer on the return did not bring the pane").not.toBeNull();
     // Answered now: another return asks nothing.
     await backToTheWindow();
     expect(reads() - before).toBe(1);
@@ -412,7 +413,7 @@ describe("the offer after a failed read", () => {
     const before = reads();
     await backToTheWindow();
     expect(reads() - before, "an answered offer asked again").toBe(0);
-    expect(nav()).not.toContain(SETTINGS.billing);
+    expect(subscriptionEntry()).toBeNull();
   });
 });
 

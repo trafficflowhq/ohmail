@@ -7,7 +7,7 @@ import {
   type MailStateInputs,
   type MailboxFacts,
 } from "@ohmail/app-logic/mail-state/mail-state";
-import { pullEtaMs, pullRate, pullRemaining, pullSampleStep } from "../app/shell/pull-rate";
+import { pullEtaMs, pullRate, pullRemaining, pullSampleStep } from "@ohmail/app-logic/mailboxes/first-run/pull-rate";
 
 /**
  * ═══ THE HOSTED FIRST RUN'S NUMERATOR ══════════════════════════════════════════════════════

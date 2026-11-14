@@ -73,7 +73,7 @@ import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
 import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
-import { InvitationNote } from "../shell/InvitationNote";
+import { InvitationNote } from "../components/InvitationNote";
 import { MessageEvents } from "../shell/MessageEvents";
 import { goFirstRun, goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "@ohmail/app-logic/screener/screener-state";
@@ -3708,7 +3708,7 @@ function JunkSearchState({ search, localCount }: { search: JunkWindowControl["se
  */
 function JunkSweepOffer({ sweep }: { sweep: JunkWindowControl["sweep"] }) {
   const t = useTranslations("screener");
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
   if (sweep.phase === "unknown" || sweep.phase === "none" || sweep.preview === null) return null;
   const pv = sweep.preview;
   const stranded = pv.mailboxes.filter((m) => !m.hasJunkFolder && m.candidates > 0);
@@ -3731,18 +3731,18 @@ function JunkSweepOffer({ sweep }: { sweep: JunkWindowControl["sweep"] }) {
           {t("junkSweepHint")}
           {sweep.phase === "failed" ? <p className="scn-junk-note" style={{ margin: "6px 0 0" }}>{t("junkSweepFailed")}</p> : null}
           <div className="scn-junk-sweep-actions">
-            {confirming ? (
+            {confirming !== null && confirming === pv.confirmation ? (
               <>
-                <Button onClick={sweep.request} disabled={sweep.requesting}>
+                <Button onClick={() => { setConfirming(null); sweep.request(confirming); }} disabled={sweep.requesting}>
                   {t("junkSweepConfirm", { count: pv.movable })}
                 </Button>
-                <Button variant="ghost" onClick={() => setConfirming(false)} disabled={sweep.requesting}>
+                <Button variant="ghost" onClick={() => setConfirming(null)} disabled={sweep.requesting}>
                   {t("junkSweepCancel")}
                 </Button>
               </>
             ) : (
               <>
-                <Button onClick={() => setConfirming(true)}>{t("junkSweepAction")}</Button>
+                <Button onClick={() => setConfirming(pv.confirmation ?? null)} disabled={pv.confirmation === undefined}>{t("junkSweepAction")}</Button>
                 <Button variant="ghost" onClick={sweep.dismiss}>{t("junkSweepDismiss")}</Button>
               </>
             )}

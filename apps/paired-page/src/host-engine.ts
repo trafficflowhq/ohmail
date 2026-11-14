@@ -19,6 +19,8 @@ export interface HostClientEngineOptions {
   factory?: IDBFactory | null;
   /** This browser will not keep them — the gate says so once. */
   onUnkept?: () => void;
+  /** The account named by a successful snapshot for this pairing. */
+  onMirrorAccount?: (accountId: string) => void;
 }
 
 let saidNoWebLocks = false;
@@ -36,7 +38,19 @@ export function createHostClientEngine(bearer: BearerManager, opts: HostClientEn
     adapter: new HttpAdapter({
       baseUrl: "",
       headers: () => bearer.headers(),
-      fetch: bearer.fetch,
+      fetch: async (url, init) => {
+        const response = await bearer.fetch(url, init, opts.scope ?? undefined);
+        if (
+          response.ok &&
+          url.split("?")[0] === "/sync/snapshot" &&
+          opts.scope !== null &&
+          bearer.pairScope() === opts.scope
+        ) {
+          const account = response.headers.get("x-ohmail-mirror-account");
+          if (account) opts.onMirrorAccount?.(account);
+        }
+        return response;
+      },
       // The paired host answers /hello; an older one sends every file of a forward.
       forwardPartsCheck: true,
     }),

@@ -3,7 +3,8 @@ import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -137,7 +138,6 @@ let host: HTMLDivElement | null = null;
  */
 async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike }> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
 
   function Probe(): null {
@@ -148,7 +148,7 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike 
       null, v,
       ((message: string, options?: Omit<ToastCall, "message">) => {
         toasts.push({ message, ...(options ?? {}) });
-      }) as never, useScreenerText(),
+      }) as never, useScreenerWords(),
     ) as unknown as StateLike;
     return null;
   }
@@ -158,8 +158,8 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike 
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
+      h(TextProvider, {
+        locale: "en", messages, timeZone: "UTC", children: h(Probe),
       }),
     );
   });

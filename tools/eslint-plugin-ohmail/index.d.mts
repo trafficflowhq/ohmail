@@ -11,14 +11,6 @@ export function isDoorFile(rel: string, doors: string[]): boolean;
 export function readDoors(root: string): { doors: string[]; platforms: Platform[] };
 /** tools/binders.json as the options of `ohmail/binder-callers`. */
 export function readBinders(root: string): { names: string[]; files: string[] };
-/** A row of tools/shell-adapters.json: a file of the old shell's side of the frame, and the feeds it declares. */
-export interface ShellAdapter {
-  file: string;
-  contexts?: string[];
-}
-export function readShellAdapters(root: string): { folder: string; files: ShellAdapter[] };
-/** What a list of the old shell's files names that another did not: a file, or a context of a file it had. */
-export function shellAdaptersAdded(now: ShellAdapter[], before: ShellAdapter[]): string[];
 /** The session's marker's cookie name, as `ohmail/owner-lookup` looks for it. */
 export const OWNER_MARKER_NAME: string;
 declare const plugin: ESLint.Plugin;

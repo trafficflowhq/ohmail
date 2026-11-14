@@ -52,6 +52,9 @@ interface FieldOfWords extends FieldShared {
   onChange?: (value: string) => void;
   /** Several lines: how many it starts with. */
   lines?: number;
+  /** A date's, a time's or a number's least and last ("2026-11-18"): the browser's own picker offers nothing past them. */
+  min?: string;
+  max?: string;
 }
 
 /**
@@ -65,6 +68,8 @@ interface FieldOfSecret extends FieldShared {
   value?: string;
   onChange?: (value: string) => void;
   lines?: never;
+  min?: never;
+  max?: never;
 }
 
 export type FieldProps = FieldOfWords | FieldOfSecret;
@@ -90,6 +95,8 @@ export function Field({
   autoComplete = "off",
   inputMode,
   maxLength,
+  min,
+  max,
   "aria-describedby": describedBy,
   onLeave,
   onEnter,
@@ -149,6 +156,8 @@ export function Field({
           value={box.value}
           ref={box.ref}
           type={type}
+          min={min}
+          max={max}
           autoComplete={autoComplete}
           onChange={(e) => onChange?.(e.currentTarget.value)}
           onKeyDown={onEnter ? enter : undefined}

@@ -83,6 +83,8 @@ export interface ReplyAutosave {
   rebind: (lane: string) => void;
   /** `key` is this lane's own create under its binding, waiting or the write in the air. */
   owns: (lane: string, key: string) => boolean;
+  /** Changes whenever this lane starts editing another draft. */
+  bindingOf: (lane: string) => number;
   /** `row` is the row a create this lane claims has made. */
   ownsRow: (lane: string, row: string) => boolean;
   /** The lane's stored claims are read back (a reload): each counts once this engine shows it. */
@@ -112,6 +114,17 @@ function signatureOf(f: ReplyDraftForm): string {
     ...(f.forwardOf ? [f.forwardOf, f.forwardParts ? [...f.forwardParts].sort() : null] : []),
   ]);
 }
+
+/** Does a stored reply meta hold anything beside the lane's claims (`creates`)? A claim alone is no unit. */
+const besideClaims = (raw: string | null): boolean => {
+  if (raw === null) return false;
+  try {
+    const { creates: _claims, ...rest } = JSON.parse(raw) as Record<string, unknown>;
+    return Object.keys(rest).length > 0;
+  } catch {
+    return false;
+  }
+};
 
 /** What the server last confirmed a row holds, as the editor's signature; `null` when not known. */
 export function accountSigOf(engine: OhmailEngine, id: string): string | null {
@@ -192,15 +205,27 @@ export function useReplyAutosave(
    * MAY THE LANE'S ROW BE WRITTEN NOW: always while the composer stands; once it is gone, only while the lane's
    * stored words or its stored meta stand under its scope (an emptied reply, a retitled one, a forward with only its
    * audience keep no words). The row is part of the reply's unit and never stands without the rest; a sweep takes both.
+   * A meta that holds only the lane's own claims, written after the composer went over a meta a sweep had taken
+   * ({@link claimedOverASweep}), does not stand: the lane's create writes its claims itself, after a sweep too.
    */
-  const laneStands = (l: string): boolean => !composerGone.current
-    || localStorageDoor("reply.draft").get(replyDraftKey(l, owner.current)) !== null
-    || localStorageDoor("reply.meta").get(replyMetaKey(l, owner.current)) !== null;
+  const laneStands = (l: string): boolean => {
+    if (!composerGone.current) return true;
+    if (localStorageDoor("reply.draft").get(replyDraftKey(l, owner.current)) !== null) return true;
+    const meta = localStorageDoor("reply.meta").get(replyMetaKey(l, owner.current));
+    return meta !== null && (!claimedOverASweep.current.has(l) || besideClaims(meta));
+  };
+  /**
+   * The lanes whose claims were stored once the composer was gone, where no meta of theirs stood: whatever the
+   * account's sweep took is not stood up again by a claim alone.
+   */
+  const claimedOverASweep = useRef(new Set<string>());
   /** The lane's claims under its binding, beside its meta: a reload claims them again. */
   const storeClaims = useCallback((l: string) => {
     const keys = [...(claims.current.get(l) ?? [])].filter(([, c]) => c.binding === (bound.current.get(l) ?? 0)).map(([k]) => k);
     const meta = readReplyMeta(l, owner.current);
     if (keys.length === 0 && meta.creates === undefined) return;
+    if (composerGone.current && localStorageDoor("reply.meta").get(replyMetaKey(l, owner.current)) === null)
+      claimedOverASweep.current.add(l);
     writeReplyMeta(l, { ...meta, creates: keys.slice(-STORED_CREATES) }, owner.current);
   }, []);
   const claim = useCallback((l: string, key: string, c: CreateClaim) => {
@@ -381,6 +406,7 @@ export function useReplyAutosave(
   /* Declared ABOVE the close's save: at unmount the cleanups run in this order, so the composer is gone before it. */
   useEffect(() => {
     composerGone.current = false;
+    claimedOverASweep.current.clear();
     return () => {
       composerGone.current = true;
     };
@@ -622,7 +648,7 @@ export function useReplyAutosave(
     await settleWrites(); // a fork or carry the write started
   }, [settleWrites, writeNow]);
   return {
-    seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, ownsRow, restore, awaits, settled, notSent, takeOwn, fork,
+    seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, bindingOf, ownsRow, restore, awaits, settled, notSent, takeOwn, fork,
     waitedOf, opened, flush,
   };
 }

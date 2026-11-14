@@ -161,8 +161,14 @@ export type SignInReturn =
 
 /** A sign-in by code as a view may draw it. The shell holds the ceremony; a view holds nothing of it. */
 export type CodeCeremony =
-  | { readonly kind: "checking" }
-  | { readonly kind: "shown"; readonly code: string; readonly openAt: string | null; readonly until: number }
+  | { readonly kind: "checking"; readonly refusal?: Refusal }
+  | {
+      readonly kind: "shown";
+      readonly code: string;
+      readonly openAt: string | null;
+      readonly until: number;
+      readonly refusal?: Refusal;
+    }
   | {
       readonly kind: "ended";
       readonly why: "declined" | "expired" | "refused";

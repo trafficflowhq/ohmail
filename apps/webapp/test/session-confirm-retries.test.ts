@@ -31,8 +31,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ACCOUNT, coded401, db503, html502, installConfirmEnv, messages, mountCloudShell, overlay,
-  rate429, refresh204, refreshCalls, rememberOwner, scriptRefresh, scriptSession, sessionCalls,
-  sessionCallsAt, sessionEnrollment, sessionFull, shellRoot, showsEnded, showsUnconfirmed,
+  rate429, refresh204, refreshCalls, rememberOwner, scriptRefresh, scriptSession, sessionCalls, shellRoot,
+  sessionCallsAt, sessionEnrollment, sessionFull, showsEnded, showsUnconfirmed,
   scriptSync, syncCalls, syncPage,
   teardownConfirmEnv, tick, tryAgainButton, uncoded401, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";

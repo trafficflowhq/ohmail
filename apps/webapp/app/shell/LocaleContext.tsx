@@ -11,7 +11,9 @@
  * ⇒ the row is not drawn — the honest degradation, and forty-odd provider-less unit tests keep working.
  */
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+import { useLocale, useMessages, useTimeZone } from "next-intl";
+import { TextProvider, useTextProvided } from "@ohmail/app/text";
 import type { AppLocale } from "./locale";
 
 export interface LocaleControls {
@@ -33,7 +35,7 @@ export interface LocaleControls {
    * read does not undo a press); an `install` host keeps a language it already holds and takes the
    * account's only while it holds none. Local-only either way. `AppShell` is the only caller.
    */
-  adoptLocale: (next: AppLocale) => Promise<void>;
+  adoptLocale: (next: AppLocale, holds?: () => boolean) => Promise<void>;
   /** A switch is in flight — the selector disables itself rather than queueing two. */
   busy: boolean;
   /**
@@ -54,4 +56,22 @@ export const LocaleContext = createContext<LocaleControls | null>(null);
 /** `null` where no host wired a provider — the demo's bare panes, and unit tests. */
 export function useAppLocale(): LocaleControls | null {
   return useContext(LocaleContext);
+}
+
+/**
+ * The frame's text reader, where the host brought none: over the catalogue, language and zone of the intl provider
+ * the entry stands under. The hosts' locale shells bring their own (the web's knows when the catalogue is still on
+ * its way); a mount with only the intl provider above gets this one.
+ */
+export function TextFromIntl({ children }: { children: ReactNode }): ReactNode {
+  const provided = useTextProvided();
+  const locale = useLocale();
+  const messages = useMessages();
+  const timeZone = useTimeZone() ?? "UTC";
+  if (provided) return children;
+  return (
+    <TextProvider locale={locale === "de" ? "de" : "en"} messages={messages as Parameters<typeof TextProvider>[0]["messages"]} timeZone={timeZone}>
+      {children}
+    </TextProvider>
+  );
 }

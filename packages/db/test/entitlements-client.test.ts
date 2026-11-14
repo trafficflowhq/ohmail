@@ -11,6 +11,8 @@ import {
 import {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, parkedAccountsOf, pricingOf, aiUsageLineOf, type AiUsageLine,
 } from "../src/entitlements-port.js";
+import { readManagedModelConsent } from "../src/model-consent.js";
+import type { Tx } from "../src/change-log.js";
 import { DEFAULT_ALERT_THRESHOLDS } from "../src/alerts.js";
 
 /**
@@ -2405,4 +2407,113 @@ describe("readOps — /v1/ops, mapped to a reading and never to a call fault", (
     await c.port.access(ACC);
     expect(c.paths).toEqual(["/v1/ops", "/v1/access"]);
   });
+});
+
+it("dispatch rejects an older in-flight entitlement allow and an unreadable fresh answer", async () => {
+  let finishOld!: (response: Response) => void;
+  const oldResponse = new Promise<Response>((resolve) => { finishOld = resolve; });
+  let reads = 0;
+  const { port } = onPlane(async () => ++reads === 1
+    ? oldResponse : Response.json({}, { status: 503 }), { now: () => 1000 });
+  const db = {
+    select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ aiEnabled: true }] }) }) }),
+  } as unknown as Tx;
+  const old = port.access(ACC);
+  try {
+    const dispatch = readManagedModelConsent(db, ACC, port);
+    finishOld(Response.json(wire("access-200-active")));
+    await expect(old).resolves.toMatchObject({ ok: true });
+    await expect(dispatch).resolves.toBe(false);
+    expect(reads).toBe(2);
+  } finally {
+    finishOld(Response.json({}, { status: 503 }));
+  }
+});
+
+it("dispatch preserves admitted AI work at zero balance and rejects contradictory flags", async () => {
+  const active = wire("access-200-active") as { entitlements: Record<string, unknown> };
+  const body = (reason: string, aiEnabled = false) => ({
+    ...active, balance: 0, entitlements: { ...active.entitlements, aiEnabled, reason },
+  });
+  const c = client([
+    { status: 200, body: body("active") },
+    { status: 200, body: body("ai_disabled") },
+    { status: 200, body: body("unrecognized state") },
+    { status: 200, body: body("active", true) },
+  ]);
+  const opts = { forDispatch: true } as const;
+  await expect(c.port.accessOrFault(ACC, opts)).resolves.toMatchObject({ dispatchAiEnabled: true });
+  await expect(c.port.accessOrFault(ACC, opts)).resolves.toMatchObject({ dispatchAiEnabled: false });
+  await expect(c.port.accessOrFault(ACC, opts)).resolves.toBe("fault");
+  await expect(c.port.accessOrFault(ACC, opts)).resolves.toBe("fault");
+  expect(c.faults.map((fault) => fault.field)).toEqual(["entitlements.reason", "entitlements.aiEnabled"]);
+});
+
+describe("the dispatch entitlement reply", () => {
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["a numeric string", "0"],
+    ["negative", -1],
+    ["fractional", 1.5],
+    ["outside the safe integer range", Number.MAX_SAFE_INTEGER + 1],
+  ])("faults when the balance is %s", async (_label, balance) => {
+    const active = wire("access-200-active") as { balance?: unknown };
+    if (balance === undefined) delete active.balance;
+    else active.balance = balance;
+    const c = client([{ status: 200, body: active }]);
+
+    await expect(c.port.accessOrFault(ACC, { forDispatch: true })).resolves.toBe("fault");
+    expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field: "balance" }]);
+  });
+
+  it.each([
+    ["AI disabled with credits in an eligible state", { aiEnabled: false }],
+    ["AI enabled in an ineligible state", { reason: "ai_disabled" }],
+    ["AI enabled with sync disabled", { syncEnabled: false }],
+  ])("faults on contradictory flags: %s", async (_label, entitlements) => {
+    const active = wire("access-200-active") as { entitlements: Record<string, unknown> };
+    const c = client([{ status: 200, body: { ...active, entitlements: { ...active.entitlements, ...entitlements } } }]);
+
+    await expect(c.port.accessOrFault(ACC, { forDispatch: true })).resolves.toBe("fault");
+    expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field: "entitlements.aiEnabled" }]);
+  });
+
+  it.each(["access-200-active", "access-200-trialing", "access-200-grace"])(
+    "accepts a consistent dispatch reply based on %s", async (fixture) => {
+      const reply = wire(fixture) as { balance: number; entitlements: Record<string, unknown> };
+      const aiEnabled = reply.balance > 0;
+      const c = client([{
+        status: 200, body: { ...reply, entitlements: { ...reply.entitlements, aiEnabled } },
+      }]);
+
+      await expect(c.port.accessOrFault(ACC, { forDispatch: true })).resolves.toMatchObject({
+        dispatchAiEnabled: true, limits: { aiEnabled },
+      });
+      expect(c.faults).toEqual([]);
+    },
+  );
+});
+
+it.each([
+  ["no cached verdict", false],
+  ["an expired cached allow", true],
+])("a dispatch fault lets ordinary access read the recovered plane with %s", async (_label, cacheAllow) => {
+  let now = 0;
+  const prior = cacheAllow ? [{ status: 200, body: wire("access-200-active") }] : [];
+  const c = client([
+    ...prior,
+    { status: 503 },
+    { status: 200, body: wire("access-200-closed-trial-ended") },
+  ], { ttlMs: 1, now: () => now });
+  if (cacheAllow) {
+    await expect(c.port.access(ACC)).resolves.toMatchObject({ ok: true });
+    now += 2;
+  }
+
+  await expect(c.port.accessOrFault(ACC, { forDispatch: true })).resolves.toBe("fault");
+  expect(c.port.accessFaults!()).toBe(1);
+  await expect(c.port.access(ACC)).resolves.toMatchObject({ ok: false });
+  expect(c.paths).toHaveLength(prior.length + 2);
+  expect(c.port.accessFaults!()).toBe(1);
 });

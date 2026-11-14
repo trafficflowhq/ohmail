@@ -3,7 +3,8 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -11,9 +12,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { ARCHIVE_TIMEOUT_MS, SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { ARCHIVE_TIMEOUT_MS } from "@ohmail/app-logic/search";
 
 /**
  * "SEARCHING THE WHOLE ARCHIVE…" HAD NO END — the failure-looks-like-healthy family, on screen.
@@ -36,7 +35,6 @@ import { KeymapProvider } from "@ohmail/app/keys";
 // See `sync-liveness-shell.test.ts` for why React is published as a global.
 (globalThis as unknown as { React: unknown }).React = React;
 
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -80,10 +78,12 @@ async function engineWith(rows: EngineMessage[], over: Partial<EngineAdapter> = 
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false });
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -92,23 +92,13 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
   vi.useRealTimers();
 });
 
 async function render(engine: OhmailEngine, query: string): Promise<void> {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, {
-          children: h(SearchView, {
-            engine, version: 1, now: NOW, query,
-            onQuery: () => {}, onOpen: () => {},
-          }),
-        }),
-      }),
-    );
-  });
+  await act(async () => { root.render(<RegisteredSearch engine={engine} now={NOW} />); });
+  await act(async () => { typeSearch(host, query); });
 }
 
 /** Every scope sentence on screen, joined — the line lives in `.results-head` and in `.empty`. */
@@ -153,8 +143,8 @@ describe("the archive pass has a ceiling", () => {
     expect(scopeText()).not.toContain("Searching your whole mailbox");
     // And the retry this view already offers for a refusal is on screen for this state too:
     // a stated dead end with no way out of it is half a sentence.
-    const retry = [...host.querySelectorAll("button")].map((b) => b.textContent ?? "");
-    expect(retry).toContain("Search your whole mailbox again");
+    const retry = within(host).getByRole("button", { name: "Search again" });
+    expect(retry).toBeTruthy();
   });
 
   it("an archive that answers within the ceiling is never called out", async () => {

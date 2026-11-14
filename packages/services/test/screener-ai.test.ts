@@ -7,7 +7,7 @@ import { asc, eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, routingDecisions, type LedgerTx, type Tx } from "@trafficflow/db";
 import { makeHaikuClassifier, type AnthropicLike, type ClassifierPort, type ClassifierInput, type ClassifierResult } from "@trafficflow/core";
 import { ScreenerService } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /**
  * **The Screener's AI is a PURCHASE, and the read path cannot make it.**
@@ -66,7 +66,7 @@ const NOW = new Date("2026-07-28T12:00:00Z");
 async function billable(
   opts: { credits?: number; status?: "active" | "canceled"; aiDisabled?: boolean } = {},
 ) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener" });
   const credits = fakeSpendPort(
     opts.aiDisabled
@@ -893,7 +893,7 @@ describe("UNMETERED hosts and cross-account reach", () => {
   });
 
   it("naming another account's sender buys nothing — the queue lookup is account-led", async () => {
-    // BOTH accounts in ONE database, or this proves nothing: two `makeCtx` calls are two
+    // BOTH accounts in ONE database, or this proves nothing: two `makeSuggestionCtx` calls are two
     // separate PGlite instances and a cross-account read would "pass" by having nothing to read.
     const mine = await billable({ credits: 10 });
     const otherAccount = randomUUID();

@@ -23,6 +23,7 @@ export interface ResolvedSessionCore {
   accountId: string;
   userId: string;
   sessionId: string;
+  familyId?: string;
   lastTwofaAt: Date | null;
   scope: SessionScope;
   /**
@@ -63,6 +64,7 @@ export async function resolveSession(db: UnboundDb, token: string, now: Date): P
   const rows = await bindDb(db, { account: null, key: digest })
     .select({
       id: sessions.id,
+      familyId: sessions.familyId,
       accountId: sessions.accountId,
       userId: sessions.userId,
       lastTwofaAt: sessions.lastTwofaAt,
@@ -85,6 +87,7 @@ export async function resolveSession(db: UnboundDb, token: string, now: Date): P
     accountId: row.accountId,
     userId: row.userId,
     sessionId: row.id,
+    familyId: row.familyId,
     lastTwofaAt: row.lastTwofaAt,
     // The column is CHECK-constrained to ('full','enrollment') by migration 0017, so
     // this narrowing is exhaustive rather than a silent fallback.

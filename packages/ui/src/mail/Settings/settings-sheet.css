@@ -108,6 +108,19 @@
     gap: var(--s2);
   }
 
+  /* A quiet action lines up with the text edge, including after wrapping onto its own line. */
+  .oh-settingssheet:not([data-wants])
+    .oh-settingssheet-acts
+    > .oh-button[data-kind="quiet"]:not([data-bare]):first-child {
+    margin-left: var(--oh-settingssheet-pull);
+  }
+
+  .oh-settingssheet:not([data-wants])
+    .oh-settingssheet-acts
+    > .oh-button[data-kind="quiet"]:not([data-bare]):last-child {
+    margin-right: var(--oh-settingssheet-pull);
+  }
+
   :root[data-face="ohmarchy"] .oh-settingssheet {
     --oh-settingssheet-dot: 8px;
   }

@@ -5,7 +5,7 @@
  * what the seating step relies on.
  */
 import type { EngineMessage, FolderEntity, TagEntity as TagDTO } from "@ohmail/wire";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useAddressList } from "@ohmail/app-logic/address";
@@ -16,7 +16,7 @@ import { useTagsList } from "@ohmail/app-logic/tags";
 import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine";
 import { useTrashList } from "@ohmail/app-logic/trash";
 import { Frame } from "../../src/frame/Frame.js";
-import type { PlaceEntry, PlaceId } from "../../src/frame/contract.js";
+import type { PlaceEntry } from "../../src/frame/contract.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { addressPlace, AddressAbove } from "../../src/address/index.js";
 import { draftsPlace, DraftsAbove } from "../../src/drafts/index.js";
@@ -27,9 +27,10 @@ import { trashPlace, TrashAbove } from "../../src/trash/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
+import { unseated } from "../support/unseated.js";
 import { fakeMail } from "../reader/support/fake-mail.js";
 import { wideWindow } from "../ohbox/setup.js";
-import { at, draft, msg, stamp, WORDS } from "./lists-world.js";
+import { at, draft, msg, NO_HIT, stamp, walkAt, WORDS } from "./lists-world.js";
 
 const mail: EngineMessage[] = [
   msg({
@@ -46,7 +47,17 @@ const folder = { id: "f1", name: "Workshops", mailboxId: "mb", mailbox: "mb" } a
 
 function useSeat() {
   const [openId, open] = useState<string | null>(null);
-  return { openId, open, markSeen: () => true, act: () => {}, stamp, settled: true, owed: false };
+  return {
+    openId,
+    open,
+    markSeen: () => true,
+    act: () => {},
+    entered: NO_HIT,
+    ...walkAt(),
+    stamp,
+    settled: true,
+    owed: false,
+  };
 }
 
 /** Each place's Above, its model over plain rows, as a seat would stand it. */
@@ -113,7 +124,15 @@ const ABOVE: Record<string, (props: { children: ReactNode }) => ReactNode> = {
         notSent: new Map(),
       },
       report: () => {},
-      words: { discarded: "", undo: "", notSent: "", refused: () => "", queued: () => "" },
+      words: {
+        discarded: "",
+        undo: "",
+        changed: "",
+        unsupported: "",
+        notSent: "",
+        refused: () => "",
+        queued: () => "",
+      },
       stamp,
       appointment: stamp,
       now: new Date(at(3)),
@@ -132,16 +151,17 @@ const ABOVE: Record<string, (props: { children: ReactNode }) => ReactNode> = {
       open: () => {},
       stamp,
       placeOf: (f) => f,
+      ...walkAt(),
     });
     return <TrashAbove model={model}>{children}</TrashAbove>;
   },
 };
 
 const ENTRIES: readonly [PlaceEntry, string, string][] = [
-  [historyPlace, "#/history", "History"],
-  [tagsPlace, "#/tag/t1", "Tags"],
-  [folderPlace, "#/folder/f1", "Workshops"],
-  [addressPlace, "#/address/petra%40ex.example", "Petra Wyss"],
+  [unseated(historyPlace), "#/history", "History"],
+  [unseated(tagsPlace), "#/tag/t1", "Tags"],
+  [unseated(folderPlace), "#/folder/f1", "Workshops"],
+  [unseated(addressPlace), "#/address/petra%40ex.example", "Petra Wyss"],
   [draftsPlace, "#/drafts", "Drafts"],
   [trashPlace, "#/trash", "Trash"],
 ];
@@ -156,11 +176,11 @@ function mount(entry: PlaceEntry, at: string) {
     engine,
     service: "self",
     scope: "acct-1",
-    places: { [entry.id]: entry } as Partial<Record<PlaceId, PlaceEntry>>,
+    places: { [entry.id]: entry.id === "trash" ? unseated(entry) : entry },
+    above: ABOVE[entry.id]!,
     window: fakeWindow("desktop"),
     address: fakeAddress(at),
   });
-  const Above = ABOVE[entry.id]!;
   const binding: EngineBinding = {
     engine,
     demo: false,
@@ -170,9 +190,7 @@ function mount(entry: PlaceEntry, at: string) {
   return render(
     <TextProvider locale="en" messages={ALL} timeZone="UTC">
       <EngineContext.Provider value={binding}>
-        <Above>
-          <Frame host={made.host} />
-        </Above>
+        <Frame host={made.host} />
       </EngineContext.Provider>
     </TextProvider>,
   );
@@ -192,14 +210,15 @@ describe("the list places, each alone in the frame", () => {
   it("the places with a rail entry name it in their own words; a folder and an address have none", () => {
     for (const [entry, address, title] of ENTRIES) {
       const view = mount(entry, address);
-      const rail = view.container.querySelector(`[data-rail-id="${entry.id}"]`);
-      if (entry.rail === null) expect(rail).toBeNull();
-      else expect(rail?.textContent).toContain(title);
+      const rail = screen.getByRole("navigation", { name: "Places" });
+      const button = within(rail).queryByRole("button", { name: title });
+      if (entry.rail === null) expect(button).toBeNull();
+      else expect(button?.textContent).toContain(title);
       view.unmount();
     }
     expect(ENTRIES.map(([e]) => [e.id, e.rail?.group ?? null])).toEqual([
       ["history", "more"],
-      ["tags", "tags"],
+      ["tags", null],
       ["folder", null],
       ["address", null],
       ["drafts", "more"],
@@ -207,7 +226,7 @@ describe("the list places, each alone in the frame", () => {
     ]);
   });
 
-  it("the four reader places use the reader's column; Trash asks the room for its own, Drafts' blank column does not", () => {
+  it("the four reader places use the reader's column, Trash and Drafts their own, and none asks the room: it stands for the frame's life", () => {
     const panes = ENTRIES.map(([e]) =>
       e.panes.kind === "columns" ? [e.id, e.panes.Reading === "reader", e.panes.room ?? false] : [e.id],
     );
@@ -217,7 +236,7 @@ describe("the list places, each alone in the frame", () => {
       ["folder", true, false],
       ["address", true, false],
       ["drafts", false, false],
-      ["trash", false, true],
+      ["trash", false, false],
     ]);
   });
 });

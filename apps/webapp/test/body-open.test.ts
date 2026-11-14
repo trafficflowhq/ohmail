@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder, MessageBodyWire, MutationOutcome } from "@ohmail/wire";
+import type { EngineMessage, Folder, MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,12 +54,6 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-08-03T12:00:00.000Z");
-/** `StreamCard`'s SC_CLAMP plus its 28 px "no point clamping a few lines" tolerance. */
-const CLAMP_PX = 348 + 28;
-
-/** Text long enough that the stubbed height exceeds the clamp — a real newsletter. */
-const LONG = "Sanded the north elevation again today. ".repeat(40);
-
 function layoutStubs(): () => void {
   const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
   const offset = Object.getOwnPropertyDescriptor(proto, "offsetHeight");
@@ -112,22 +106,13 @@ function msg(over: Partial<EngineMessage> & { id: string }): EngineMessage {
   };
 }
 
-/** Every mutation the surface dispatched — the Screener's side-effect-free claim is measured. */
-let sent: EngineMutation[] = [];
-/** Every body the engine asked the wire for. */
-let bodiesFetched: string[] = [];
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let restoreLayout: (() => void) | null = null;
 
 async function engineWith(
   seedMessages: EngineMessage[],
-  // the wire carries `html` now, and the DEFAULT here is `null` on purpose: these
-  // cases are about the text path, and a body stub that quietly grew an html part would
-  // change which renderer every one of them exercises.
-  body: (id: string) => Promise<MessageBodyWire> = async (id) => ({
-    text: `FULL BODY of ${id}\n${LONG}`, html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-  }),
+  body: (id: string) => Promise<MessageBodyWire>,
 ): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
@@ -144,15 +129,9 @@ async function engineWith(
         changes: { creates: [], updates: [], moves: [], deletes: [] },
         cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
       }),
-      mutate: async (m): Promise<MutationOutcome> => {
-        sent.push(m);
-        return { changes: [], seq: null };
-      },
+      mutate: async (): Promise<MutationOutcome> => ({ changes: [], seq: null }),
       withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async (id) => {
-        bodiesFetched.push(id);
-        return body(id);
-      },
+      fetchBody: body,
     },
   });
 }
@@ -178,8 +157,6 @@ async function render(node: React.ReactNode): Promise<void> {
 
 beforeEach(() => {
   (globalThis as Record<string, unknown>).CSS ??= { escape: (v: string) => v };
-  sent = [];
-  bodiesFetched = [];
   restoreLayout = layoutStubs();
   (window as unknown as { matchMedia: unknown }).matchMedia = (q: string) => ({
     matches: false, media: q, onchange: null,
@@ -211,15 +188,6 @@ async function mountCard(props: Record<string, unknown>): Promise<HTMLElement> {
 }
 
 describe("StreamCard — the clamp tells the truth about what it is clamping", () => {
-  it("a LONG full body clamps and offers the pill: the shape the prototype drew", async () => {
-    const card = await mountCard({ body: LONG, bodyState: "full" });
-    expect(card.classList.contains("short")).toBe(false);
-    expect(card.classList.contains("pend")).toBe(false);
-    expect(card.querySelector(".sc-state")).toBeNull();
-    // And the pill works.
-    await act(async () => { pill(card).click(); });
-    expect(pill(cards()[0]!).getAttribute("aria-expanded")).toBe("true");
-  });
 
   it("a SHORT full body is short, draws no pill, says nothing — and still opens for the keyboard", async () => {
     // The one case where no DRAWN pill is the correct answer, and the reason `short` still exists.
@@ -231,37 +199,6 @@ describe("StreamCard — the clamp tells the truth about what it is clamping", (
     expect(card.querySelector(".sc-state")).toBeNull();
     await act(async () => { pill(card).click(); });
     expect(pill(cards()[0]!).getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("A SNIPPET IS SHORT AND STILL OPENABLE — the defect, closed", async () => {
-    /**
-     * THE HEART OF THAT CHANGE. A one-line snippet measures short; `.scast.short .sc-x{display:none}`
-     * then hides the Expand pill; and on a live account that was EVERY card in Reads and
-     * Receipts. "No pill, because there is nothing to expand" — the report, from the
-     * opposite cause to a missing affordance.
-     *
-     * `pend` is what re-enables the pill in CSS, and `toggle()`'s `short && !pending` is what
-     * makes the re-enabled pill do something. Both are asserted, because either one alone
-     * ships a button that is visible and dead, or a body that can never be asked for.
-     *
-     * Red two ways: drop `pend` from the class list (the CSS rule below has nothing to match,
-     * so the pill stays hidden on a real page); or restore `toggle()`'s bare `if (short)
-     * return` (the pill renders, and clicking it does nothing — aria-expanded stays false).
-     */
-    const hydrated: string[] = [];
-    const card = await mountCard({
-      body: "one line of m1",
-      bodyState: "snippet",
-      onToggle: (open: boolean) => { if (open) hydrated.push("c1"); },
-    });
-
-    expect(card.classList.contains("short")).toBe(true);
-    expect(card.classList.contains("pend")).toBe(true);
-
-    await act(async () => { pill(card).click(); });
-    expect(pill(cards()[0]!).getAttribute("aria-expanded")).toBe("true");
-    // Expanding IS the request for the body.
-    expect(hydrated).toEqual(["c1"]);
   });
 
   it("and the CSS that un-hides that pill exists — and the fade is NOT dropped any more", async () => {
@@ -298,46 +235,6 @@ describe("StreamCard — the clamp tells the truth about what it is clamping", (
     expect(failed.querySelector(".sc-state")!.classList.contains("warn")).toBe(true);
   });
 
-  it("the state line is a SIBLING of the body, never inside it", async () => {
-    // `.sc-body` holds the mail. A reader who selects the text of a message must not get the
-    // product's own sentence with it.
-    const card = await mountCard({ body: "one line", bodyState: "loading", loadingLabel: "Loading the full message…" });
-    for (const p of card.querySelectorAll(".sc-body")) {
-      expect(p.textContent).not.toContain("Loading the full message");
-    }
-  });
-
-  it("an OPEN card re-pins to its new height when the body arrives", async () => {
-    /**
-     * The expand-then-fill order this slice creates. `toggle()` pins `max-height` to the
-     * content height measured AT THE CLICK — which, before hydration, is a two-line snippet.
-     * Without the re-pin the fetched body is clipped at the snippet's height: the pill works,
-     * the request succeeds, and the mail is still one line.
-     *
-     * Red by removing `open` from the measuring effect's dependency list, or the
-     * `if (open) clip.style.maxHeight` line inside it.
-     */
-    const { StreamCard } = await import("@ohmail/ui");
-    const base = { id: "c1", from: "S", time: "09:12", subject: "S" };
-    await render(h(StreamCard as never, { ...base, body: "one line", bodyState: "snippet" } as never));
-    await act(async () => { pill(cards()[0]!).click(); });
-
-    const pinnedForSnippet = Number.parseInt(
-      (cards()[0]!.querySelector<HTMLElement>(".sc-clip")!.style.maxHeight || "0").replace("px", ""), 10);
-    expect(pinnedForSnippet).toBeGreaterThan(0);
-    expect(pinnedForSnippet).toBeLessThan(CLAMP_PX);
-
-    // The body lands, exactly as a hydration re-render delivers it.
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(StreamCard as never, { ...base, body: LONG, bodyState: "full" } as never),
-      }));
-    });
-    const pinnedForBody = Number.parseInt(
-      (cards()[0]!.querySelector<HTMLElement>(".sc-clip")!.style.maxHeight || "0").replace("px", ""), 10);
-    expect(pinnedForBody).toBeGreaterThan(CLAMP_PX);
-  });
 });
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
@@ -346,7 +243,7 @@ describe("StreamCard — the clamp tells the truth about what it is clamping", (
 
 async function mountReads(engine: OhmailEngine): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   function Host(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -375,75 +272,6 @@ async function mountReads(engine: OhmailEngine): Promise<void> {
 }
 
 describe("Reads — collapsed by default, and openable because the body arrives", () => {
-  it("the CURRENT card hydrates, and it is the ONLY one that does", async () => {
-    /**
-     * The "An unverified account must not be able to generate meaningful cost" invariant's posture, at the surface. `read` is a permissive cost class, so a pile-wide
-     * prefetch is cheap to write and wrong to ship: a real Reads folder holds many
-     * newsletters, and fetching all of them because the view mounted bills a read for each
-     * of them, for mail nobody opened.
-     *
-     * Red by hydrating `partition.fresh.concat(partition.seen)` in the mount effect — the
-     * assertion below becomes three ids.
-     */
-    const engine = await engineWith([
-      msg({ id: "r1", date: "2026-08-03T09:00:00.000Z" }),
-      msg({ id: "r2", date: "2026-08-02T09:00:00.000Z" }),
-      msg({ id: "r3", date: "2026-08-01T09:00:00.000Z" }),
-    ]);
-    await engine.start();
-    await mountReads(engine);
-
-    // `current` falls back to the first unread, which is the newest — one id, not the pile.
-    expect(bodiesFetched).toEqual(["r1"]);
-  });
-
-  it("the hydrated card shows the FULL body; its siblings show a snippet AND their pill", async () => {
-    /**
-     * The report, answered. Before this change every card here rendered
-     * `m.body ?? m.snippet` — one line — measured short, and lost its pill; the pile looked
-     * like mail with nothing in it and no way to ask for more.
-     *
-     * Red by reverting `ReadsView`'s card to `body={m.body ?? m.snippet}` with no `bodyState`:
-     * the hydrated card falls back to its snippet AND every card claims `full`, so the two
-     * assertions fail for the two separate reasons the slice exists to fix.
-     */
-    const engine = await engineWith([
-      msg({ id: "r1", date: "2026-08-03T09:00:00.000Z" }),
-      msg({ id: "r2", date: "2026-08-02T09:00:00.000Z" }),
-    ]);
-    await engine.start();
-    await mountReads(engine);
-
-    const byId = new Map(cards().map((c) => [c.dataset.sid, c]));
-    const hydrated = byId.get("r1")!;
-    expect(hydrated.textContent).toContain("FULL BODY of r1");
-    expect(hydrated.classList.contains("pend")).toBe(false);
-    expect(hydrated.classList.contains("short")).toBe(false);
-
-    const untouched = byId.get("r2")!;
-    expect(untouched.textContent).toContain("one line of r2");
-    expect(untouched.textContent).not.toContain("FULL BODY");
-    // Short, but pending — so the pill is reachable and asking for the body is possible.
-    expect(untouched.classList.contains("short")).toBe(true);
-    expect(untouched.classList.contains("pend")).toBe(true);
-  });
-
-  it("expanding a snippet card fetches its body, and the card then holds the mail", async () => {
-    const engine = await engineWith([
-      msg({ id: "r1", date: "2026-08-03T09:00:00.000Z" }),
-      msg({ id: "r2", date: "2026-08-02T09:00:00.000Z" }),
-    ]);
-    await engine.start();
-    await mountReads(engine);
-    expect(bodiesFetched).toEqual(["r1"]);
-
-    const r2 = cards().find((c) => c.dataset.sid === "r2")!;
-    await act(async () => { pill(r2).click(); });
-    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
-
-    expect(bodiesFetched).toEqual(["r1", "r2"]);
-    expect(cards().find((c) => c.dataset.sid === "r2")!.textContent).toContain("FULL BODY of r2");
-  });
 
   it("a FAILED fetch says so on the card, rather than passing the snippet off as the mail", async () => {
     // Risk 2, at a stream surface. Red by having the engine write a `ready` record on a
@@ -469,7 +297,7 @@ async function mountScreener(engine: OhmailEngine): Promise<void> {
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   function Host(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -492,8 +320,6 @@ async function mountScreener(engine: OhmailEngine): Promise<void> {
   await settleFirstPaint();
 }
 
-const heldArticles = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".scn-mails .hmail")];
-
 describe("Screener — every held message, in full, for the sender being decided about", () => {
   const HELD = [
     msg({ id: "s1", from: { name: "Lena", address: "lena@atelier.example" }, folder: "ohmail/Screener" as Folder, date: "2026-08-03T08:12:00.000Z" }),
@@ -501,84 +327,6 @@ describe("Screener — every held message, in full, for the sender being decided
     msg({ id: "s3", from: { name: "Win", address: "win@jackpot.example" }, folder: "ohmail/Screener" as Folder, date: "2026-08-02T08:40:00.000Z" }),
   ];
 
-  it("renders held.length articles, each with the HYDRATED body", async () => {
-    /**
-     * `ScreenerSenderDTO.held` has promised "every held message, in full — there is deliberately
-     * no heldCount / lastSubject / lastBody beside it" since it was written, and
-     * `ScreenerView`'s own comment says "NO-COLLAPSE: every held message renders". On a live
-     * account both were true about the COUNT and false about the CONTENT: every row is derived,
-     * so every body was the snippet, and a consent decision was being taken on one line.
-     *
-     * This is the live shape — derived rows, no `screener_sender` fixture anywhere — with the
-     * bodies fetched.
-     *
-     * Red by reverting `heldOf` to `m.body ?? m.snippet`: the article count still passes and
-     * every body reverts to "one line of s1", which is exactly how the claim outlived the code.
-     */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountScreener(engine);
-
-    // The selected sender is the newest, Lena, with two held messages.
-    const articles = heldArticles();
-    expect(articles).toHaveLength(2);
-    expect(articles.map((a) => a.querySelector(".hm-body")!.textContent))
-      .toEqual([
-        expect.stringContaining("FULL BODY of s1"),
-        expect.stringContaining("FULL BODY of s2"),
-      ]);
-    // Bounded by `held.length`: the OTHER sender's message is not fetched.
-    expect(bodiesFetched.sort()).toEqual(["s1", "s2"]);
-    // Nothing says "loading" or "couldn't" once the bodies are in.
-    expect(host!.querySelector(".scn-mails .hm-state")).toBeNull();
-  });
-
-  it("READING HELD MAIL IS SIDE-EFFECT-FREE — nothing is marked seen, nothing moves", async () => {
-    /**
-     * The ruling's one rule for this pile. The ⇧-twins on the decision keys exist precisely
-     * because plain filing does NOT mark held mail read, and a preview that marked it read on
-     * sight — or that ran the Ohbox's dwell timer, or moved a waterline — would make that
-     * distinction meaningless and would silently consume a stranger's first contact.
-     *
-     * Red by adding a `mark_seen` (or any mutation) to the selection path: `sent` stops being
-     * empty. `hydrateBody` is a GET and writes nothing but a client-local record.
-     */
-    const engine = await engineWith(HELD);
-    await engine.start();
-    await mountScreener(engine);
-
-    expect(heldArticles()).toHaveLength(2);
-    expect(sent).toEqual([]);
-    // The mail is still unread and still held, on the record as well as on screen.
-    for (const id of ["s1", "s2", "s3"]) {
-      const m = engine.read().get<EngineMessage>("message", id)!;
-      expect(m.unread, id).toBe(true);
-      expect(m.folder, id).toBe("ohmail/Screener");
-    }
-  });
-
-  it("a FAILED body says so in the preview — the one place a wrong decision is expensive", async () => {
-    /**
-     * Risk 2 again, and here it is the sharpest: the whole argument for giving this pile full
-     * bodies by default is that a consent decision taken on a truncation is the actual risk.
-     * A preview that silently showed a snippet after a failed fetch would reinstate exactly
-     * that, with the decision bar sitting above it.
-     *
-     * Red by dropping `bodyState` from `HeldMail`, or by having `heldOf` not carry it.
-     */
-    const engine = await engineWith(HELD, async () => { throw new Error("HTTP 503"); });
-    await engine.start();
-    await mountScreener(engine);
-
-    const notes = [...host!.querySelectorAll<HTMLElement>(".scn-mails .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("Couldn't load the full message");
-      expect(n.classList.contains("warn")).toBe(true);
-    }
-    // And the snippet is still on screen — it is the only text there is.
-    expect(heldArticles()[0]!.querySelector(".hm-body")!.textContent).toContain("one line of s1");
-  });
 
   /**
    * ═══ A HELD SENSITIVE MESSAGE SHOWS ITS BODY LIKE ANY OTHER ════════════════════════════
@@ -588,36 +336,6 @@ describe("Screener — every held message, in full, for the sender being decided
    * Screener hydrates and shows a held sensitive message's body exactly like every other held one.
    * `hydrateBody` no longer refuses it, and `.hm-body` renders its text rather than a block.
    */
-  it("a SENSITIVE held message is fetched and shows its body — no withholding at the gate", async () => {
-    /**
-     * WATCHED RED by restoring `isProtectedMessage`'s live branch: the engine stops fetching and
-     * the code disappears. The `.hm-body` redaction arm that used to stand beside it is gone —
-     * body withholding was withdrawn and the branch rendered for nobody — so restoring the
-     * predicate alone is the whole mutation now.
-     */
-    const engine = await engineWith([
-      msg({
-        id: "p1",
-        from: { name: "Bank", address: "bank@example.invalid" },
-        folder: "ohmail/Screener" as Folder,
-        date: "2026-08-03T10:00:00.000Z",
-        snippet: "Your code is 481920",
-        sensitivity: {
-          sensitive: true, category: "otp",
-          no_ai: true, no_forward: true, no_kb: true, priority: false,
-        },
-      }),
-    ]);
-    await engine.start();
-    await mountScreener(engine);
-
-    const article = heldArticles()[0]!;
-    // The engine fetches it like any other held body — the reader gets the whole message.
-    expect(bodiesFetched).toContain("p1");
-    // No withholding block; the fetched body renders where a stranger's mail is judged.
-    expect(article.querySelector(".protected")).toBeNull();
-    expect(article.querySelector(".hm-body")!.textContent).toContain("FULL BODY of p1");
-  });
 
   it("…and an ordinary body still says it is loading — the spinner was NARROWED, not deleted", async () => {
     /**

@@ -1,5 +1,7 @@
 {
   "agenda": {
+    "landmark": "Agenda",
+    "close": "Close Agenda",
     "title": "Agenda",
     "today": "Today",
     "tomorrow": "Tomorrow",
@@ -11,6 +13,7 @@
     "untilDay": "until {day}",
     "span": "{from}–{to}",
     "count": "{count, number}",
+    "top": "Back to top",
     "month": "Month"
   }
 }

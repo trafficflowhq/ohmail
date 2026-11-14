@@ -14,9 +14,13 @@ import en from "../../messages/en.json";
 import { act, message, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
-import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./writing-world.js";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "../_write-1-writing.js"; // Write over parts that stay (share write-1): today's words and keys leave
 
 const W = en.write;
+
+/* Write's text is the ground's rich editor (ProseMirror): a drop asks the page which place is under the pointer,
+   which every browser answers and jsdom does not. Nothing is under it here. */
+if (typeof document.elementFromPoint !== "function") document.elementFromPoint = () => null;
 
 beforeEach(() => {
   try {
@@ -36,9 +40,25 @@ afterEach(async () => {
 const sendButton = (): HTMLButtonElement =>
   within(screen.getByRole("toolbar", { name: W.verbs })).getByRole("button", { name: W.send }) as HTMLButtonElement;
 const sends = (w: WritingWorld): number => w.sent.filter((m) => m.kind === "mail_send").length;
+const sendAnnouncements = () => within(letterRegion()).getAllByRole("status")
+  .map((status) => status.textContent)
+  .filter((text) => text === W.status.sending || text === W.status.offline);
+
+/** The Tiptap editor behind Write's rich text box (ProseMirror's view stamps it on its own element). */
+type RichBox = HTMLElement & {
+  editor?: { chain(): { selectAll(): { insertContent(w: string): { run(): boolean } } }; getText(): string };
+};
+/** The letter's text box: the ground's rich editor, as every host mounts it. */
+function richText(): NonNullable<RichBox["editor"]> {
+  const box = screen.getByRole("textbox", { name: W.text }) as RichBox;
+  if (!box.editor) throw new Error("the letter's text box is no rich editor");
+  return box.editor;
+}
+/** A person writes `words` in place of what the letter's text held (over a whole selection). */
+const writeText = (words: string): void => void richText().chain().selectAll().insertContent(words).run();
 
 async function typeLetter(to: string, body: string): Promise<void> {
-  const typed = screen.getByRole("textbox", { name: W.to });
+  const typed = screen.getByRole("combobox", { name: W.to }) // the To line offers people: a combobox;
   await act(async () => {
     fireEvent.change(typed, { target: { value: to } });
   });
@@ -49,7 +69,7 @@ async function typeLetter(to: string, body: string): Promise<void> {
     fireEvent.change(screen.getByRole("textbox", { name: W.subject }), { target: { value: "Friday" } });
   });
   await act(async () => {
-    fireEvent.change(screen.getByRole("textbox", { name: W.text }), { target: { value: body } });
+    writeText(body);
   });
   await rounds(2);
 }
@@ -72,7 +92,7 @@ describe("the new letter", () => {
     await rounds(10);
     expect(sends(w)).toBe(1);
     expect(sendButton().disabled).toBe(true);
-    expect(screen.getByRole("status").textContent).toContain(W.status.sending);
+    expect(sendAnnouncements()).toEqual([W.status.sending]);
   });
 
   it("Mod+Enter from the subject sends once, however long it is held", async () => {
@@ -120,7 +140,7 @@ describe("the new letter", () => {
     await w.unmount();
     await mountWriting({ view: true, store: w.store });
     await rounds(4);
-    expect((screen.getByRole("textbox", { name: W.text }) as HTMLTextAreaElement).value).toBe("Words worth keeping.");
+    expect(richText().getText()).toBe("Words worth keeping.");
   });
 
   it("draws the sender's signature under the text; written over in place, the send carries the new words", async () => {
@@ -256,8 +276,8 @@ describe("the new letter", () => {
       fireEvent.click(sendButton());
     });
     await rounds(20);
-    expect(screen.getByRole("status").textContent).toContain(W.status.offline);
-    expect((screen.getByRole("textbox", { name: W.text }) as HTMLTextAreaElement).value).toBe("Written on the train.");
+    expect(sendAnnouncements()).toEqual([W.status.offline]);
+    expect(richText().getText()).toBe("Written on the train.");
   });
 });
 
@@ -266,9 +286,10 @@ describe("the new letter", () => {
 const bytes = (n: number, fill: number): Uint8Array<ArrayBuffer> => new Uint8Array(new ArrayBuffer(n)).fill(fill);
 const b64 = (u: Uint8Array): string => Buffer.from(u).toString("base64");
 const letterRegion = (): HTMLElement => screen.getAllByRole("region", { name: W.letter }).at(-1)!;
+/** Files let go over the letter: on its text, inside the letter's one landmark (the sheet that names it). */
 async function drop(...files: File[]): Promise<void> {
   await act(async () => {
-    fireEvent.drop(letterRegion(), { dataTransfer: { types: ["Files"], files } });
+    fireEvent.drop(within(letterRegion()).getByRole("textbox", { name: W.text }), { dataTransfer: { types: ["Files"], files } });
   });
   await rounds(6);
 }
@@ -539,7 +560,7 @@ describe("a send nobody can confirm", () => {
     await rounds(10);
     expect(document.body.textContent).not.toContain("Plans for Friday");
     expect(document.body.textContent).not.toContain("Shall we meet at noon?");
-    expect((screen.getByRole("textbox", { name: W.text }) as HTMLTextAreaElement).value).toBe("");
+    expect(richText().getText()).toBe("");
     expect(screen.queryByRole("button", { name: W.held.sendAgain })).toBeNull();
     expect(readComposeDraft("acc-2")?.body ?? "").toBe("");
     expect(readComposeDraft("acc-2")?.subject ?? "").toBe("");
@@ -576,7 +597,7 @@ function drafter(fromText: "door" | "none" = "door") {
   };
   return { wire, asked, state };
 }
-const letterText = (): string => (screen.getByRole("textbox", { name: W.text }) as HTMLTextAreaElement).value;
+const letterText = (): string => richText().getText();
 const control = (label: string): HTMLButtonElement => screen.getByRole("button", { name: label }) as HTMLButtonElement;
 
 describe("draft from your text, on a new letter", () => {
@@ -676,7 +697,7 @@ describe("draft from your text, on a new letter", () => {
     await act(async () => w.now().openDraft(forward));
     await rounds(8);
     await act(async () => {
-      fireEvent.change(screen.getByRole("textbox", { name: W.text }), { target: { value: "Have a look at this." } });
+      writeText("Have a look at this.");
     });
     await rounds(2);
     const offered =

@@ -2,9 +2,10 @@
  * A SECTION WITH NO ROWS says so once, and only what is so: nothing before the queue is read, why where the list is
  * withheld, and on Waiting the sentence that is true where nothing organizes the account's mail.
  */
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { sharedNotOrganizedWhy } from "@ohmail/app-logic/mail-state/mail-state";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
-import { emptyOf, type ScreenerView } from "@ohmail/app-logic/screener";
+import { emptyOf, type ScreenerEmpty, type ScreenerView } from "@ohmail/app-logic/screener";
 import { Empty as KitEmpty, WaitRow } from "@ohmail/ui/base";
 import { ListLine } from "@ohmail/ui/mail";
 import { useFrame } from "../../frame/commands.js";
@@ -12,17 +13,34 @@ import { NONE } from "../../host/index.js";
 import { useText } from "../../text/index.js";
 import { useScreener, useScreenerBeside } from "../contract.js";
 
-export function Empty({ view }: { view: ScreenerView }) {
-  const t = useText("screener");
+export function useScreenerEmpty(view: ScreenerView | null): ScreenerEmpty {
   const model = useScreener();
   const { facts } = useScreenerBeside();
+  if (view === null || (view.segment === "waiting" && !model.queueSettled)) return { kind: "loading" };
+  return emptyOf(view.segment, model, facts, view.rows.length + view.decided.length);
+}
+
+export function Empty({ view }: { view: ScreenerView }) {
+  const t = useText("screener");
+  const { facts } = useScreenerBeside();
   const { commands, host, plan } = useFrame();
-  const count = view.rows.length + view.decided.length;
-  const empty = emptyOf(view.segment, model, facts, count);
+  const empty = useScreenerEmpty(view);
+  const delayed = useLoadingGrace(empty.kind === "withheld");
   if (empty.kind === "rows") return null;
   if (empty.kind === "loading") return <KitEmpty label={t("place.loading")} />;
-  if (empty.kind === "withheld")
-    return <ListLine>{t(empty.why === "listing" ? "emptyListing" : "emptyImporting")}</ListLine>;
+  if (empty.kind === "withheld") {
+    const listing = empty.why === "listing";
+    return (
+      <div aria-busy="true">
+        {delayed ? (
+          <>
+            <KitEmpty label={t(listing ? "emptyListingTitle" : "emptyImportingTitle")} />
+            <ListLine>{t(listing ? "emptyListing" : "emptyImportingLine")}</ListLine>
+          </>
+        ) : null}
+      </div>
+    );
+  }
   const notYet = view.segment === "waiting" ? facts.notOrganizingYet : null;
   const first = notYet?.mailboxes[0];
   /* The press that changes it, by the first such mailbox: never agreed is the first run's question again for it;
@@ -91,22 +109,26 @@ export function AllDecided() {
   const t = useText("screener");
   const places = useText("place");
   const { commands } = useFrame();
+  const { facts } = useScreenerBeside();
+  const hint = facts.notOrganizingYet === null ? "empty.waiting.hint" : "empty.waiting.mixedHint";
   return (
-    <KitEmpty
-      mark="oh"
-      label={t("place.empty.waiting")}
-      act={{ label: places("ohbox"), onPress: () => commands.go({ place: "ohbox" }) }}
-    />
+    <>
+      <KitEmpty
+        mark="oh"
+        label={t("place.empty.waiting")}
+        act={{ label: places("ohbox"), onPress: () => commands.go({ place: "ohbox" }) }}
+      />
+      <ListLine>{t(hint)}</ListLine>
+    </>
   );
 }
 
 /** Is Waiting all decided: read, no row and no decision left, and nothing that says nothing organizes it? */
 export function useAllDecided(view: ScreenerView | null): boolean {
-  const model = useScreener();
+  const empty = useScreenerEmpty(view);
   const { facts } = useScreenerBeside();
   if (view === null || view.segment !== "waiting" || view.open !== null || view.failedOpen !== null)
     return false;
-  const count = view.rows.length + view.decided.length;
-  if (emptyOf("waiting", model, facts, count).kind !== "empty") return false;
+  if (empty.kind !== "empty") return false;
   return facts.notOrganizingYet === null || !facts.notOrganizingYet.every;
 }

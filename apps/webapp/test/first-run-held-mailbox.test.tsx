@@ -1,13 +1,10 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import type { OnboardingAi, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { M, O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ SETUP ON A MAILBOX SOMEBODY ELSE ORGANIZES ═════════════════════════════════════════════
@@ -64,14 +61,17 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  *    is the case that carries it.
  *
  * All four mutations were run; the fourth is recorded because its result is the useful one.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`, its step the same `firstRunStep`, now
+ * `packages/app-logic/src/mailboxes/first-run/step.ts`) over a ground the case moves
+ * (`_first-run-stage.tsx`), its words the stage's catalogue; a pick is the claim
+ * question's radio by its name; leaving is the frame's address moving to its place. Every
+ * expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
-const tm = messages.mailboxes;
+const t = O;
+const tm = M;
 
 /** What a standalone connect creates: a consent-less reader, and nobody named yet. */
 const PRE_CONSENT: OnboardingMailbox = {
@@ -89,15 +89,16 @@ const PEEKED: OnboardingMailbox = {
   organizerState: "held",
 };
 
-const facts = (mailbox: OnboardingMailbox | null, over: Partial<OnboardingFacts> = {}):
-OnboardingFacts => ({
-  door: "local",
+/** The mailbox and the install's AI answer, as the ground hands them. */
+interface Facts { mailbox: OnboardingMailbox; ai: OnboardingAi }
+const facts = (mailbox: OnboardingMailbox, over: { ai?: OnboardingAi } = {}): Facts => ({
   mailbox,
-  account: { onboardingCompletedAt: null },
-  ai: "unset",
-  queuedSenders: 0,
-  ...over,
+  ai: over.ai ?? "unset",
 });
+
+/** The row the ground hands: the account's id and address beside exactly the case's facts. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow =>
+  ({ id: id("mb-1"), address: "me@example.invalid", holderSince: "30 Aug 2026", ...mailbox }) as FirstRunRow;
 
 interface Harness {
   el: HTMLElement;
@@ -115,109 +116,82 @@ interface Harness {
   organizedWith: Array<unknown>;
 }
 
-const roots: Root[] = [];
-afterEach(async () => {
-  /* Inside `act`, because a bare unmount is itself a React update and the warning it prints
-     ("An update to Root inside a test was not wrapped in act") looks exactly like a real one. */
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
+/** The claim question's two radios by their names (the stopped holder's "here" has its own). */
+const HERE = [t.elsewhereChoiceHere, t.elsewhereChoiceHereStopped];
+const READ = [t.elsewhereChoiceRead];
+
 async function mount(o: {
-  facts: OnboardingFacts;
+  facts: Facts;
   /** Present only where the case is about the SUMMARY's two shapes. */
   pull?: { screened: number; history: number; pulled: number };
 }): Promise<Harness> {
-  let current = o.facts;
+  let current = rowOf(o.facts.mailbox);
   let completes = 0;
-  let leaves = 0;
   const organizedWith: unknown[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [current],
     door: "local",
-    ai: o.facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      organizedWith.push(body);
-      /* THE SERVER TOOK THE CONSENT. It does NOT make this install the organizer — that is the
-         lease's decision on the next pass, and on a live Cloud claim the answer is no. The facts
-         are left exactly as the caller set them, which is the honest simulation. */
-      current = {
-        ...current,
-        mailbox: { ...current.mailbox!, organizeConsentedAt: "2026-09-02T12:04:32.000Z" },
-      };
-      return "stored";
+    /* Today's stage read the managed-service fact with no host stating it: absent reads as managed, so ohmail Cloud
+       was said as itself. The new stage takes it from the host's service; this case's holder is ohmail Cloud. */
+    service: "managed",
+    live: () => [current],
+    about: { pull: { ...(o.pull ?? { screened: 0, history: 0, pulled: 0 }), whole: false } },
+    verbs: {
+      ai: o.facts.ai,
+      organize: async (_id, body) => {
+        organizedWith.push(body);
+        /* THE SERVER TOOK THE CONSENT. It does NOT make this install the organizer — that is the
+           lease's decision on the next pass, and on a live Cloud claim the answer is no. The facts
+           are left exactly as the caller set them, which is the honest simulation. */
+        current = { ...current, organizeConsentedAt: "2026-09-02T12:04:32.000Z" };
+        return "stored";
+      },
+      complete: async () => { completes += 1; },
+      setAiEnabled: async () => { /* answered */ },
     },
-    complete: async () => { completes += 1; },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  let bumpOutside: (() => void) | null = null;
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    bumpOutside = () => bump((n) => n + 1);
-    return h(FirstRun, {
-      host,
-      facts: current,
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { leaves += 1; },
-      pull: o.pull ?? { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      organizedSince: "30 Aug 2026",
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
   });
-
-  const press = async (label: string) => {
-    const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
-    if (!button) {
-      throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
-        + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
-    }
-    await act(async () => {
-      button.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
+  const el = st.el;
+  const at = st.address();
+  const radios = (): HTMLElement[] => [...el.querySelectorAll<HTMLElement>("[role=radio]")];
+  const valueOf = (r: HTMLElement): "here" | "read" | null => {
+    const name = (r.querySelector(".oh-radioline-word")?.textContent ?? "").trim();
+    return HERE.includes(name) ? "here" : READ.includes(name) ? "read" : null;
   };
-
-  const radios = (): HTMLInputElement[] =>
-    [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
-
   return {
     el,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => el.textContent ?? "",
-    press,
+    press: async (label) => {
+      if (![...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith(label))) {
+        throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
+          + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
+      }
+      await st.press(label);
+    },
     pick: async (value) => {
-      const radio = radios().find((i) => i.value === value);
+      const radio = radios().find((r) => valueOf(r) === value);
       if (!radio) {
         throw new Error(`no ${JSON.stringify(value)} option; saw: `
-          + radios().map((i) => JSON.stringify(i.value)).join(", "));
+          + radios().map((r) => JSON.stringify(r.textContent)).join(", "));
       }
       await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
     },
-    picked: () => radios().find((i) => i.checked)?.value ?? null,
+    picked: () => {
+      const on = radios().find((r) => r.getAttribute("aria-checked") === "true");
+      return on ? valueOf(on) : null;
+    },
     move: async (mailbox) => {
-      current = { ...current, mailbox };
-      await act(async () => { bumpOutside?.(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+      current = rowOf(mailbox);
+      await st.move([current]);
     },
     completed: () => completes,
-    left: () => leaves,
+    /* The run left: the frame's address went from the stage to its place. */
+    left: () => (st.address() !== at && !st.address().includes("first-run") ? 1 : 0),
     organizedWith,
   };
 }
@@ -319,7 +293,7 @@ describe("the claim question cannot be walked past", () => {
     expect(cont?.disabled, "Continue is pressable with nothing picked").toBe(true);
     await live.press(t.continue);
     // Enter submits the step's form whatever the button says.
-    await act(async () => { live.el.querySelector("form")!.requestSubmit(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
+    await act(async () => { live.el.querySelector("h1")!.closest("form")!.requestSubmit(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
     expect({ heading: live.heading(), organized: live.organizedWith }).toEqual({ heading: t.elsewhereTitle, organized: [] });
     const stopped = await mount({ facts: facts({ ...PEEKED, organizerState: "stopped" }) });
     expect(stopped.picked()).toBe("here");

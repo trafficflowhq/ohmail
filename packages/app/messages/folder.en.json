@@ -39,6 +39,7 @@
       "menu": "List"
     },
     "move": {
+      "title": "Move to a folder",
       "moved": "Moved to {name}.",
       "outdated": "{by} organizes this mailbox with an older ohmail, which can't move into folders. Update ohmail there.",
       "outdatedUnknown": "The install that organizes this mailbox runs an older ohmail, which can't move into folders. Update ohmail there.",

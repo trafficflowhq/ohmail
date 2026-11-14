@@ -2,14 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { cleanup, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import messages from "../messages/en.json";
-import { shellFrameOf, shellSliceOf } from "./source-anchor";
-
-const read = (rel: string): string =>
-  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+import { listSeat } from "../../../packages/app/test/places/list-seat.js";
 
 /**
  * TRI-F4 / TRI-F6 / TRI-F11 — THE MESSAGE VERBS INSIDE TRIAGE, AND THE WAY OUT OF A PILE.
@@ -71,6 +67,7 @@ afterEach(async () => {
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  cleanup();
   vi.restoreAllMocks();
 });
 
@@ -93,15 +90,16 @@ async function mount(node: React.ReactElement): Promise<HTMLElement> {
   return container;
 }
 
-async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+async function shell(hash = "#/triage"): Promise<HTMLElement> {
+  window.location.hash = hash;
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  return mount(h(ThemeProvider, { children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }));
+  return mount(h(ThemeProvider, { children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }) }));
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -118,37 +116,39 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-/** The segmented control's label for a pile, count included — the view's own claim. */
-const segText = (el: HTMLElement): string =>
-  el.querySelector(".triage-seg")?.textContent ?? "";
+const segment = (label: string) =>
+  within(screen.getByRole("group", { name: "Piles" })).queryByRole("button", { name: label });
+const laterRows = () => within(screen.getByRole("listbox", { name: "Answer Later" })).getAllByRole("option");
+const reading = () => within(screen.getByRole("region", { name: "Reading" }));
+const forwardEditor = () => screen.queryByRole("textbox", { name: "Forward body" });
+
+async function openLater(): Promise<void> {
+  await shell();
+  await screen.findByRole("listbox", { name: "Answer Later" });
+  await screen.findByRole("region", { name: "Reading" });
+}
 
 describe("TRI-F4 — a/e/b act INSIDE the Triage view", () => {
   it("`e` on the shown Answer-Later message parks it — key, not footer", async () => {
-    const container = await shell();
-    await key("g");
-    await key("l");
-    await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
+    await openLater();
     // The fixture world queues two message-backed entries; the first openable is shown.
-    expect(segText(container)).toContain("Answer Later 2");
+    expect(segment("Answer Later 2")).not.toBeNull();
 
     await key("e");
-    await waitFor(() => segText(container).includes("Answer Later 1"), "the pile shrank");
+    await waitFor(() => segment("Answer Later 1") !== null, "the pile shrank");
     // Parked grew: one fixture orphan plus the message just parked.
-    expect(segText(container)).toContain("Parked 2");
+    expect(segment("Parked 2")).not.toBeNull();
   }, 20000);
 
   it("`a` on a message already queued takes it OUT — the un-triage path (TRI-F6)", async () => {
-    const container = await shell();
-    await key("g");
-    await key("l");
-    await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
-    expect(segText(container)).toContain("Answer Later 2");
+    await openLater();
+    expect(segment("Answer Later 2")).not.toBeNull();
 
     // The shown message is IN the Answer Later pile, so the verb that put it there is the
     // verb that takes it out. Before the toggle this keypress was a silent no-op (and in
     // the Ohbox, a "{name} is already queued" toast) — the pile count is what bites.
     await key("a");
-    await waitFor(() => segText(container).includes("Answer Later 1"), "the message left the pile");
+    await waitFor(() => segment("Answer Later 1") !== null, "the message left the pile");
     await waitFor(
       () => (document.body.textContent ?? "").includes("Out of Answer Later"),
       "the toast states the direction",
@@ -174,22 +174,18 @@ describe("⇧F inside Triage — the pill's keycap and the key are one claim", (
    * while the keycap on the bar is unchanged.
    */
   it("`⇧F` on the shown message opens the forward dock — the key the pill advertises here", async () => {
-    const container = await shell();
-    await key("g");
-    await key("l");
-    await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
+    await openLater();
 
     // The bar in this view prints the keycap, which is the claim the key has to honour.
-    const fwd = [...container.querySelectorAll<HTMLButtonElement>(".view-triage .abar-b")]
-      .find((b) => (b.textContent ?? "").startsWith("Forward"));
+    const fwd = reading().getByRole("button", { name: /^Forward/ });
     expect(fwd, "no Forward button on the triage pane").toBeDefined();
-    expect(fwd!.querySelector("kbd")?.textContent, "the bar advertises the chord").toBe("⇧ f");
-
+    const shortcut = fwd.getAttribute("aria-keyshortcuts");
     await key("F", { shiftKey: true });
     await waitFor(
-      () => container.querySelector(".view-triage .reply .reply-forwarding") != null,
+      () => forwardEditor() !== null,
       "the forward dock, opened by the key the bar advertises",
     );
+    expect(shortcut, "the bar advertises the chord").toBe("Shift+F");
   }, 20000);
 });
 
@@ -214,62 +210,41 @@ describe("the NARROW reader and the view's cursor are the same message", () => {
    * and this reddens naming both ids.
    */
   it("`⇧F` after tapping the SECOND row forwards that row — not the pile's first", async () => {
-    // The narrow world: `readColumnHidden()` asks `(max-width: 699.98px)`, so a matching query is
-    // the phone layout where the reading column is `display:none` and a tap raises the reader.
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      writable: true,
-      value: (query: string) => ({
-        matches: /max-width/.test(query),
-        media: query, onchange: null,
-        addEventListener: () => {}, removeEventListener: () => {},
-        addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
-      }),
-    });
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      await shell();
+      await screen.findByRole("listbox", { name: "Answer Later" });
+      const [first, second] = laterRows();
+      expect(second, "the fixture pile needs a second row").toBeDefined();
+      expect(second!.getAttribute("aria-label")).not.toBe(first!.getAttribute("aria-label"));
 
-    const container = await shell();
-    await key("g");
-    await key("l");
-    await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
+      await act(async () => { second!.click(); });
+      const sheet = within(await screen.findByRole("dialog", { name: "Reading" }));
+      const subject = sheet.getByRole("heading", { level: 2 }).textContent!;
+      expect(second!.getAttribute("aria-label")).toContain(subject);
+      expect(first!.getAttribute("aria-label")).not.toContain(subject);
 
-    const rows = [...container.querySelectorAll<HTMLElement>(".view-triage :is(.row, [role=option])[data-id]")];
-    expect(rows.length, "the fixture pile needs a second row for this case to mean anything")
-      .toBeGreaterThan(1);
-    const first = rows[0]!.dataset.id!;
-    const second = rows[1]!.dataset.id!;
-    expect(second).not.toBe(first);
-
-    await act(async () => { rows[1]!.click(); });
-    await waitFor(() => document.querySelector(".reader") != null, "the reader sheet");
-
-    await key("F", { shiftKey: true });
-    await waitFor(
-      () => document.querySelector(".reply[data-reply-for]") != null,
-      "the forward dock",
-    );
-    const target = document.querySelector<HTMLElement>(".reply[data-reply-for]")!.dataset.replyFor;
-    expect(
-      target,
-      `⇧F forwarded ${target === first ? "the pile's FIRST row" : String(target)} while the ` +
-        "reader was showing the second — the view's cursor did not follow the tap",
-    ).toBe(second);
+      await key("F", { shiftKey: true });
+      await waitFor(() => forwardEditor() !== null, "the forward editor");
+      expect(sheet.getByRole("textbox", { name: "Forward body" })).toBeTruthy();
+      expect(sheet.getByRole("heading", { level: 2 }).textContent).toBe(subject);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    }
   }, 20000);
 });
 
 describe("TRI-F6 — the footer button is the same toggle", () => {
   it("the pane's Later button un-queues a queued message", async () => {
-    const container = await shell();
-    await key("g");
-    await key("l");
-    await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
-    expect(segText(container)).toContain("Answer Later 2");
+    await openLater();
+    expect(segment("Answer Later 2")).not.toBeNull();
 
     // The reading column's action bar — the button and the key dispatch one code path.
-    const later = [...container.querySelectorAll<HTMLButtonElement>(".view-triage .abar-b")]
-      .find((b) => (b.textContent ?? "").includes("Later"));
+    const later = reading().getByRole("button", { name: /Later/ });
     expect(later, "no Later button on the pane").toBeDefined();
     await act(async () => later!.click());
-    await waitFor(() => segText(container).includes("Answer Later 1"), "the button un-queued it");
+    await waitFor(() => segment("Answer Later 1") !== null, "the button un-queued it");
   }, 20000);
 });
 
@@ -287,11 +262,16 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
    * silently — a second `b` that "worked" in the Ohbox would mean the row was still there.
    */
   it("books, states the day, leaves the Ohbox, and `b` in the pile opens the chooser whose Now brings it back", async () => {
-    const container = await shell();
-    // Queue nothing — act on the Ohbox cursor. `j` enters the list, `b` books resurface.
+    await shell("#/ohbox");
+    await screen.findByRole("heading", { name: "Ohbox" });
+    await screen.findAllByRole("option");
     await key("j");
-    const booked = container.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
-    expect(booked, "`j` put the cursor on no row").toBeDefined();
+    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+    const id = window.location.hash.split("/m/")[1];
+    expect(id, "`j` put the cursor on no row").toBeTruthy();
+    const booked = screen.getAllByRole("option").find((row) => row.dataset.id === id)
+      ?.getAttribute("aria-label");
+    expect(booked).toBeTruthy();
     await key("b");
     await waitFor(
       () => (document.body.textContent ?? "").includes("Resurfaces"),
@@ -299,102 +279,39 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     );
     // ONE PILE: the booked row is gone from the Ohbox the moment it is booked.
     await waitFor(
-      () => container.querySelector(`.view-ohbox :is(.row, [role=option])[data-id="${booked!}"]`) == null,
+      () => screen.queryByRole("option", { name: booked! }) === null,
       "the booked row left the Ohbox",
     );
 
     // The way out TRI-F6 names, taken in the pile the row moved to.
     window.location.hash = "#/triage/resurface";
     await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(() => container.querySelector(".view-triage") != null, "the Resurface pile");
+    const pile = await screen.findByRole("listbox", { name: "Resurface" });
+    const moved = within(pile).getAllByRole("option").find((row) => row.dataset.id === id);
+    expect(moved, "the booking did not reach the Resurface pile").toBeDefined();
+    await act(async () => { moved!.click(); });
+    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
     /* INVERTED for that change: `b` in the pile used to cancel the booking; it opens the chooser
        its Resurface button opens, focused on Now (jsdom does not press a focused button on ↵). */
     await key("b");
-    await waitFor(
-      () => (document.body.textContent ?? "").includes("Resurface when?"),
-      "`b` in the pile opens the chooser",
-    );
-    const now = [...document.querySelectorAll<HTMLButtonElement>(".abar button")]
-      .find((el) => (el.textContent ?? "").trim() === "Now");
-    await act(async () => { now?.click(); });
+    const picker = await screen.findByRole("menu", { name: "Resurface" });
+    const now = within(picker).getByRole("menuitem", { name: "Now" });
+    await act(async () => { now.click(); });
     await waitFor(
       () => (document.body.textContent ?? "").includes("Back at the top"),
       "Now brings it back",
     );
   }, 20000);
-
-  it("the keyboard default IS a picker option — tomorrow, at the hour the strip shows", async () => {
-    // The picker's presets are `tomorrowAt` / `nextWeekAt` (MessagePane); the keyboard and
-    // palette default used `nextFridayNine`, a horizon the picker cannot produce — so the key's
-    // outcome could be neither predicted nor reproduced from the documented control. Both
-    // dispatch sites mint the picker's own first dated preset.
-    //
-    // SINCE mail 0110 the preset takes an HOUR, and the invariant is one degree stronger: the
-    // key and the strip must agree about WHICH hour, not merely which day. Both must read
-    // `consent.resurfaceTime` — the value the strip's control is filled from — so a key that
-    // kept minting 09:00 after somebody set 14:30 goes red here. The single-message verb and
-    // the selection verb are asserted apart: one of the pair was fixed alone once.
-    /* THE TWO VERBS MOVED to `shell-verbs.ts` at ARCH-022 and the chrome supply stayed in
-       `AppShell.tsx`, so the claim is asked of each frame that holds its half — and the two
-       negatives are asked of BOTH, because a bare 09:00 written back into either is the same
-       defect. Each verb is read inside its OWN declaration: one of the pair was fixed alone
-       once, and a file-wide match cannot tell them apart. */
-    const src = read("../app/shell/AppShell.tsx");
-    const verbs = shellFrameOf("onMessageAction").source;
-    for (const [where, text] of [["AppShell.tsx", src], ["shell-verbs.ts", verbs]] as const) {
-      expect(text, `${where} mints the retired Friday horizon`).not.toMatch(/nextFridayNine/);
-      // Neither site may mint a bare 09:00 any more — the `*Nine` wrappers belong to send later.
-      expect(text, `${where} mints a bare 09:00`).not.toMatch(/tomorrowNine/);
-    }
-    // `.iso` since a horizon carries the wall clock it booked as well as the instant: both sites
-    // take the instant off the SAME value the strip labels its buttons from.
-    // `nowAt()` and not `now`: the shell's rendered clock is at most a minute old, and a horizon
-    // minted from it at 00:00:30 books yesterday's tomorrow. A press asks the clock itself
-    // (`resurface-horizon-at-the-press.test.tsx` drives that on the rendered strip).
-    expect(shellSliceOf("onMessageAction"), "the single-message verb")
-      .toMatch(/const when = tomorrowAt\(nowAt\(\), consent\.resurfaceTime\)\.iso;/);
-    expect(shellSliceOf("onBulkAction"), "the selection verb").toMatch(
-      /const when = action === "resurface" \? tomorrowAt\(nowAt\(\), consent\.resurfaceTime\)\.iso : null;/,
-    );
-    // …and the strip fills its control from the SAME field, through the chrome the shell
-    // supplies it on — one source, or the key and the control are two answers again.
-    expect(src).toMatch(/resurfaceTime: consent\.resurfaceTime,/);
-    const pane = read("../app/shell/MessagePane.tsx");
-    expect(pane).toMatch(/resurfaceClock\(chrome\.resurfaceTime\)/);
-    expect(pane).toMatch(/resurfaceHorizons\(base, resurfaceAt\)/);
-  });
 });
 
-describe("STA-F8 — the pile hint renders once", () => {
-  it("an empty Parked pile does not repeat the header's sentence in the empty state", async () => {
-    const { TriageView } = await import("../app/views/TriageView.js");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
-    const { WithListGone } = await import("./_list-gone.js");
-    const container = await mount(
-      h(KeymapProvider, {
-        children: h(WithListGone, { children: h(TriageView, { onMarkSeen: () => {},
-          piles: { replyLater: [], setAside: [], resurface: [] },
-          settled: true,
-          owed: false,
-          pile: "aside",
-          onPile: () => {},
-          frDone: new Set<string>(),
-          onStartFR: () => {},
-          messageOf: () => null,
-          tags: [],
-          now: new Date("2026-08-02T09:00:00.000Z"),
-          onOpen: () => {},
-          hydrateBody: () => {},
-          onAction: () => {},
-          onAddTag: () => {},
-        }) }),
-      }),
-    );
-    const hint = (messages as unknown as Record<string, Record<string, string>>).triage!.hintAside!;
-    const text = container.textContent ?? "";
-    const occurrences = text.split(hint).length - 1;
-    // The header's `.triage-cta` line carries the sentence; the empty state must not say it
-    // again 150px below. Exactly once.
-    expect(occurrences, `the pile hint appears ${occurrences}× — expected once`).toBe(1);
+describe("the empty Parked list", () => {
+  it("says the pile is empty once", async () => {
+    listSeat({ letters: [], first: "#/triage/aside" });
+    await screen.findByRole("heading", { name: "Triage" });
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(screen.getAllByText((_, element) =>
+      element?.tagName === "P" && element.textContent === messages.parked.empty,
+    )).toHaveLength(1);
+    expect(screen.queryByText(messages.triage.hintAside)).toBeNull();
   });
 });

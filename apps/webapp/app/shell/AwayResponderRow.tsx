@@ -37,7 +37,7 @@ import {
   AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_PILES_DEFAULT, AWAY_SCREENER_FOLDER,
   awayEffectivePiles, type AwayPile,
 } from "@trafficflow/core/away-scope";
-import { away as awayApi, type AwayResponderSaveWire, type AwayResponderWire } from "../api-client";
+import { away as awayApi, type AwayResponderWire, type AwayTransport } from "../api-client";
 import { dayEnd, dayStamp, dayValue, tomorrowNine } from "./format";
 import { noteOf, TravelledChangeNote, type TravelledNote } from "./travelled-change";
 import { holdLeave } from "./routing";
@@ -146,23 +146,9 @@ export const AWAY_COPY = {
   leaveKeep: "Keep editing",
 } as const;
 
-type Audience = AwayResponderWire["audience"];
+export type { AwayTransport } from "../api-client";
 
-/**
- * Where the row is read and written — two installs reach the same account's row down two wires. A
- * browser tab talks to the hosted API (`app/api-client`'s `away`, the default). The desktop cannot:
- * its content policy forbids the window opening a socket and the Cloud client is not compiled into
- * that build (`apps/desktop/vite.config.ts` aliases `../api-client` to a refusing stub), so both of
- * its doors send the request down the pipe to the engine on this machine — the hosted door forwards
- * with the bearer, the standalone door answers from the local database and its drain sends. The
- * transport is a parameter; everything else is shared, because a second copy of this control would
- * be a second definition of what strangers are told. See {@link local} for the sentence that differs.
- */
-export interface AwayTransport {
-  state: () => Promise<AwayResponderWire>;
-  /** Answers {@link AwayResponderSaveWire}: the row, plus `pending` when the edit had to travel. */
-  save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
-}
+type Audience = AwayResponderWire["audience"];
 
 /** The two audiences, in the order the control draws them. Labels are resolved at render. */
 const AUDIENCE_IDS: readonly Audience[] = ["screened_in", "everyone"];

@@ -1,4 +1,8 @@
-/** The door of `streams`: the read rule of News and Receipts, its adapter on the scroller, the leave and the model. */
+/**
+ * The door of `streams`: the read rule of News and Receipts, its adapter on the scroller, the leave, the model, and a
+ * stream live over the mail ground with what it writes.
+ */
+export { presentsUnread } from "@ohmail/client-engine";
 export {
   STREAM_REST_MS,
   createStreamReadRule,
@@ -15,7 +19,6 @@ export {
 } from "./leave.js";
 export {
   measureStream,
-  restingAt,
   useStreamRead,
   type StreamItemFacts,
   type StreamReadDom,
@@ -32,6 +35,7 @@ export {
 } from "./stream-scroll.js";
 export {
   STREAM_ITEM,
+  StreamVisits,
   StreamModelContext,
   lineStampOf,
   useStream,
@@ -40,3 +44,8 @@ export {
   type StreamModel,
   type StreamPlace,
 } from "./use-stream.js";
+export { useStreamMove } from "./move.js";
+export { FEED_OF, useStreamLive, type StreamLiveOwn } from "./live.js";
+export { useStreamNew } from "./rail-count.js";
+export { useStreamWrites, type MarkAllWords, type StreamWrites } from "./writes.js";
+export { keepInPlace, streamHostOf } from "./reply-in-place.js";

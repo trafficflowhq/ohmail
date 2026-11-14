@@ -3,10 +3,15 @@
  * says comes from the model (who waits, whether it is open, Done) and from the shell's words (names, times, tags).
  */
 import { useState } from "react";
+import type { EngineMessage } from "@ohmail/wire";
 import type { OhboxRow, ThreadMark } from "@ohmail/client-engine";
 import { useWalkedSquares, type OhboxListModel } from "@ohmail/app-logic/ohbox";
+import { claimFact, senderCheckSentence } from "@ohmail/app-logic/screener";
 import { Tag } from "@ohmail/ui/base";
 import { GroupHeading, ReadSquares, Row, Rows, type SquareKind } from "@ohmail/ui/mail";
+import { useFrame } from "../frame/index.js";
+import { NONE } from "../host/index.js";
+import type { ContactOf } from "../reader/contact/Contact.js";
 import { useLocale, useText } from "../text/index.js";
 import { useRowSwipe } from "../touch/index.js";
 import type { OhboxBeside } from "./beside.js";
@@ -18,6 +23,8 @@ import { useSquaresRun } from "./squares-run.js";
 export interface OhboxGroupProps {
   model: OhboxListModel;
   beside: OhboxBeside;
+  /** On the phone the personal tag leaves room for the sender's address. */
+  showTaggedByline?: boolean;
   /** The group's name, said by its heading and its listbox. */
   name: string;
   /** Every row of the group, for its count and its dot. */
@@ -37,6 +44,7 @@ const SQUARE: Record<ThreadMark, SquareKind> = { read: "seen", unread: "unseen",
 export function OhboxGroup({
   model,
   beside,
+  showTaggedByline = false,
   name,
   rows,
   from,
@@ -46,6 +54,27 @@ export function OhboxGroup({
   heading,
 }: OhboxGroupProps) {
   const t = useText("ohbox");
+  const screening = useText("screening");
+  const {
+    host: {
+      features: { reader },
+    },
+    plan,
+  } = useFrame();
+  const ScreenContact = reader === NONE ? undefined : reader.Screening;
+  const [contact, setContact] = useState<{ person: ContactOf; openId: string | undefined } | null>(null);
+  const openId = model.selected?.id;
+  const showScreening = (letter: EngineMessage, anchor: HTMLElement) =>
+    setContact({
+      person: {
+        messageId: letter.id,
+        slot: `${letter.id} from`,
+        name: beside.words.name(letter),
+        address: letter.from.address,
+        anchor,
+      },
+      openId,
+    });
   const [menu, setMenu] = useState<{ row: OhboxRow; at: { x: number; y: number } } | null>(null);
   const drawn = rows.slice(from, to);
   const hot = rows.some(model.rowUnread);
@@ -60,19 +89,51 @@ export function OhboxGroup({
       ) : null}
       {drawn.length > 0 ? (
         <Rows label={name} many>
-          {drawn.map((row, k) => (
-            <OhboxRowItem
-              key={row.key}
-              model={model}
-              beside={beside}
-              row={row}
-              index={rowBase === undefined ? undefined : rowBase + from + k}
-              place={{ at: from + k + 1, of: rows.length }}
-              onMenu={(at) => setMenu({ row, at })}
-              words={t}
-            />
-          ))}
+          {drawn.map((row, k) => {
+            const letter = model.rowOpen(row) ? (model.selected ?? row.face) : row.face;
+            const canScreen = ScreenContact && model.picked.size === 0 && !beside.words.sentTo(letter);
+            return (
+              <OhboxRowItem
+                key={row.key}
+                model={model}
+                beside={beside}
+                showTaggedByline={showTaggedByline}
+                row={row}
+                index={rowBase === undefined ? undefined : rowBase + from + k}
+                place={{ at: from + k + 1, of: rows.length }}
+                onMenu={(at) => setMenu({ row, at })}
+                faceAction={
+                  canScreen
+                    ? {
+                        label: screening("openFor", { sender: beside.words.name(letter) }),
+                        onPress: (anchor) => showScreening(letter, anchor),
+                      }
+                    : undefined
+                }
+                onAddress={
+                  ScreenContact && plan.pointer !== "coarse" && model.picked.size === 0
+                    ? showScreening
+                    : undefined
+                }
+                words={t}
+              />
+            );
+          })}
         </Rows>
+      ) : null}
+      {contact &&
+      ScreenContact &&
+      contact.openId === openId &&
+      model.picked.size === 0 &&
+      contact.person.anchor.isConnected ? (
+        <ScreenContact
+          key={contact.person.slot}
+          direct
+          person={contact.person}
+          onClose={() => setContact(null)}
+        >
+          {() => null}
+        </ScreenContact>
       ) : null}
       {menu ? <OhboxRowMenu model={model} row={menu.row} at={menu.at} onClose={() => setMenu(null)} /> : null}
     </>
@@ -82,26 +143,35 @@ export function OhboxGroup({
 /** One mailbox written two ways is one person: an address is compared without its case. */
 const sameAddress = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
-function OhboxRowItem({
-  model,
-  beside,
-  row,
-  index,
-  place,
-  onMenu,
-  words: t,
-}: {
+interface OhboxRowItemProps {
   model: OhboxListModel;
   beside: OhboxBeside;
+  showTaggedByline: boolean;
   row: OhboxRow;
   index: number | undefined;
   place: { at: number; of: number };
   onMenu: (at: { x: number; y: number }) => void;
+  faceAction?: Parameters<typeof Row>[0]["faceAction"];
+  onAddress?: (letter: EngineMessage, anchor: HTMLElement) => void;
   words: ReturnType<typeof useText>;
-}) {
+}
+
+function OhboxRowItem({
+  model,
+  beside,
+  showTaggedByline,
+  row,
+  index,
+  place,
+  onMenu,
+  faceAction,
+  onAddress,
+  words: t,
+}: OhboxRowItemProps) {
   const w = beside.words;
   const locale = useLocale();
   const face = row.face;
+  const senderCheck = useSenderCheckChip(face);
   const single = row.members.length === 1;
   const sent = single || row.unreadCount === 0 ? w.sentTo(face) : null;
   const voices = model.groupVoices(row);
@@ -136,11 +206,13 @@ function OhboxRowItem({
   const tag = w.tag(row.openTarget);
   const picked = model.pickState(row.members.every((m) => model.picked.has(m.id)));
   const open = model.rowOpen(row);
+  const addressSource = voices.length === 1 && sent === null ? voices[0] : undefined;
   const swipe = useRowSwipe(row.openTarget.id, ohboxRowSides(model, row, t));
   return (
     <Row
       who={who.who}
-      address={marks || tag ? undefined : who.address}
+      address={marks || (tag && !showTaggedByline) ? undefined : who.address}
+      senderCheck={senderCheck}
       people={people}
       peopleMore={more > 0 ? `+${more}` : undefined}
       peopleLabel={
@@ -178,6 +250,8 @@ function OhboxRowItem({
       }
       onOpen={() => model.pressRow(row)}
       onMenu={onMenu}
+      faceAction={faceAction}
+      addressAction={onAddress && addressSource ? (anchor) => onAddress(addressSource, anchor) : undefined}
       swipe={swipe}
       listing={{
         name: `${who.names}: ${subject}`,
@@ -186,6 +260,7 @@ function OhboxRowItem({
           unread: unread ? t("row.unread") : t("row.read"),
           marks: marksWords,
           file,
+          identity: senderCheck?.title,
         }),
         selected: picked ?? open,
         place,
@@ -199,4 +274,15 @@ function OhboxRowItem({
       }}
     />
   );
+}
+
+function useSenderCheckChip(face: EngineMessage) {
+  const screener = useText("screener");
+  const claim = claimFact(face);
+  return claim?.reason === "impersonation"
+    ? {
+        label: screener("senderCheck.chip", { brand: claim.brand }),
+        title: senderCheckSentence(screener, claim),
+      }
+    : undefined;
 }

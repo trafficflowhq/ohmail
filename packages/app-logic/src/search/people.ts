@@ -4,7 +4,30 @@
  * holds it anywhere. Nothing typed: everybody, the most mail first. The book is the shell's, which leaves the account's
  * own addresses out.
  */
-import type { AddressBookEntry } from "@ohmail/client-engine";
+import { addressBook, type AddressBookEntry, type EntityReader, type SearchHit } from "@ohmail/client-engine";
+import { useMemo } from "react";
+import { atStamp, useDerivedVersion } from "../engine/context.js";
+import type { RestingSearchPerson } from "./types.js";
+
+/** This closure holds only the address-book inputs and the book it builds lazily. */
+function peopleFrom(
+  presented: EntityReader,
+  ownAddresses: readonly string[],
+): () => readonly AddressBookEntry[] {
+  let book: readonly AddressBookEntry[] | undefined;
+  return () => (book ??= addressBook(presented, { exclude: ownAddresses }));
+}
+
+export function usePeople(
+  presented: EntityReader,
+  ownAddresses: readonly string[],
+): () => readonly AddressBookEntry[] {
+  const version = useDerivedVersion();
+  return useMemo(
+    () => atStamp(version, peopleFrom(presented, ownAddresses)),
+    [presented, version, ownAddresses],
+  );
+}
 
 /** How near a person is to the text: 0 nearest; null not meant at all. */
 function rankOf(p: AddressBookEntry, t: string): number | null {
@@ -65,4 +88,31 @@ export function peopleFor(text: string, book: readonly AddressBookEntry[]): Addr
     if (rank !== null) ranked.push({ p, rank, i });
   });
   return ranked.sort((a, b) => a.rank - b.rank || b.p.count - a.p.count || a.i - b.i).map((x) => x.p);
+}
+
+/** Rank the existing address book by actual From and To/Cc appearances in the mirror. */
+export function restingPeople(
+  book: readonly AddressBookEntry[],
+  messages: readonly SearchHit["message"][],
+): RestingSearchPerson[] {
+  const byAddress = new Map(book.map((person) => [person.address, { person, from: 0, to: 0 }]));
+  for (const message of messages) {
+    const sender = byAddress.get(message.from?.address?.toLowerCase() ?? "");
+    if (sender) sender.from++;
+    const recipients = new Set(
+      [...(message.to ?? []), ...(message.cc ?? [])].map((p) => p.address.toLowerCase()),
+    );
+    for (const address of recipients) {
+      const recipient = byAddress.get(address);
+      if (recipient) recipient.to++;
+    }
+  }
+  return [...byAddress.values()]
+    .filter((entry) => entry.from + entry.to > 0)
+    .sort(
+      (a, b) =>
+        b.from + b.to - (a.from + a.to) ||
+        a.person.name.localeCompare(b.person.name) ||
+        a.person.address.localeCompare(b.person.address),
+    );
 }

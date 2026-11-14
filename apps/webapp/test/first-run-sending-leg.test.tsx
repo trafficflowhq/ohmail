@@ -1,13 +1,9 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
-import type { FirstRunHost, FirstRunProbeOk } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import { act, cleanup, fireEvent, within } from "@testing-library/react";
+import type { Answered, ConnectProbed } from "@ohmail/app-logic/mailboxes/connect/types";
+import { O, P, fakeDoor } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /** The hosted door's probe, as `POST /mailboxes/probe` answers it; every body it was sent. */
 const mockProbe = vi.fn();
@@ -42,26 +38,25 @@ vi.mock("../app/hello", () => ({ SELF_HOST_BUILD: false, serverHello: async () =
  * MUTATIONS WATCHED RED, restored `cmp`-equal: the sending block dropped from the stage's
  * render → the three naming cases; `not_configured` mapped to the ok sentence → the blank case;
  * the refusal's host dropped from the sentence → the naming case.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the first run is the new frame's stage
+ * (`_first-run-stage.tsx`), its mailbox step the one connect form (`packages/app/src/mailboxes/connect`,
+ * the verdict drawn by `Tested.tsx`) over a wire that answers as the door does (`fakeDoor`); on the hosted door the
+ * wire is the web's own (`connect-wire.ts`, `webConnectWire`) over the same `mailboxes.probe` mock. The new form asks
+ * for more before a Test than today's did: a provider's tile, the address, the password and both servers; the cases
+ * give them, and the door's answer is what is scripted, as before. The verdict's MARK is read as a person's reader
+ * hears it: a failure is a refusal line (said as a status, with the warning sign), a pass a plain line. Every
+ * expectation is as it stood.
  */
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-/** A standalone run with the mailbox still to connect — the step this screen belongs to. */
-const facts: OnboardingFacts = {
-  door: "local",
-  mailbox: null,
-  account: { onboardingCompletedAt: null },
-  ai: "unset",
-  queuedSenders: 0,
-};
+/** What is said as a refusal (a status or an alert), line by line. */
+const refusalsOf = (el: HTMLElement): string[] =>
+  [...el.querySelectorAll('[role="status"], [role="alert"]')].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
 
 interface Harness {
   el: HTMLElement;
@@ -69,62 +64,41 @@ interface Harness {
   test: () => Promise<void>;
 }
 
-async function mount(answer: FirstRunProbeOk): Promise<Harness> {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
-    door: "local",
-    ai: "unset",
-    probe: async () => answer,
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => { /* nothing to finish here */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
+async function pressIn(el: HTMLElement, label: string): Promise<void> {
+  const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
+  if (!button) {
+    throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
+      + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
+  }
   await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: h(FirstRun, {
-          host,
-          facts,
-          onRefresh: () => { /* the facts do not move in these cases */ },
-          onLeave: () => { /* nobody leaves */ },
-          pull: { screened: 0, history: 0, pulled: 0 },
-          decide: null,
-          mailboxId: null,
-        }),
-      }),
-    }));
+    button.click();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
   });
-
-  const press = async (label: string): Promise<void> => {
-    const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
-    if (!button) {
-      throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
-        + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
-    }
-    await act(async () => {
-      button.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
-  };
-
-  /* A run with nothing behind it opens on the welcome screen, so the mailbox step — the one that
-     holds the fields and the test — is one press in. */
-  await press("Set up a mailbox");
-
-  return { el, text: () => el.textContent ?? "", test: () => press("Test connection") };
 }
 
-const RECEIVING: Omit<FirstRunProbeOk, "sending"> = {
+async function typeIn(el: HTMLElement, label: string, value: string): Promise<void> {
+  const input = within(el).getByLabelText(label) as HTMLInputElement;
+  await act(async () => { fireEvent.change(input, { target: { value } }); });
+}
+
+/** A standalone run with the mailbox still to connect — the step this screen belongs to. */
+async function mount(answer: ConnectProbed): Promise<Harness> {
+  const wire = fakeDoor({ probe: [{ ok: true, value: answer } as Answered<ConnectProbed>] });
+  const st = await mountStage({ rows: [], door: "local", connect: wire.door, verbs: { ai: "unset" } });
+  const el = st.el;
+  /* A run with nothing behind it opens on the welcome screen, so the mailbox step — the one that
+     holds the fields and the test — is one press in. */
+  await pressIn(el, "Set up a mailbox");
+  /* The form asks for a provider, the address, the password and both servers before a Test. */
+  await pressIn(el, P.otherLabel);
+  await typeIn(el, O.address, "someone@example.test");
+  await typeIn(el, O.password, "app-password-fixture");
+  await typeIn(el, O.imapHost, "imap.example.test");
+  await typeIn(el, O.smtpHost, "outgoing.example.test");
+  return { el, text: () => el.textContent ?? "", test: () => pressIn(el, "Test connection") };
+}
+
+const RECEIVING: Omit<ConnectProbed, "sending"> = {
   host: "imap.example.test", user: "someone@example.test", folders: 7,
 };
 
@@ -143,8 +117,10 @@ describe("the connection test states both legs", () => {
       .toContain("outgoing.example.test");
     // The MARK matters as much as the words: a tick over a refused submission is the shape this
     // row is about. One of each — the receiving pass and the sending failure.
-    expect([...rig.el.querySelectorAll(".set-verdict")].map((v) => v.className))
-      .toEqual(expect.arrayContaining([expect.stringContaining("ok"), expect.stringContaining("bad")]));
+    const refusals = refusalsOf(rig.el);
+    expect(refusals.filter((r) => r.includes("Sending:") && r.includes("outgoing.example.test")), "the sending failure is not said as one")
+      .toHaveLength(1);
+    expect(refusals.filter((r) => r.includes("imap.example.test answered")), "the receiving pass is said as a failure").toEqual([]);
   });
 
   it("an accepted submission server says so, naming the host that answered", async () => {
@@ -152,7 +128,7 @@ describe("the connection test states both legs", () => {
     await rig.test();
 
     expect(rig.text()).toContain("smtp.example.test accepted the same login");
-    expect(rig.el.querySelector(".set-verdict.bad"), "an accepted leg rendered a failure").toBeNull();
+    expect(refusalsOf(rig.el).filter((r) => r.includes("Sending:") || r.includes("answered")), "an accepted leg rendered a failure").toEqual([]);
   });
 
   it("nothing on the outgoing side is an ANSWER — no cross, and it says what it costs", async () => {
@@ -161,7 +137,7 @@ describe("the connection test states both legs", () => {
 
     expect(rig.text()).toContain("Sending: not set up");
     expect(rig.text(), "a mailbox that cannot send was not told so").toContain("nothing can be sent from it");
-    expect(rig.el.querySelector(".set-verdict.bad"), "a legitimate pair was marked as a failure").toBeNull();
+    expect(refusalsOf(rig.el).filter((r) => r.includes("Sending:") || r.includes("answered")), "a legitimate pair was marked as a failure").toEqual([]);
   });
 
   /* THE CONTROL. A door that tested only the incoming server answers no `sending` at all, and the
@@ -182,40 +158,26 @@ describe("the connection test states both legs", () => {
  */
 describe("the hosted door's connection test", () => {
   it("sends the outgoing server and renders its verdict", async () => {
-    const { useCloudFirstRun } = await import("../app/(product)/mailbox/useCloudFirstRun");
+    const { webConnectWire } = await import("../app/(product)/mailbox/connect-wire");
     mockProbe.mockResolvedValue({
       ok: true, host: "imap.gmail.com", user: "pat@gmail.test", folders: 4,
       sending: { state: "refused", host: "smtp.gmail.com", reason: "auth" },
     });
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const root = createRoot(el);
-    roots.push(root);
-    const Stage = () => {
-      const host = useCloudFirstRun(false);
-      return host ? h(FirstRun, {
-        host, facts: { ...facts, door: "cloud", ai: "on" }, add: true,
-        onRefresh: () => {}, onLeave: () => {}, pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
-      }) : null;
-    };
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", children: h(KeymapProvider, { children: h(Stage) }),
-      }));
+    const st = await mountStage({
+      rows: [], at: "#/first-run/add", door: "cloud", verbs: { ai: "on" },
+      connect: webConnectWire({ owner: () => null, returned: "page" }),
     });
-    for (const [suffix, value] of [["address", "pat@gmail.test"], ["pass", "app-password-fixture"]]) {
-      const input = el.querySelector<HTMLInputElement>(`input[id$='-${suffix}']`)!;
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+    const el = st.el;
+    /* The form asks for a provider before its fields: Gmail's tile, whose outgoing server is Google's. */
+    await pressIn(el, "Gmail");
+    for (const [label, value] of [[O.address, "pat@gmail.test"], [O.password, "app-password-fixture"]] as const) {
+      await typeIn(el, label, value);
     }
-    const test = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === messages.onboarding.test)!;
-    await act(async () => { test.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    await pressIn(el, O.test);
 
     const sent = mockProbe.mock.calls[0]![0] as { smtp?: Record<string, unknown> };
     expect(sent.smtp, "the outgoing server was not asked about").toMatchObject({ host: "smtp.gmail.com" });
     expect(sent.smtp, "the password travelled in the outgoing block").not.toHaveProperty("pass");
-    expect(el.textContent).toContain(messages.onboarding.sendingRefusedAuth.replace("{host}", "smtp.gmail.com"));
+    expect(el.textContent).toContain(O.sendingRefusedAuth.replace("{host}", "smtp.gmail.com"));
   });
 });

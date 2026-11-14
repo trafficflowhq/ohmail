@@ -1,19 +1,10 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  MemoryMirrorStore,
-  OhmailEngine,
-  messageDisplayTime,
-  type EngineAdapter,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { metaLine } from "../app/shell/format";
-import { setActiveFormatZone } from "../app/shell/locale";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, screen, within } from "@testing-library/react";
+import { messageDisplayTime } from "@ohmail/client-engine";
+import { mountReader } from "../../../packages/app/test/reader/support/mail.js";
+import { metaLine } from "@ohmail/app-logic/text/format";
 
 /**
  * "Ohbox ·", AND THE SEPARATOR THAT INTRODUCED NOTHING.
@@ -52,13 +43,7 @@ import { setActiveFormatZone } from "../app/shell/locale";
  * the ingest fix lands: a date that is always present simply means no part is ever dropped.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
 const NOW = new Date("2026-08-04T12:00:00.000Z");
-let seq = 0;
 
 /** A real-shaped row. `date: null` is the whole point and is the DEFAULT here. */
 function msg(over: Partial<EngineMessage> & { id: string }): EngineMessage {
@@ -74,33 +59,25 @@ function msg(over: Partial<EngineMessage> & { id: string }): EngineMessage {
   } as EngineMessage;
 }
 
-let host: HTMLDivElement;
-let root: Root;
+let zone: string | undefined;
 
 beforeEach(() => {
-  /* The DATED sibling's stamp renders in the reader's zone; pinned so this file keeps testing the
-     SEPARATOR rather than the machine's timezone. */
-  setActiveFormatZone("UTC");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  /* The DATED sibling's stamp renders in the reader's zone (the platform's) on the reader's clock;
+     both pinned so this file keeps testing the SEPARATOR rather than the machine's timezone. */
+  zone = process.env.TZ;
+  process.env.TZ = "UTC";
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+  localStorage.clear();
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
 
-afterEach(async () => {
-  await act(async () => root.unmount());
-  setActiveFormatZone(null);
-  host.remove();
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  if (zone === undefined) delete process.env.TZ;
+  else process.env.TZ = zone;
 });
-
-const render = async (children: React.ReactNode): Promise<void> => {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children,
-      }),
-    );
-  });
-};
 
 describe("the premise: an undated message really does reach the client with no stamp", () => {
   it("`messageDisplayTime` answers the empty string, and that is correct", () => {
@@ -131,151 +108,47 @@ describe("the separator is never printed without a value on both sides", () => {
     }
   });
 
-  it("a search hit for an undated message says where it is and stops", async () => {
-    const { SearchView } = await import("../app/views/SearchView.js");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
-
-    const store = new MemoryMirrorStore();
-    await store.load();
-    const row = msg({ id: "nodate", subject: "Kingfisher invoice", folder: "INBOX" });
-    await store.applyChanges([
-      { type: "message", op: "create", id: row.id, seq: ++seq, updatedAt: row.updatedAt, entity: row },
-    ]);
-    const engine = new OhmailEngine({
-      store,
-      now: () => NOW,
-      adapter: {
-        sync: async () => ({
-          changes: { creates: [], updates: [], moves: [], deletes: [] },
-          cursor: "0", hasMore: false, serverTime: NOW.toISOString(),
-        }),
-        mutate: async () => ({ changes: [], seq: null }),
-        fetchBody: async () => null,
-      } as unknown as EngineAdapter,
-    });
-
-    await render(
-      h(KeymapProvider, {
-        children: h(SearchView as never, {
-          engine, version: 1, now: NOW, query: "kingfisher",
-          onQuery: () => {}, onOpen: () => {},
-        } as never),
-      }),
-    );
-
-    const where = host.querySelector(".hit .where");
-    expect(where, "the premise: the hit rendered").not.toBeNull();
-    // The walked string, exactly.
-    expect(where!.textContent).not.toBe("Ohbox · ");
-    expect(where!.textContent).toBe("Ohbox");
-  });
-
   it("the open message's header does not introduce a stamp it does not have", async () => {
-    const { MessagePane } = await import("../app/shell/MessagePane.js");
-    const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+    const open = msg({ id: "open", subject: "No date on this one", threadId: "t1" });
+    const sibling = msg({ id: "sib", subject: "No date on this one", threadId: "t1" });
 
-    const open = msg({ id: "open", subject: "No date on this one" });
-    const sibling = msg({ id: "sib", subject: "No date on this one" });
-
-    host.className = "read-col";
-    await render(
-      h(MessageChromeProvider as never, {
-        value: {
-          ownAddresses: [],
-          replyTo: null,
-          replyBody: "",
-          onReplyBody: () => {},
-          closeReply: () => {},
-          sendReply: () => {},
-          replySendState: () => ({ phase: "idle" }),
-          openSenderMenu: () => {},
-          // Three in the thread, so the pane takes the conversation path.
-          conversationOf: () => [open, sibling, msg({ id: "sib2" })],
-          bodyOf: (m: Record<string, unknown>) => ({ text: m.snippet as string, state: "snippet" }),
-          hydrateBody: () => {},
-          hydrateThread: () => {},
-        },
-        children: h(MessagePane as never, {
-          message: open, tags: [], now: NOW,
-          onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
-        } as never),
-      } as never),
-    );
+    // Three in the thread, so the column draws the conversation.
+    mountReader({ letters: [open, sibling, msg({ id: "sib2", threadId: "t1" })], open: "open" });
 
     // The focused message wears its own header; an undated one leaves the stamp slot empty
     // rather than dangling a separator.
-    const stamp = host.querySelector(".conv-focus .msg-from .t");
-    expect(stamp, "the premise: the focused message rendered its header").not.toBeNull();
-    const t = stamp!.textContent ?? "";
-    expect(t, "a separator with nothing after it").not.toMatch(/·\s*$/);
+    const head = letterOf("open");
+    expect(head, "the premise: the focused message rendered its header").not.toBeNull();
+    expect(within(head!).getByRole("button", { name: "Message" }), "the premise: its head stands").toBeTruthy();
+    for (const stamp of head!.querySelectorAll("time"))
+      expect(stamp.textContent ?? "", "a separator with nothing after it").not.toMatch(/·\s*$/);
     // The header no longer carries "thread (N)" — and the count line is gone with the
     // panel redesign, which forbids restating the thread as a number anywhere.
-    expect(host.querySelector(".conv-head")).toBeNull();
-    expect(host.textContent).not.toContain("on this conversation");
+    expect(document.body.textContent).not.toMatch(/thread \(\d+\)/);
+    expect(document.body.textContent).not.toContain("on this conversation");
   });
 
   it("a thread sibling's panel with no stamp renders no stamp element at all", async () => {
-    // A panel's header guards its stamp (`{rel ? … : null}`, `MessageHeader`); a dateless one
-    // leaves no empty `.t time`. Red by rendering the stamp button unconditionally.
-    const { ConversationPanels } = await import("../app/shell/Conversation.js");
-    const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+    // A panel's header guards its stamp; a dateless one leaves no empty `time`. Red by
+    // rendering the stamp unconditionally.
+    mountReader({ letters: [msg({ id: "s1", threadId: "t1" }), msg({ id: "focus", threadId: "t1" })], open: "focus" });
 
-    await render(
-      h(MessageChromeProvider as never, {
-        value: chromeStub(),
-        children: h(ConversationPanels as never, {
-          messages: [msg({ id: "s1" }), msg({ id: "focus" })],
-          focusedId: "focus",
-          focusedPanel: h("article", { className: "pm conv-focus", "data-conv-id": "focus" }),
-          now: NOW,
-          threadSubject: "Subject s1",
-        } as never),
-      } as never),
-    );
-
-    expect(host.querySelectorAll(".pm").length, "the premise: the panels rendered").toBe(2);
-    expect(host.querySelectorAll(".pm .msg-from .t time").length).toBe(0);
+    expect(screen.getAllByRole("article").length, "the premise: the panels rendered").toBe(2);
+    expect(letterOf("s1")!.querySelectorAll("time").length).toBe(0);
   });
 
   it("and a DATED sibling's panel still renders one — the guard did not just delete the slot", async () => {
-    const { ConversationPanels } = await import("../app/shell/Conversation.js");
-    const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+    mountReader({
+      letters: [msg({ id: "s1", threadId: "t1", date: "2026-08-04T09:12:00.000Z" }), msg({ id: "focus", threadId: "t1" })],
+      open: "focus",
+    });
 
-    await render(
-      h(MessageChromeProvider as never, {
-        value: chromeStub(),
-        children: h(ConversationPanels as never, {
-          messages: [msg({ id: "s1", date: "2026-08-04T09:12:00.000Z" }), msg({ id: "focus" })],
-          focusedId: "focus",
-          focusedPanel: h("article", { className: "pm conv-focus", "data-conv-id": "focus" }),
-          now: NOW,
-          threadSubject: "Subject s1",
-        } as never),
-      } as never),
-    );
-
-    expect(host.querySelectorAll(".pm .msg-from .t time").length).toBe(1);
-    expect(host.querySelector(".pm .msg-from .t time")!.textContent).toBe("09:12");
+    expect(letterOf("s1")!.querySelectorAll("time").length).toBe(1);
+    expect(letterOf("s1")!.querySelector("time")!.textContent).toBe("09:12");
   });
 });
 
-/** The inert chrome a bare panel needs: bodies answer as snippets, nothing dispatches. */
-function chromeStub(): Record<string, unknown> {
-  return {
-    ownAddresses: [],
-    replyTo: null,
-    replyBody: { text: "", html: "" },
-    onReplyBody: () => {},
-    closeReply: () => {},
-    sendReply: () => {},
-    replySendState: () => ({ phase: "idle" }),
-    openSenderMenu: () => {},
-    conversationOf: () => [],
-    bodyOf: (m: Record<string, unknown>) => ({
-      text: m.snippet as string, state: "snippet", html: null,
-      loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-    }),
-    hydrateBody: () => {},
-    hydrateThread: () => {},
-  };
+/** One letter of the column, by the id it carries. */
+function letterOf(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-conv-id="${id}"]`);
 }

@@ -2,7 +2,7 @@
 /**
  * A RE-PAIR MOUNTS THE PAIRED PAGE'S FRAME AGAIN. A letter is begun under pairing 1; a fresh redeem in this tab (or
  * another tab's, which this one adopts at its next rotation) mints pairing 2's scope. The real gate, over the real
- * frame and today's views: pairing 2's composer is empty, and nothing sent under pairing 2 carries pairing 1's words.
+ * frame and Write's letter: pairing 2's composer is empty, and nothing sent under pairing 2 carries pairing 1's words.
  * What holds it: the gate keys its engine provider by the pairing's scope, and the frame keys everything under it by
  * the scope the gate names in the host contract. Seen red with both taken away (the provider unkeyed and one fixed
  * scope handed to the contract): pairing 1's words stand in pairing 2's composer.
@@ -57,7 +57,9 @@ async function until(ok: () => boolean, what: string): Promise<void> {
   throw new Error(`never: ${what}`);
 }
 
-const subject = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('input[aria-label="Subject"]');
+/* RE-POINTED: Write's letter's subject, by role and name (an input or a text area). */
+const subject = (): HTMLInputElement | null =>
+  document.querySelector<HTMLInputElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]');
 
 beforeEach(() => {
   sent = [];

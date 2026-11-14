@@ -8,14 +8,20 @@ import {
   SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
-import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { ERASED_DECLARATION, erasedAwareFetch } from "@ohmail/app-logic/session/account-erased";
 import { clientDeclaration } from "./client-declaration";
 import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "@ohmail/app-logic/session/sync-scheduler";
+import { retiredSignOutStorageHeld } from "@ohmail/app-logic/storage/storage-owner";
 import { sessionFetch, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
 import { webLane, type ResumeLane } from "@ohmail/app-logic/session/resume-lane";
+import type { CalendarSettingsWire } from "@ohmail/wire";
+import { api, boundApiFamily } from "../api-client";
 import { stagingAdmits, stagingUploadSource } from "../../staging-origin.mjs";
+
+/** The demo's frozen day: the fixtures' world is dated around it, and the demo's host says it is today. */
+export const DEMO_DAY: Date = DEMO_NOW;
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -48,6 +54,12 @@ const BUILD_ENV: EngineEnv = {
   NEXT_PUBLIC_DESKTOP: process.env.NEXT_PUBLIC_DESKTOP,
   NEXT_PUBLIC_STAGING_ORIGIN: process.env.NEXT_PUBLIC_STAGING_ORIGIN,
 };
+
+const isolatedScopes = new WeakMap<OhmailEngine, string>();
+
+export function isolatedScopeOf(engine: OhmailEngine): string | undefined {
+  return isolatedScopes.get(engine);
+}
 
 let saidNoWebLocks = false;
 /**
@@ -210,6 +222,7 @@ export function createEngine(
   demo: boolean,
   env: EngineEnv = BUILD_ENV,
   owner: string | null = null,
+  isolatedScope?: string,
 ): OhmailEngine {
   // `demo` FIRST, and it returns — so there is no configuration, no environment variable
   // and no argument that can make a `demo: true` call yield an `HttpAdapter`. Unchanged in
@@ -228,9 +241,9 @@ export function createEngine(
   const apiBase = env.NEXT_PUBLIC_API_BASE;
   if (!apiBase) throw new EngineUnarmedError();
 
-  const persist = owner !== null && typeof indexedDB !== "undefined";
+  const persist = isolatedScope === undefined && owner !== null && typeof indexedDB !== "undefined";
   if (persist) sayNoWebLocks();
-  if (persist) {
+  if (persist && !retiredSignOutStorageHeld()) {
     // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
     // is not something to leave lying on the origin. It is never opened, only deleted.
     void purgeLegacyMirror().catch(() => {
@@ -264,7 +277,7 @@ export function createEngine(
    */
   const gate = createSyncGate(owner ?? null);
   const uploadSource = stagingUploadSource(env.NEXT_PUBLIC_STAGING_ORIGIN);
-  return registerSyncGate(
+  const engine = registerSyncGate(
     new OhmailEngine({
       /**
        * `stageAttachments: true` — A send whose attachment bytes exceed what the inline transport can carry mints an
@@ -301,9 +314,16 @@ export function createEngine(
       adapter: gate.guard(
         new HttpAdapter({
           baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
+          ...(owner ? {
+            saveCalendarSettings: (body) => api<CalendarSettingsWire>("/calendar/settings", {
+              method: "PATCH", body, expectedOwner: owner, expectedFamily: boundApiFamily(owner) ?? undefined,
+            }),
+          } : {}),
           uploadAdmits: (url) => stagingAdmits(url, uploadSource, globalThis.location?.origin ?? ""),
           headers: () => ({ ...ERASED_DECLARATION, ...clientDeclaration() }),
-          fetch: updateAwareFetch(erasedAwareFetch(sessionFetch, sessionEndedResponse), RELOAD_REMEDY),
+          fetch: updateAwareFetch(erasedAwareFetch(
+            (url, init) => sessionFetch(url, init, owner), sessionEndedResponse,
+          ), RELOAD_REMEDY),
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
           // A forward naming its kept files asks /hello first: an older server would send them all.
           forwardPartsCheck: true,
@@ -331,4 +351,6 @@ export function createEngine(
     }),
     gate,
   );
+  if (isolatedScope !== undefined) isolatedScopes.set(engine, isolatedScope);
+  return engine;
 }

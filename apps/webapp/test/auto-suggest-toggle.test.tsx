@@ -1,17 +1,14 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
-import { beforeEach, afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { useSuggestText } from "../app/shell/suggest-text";
-import {
-  OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
+import { writeBootCache } from "@ohmail/app-logic/session/boot-cache";
+import type { EngineMessage, SyncResponse } from "@ohmail/wire";
+import { beforeAll, beforeEach, afterEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
 /**
  * THE AUTO-WORK OPT-IN'S SWITCH — the writer that mail 0040 shipped without.
@@ -55,25 +52,6 @@ import { settleFirstPaint } from "./_first-paint.js";
  * `apps/webapp` typechecks its tests, so the wire shapes below are checked as well as the values.
  */
 
-// See `sync-liveness-shell.test.ts` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-// BEFORE any import of `api-client`: `API_BASE` is read once at module load.
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
 /**
  * The batch ceiling, restated as a LITERAL for the reason `screener-auto-suggest.test.tsx` gives:
  * importing it from the module under test would make the assertion "the code agrees with itself",
@@ -81,22 +59,26 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
  */
 const AUTO_BATCH_SIZE = 10;
 
-const NOW = new Date("2026-08-02T12:00:00.000Z");
-const TURNED_ON_AT = "2026-08-02T12:00:00.000Z";
-let seq = 0;
+const TURNED_ON_AT = ISO;
+const QUOTED_CREDITS = 17;
 
-function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
+function msg(index: number): EngineMessage {
+  const id = `h${index}`;
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`,
-    folder, snippet: `snippet ${id}`, unread: true,
+    id, accountId: ACCOUNT, mailboxId: "mb", threadId: null, messageIdHeader: null,
+    subject: `Subject ${id}`,
+    from: { name: null, address: [`s${index}`, "example.invalid"].join("@") },
+    to: [], cc: [],
+    date: new Date(Date.parse(ISO) - index * 60_000).toISOString(),
+    folder: "ohmail/Screener", snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none",
-    updatedAt: "2026-08-02T09:00:00.000Z",
+    triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
   };
 }
+
+const HELD = Array.from({ length: 12 }, (_, index) => msg(index));
+const FIRST_BATCH = HELD.slice(0, AUTO_BATCH_SIZE).map((row) => row.from.address);
 
 interface Recorded {
   method: string;
@@ -105,10 +87,8 @@ interface Recorded {
 }
 
 let calls: Recorded[] = [];
-let sent: EngineMutation[] = [];
-let toasts: string[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement;
+let consentReads = 0;
 
 /** What the server currently holds for this account. The PATCH moves it; the GET reads it. */
 let storedAt: string | null = null;
@@ -134,11 +114,13 @@ const refusal = (status: number, code: string, message: string) =>
   json({ error: { code, message } }, status);
 
 function installFetch(): void {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : String(input);
-    const path = url.replace(/^\/api/, "");
-    const raw = typeof init?.body === "string" ? (JSON.parse(init.body) as Recorded["body"]) : null;
-    calls.push({ method: init?.method ?? "GET", path, body: raw });
+  const wire = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname.replace(/^\/api(?=\/)/, "");
+    const method = init?.method ?? "GET";
+    const optIn = path === "/consent/settings" || path === "/screener/suggest";
+    const raw = optIn && typeof init?.body === "string" ? JSON.parse(init.body) as Recorded["body"] : null;
+    calls.push({ method, path, body: raw });
 
     if (path === "/consent/settings") {
       if (writeMode === "refuse") return refusal(500, "internal", "nope");
@@ -147,6 +129,7 @@ function installFetch(): void {
       return json({ autoSuggestAt: storedAt });
     }
     if (path === "/consent") {
+      consentReads += 1;
       if (consentMode === "fail") return refusal(500, "internal", "nope");
       return json({
         seedConfirmedAt: "2026-07-01T00:00:00.000Z",
@@ -174,18 +157,40 @@ function installFetch(): void {
       };
       // The field the confirm depends on, WITHHELD in `noPrice` — a deployment from the minutes
       // between two releases, which is a real state and not a hypothetical one.
-      return json(quoteMode === "noPrice" ? base : { ...base, quotedCredits: senders.length });
+      return json(quoteMode === "noPrice" ? base : { ...base, quotedCredits: QUOTED_CREDITS });
     }
-    if (path.startsWith("/screener")) {
-      return json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
+    if (path === "/screener") {
+      return json({
+        items: HELD.map((row) => ({
+          messageId: row.id, sender: row.from, receivedAt: row.date,
+          subject: row.subject, snippet: row.snippet, mailboxId: row.mailboxId,
+        })),
+        total: HELD.length, nextCursor: null,
+        suggestable: { senders: HELD.map((row) => row.from.address), maxPerRequest: 50 },
+      });
     }
-    return json({});
-  }) as typeof fetch;
+    if (path === "/screener/held-releases" || path === "/screener/unscreened") {
+      return json({ groups: [], total: 0 });
+    }
+    if (path === "/screener/auto-filed") return json({ items: [], more: false });
+    if (path === "/account/screening") {
+      return json({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people" });
+    }
+    if (path === "/mailboxes") {
+      return json({ items: [{
+        id: "mb",
+        address: ["mailbox", "example.invalid"].join("@"),
+        status: "connected",
+        organizerRole: "organizer",
+        initialImportCompletedAt: ISO,
+        organizeConsentedAt: ISO,
+        lastSyncAt: ISO,
+        createdAt: ISO,
+      }] });
+    }
+    return wire(input, init);
+  };
 }
-
-const flush = async (): Promise<void> => {
-  for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
-};
 
 const suggestCalls = () => calls.filter((c) => c.path.startsWith("/screener/suggest"));
 const dryRuns = () => suggestCalls().filter((c) => c.body?.dryRun === true);
@@ -194,149 +199,80 @@ const patches = () => calls.filter((c) => c.path === "/consent/settings");
 /** Any POST to a per-sender screener decision — `POST /screener/:id`. */
 const decides = () => calls.filter((c) => c.method === "POST" && /^\/screener\/[^s]/.test(c.path));
 
-async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(
-    held.map((m): SyncChange => ({
-      type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-    })),
-  );
-  return new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async (m) => {
-        sent.push(m);
-        const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
-          .map((e) => ({
-            type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq,
-            updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}),
-          }));
-        await store.applyChanges(changes);
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null };
-      },
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async () => ({ text: "body", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
+// Inspect the whole wire for mail mutations as well as the direct sender decisions.
+const mutations = () => calls.filter(({ method, path }) =>
+  method !== "GET" && /^\/(messages|rules|sync|contacts|folders)(\/|$)/.test(path));
+function installSession() {
+  installConfirmEnv();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  scriptSync(() => json({
+    changes: {
+      creates: HELD.map((entity, index) => ({
+        type: "message", op: "create", id: entity.id, seq: index + 1, updatedAt: ISO, entity,
+      })),
+      updates: [], moves: [], deletes: [],
     },
-  });
+    cursor: `c${HELD.length}`,
+    hasMore: false,
+    serverTime: ISO,
+  } satisfies SyncResponse));
+  installFetch();
 }
 
-/**
- * Mount the REAL row over the REAL hooks, wired exactly as `AppShell` wires them.
- *
- * The Screener's own surface is mounted in the same tree and behind the same `useScreenerSuggestions`
- * instance, because assertion 5 is a statement about ONE tab: the switch and the spender have to be
- * looking at the same consent state for the test to be able to catch them disagreeing. `screener`
- * flips which of the two is on screen, which is what navigating between Settings and the Screener is.
- */
-async function mountShell(engine: OhmailEngine): Promise<{
-  unsuggested: () => string[];
-  openScreener: () => Promise<void>;
-  openSettings: () => Promise<void>;
-  row: () => HTMLElement;
-}> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
-  const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-  const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api.js");
-  const { AutoSuggestRow } = await import("../app/shell/AutoSuggestRow.js");
-
-  let live: { unsuggestedSenders: string[] } | null = null;
-  let setOnScreener: ((on: boolean) => void) | null = null;
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    const [onScreener, setScreener] = React.useState(false);
-    setOnScreener = setScreener;
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const consent = useConsentState(true, null, CLOUD_CONSENT);
-    const suggestions = useScreenerSuggestions({
-      text: useSuggestText(),
-      wire: CLOUD_WIRE,
-      active: onScreener,
-      autoSuggest: consent.autoSuggest,
-      toast: ((m: string) => { toasts.push(m); }) as never,
-    });
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
-    live = state;
-    // Bound unconditionally, exactly as `AppShell` binds it — and NOT via `forSenders`, which the
-    // shell binds only inside the Screener branch. That asymmetry is assertion 3.
-    const autoOptIn = suggestions.autoOptIn(state.unsuggestedSenders);
-    // The Screener's own capture, present only while the Screener is on screen — the real shell's
-    // shape. Its absence on the Settings pane is what makes assertion 3 able to fail.
-    if (onScreener) suggestions.forSenders(state.unsuggestedSenders);
-    return h("div", { id: "probe" },
-      onScreener ? null : h("div", { id: "row" },
-        h(AutoSuggestRow, {
-          on: consent.autoSuggest,
-          since: consent.autoSuggestAt,
-          control: autoOptIn,
-          setAutoSuggest: consent.setAutoSuggest,
-        })),
-    );
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, { storageKey: null, children: h(Probe) }),
-      }),
-    );
-  });
-  await flush();
-  await settleFirstPaint();
+async function mountShell() {
+  window.location.hash = "#/settings/screener";
+  host = await mountCloudShell();
+  await tick(3000);
   return {
-    unsuggested: () => live!.unsuggestedSenders,
-    openScreener: async () => { await act(async () => { setOnScreener!(true); }); await flush(); },
-    openSettings: async () => { await act(async () => { setOnScreener!(false); }); await flush(); },
-    row: () => host!.querySelector("#row") as HTMLElement,
+    async openScreener() {
+      window.location.hash = "#/screener";
+      await tick(1000);
+      expect(within(host).getByRole("listbox", { name: messages.rail.screener })).toBeTruthy();
+    },
+    async openSettings() {
+      window.location.hash = "#/settings/screener";
+      await tick(300);
+      expect(pane()).toBeTruthy();
+    },
   };
 }
 
-const q = (sel: string): HTMLElement | null => host!.querySelector(sel);
-const text = (): string => host!.textContent ?? "";
-const switchEl = (): HTMLButtonElement => q('[role="switch"]') as HTMLButtonElement;
-const buttonNamed = (label: string): HTMLButtonElement | undefined =>
-  Array.from(host!.querySelectorAll("button")).find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
-const click = async (el: Element): Promise<void> => {
-  await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await flush();
-};
+const pane = () => within(within(host).getByRole("region", { name: messages.settings.screener }));
+const text = () => within(host).getByRole("region", { name: messages.settings.screener }).textContent ?? "";
+const switchEl = () => pane().getByRole("switch", { name: messages.screener.suggest.autoTitle });
+const buttonNamed = (name: string) => pane().getByRole<HTMLButtonElement>("button", { name });
+async function click(element: HTMLElement): Promise<void> {
+  await act(async () => { element.click(); });
+  await tick(50);
+}
 
-/** Twelve waiting senders, so `AUTO_BATCH_SIZE` is a real slice and not the whole list. */
-const HELD = Array.from({ length: 12 }, (_, i) =>
-  msg(`h${i}`, `s${String(i).padStart(2, "0")}@ex.example`, 8),
-);
-
+beforeAll(warmCloudShell);
 beforeEach(() => {
-  calls = []; sent = []; toasts = []; seq = 0;
+  calls = [];
+  consentReads = 0;
   storedAt = null; consentMode = "ok"; quoteMode = "ok"; writeMode = "ok";
-  installFetch();
+  resetStorageOwnerForTest();
+  localStorage.clear();
+  installSession();
+});
+afterEach(async () => {
+  await teardownConfirmEnv();
+  resetStorageOwnerForTest();
+  localStorage.clear();
 });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null;
-});
+async function approveQuote() {
+  await click(switchEl());
+  expect(suggestCalls()).toHaveLength(0);
+  expect(patches()).toHaveLength(0);
+  await click(buttonNamed("Get a quote")!);
+}
 
 describe("the auto-work opt-in's switch", () => {
   it("1 — is OFF by default and says so, and a failed consent read reads the same", async () => {
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
+    await mountShell();
 
     expect(switchEl().getAttribute("aria-checked")).toBe("false");
     expect(text()).toContain(messages.screener.suggest.autoOff);
@@ -344,21 +280,48 @@ describe("the auto-work opt-in's switch", () => {
     expect(dryRuns()).toHaveLength(0);
     expect(patches()).toHaveLength(0);
 
-    await act(async () => { root!.unmount(); });
-    root = null; host?.remove();
+    await teardownConfirmEnv();
+    resetStorageOwnerForTest();
+    localStorage.clear();
     consentMode = "fail";
-    const e2 = await engineWith(HELD);
-    await mountShell(e2);
+    const readsBefore = consentReads;
+    installSession();
+    await mountShell();
+    expect(consentReads).toBeGreaterThan(readsBefore);
     expect(switchEl().getAttribute("aria-checked")).toBe("false");
     expect(text()).toContain(messages.screener.suggest.autoOff);
+
+    await teardownConfirmEnv();
+    resetStorageOwnerForTest();
+    localStorage.clear();
+    installSession();
+    writeBootCache("consent", ACCOUNT, {
+      v: 1, seedConfirmedAt: ISO, dormancyDays: 180, screeningBaselineAt: null,
+    });
+    consentMode = "fail";
+    await mountShell();
+    expect(consentReads).toBeGreaterThan(0);
+    expect((switchEl() as HTMLButtonElement).disabled).toBe(true);
+    await click(switchEl());
+    expect(suggestCalls()).toHaveLength(0);
+    expect(patches()).toHaveLength(0);
+
+    consentMode = "ok";
+    window.dispatchEvent(new Event("online"));
+    await tick(3000);
+    expect((switchEl() as HTMLButtonElement).disabled).toBe(false);
+
+    consentMode = "fail";
+    window.dispatchEvent(new Event("online"));
+    await tick(300);
+    expect((switchEl() as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("2 — prices on the SERVER, and without `quotedCredits` the confirm never arms", async () => {
     quoteMode = "noPrice";
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
+    await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     expect(dryRuns()).toHaveLength(1);
     const confirm = buttonNamed(messages.screener.suggest.autoTurnOn)!;
     expect(confirm).toBeTruthy();
@@ -371,31 +334,27 @@ describe("the auto-work opt-in's switch", () => {
   });
 
   it("2b — the armed confirm shows the SERVER's figure, not a count times an assumed cost", async () => {
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
-    await click(switchEl());
+    await mountShell();
+    await approveQuote();
 
     const confirm = buttonNamed(messages.screener.suggest.autoTurnOn)!;
     expect(confirm.disabled).toBe(false);
-    // `suggest.price` renders "10 senders · 10 credits" from the server's `quoted`/`quotedCredits`.
-    expect(q(".scn-sg-price")!.textContent).toContain(String(AUTO_BATCH_SIZE));
+    expect(pane().getByText(`${AUTO_BATCH_SIZE} senders · ${QUOTED_CREDITS} credits`)).toBeTruthy();
     expect(text()).toContain("credits");
     // The batch ceiling is stated from the constant the spender slices by, not from a literal.
     expect(text()).toContain(String(AUTO_BATCH_SIZE));
   });
 
   it("3 — prices the FIRST AUTO_BATCH_SIZE of the same queue the batch will take", async () => {
-    const engine = await engineWith(HELD);
-    const shell = await mountShell(engine);
+    await mountShell();
 
-    const queue = shell.unsuggested();
-    expect(queue.length).toBeGreaterThan(AUTO_BATCH_SIZE);
+    expect(HELD.length).toBeGreaterThan(AUTO_BATCH_SIZE);
 
     // Priced from the SETTINGS pane, having never visited the Screener — the tab whose
     // `forSenders` capture is still empty.
-    await click(switchEl());
+    await approveQuote();
     expect(dryRuns()).toHaveLength(1);
-    expect(dryRuns()[0]!.body!.senders).toEqual(queue.slice(0, AUTO_BATCH_SIZE));
+    expect(dryRuns()[0]!.body!.senders).toEqual(FIRST_BATCH);
     // Not zero, which is what a quote read from the unbound capture would have said.
     expect(dryRuns()[0]!.body!.senders).toHaveLength(AUTO_BATCH_SIZE);
     // Priced under the batch's own rule, so a sender the batch will not ask about is not quoted.
@@ -403,10 +362,11 @@ describe("the auto-work opt-in's switch", () => {
   });
 
   it("4 — arms the work and decides nothing: three requests, no mutation, no purchase", async () => {
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
+    await mountShell();
+    expect(consentReads).toBeGreaterThan(0);
+    const beforePress = calls.length;
 
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
 
     expect(storedAt).toBe(TURNED_ON_AT);
@@ -418,11 +378,9 @@ describe("the auto-work opt-in's switch", () => {
     // NOTHING DECIDED. No per-sender decision, no real purchase, no engine mutation at all.
     expect(decides()).toHaveLength(0);
     expect(purchases()).toHaveLength(0);
-    expect(sent).toHaveLength(0);
-    // And the only paths touched are the three this flow is allowed to touch.
-    expect([...new Set(calls.map((c) => c.path))].sort()).toEqual(
-      ["/consent", "/consent/settings", "/screener/suggest"],
-    );
+    expect(mutations()).toHaveLength(0);
+    // Boot reads consent. After boot, the opt-in only sends a quote and the consent write.
+    expect(calls.slice(beforePress).map(({ path }) => path)).toEqual(["/screener/suggest", "/consent/settings"]);
 
     // The row now states when, from the server's echo.
     expect(switchEl().getAttribute("aria-checked")).toBe("true");
@@ -432,10 +390,9 @@ describe("the auto-work opt-in's switch", () => {
 
   it("4b — a refused write leaves the switch showing the stored value and says so", async () => {
     writeMode = "refuse";
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
+    await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
 
     expect(storedAt).toBeNull();
@@ -446,10 +403,9 @@ describe("the auto-work opt-in's switch", () => {
 
   it("4d — the switch shows what the DATABASE stored, never what the click asked for", async () => {
     writeMode = "storesOff";
-    const engine = await engineWith(HELD);
-    const shell = await mountShell(engine);
+    const shell = await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
 
     // A 200 that stored nothing. Asking for `true` and being told `null` must read as OFF — the
@@ -468,20 +424,18 @@ describe("the auto-work opt-in's switch", () => {
 
   it("4c — a refused QUOTE shows the server's own sentence, not a generic one", async () => {
     quoteMode = "refuse";
-    const engine = await engineWith(HELD);
-    await mountShell(engine);
+    await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     expect(text()).toContain("no AI credits remain on this account");
     expect(buttonNamed(messages.screener.suggest.autoTurnOn)!.disabled).toBe(true);
   });
 
   it("5 — turning it OFF disarms THIS TAB, not just the database", async () => {
-    const engine = await engineWith(HELD);
-    const shell = await mountShell(engine);
+    const shell = await mountShell();
 
     // On, confirmed.
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
     expect(storedAt).toBe(TURNED_ON_AT);
 
@@ -497,14 +451,13 @@ describe("the auto-work opt-in's switch", () => {
     // NOW OPEN THE SCREENER IN THE SAME TAB, no reload. Nothing may be bought.
     await shell.openScreener();
     expect(purchases()).toHaveLength(0);
-    expect(sent).toHaveLength(0);
+    expect(mutations()).toHaveLength(0);
   });
 
   it("5b — the same tab, left ON, DOES buy: the negative in 5 is not vacuous", async () => {
-    const engine = await engineWith(HELD);
-    const shell = await mountShell(engine);
+    const shell = await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
     await shell.openScreener();
 
@@ -513,17 +466,17 @@ describe("the auto-work opt-in's switch", () => {
     // where the automatic path never worked at all.
     expect(purchases()).toHaveLength(1);
     expect(purchases()[0]!.body!.senders).toHaveLength(AUTO_BATCH_SIZE);
+    expect(purchases()[0]!.body!.senders).toEqual(FIRST_BATCH);
     expect(purchases()[0]!.body!.automatic, "the batch the switch armed went out as a press").toBe(true);
     // Still no decision: it bought work, not an outcome.
     expect(decides()).toHaveLength(0);
-    expect(sent).toHaveLength(0);
+    expect(mutations()).toHaveLength(0);
   });
 
   it("6 — re-confirming is idempotent: same body, same stored state", async () => {
-    const engine = await engineWith(HELD);
-    const shell = await mountShell(engine);
+    const shell = await mountShell();
 
-    await click(switchEl());
+    await approveQuote();
     await click(buttonNamed(messages.screener.suggest.autoTurnOn)!);
     expect(storedAt).toBe(TURNED_ON_AT);
 

@@ -214,8 +214,8 @@ const ONE_TIME = ["oauth", "state", "code", "reason"];
 /**
  * Put the browser where the answer will be, and take the single-use values out of the URL. One `replaceState`
  * doing both, because they are the same edit: `?settings=mailboxes` is read at mount and kept (a pane name is
- * not a credential); `#/settings` is SET rather than trusted — the fragment is what the redirect chain can
- * drop, and it decides which screen this is; `oauth`, `state`, `code`, `reason` are removed BEFORE the POST —
+ * not a credential); `#/settings/mailboxes` is SET rather than trusted — the fragment is what the redirect chain
+ * can drop, and it decides which screen and which pane this is (the frame's router reads the pane from it alone); `oauth`, `state`, `code`, `reason` are removed BEFORE the POST —
  * the authorization code is single-use and must not sit in an address bar for the length of an IMAP probe, and
  * a reload must not re-POST a spent state. `replaceState` and not `location.hash = …`: assigning the hash
  * pushes a history entry, and Back returning to a URL with a spent code is the reload case again. A
@@ -228,7 +228,7 @@ function landOn(where: "settings" | "first-run"): void {
   if (where === "settings") url.searchParams.set("settings", "mailboxes");
   else url.searchParams.delete("settings");
   for (const k of ONE_TIME) url.searchParams.delete(k);
-  const hash = where === "settings" ? "#/settings" : "#/first-run";
+  const hash = where === "settings" ? "#/settings/mailboxes" : "#/first-run";
   const changed = url.hash !== hash;
   /* The router's own `history.state` is kept, as every writer under this app keeps it: a state
      without the app router's marker makes it adopt the URL it was given and restore it over the

@@ -295,6 +295,7 @@
     "reasonUnknown": "der Server hat es abgelehnt.",
     "toastSent": "Antwort gesendet.",
     "toastSentAndDone": "Gesendet · erledigt",
+    "toastSentFilingIncomplete": "Gesendet · Einsortieren nicht abgeschlossen",
     "toastForwarded": "Weitergeleitet.",
     "toastEarlierWent": "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "toastForwardEarlierWent": "Diese Weiterleitung wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
@@ -319,6 +320,7 @@
       "itWasSent": "Sie wurde gesendet — ausblenden"
     },
     "letter": "Neue Nachricht",
+    "back": "Ohbox",
     "foot": "Formatierung und Dateien",
     "text": "Nachricht",
     "placeholder": "Schreib deine Nachricht",
@@ -330,6 +332,8 @@
     "subjectPlaceholder": "Betreff",
     "remove": "{name} entfernen",
     "refused": "Keine Adresse: {list}",
+    "suggestions": "Adressvorschläge",
+    "wroteToYou": "hat dir geschrieben",
     "verbs": "Senden oder verwerfen",
     "send": "Senden",
     "discard": "Verwerfen",
@@ -395,7 +399,12 @@
     },
     "keys": {
       "send": "Nachricht senden",
-      "leave": "Nachricht verlassen"
+      "leave": "Nachricht verlassen",
+      "schedule": "Versand planen",
+      "evening": "Später senden: heute Abend",
+      "tomorrow": "Später senden: morgen früh",
+      "monday": "Später senden: Montagmorgen",
+      "custom": "Später senden: Zeit wählen"
     },
     "files": {
       "attach": "Dateien anhängen, höchstens {size} insgesamt",
@@ -464,11 +473,13 @@
       }
     },
     "draft": {
+      "placeholder": "Schreib deine Nachricht oder Stichworte für einen Entwurf",
       "verb": "Antwort entwerfen",
       "again": "Erneut entwerfen",
       "running": "Wird entworfen …",
       "waiting": "Eine andere Antwort wird entworfen …",
       "fromText": "Aus deinem Text entwerfen",
+      "fromTextShort": "Aus Text entwerfen",
       "fromTextTitle": "Aus deinem Text entwerfen, {cost, plural, one {# Punkt} other {# Punkte}}",
       "noCredits": "Auf diesem Account sind keine KI-Credits mehr übrig.",
       "cost": "{cost, plural, one {# Punkt} other {# Punkte}}",

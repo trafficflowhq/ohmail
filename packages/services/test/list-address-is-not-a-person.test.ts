@@ -271,11 +271,11 @@ describe("a press over a list address consents only what it moves", () => {
  * keeps its destination, priority, switch, stamps and retro, the list's letter and the next one stay
  * in News, no learning signal is written and no unsubscribe is asked. On whichever store runs.
  */
-async function listWithItsRule() {
+async function listWithFiledPost(standingRule = true) {
   const w = await pressWorld("person");
   const [mb] = await w.db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, w.accountId));
   const stamp = new Date("2026-09-30T08:00:00.000Z");
-  await w.db.insert(rules).values({
+  if (standingRule) await w.db.insert(rules).values({
     accountId: w.accountId, kind: "sender", match: LIST, destination: "ohmail/News", enabled: true, priority: 3,
     provenance: "manual", personDecidedAt: stamp, retroRequestedAt: stamp, retroDoneAt: stamp,
   });
@@ -308,15 +308,17 @@ async function listWithItsRule() {
 
 describe("a person's screen-out of a claim through a list address", () => {
   it("files the claim alone: the list's rule, its letters, its learning and its subscription are untouched", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const claim = await w.held("PostFinance", "PostFinance", "us");
     const before = await w.listRule();
     // The row says so before the press: the surfaces key their sentences on it.
     const page = await w.svc.list(w.ctx, { limit: 50, live: true });
     expect(page.items.find((i) => i.messageId === claim)?.checked).toMatchObject({ list: true, claimsOnly: true });
+    const ordinaryAtGate = await w.held("The List", null, "us");
     const r = await w.svc.decide(w.ctx, claim, { decision: "no", scope: "sender" }, { idempotency: { key: "lst-no", requestHash: "h" } });
     expect(r).toMatchObject({ createdRuleId: null, createdRule: null, appliedFolder: "ohmail/Screened" });
     expect(await w.desired(claim)).toBe("ohmail/Screened");
+    expect(await w.desired(ordinaryAtGate)).toBe(GATE);
     expect(await w.listRule(), "the list's rule moved").toEqual(before);
     await ruleRetroPass(w.db as never, { accountId: w.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, NOW);
     expect(await w.desired(w.post), "the list's own letter left News").toBe("ohmail/News");
@@ -326,10 +328,20 @@ describe("a person's screen-out of a claim through a list address", () => {
     // The replay a lost answer gets is the answer the press got.
     const [stored] = await w.db.select().from(idempotencyKeys).where(eq(idempotencyKeys.accountId, w.accountId));
     expect([stored!.responseStatus, JSON.parse(JSON.stringify(stored!.responseJson))]).toEqual([200, JSON.parse(JSON.stringify(r))]);
+
+    const spam = await w.held("PostFinance", "PostFinance", "us");
+    const spamResult = await w.svc.decide(w.ctx, spam, { decision: "no", scope: "sender", dest: "ohmail/Quarantine" });
+    expect(spamResult).toMatchObject({ createdRuleId: null, createdRule: null, appliedFolder: "ohmail/Quarantine" });
+    expect(await w.desired(spam)).toBe("ohmail/Quarantine");
+    expect(await w.desired(claim)).toBe("ohmail/Screened");
+    expect(await w.desired(ordinaryAtGate)).toBe(GATE);
+    expect(await w.listRule()).toEqual(before);
+    expect(await w.desired(w.post)).toBe("ohmail/News");
+    expect(w.unsubscribed).toEqual([]);
   });
 
   it("CONTROL: a list address whose held mail holds no claim is screened out as an address", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const plain = await w.held("The List", null, "us");
     const r = await w.svc.decide(w.ctx, plain, { decision: "no", scope: "sender" });
     expect((await w.listRule()).map((x) => x.destination)).toEqual(["ohmail/Screened"]);
@@ -348,11 +360,24 @@ describe("a person's screen-out of a claim through a list address", () => {
   });
 
   it("CONTROL: a yes on the claim is the press it was: a rule, and the claim let in", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const claim = await w.held("PostFinance", "PostFinance", "us");
     const r = await w.svc.decide(w.ctx, claim, { decision: "yes", scope: "sender" });
     expect(r).toMatchObject({ createdRuleId: expect.any(String) });
     expect(await w.desired(claim)).toBe("INBOX");
+    for (const dest of ["INBOX", "ohmail/News", "ohmail/Receipts"] as const) {
+      const list = await listWithFiledPost(false);
+      const held = await list.held("PostFinance", "PostFinance", "us");
+      expect(await list.listRule()).toEqual([]);
+      const filed = await list.svc.decide(list.ctx, held, { decision: "yes", scope: "sender", dest, applyRetro: false });
+      const persisted = await list.listRule();
+      expect(persisted).toEqual([expect.objectContaining({
+        id: expect.any(String), kind: "sender", match: LIST, destination: dest, enabled: true,
+      })]);
+      expect(filed).toMatchObject({ createdRuleId: persisted[0]!.id, appliedFolder: dest });
+      expect(await list.desired(held)).toBe(dest);
+      expect(await list.desired(list.post)).toBe("ohmail/News");
+    }
   });
 });
 
@@ -559,7 +584,7 @@ describe("a list address whose claim no press can reach", () => {
  */
 describe("a list claim held where another install organizes", () => {
   it("asks the holder to move that claim alone: no decision travels, and the holder's list rule and mail stand", async () => {
-    const w = await listWithItsRule();
+    const w = await listWithFiledPost();
     const [laptop] = await w.db.insert(mailboxes).values({
       accountId: w.accountId, provider: "imap", address: `work-${w.accountId.slice(0, 8)}@own.invalid`, organizerRole: "reader",
       organizerState: "held", organizedByCapabilities: "requests,moves", organizedByKind: "local", organizedByName: "Laptop",
@@ -575,7 +600,7 @@ describe("a list claim held where another install organizes", () => {
     expect(w.unsubscribed).toEqual([]);
 
     // The holder's own store, as its drain applies the request: the list's rule, its past letter and its retro stand.
-    const h = await listWithItsRule();
+    const h = await listWithFiledPost();
     const claim = await h.held("PostFinance", "PostFinance", "us");
     await h.db.update(messages).set({ dedupKey }).where(eq(messages.id, claim));
     const before = await h.listRule();

@@ -13,20 +13,22 @@ import { qhFixtures, qhNorm } from "../../../packages/client-engine/test/quoted-
  * and pressing a toggle reads or unreads nothing by itself.
  */
 const FX = Object.fromEntries(qhFixtures().filter((f) => ["01", "11", "13", "37", "132"].includes(f.id)).map((f) => [f.id, f]));
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+/** The frame's reading column, where the new shell reads the open conversation. */
+const col = (): HTMLElement => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]')!;
 const panel = (id: string): HTMLElement => col().querySelector<HTMLElement>(`[data-conv-id="${id}"]`)!;
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
 const follows = (a: Node, b: Node): boolean => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 let layout: ThreadLayout;
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => {
   installShellEnv();
   layout = stubThreadLayout({ heights: { p1: 160, p2: 160, p3: 160, p4: 160 } });
-  window.location.hash = "#/history";
+  /* The reader is the subject: the conversation is opened where the new shell mounts it (History is not mounted yet). */
+  window.location.hash = "#/ohbox";
 });
 afterEach(async () => {
   layout.restore();

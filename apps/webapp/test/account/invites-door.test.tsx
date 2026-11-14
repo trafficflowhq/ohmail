@@ -1,12 +1,19 @@
 /** @vitest-environment jsdom */
 import { createHash } from "node:crypto";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FactorSlot, GatedAsk } from "@ohmail/app/account";
 import { catchConsole, en, foundIn, json, refusal, serve, settle, type Server } from "./account-harness";
-import { qr, scanned, watchClipboard, Words } from "./devices-support";
-import { InvitesPane, useInvites } from "../../../../packages/app/src/account/invites/index.js";
-import { ApiError, pair } from "../../app/api-client";
+import { hello, qr, scanned, watchClipboard, Words } from "./devices-support";
+import { InvitesPane } from "../../../../packages/app/src/account/invites/InvitesPane.js";
+import { useInvites } from "../../../../packages/app/src/account/invites/use-invites.js";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick,
+} from "../fixtures/cloud-confirm-shell";
+import { ApiError, bindApiOwner, pair } from "../../app/api-client";
 import { invitesDoor, useInvitesDoor } from "../../app/(product)/mailbox/invites-door";
 
 /**
@@ -15,6 +22,16 @@ import { invitesDoor, useInvitesDoor } from "../../app/(product)/mailbox/invites
  * sends the same request once more; Cancel, a factor that lands late and a pane that was left send nothing. The
  * invite link is assembled once, drawn as a picture and copied on request, and is never printed.
  */
+
+const previousFlavor = vi.hoisted(() => {
+  const previous = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+  process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = "selfhost";
+  return previous;
+});
+afterAll(() => {
+  if (previousFlavor === undefined) delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
+  else process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = previousFlavor;
+});
 
 const LIST = "GET /api/pair";
 const MINT = "POST /api/pair";
@@ -44,6 +61,7 @@ let invites: unknown[] = [];
 let server: Server;
 let written: ReturnType<typeof catchConsole>;
 let clipboard: ReturnType<typeof watchClipboard>;
+let mounted = false;
 const slot = { asked: null as GatedAsk | null };
 /** The factor's dialog, stood in for: its ceremony is the doors' own. What is held here is what the pane asks. */
 const factor: FactorSlot = (ask) => {
@@ -63,7 +81,15 @@ beforeEach(() => {
     [REVOKE]: GONE,
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  if (mounted) {
+    await teardownConfirmEnv();
+    bindApiOwner(null);
+    mounted = false;
+    window.history.replaceState(null, "", "/");
+    resetSessionTruthForTests();
+    resetStorageOwnerForTest();
+  }
   cleanup();
   server.restore();
   written.restore();
@@ -85,12 +111,32 @@ async function opened() {
   await settle();
   return view;
 }
+async function openMountedInvites() {
+  const inviteFetch = globalThis.fetch;
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  installConfirmEnv();
+  mounted = true;
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  const shellFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const { pathname } = new URL(String(input), window.location.origin);
+    if (pathname === "/api/hello") return Promise.resolve(hello("selfhost"));
+    return pathname === "/api/pair" ? inviteFetch(input, init) : shellFetch(input, init);
+  };
+  window.location.hash = "#/settings/invites";
+  await mountCloudShell();
+  await tick(2500);
+}
+
 const said = (words: string): boolean => (document.body.textContent ?? "").includes(words);
 const press = async (name: string) => {
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name }));
   });
-  await settle();
+  await (mounted ? tick(0) : settle());
 };
 const typeName = (name: string) =>
   act(async () => {
@@ -194,7 +240,7 @@ describe("opening the pane", () => {
 describe("the invite link, made once", () => {
   it("one request with the grant and the name; the picture and the clipboard are one link on this page's origin; it is never printed", async () => {
     server.answer(MINT, minted("Rahel Beck"));
-    await opened();
+    await openMountedInvites();
     await typeName("  Rahel Beck ");
     await press(en.invites.mintAction);
     expect(server.on(MINT).map((sent) => sent.body)).toEqual([{ grant: "invite", label: "Rahel Beck" }]);

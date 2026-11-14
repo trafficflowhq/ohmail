@@ -4,7 +4,7 @@
  * of the account's addresses. Held-back records and hidden calendars are already left out of the occurrences.
  */
 import { momentOrUtc, type ZoneSource } from "@ohmail/cal-core";
-import type { CalendarConnectionRecord } from "@ohmail/wire";
+import type { CalendarConnectionRecord, CalendarEventRecord } from "@ohmail/wire";
 import { viewOnlyOf } from "../offers.js";
 import { daySpanOf } from "../spans/days.js";
 import type { ShownOccurrence } from "../window.js";
@@ -33,8 +33,8 @@ export interface InvitationGroups {
 
 const ANSWERED = new Set(["accepted", "tentative", "declined"]);
 
-function isInvitation(o: ShownOccurrence, own: ReadonlySet<string>): boolean {
-  const { myAnswer, organizer } = o.record;
+export function invitedByOthers(record: CalendarEventRecord, own: ReadonlySet<string>): boolean {
+  const { myAnswer, organizer } = record;
   return myAnswer !== null && organizer !== null && !own.has(organizer.address.trim().toLowerCase());
 }
 
@@ -67,7 +67,7 @@ export function invitationsOf(input: InvitationsInput): InvitationGroups {
   const at = (o: ShownOccurrence) => momentOrUtc(o.occurrence.start, input.zones);
   const first = new Map<string, ShownOccurrence>();
   for (const o of input.occurrences) {
-    if (o.day < input.todayKey || !isInvitation(o, own)) continue;
+    if (o.day < input.todayKey || o.calendar.access === "busy" || !invitedByOthers(o.record, own)) continue;
     const before = first.get(o.record.id);
     if (before === undefined || o.day < before.day || (o.day === before.day && at(o) < at(before)))
       first.set(o.record.id, o);

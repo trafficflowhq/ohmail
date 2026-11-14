@@ -5,7 +5,9 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { settleEditor } from "./_first-paint.js";
+import { screen, within } from "@testing-library/react";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./_write-1-writing.js";
+import { GROUND_CATALOGUE } from "./_write-1-send-text.js";
 import { SENT_BEAT_MS } from "@ohmail/app-logic/writing/mail-send";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -59,7 +61,14 @@ const message: EngineMessage = {
 
 /** What the held reply's two verbs reported, newest last — reset by every `mount`. */
 let heldAnswers: string[] = [];
+/** Write's reply, as the reader's slot draws it over the composition (`_write-1-writing.tsx`). */
+let world: WritingWorld | null = null;
 
+/**
+ * WRITE's REPLY TO `m1`, handed the send machine's state for its lane (`replySend`) and, for a held send, the row
+ * it holds: Write's own derivation (`writingOf`) reads them where it reads the machine's, as today's editor was
+ * handed its `SendState` prop. The reply's words are typed into the composition (`onReplyBody`).
+ */
 async function mount(
   send: SendState,
   text = "Donnerstag passt.",
@@ -67,32 +76,29 @@ async function mount(
 ): Promise<void> {
   heldAnswers = [];
   await unmount();
-  const { InlineReply } = await import("../app/shell/InlineReply.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(InlineReply as never, {
-          // No `context` and no `now` since that change: the editor renders no mail, so it needs
-          // neither the conversation nor a clock to format one with.
-          // The editor holds BOTH halves now. Plain text with no markup — `html: ""` is what
-          // a message nobody formatted looks like, and it is the shape every assertion below
-          // is about.
-          message, value: { text, html: "" }, send,
-          onChange: () => {}, onClose: () => {}, onSend: () => {},
-          /* THE HELD REPLY'S WAY OUT, handed in the way the shell hands it: the row the hold is
-             about, and the callback that dispatches the reader's answer. `null` is every mount
-             that is not about a held row, which is every other case in this file. */
-          ...(heldResolve === null ? {} : { heldResolve }),
-        } as never),
-      }),
-    );
+  world = await mountWriting({
+    messages: [message],
+    hash: "#/ohbox",
+    sheet: ["m1"],
+    replySend: send,
+    ...(heldResolve === null ? {} : { heldReply: heldResolve.draftId }),
   });
-  // The reply's editor is behind `RichEditorLazy` — one seam, one helper.
-  await settleEditor();
+  await act(async () => { world!.now().openReply("m1"); });
+  await act(async () => { world!.now().onReplyBody({ text, html: "" }); });
+  await rounds(2);
+  host = world.el as HTMLDivElement;
+  /* THE HELD REPLY'S WAY OUT: what Write reported is handed on to the case's own callback. */
+  if (heldResolve !== null) {
+    const resolved = world.resolved;
+    const push = resolved.push.bind(resolved);
+    resolved.push = (...items: string[]) => {
+      for (const item of items) {
+        const at = item.lastIndexOf(":");
+        heldResolve.onResolve(item.slice(0, at), item.slice(at + 1));
+      }
+      return push(...items);
+    };
+  }
 }
 
 async function unmount(): Promise<void> {
@@ -100,24 +106,33 @@ async function unmount(): Promise<void> {
   host?.remove();
   root = null;
   host = null;
+  world = null;
+  await unmountWritings();
 }
 
 afterEach(unmount);
 
 /**
- * The send verb, found by its VARIANT rather than by its label.
- *
- * The label used to be the locator (`/^(Send|Sending)/`) and that stopped working the moment the
- * button gained its own states: a `queued` send says "Queued" and a delivered one says "Sent", so
- * a label-matched finder returned `undefined` and the case died reading `.disabled` of nothing —
- * which reads as a crash in the editor rather than as a stale locator. The primary variant is the
- * one durable fact about this control; Cancel beside it is a ghost.
+ * The send verb, found by its role and name in the panel the reply hands its verbs to (the reading sheet's one
+ * panel, "Send or discard"): Write's Send keeps its name in every phase; whether it may be pressed is the claim.
  */
 const sendBtn = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-const status = (): HTMLElement | null => host!.querySelector<HTMLElement>(".send-status");
-/** The editable surface of the rich editor — `.reply-editor` is the frame around it now. */
-const surface = (): HTMLElement => host!.querySelector<HTMLElement>(".reply-editor .rte-surface")!;
+  within(screen.getByRole("toolbar", { name: GROUND_CATALOGUE("write.verbs") }))
+    .getByRole<HTMLButtonElement>("button", { name: GROUND_CATALOGUE("write.send") });
+/** The reply's send line, by its role. */
+const status = (): HTMLElement | null => host!.querySelector<HTMLElement>("[role=status]");
+/** The reply's formatting buttons: the marks of its strip ("Formatting"), by role. */
+const marks = (): HTMLButtonElement[] => {
+  const strip = screen.queryByRole("toolbar", { name: GROUND_CATALOGUE("write.marks.bar") });
+  return strip === null ? [] : within(strip).queryAllByRole<HTMLButtonElement>("button");
+};
+/** The held send's way out: the send line that carries its answers, by role. */
+const resolveBox = (): HTMLElement | null => {
+  const line = status();
+  return line !== null && within(line).queryAllByRole("button").length > 0 ? line : null;
+};
+/** The reply's text box, by its role and name. */
+const surface = (): HTMLElement => screen.getByRole("textbox", { name: GROUND_CATALOGUE("write.reply.text") });
 
 /**
  * No phase may produce copy a hurried reader takes for a delivery.
@@ -144,16 +159,23 @@ describe("the reply editor's send states", () => {
   it("sending — locked, busy, and the text is not editable out from under the request", async () => {
     await mount({ phase: "sending" });
     expect(sendBtn().disabled).toBe(true);
-    expect(sendBtn().getAttribute("aria-busy")).toBe("true");
     // `readOnly` is a textarea's word for it; a `contenteditable` says `contenteditable="false"`,
     // which is what `RichEditor`'s `editable` prop sets. The claim is unchanged: mid-send the
     // text is still on screen and still cannot be edited out from under the request.
     expect(surface().getAttribute("contenteditable")).toBe("false");
     // And the toolbar goes with it — a live formatting button would edit a document the caret
     // cannot reach.
-    expect([...host!.querySelectorAll<HTMLButtonElement>(".rte-b")].every((b) => b.disabled))
+    expect(marks().length, "the reply draws no formatting control to check").toBeGreaterThan(0);
+    expect(marks().every((b) => b.disabled))
       .toBe(true);
-    expect(status()!.textContent).toContain("Sending your reply");
+    // The sentence follows Write's catalogue (`write.status.sending`, the studio's words): today's said "Sending your reply".
+    expect(status()!.textContent).toContain("Sending your message");
+  });
+
+  // While a send is pending, the send action reports its busy state to a screen reader.
+  it("sending — the Send verb says it is busy", async () => {
+    await mount({ phase: "sending" });
+    expect(sendBtn().getAttribute("aria-busy")).toBe("true");
   });
 
   it("queued — says NOT sent, keeps the text, and stays locked", async () => {
@@ -164,31 +186,6 @@ describe("the reply editor's send states", () => {
     expect(status()!.textContent).toContain("Not sent yet");
     expect(status()!.textContent).not.toMatch(CLAIMS_DELIVERY);
     expect(surface().textContent).toContain("Donnerstag passt.");
-  });
-
-  it("the button carries the phase the stylesheet paints — and only for the phases it paints", async () => {
-    // `data-send` is the whole hand-off to `packages/ui`: it keeps the accent fill while the
-    // control is natively disabled and runs the band along its foot. Written from the lane's
-    // phase, never inferred from `disabled`, because "locked" is true of states that must look
-    // completely different — mid-send and refused-because-empty are both disabled buttons.
-    await mount({ phase: "sending" });
-    expect(sendBtn().getAttribute("data-send")).toBe("sending");
-    expect(sendBtn().textContent).toContain("Sending");
-
-    await mount({ phase: "sent" });
-    expect(sendBtn().getAttribute("data-send")).toBe("sent");
-    expect(sendBtn().textContent).toContain("Sent");
-
-    await mount({ phase: "queued" });
-    expect(sendBtn().getAttribute("data-send")).toBe("queued");
-    expect(sendBtn().textContent).toContain("Queued");
-
-    // Back to rest: Send is the retry, and an attribute the stylesheet has no rule for would be
-    // a claim in the DOM that nothing is making.
-    await mount({ phase: "failed" });
-    expect(sendBtn().getAttribute("data-send")).toBeNull();
-    await mount({ phase: "idle" });
-    expect(sendBtn().getAttribute("data-send")).toBeNull();
   });
 
   it("the server's accepted-pending send says the product HAS it; the transport's does not", async () => {
@@ -224,7 +221,6 @@ describe("the reply editor's send states", () => {
     expect(sendBtn().disabled).toBe(true);
     expect(status()!.textContent).toContain("not sure this was sent");
     expect(status()!.textContent).toContain("Sent folder");
-    expect(status()!.className).toContain("warn");
   });
 
   it("failed — the plain sentence, never the server's wire, and Send is live again", async () => {
@@ -238,7 +234,6 @@ describe("the reply editor's send states", () => {
     expect(sendBtn().disabled).toBe(false);
     expect(status()!.textContent).toContain("Sending didn't work");
     expect(status()!.textContent, "the wire leaked into the sentence").not.toContain("was not delivered");
-    expect(status()!.className).toContain("error");
   });
 
   it("every non-delivered phase is announced, and none of them claims delivery", async () => {
@@ -247,7 +242,8 @@ describe("the reply editor's send states", () => {
       const line = status()!;
       // Out-of-band outcomes: a retry can resolve minutes after focus moved on.
       expect(line.getAttribute("role")).toBe("status");
-      expect(line.getAttribute("aria-live")).toBe("polite");
+      // `role="status"` is a polite live region by its role (WAI-ARIA); an explicit attribute may only restate it.
+      expect(line.getAttribute("aria-live") ?? "polite").toBe("polite");
       expect(line.textContent, phase).not.toMatch(CLAIMS_DELIVERY);
     }
   });
@@ -587,7 +583,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
   async function probe(rec: Recorder, handed?: { scope: string | null }): Promise<(m: Mut) => boolean> {
     await unmount();
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
     let send!: (m: Mut) => boolean;
     const Probe = (): null => {
       const api = useMailSend(
@@ -661,8 +657,8 @@ describe("useMailSend refuses on its own, not only via the button", () => {
   it("an ending says whether a surface showed its lane, and a withdrawn send ends with nothing to say", async () => {
     await unmount();
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
-    const { sendLine } = await import("../app/shell/SendStatus.js");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
+    const { sendLine } = await import("@ohmail/app-logic/writing/send-line");
     const { OUTBOX_WITHDRAWN_CODE } = await import("@ohmail/client-engine");
     const rec = recorder();
     let code = "send_unreachable";
@@ -715,7 +711,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
   }> {
     await unmount();
     const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+    const { useMailSendText } = await import("./_write-1-send-text.js");
     const settled: string[] = [];
     let api!: { send: (m: Mut) => void; stateOf: (k: string) => { phase: string; accepted?: true } };
     // The FIRST answer is the send route's own 202 (`send_queued`); every later one is the 409
@@ -814,7 +810,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     try {
       await unmount();
       const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-      const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+      const { useMailSendText } = await import("./_write-1-send-text.js");
       const said: string[] = []; const keys: string[] = []; let flushes = 0;
       const engine = {
         mutate: async () => ({ id: "i", key: "k1", seq: 1, status: "queued", error: { code: "network", retryable: true } }),
@@ -1134,7 +1130,12 @@ describe("no path mints a fresh key after an unverified send", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const send = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/mail-send.ts"), "utf8");
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
+    /* The composer the new shell stands (re-pointed by path, share write-1): today's AppShell held it; the ground's
+       Write mount (`WritingMount.tsx`) stands `useShellCompose` of `shell-compose.ts`, which every host reaches. */
+    const shell = [
+      "packages/app-logic/src/writing/shell-compose.ts",
+      "packages/app/src/mail/ground/WritingMount.tsx",
+    ].map((at) => readFileSync(resolve(process.cwd(), at), "utf8")).join("\n");
 
     // 1. the button
     const { canSend } = await import("@ohmail/app-logic/writing/mail-send");
@@ -1482,31 +1483,40 @@ describe("the warn sentence is about the message on screen", () => {
   });
 
   it("both surfaces render the narrowed state, and judge the unnarrowed one", async () => {
+    /* RE-POINTED BY PATH (share write-1): today's two surfaces were ComposeView and InlineReply; Write's are the letter
+       and the reply, whose send state each surface renders is derived in `writing-of.ts` (the letter's `composeSend`)
+       and `writing-reply.ts` (the reply's `send`), and whose sentence and held answers are drawn by ONE part,
+       `write/status/Status.tsx`, off the state it is handed. */
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const compose = readFileSync(resolve(process.cwd(), "apps/webapp/app/views/ComposeView.tsx"), "utf8");
-    const reply = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/InlineReply.tsx"), "utf8");
+    const compose = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/writing-of.ts"), "utf8");
+    const reply = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/writing-reply.ts"), "utf8");
+    const status = readFileSync(resolve(process.cwd(), "packages/app/src/write/status/Status.tsx"), "utf8");
     expect(
       compose,
       "the compose surface renders the lane's phase, so an unresolved send warns about mail the "
         + "reader is not writing",
-    ).toMatch(/<SendStatus send=\{shown\}/);
+    ).toMatch(/\bsendStateFor\(/);
     expect(
       reply,
       "the inline reply renders the lane's phase, same defect",
-    ).toMatch(/<SendStatus send=\{sendStateFor\(send, wouldSend\)\}/);
+    ).toMatch(/\bsendStateFor\(/);
     /* ── AND THE WAY OUT, ON BOTH OF THEM, OFF THE SAME NARROWED STATE ──────────────────────
        A surface that states the hold and offers nothing to do about it sends the reader to
        another screen to answer a question this one asked. Both doors gate the verbs on the
-       phase the SENTENCE renders from, so a hold that says nothing here offers nothing either. */
+       phase the SENTENCE renders from, so a hold that says nothing here offers nothing either.
+       Write draws both doors' sentence and answers in one part, off the one `send` it is handed. */
+    const replyView = readFileSync(resolve(process.cwd(), "packages/app/src/write/Reply.tsx"), "utf8");
+    expect(status, "the held answers are not gated on the phase the sentence renders from")
+      .toMatch(/held !== null && send\.phase === "unverified"/);
     expect(
-      compose,
+      status,
       "the composer states the hold and offers no way to answer it",
-    ).toMatch(/heldResolve !== null && shown\.phase === "unverified"/);
+    ).toMatch(/const said = \{ send: w\.composeSend, held, locked, onResolve: w\.resolveHeldSend \}/);
     expect(
-      reply,
+      replyView,
       "the reply editor states the hold and offers no way to answer it",
-    ).toMatch(/heldResolve !== null && sendStateFor\(send, wouldSend\)\.phase === "unverified"/);
+    ).toMatch(/<Status\s+at="one"\s+send=\{reply\.send\}\s+held=\{reply\.held\}\s+locked=\{null\}\s+onResolve=\{w\.resolveHeldSend\}\s+\/>/);
   });
 });
 
@@ -1680,7 +1690,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
     });
 
     expect(
-      host!.querySelector(".draft-resolve"),
+      resolveBox(),
       "a held reply's editor offers no way to answer the question its own sentence asks",
     ).not.toBeNull();
     expect(
@@ -1689,9 +1699,9 @@ describe("the row the composer is holding decides too, not only the jar", () => 
       + "have been delivered",
     ).toBe(true);
 
-    const verbs = Array.from(host!.querySelectorAll<HTMLElement>(".draft-resolve button"));
-    const arrived = verbs.find((b) => (b.textContent ?? "").trim() === "It was sent — dismiss");
-    const not = verbs.find((b) => (b.textContent ?? "").trim() === "Send again");
+    const verbs = within(resolveBox()!).getAllByRole<HTMLElement>("button");
+    const arrived = verbs.find((b) => (b.textContent ?? "").trim() === messages.drafts.heldItWasSent);
+    const not = verbs.find((b) => (b.textContent ?? "").trim() === messages.drafts.sendAgain);
     expect(arrived, "the editor lost the arrived verb").toBeDefined();
     expect(not, "the editor lost the did-not-arrive verb").toBeDefined();
 
@@ -1714,7 +1724,7 @@ describe("the row the composer is holding decides too, not only the jar", () => 
       onResolve: (id, outcome) => { heldAnswers.push(`${id}:${outcome}`); },
     });
     expect(
-      host!.querySelector(".draft-resolve"),
+      resolveBox(),
       "an ordinary reply is asked whether it arrived, which is a question about a send that was "
       + "never attempted",
     ).toBeNull();

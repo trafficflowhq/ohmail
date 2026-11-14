@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -24,10 +25,12 @@ import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
+const RECIPIENT = "lena@atelier.example";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
+const composer = () => within(host!).getByRole("region", { name: messages.write.letter });
+const subjectField = () => within(composer()).getByRole<HTMLTextAreaElement>("textbox", { name: "Subject" });
 const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
 const settle = async (n = 8): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
@@ -43,7 +46,7 @@ async function goto(hash: string): Promise<void> {
 }
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -52,26 +55,20 @@ async function mountShell(): Promise<void> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-09-27T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
       }),
     }));
   });
   await settle(10);
 }
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
 async function makeADraft(): Promise<string> {
   await goto("#/compose");
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Bis Montag");
+  const to = within(composer()).getByRole("combobox", { name: "To" });
+  await act(async () => {
+    fireEvent.change(to, { target: { value: `${RECIPIENT}, ` } });
+    fireEvent.change(subjectField(), { target: { value: "Bis Montag" } });
+  });
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
   const id = window.localStorage.getItem(composeRowKey(storageOwner()));
@@ -88,7 +85,7 @@ function parkTheRow(draftId: string): void {
 }
 
 const notes = (): string[] =>
-  Array.from(host!.querySelectorAll<HTMLElement>(".view-compose .send-note")).map((n) => n.textContent ?? "");
+  within(composer()).queryAllByRole("status").map((n) => n.textContent ?? "");
 const compose = messages.compose as unknown as Record<string, string>;
 
 beforeEach(() => {
@@ -137,9 +134,10 @@ describe("the plain compose door, over a message left unfinished", () => {
     await mountShell();
     const id = await makeADraft();
     await goto("#/drafts");
-    const open = q<HTMLElement>(`.draft-row[data-id="${id}"] .draft-open`);
-    expect(open, "the draft is not listed").not.toBeNull();
-    await act(async () => { open!.click(); });
+    const drafts = within(host!).getByRole("listbox", { name: messages.drafts.title });
+    const open = within(drafts).getByRole("option", { name: `${RECIPIENT}: Bis Montag` });
+    expect(open.dataset.id).toBe(id);
+    await press(open);
     await settle(6);
     await settleFirstPaint();
     expect(window.location.hash).toBe("#/compose");
@@ -152,6 +150,7 @@ describe("the plain compose door, over a message left unfinished", () => {
     parkTheRow(id);
     await goto("#/ohbox");
     await goto("#/compose");
+    expect(notes().some((line) => line.startsWith(messages.write.status.unverified))).toBe(true);
     expect(notes(), "the resumed line stood over a held message").not.toContain(compose.resumedNote);
   }, 30_000);
 
@@ -164,7 +163,7 @@ describe("the plain compose door, over a message left unfinished", () => {
     await mountShell();
     await settle(10);
     await settleFirstPaint();
-    expect(q<HTMLInputElement>("#compose-subject")?.value, "the reload did not restore the message").toBe("Bis Montag");
+    expect(subjectField().value, "the reload did not restore the message").toBe("Bis Montag");
     expect(notes(), "the restored message was not said as resumed").toContain(compose.resumedNote);
   }, 30_000);
 

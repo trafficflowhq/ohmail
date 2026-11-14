@@ -3,7 +3,7 @@ import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { mailboxes, organizerRequests, markRequestsApplied, markRequestsRefused, markRequestsSent } from "@trafficflow/db";
 import { FIXED_NOW, makeDeps, seedSession } from "../../api/test/helpers.js";
 import { HttpAdapter, OhmailEngine, rulesList, type FetchLike } from "@ohmail/client-engine";
-import { waitingByRow, actingRules } from "../../../apps/webapp/app/views/rules-standing.js";
+import { waitingByRow, actingRules } from "@ohmail/app-logic/press/rules-standing";
 
 // REVIEW-026 H2, the reviewer's probe kept as the control: the REAL rules route's 202 through the
 // REAL engine, on a reader-only account. Red at that change; the press now carries its legs' ids.

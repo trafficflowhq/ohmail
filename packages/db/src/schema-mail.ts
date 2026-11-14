@@ -2876,6 +2876,8 @@ export const calCredentials = pgTable("cal_credentials", {
 
 /** One calendar of a connection, and where its sync stands. */
 export const calCalendars = pgTable("cal_calendars", {
+  /** Per-calendar secret for stable availability identities. Never included in an account export or feed. */
+  availabilityKey: uuid("availability_key").defaultRandom().notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
   connectionId: uuid("connection_id").notNull(),

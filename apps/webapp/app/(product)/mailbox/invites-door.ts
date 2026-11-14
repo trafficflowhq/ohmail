@@ -18,7 +18,7 @@ import { securityRefusal } from "./security-door";
  * join page's path are the two halves of one address. The token rides the fragment, which no request carries; it
  * is in no log line and no stored key, and only the link leaves this file. `day` says a day as the reader says it.
  */
-export function invitesDoor(say: (err: unknown) => string, day: (iso: string) => string): InvitesDoor {
+export function invitesDoor(say: (err: unknown) => string, day: (iso: string) => string, expectedOwner?: string | null): InvitesDoor {
   const tried = async <T>(call: () => Promise<T>): Promise<Answer<T>> => {
     try {
       return { ok: true, value: await call() };
@@ -29,7 +29,7 @@ export function invitesDoor(say: (err: unknown) => string, day: (iso: string) =>
   return {
     async read() {
       try {
-        const { items } = await pair.list();
+        const { items } = await pair.list(expectedOwner);
         // Open invites only: spent and expired rows are history, and pairing codes are the Devices pane's.
         const open = items.filter((item) => item.grant === "invite" && item.status === "live");
         return {
@@ -47,13 +47,13 @@ export function invitesDoor(say: (err: unknown) => string, day: (iso: string) =>
     },
     make: (name) =>
       tried(async () => {
-        const made = await pair.mint(name ? { label: name } : {});
+        const made = await pair.mint(name ? { label: name } : {}, expectedOwner);
         return { link: `${window.location.origin}/join/invite#${made.token}`, name: made.label };
       }),
     revoke: (id) =>
       tried(async () => {
         try {
-          await pair.revoke(id);
+          await pair.revoke(id, expectedOwner);
         } catch (err) {
           // Spent, expired or revoked elsewhere: the row is leaving the list either way.
           if (!(err instanceof ApiError && err.status === 404)) throw err;
@@ -72,7 +72,7 @@ export function invitesDoor(say: (err: unknown) => string, day: (iso: string) =>
 }
 
 /** The web's Invites door, its refusals and days said in the reader's language. */
-export function useInvitesDoor(): InvitesDoor {
+export function useInvitesDoor(expectedOwner?: string | null): InvitesDoor {
   const say = useRefusalSentence();
   const format = useFormatter();
   // The door stays one door whatever formatter a draw hands in: a new door would ask the list again.
@@ -81,7 +81,7 @@ export function useInvitesDoor(): InvitesDoor {
     formatter.current = format;
   });
   return useMemo(
-    () => invitesDoor(say, (iso) => formatter.current.dateTime(new Date(iso), { dateStyle: "medium" })),
-    [say],
+    () => invitesDoor(say, (iso) => formatter.current.dateTime(new Date(iso), { dateStyle: "medium" }), expectedOwner),
+    [say, expectedOwner],
   );
 }

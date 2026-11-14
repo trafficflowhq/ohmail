@@ -5,7 +5,7 @@
  * a branch never taken (`DesktopGate` passes `demo={false}` structurally) still puts its
  * imports — the whole fixtures corpus of invented mail — into the bundle of an app that opens
  * EMPTY, so the module is replaced, not merely unreached (`scan-artifact.mjs` greps both dists
- * for the sample senders). The three value exports below are what the client-engine barrel
+ * for the sample senders). The value exports below are what the testing adapter entry
  * re-exports; the class throws in its constructor so a reached demo branch fails loudly.
  */
 
@@ -15,6 +15,11 @@ export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
 
 /** The fixture timestamp reader. Nothing in a desktop artifact holds a fixture to read. */
 export function parseFixtureTime(_time: string, _index: number, _base: Date): string {
+  throw new Error("ohmail Desktop carries no sample mail; the demo lives on ohmail.app alone.");
+}
+
+/** The demo reply uses fixture mail. A desktop that tries to read it must fail. */
+export function demoReplySource(): never {
   throw new Error("ohmail Desktop carries no sample mail; the demo lives on ohmail.app alone.");
 }
 

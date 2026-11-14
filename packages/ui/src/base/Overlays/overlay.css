@@ -28,7 +28,23 @@
     grid-template-rows: minmax(0, 1fr);
     /* In the middle, unless what holds it says another place (`--oh-scrim-place`). */
     place-items: var(--oh-scrim-place, center);
+    isolation: isolate;
+  }
+  .oh-scrim:not([data-scrim-motion="backdrop"]) {
     background: var(--scrim);
+  }
+  .oh-scrim[data-scrim-motion="backdrop"]::before {
+    /* Fade the backdrop independently of the sheet above it. The scrim keeps the same hit area. */
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-layer-recessed);
+    pointer-events: none;
+    background: var(--scrim);
+    animation: oh-scrim-in var(--d-fade) var(--e-std) backwards;
+  }
+  .oh-scrim[data-scrim-motion="together"] {
+    animation: oh-scrim-in var(--d-fade) var(--e-std) backwards;
   }
   .oh-scrim[data-place="top"] {
     --oh-scrim-place: start center;
@@ -44,5 +60,29 @@
   }
   .oh-overlay:focus {
     outline: none;
+  }
+  .oh-overlay,
+  .oh-menu {
+    animation: oh-overlay-in var(--d-pop) var(--e-pop) backwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-overlay,
+    .oh-menu,
+    .oh-scrim[data-scrim-motion="backdrop"]::before,
+    .oh-scrim[data-scrim-motion="together"] {
+      /* The shared reset makes other animations instant. Keep the kit's opacity-only arrival. */
+      animation-duration: var(--d-reduced) !important;
+    }
+  }
+  @keyframes oh-scrim-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes oh-overlay-in {
+    from {
+      opacity: var(--o-pop);
+      transform: var(--x-pop);
+    }
   }
 }

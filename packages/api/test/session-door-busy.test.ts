@@ -72,10 +72,13 @@ describe("the session doors under a busy pool", () => {
     const [row] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
     expect(row?.revokedAt, "a refused door ended the family anyway").toBeNull();
-    // The pool frees: the same jar's next ask ends it and clears the jar.
+    // The pool frees: the same jar's next ask revokes the family.
     const done = await app.handle(req("POST", "/auth/refresh/logout", { cookie: `tf_refresh=${refresh}` }), deps);
     expect(done.status).toBe(204);
-    expect(done.headers.getSetCookie().some((c) => /^tf_refresh=;/.test(c))).toBe(true);
+    expect(done.headers.getSetCookie()).toEqual([]);
+    const [ended] = await db.select({ revokedAt: refreshTokens.revokedAt }).from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, hashToken(refresh)));
+    expect(ended?.revokedAt instanceof Date).toBe(true);
   });
 
   it("GET /auth/session answers 503 db_busy, Retry-After, retryable, and sets no cookie", async () => {

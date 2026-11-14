@@ -3777,13 +3777,15 @@ export interface LiveWorldActions {
    * A waiting sender's decision — the five destinations, "&read", sender/domain scope. `peers`, the
    * waiting rows on screen: a whole-domain press files their letters at that domain too.
    */
-  decide(row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, peers?: readonly ScreenerRow[]): Promise<boolean>;
+  decide(row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, peers?: readonly ScreenerRow[], unsubscribeIds?: readonly string[]): Promise<boolean>;
   /** What that press files beyond the row's own letters, before it is made ({@link cardReach}). */
   reachOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): CardReach;
   /** What a Screen out or Spam press on the row says about the one-click unsubscribe, before it is made. */
   unsubClaimOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): UnsubscribeClaim;
+  unsubscribeIdsOf(row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): readonly string[];
   /** The same, for the open message's screening sheet: `none` where the press is not a decide. */
   screeningUnsubClaim(messageId: string, scope: Scope): UnsubscribeClaim;
+  screeningUnsubscribeIds(messageId: string, scope: Scope): readonly string[];
   /** Allow / Not-spam: release the held bag to a place, REWRITING the holding rules. */
   release(row: ScreenerRow, dest: Place, segment: "screened" | "spam"): Promise<boolean>;
   /** The message screen's triage: Answer Later / Park / Resurface. */
@@ -4004,7 +4006,7 @@ export interface LiveWorldActions {
    * SCREENING from the open message: where THIS SENDER's mail goes — the webapp sender sheet's
    * rule ladder (`sender-screening.ts#planScreeningChange`), in the phone's idiom.
    */
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): Promise<boolean>;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress, unsubscribeIds?: readonly string[]): Promise<boolean>;
   /** The press before it is made — where the lists would show the sender's mail afterwards. */
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   /** "Their rules": every rule deciding the sender's mail today, as the lists place it. */
@@ -4074,10 +4076,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       letters: heldIds.map((id) => unsubscribeLetterOf(reader, id)),
     });
   };
-  /** The press's sentence with the unsubscribe arm, if any: `held` while Undo is still to come. */
-  const withUnsub = (said: Refusal, claim: UnsubscribeClaim, held: boolean): Refusal =>
-    claim === "none" ? said
-      : refuse("liveAlsoUnsubscribing", said, held ? (claim === "sends" ? "sends" : "may") : (claim === "sends" ? "sent" : "maysent"));
+  const unsubscribeCandidates = (ids: readonly string[]): string[] => {
+    const reader = engine.read();
+    return [...new Set(ids)].filter((id) => {
+      const { posture, authVerdict } = unsubscribeLetterOf(reader, id);
+      return (posture === null || posture === "one_click") && (authVerdict == null || authVerdict === "pass");
+    });
+  };
+  /** Requests come from the confirmed press, so the receipt says whether the send was conditional. */
+  const withUnsub = (said: Refusal, claim: UnsubscribeClaim): Refusal =>
+    claim === "none" ? said : refuse("liveAlsoUnsubscribing", said, claim === "sends" ? "sent" : "maysent");
   /**
    * Everything swept per stream DURING THE CURRENT VISIT — the leave commit's anchor pool.
    * CONSUMED by {@link leaveFeed}: a visit's sweep may not leak into the next one, or a
@@ -4652,25 +4660,29 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return pressClaim(atGate, "no", heldInScope(row, peers, scope));
   };
 
+  const unsubscribeIdsOf = (row: ScreenerRow, peers: readonly ScreenerRow[], scope: Scope): string[] =>
+    unsubClaimOf(row, peers, scope) === "none" ? [] : unsubscribeCandidates(heldInScope(row, peers, scope));
+
   const decide = async (
     row: ScreenerRow, dest: Destination, read: boolean, pressed: Scope, peers: readonly ScreenerRow[] = [],
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const scope: Scope = domainScopeOffered(row.address) ? pressed : "sender";
-    const rep = engine.read().get<EngineMessage>("message", row.id);
     const decision = decisionOf(dest as ScreenDest);
     const target = scope === "domain" ? `@${domainOf(row.address)}` : row.address;
     // A whole-domain card files the other waiting senders' INBOX letters it named, too.
     const own = new Set(row.held.map((h) => h.id));
     const also = scope === "domain" ? reachOf(row, peers, scope).inboxIds.filter((id) => !own.has(id)) : [];
+    const grants = decision === "no" && unsubscribeIds.length > 0
+      ? unsubscribeIdsOf(row, peers, scope).filter((id) => unsubscribeIds.includes(id)) : [];
+    if (grants.length) return decideNow(row, dest, read, scope, also, grants);
     const intent: DecideIntent = {
       v: 3, verb: "decide", id: deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`, seedId: row.id,
       address: row.address, scope, dest: dest as ScreenDest, read,
       messageIds: row.held.map((h) => h.id), ...(also.length > 0 ? { alsoIds: also } : {}), at: now().getTime(),
     };
     const decidedSaid = decidedSaidOf(row, dest, scope, target);
-    const atGate = rep === undefined || physicalFolderOf(rep) === FOLDER_OF_VIEW.screener;
-    const claim = claimsOnly(row, scope) ? "none" : pressClaim(atGate, decision, heldInScope(row, peers, scope));
-    const pressSaid = withUnsub(decidedSaid, claim, true);
+    const pressSaid = decidedSaid;
     let spoke = false;
     const hold = deps.leaveWaiting?.({ address: row.address, scope });
     const opened = await holdScreenRouting(intent, (a) => {
@@ -4696,7 +4708,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     });
     // Sent by the window itself (its record refused): the answer above speaks for the press.
     if (opened.sent) return true;
-    if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope, also, heldInScope(row, peers, scope)); }
+    if (!opened.held) { hold?.(); return decideNow(row, dest, read, scope, also); }
     spoke = true;
     const subject = routingSubject(intent);
     toast(pressSaid, {
@@ -4716,7 +4728,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** The same decision with no window to hold it: sent now, and the sentence waits for the answer. */
   const decideNow = async (
     row: ScreenerRow, dest: Destination, read: boolean, scope: Scope, also: readonly string[] = [],
-    heldIds: readonly string[] = row.held.map((h) => h.id),
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const raw = engine.read();
     const rep = raw.get<EngineMessage>("message", row.id);
@@ -4753,6 +4765,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(decision === "yes" ? { read } : {}),
         scope,
         applyRetro: false,
+        ...(unsubscribeIds.length ? { unsubscribeIds } : {}),
       }).then(
         (r) => {
           queuedWith = r.pendingWith ?? null;
@@ -4816,7 +4829,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return said(
       v,
       // Sent at once: no Undo is on offer, so the request is said as gone.
-      withUnsub(decidedSaid, claimsOnly(row, scope) ? "none" : pressClaim(decideRoute, decision, heldIds), false),
+      withUnsub(decidedSaid, claimsOnly(row, scope) ? "none" : pressClaim(decideRoute && unsubscribeIds.length > 0, decision, unsubscribeIds)),
       refuse("liveDecideFailed", row.address),
     );
   };
@@ -6557,22 +6570,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return brand ? { brand } : null;
   };
   /** The open message's sheet, before a press: what Screen out or Spam would say about the unsubscribe. */
-  const screeningUnsubClaim = (messageId: string, scope: Scope): UnsubscribeClaim => {
+  const screeningUnsubscribeScope = (messageId: string, scope: Scope): string[] => {
     const m = messageOf(messageId);
-    if (!m || isOwn(messageId)) return "none";
+    if (!m || isOwn(messageId)) return [];
     const address = m.from.address.trim().toLowerCase();
     const match = scope === "domain" ? domainOf(address).toLowerCase() : address;
-    if (match === "") return "none";
+    if (match === "") return [];
     const subject = engine.read().list<EngineMessage>("message").filter((x) => (scope === "domain"
       ? domainOf(x.from.address.trim().toLowerCase()).toLowerCase() === match
       : x.from.address.trim().toLowerCase() === match));
-    if (listClaimAt(address, scope, subject) !== null) return "none";
-    const held = heldOfSubject(subject);
-    return pressClaim(held.length > 0, "no", held);
+    return listClaimAt(address, scope, subject) === null ? heldOfSubject(subject) : [];
   };
+  const screeningUnsubClaim = (messageId: string, scope: Scope): UnsubscribeClaim => {
+    const ids = screeningUnsubscribeScope(messageId, scope);
+    return pressClaim(ids.length > 0, "no", ids);
+  };
+  const screeningUnsubscribeIds = (messageId: string, scope: Scope): string[] =>
+    deps.autoUnsubscribe?.() === false ? [] : unsubscribeCandidates(screeningUnsubscribeScope(messageId, scope));
 
   const screenSender = async (
     messageId: string, dest: Destination, scope: Scope, applyRetro = true, press?: PhoneScreenPress,
+    unsubscribeIds: readonly string[] = [],
   ): Promise<boolean> => {
     const raw = engine.read();
     const m = messageOf(messageId);
@@ -6602,6 +6620,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
     // Read before the press: its overlay takes the sender's row off the store's page.
     const claims = waiting && decision === "no" ? listClaimAt(address, scope, subject) : null;
+    const granted = waiting && decision === "no" && claims === null && unsubscribeIds.length > 0
+      ? screeningUnsubscribeIds(messageId, scope).filter((id) => unsubscribeIds.includes(id)) : [];
 
     /* AN ADDRESS PRESS PAST THE GATE IS HELD, like a Move (`held-routing.ts`): the mail the list
        will show at the place moves now, the rules are a v2 intent committed when the window
@@ -6618,6 +6638,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // The past-mail answer rides the decision, because the rule it promotes is the only rule
       // this press writes — the webapp's ruling, on the same wire.
       applyRetro,
+      ...(granted.length ? { unsubscribeIds: granted } : {}),
     } : undefined;
     let ruled: Promise<PressVerdict[]>;
     if (decide) {
@@ -6664,7 +6685,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       : stay ?? refuse("liveDecided", destDone(dest), target);
     return saidAll(
       verdicts,
-      withUnsub(pressSaid, claims !== null ? "none" : pressClaim(waiting !== undefined, decision, heldOfSubject(subject)), false),
+      withUnsub(pressSaid, claims !== null ? "none" : pressClaim(granted.length > 0, decision, granted)),
       ownAddressOr(verdicts, refuse("liveDecideFailed", m.from.address)),
     );
   };
@@ -6715,7 +6736,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, scheduleFilesKept, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
-    sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
+    sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, unsubscribeIdsOf, screeningUnsubClaim, screeningUnsubscribeIds, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
@@ -6773,13 +6794,15 @@ export interface WorldActions {
   holdFiles(ids: string[]): void;
   releaseFiles(ids: string[]): void;
   /** `peers`: the waiting rows on screen, whose letters at the domain a whole-domain press files too. */
-  decide(row: ScreenerRow, dest: Destination, read: boolean, peers?: readonly ScreenerRow[]): void;
+  decide(row: ScreenerRow, dest: Destination, read: boolean, peers?: readonly ScreenerRow[], unsubscribeIds?: readonly string[]): void;
   /** What a press on `row` files beyond its own letters, at the row's scope, before it is made. */
   reachOf(row: ScreenerRow, peers: readonly ScreenerRow[]): CardReach;
   /** What Screen out or Spam on `row` says about the one-click unsubscribe, at the row's scope. */
   unsubClaimOf(row: ScreenerRow, peers: readonly ScreenerRow[]): UnsubscribeClaim;
+  unsubscribeIdsOf(row: ScreenerRow, peers: readonly ScreenerRow[]): readonly string[];
   /** The same for the open message's screening sheet, at `scope`. */
   screeningUnsubClaim(messageId: string, scope: Scope): UnsubscribeClaim;
+  screeningUnsubscribeIds(messageId: string, scope: Scope): readonly string[];
   setScope(row: ScreenerRow, scope: Scope): void;
   /** Allow (screened) / Not spam (spam): release the whole held bag to a place. */
   allow(row: ScreenerRow, dest: Place): void;
@@ -6884,7 +6907,7 @@ export interface WorldActions {
   sendOutcome(key: string): "pending" | "confirmed" | "rolled_back" | "unverified" | "unknown";
   tagToggle(messageId: string, tag: WorldTag, assigned: boolean): void;
   tagCreate(messageId: string, name: string): void;
-  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress): void;
+  screenSender(messageId: string, dest: Destination, scope: Scope, applyRetro?: boolean, press?: PhoneScreenPress, unsubscribeIds?: readonly string[]): void;
   screeningForecast(messageId: string, dest: Destination, scope: Scope, applyRetro: boolean): PressForecast | null;
   screeningRules(messageId: string, scope: Scope): RulesInPlay | null;
   screeningStayed(messageId: string, scope: Scope): StayedAsk | null;
@@ -6935,10 +6958,12 @@ export function stableActions(current: () => WorldActions): WorldActions {
     hydrateHeld: (ids) => current().hydrateHeld(ids),
     holdFiles: (ids) => current().holdFiles(ids),
     releaseFiles: (ids) => current().releaseFiles(ids),
-    decide: (row, dest, read, peers) => current().decide(row, dest, read, peers),
+    decide: (row, dest, read, peers, ids) => current().decide(row, dest, read, peers, ids),
     reachOf: (row, peers) => current().reachOf(row, peers),
     unsubClaimOf: (row, peers) => current().unsubClaimOf(row, peers),
     screeningUnsubClaim: (id, scope) => current().screeningUnsubClaim(id, scope),
+    unsubscribeIdsOf: (row, peers) => current().unsubscribeIdsOf(row, peers),
+    screeningUnsubscribeIds: (id, scope) => current().screeningUnsubscribeIds(id, scope),
     setScope: (row, scope) => current().setScope(row, scope),
     allow: (row, dest) => current().allow(row, dest),
     notSpam: (row, dest) => current().notSpam(row, dest),
@@ -6979,7 +7004,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendOutcome: (key) => current().sendOutcome(key),
     tagToggle: (id, tag, assigned) => void current().tagToggle(id, tag, assigned),
     tagCreate: (id, name) => void current().tagCreate(id, name),
-    screenSender: (id, dest, scope, applyRetro, press) => void current().screenSender(id, dest, scope, applyRetro, press),
+    screenSender: (id, dest, scope, applyRetro, press, ids) => void current().screenSender(id, dest, scope, applyRetro, press, ids),
     screeningForecast: (id, dest, scope, applyRetro) => current().screeningForecast(id, dest, scope, applyRetro),
     screeningRules: (id, scope) => current().screeningRules(id, scope),
     screeningStayed: (id, scope) => current().screeningStayed(id, scope),

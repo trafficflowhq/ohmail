@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DEMO_PARAM, isDemoBuild, isDemoRequested } from "../app/demo-mode.js";
 
@@ -175,15 +175,19 @@ describe("the client may turn the demo ON, never OFF", () => {
   it("SECURITY is withheld from the demo, like every other ceremony pane", () => {
     // Settings -> Security is nothing but step-up calls against `auth`: regenerate recovery
     // codes, enrol or remove TOTP. `?demo=1` has no session and no account, so offering the
-    // pane there would render controls that 401 on click -- the same defect that put an
-    // "erase my account" button in front of the fixture world before `accountSection` was
-    // gated. The gate is a ternary at the SettingsView call site in AppShell, so read THAT
-    // file: the first version of this test asserted against `engine.tsx`, where the string
-    // can never appear, and so could only ever have failed.
-    const shell = read("../app/shell/AppShell.tsx");
-    expect(shell).toMatch(/securitySection=\{demo \? undefined : securitySection\}/);
-    // Every ceremony pane is gated the same way; none may be handed over unguarded.
-    expect(shell).not.toMatch(/\n\s*securitySection=\{securitySection\}\s*\n\s*accountSection=/);
+    // pane there would render controls that 401 on click. The demo entry uses its own host
+    // whose feature declarations withhold every account ceremony, including Security.
+    const entry = read("../app/(product)/mailbox/CloudShell.tsx");
+    const frame = read("../app/(product)/demo/DemoShell.tsx");
+    const host = read("../app/(product)/demo/host.ts");
+    const webFrame = /function WebFrame\([\s\S]*?\n\}/.exec(entry)?.[0];
+    expect(webFrame).toMatch(
+      /const demoNow = useResolvedDemoMode\(\);[\s\S]*?if \(demoNow\) return <DemoFrame[^;]*;\s*return \(\s*<AccountLocale[^>]*>\s*<SignedInFrame/,
+    );
+    expect(frame).toMatch(/const host = useMemo\(\(\) => demoHost[\s\S]*?return <MailFrame host=\{host\}/);
+    const features = /features: \{([\s\S]*?)\n    device:/.exec(host)?.[1];
+    expect(features).toMatch(/FEATURE_NAMES\.map\(\(name\) => \[name, NONE\]\)/);
+    expect(features).not.toMatch(/\b(?:security|account|invites):\s*(?!NONE\b)[\w{]/);
   });
 
   it("a mode change after mount REPLACES the engine", () => {
@@ -195,8 +199,14 @@ describe("the client may turn the demo ON, never OFF", () => {
   it("the chrome reads the engine's mode, not the server's prop", () => {
     // The ribbon and the frozen demo clock must never disagree with the adapter the data
     // is coming from.
-    const shell = read("../app/shell/AppShell.tsx");
+    /* Re-pointed by path (RULING-NEW-SHELL-FIRST D (3)) from today's `AppShell.tsx`, whose `ShellInner` read the mode:
+       the new shell's mail ground, which stands above every place on every host (`MailGround.tsx` and its pieces,
+       `packages/app/src/mail/ground/`), read whole. The second needle names today's component; over the ground it asks
+       the same of each of its components: none takes the mode as a prop. */
+    const GROUND = "../../../packages/app/src/mail/";
+    const shell = [`${GROUND}MailGround.tsx`, ...readdirSync(`${HERE}${GROUND}ground`)
+      .filter((f) => /\.tsx?$/.test(f)).map((f) => `${GROUND}ground/${f}`)].map(read).join("\n");
     expect(shell).toMatch(/const demo = useDemoMode\(\);/);
-    expect(shell).not.toMatch(/function ShellInner\(\{ demo \}/);
+    expect(shell).not.toMatch(/function \w+\(\{ demo \}/);
   });
 });

@@ -4,9 +4,17 @@
  * provider's: the frame writes `data-face` only where it finds none, and takes away only what it wrote. The document
  * is the one the root element was drawn in, never a global.
  */
-import { useLayoutEffect, type ReactNode, type RefObject } from "react";
+import { createContext, useContext, useLayoutEffect, type ReactNode, type RefObject } from "react";
+import { design } from "@ohmail/tokens/design";
 import { useGlass } from "./glass.js";
 import { ROOT_ATTRIBUTES, type RootAttribute } from "./root-attributes.js";
+
+const FrameElement = createContext<RefObject<HTMLDivElement | null> | null>(null);
+
+/** The element whose document owns the frame and its panes. */
+export function useFrameElement() {
+  return useContext(FrameElement);
+}
 
 export function FrameRoot({
   drawn,
@@ -29,6 +37,13 @@ export function FrameRoot({
   }, [drawn]);
   useLayoutEffect(() => {
     const root = drawn.current!.ownerDocument.documentElement;
+    const stampsAccent =
+      attributes["data-product"] === "cal" &&
+      root.dataset.accent === undefined &&
+      root.dataset.face === "paper";
+    if (stampsAccent) {
+      root.dataset.accent = design.productAccent.cal;
+    }
     const before = ROOT_ATTRIBUTES.map((name) => [name, root.getAttribute(name)] as const);
     for (const name of ROOT_ATTRIBUTES) {
       const value = attributes[name];
@@ -36,6 +51,7 @@ export function FrameRoot({
       else root.setAttribute(name, value);
     }
     return () => {
+      if (stampsAccent && root.dataset.accent === design.productAccent.cal) delete root.dataset.accent;
       for (const [name, value] of before) {
         if (value === null) root.removeAttribute(name);
         else root.setAttribute(name, value);
@@ -43,8 +59,10 @@ export function FrameRoot({
     };
   }, [drawn, attributes]);
   return (
-    <div ref={drawn} className="oh-root fr-root" data-held={held ? "" : undefined}>
-      {children}
-    </div>
+    <FrameElement.Provider value={drawn}>
+      <div ref={drawn} className="oh-root fr-root" data-held={held ? "" : undefined}>
+        {children}
+      </div>
+    </FrameElement.Provider>
   );
 }

@@ -9,6 +9,8 @@ motion.liquid	*	sheet-only	One motion style ships: slick.
 motion.snap	*	sheet-only	One motion style ships: slick.
 motion.paper	*	sheet-only	One motion style ships: slick.
 motion.spring	*	sheet-only	One motion style ships: slick.
+motion.slick	stream-clip-motion-threshold	product-only	The sheet uses a two-pixel cutoff in the stream's reveal code. The app exposes that same cutoff as a motion token.
+css :root	stream-clip-motion-threshold	product-only	The stream reads the sheet's two-pixel reveal cutoff from this custom property.
 motion.calendar.liquid	*	sheet-only	One motion style ships: slick.
 motion.calendar.snap	*	sheet-only	One motion style ships: slick.
 motion.calendar.paper	*	sheet-only	One motion style ships: slick.

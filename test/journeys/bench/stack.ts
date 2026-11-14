@@ -67,7 +67,10 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
     release() {},
     fixtures: null,
     has: (need) => need === "pg" || need === "stack" || need === "mail",
-    async ask(a, method, path) { return far.ask(jar(a).cookies, method, path); },
+    async ask(a, method, path, o = {}) {
+      if (o.session === "fresh") throw new Error("the stack signs in by its gate alone: a session made for one request is the web bench's");
+      return far.ask(jar(a).cookies, method, path);
+    },
     async account() {
       const session = await far.signIn(await far.register());
       const { address } = await far.connectMailbox(session);
@@ -85,8 +88,12 @@ export async function startStack(recordAs: string, size: Size): Promise<Bench> {
       mailboxes.set(account, address);
       return account;
     },
+    async signedInElsewhere() {
+      throw new Error("the stack signs a jar in by its gate alone: a jar turned to another account under a live page is the web bench's");
+    },
     async person(o = {}) {
       if (o.door !== undefined) throw new Error("the stack has no demo");
+      if (o.clock === "driven") throw new Error("the stack's windows keep the machine's own clock: a driven clock is the web bench's");
       const person = await fenced(browser, { origin, base: "/", lang: "en", allow: [ELSEWHERE], size });
       if (o.account) {
         const host = o.host ?? new URL(origin).hostname;

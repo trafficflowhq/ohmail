@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,6 +15,13 @@ import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
  * its opener; a menu closes when focus leaves it; the shortcut list scrolls by keyboard; a
  * collapsed doorbell is no Tab stop; the palette and Search give focus back to what opened them.
  * Tab's own move is emulated in document order when nothing prevented it.
+ *
+ * OVER THE NEW SHELL (the older tests' sorting): the shell is the new shell's test door (`MailShell`,
+ * `_todays-shell.js`'s old name of it) on the demo world. A row is an option of the Ohbox's list section ("Messages"),
+ * the cursor's row the one the list marks (`data-cursor`, else the open one); the open letter's verbs are found by
+ * name on its toolbar "Actions" (More) and its own menu button ("Message"); the list's own stop is the list
+ * section's scroller; the new letter is Write's region "New message". The cases at places not mounted (Search, the
+ * palette, the key sheet, Later's phone sheet, the Screening sheet) wait for them as they stood.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -56,6 +64,7 @@ afterEach(async () => {
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function shell(hash = "", minRows = 3): Promise<void> {
@@ -88,9 +97,19 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-/* A row of a list: today's row, or the Ohbox's, an option of its listbox; the cursor's is `.sel` there, open here. */
-const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
-const CURSOR = ".view :is(.row.sel, [role=option][data-open])[data-id]";
+/* A row of a list: today's row, or the Ohbox's, an option of its listbox; the cursor's is `.sel` there, the list's
+   cursor mark (else the open row) here. */
+const LIST_SECTION = 'section[aria-label="Messages"]';
+const rows = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>(`.view :is(.row, [role=option])[data-id], ${LIST_SECTION} [role=option][data-id]`)];
+const CURSOR = `.view :is(.row.sel, [role=option][data-open])[data-id], ${LIST_SECTION} [role=option][data-cursor][data-id]`;
+/** The cursor's row: the list's cursor mark, else the open row (`ohbox/_finders.ts` `cursorRow`). */
+const cursorEl = (): HTMLElement | null =>
+  document.querySelector<HTMLElement>(CURSOR) ?? document.querySelector<HTMLElement>(`${LIST_SECTION} [role=option][data-open][data-id]`);
+/** The open letter's verb by its name, on its toolbar "Actions"; its own menu ("Message") by its button's name. */
+const letterVerb = (name: string): HTMLElement | null =>
+  [...document.querySelectorAll<HTMLElement>('[role="region"][aria-label="Open message"] button[aria-label]')]
+    .find((b) => b.getAttribute("aria-label") === name) ?? null;
 const focused = (): HTMLElement | null => document.activeElement as HTMLElement | null;
 const where = (): string => {
   const el = focused();
@@ -137,7 +156,7 @@ async function enter(): Promise<void> {
 
 async function standOn(index: number): Promise<string> {
   const id = rows()[index]!.dataset.id!;
-  for (let i = 0; i < 12 && document.querySelector<HTMLElement>(CURSOR)?.dataset.id !== id; i += 1) await key("j");
+  for (let i = 0; i < 12 && cursorEl()?.dataset.id !== id; i += 1) await key("j");
   await key("ArrowLeft");
   await key("ArrowRight");
   expect(focused()?.dataset.id, `could not stand on row ${index}: focus is on ${where()}`).toBe(id);
@@ -148,20 +167,25 @@ describe("the shortcut sheet's list (R21-03)", () => {
   it("is a named Tab stop, and there the scroll keys scroll the sheet instead of closing it", async () => {
     await shell();
     await standOn(1);
-    const cursor = document.querySelector<HTMLElement>(CURSOR)!.dataset.id;
+    const rowState = () => rows().map((row) => ({
+      id: row.dataset.id,
+      cursor: row.hasAttribute("data-cursor"),
+      selected: row.getAttribute("aria-selected"),
+    }));
+    const before = rowState();
     await key("?");
     await settle();
+    const dialog = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(focused()).toBe(within(dialog).getByRole("button", { name: "Close" }));
     await tab();
-    const list = document.querySelector<HTMLElement>(".ks-cols");
+    const list = within(dialog).getByRole("region", { name: "Keyboard shortcuts" });
     expect(focused(), `Tab from the Close button went to ${where()}`).toBe(list);
-    expect(list!.getAttribute("role")).toBe("region");
-    expect(document.getElementById(list!.getAttribute("aria-labelledby") ?? "")?.textContent).toContain("Keyboard shortcuts");
     for (const k of ["PageDown", "ArrowDown", "End", "PageUp", "Home", " "]) {
       const e = await key(k);
-      expect(document.querySelector(".ks"), `${k} closed the sheet`).not.toBeNull();
+      expect(dialog.isConnected, `${k} closed the sheet`).toBe(true);
       expect(e.defaultPrevented, `${k} was prevented, so it cannot scroll`).toBe(false);
     }
-    expect(document.querySelector<HTMLElement>(CURSOR)!.dataset.id, "a scroll key moved the list behind").toBe(cursor);
+    expect(rowState(), "a scroll key moved the list behind").toEqual(before);
   });
 
   it("any other key still closes it (control), and its headings sit under one h2", async () => {
@@ -169,11 +193,12 @@ describe("the shortcut sheet's list (R21-03)", () => {
     await standOn(1);
     await key("?");
     await settle();
-    expect(document.querySelector(".ks h2")?.textContent).toContain("Keyboard shortcuts");
-    expect(document.querySelectorAll(".ks h3").length).toBeGreaterThan(1);
-    expect(document.querySelectorAll(".ks h4").length).toBe(0);
+    const dialog = within(screen.getByRole("dialog", { name: "Keyboard shortcuts" }));
+    expect(dialog.getByRole("heading", { level: 2 }).textContent).toContain("Keyboard shortcuts");
+    expect(dialog.getAllByRole("heading", { level: 3 }).length).toBeGreaterThan(1);
+    expect(dialog.queryAllByRole("heading", { level: 4 })).toHaveLength(0);
     await key("F" + "7");
-    expect(document.querySelector(".ks")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).toBeNull();
   });
 });
 
@@ -181,11 +206,15 @@ describe("the Screening sheet (R21-04)", () => {
   it("is modal, holds Tab both ways, and its opener states it", async () => {
     await shell();
     await standOn(1);
+    const reading = within(screen.getByRole("region", { name: "Open message" }));
+    const screening = reading.getByRole("button", { name: messages.screening.action });
+    const opener = await tabTo((el) => el === screening, messages.screening.action);
     await key("s");
     await settle();
-    const sheet = document.querySelector<HTMLElement>(".senderm")!;
+    const sheet = screen.getByRole("dialog", { name: /^Options for / });
+    expect(within(sheet).getByRole("radiogroup", { name: messages.screening.sectionWhere })).toBeTruthy();
     expect(sheet.getAttribute("aria-modal")).toBe("true");
-    const opener = document.querySelector<HTMLElement>(".read-col .abar-row .abar-screen")!;
+    expect(sheet.contains(focused())).toBe(true);
     expect(opener.getAttribute("aria-haspopup")).toBe("dialog");
     expect(opener.getAttribute("aria-expanded")).toBe("true");
     expect(opener.getAttribute("aria-controls")).toBe(sheet.id);
@@ -199,17 +228,19 @@ describe("the Screening sheet (R21-04)", () => {
     }
     await key("Escape");
     await settle();
-    expect(document.querySelector(".senderm")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: /^Options for / })).toBeNull();
     expect(opener.getAttribute("aria-expanded")).toBe("false");
   });
 });
 
 describe("a letter's menus close when focus leaves them (R21-05)", () => {
-  for (const [name, sel] of [["More", ".read-col .abar-row .abar-more"], ["Message actions", ".read-col .msg-more"]] as const) {
+  /* Today's triggers by class (`.abar-more`, `.msg-more`); the open letter's own by their names now: More on its
+     toolbar, and the letter's own menu, "Message" (`reader.message.menu`; today's said "Message actions"). */
+  for (const [name, button] of [["More", "More"], ["Message actions", "Message"]] as const) {
     it(`${name}: Tab closes it, and focus does not fall to the page`, async () => {
       await shell();
       await standOn(1);
-      const trigger = await tabTo((el) => el.matches(sel), name);
+      const trigger = await tabTo((el) => el === letterVerb(button), name);
       await enter();
       expect(document.querySelector('[role="menu"]'), `${name} did not open`).not.toBeNull();
       expect(document.querySelector('[role="menu"]')!.contains(focused()), `the menu opened with focus on ${where()}`).toBe(true);
@@ -224,7 +255,7 @@ describe("a letter's menus close when focus leaves them (R21-05)", () => {
   it("Escape still closes More back onto its trigger (control)", async () => {
     await shell();
     await standOn(1);
-    const trigger = await tabTo((el) => el.matches(".read-col .abar-row .abar-more"), "More");
+    const trigger = await tabTo((el) => el === letterVerb("More"), "More");
     await enter();
     await key("Escape");
     await settle();
@@ -236,26 +267,27 @@ describe("a letter's menus close when focus leaves them (R21-05)", () => {
 describe("the phone's letter sheet (R21-06)", () => {
   it("takes focus, holds Tab both ways, and Escape returns it to the row", async () => {
     phone = true;
+    vi.stubGlobal("innerWidth", 390);
     await shell("#/triage", 1);
-    const row = await tabTo((el) => el.matches(".view .row[data-id]"), "a row");
-    const id = row.dataset.id;
+    const options = screen.getAllByRole("option");
+    await key("j");
+    const row = await tabTo((el) => options.includes(el), "a message row");
     await enter();
-    const sheet = document.querySelector<HTMLElement>(".reader");
-    expect(sheet, "Enter on the row opened no sheet").not.toBeNull();
-    expect(sheet!.getAttribute("aria-modal")).toBe("true");
-    expect(sheet!.contains(focused()), `the sheet opened with focus on ${where()}`).toBe(true);
+    const sheet = screen.getByRole("dialog", { name: "Reading" });
+    expect(sheet.getAttribute("aria-modal")).toBe("true");
+    expect(sheet.contains(focused()), `the sheet opened with focus on ${where()}`).toBe(true);
     for (let i = 0; i < 24; i += 1) {
       await tab();
-      expect(sheet!.contains(focused()), `Tab ${i + 1} reached ${where()} behind the sheet`).toBe(true);
+      expect(sheet.contains(focused()), `Tab ${i + 1} reached ${where()} behind the sheet`).toBe(true);
     }
     for (let i = 0; i < 24; i += 1) {
       await tab(true);
-      expect(sheet!.contains(focused()), `Shift+Tab ${i + 1} reached ${where()} behind the sheet`).toBe(true);
+      expect(sheet.contains(focused()), `Shift+Tab ${i + 1} reached ${where()} behind the sheet`).toBe(true);
     }
     await key("Escape");
     await settle();
-    expect(document.querySelector(".reader")).toBeNull();
-    expect(focused()?.dataset.id, `after Escape focus is on ${where()}`).toBe(id);
+    expect(screen.queryByRole("dialog", { name: "Reading" })).toBeNull();
+    expect(focused(), `after Escape focus is on ${where()}`).toBe(row);
   });
 });
 
@@ -303,25 +335,28 @@ describe("a surface that closes after the page has gone (the unhandled errors at
 describe("Escape gives focus back to what opened the palette and Search (R18-02)", () => {
   it("Search, opened from the rail, returns to the rail's Search row", async () => {
     await shell();
-    await tabTo((el) => el.matches("[data-rail-id] button") && /Search/.test(el.textContent ?? ""), "the rail's Search row");
+    const rail = within(screen.getByRole("navigation"));
+    const opener = rail.getByRole("button", { name: "Search" });
+    await tabTo((el) => el === opener, "the rail's Search row");
     await enter();
-    await waitFor(() => document.querySelector(".view-search") !== null, "Search did not open");
+    const field = () => screen.queryByRole("textbox", { name: "Search" });
+    await waitFor(() => field() !== null, "Search did not open");
     await key("Escape");
-    await waitFor(() => document.querySelector(".view-search") === null, "Escape did not leave Search");
+    await waitFor(() => field() === null, "Escape did not leave Search");
     await settle();
-    const now = focused();
-    expect(now?.matches("[data-rail-id] button") && /Search/.test(now.textContent ?? ""), `after Escape focus is on ${where()}`).toBe(true);
+    expect(focused(), `after Escape focus is on ${where()}`).toBe(opener);
   });
 
   it("the palette, opened from a rail row, returns to that row", async () => {
     await shell();
-    const opener = await tabTo((el) => el.matches("[data-rail-id] button") && /History/.test(el.textContent ?? ""), "the rail's History row");
+    const rail = within(screen.getByRole("navigation"));
+    const opener = rail.getByRole("button", { name: "History" });
+    await tabTo((el) => el === opener, "the rail's History row");
     await key("k", { ctrlKey: true });
-    await settle();
-    expect(document.querySelector(".palette"), "Ctrl+K did not open the palette").not.toBeNull();
+    const palette = () => screen.queryByRole("dialog", { name: messages.palette.ariaLabel });
+    await waitFor(() => palette() !== null, "Ctrl+K did not open the palette");
     await key("Escape");
-    await settle();
-    expect(document.querySelector(".palette")).toBeNull();
+    await waitFor(() => palette() === null, "Escape did not close the palette");
     expect(focused(), `after Escape focus is on ${where()}`).toBe(opener);
   });
 });
@@ -330,28 +365,32 @@ describe("the composer, closed, gives the keyboard back to the list it left (R18
   /* `c` leaves the Ohbox for the composer and Escape comes back: the control that opened it is gone with the view, so
      the keyboard goes to the row it stood on, else the cursor's row, else the list's own stop. Never a control of the
      list's head, where the next Enter would press it. */
+  /* The composer is Write's new letter (its region "New message"); the Ohbox is back when its list section is. */
+  const letterOpen = (): boolean => document.querySelector('[role="region"][aria-label="New message"]') !== null;
+  const ohboxBack = (): boolean => document.querySelector(LIST_SECTION) !== null && !letterOpen();
   const compose = async (): Promise<void> => {
     await key("c");
-    await waitFor(() => document.querySelector(".view-ohbox") === null, "c did not open the composer");
+    await waitFor(() => letterOpen(), "c did not open the composer");
     await settle();
     await key("Escape");
-    await waitFor(() => document.querySelector(".view-ohbox") !== null && rows().length > 0, "Escape did not come back to the Ohbox");
+    await waitFor(() => ohboxBack() && rows().length > 0, "Escape did not come back to the Ohbox");
     await settle();
   };
-  const LIST = ".view-ohbox :is(.scroller, .ob-scroll)";
+  /** The list's own stop: the Ohbox list section's scroller (today's `.ob-scroll`). */
+  const LIST = `.view-ohbox :is(.scroller, .ob-scroll), ${LIST_SECTION} .ob-scroll, ${LIST_SECTION} [tabindex="-1"]`;
 
   it("opened from the cursor's row: back on that row", async () => {
     await shell("#/ohbox");
     const id = await standOn(1);
     await compose();
     expect(focused()?.dataset.id, `after the composer closed focus is on ${where()}`).toBe(id);
-    expect(focused()?.matches(CURSOR)).toBe(true);
+    expect(focused() === cursorEl()).toBe(true);
   });
 
   it("opened from a control of the head with a letter open: on the cursor's row", async () => {
     await shell("#/ohbox");
     const id = await standOn(1);
-    const head = [...document.querySelectorAll<HTMLElement>(".view-ohbox :is(.oh-listhead-aside, .vhead) button:not([disabled])")].pop()!;
+    const head = [...document.querySelectorAll<HTMLElement>(`.view-ohbox :is(.oh-listhead-aside, .vhead) button:not([disabled]), ${LIST_SECTION} header button:not([disabled])`)].pop()!;
     await act(async () => { head.focus(); });
     expect(focused(), "the premise: a control of the head holds the keyboard").toBe(head);
     await compose();
@@ -360,7 +399,7 @@ describe("the composer, closed, gives the keyboard back to the list it left (R18
 
   it("opened from a row that holds the keyboard with no letter open: back on that row", async () => {
     await shell("#/ohbox");
-    expect(document.querySelector(CURSOR), "the premise: no cursor").toBeNull();
+    expect(cursorEl(), "the premise: no cursor").toBeNull();
     const row = rows()[2]!;
     const id = row.dataset.id;
     await act(async () => { row.focus(); });
@@ -371,7 +410,7 @@ describe("the composer, closed, gives the keyboard back to the list it left (R18
 
   it("opened with no cursor in the list: on the list's own stop", async () => {
     await shell("#/ohbox");
-    expect(document.querySelector(CURSOR), "the premise: no cursor").toBeNull();
+    expect(cursorEl(), "the premise: no cursor").toBeNull();
     await compose();
     expect(focused()?.matches(LIST), `after the composer closed focus is on ${where()}`).toBe(true);
   });

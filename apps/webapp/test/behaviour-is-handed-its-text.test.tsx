@@ -101,7 +101,10 @@ afterEach(async () => {
 
 describe("the zone model is handed its reader", () => {
   it("the arrows' labels in the key registry are the handed reader's words", async () => {
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    // The registry as the frame mounts it (`Frame.tsx` `OwnKeys`): its context over the one store.
+    const { KeymapContext, useKeymapStore } = await import("@ohmail/app-logic/keys");
+    const KeymapProvider = ({ children }: { children?: React.ReactNode }): React.ReactElement =>
+      h(KeymapContext.Provider, { value: useKeymapStore() }, children);
     const { useBinding } = await import("@ohmail/app-logic/keys/keymap");
     const { useZoneNav } = await import("@ohmail/app-logic/keys/zone-nav");
     const { t, asked } = recording();

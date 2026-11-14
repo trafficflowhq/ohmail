@@ -1,28 +1,25 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { AutoActRow } from "../app/shell/AutoActRow";
+import {
+  act, installConfirmEnv, ISO, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * "ACT ON CONFIDENT SUGGESTIONS FOR ME", RENDERED — the ruled words, the stored value,
- * and the two disabled states: automatic suggestions off, and an install that reads mail another
- * install organizes. The desktop's standalone door renders this same row.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  })) as never;
+const capabilities = vi.hoisted(() => ({ rulesMarked: true }));
+vi.mock("../app/(product)/mailbox/host", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../app/(product)/mailbox/host")>();
+  return {
+    ...real,
+    webHost(...args: Parameters<typeof real.webHost>) {
+      const host = real.webHost(...args);
+      return { ...host, capabilities: { ...host.capabilities, rulesMarked: capabilities.rulesMarked } };
+    },
+  };
+});
 
 const TITLE = "Act on confident suggestions for me";
 const DESCRIPTION = "When a suggestion about a waiting sender is at least 90% sure that it is spam or one "
@@ -39,89 +36,129 @@ const UNMARKED = DESCRIPTION.replace(
   "is listed in Settings → Rules, where you can undo it.",
 );
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null;
+beforeAll(warmCloudShell);
+beforeEach(() => {
+  capabilities.rulesMarked = true;
+  installConfirmEnv();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
 });
+afterEach(teardownConfirmEnv);
 
-async function mount(props: Parameters<typeof AutoActRow>[0], locale: "en" | "de" = "en"): Promise<void> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "en" ? en : de, timeZone: "UTC",
-      children: h(ThemeProvider, { storageKey: null, children: h(AutoActRow, props) }),
-    }));
-  });
+async function mount({
+  on = false, suggestOn = true, reader = false, refuse = false, locale = "en",
+}: { on?: boolean; suggestOn?: boolean; reader?: boolean; refuse?: boolean; locale?: "en" | "de" } = {}) {
+  const calls: unknown[] = [];
+  let autoActAt = on ? ISO : null;
+  const wire = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    if (path === "/api/consent") {
+      return json({
+        seedConfirmedAt: ISO, onboardingCompletedAt: ISO, dormancyDays: 60, screeningResetAt: null,
+        autoSuggestAt: suggestOn ? ISO : null, autoActAt,
+      });
+    }
+    if (path === "/api/consent/settings" && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as { autoAct: boolean };
+      calls.push(body);
+      if (refuse) return json({ error: { code: "forbidden", message: "The setting did not save." } }, 403);
+      autoActAt = body.autoAct ? ISO : null;
+      return json({ autoActAt });
+    }
+    if (path === "/api/account/screening") {
+      return json({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people" });
+    }
+    if (path === "/api/mailboxes") {
+      return json({ items: [{
+        id: "mb", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
+        organizerRole: reader ? "reader" : "organizer",
+        organizedBy: reader ? { kind: "cloud", name: "Other installation", since: ISO } : null,
+        initialImportCompletedAt: ISO, organizeConsentedAt: reader ? null : ISO, lastSyncAt: ISO, createdAt: ISO,
+      }] });
+    }
+    return wire(input, init);
+  };
+
+  window.location.hash = "#/settings/screener";
+  const messages = locale === "de" ? de : en;
+  const host = await mountCloudShell((shell) => (
+    <NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">{shell}</NextIntlClientProvider>
+  ));
+  await tick(3000);
+  const pane = within(host).getByRole("region", { name: messages.settings.screener });
+  const sw = () => within(pane).getByRole<HTMLButtonElement>("switch", { name: messages.screener.suggest.actTitle });
+  return { pane, sw, calls };
 }
-const sw = (): HTMLButtonElement => host!.querySelector('button[role="switch"]') as HTMLButtonElement;
-const why = (): string | null => host!.querySelector("[data-act-why]")?.textContent ?? null;
-const flush = async (): Promise<void> => {
-  for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
-};
+
+async function press(button: HTMLElement): Promise<void> {
+  await act(async () => { button.click(); });
+  await tick(250);
+}
 
 describe("the act on suggestions' switch", () => {
   it("says what it agrees to, word for word, and writes on a press when suggestions are on", async () => {
-    const calls: boolean[] = [];
-    await mount({ on: false, suggestOn: true, reader: false, setAutoAct: async (v) => { calls.push(v); return v; } });
-    expect(host!.textContent).toContain(TITLE);
-    expect(host!.textContent).toContain(DESCRIPTION);
+    const { pane, sw, calls } = await mount();
+    expect(pane.textContent).toContain(TITLE);
+    expect(pane.textContent).toContain(DESCRIPTION);
     expect(en.screener.suggest.actDescription).toBe(DESCRIPTION);
-    expect(host!.textContent, "no-AI wording within reach of the act").not.toMatch(/no AI/i);
+    expect(pane.textContent, "no-AI wording within reach of the act").not.toMatch(/no AI/i);
     expect(sw().getAttribute("aria-checked")).toBe("false");
     expect(sw().disabled).toBe(false);
-    expect(why()).toBeNull();
-    await act(async () => { sw().click(); });
-    await flush();
-    expect(calls).toEqual([true]);
+    expect(within(pane).queryByText(en.screener.suggest.actNeedsSuggest)).toBeNull();
+    expect(within(pane).queryByText(en.screener.suggest.actReader)).toBeNull();
+    await press(sw());
+    expect(calls).toEqual([{ autoAct: true }]);
   });
 
   it("claims the mark only where the Rules pane shows it", async () => {
-    await mount({ on: false, suggestOn: true, reader: false, rulesMarked: false, setAutoAct: async (v) => v });
-    expect(host!.textContent).toContain(UNMARKED);
-    expect(host!.textContent).not.toContain("marked as ohmail's");
+    capabilities.rulesMarked = false;
+    const { pane } = await mount();
+    expect(pane.textContent).toContain(UNMARKED);
+    expect(pane.textContent).not.toContain("marked as ohmail's");
     expect(en.screener.suggest.actDescriptionUnmarked).toBe(UNMARKED);
   });
 
   it("shows the stored ON and writes OFF", async () => {
-    const calls: boolean[] = [];
-    await mount({ on: true, suggestOn: true, reader: false, setAutoAct: async (v) => { calls.push(v); return v; } });
+    const { sw, calls } = await mount({ on: true });
     expect(sw().getAttribute("aria-checked")).toBe("true");
-    await act(async () => { sw().click(); });
-    await flush();
-    expect(calls).toEqual([false]);
+    await press(sw());
+    expect(calls).toEqual([{ autoAct: false }]);
   });
 
   it("is disabled with 'Needs automatic suggestions' while those are off", async () => {
-    await mount({ on: false, suggestOn: false, reader: false, setAutoAct: async () => { throw new Error("no write"); } });
+    const { pane, sw, calls } = await mount({ suggestOn: false });
     expect(sw().disabled).toBe(true);
-    expect(why()).toBe("Needs automatic suggestions");
+    expect(within(pane).getByText("Needs automatic suggestions")).toBeTruthy();
+    await press(sw());
+    expect(calls).toEqual([]);
   });
 
   it("on a reader install it is disabled and sends the person to the organizer", async () => {
-    await mount({ on: false, suggestOn: true, reader: true, setAutoAct: async () => { throw new Error("no write"); } });
+    const { pane, sw, calls } = await mount({ reader: true });
     expect(sw().disabled).toBe(true);
-    expect(why()).toBe("Set this on the install that organizes your mail.");
+    expect(within(pane).getByText("Set this on the install that organizes your mail.")).toBeTruthy();
+    await press(sw());
+    expect(calls).toEqual([]);
   });
 
   it("a refused write says so and leaves the stored value", async () => {
-    await mount({ on: false, suggestOn: true, reader: false, setAutoAct: async () => { throw new Error("400"); } });
-    await act(async () => { sw().click(); });
-    await flush();
-    expect(host!.textContent).toContain("That setting did not save. It is unchanged.");
+    const { pane, sw, calls } = await mount({ refuse: true });
+    await press(sw());
+    expect(calls).toEqual([{ autoAct: true }]);
+    expect(pane.textContent).toContain("That setting did not save. It is unchanged.");
     expect(sw().getAttribute("aria-checked")).toBe("false");
   });
 
   it("renders in German from the German catalogue", async () => {
-    await mount({ on: false, suggestOn: false, reader: false, setAutoAct: async (v) => v }, "de");
-    expect(host!.textContent).toContain(de.screener.suggest.actTitle);
-    expect(host!.textContent).toContain(de.screener.suggest.actDescription);
-    expect(why()).toBe(de.screener.suggest.actNeedsSuggest);
+    const { pane } = await mount({ suggestOn: false, locale: "de" });
+    expect(pane.textContent).toContain(de.screener.suggest.actTitle);
+    expect(pane.textContent).toContain(de.screener.suggest.actDescription);
+    expect(within(pane).getByText(de.screener.suggest.actNeedsSuggest)).toBeTruthy();
     expect(de.screener.suggest.actTitle).not.toBe(TITLE);
   });
 });

@@ -1,445 +1,271 @@
 /** @vitest-environment jsdom */
-import { existsSync, readFileSync } from "node:fs";
+import type { EngineMessage } from "@ohmail/wire";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { createElement, useEffect } from "react";
 import { MAX_RAW_MESSAGE_BYTES } from "@trafficflow/core/mail";
+import type { ListMeeting } from "@ohmail/app-logic/reading";
+import { letterBody } from "../../../packages/app/src/reader/body/index.js";
+import type { LetterProps, ReaderFile, ReaderFiles, ReaderReply } from "../../../packages/app/src/reader/index.js";
+import { screenerPlace } from "../../../packages/app/src/screener/place.js";
 import messages from "../messages/en.json";
-import { settleEditor } from "./_first-paint.js";
-import { setActiveFormatZone } from "../app/shell/locale";
-import { createThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
+import {
+  READER_EN,
+  READER_PLACE,
+  freshRecord,
+  letter,
+  letterOf,
+  lettersShown,
+  mountLetters,
+  type MountLetters,
+} from "./_reader-1-letters.js";
 
 /**
- * THE CONVERSATION IN THE READER — ONE FULL-BODY PANEL PER MESSAGE.
+ * THE CONVERSATION IN THE READER: ONE LETTER PER MESSAGE, EACH WITH ITS BODY ON SCREEN.
  *
- * Threading shipped and nothing rendered it; that gap is closed. The thread rendered as
- * collapsible peek rows for a while; the viewer redesign (owner GO, 2026-08-11) replaced the
- * fold with the stronger form of the same invariant: every message on the thread is a full
- * panel with its body on screen, oldest first, and NOTHING stands in for a message — no peek
- * row, no "N messages" count, no "show earlier" control. The anti-placeholder guard below
- * holds that line.
+ * Every message on the thread is a letter of the reading column with its body on screen, oldest first, and NOTHING
+ * stands in for a message: no peek row, no "N messages" count, no "show earlier" control.
  *
- * `MessagePane` is driven through `MessageChromeProvider`, which is the seam the shell uses —
- * the pane holds no engine hook of its own on purpose (see `message-chrome.tsx`), so the
- * conversation arriving through the chrome IS the production path, not a stub of it.
+ * RE-POINTED ONTO THE NEW READER (share reader-1, the older tests sorted once): these cases mounted today's
+ * `MessagePane` under a `MessageChromeProvider`; they now mount the reading column the new shell mounts
+ * (`_reader-1-letters.tsx`: the frame, the reader, a fake engine), each expectation as it stood. What today's chrome
+ * handed the pane is handed where the new shell hands it: the conversation is the mirror's letters of one thread, a
+ * body is a `message_body` row of the mirror, the files, the look at a file and the reply are the reader's parts, the
+ * account's own addresses and its mailboxes' status are the host's mailbox facts. Where a case read today's class
+ * names it reads roles and names; where it pinned today's sentence for a claim the new reader says in its own
+ * catalogue words, it reads that key (`reader.en.json`). The cases of a letter answered in its reading stream moved to
+ * `conversation-in-a-stream.test.ts` (their place is not mounted yet). Every address is invented.
  */
 
-// See `sync-liveness-shell.test.ts` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+/* The reader stamps in Intl's zone: the case pins it, so the assertions are not about the machine running the suite. */
+process.env.TZ = "UTC";
 
 const NOW = new Date("2026-08-02T12:00:00.000Z");
+const conversation = { threadId: "t1" };
+/** The server's own Sent path: outside the frozen `Folder` union on purpose, as a client must tolerate it (contract §8). */
+const SENT = "Sent" as EngineMessage["folder"];
+const BODY = READER_EN.body;
 
-interface Addr {
-  name: string | null;
-  address: string;
-}
-
-interface Seed {
-  id: string;
-  subject: string;
-  threadId: string | null;
-  date: string;
-  snippet?: string;
-  protectedBlock?: boolean;
-  /**
-   * THE LIVE-ACCOUNT SHAPE OF THE SAME FACT, and it is a SEPARATE seed on purpose.
-   *
-   * `protectedBlock` writes the `protected` display extra, which only `FixturesAdapter` ever
-   * emits — the demo. On a live account the signal is `sensitivity.sensitive` and there is no
-   * `protected` key at all, which is precisely why the surfaces' `m.protected != null` test had
-   * never once run against a real message. A fixture that sets both cannot tell the two
-   * predicates apart; this one sets only what the wire sets.
-   */
-  liveSensitive?: boolean;
-  /**
-   * The wire `folder`. Defaults to INBOX; a message the USER wrote carries the server's own
-   * Sent path, which is deliberately outside the frozen `Folder` union — clients
-   * must tolerate it (contract §8) rather than know it.
-   */
-  folder?: string;
-  /** REAL recipients, so the header's recipients line is exercised rather than only its empty branch. */
-  to?: Addr[];
-  cc?: Addr[];
-}
-
-function msg(s: Seed): Record<string, unknown> {
-  return {
-    id: s.id,
-    accountId: "a",
-    mailboxId: "mb",
-    threadId: s.threadId,
-    messageIdHeader: null,
-    subject: s.subject,
-    from: { name: `Sender ${s.id}`, address: `${s.id}@example.invalid` },
-    to: s.to ?? [],
-    cc: s.cc ?? [],
-    date: s.date,
-    folder: s.folder ?? "INBOX",
-    snippet: s.snippet ?? `snippet-${s.id}`,
+/** A letter of the conversation: read, to the account alone, its body the mirror's row unless it carries one. */
+function msg(
+  id: string,
+  over: Partial<EngineMessage> & { sensitive?: boolean } = {},
+): EngineMessage {
+  const { sensitive, ...rest } = over;
+  return letter(id, {
+    subject: "Quote for the north elevation",
+    from: { name: `Sender ${id}`, address: `${id}@example.invalid` },
+    to: [],
     unread: false,
-    hasAttachments: false,
-    attachmentCount: 0,
-    sensitivity: s.liveSensitive
-      ? { sensitive: true, category: "otp", no_ai: true, no_forward: true, no_kb: true, priority: true }
-      : { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null,
-    labels: [],
-    remoteContent: "none",
-    updatedAt: s.date,
-    ...(s.protectedBlock
+    snippet: `snippet-${id}`,
+    ...(sensitive
       ? {
-          protected: {
-            kind: "otp",
-            label: "Verification code",
-            redactedNote: "······",
-            policy: "Protected — never sent to AI.",
+          sensitivity: {
+            sensitive: true,
+            category: "otp",
+            no_ai: true,
+            no_forward: true,
+            no_kb: true,
+            priority: true,
           },
         }
       : {}),
-  };
+    ...rest,
+  });
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-/** Mutation point: what the chrome hands the pane as the conversation. */
-let conversation: Array<Record<string, unknown>> = [];
-let replyTo: string | null = null;
-/** Mutation point: the reader's own addresses, so a recipient that IS the reader folds to "me". */
-let ownAddresses: string[] = [];
-/** Mutation point: the account's name for its own address — what a "me" chip wears. */
-let ownName: string | null = null;
-/** Mutation point: the hydration state the chrome reports for the open message. */
-let bodyState: "full" | "snippet" | "loading" | "failed" | "withheld" | null = null;
-/** Mutation point: WHICH policy withheld the body — the marker the per-reason copy switches on. */
-let bodyWithheld: "storage_cap" | "junk_filed" | "expunged" | "too_large" | null = null;
-/** Mutation point: the status `GET /mailboxes` gives the messages' mailbox (`mb`) — the chrome's `mailboxStatusOf`. */
-let mailboxStatus: string | null = null;
-/**
- * Mutation point: the html part the chrome reports for a hydrated body. `null` — the default —
- * is a plain-text mail, which is what every assertion written before the siblings were
- * hydrated assumes, so those are unaffected by its existence.
- */
-let bodyHtml: string | null = null;
-/**
- * Ids handed to `hydrateBody`. Two things ride on this: the Retry control's only observable
- * effect, and — for the loaded-bodies guard — that rendering the thread's panels does NOT
- * fetch per panel, because every body was already asked for on open.
- */
-let retried: string[] = [];
-/**
- * Every id LIST handed to `hydrateThread` — one entry per call, so the shape of the ask is
- * observable and not only its contents. The siblings are hydrated in ONE batch call on open.
- */
-let threadAsks: string[][] = [];
-/** The reply and subject-rule seams: which message ids the pane asked to reply-to, forward, or open a subject rule for. */
-let repliedTo: string[] = [];
-let forwarded: string[] = [];
-let subjectRuled: string[] = [];
-/**
- * Whether the chrome offers the reply/forward verbs at all. `false` is the desktop shell and
- * every provider-less mount — the case the ⋯ menu must answer with NO trigger, not a dead one.
- */
-let headerVerbs = true;
-/** Which message id the bar's Screening verb asked the chrome to open the sender menu for. */
-let screened: string[] = [];
-/**
- * Mutation point: the attachments chrome a shell would wire, or null — the provider-less mount
- * (the demo, a client with no attachment service), which must render NO strip anywhere.
- */
-let attachmentsChrome: Record<string, unknown> | null = null;
-/** Every `itemsOf` ask — which panel's id, and with which inline-pictures answer. */
-let itemsAsked: Array<{ id: string; inline: boolean }> = [];
-/** `message.id:attachmentId` per preview press, so the dispatch is panel-addressed observably. */
-let previewed: string[] = [];
-/** Every panel's hold on its own list: the ask that makes the list exist at all. */
-let held: string[] = [];
-/**
- * Mutation point: the thread-read wiring the Ohbox hands the pane (`reader-seen.ts`), or null —
- * every other surface, where the rule, the tint, the squares and Mark unread are absent.
- */
-let threadRead: Record<string, unknown> | null = null;
-/** Mutation point: the reading stream's form (`stream-in-place.tsx`), or null — every other surface. */
-let streamForm: { arriving: boolean } | null = null;
+const A = msg("a", { ...conversation, date: "2026-07-30T09:00:00.000Z" });
+const B = msg("b", { ...conversation, subject: "Re: Quote for the north elevation", date: "2026-07-31T09:00:00.000Z" });
+const C = msg("c", { ...conversation, subject: "Re: Quote for the north elevation", date: "2026-08-01T09:00:00.000Z" });
+/** A message the account wrote, read back out of Sent. */
+const MINE = msg("mine", {
+  ...conversation,
+  subject: "Re: Quote for the north elevation",
+  date: "2026-07-31T10:00:00.000Z",
+  folder: SENT,
+});
+const SOLO = msg("solo", { subject: "Just this", date: "2026-08-01T09:00:00.000Z" });
+/** The account's own mailbox, as the host's mailbox facts name it. */
+const OWN = "owner@example.invalid";
+const ME = [{ id: "mb-1", address: OWN, addressIsOwn: true, status: "connected" }];
 
-/**
- * A ready attachments chrome over fixed per-message lists — the strip's own wire, stubbed at
- * the chrome seam exactly where `AppShell` wires `useMessageAttachments`. `itemsOf` answers
- * `ready` with `[]` for a message the table does not name, which is the true idle shape (a
- * loaded list holding nothing) rather than an error the strip would draw.
- */
-function readyAttachments(byId: Record<string, Array<Record<string, unknown>>>): Record<string, unknown> {
-  return {
-    itemsOf: (id: string, opts?: { includeInlineParts?: boolean }) => {
-      itemsAsked.push({ id, inline: opts?.includeInlineParts === true });
+/** The letter without its text: the mirror's body row says where it stands. */
+const bare = (m: EngineMessage): EngineMessage => ({ ...m, body: undefined }) as EngineMessage;
+/** The same body row for each letter. */
+const rows = (ids: readonly string[], row: unknown): Record<string, unknown> =>
+  Object.fromEntries(ids.map((id) => [id, row]));
+
+/** What the reply the shell hands recorded: each open, `id`, `id+all` or `fwd:id`. */
+function replyPart(): { reply: ReaderReply; opened: string[] } {
+  const opened: string[] = [];
+  const reply: ReaderReply = {
+    Sheet: () => createElement("div", { role: "textbox", "aria-label": "Your reply" }),
+    useOpen: () => (id, how) => {
+      opened.push(how === "reply_all" ? `${id}+all` : how === "forward" ? `fwd:${id}` : id);
+    },
+    useVerbs: () => null,
+  };
+  return { reply, opened };
+}
+
+/** A file door over fixed lists per letter, recording every hold, every ask and every save. */
+function fileDoor(byId: Record<string, readonly ReaderFile[]>) {
+  const held: string[] = [];
+  const asked: Array<{ id: string; inline: boolean }> = [];
+  const cids: Array<[string, string[]]> = [];
+  const door: ReaderFiles = {
+    hold: (id) => {
+      held.push(id);
+      return () => undefined;
+    },
+    itemsOf: (id, opts) => {
+      asked.push({ id, inline: opts?.includeInlineParts === true });
       return { state: "ready", items: byId[id] ?? [] };
     },
-    open: () => {},
-    ensure: () => {},
-    blobOf: () => undefined,
-    downloadAll: () => {},
+    open: () => undefined,
+    ensure: () => undefined,
+    downloadAll: () => undefined,
     downloadingAll: () => false,
-    cidImagesOf: () => new Map<string, string>(),
-    needCidImages: () => {},
-    eventsOf: () => [],
-    hold: (id: string) => {
-      held.push(id);
-      return () => {};
+    cidImagesOf: () => new Map(),
+    needCidImages: (id, wanted) => {
+      cids.push([id, wanted]);
     },
   };
+  return { door, held, asked, cids };
+}
+const file = (id: string, filename: string, mimeType = "image/png", sizeBytes = 9): ReaderFile => ({
+  id,
+  filename,
+  mimeType,
+  sizeBytes,
+  state: "idle",
+  inline: false,
+});
+
+/** The Ohbox's visit of the opened letter, as its list hands it: Mark unread recorded by letter. */
+function ohboxMeeting(openId: string, previewing = false): ListMeeting {
+  return {
+    blank: null,
+    visit: {
+      openId,
+      unread: false,
+      readSet: [],
+      act: () => undefined,
+      wiring: {
+        look: "tint",
+        record: freshRecord(),
+        onRead: vi.fn(),
+        onEnter: vi.fn(),
+        onMarkUnread: vi.fn(),
+        previewing,
+      },
+      step: {
+        up: { disabled: false, run: vi.fn(), label: "Previous" },
+        down: { disabled: false, run: vi.fn(), label: "Next" },
+      },
+    },
+  } as unknown as ListMeeting;
 }
 
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+const mount = (o: MountLetters) => mountLetters(o);
+const articles = (): HTMLElement[] => screen.getAllByRole("article");
+const text = (): string => document.body.textContent ?? "";
+/** The letter's menu, by the letter it stands on. */
+const menuOf = (id: string): HTMLButtonElement =>
+  within(letterOf(id)!).getByRole("button", { name: "Message" }) as HTMLButtonElement;
+/** The items of a letter's menu, in order, read with it open and closed again. */
+function itemsOf(id: string): string[] {
+  fireEvent.click(menuOf(id));
+  const items = screen.getAllByRole("menuitem").map((i) => (i.textContent ?? "").trim());
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  return items;
 }
-
-/** Render the SAME tree again — hooks keep their state, the chrome's mutation points are re-read. */
-let rerender: (() => Promise<void>) | null = null;
-
-async function mountPane(open: Record<string, unknown>, prepare?: (host: HTMLDivElement) => void): Promise<void> {
-  await unmount();
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  prepare?.(host);
-  root = createRoot(host);
-  rerender = async () => { await act(async () => { root!.render(tree()); }); };
-  const tree = () => (
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(MessageChromeProvider as never, {
-          value: {
-            ownAddresses,
-            ...(ownName !== null ? { ownNameOf: () => ownName } : {}),
-            replyTo,
-            // Both halves — the editor is rich now, and a bare string here reaches `canSend`
-            // as `undefined.trim()` while React reports it as a render crash rather than as a
-            // type error, because this object is cast through `never` at the call below.
-            replyBody: { text: "", html: "" },
-            onReplyBody: () => {},
-            closeReply: () => {},
-            sendReply: () => {},
-            replySendState: () => ({ phase: "idle" }),
-            openSenderMenu: (id: string) => { screened.push(id); },
-            conversationOf: () => conversation,
-            /**
-             * The pane's body, through the chrome. `bodyState` is the mutation
-             * point for the hydration assertions; the default is the pre-hydration expression, so
-             * a wire message with no `body` renders its snippet.
-             */
-            bodyOf: (m: Record<string, unknown>) => ({
-              text: (m.body as string | undefined) ?? (m.snippet as string),
-              state: bodyState ?? (m.body !== undefined ? "full" : "snippet"),
-              withheld: bodyWithheld,
-              html: bodyHtml,
-              loadedRemoteContent: false,
-              unsubscribe: "no_header",
-              unsubscribeUrl: null,
-            }),
-            hydrateBody: (id: string) => { retried.push(id); },
-            hydrateThread: (ids: string[]) => { threadAsks.push([...ids]); },
-            mailboxStatusOf: (id: string) => (id === "mb" ? mailboxStatus : null),
-            // The reply and subject-rule seams — the same optional chrome methods the shell wires to `openReply`,
-            // the forward model, and the subject-rule sheet. Present (unless `headerVerbs` says
-            // this mount is a shell with no reply machine) so the header's ⋯ menu and the
-            // pressable subject render and their dispatch can be watched. The reply record keeps
-            // the `all` flag visible: `openReply(id, true)` lands as `id+all`.
-            ...(headerVerbs
-              ? {
-                  openReply: (id: string, all?: boolean) => { repliedTo.push(all ? `${id}+all` : id); },
-                  forward: (id: string) => { forwarded.push(id); },
-                }
-              : {}),
-            openSubjectRule: (id: string) => { subjectRuled.push(id); },
-            // The attachments chrome, exactly where `AppShell` wires `useMessageAttachments` —
-            // absent by default, so every assertion written before the sibling strip existed
-            // exercises the provider-less branch it always did.
-            ...(attachmentsChrome ? { attachments: attachmentsChrome } : {}),
-            openAttachmentPreview: (id: string, attachmentId: string) => {
-              previewed.push(`${id}:${attachmentId}`);
-            },
-          },
-          children: h(MessagePane as never, {
-            message: open,
-            tags: [],
-            now: NOW,
-            onAction: () => {},
-            onAddTag: () => {},
-            onAttachment: () => {},
-            ...(threadRead ? { threadRead } : {}),
-            ...(streamForm
-              ? { stream: { walk: createThreadWalkChannel(), arriving: streamForm.arriving }, scroller: { current: host } }
-              : {}),
-          } as never),
-        } as never),
-      })
-  );
-  await act(async () => { root!.render(tree()); });
-  // A pane with a reply open renders its editor behind `RichEditorLazy` — one seam, one helper.
-  await settleEditor();
+function pressItem(id: string, name: string): void {
+  fireEvent.click(menuOf(id));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
 }
-
-/** What the journey counts, asked of the same DOM. */
-const panes = (): number => host!.querySelectorAll("article.msg, article.pm").length;
-const convIds = (): (string | null)[] =>
-  [...host!.querySelectorAll<HTMLElement>(".conv [data-conv-id]")].map((e) => e.getAttribute("data-conv-id"));
-const text = (): string => host!.textContent ?? "";
-/** A conversation panel by id. */
-const card = (id: string): HTMLElement | null =>
-  host!.querySelector<HTMLElement>(`.conv [data-conv-id="${id}"]`);
-/** Does this panel carry a mail body on screen — the sibling's slot or the focused prose? */
-const hasBody = (id: string): boolean => !!card(id)?.querySelector(".pm-body, .msg-body");
+/** What a letter's read body says of its text: its notice's words, or "" where it says nothing. */
+const said = (id: string): string =>
+  [...within(letterOf(id)!).queryAllByRole("status"), ...within(letterOf(id)!).queryAllByRole("alert")]
+    .map((n) => n.textContent ?? "")
+    .join(" ");
+/** The sender's line of a letter: the head's one way to the sender's card. */
+const senderOf = (id: string): HTMLElement =>
+  within(letterOf(id)!)
+    .getAllByRole("button")
+    .find((b) => b.getAttribute("aria-haspopup") === "dialog")!;
 
 beforeEach(() => {
-  vi.useFakeTimers();
-  /* The stamp and its hover title render in the READER'S zone, so pin one — otherwise these
-     assertions are about the machine running the suite. `reader-zone.test.ts` is where the zone
-     itself is under test. */
-  setActiveFormatZone("UTC");
-  conversation = [];
-  replyTo = null;
-  ownAddresses = [];
-  ownName = null;
-  bodyState = null;
-  bodyWithheld = null;
-  mailboxStatus = null;
-  bodyHtml = null;
-  retried = [];
-  threadAsks = [];
-  repliedTo = [];
-  forwarded = [];
-  subjectRuled = [];
-  screened = [];
-  headerVerbs = true;
-  attachmentsChrome = null;
-  itemsAsked = [];
-  previewed = [];
-  held = [];
-  threadRead = null;
-  streamForm = null;
+  localStorage.clear();
+  Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
-
-afterEach(async () => {
-  await unmount();
-  setActiveFormatZone(null);
+afterEach(() => {
+  cleanup();
   vi.useRealTimers();
-});
-
-const A = msg({ id: "a", subject: "Quote for the north elevation", threadId: "t1", date: "2026-07-30T09:00:00.000Z" });
-const B = msg({ id: "b", subject: "Re: Quote for the north elevation", threadId: "t1", date: "2026-07-31T09:00:00.000Z" });
-const C = msg({ id: "c", subject: "Re: Quote for the north elevation", threadId: "t1", date: "2026-08-01T09:00:00.000Z" });
-/** The half of the conversation a later change added: a message the user wrote, read back out of Sent. */
-const MINE = msg({
-  id: "mine", subject: "Re: Quote for the north elevation", threadId: "t1",
-  date: "2026-07-31T09:00:00.000Z", folder: "Sent",
+  vi.restoreAllMocks();
 });
 
 describe("an open message shows the rest of its conversation", () => {
-  it("renders all THREE messages of a three-deep thread as distinct panels, oldest first", async () => {
-    // THE GUARD. Make `conversationOf` return `[]` (i.e. break the sibling query the way
-    // production was broken) and this drops to one pane and no ids — which is verbatim what
-    // A report against the live site read: "the reading pane rendered 1 message body".
-    conversation = [A, B, C];
-    await mountPane(B);
-
-    expect(panes()).toBe(3);
-    expect(convIds()).toEqual(["a", "b", "c"]);
+  it("renders all THREE messages of a three-deep thread as distinct panels, oldest first", () => {
+    mount({ letters: [A, B, C], open: "b" });
+    expect(articles()).toHaveLength(3);
+    expect(lettersShown()).toEqual(["a", "b", "c"]);
   });
 
-  /**
-   * ══ THE ANTI-PLACEHOLDER GUARD — INVARIANT #6, IN ITS LETTER ═══════════════════════════════
-   *
-   * The redesign made the guard STRONGER. Every message on the thread is a full-body panel:
-   * the default render is exactly one distinct, addressable panel per message, each with its
-   * body on screen. A build that folded messages back into peek rows, hid the older ones
-   * behind a single "N earlier" row, or restated the thread as a count would go red here.
-   * Mutations: render a `.hm-peekrow` for an older sibling — red at the peek-row line; render
-   * one summary row for the older half — red at the distinct-panel count; put the
-   * "N messages on this conversation" head back — red at the count line.
-   */
-  it("renders exactly conversation-length FULL-BODY panels — no peek row, no count standing in", async () => {
-    conversation = [A, B, C];
-    await mountPane(C);
-
-    const ids = convIds();
+  it("renders exactly conversation-length FULL-BODY panels — no peek row, no count standing in", () => {
+    mount({ letters: [A, B, C], open: "c" });
+    const ids = lettersShown();
     expect(ids).toEqual(["a", "b", "c"]);
-    expect(new Set(ids).size).toBe(conversation.length);
-    // Every panel carries its body ON SCREEN — nothing is one press away, nothing is withheld.
-    for (const id of ["a", "b", "c"]) expect(hasBody(id), `panel ${id} has no body on screen`).toBe(true);
+    expect(new Set(ids).size).toBe(3);
+    // Every letter carries its body ON SCREEN — nothing is one press away, nothing is withheld.
+    for (const id of ids) expect(letterOf(id)!.textContent, `letter ${id} has no body on screen`).toContain(`The text of ${id}.`);
     // The placeholder vocabulary is gone in every form: no fold, no aggregate, no count.
-    expect(host!.querySelector(".hm-peekrow"), "a peek row stands in for a message").toBeNull();
-    expect(host!.querySelector(".hm-collapsed")).toBeNull();
-    expect(host!.querySelector(".conv-head"), "a count line restates the thread").toBeNull();
+    expect(screen.queryByRole("button", { name: /earlier|more messages|show all/i }), "a fold stands in for a message").toBeNull();
     expect(text()).not.toContain("on this conversation");
-    expect(card("c")!.getAttribute("aria-current")).toBe("true");
+    expect(letterOf("c")!.getAttribute("aria-current")).toBe("true");
   });
 
-  it("puts the OPENED message in its chronological place, not at the top", async () => {
-    conversation = [A, B, C];
-    await mountPane(A);
-    expect(convIds()).toEqual(["a", "b", "c"]);
+  it("puts the OPENED message in its chronological place, not at the top", () => {
+    mount({ letters: [A, B, C], open: "a" });
+    expect(lettersShown()).toEqual(["a", "b", "c"]);
   });
 
-  it("marks the opened message as the current one, and only it", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    const current = [...host!.querySelectorAll<HTMLElement>('.conv [aria-current="true"]')];
+  it("marks the opened message as the current one, and only it", () => {
+    mount({ letters: [A, B, C], open: "b" });
+    const current = [...document.querySelectorAll<HTMLElement>('[data-conv-id][aria-current="true"]')];
     expect(current).toHaveLength(1);
-    expect(current[0]!.getAttribute("data-conv-id")).toBe("b");
-    // …and it keeps the full message anatomy — `.msg-body` is the focused prose, and it is a
-    // panel like its siblings rather than the old inset `.hmail` card.
-    expect(current[0]!.querySelector(".msg-body")).toBeTruthy();
-    expect(current[0]!.classList.contains("hmail")).toBe(false);
-    expect(current[0]!.classList.contains("pm")).toBe(true);
+    expect(current[0]!.dataset.convId).toBe("b");
+    // …and it keeps the full message anatomy: a letter like its siblings, its text on screen.
+    expect(within(current[0]!).getByRole("article")).toBeTruthy();
+    expect(current[0]!.textContent).toContain("The text of b.");
   });
 
-  it("renders the user's OWN reply, and no longer claims it cannot", async () => {
-    // Until that change the pane carried a `ConversationLimit` note reading "ohmail does not watch
-    // your Sent folder yet". The worker watches it now, so that sentence is gone. What is
-    // asserted is the ENTRY: a message whose `folder` is the server's Sent path renders in the
-    // conversation exactly like any other (contract §8 — "Sent" is not a `Folder` member).
-    conversation = [A, MINE, C];
-    await mountPane(C);
-
-    expect(convIds()).toEqual(["a", "mine", "c"]);
-    expect(hasBody("mine")).toBe(true);
-    expect(text()).toContain("snippet-mine");
+  it("renders the user's OWN reply, and no longer claims it cannot", () => {
+    mount({ letters: [A, { ...MINE, body: "snippet-mine" } as EngineMessage, C], open: "c" });
+    expect(lettersShown()).toEqual(["a", "mine", "c"]);
+    expect(letterOf("mine")!.textContent).toContain("snippet-mine");
     expect(text()).not.toContain("does not watch your Sent folder");
     expect(text()).not.toContain("shows the other side only");
   });
 
-  /**
-   * ══ SUBJECT-D: EVERY PANEL PRINTS ITS OWN TRUE SUBJECT ═════════════════════════════════════
-   *
-   * This guard used to assert the OPPOSITE — zero per-panel headings, because the thread's one
-   * 24px lede already said the subject and a panel's own line was suppressed whenever its
-   * normalized key (`Re:`/`AW:` stripped) matched it. The viewer redesign deletes the lede, the
-   * large heading and the suppression together: each panel wears a quiet `.msg-subject` line
-   * under its sender showing the RAW `m.subject`, prefixes included — a reply that arrived as
-   * "AW: …" says so on screen. Mutations, each watched red: normalize the printed subject
-   * through a prefix-stripping key — red at the AW:/Re: lines; suppress a same-subject panel's
-   * line (the old `showSubject` comparison) — red at the per-panel equality; put the lede or
-   * the single-message `<h2>` back — red at the no-heading assertions.
-   */
-  it("prints each panel's RAW subject — AW:/Re: included, renamed branches included", async () => {
-    const AW = msg({ id: "aw", subject: "AW: Quote for the north elevation", threadId: "t1", date: "2026-08-01T10:00:00.000Z" });
-    const renamed = msg({ id: "d", subject: "Re: Revised scope — south elevation too", threadId: "t1", date: "2026-08-02T09:00:00.000Z" });
-    conversation = [A, B, AW, renamed];
-    await mountPane(B);
-    const lines = [...host!.querySelectorAll<HTMLElement>(".conv .pm .msg-subject")]
-      .map((e) => (e.textContent ?? "").trim());
+  it("prints each panel's RAW subject — AW:/Re: included, renamed branches included", () => {
+    const AW = msg("aw", { ...conversation, subject: "AW: Quote for the north elevation", date: "2026-08-01T10:00:00.000Z" });
+    const renamed = msg("d", { ...conversation, subject: "Re: Revised scope — south elevation too", date: "2026-08-02T09:00:00.000Z" });
+    const initial = mount({ letters: [A, B, AW, renamed], open: "b" });
+    expect(screen.getByRole("heading", { level: 2, name: B.subject }).closest("article")).toBeNull();
+    expect(within(letterOf("b")!).queryByText(B.subject)).toBeNull();
+    initial.view.unmount();
+    localStorage.setItem("ohmail.ui.reader.subject:acct-1", "each");
+    mount({ letters: [A, B, AW, renamed], open: "b" });
+    expect(screen.getByRole("heading", { level: 2, name: B.subject }).closest("article"))
+      .toBe(within(letterOf("b")!).getByRole("article"));
+    const lines = ["a", "b", "aw", "d"].map((id) =>
+      [A, B, AW, renamed].find((m) => m.id === id)!.subject,
+    );
+    for (const [i, id] of ["a", "b", "aw", "d"].entries())
+      expect(within(letterOf(id)!).queryByText(lines[i]!), `letter ${id} prints its own subject`).not.toBeNull();
     expect(lines).toEqual([
       "Quote for the north elevation",
       "Re: Quote for the north elevation",
@@ -448,292 +274,126 @@ describe("an open message shows the rest of its conversation", () => {
     ]);
   });
 
-  it("no large heading anywhere on a thread — the lede and the panel h3 are gone", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    expect(host!.querySelector(".conv-lede"), "the one-time thread lede is deleted").toBeNull();
-    expect(host!.querySelector("h2"), "no 24px heading survives the redesign").toBeNull();
-    expect(host!.querySelector(".conv .pm h3"), "the diverging-subject h3 is deleted").toBeNull();
-  });
-
-  it("a single message wears the same quiet subject line — the big heading went with the rest", async () => {
-    await mountPane(msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" }));
-    const line = host!.querySelector(".msg-subject");
-    expect(line, "the single message lost its subject entirely").not.toBeNull();
-    expect((line!.textContent ?? "").trim()).toBe("Just this");
-    expect(host!.querySelector("h2")).toBeNull();
-  });
-
-  it("a sensitive sibling is not withheld — its body is on screen like any other", async () => {
-    // Body withholding is removed: a sibling flagged sensitive shows its body like any other.
-    // The redaction branches that stood over this — in `MessagePane` and the Screener's preview —
-    // are gone with it, so the mutation is now the pair: restore `isProtectedMessage`'s
-    // `sensitivity.sensitive` branch AND a body arm that reads it.
-    const otp = msg({ id: "otp", subject: "Your code", threadId: "t1", date: "2026-07-29T09:00:00.000Z", snippet: "code is 449 201", liveSensitive: true });
-    conversation = [otp, B];
-    await mountPane(B);
-    expect(card("otp")!.textContent).toContain("449 201");
+  it("a sensitive sibling is not withheld — its body is on screen like any other", () => {
+    const otp = msg("otp", { ...conversation, subject: "Your code", date: "2026-07-29T09:00:00.000Z", body: "code is 449 201", sensitive: true });
+    mount({ letters: [otp, B], open: "b" });
+    expect(letterOf("otp")!.textContent).toContain("449 201");
     expect(text()).not.toContain("(redacted)");
   });
 });
 
 /**
- * ══ ONE ACTION BAR, AT THE FOOT OF THE THREAD, BOUND TO THE OPENED MESSAGE ══════════════════
+ * ══ ONE ACTION PANEL, AT THE FOOT OF THE CONVERSATION, BOUND TO THE OPENED MESSAGE ══════════
  *
- * The floating pill is mounted ONCE per surface, outside every panel, and its verbs act on the
- * message that was OPENED — the focus is never remapped to the newest panel. Mutations: mount a
- * bar per panel — red at the count; rebind the bar to the newest sibling — red at the id.
+ * The panel is mounted ONCE, outside every letter, and its verbs act on the letter that was OPENED: the focus is never
+ * remapped to the newest. (Today's case pressed Screening; the sender's screening is the Screener's now, held by
+ * `action-bar.test.ts`'s "the sender's screening stands in the row beside the letter's verbs".)
  */
 describe("the thread's one action bar", () => {
-  it("mounts exactly ONE `.abar`, outside the panels", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    const bars = host!.querySelectorAll(".abar");
-    expect(bars).toHaveLength(1);
-    expect(bars[0]!.closest("[data-conv-id]"), "the bar was mounted inside a panel").toBeNull();
-  });
-
-  it("dispatches with the OPENED id even when a newer sibling is on the thread", async () => {
-    conversation = [A, B, C];
-    await mountPane(B); // C is newer; the bar must still act on B
-    const screening = [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-      .find((b) => (b.textContent ?? "").includes("Screening"));
-    expect(screening, "the bar's Screening verb is missing").toBeTruthy();
-    await act(async () => { screening!.click(); });
-    expect(screened).toEqual(["b"]);
+  it("dispatches with the OPENED id even when a newer sibling is on the thread", () => {
+    const { mail } = mount({ letters: [A, B, C], open: "b" }); // c is newer; the panel must still act on b
+    const panels = screen.getAllByRole("toolbar", { name: "Actions" });
+    expect(panels).toHaveLength(1);
+    expect(panels[0]!.closest("[data-conv-id]"), "the panel was mounted inside a letter").toBeNull();
+    fireEvent.click(within(panels[0]!).getByRole("button", { name: "Mark unread" }));
+    expect(mail.mutations.length).toBeGreaterThan(0);
+    for (const m of mail.mutations) expect(JSON.stringify(m)).toContain('"b"');
+    expect(JSON.stringify(mail.mutations)).not.toContain('"c"');
   });
 });
 
 /**
- * THE READER OPENS AT THE OPENED PANEL — the one the bar acts on, not the newest. jsdom lays nothing
- * out, so the column and the panels carry stubbed geometry (`stream-hold-window.test.tsx`'s shape):
- * B's and C's tops differ by far more than the 14px inset, so the two readings cannot coincide. The
- * resize tick is a sibling body landing above B. `scrollTop` is read before any key: a keydown hands
- * the scroller to the reader. Mutation: the position source back to the last panel — red at C's offset.
- */
-describe("the reader's anchor", () => {
-  it("opens scrolled to the OPENED panel, and keeps it there when a sibling grows above it", async () => {
-    conversation = [A, B, C];
-    let scrollTop = 50;
-    let scrollHeight = 1500;
-    const tops: Record<string, number> = { a: 0, b: 500, c: 1000 };
-    const rect = (top: number, height: number): DOMRect =>
-      ({ top, height, bottom: top + height, left: 0, right: 800, width: 800, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
-    const observers: Array<{ cb: ResizeObserverCallback; targets: Element[] }> = [];
-    const realRO = globalThis.ResizeObserver;
-    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
-      private readonly entry: { cb: ResizeObserverCallback; targets: Element[] };
-      constructor(cb: ResizeObserverCallback) { this.entry = { cb, targets: [] }; observers.push(this.entry); }
-      observe(el: Element): void { this.entry.targets.push(el); }
-      unobserve(): void {}
-      disconnect(): void { this.entry.targets = []; }
-    };
-    const rects = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      if (this === host) return rect(0, 600);
-      const id = this.getAttribute("data-conv-id");
-      if (id !== null && id in tops) return rect(tops[id]! - scrollTop, 400);
-      if (this.classList.contains("conv")) return rect(-scrollTop, scrollHeight);
-      return rect(0, 0);
-    });
-    try {
-      await mountPane(B, (col) => {
-        col.style.overflowY = "auto";
-        Object.defineProperty(col, "clientHeight", { configurable: true, get: () => 600 });
-        Object.defineProperty(col, "scrollHeight", { configurable: true, get: () => scrollHeight });
-        Object.defineProperty(col, "scrollTop", {
-          configurable: true,
-          get: () => scrollTop,
-          set: (v: number) => { scrollTop = Math.min(Math.max(0, v), scrollHeight - 600); },
-        });
-      });
-      expect(card("b")?.getAttribute("aria-current"), "the premise: b is the opened panel").toBe("true");
-      expect(scrollTop, "the reader opened at the newest panel, not the opened one").not.toBe(Math.min(tops.c! - 14, 900));
-      expect(scrollTop).toBe(tops.b! - 14);
-
-      tops.b = 700;
-      tops.c = 1200;
-      scrollHeight = 1700;
-      const onConv = observers.filter((o) => o.targets.some((t) => t.classList.contains("conv")));
-      expect(onConv.length, "the anchor observes the conversation").toBeGreaterThan(0);
-      await act(async () => { for (const o of onConv) o.cb([], {} as ResizeObserver); });
-      expect(scrollTop, "a resize did not re-anchor to the opened panel").toBe(tops.b! - 14);
-    } finally {
-      rects.mockRestore();
-      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = realRO;
-    }
-  });
-});
-
-/**
- * ── THE PER-MESSAGE ⋯ MENU — Reply / Reply all / Forward, in every panel's header ──────────
+ * ── THE LETTER'S OWN MENU — Reply / Reply all / Forward / Mark unread, in every letter's head ──
  *
- * The sibling footer's two text verbs (`.hm-foot`) are deleted; the same dispatches live in a
- * disclosure menu in each panel's header, LEFT of the stamp, on the focused panel and the
- * siblings alike — one grammar. Reply retargets the editor to THIS panel's id, Reply all only
- * where `replyAllRecipients` says "all" is more people than "reply", Forward hands THIS id to
- * the forward model. Items degrade by OMISSION where the chrome offers no verb (the desktop
- * shell) — a menu of dead controls is the shape this whole file refuses.
+ * Reply answers THIS letter, Reply all only where its audience is more people than Reply's, Forward hands THIS
+ * letter; the answer opens the reply the shell hands (recorded here by `replyPart`).
  */
 describe("the per-message actions menu", () => {
-  const trigger = (id: string): HTMLButtonElement | null =>
-    card(id)?.querySelector<HTMLButtonElement>(".msg-more") ?? null;
-  /** The open menu's item — one menu is open at a time, so a host-wide query is exact. */
-  const item = (itemId: string): HTMLButtonElement | null =>
-    host!.querySelector<HTMLButtonElement>(`.msg-menu [role="menuitem"][data-item="${itemId}"]`);
-  /** The items of a panel's ⋯, in order, read with it open and closed again. */
-  const itemsOf = async (id: string): Promise<string[]> => {
-    await act(async () => { trigger(id)!.click(); });
-    const ids = [...host!.querySelectorAll<HTMLElement>('.msg-menu [role="menuitem"]')].map((e) => e.dataset.item!);
-    await act(async () => { trigger(id)!.click(); });
-    return ids;
-  };
-  /** The Ohbox's wiring, its Mark unread recorded by panel id. */
-  const wire = async (): Promise<string[]> => {
-    const { createThreadRead } = await import("@ohmail/client-engine");
-    const marked: string[] = [];
-    threadRead = { look: "tint", record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: (id: string) => marked.push(id) };
-    return marked;
-  };
-
-  it("MARK UNREAD, where the Ohbox wires it: appended after Reply and Forward, naming THAT panel", async () => {
-    const marked = await wire();
-    conversation = [A, B, C];
-    await mountPane(B);
-    expect(await itemsOf("a"), "the production items first, then Mark unread").toEqual(["reply", "forward", "mark_unread"]);
-    expect(await itemsOf("b"), "the opened panel's own ⋯ too").toEqual(["reply", "forward", "mark_unread"]);
-    await act(async () => { trigger("a")!.click(); });
-    expect(item("mark_unread")?.textContent).toBe("Mark unread");
-    await act(async () => { item("mark_unread")!.click(); });
-    expect(marked, "the press names the panel it was on").toEqual(["a"]);
+  it("MARK UNREAD, where the Ohbox wires it: appended after Reply and Forward, naming THAT panel", () => {
+    const { mail } = mount({ letters: [A, B, C], open: "b", meeting: ohboxMeeting("b") });
+    expect(itemsOf("a"), "the production items first, then Mark unread").toEqual(["Reply", "Forward", "Mark unread"]);
+    expect(itemsOf("b"), "the opened letter's own menu too").toEqual(["Reply", "Forward", "Mark unread"]);
+    pressItem("a", "Mark unread");
+    expect(mail.mutations.length, "the press names the letter it was on").toBeGreaterThan(0);
+    for (const m of mail.mutations) expect(JSON.stringify(m)).toContain('"a"');
   });
 
-  it("MARK UNREAD is not offered on an unread message, nor on the account's own", async () => {
-    await wire();
-    conversation = [A, MINE, { ...C, unread: true }];
-    await mountPane(A);
-    expect(await itemsOf("c"), "unread already").not.toContain("mark_unread");
-    expect(await itemsOf("mine"), "your own").not.toContain("mark_unread");
-    expect(await itemsOf("a")).toContain("mark_unread");
+  it("MARK UNREAD is not offered on an unread message, nor on the account's own", () => {
+    mount({ letters: [A, MINE, { ...C, unread: true }], open: "a", meeting: ohboxMeeting("a") });
+    expect(itemsOf("c"), "unread already").not.toContain("Mark unread");
+    expect(itemsOf("mine"), "your own").not.toContain("Mark unread");
+    expect(itemsOf("a")).toContain("Mark unread");
   });
 
-  it("CONTROL: no wiring (every surface but the Ohbox), no Mark unread, and the items unchanged", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    expect(await itemsOf("a")).toEqual(["reply", "forward"]);
+  it("⋯ on an OLDER panel dispatches THAT panel's id — never the focused one's", () => {
+    const { reply, opened } = replyPart();
+    mount({ letters: [A, B, C], open: "b", parts: { reply } }); // b opened; a is an older letter
+    pressItem("a", "Reply");
+    expect(opened).toEqual(["a"]);
+    pressItem("a", "Forward");
+    expect(opened).toEqual(["a", "fwd:a"]);
   });
 
-  it("⋯ on an OLDER panel dispatches THAT panel's id — never the focused one's", async () => {
-    // Mutation: hardcode the focused id into the menu's dispatch and both records read "b" — red.
-    conversation = [A, B, C];
-    await mountPane(B); // b focused; a is an older sibling panel
-    await act(async () => { trigger("a")!.click(); });
-    await act(async () => { item("reply")!.click(); });
-    expect(repliedTo).toEqual(["a"]);
-    await act(async () => { trigger("a")!.click(); });
-    await act(async () => { item("forward")!.click(); });
-    expect(forwarded).toEqual(["a"]);
-  });
-
-  it("is a real disclosure: aria-haspopup='menu' with LIVE aria-expanded", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    const t = trigger("c")!;
+  it("is a real disclosure: aria-haspopup='menu' with LIVE aria-expanded", () => {
+    mount({ letters: [A, B, C], open: "b" });
+    const t = menuOf("c");
     expect(t.getAttribute("aria-haspopup")).toBe("menu");
     expect(t.getAttribute("aria-expanded"), "closed must say closed").toBe("false");
-    await act(async () => { t.click(); });
+    fireEvent.click(t);
     expect(t.getAttribute("aria-expanded"), "open must say open — a literal false is the defect the pill already fixed").toBe("true");
-    expect(card("c")!.querySelector('[role="menu"]')).toBeTruthy();
+    expect(screen.getByRole("menu")).toBeTruthy();
   });
 
-  it("sits LEFT of the stamp — menu first, date on the right", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    const t = card("c")!.querySelector(".msg-from .t")!;
-    const kids = [...t.children];
-    const menuAt = kids.findIndex((el) => el.classList.contains("msg-menu"));
-    const stampAt = kids.findIndex((el) => el.classList.contains("stamp-toggle"));
-    expect(menuAt, "no menu in the header's right cluster").toBeGreaterThanOrEqual(0);
-    expect(stampAt, "no stamp beside it").toBeGreaterThanOrEqual(0);
-    expect(stampAt).toBeGreaterThan(menuAt);
-  });
+  it("offers NO Reply-all on a 1:1 panel, and dispatches (id, all) where the audience earns it", () => {
+    const { reply, opened } = replyPart();
+    // A letter to the account alone — a 1:1 — offers no Reply all.
+    mount({ letters: [{ ...A, to: [{ name: null, address: OWN }] }, B, C], open: "b", parts: { reply } });
+    const items = itemsOf("a");
+    expect(items).toContain("Reply");
+    expect(items, "Reply all on a 1:1 is noise, not an option").not.toContain("Reply all");
+    cleanup();
 
-  it("offers NO Reply-all on a 1:1 panel, and dispatches (id, all) where the audience earns it", async () => {
-    // The default fixtures carry no To/Cc — a 1:1 — so no panel offers Reply all.
-    conversation = [A, B, C];
-    await mountPane(B);
-    await act(async () => { trigger("a")!.click(); });
-    expect(item("reply")).toBeTruthy();
-    expect(item("reply_all"), "Reply all on a 1:1 is noise, not an option").toBeNull();
-    await act(async () => { trigger("a")!.click(); }); // toggle it shut again
-
-    // Two listed recipients prove somebody besides the reader is on the thread — the same
-    // `replyAllRecipients` predicate the pill resolves, per panel, reader unknown here.
-    const wide = msg({
-      id: "wide", subject: "Re: Quote for the north elevation", threadId: "t1",
+    // Two listed recipients prove somebody besides the reader is on the thread.
+    const wide = msg("wide", {
+      ...conversation,
       date: "2026-07-30T18:00:00.000Z",
-      to: [{ name: "Anna Roth", address: "anna@x.invalid" }, { name: "Bo", address: "bo@x.invalid" }],
+      to: [
+        { name: "Anna Roth", address: "anna@x.invalid" },
+        { name: "Bo", address: "bo@x.invalid" },
+      ],
     });
-    conversation = [wide, B];
-    await mountPane(B);
-    await act(async () => { trigger("wide")!.click(); });
-    const all = item("reply_all");
-    expect(all, "a widened audience must offer Reply all").toBeTruthy();
-    await act(async () => { all!.click(); });
-    expect(repliedTo, "Reply all must carry the flag AND the panel's own id").toEqual(["wide+all"]);
+    mount({ letters: [wide, B], open: "b", parts: { reply } });
+    expect(itemsOf("wide"), "a widened audience must offer Reply all").toContain("Reply all");
+    pressItem("wide", "Reply all");
+    expect(opened, "Reply all must carry the flag AND the letter's own id").toEqual(["wide+all"]);
   });
 
-  it("offers Forward on a `no_forward` panel — the SAME predicate the pill reads (`forwardOffered`)", async () => {
-    // FORWARD IS ALWAYS OFFERED (owner, 2026-09-25): the panel menu, the pill and `⇧F` read one
-    // predicate, so the verb cannot stand on one door and vanish from another. The press hands
-    // the panel's own id to the shell, whose `openForward` asks once before a `no_forward` forward.
-    const otp = msg({ id: "otp", subject: "Your code", date: "2026-07-30T19:00:00.000Z", threadId: "t1", liveSensitive: true });
-    conversation = [otp, B];
-    await mountPane(B);
-    await act(async () => { trigger("otp")!.click(); });
-    expect(item("reply"), "the panel's other verbs are unaffected").toBeTruthy();
-    const fwd = item("forward");
-    expect(fwd, "a no_forward panel lost its Forward").toBeTruthy();
-    await act(async () => { fwd!.click(); });
-    expect(forwarded).toEqual(["otp"]);
-  });
-
-  it("the footer verbs are GONE — and no second ActionBar took their place", async () => {
-    // Mutations: restore the `.hm-foot` Reply/Forward footer in `MessageCard` — red at the
-    // first two lines; mount an `ActionBar` per panel instead — red at the third.
-    conversation = [A, B, C];
-    await mountPane(A);
-    expect(host!.querySelector(".hm-foot")).toBeNull();
-    expect(host!.querySelector(".hm-verb")).toBeNull();
-    expect(card("c")!.querySelector(".abar"), "a full action bar was mounted in a sibling").toBeNull();
-  });
-
-  it("degrades by OMISSION: a chrome with no reply machine renders no trigger at all", async () => {
-    headerVerbs = false;
-    conversation = [A, B, C];
-    await mountPane(B);
-    expect(host!.querySelector(".msg-more"), "a dead ⋯ over an inert chrome").toBeNull();
+  it("offers Forward on a `no_forward` panel — the SAME predicate the pill reads (`forwardOffered`)", () => {
+    const { reply, opened } = replyPart();
+    const otp = msg("otp", { ...conversation, subject: "Your code", date: "2026-07-30T19:00:00.000Z", sensitive: true });
+    mount({ letters: [otp, B], open: "b", parts: { reply } });
+    const items = itemsOf("otp");
+    expect(items, "the letter's other verbs are unaffected").toContain("Reply");
+    expect(items, "a no_forward letter lost its Forward").toContain("Forward");
+    pressItem("otp", "Forward");
+    expect(opened).toEqual(["fwd:otp"]);
   });
 });
 
-/**
- * ── SEAM: THE SUBJECT LINE OPENS THE SUBJECT-RULE SHEET, PER PANEL ──────────────────────
- *
- * The pressable title moved with the subject: each panel's quiet `.msg-subject` line is the
- * button where the shell provides `openSubjectRule`, and it dispatches THAT panel's id — the
- * sheet behind it is a later slice. Where the shell offers no sheet the line is plain text,
- * never a dead control.
- */
 describe("the subject line as a subject-rule entry", () => {
-  it("a press on a panel's subject dispatches openSubjectRule for THAT message", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    const older = card("a")!.querySelector<HTMLButtonElement>(".msg-subject .subj-rule");
-    expect(older, "the subject is not a pressable control").not.toBeNull();
-    await act(async () => { older!.click(); });
-    expect(subjectRuled).toEqual(["a"]);
-    const focused = card("b")!.querySelector<HTMLButtonElement>(".msg-subject .subj-rule")!;
-    await act(async () => { focused.click(); });
-    expect(subjectRuled).toEqual(["a", "b"]);
+  it("a press on a panel's subject dispatches openSubjectRule for THAT message", () => {
+    const older = { ...A, subject: "Blue roof appointment" };
+    const focused = { ...B, subject: "Window budget revision", from: { ...older.from, name: "Newer sender name" } };
+    mount({ letters: [older, focused], open: focused.id,
+      host: { places: { ohbox: READER_PLACE, screener: { ...screenerPlace, rail: null } } } });
+    fireEvent.click(within(letterOf(older.id)!).getByRole("button", { name: /^Sender a/ }));
+    const contact = within(screen.getByRole("dialog", { name: /^Options for Sender a/ }));
+    fireEvent.click(contact.getByRole("menuitem", { name: messages.screening.subjectRuleOpen }));
+    const dialog = within(screen.getByRole("dialog", {
+      name: messages.screening.subjectAria.replace("{who}", "Sender a"),
+    }));
+    expect(dialog.getByRole<HTMLInputElement>("textbox", { name: messages.screening.subjectTermAria }).value)
+      .toBe(older.subject);
   });
 });
 
@@ -741,157 +401,125 @@ describe("the subject line as a subject-rule entry", () => {
    THE MESSAGE HEADER — WHO IT IS FROM, AND WHO ELSE IT WENT TO
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 describe("the header", () => {
-  it("renders exactly one from-line per message — never a doubled header", async () => {
-    // The anatomy migration moved the from-line out of `ReadingPane` and into `MessageHeader`.
-    // If `ReadingPane` still drew its own while the pane composed one too, the focused message
-    // would carry two. Single path: exactly one. Thread: the focused panel carries exactly one.
-    await mountPane(msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" }));
-    expect(host!.querySelectorAll(".msg-from")).toHaveLength(1);
-
-    conversation = [A, B, C];
-    await mountPane(B);
-    expect(host!.querySelectorAll(".conv-focus .msg-from")).toHaveLength(1);
+  it("renders exactly one from-line per message — never a doubled header", () => {
+    mount({ letters: [SOLO], open: "solo" });
+    expect(within(letterOf("solo")!).getAllByRole("button", { name: /Sender solo/ })).toHaveLength(1);
+    cleanup();
+    mount({ letters: [A, B, C], open: "b" });
+    for (const id of ["a", "b", "c"])
+      expect(within(letterOf(id)!).getAllByRole("button", { name: new RegExp(`Sender ${id}`) })).toHaveLength(1);
   });
 
-  it("renders NO recipients block when there is no To and no Cc", async () => {
-    // The empty branch: a message addressed to nobody visible must not print a dangling "To".
-    await mountPane(msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" }));
-    expect(host!.querySelector(".msg-rcpts")).toBeNull();
+  it("renders NO recipients block when there is no To and no Cc", () => {
+    mount({ letters: [SOLO], open: "solo" });
+    const head = letterOf("solo")!.querySelector("header")!;
+    expect([...head.querySelectorAll("p")].some((p) => /^to\b/.test(p.textContent ?? ""))).toBe(false);
   });
 
   it("a recipient who IS the reader reads `you` — and never a stranger's chip", async () => {
-    // The account's name and address ride the chip's title (`contact-chips.test.tsx`); this
-    // holds the fold's two sides on the thread surface.
-    const withMe = msg({
-      id: "r", subject: "Hi", threadId: null, date: "2026-08-01T09:00:00.000Z",
-      to: [{ name: null, address: "owner@example.invalid" }, { name: "Anna Roth", address: "anna@x.invalid" }],
-    });
-
-    // Known own address → `you`.
-    ownAddresses = ["owner@example.invalid"];
-    ownName = "Own Er";
-    await mountPane(withMe);
-    const faces = () => [...host!.querySelectorAll(".rcpt-chip")].map((c) => c.textContent);
-    expect(faces()).toEqual(["you", "Anna Roth"]);
-
-    // NOT known → the bare address, never the account's name. The explicit degradation branch.
-    ownAddresses = [];
-    await mountPane(withMe);
-    expect(faces()).toEqual(["owner@example.invalid", "Anna Roth"]);
-  });
-
-  it("writes every Cc out as chips — `details` keeps only the exact date and the folder", async () => {
-    const many = msg({
-      id: "r", subject: "Hi", threadId: null, date: "2026-08-01T09:00:00.000Z",
-      to: [{ name: "Anna Roth", address: "anna@x.invalid" }],
-      cc: [
-        { name: "Bo", address: "bo@x.invalid" },
-        { name: "Cy", address: "cy@x.invalid" },
+    const withMe = msg("r", {
+      subject: "Hi",
+      to: [
+        { name: null, address: OWN },
+        { name: "Anna Roth", address: "anna@x.invalid" },
       ],
     });
-    await mountPane(many);
-    // nobody is behind a press any more — every Cc person is ON screen, a chip each.
-    const block = host!.querySelector(".msg-rcpts")!;
-    expect(block.textContent).toContain("Bo");
-    expect(block.textContent).toContain("Cy");
-    expect(block.textContent).not.toContain("cc 2");
-    // What remains behind `details` is what the chips do not say: the exact instant.
-    expect(host!.querySelector(".msg-rcpt-full")).toBeNull();
-    const more = host!.querySelector<HTMLButtonElement>(".msg-rcpt-more")!;
-    await act(async () => { more.click(); });
-    const full = host!.querySelector(".msg-rcpt-full")!;
-    expect(full.textContent).toContain("Sat 1 Aug 2026, 09:00");
-    // …and no second copy of the recipient list grows back there.
-    expect(full.textContent).not.toContain("bo@x.invalid");
+    // Known own address → `you`.
+    mount({ letters: [withMe], open: "r", host: { mailboxes: async () => ME } });
+    await screen.findByRole("button", { name: "you" });
+    const faces = () =>
+      within(letterOf("r")!)
+        .getByRole("button", { name: "Anna Roth" })
+        .closest("p")!
+        .querySelectorAll("button:not([data-details])");
+    expect([...faces()].map((c) => c.textContent)).toEqual(["you", "Anna Roth"]);
+    cleanup();
+    // NOT known → the bare address, never the account's name. The explicit degradation branch.
+    mount({ letters: [withMe], open: "r" });
+    expect([...faces()].map((c) => c.textContent)).toEqual([OWN, "Anna Roth"]);
   });
 
-  it("puts the relative stamp on screen with the absolute date on hover", async () => {
-    const dated = msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-05T14:32:00.000Z" });
-    await mountPane(dated);
-    const stamp = host!.querySelector<HTMLElement>(".msg-from .t time")!;
+  it("puts the relative stamp on screen with the absolute date on hover", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    const dated = msg("solo", { subject: "Just this", date: "2026-08-05T14:32:00.000Z" });
+    mount({ letters: [dated], open: "solo" });
+    const stamp = within(letterOf("solo")!).getByRole("button", { pressed: false, name: /14:32/ });
     expect(stamp.getAttribute("title")).toBe("Wed 5 Aug 2026, 14:32");
-    expect(stamp.getAttribute("datetime")).toBe("2026-08-05T14:32:00.000Z");
+    expect(stamp.querySelector("time")!.getAttribute("datetime")).toBe("2026-08-05T14:32:00.000Z");
   });
 
-  it("names-first: the bold name with the small address beside it — once each", async () => {
-    const named = {
-      ...msg({ id: "n", subject: "Hi", threadId: null, date: "2026-08-01T09:00:00.000Z" }),
-      from: { name: "Anna Roth", address: "anna@x.invalid" },
-    };
-    await mountPane(named);
-    const sender = host!.querySelector(".msg-sender")!;
-    expect(sender.querySelector("b")!.textContent).toBe("Anna Roth");
-    expect(sender.querySelector("small")!.textContent).toBe("anna@x.invalid");
+  it("names-first: the bold name with the small address beside it — once each", () => {
+    const named = msg("n", { subject: "Hi", from: { name: "Anna Roth", address: "anna@x.invalid" } });
+    mount({ letters: [named], open: "n" });
+    const sender = senderOf("n");
+    expect(within(sender).getByText("Anna Roth").tagName).toBe("B");
+    /* The address is drawn whole by the kit's address part, its local part and its domain each a box of their own:
+       the element that says it whole, and none of whose children does. */
+    const saysWhole = (_: string, el: Element | null): boolean =>
+      el?.textContent === "anna@x.invalid" && ![...el.children].some((c) => c.textContent === "anna@x.invalid");
+    expect(within(sender).getAllByText(saysWhole)).toHaveLength(1);
+    expect((sender.textContent ?? "").indexOf("Anna Roth")).toBeLessThan((sender.textContent ?? "").indexOf("anna@x.invalid"));
   });
 
-  it("a no-name sender prints the bare address ONCE, never twice", async () => {
-    // The `senderName`/`rowAddress` split (`format.ts`): the name slot falls back to the
-    // address and the small slot then prints nothing. Mutation: pass the address to the small
-    // slot unconditionally — the occurrence count reads 2, red.
-    const bare = {
-      ...msg({ id: "n", subject: "Hi", threadId: null, date: "2026-08-01T09:00:00.000Z" }),
-      from: { name: null, address: "verify@atlas-identity.invalid" },
-    };
-    await mountPane(bare);
-    const sender = host!.querySelector(".msg-sender")!;
-    expect(occurrences(sender.textContent ?? "", "verify@atlas-identity.invalid")).toBe(1);
-    expect(sender.querySelector("small"), "the address must not print beside itself").toBeNull();
+  it("a no-name sender prints the bare address ONCE, never twice", () => {
+    const bareName = msg("n", { subject: "Hi", from: { name: null, address: "verify@atlas-identity.invalid" } });
+    mount({ letters: [bareName], open: "n" });
+    expect(occurrences(senderOf("n").textContent ?? "", "verify@atlas-identity.invalid")).toBe(1);
   });
 });
 
 /**
- * THE FORWARD ROW. The account's own forward threads with the message it forwarded (its headers
- * say so), so it stands inside that conversation as its own panel, BELOW the original, and its
- * face says where it went rather than repeating the account's name: "Forwarded to <recipient>",
- * in the reader's language. The account's own REPLY in the same thread keeps the sender face —
- * the predicate reads the leading subject prefix on an own-sent row and nothing else. Mutations
- * watched red: face every own-sent row — the reply case prints the sentence; drop the recipients
- * join — the sentence ends in nothing.
+ * THE FORWARD ROW. The account's own forward threads with the message it forwarded, so it stands inside that
+ * conversation as its own letter, BELOW the original, and it says where it went: "Forwarded to <recipient>", in the
+ * reader's language. The account's own REPLY in the same thread does not; nor does a "Fwd:" somebody else sent.
  */
 describe("the forward row inside the original's conversation", () => {
-  const FWD = msg({
-    id: "fwd", subject: "Fwd: Quote for the north elevation", threadId: "t1",
-    date: "2026-08-01T10:00:00.000Z", folder: "Sent",
-    to: [{ name: "Sam Example", address: "sam@colleague.example" }, { name: null, address: "kim@colleague.example" }],
+  const FWD = msg("fwd", {
+    ...conversation,
+    subject: "Fwd: Quote for the north elevation",
+    date: "2026-08-01T10:00:00.000Z",
+    folder: SENT,
+    to: [
+      { name: "Sam Example", address: "sam@colleague.example" },
+      { name: null, address: "kim@colleague.example" },
+    ],
   });
 
-  it("faces the account's own forward 'Forwarded to <recipients>', the original above it", async () => {
-    conversation = [A, FWD];
-    await mountPane(A);
-
-    expect(convIds()).toEqual(["a", "fwd"]);
-    const row = card("fwd")!;
-    const face = row.querySelector(".msg-sender b")!.textContent;
-    expect(face).toBe("Forwarded to Sam Example, kim@colleague.example");
-    // The subject line still prints the true subject — the face is the sender slot, not the subject.
-    expect(row.querySelector(".msg-subject")!.textContent).toBe("Fwd: Quote for the north elevation");
-    // The original keeps its sender face.
-    expect(card("a")!.querySelector(".msg-sender b")!.textContent).not.toContain("Forwarded to");
+  it("faces the account's own forward 'Forwarded to <recipients>', the original above it", () => {
+    mount({ letters: [A, FWD], open: "a" });
+    expect(lettersShown()).toEqual(["a", "fwd"]);
+    const row = letterOf("fwd")!;
+    expect(row.textContent).toContain("Forwarded to Sam Example, kim@colleague.example");
+    // The letter still says its true subject.
+    expect(row.textContent).toContain("Fwd: Quote for the north elevation");
+    // The original says no such thing.
+    expect(letterOf("a")!.textContent).not.toContain("Forwarded to");
   });
 
-  it("the account's own REPLY keeps its sender face — only a forward wears the sentence", async () => {
-    // The reply CARRIES recipients: a face computed for every own-sent row would have somebody to
-    // name here, which is what makes this the control for the predicate rather than for the join.
-    const mineTo = msg({
-      id: "mine", subject: "Re: Quote for the north elevation", threadId: "t1",
-      date: "2026-07-31T09:00:00.000Z", folder: "Sent",
+  it("the account's own REPLY keeps its sender face — only a forward wears the sentence", () => {
+    const mineTo = msg("mine", {
+      ...conversation,
+      subject: "Re: Quote for the north elevation",
+      date: "2026-07-31T09:00:00.000Z",
+      folder: SENT,
       to: [{ name: "Sam Example", address: "sam@colleague.example" }],
     });
-    conversation = [A, mineTo, C];
-    await mountPane(C);
-    expect(card("mine")!.querySelector(".msg-sender b")!.textContent).not.toContain("Forwarded to");
+    mount({ letters: [A, mineTo, C], open: "c" });
+    expect(senderOf("mine").textContent).not.toContain("Forwarded to");
     expect(text()).not.toContain("Forwarded to");
   });
 
-  it("a RECEIVED 'Fwd:' is somebody else's forward and keeps its sender's name", async () => {
-    const theirs = msg({
-      id: "theirs", subject: "Fwd: Quote for the north elevation", threadId: "t1",
-      date: "2026-08-01T11:00:00.000Z", folder: "INBOX",
+  it("a RECEIVED 'Fwd:' is somebody else's forward and keeps its sender's name", () => {
+    const theirs = msg("theirs", {
+      ...conversation,
+      subject: "Fwd: Quote for the north elevation",
+      date: "2026-08-01T11:00:00.000Z",
       to: [{ name: "Sam Example", address: "sam@colleague.example" }],
     });
-    conversation = [A, theirs];
-    await mountPane(A);
-    expect(card("theirs")!.querySelector(".msg-sender b")!.textContent).not.toContain("Forwarded to");
+    mount({ letters: [A, theirs], open: "a" });
+    expect(senderOf("theirs").textContent).toContain("Sender theirs");
+    expect(letterOf("theirs")!.textContent).not.toContain("Forwarded to");
   });
 
   it("the German catalogue carries the same face", () => {
@@ -902,86 +530,14 @@ describe("the forward row inside the original's conversation", () => {
 });
 
 describe("a message with no conversation gets no conversation chrome", () => {
-  it("renders no count, no note and no second pane", async () => {
-    conversation = [];
-    await mountPane(msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" }));
-
-    expect(panes()).toBe(1);
-    expect(host!.querySelector(".conv")).toBeNull();
+  it("renders no count, no note and no second pane", () => {
+    mount({ letters: [{ ...SOLO, body: "snippet-solo" } as EngineMessage], open: "solo" });
+    expect(articles()).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: /messages/ }), "a single letter draws no squares").toBeNull();
     expect(text()).not.toContain("on this conversation");
     expect(text()).not.toContain("Sent folder");
-    // The body is still the body — the singleton path is byte-identical to pre-P6b.
-    expect(host!.querySelector(".msg-body")!.textContent).toBe("snippet-solo");
-  });
-});
-
-describe("a letter answered in its reading stream", () => {
-  const SOLO = msg({ id: "solo", subject: "Issue 118", threadId: null, date: "2026-08-01T09:00:00.000Z" });
-  /** A scrolling host whose every `scrollTop` write is recorded. */
-  const scrolling = (writes: number[]) => (col: HTMLDivElement): void => {
-    col.style.overflowY = "auto";
-    Object.defineProperty(col, "scrollTop", {
-      configurable: true,
-      get: () => 50,
-      set: (v: number) => { writes.push(v); },
-    });
-    col.scrollTo = ((o: ScrollToOptions) => { writes.push(o.top ?? -1); }) as typeof col.scrollTo;
-  };
-
-  it("a lone letter is one panel of a conversation, so the paper keeps its place when a reply joins", async () => {
-    streamForm = { arriving: true };
-    replyTo = "solo";
-    await mountPane(SOLO);
-    expect(host!.querySelector("article.msg"), "the single-message article").toBeNull();
-    expect(host!.querySelector(".conv[data-stream] > article.pm[data-conv-id='solo']")).not.toBeNull();
-    expect(host!.querySelector(".conv[data-stream] > .reply-dock .reply[data-reply-for]")).not.toBeNull();
-    expect(host!.querySelector(".conv[data-thread-read]"), "no thread-read rule in a stream").toBeNull();
-    expect(host!.querySelector(".thread-marks"), "one message draws no squares").toBeNull();
-  });
-
-  it("two messages draw the squares, without the read rule", async () => {
-    streamForm = { arriving: false };
-    conversation = [A, MINE];
-    await mountPane(A);
-    const squares = [...host!.querySelectorAll<HTMLElement>(".conv[data-stream] > .thread-marks .tm-mb")];
-    expect(squares.map((b) => b.dataset.for)).toEqual(["a", "mine"]);
-    expect(squares[1]!.querySelector(".tm-sq.mine")).not.toBeNull();
-    expect(host!.querySelector("[data-thread-read]")).toBeNull();
-  });
-
-  it("mounting scrolls nothing — the stream is the host's to move", async () => {
-    const control: number[] = [];
-    await mountPane(SOLO, scrolling(control));
-    expect(control, "control: outside a stream a lone letter opens at its top").toContain(0);
-
-    for (const [conv, open] of [[[], SOLO], [[A, B, C], B]] as const) {
-      const writes: number[] = [];
-      streamForm = { arriving: true };
-      conversation = [...conv];
-      replyTo = open.id as string;
-      await mountPane(open, scrolling(writes));
-      expect(writes, `the pane scrolled the stream (${conv.length} panels)`).toEqual([]);
-    }
-  });
-
-  it("the editor takes focus on its arrival only", async () => {
-    // The editor focuses itself a frame after it stands: run that frame at once.
-    const frame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => { cb(0); return 0; });
-    const focused = (): boolean => !!host!.querySelector(".reply-editor")?.contains(document.activeElement);
-    try {
-      streamForm = { arriving: true };
-      replyTo = "solo";
-      await mountPane(SOLO);
-      expect(host!.querySelector(".reply-editor .ProseMirror"), "the editor stands").not.toBeNull();
-      expect(focused(), "control: an arrival focuses").toBe(true);
-
-      streamForm = { arriving: false };
-      await mountPane(SOLO);
-      expect(host!.querySelector(".reply-editor .ProseMirror"), "the editor stands").not.toBeNull();
-      expect(focused()).toBe(false);
-    } finally {
-      frame.mockRestore();
-    }
+    // The body is still the body.
+    expect(within(letterOf("solo")!).getByText("snippet-solo")).toBeTruthy();
   });
 });
 
@@ -989,69 +545,43 @@ describe("a letter answered in its reading stream", () => {
    SLICE · THE CONVERSATION IS ON SCREEN EXACTLY ONCE
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 describe("the conversation is on screen exactly once", () => {
-  const allEntries = (): (string | null)[] =>
-    [...host!.querySelectorAll<HTMLElement>("[data-conv-id]")].map((e) =>
-      e.getAttribute("data-conv-id"),
-    );
-
-  it("stays in the PANE while the editor is open — one copy, and the editor below it", async () => {
-    conversation = [A, B, C];
-    replyTo = "b";
-    await mountPane(B);
-
-    const editor = host!.querySelector<HTMLElement>(".reply .reply-editor .rte-surface");
-    expect(editor, "no reply editor mounted, so `exactly once` proves nothing here").toBeTruthy();
-
-    expect(host!.querySelector(".conv")).toBeTruthy();
-    expect(host!.querySelector(".reply-context")).toBeNull();
-    expect(allEntries()).toEqual(["a", "b", "c"]);
-    expect(new Set(allEntries()).size).toBe(allEntries().length);
-
-    // ONE copy of the body the reader came for: the focused entry's prose, not a second
-    // `.msg-body` and not a quote of it.
-    expect(host!.querySelectorAll(".msg-body")).toHaveLength(1);
+  it("stays in the PANE while the editor is open — one copy, and the editor below it", () => {
+    const { reply } = replyPart();
+    mount({ letters: [A, { ...B, body: "snippet-b" } as EngineMessage, C], open: "b", parts: { reply } });
+    const editor = screen.getByRole("textbox", { name: "Your reply" });
+    expect(lettersShown()).toEqual(["a", "b", "c"]);
+    expect(new Set(lettersShown()).size).toBe(3);
+    // ONE copy of the body the reader came for, not a second one and not a quote of it.
     expect(occurrences(text(), "snippet-b")).toBe(1);
-
-    const conv = host!.querySelector(".conv")!;
-    expect(conv.compareDocumentPosition(editor!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(letterOf("c")!.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("…and it is the same one copy when the editor is closed", async () => {
-    conversation = [A, B, C];
-    replyTo = null;
-    await mountPane(B);
-
-    expect(allEntries()).toEqual(["a", "b", "c"]);
-    expect(host!.querySelectorAll(".msg-body")).toHaveLength(1);
+  it("…and it is the same one copy when the editor is closed", () => {
+    mount({ letters: [A, { ...B, body: "snippet-b" } as EngineMessage, C], open: "b" });
+    expect(lettersShown()).toEqual(["a", "b", "c"]);
     expect(occurrences(text(), "snippet-b")).toBe(1);
-    expect(host!.querySelector(".reply")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("a message with NO conversation is not repeated by the editor either", async () => {
-    conversation = [];
-    replyTo = "solo";
-    await mountPane(msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" }));
-
-    expect(host!.querySelector(".reply-editor")).toBeTruthy();
-    expect(host!.querySelector(".reply-context")).toBeNull();
-    expect(host!.querySelectorAll(".msg-body")).toHaveLength(1);
+  it("a message with NO conversation is not repeated by the editor either", () => {
+    const { reply } = replyPart();
+    mount({ letters: [{ ...SOLO, body: "snippet-solo" } as EngineMessage], open: "solo", parts: { reply } });
+    expect(screen.getByRole("textbox", { name: "Your reply" })).toBeTruthy();
+    expect(articles()).toHaveLength(1);
     expect(occurrences(text(), "snippet-solo")).toBe(1);
     expect(text()).not.toContain("the only message ohmail has on this conversation");
   });
 
-  it("a SENSITIVE message being answered renders its body in full (no withholding)", async () => {
+  it("a SENSITIVE message being answered renders its body in full (no withholding)", () => {
+    const { reply } = replyPart();
     const FULL = "Your verification code is 449 201";
-    replyTo = "otp";
-    bodyState = "full";
-    await mountPane({
-      ...msg({ id: "otp", subject: "Your code", threadId: null, date: "2026-08-01T09:00:00.000Z", liveSensitive: true }),
-      body: FULL,
+    mount({
+      letters: [msg("otp", { subject: "Your code", sensitive: true, body: FULL })],
+      open: "otp",
+      parts: { reply },
     });
-
-    expect(host!.querySelector(".reply-editor")).toBeTruthy();
-    expect(host!.querySelector(".protected")).toBeNull();
-    expect(host!.querySelector(".msg-body")).toBeTruthy();
-    expect(text()).toContain("449 201");
+    expect(screen.getByRole("textbox", { name: "Your reply" })).toBeTruthy();
+    expect(letterOf("otp")!.textContent).toContain("449 201");
   });
 });
 
@@ -1066,406 +596,277 @@ function occurrences(hay: string, needle: string): number {
    SLICE · THE READING PANE SAYS WHAT ITS TEXT IS
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 describe("the pane distinguishes 'this is the whole message' from the three things that are not", () => {
-  const SOLO = msg({ id: "solo", subject: "Just this", threadId: null, date: "2026-08-01T09:00:00.000Z" });
+  const SOLE = bare(SOLO);
+  /** Today's bound: twice the engine's own deadline for a body, and three seconds. */
+  const BODY_STALL_MS = 12_000 * 2 + 3_000;
 
-  it("a FULL body says nothing at all — the Blanc pane, unchanged", async () => {
-    bodyState = "full";
-    await mountPane(SOLO);
-    expect(host!.querySelector(".msg-body")!.textContent).toBe("snippet-solo");
-    expect(host!.querySelector(".msg-body-state")).toBeNull();
+  it("a FULL body says nothing at all — the Blanc pane, unchanged", () => {
+    mount({ letters: [SOLE], open: "solo", bodies: { solo: { state: "ready", text: "snippet-solo" } } });
+    expect(within(letterOf("solo")!).getByText("snippet-solo")).toBeTruthy();
+    expect(said("solo")).toBe("");
   });
 
-  it("a SNIPPET says the message is still coming — it is NOT a sub-frame state", async () => {
-    bodyState = "snippet";
-    await mountPane(SOLO);
-    const note = host!.querySelector(".msg-body-state");
-    expect(note).not.toBeNull();
-    expect(note!.textContent).toContain("Loading the full message");
-    expect(host!.querySelector(".msg-body")!.textContent).toBe("snippet-solo");
+  it("a SNIPPET says the message is still coming — it is NOT a sub-frame state", () => {
+    mount({ letters: [SOLE], open: "solo" });
+    expect(said("solo")).toContain(BODY.loading);
+    expect(within(letterOf("solo")!).getByText("snippet-solo")).toBeTruthy();
   });
 
-  it("LOADING says so, beside the body and not inside it", async () => {
-    bodyState = "loading";
-    await mountPane(SOLO);
-    expect(host!.querySelector(".msg-body")!.textContent).toBe("snippet-solo");
-    const note = host!.querySelector(".msg-body-state")!;
-    expect(note.textContent).toContain("Loading the full message");
-    expect(note.classList.contains("warn")).toBe(false);
+  it("LOADING says so, beside the body and not inside it", () => {
+    mount({ letters: [SOLE], open: "solo", bodies: { solo: { state: "loading" } } });
+    expect(within(letterOf("solo")!).getByText("snippet-solo")).toBeTruthy();
+    expect(said("solo")).toContain(BODY.loading);
+    expect(within(letterOf("solo")!).queryByRole("alert"), "loading is no warning").toBeNull();
   });
 
-  it("FAILED says so DIFFERENTLY, and carries a way out (Risk 2)", async () => {
-    bodyState = "failed";
-    await mountPane(SOLO);
-
-    const note = host!.querySelector(".msg-body-state")!;
-    expect(note.textContent).toContain("Couldn't load the full message");
-    expect(note.classList.contains("warn")).toBe(true);
-    expect(note.textContent).not.toContain("Loading the full message");
-
-    const retry = [...host!.querySelectorAll<HTMLButtonElement>(".msg-body-state button")]
-      .find((b) => b.textContent?.includes("Retry"));
+  it("FAILED says so DIFFERENTLY, and carries a way out (Risk 2)", () => {
+    const { mail } = mount({ letters: [SOLE], open: "solo", bodies: { solo: { state: "failed" } } });
+    const note = within(letterOf("solo")!).getByRole("alert");
+    expect(note.textContent).toContain(BODY.kept.failed);
+    expect(note.textContent).not.toContain(BODY.loading);
+    const retry = within(letterOf("solo")!).queryByRole("button", { name: BODY.kept.tryAgain });
     expect(retry, "a failed body with no control is a dead end").toBeTruthy();
-    await act(async () => { retry!.click(); });
-    expect(retried).toEqual(["solo"]);
+    const before = mail.bodyAsks.length;
+    fireEvent.click(retry!);
+    expect(mail.bodyAsks.slice(before)).toEqual(["solo retry"]);
   });
 
-  it("a sensitive message renders its body in full — no withholding at the surface", async () => {
+  it("a sensitive message renders its body in full — no withholding at the surface", () => {
     const FULL = "Your verification code is 449 201";
-    const otp = {
-      ...msg({ id: "otp", subject: "Your code", threadId: null, date: "2026-08-01T09:00:00.000Z", liveSensitive: true }),
-      body: FULL,
-    };
-    bodyState = "full";
-    await mountPane(otp);
-
-    expect(host!.querySelector(".protected")).toBeNull();
+    mount({ letters: [msg("otp", { subject: "Your code", sensitive: true, body: FULL })], open: "otp" });
     expect(text()).not.toContain("······");
-    expect(host!.querySelector(".msg-body")).toBeTruthy();
-    expect(text()).toContain("449 201");
+    expect(letterOf("otp")!.textContent).toContain("449 201");
   });
 
-  it("a LIVE sensitive message renders its body — the engine fetches it like any other", async () => {
-    const otp = {
-      ...msg({
-        id: "otp", subject: "Your code", threadId: null, date: "2026-08-01T09:00:00.000Z",
-        snippet: "Ich finde deine Idee mit dem Rollen-Guard gut", liveSensitive: true,
-      }),
-      body: "Ich finde deine Idee mit dem Rollen-Guard gut",
-    };
-    bodyState = "full";
-    await mountPane(otp);
-
-    expect(host!.querySelector(".protected"), "no message is withheld from its reader now").toBeNull();
-    expect(host!.querySelector(".msg-body")).toBeTruthy();
-    expect(text()).toContain("Rollen-Guard");
+  it("a LIVE sensitive message renders its body — the engine fetches it like any other", () => {
+    const words = "Ich finde deine Idee mit dem Rollen-Guard gut";
+    mount({ letters: [msg("otp", { subject: "Your code", sensitive: true, snippet: words, body: words })], open: "otp" });
+    expect(letterOf("otp")!.textContent).toContain("Rollen-Guard");
   });
 
-  it("a body that never arrives becomes a failure with Retry, not a permanent spinner", async () => {
+  it("a body that never arrives becomes a failure with Retry, not a permanent spinner", () => {
     vi.useFakeTimers();
-    try {
-      bodyState = "loading";
-      await mountPane(A);
-      expect(host!.querySelector(".msg-body-state")!.textContent).toContain("Loading the full message");
-
-      const { BODY_STALL_MS } = await import("../app/shell/message-chrome.js");
-      await act(async () => { vi.advanceTimersByTime(BODY_STALL_MS + 1); });
-
-      const note = host!.querySelector(".msg-body-state")!;
-      expect(note.textContent, "the spinner outlived the engine's own deadline").toContain("Retry");
-      expect(note.textContent).not.toContain("Loading the full message");
-      expect(note.className).toContain("warn");
-
-      retried = [];
-      await act(async () => { note.querySelector("button")!.click(); });
-      expect(retried).toContain(A.id as string);
-    } finally {
-      vi.useRealTimers();
-    }
+    const { mail } = mount({ letters: [bare(A)], open: "a", bodies: { a: { state: "loading" } } });
+    expect(said("a")).toContain(BODY.loading);
+    act(() => {
+      vi.advanceTimersByTime(BODY_STALL_MS + 1);
+    });
+    const retry = within(letterOf("a")!).queryByRole("button", { name: BODY.kept.tryAgain });
+    expect(retry, "the spinner outlived the engine's own deadline").not.toBeNull();
+    expect(said("a")).not.toContain(BODY.loading);
+    const before = mail.bodyAsks.length;
+    fireEvent.click(retry!);
+    expect(mail.bodyAsks.slice(before)).toContain("a retry");
   });
 
-  it("the spinner stands for as long as a request could still be in the air", async () => {
+  it("the spinner stands for as long as a request could still be in the air", () => {
     vi.useFakeTimers();
-    try {
-      bodyState = "loading";
-      await mountPane(A);
-      const { BODY_STALL_MS } = await import("../app/shell/message-chrome.js");
-      await act(async () => { vi.advanceTimersByTime(BODY_STALL_MS - 100); });
-
-      const note = host!.querySelector(".msg-body-state")!;
-      expect(note.textContent, "the failure was declared before the deadline").toContain(
-        "Loading the full message",
-      );
-      expect(note.textContent).not.toContain("Retry");
-      expect(note.className).not.toContain("warn");
-    } finally {
-      vi.useRealTimers();
-    }
+    mount({ letters: [bare(A)], open: "a", bodies: { a: { state: "loading" } } });
+    act(() => {
+      vi.advanceTimersByTime(BODY_STALL_MS - 100);
+    });
+    expect(said("a"), "the failure was declared before the deadline").toContain(BODY.loading);
+    expect(within(letterOf("a")!).queryByRole("button", { name: BODY.kept.tryAgain })).toBeNull();
+    expect(within(letterOf("a")!).queryByRole("alert")).toBeNull();
   });
 
-  it("…and a sensitive message is treated like any other — a failed fetch shows the note", async () => {
-    bodyState = "failed";
-    await mountPane(msg({ id: "otp2", subject: "Your code", threadId: null, date: "2026-08-01T09:00:00.000Z", liveSensitive: true }));
-    expect(host!.querySelector(".protected")).toBeNull();
-    expect(host!.querySelector(".msg-body-state")).toBeTruthy();
+  it("…and a sensitive message is treated like any other — a failed fetch shows the note", () => {
+    mount({
+      letters: [bare(msg("otp2", { subject: "Your code", sensitive: true }))],
+      open: "otp2",
+      bodies: { otp2: { state: "failed" } },
+    });
+    expect(said("otp2")).toContain(BODY.kept.failed);
   });
 
-  it("the state line survives the CONVERSATION path, which composes the middle section itself", async () => {
-    conversation = [A, B, C];
-    bodyState = "loading";
-    await mountPane(B);
-    expect(host!.querySelector(".conv")).toBeTruthy();
-    expect(host!.querySelector(".conv-focus .msg-body-state")!.textContent).toContain("Loading the full message");
+  it("the state line survives the CONVERSATION path, which composes the middle section itself", () => {
+    mount({ letters: [A, bare(B), C], open: "b", bodies: { b: { state: "loading" } } });
+    expect(articles()).toHaveLength(3);
+    expect(said("b")).toContain(BODY.loading);
   });
 });
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE SIBLINGS ARE THE MAIL, NOT ONE LINE OF IT — AND NOTHING FETCHES PER PANEL
+   THE SIBLINGS ARE THE MAIL, NOT ONE LINE OF IT
    ══════════════════════════════════════════════════════════════════════════════════════════
 
-   The reported defect (before hydration): two German business letters cut off mid-word. Bodies
-   are loaded on open in ONE batch, and every panel renders through the SAME viewer the focused
-   message uses. */
+   Every letter renders through the SAME viewer the opened one uses, and a sibling whose text is not here says why,
+   exactly as the opened letter does. */
 describe("a conversation's siblings are loaded on open and rendered like mail", () => {
-  const frames = (): HTMLIFrameElement[] =>
-    [...host!.querySelectorAll<HTMLIFrameElement>(".conv .pm .pm-body iframe")];
+  const THREE = [bare(A), bare(B), bare(C)];
+  const SIBLINGS = ["a", "c"];
+  /** The letter's renderer, as every browser host hands it. */
+  const REAL = { body: letterBody };
 
-  it("asks for every SIBLING's body when the thread opens — as ONE list, not one call each", async () => {
-    conversation = [A, B, C];
-    await mountPane(B);
-    for (const ask of threadAsks) expect(ask.sort()).toEqual(["a", "c"]);
-    expect(threadAsks.length).toBeGreaterThan(0);
-
-    threadAsks = [];
-    await mountPane(A);
-    for (const ask of threadAsks) expect(ask.sort()).toEqual(["b", "c"]);
-    expect(threadAsks.length).toBeGreaterThan(0);
-  });
-
-  /**
-   * THE LOADED-BODIES GUARANTEE. A panel renders a body that is already in the mirror — so the
-   * render fires NO `hydrateBody` and adds NO `hydrateThread` call beyond the one batch ask.
-   * Mutate `MessageCard` to fetch per panel (a `hydrateBody` in the render path) and `retried`
-   * fills, going red.
-   */
-  it("renders every body with NO per-panel fetch", async () => {
-    bodyState = "full";
-    conversation = [A, B, C];
-    await mountPane(C);
-
-    for (const id of ["a", "b"]) {
-      expect(card(id)!.querySelector(".pm-body"), `sibling ${id} has no body slot`).toBeTruthy();
-    }
-    expect(retried, "rendering panels must not fetch per message").toEqual([]);
-    expect(threadAsks.length, "one batch ask per open, nothing per panel").toBeGreaterThan(0);
-  });
-
-  it("a sibling panel renders through the SAME viewer the focused message uses", async () => {
-    bodyState = "full";
-    bodyHtml =
+  it("a sibling panel renders through the SAME viewer the focused message uses", () => {
+    const html =
       '<table width="600"><tr><td>' +
-      '<p>Auch kann man Euch nicht erreichen, wenn die Durchwahl besetzt ist.</p>' +
-      '</td></tr></table>';
-    conversation = [A, B, C];
-    await mountPane(B);
-
-    expect(frames()).toHaveLength(2);
-    for (const f of frames()) {
+      "<p>Auch kann man Euch nicht erreichen, wenn die Durchwahl besetzt ist.</p>" +
+      "</td></tr></table>";
+    mount({ letters: THREE, open: "b", parts: REAL, bodies: rows(["a", "b", "c"], { state: "ready", text: "", html }) });
+    for (const id of SIBLINGS) {
+      const frames = letterOf(id)!.querySelectorAll("iframe");
+      expect(frames, `sibling ${id} draws its letter in one frame`).toHaveLength(1);
+      const f = frames[0]!;
       expect(f.getAttribute("srcdoc")).toContain("wenn die Durchwahl besetzt ist");
       expect(f.getAttribute("sandbox")).toContain("allow-same-origin");
       expect(f.getAttribute("sandbox")).not.toContain("allow-scripts");
       expect(f.getAttribute("srcdoc")).toContain("default-src 'none'");
     }
-    expect(host!.querySelectorAll(".conv .pm .pm-body")).toHaveLength(2);
   });
 
-  it("a sibling still WAITING says so, and its snippet is not offered as the message", async () => {
-    bodyState = "loading";
-    conversation = [A, B, C];
-    await mountPane(B);
-
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("Loading the full message");
-      expect(n.classList.contains("warn")).toBe(false);
+  it("a sibling still WAITING says so, and its snippet is not offered as the message", () => {
+    mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "loading" }) });
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(BODY.loading);
+      expect(within(letterOf(id)!).queryByRole("alert")).toBeNull();
     }
   });
 
-  it("a sibling that FAILED says so differently and carries the way out", async () => {
-    bodyState = "failed";
-    conversation = [A, B, C];
-    await mountPane(B);
-
-    const note = card("a")!.querySelector(".hm-state")!;
-    expect(note.textContent).toContain("Couldn't load the full message");
-    expect(note.classList.contains("warn")).toBe(true);
-    expect(note.textContent).not.toContain("Loading the full message");
-
-    retried = [];
-    const retry = [...card("a")!.querySelectorAll<HTMLButtonElement>(".hm-state button")]
-      .find((b) => b.textContent?.includes("Retry"));
+  it("a sibling that FAILED says so differently and carries the way out", () => {
+    const { mail } = mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "failed" }) });
+    const note = within(letterOf("a")!).getByRole("alert");
+    expect(note.textContent).toContain(BODY.kept.failed);
+    expect(note.textContent).not.toContain(BODY.loading);
+    const retry = within(letterOf("a")!).queryByRole("button", { name: BODY.kept.tryAgain });
     expect(retry, "a failed sibling with no control is a dead end").toBeTruthy();
-    await act(async () => { retry!.click(); });
-    expect(retried).toContain("a");
+    const before = mail.bodyAsks.length;
+    fireEvent.click(retry!);
+    expect(mail.bodyAsks.slice(before)).toContain("a retry");
   });
 
   /**
-   * A WITHHELD SIBLING MUST SAY SO — the defect this holds shut was a SILENT one.
-   *
-   * `MessageCard` enumerated `loading`/`snippet` and `failed`; the storage-cap slice added a
-   * terminal `withheld` state that matched NEITHER arm, so a sibling whose body the server never
-   * stored rendered `bodyOf`'s snippet through `MessageBody` with no note at all — the preview
-   * presented as the message, in the one place the reader has no way to tell. The focused pane
-   * was honest the whole time, which is exactly what made it invisible.
-   *
-   * Retry is asserted ABSENT, not merely unused: withheld is an ANSWER, and a control that
-   * cannot change the answer is the dead end the failed arm's own control exists to avoid.
+   * A WITHHELD SIBLING MUST SAY SO — the defect this holds shut was a SILENT one: a sibling whose body the server
+   * never stored drew its snippet with no note at all, the preview presented as the message. Try again is asserted
+   * ABSENT: withheld is an ANSWER, and a control that cannot change it is a dead end.
    */
-  it("a WITHHELD sibling says its text was emptied to stay within the plan, and offers no Retry", async () => {
-    bodyState = "withheld";
-    conversation = [A, B, C];
-    await mountPane(B);
-
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes, "every sibling at the cap must carry the note").toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("isn't kept on Cloud because your storage is full");
-      expect(n.textContent).not.toContain("Loading the full message");
-      expect(n.textContent).not.toContain("Couldn't load the full message");
-    }
-
-    const retry = [...host!.querySelectorAll<HTMLButtonElement>(".conv .pm .hm-state button")]
-      .find((b) => b.textContent?.includes("Retry"));
-    expect(retry, "withheld is answered, not failed — a Retry here cannot succeed").toBeUndefined();
-  });
-
-  /**
-   * EACH WITHHELD MARKER GETS ITS OWN SENTENCE — `withheldCopyKey` (FOLDERS-SPEC.md/mail 0065
-   * widened the set). One sentence for three different facts was the residual defect: a body
-   * husked by the reader's own spam verdict, and one whose every copy is gone from the server,
-   * both claimed "older stored copies give way to newer mail" — a storage-cap explanation for
-   * states that have nothing to do with storage. Each case asserts its own load-bearing phrase
-   * AND the absence of the storage one, so a resolver collapsed back to one key goes red twice.
-   */
-  it("a JUNK-FILED body IN THE SPAM PILE names the verdict and the provider's Junk folder — not the storage cap", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "junk_filed";
-    const inSpam = (m: Record<string, unknown>) => ({ ...m, folder: "ohmail/Quarantine" });
-    conversation = [A, B, C].map(inSpam);
-    await mountPane(inSpam(B));
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("your spam verdict filed this message to the Junk folder");
-      expect(n.textContent).not.toContain("isn't kept on Cloud");
+  it("a WITHHELD sibling says its text was emptied to stay within the plan, and offers no Retry", () => {
+    mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "ready", withheld: "storage_cap", text: "" }) });
+    for (const id of SIBLINGS) {
+      expect(said(id), `sibling ${id} at the cap must carry the note`).toContain(BODY.kept.emptiedLine);
+      expect(said(id)).not.toContain(BODY.loading);
+      expect(said(id)).not.toContain(BODY.kept.failed);
+      expect(
+        within(letterOf(id)!).queryByRole("button", { name: BODY.kept.tryAgain }),
+        "withheld is answered, not failed — a Retry here cannot succeed",
+      ).toBeNull();
     }
   });
 
-  /**
-   * MOVED OUT OF JUNK, THE VERDICT'S SENTENCE IS FALSE (owner defect, 2026-09-23): the person moved
-   * the message to the Ohbox and the reader went on saying the verdict filed it. A `junk_filed`
-   * husk outside the spam pile is text on its way back — "loading", on every reader surface —
-   * and past the bound the reader says it could not be read, never the verdict.
-   */
-  it("a JUNK-FILED husk moved OUT of the spam pile reads loading, then the bounded failure — never the verdict", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "junk_filed";
-    conversation = [A, B, C];
-    await mountPane(B);
-    const said = () => host!.textContent ?? "";
-    expect(said()).toContain("Loading this message from your mail server");
-    expect(said()).not.toContain("your spam verdict filed this message");
-    await act(async () => { vi.advanceTimersByTime(15_000); });
-    expect(said()).not.toContain("Loading this message from your mail server");
-    expect(said()).toContain("Couldn't load the full message");
-    expect(said()).not.toContain("your spam verdict filed this message");
-  });
-
-  it("the husk shed by the refill's own change is asked for again, where it is being read", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "junk_filed";
-    conversation = [A, B, C];
-    await mountPane(B);
-    retried = [];
-    // The mirror sheds a restorable husk on the message's next change: the body is waiting again.
-    bodyState = "snippet";
-    bodyWithheld = null;
-    await rerender!();
-    expect(retried).toContain(B.id);
-  });
-
-  it("an EXPUNGED body says the copies are gone — it does NOT promise the mail is safe in the mailbox", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "expunged";
-    conversation = [A, B, C];
-    await mountPane(B);
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("every copy of this message is gone");
-      // The storage sentence's reassurance is FALSE here — that is why the marker exists.
-      expect(n.textContent).not.toContain("safe in your mailbox");
-      expect(n.textContent).not.toContain("isn't kept on Cloud");
-    }
-  });
-
-  /* A message over the download ceiling (OVERSIZE-MESSAGE-IS-STORED-NOWHERE): its reader names the
-     ceiling and where to read it, not a storage or loading state it is not in. */
-  it("a TOO-LARGE body names the download ceiling and the mail provider — no storage sentence, no Retry", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "too_large";
-    conversation = [A, B, C];
-    await mountPane(B);
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain(`larger than ${MAX_RAW_MESSAGE_BYTES / (1024 * 1024)} MB`);
-      expect(n.textContent).toContain("Open it in your mail provider");
-      expect(n.textContent).not.toContain("isn't kept on Cloud");
-    }
-    expect([...host!.querySelectorAll("button")].find((x) => x.textContent?.includes("Retry"))).toBeUndefined();
-  });
-
-  it("the storage-cap marker keeps the storage sentence: not kept on Cloud, complete on the mail server", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "storage_cap";
-    conversation = [A, B, C];
-    await mountPane(B);
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("isn't kept on Cloud because your storage is full");
-      expect(n.textContent).toContain("It's complete on your mail server.");
-    }
-  });
-
-  /* The refill runs only for mailboxes the worker still visits: a removed one is not. */
-  it("a storage-cap letter of a mailbox ohmail no longer reads says its text does not come back", async () => {
-    bodyState = "withheld";
-    bodyWithheld = "storage_cap";
-    mailboxStatus = "disabled";
-    conversation = [A, B, C];
-    await mountPane(B);
-    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
-    expect(notes).toHaveLength(2);
-    for (const n of notes) {
-      expect(n.textContent).toContain("isn't kept on Cloud because your storage was full");
-      expect(n.textContent).toContain("ohmail no longer reads this mailbox, so it does not come back here.");
-    }
-  });
-
-  it("a LIVE sensitive sibling renders its body like any other sibling", async () => {
-    const otp = {
-      ...msg({
-        id: "otp", subject: "Your code", threadId: "t1", date: "2026-07-29T09:00:00.000Z",
-        snippet: "Ich finde deine Idee mit dem Rollen-Guard gut", liveSensitive: true,
-      }),
-      body: "Ich finde deine Idee mit dem Rollen-Guard gut",
-    };
-    bodyState = "full";
-    bodyHtml = null;
-    conversation = [otp, B, C];
-    await mountPane(B);
-
-    const article = card("otp")!;
-    expect(article).toBeTruthy();
-    expect(article.textContent).toContain("Rollen-Guard");
-    expect(article.textContent).not.toContain("(redacted)");
-  });
-
-  it("a sensitive sibling renders its content, frame and all — like every other sibling", async () => {
-    const otp = msg({
-      id: "otp", subject: "Your code", threadId: "t1", date: "2026-07-29T09:00:00.000Z",
-      snippet: "code is 449 201", liveSensitive: true,
+  /* EACH WITHHELD MARKER GETS ITS OWN SENTENCE: one sentence for three different facts was the residual defect. */
+  it("a JUNK-FILED body IN THE SPAM PILE names the verdict and the provider's Junk folder — not the storage cap", () => {
+    const inSpam = (m: EngineMessage) => ({ ...m, folder: "ohmail/Quarantine" }) as EngineMessage;
+    mount({
+      letters: THREE.map(inSpam),
+      open: "b",
+      bodies: rows(["a", "b", "c"], { state: "ready", withheld: "junk_filed", text: "" }),
     });
-    bodyState = "full";
-    bodyHtml =
-      '<table width="600"><tr><td><p>Your verification code is 449 201</p></td></tr></table>';
-    conversation = [otp, B, C];
-    await mountPane(B);
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(BODY.kept.junkLine);
+      expect(said(id)).not.toContain(BODY.kept.emptiedLine);
+    }
+  });
 
-    const article = card("otp")!;
-    expect(article).toBeTruthy();
+  /**
+   * MOVED OUT OF JUNK, THE VERDICT'S SENTENCE IS FALSE (owner defect, 2026-09-23): a `junk_filed` husk outside the
+   * spam pile is text on its way back — loading — and past the bound the reader says it could not be read.
+   */
+  it("a JUNK-FILED husk moved OUT of the spam pile reads loading, then the bounded failure — never the verdict", () => {
+    vi.useFakeTimers();
+    mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "ready", withheld: "junk_filed", text: "" }) });
+    expect(text()).toContain(BODY.withheldJunkLoading);
+    expect(text()).not.toContain(BODY.kept.junkLine);
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(text()).not.toContain(BODY.withheldJunkLoading);
+    expect(text()).toContain(BODY.kept.failed);
+    expect(text()).not.toContain(BODY.kept.junkLine);
+  });
+
+  it("the husk shed by the refill's own change is asked for again, where it is being read", () => {
+    const shed = new Set<string>();
+    const { mail } = mount({
+      letters: THREE,
+      open: "b",
+      bodies: rows(["a", "b", "c"], { state: "ready", withheld: "junk_filed", text: "" }),
+    });
+    const raw = mail.engine.read();
+    const get = raw.get.bind(raw);
+    (raw as { get: typeof raw.get }).get = <T,>(type: string, id: string) =>
+      type === "message_body" && shed.has(id) ? undefined : get<T>(type, id);
+    const before = mail.bodyAsks.length;
+    // The mirror sheds a restorable husk on the message's next change: the body is waiting again.
+    shed.add("b");
+    act(() => mail.patch("b", {}));
+    expect(mail.bodyAsks.slice(before).some((ask) => ask.startsWith("b"))).toBe(true);
+  });
+
+  it("an EXPUNGED body says the copies are gone — it does NOT promise the mail is safe in the mailbox", () => {
+    mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "ready", withheld: "expunged", text: "" }) });
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(BODY.kept.expungedLine);
+      // The storage sentence's reassurance is FALSE here — that is why the marker exists.
+      expect(said(id)).not.toContain("safe in your mailbox");
+      expect(said(id)).not.toContain(BODY.kept.emptiedLine);
+    }
+  });
+
+  /* A message over the download ceiling: its reader names the ceiling and where to read it. */
+  it("a TOO-LARGE body names the download ceiling and the mail provider — no storage sentence, no Retry", () => {
+    mount({ letters: THREE, open: "b", bodies: rows(["a", "b", "c"], { state: "ready", withheld: "too_large", text: "" }) });
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(`than ${MAX_RAW_MESSAGE_BYTES / (1024 * 1024)} MB`);
+      expect(said(id)).toContain(BODY.kept.tooLargeLine);
+      expect(said(id)).not.toContain(BODY.kept.emptiedLine);
+    }
+    expect(screen.queryByRole("button", { name: BODY.kept.tryAgain })).toBeNull();
+  });
+
+  it("the storage-cap marker keeps the storage sentence: not kept on Cloud, complete on the mail server", () => {
+    mount({
+      letters: THREE,
+      open: "b",
+      bodies: rows(["a", "b", "c"], { state: "ready", withheld: "storage_cap", text: "" }),
+      host: { wires: { liveBody: () => new Promise<never>(() => undefined) } as never },
+    });
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(BODY.kept.emptiedLine);
+      expect(said(id)).toContain(BODY.kept.emptiedTitle);
+    }
+  });
+
+  /* The refill runs only for mailboxes the worker still visits: one ohmail no longer reads is not. */
+  it("a storage-cap letter of a mailbox ohmail no longer reads says its text does not come back", async () => {
+    mount({
+      letters: THREE,
+      open: "b",
+      bodies: rows(["a", "b", "c"], { state: "ready", withheld: "storage_cap", text: "" }),
+      host: {
+        wires: { liveBody: () => new Promise<never>(() => undefined) } as never,
+        mailboxes: async () => [{ id: "mb-1", address: OWN, addressIsOwn: true, status: "disabled" }],
+      },
+    });
+    await screen.findAllByText(BODY.kept.removedLine);
+    for (const id of SIBLINGS) {
+      expect(said(id)).toContain(BODY.kept.removedLine);
+      expect(within(letterOf(id)!).queryByRole("button", { name: BODY.liveLoad })).toBeNull();
+    }
+  });
+
+  it("a LIVE sensitive sibling renders its body like any other sibling", () => {
+    const words = "Ich finde deine Idee mit dem Rollen-Guard gut";
+    const otp = msg("otp", { ...conversation, subject: "Your code", date: "2026-07-29T09:00:00.000Z", snippet: words, body: words, sensitive: true });
+    mount({ letters: [otp, B, C], open: "b" });
+    expect(letterOf("otp")!.textContent).toContain("Rollen-Guard");
+    expect(letterOf("otp")!.textContent).not.toContain("(redacted)");
+  });
+
+  it("a sensitive sibling renders its content, frame and all — like every other sibling", () => {
+    const otp = bare(msg("otp", { ...conversation, subject: "Your code", date: "2026-07-29T09:00:00.000Z", snippet: "code is 449 201", sensitive: true }));
+    const html = '<table width="600"><tr><td><p>Your verification code is 449 201</p></td></tr></table>';
+    mount({ letters: [otp, B, C], open: "b", parts: REAL, bodies: { otp: { state: "ready", text: "", html } } });
+    const article = letterOf("otp")!;
     expect(article.textContent).not.toContain("(redacted)");
     const frame = article.querySelector("iframe");
     expect(frame).toBeTruthy();
@@ -1473,140 +874,89 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
   });
 });
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE FOCUSED MESSAGE NEEDS NO COLOUR-ONLY CUE
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
-describe("which message is focused", () => {
-  it("is shown by position and aria, not by a side rule or a border", () => {
-    // GUARD, carried through the panel redesign. The focused message used to carry a
-    // terracotta inset side line (`box-shadow: inset 2px 0 0 var(--accent)`) and the indent
-    // that made room for it. That was ruled out; in the panel world every message wears the
-    // SAME panel treatment and the focused one is marked by `aria-current`, never by an accent
-    // rule. Parsed from the shipped `app.css` so a re-added side rule or border is a red test.
-    // jsdom applies no stylesheet, so the file's own text is the fact. Mutation: put a
-    // `box-shadow: inset …` in the `.conv > .conv-focus` block — red.
-    const REL = "app/app.css";
-    const sheet = [
-      resolve(process.cwd(), REL),
-      resolve(process.cwd(), "apps/webapp", REL),
-    ].find(existsSync);
-    expect(sheet, `could not find ${REL} from ${process.cwd()}`).toBeTruthy();
-    const css = readFileSync(sheet!, "utf8");
-    const rule = /\.conv\s*>\s*\.conv-focus\s*\{([^}]*)\}/.exec(css);
-    expect(rule, ".conv > .conv-focus must exist").toBeTruthy();
-    expect(rule![1], "the focused message must carry no side rule").not.toMatch(/box-shadow/);
-    expect(rule![1], "the focused message must carry no border").not.toMatch(/border/);
-    expect(rule![1], "the focused message must carry no inset accent line").not.toMatch(/inset/);
-  });
-});
-
 describe("a sibling panel shows its message's files", () => {
   /**
    * ══ THE SENT-REPLY-IN-A-THREAD DEFECT, PINNED IN ITS EXACT SHAPE ═══════════════════════════
    *
-   * Found on a live account: the reader's own sent reply — ingested by the worker from the Sent
-   * folder, its two files extracted, stamped and rowed server-side — rendered inside the open
-   * thread as a conversation SIBLING (the thread was opened at the newest inbound message), and
-   * the panel composed header and body and nothing else. The files existed everywhere but on
-   * screen. The strip lived only on the focused panel; a sibling never asked.
-   *
-   * The guard: a SENT sibling whose chrome holds a ready two-file list renders the strip, inside
-   * ITS OWN panel, through the same `itemsOf` read the focused pane uses. Mutation: remove the
-   * `AttachmentStrip` block from `MessageCard` — red.
+   * Found on a live account: the reader's own sent reply, its two files extracted server-side, rendered inside the
+   * open thread as a conversation SIBLING, and its letter drew header and body and nothing else. The guard: a SENT
+   * sibling whose door holds a ready two-file list draws its files inside ITS OWN letter, through the same list read
+   * the opened letter uses, and held by that letter.
    */
-  const SENT_FILES = [
-    { id: "att-1", filename: "banner-v02x2.png", mimeType: "image/png", sizeBytes: 1_153_017, state: "idle" },
-    { id: "att-2", filename: "banner-v02.png", mimeType: "image/png", sizeBytes: 317_030, state: "idle" },
-  ];
-  /** The found case's row: the user's own reply, read back out of Sent, files stamped. */
-  const MINE_WITH_FILES = { ...MINE, hasAttachments: true, attachmentCount: 2 };
+  const SENT_FILES = [file("att-1", "banner-v02x2.png", "image/png", 1_153_017), file("att-2", "banner-v02.png", "image/png", 317_030)];
+  const MINE_WITH_FILES = { ...MINE, hasAttachments: true, attachmentCount: 2 } as EngineMessage;
 
-  it("renders the attachment strip on a SENT sibling that carries files, not only on the focused panel", async () => {
-    conversation = [A, MINE_WITH_FILES, C];
-    attachmentsChrome = readyAttachments({ mine: SENT_FILES });
-    await mountPane(C);
-
-    const strip = card("mine")?.querySelector(".att-strip");
-    expect(strip, "the sent sibling's panel must carry its attachment strip").toBeTruthy();
-    // Both files, by name, inside the sibling's own panel — never counted into some other panel.
-    expect(strip!.textContent).toContain("banner-v02x2");
-    expect(strip!.textContent).toContain("banner-v02");
-    // The ask went through the SHARED chrome read, addressed by this panel's id. A second read
-    // path for siblings is exactly what this slice refused to add.
-    expect(itemsAsked.some((a) => a.id === "mine")).toBe(true);
-    // …and the sibling's panel HELD its own list: a strip over a list nobody asked for is silent.
-    expect(held, "a panel drew a strip without asking for its list").toContain("mine");
-    expect(held, "the focused panel drew a strip without asking for its list").toContain("c");
+  it("renders the attachment strip on a SENT sibling that carries files, not only on the focused panel", () => {
+    const { door, held, asked } = fileDoor({ mine: SENT_FILES });
+    mount({ letters: [A, MINE_WITH_FILES, C], open: "c", parts: { files: door } });
+    const own = within(letterOf("mine")!);
+    // Both files, by name, inside the sibling's own letter — never counted into some other letter.
+    expect(own.getAllByRole("button", { name: /banner-v02x2\.png/ }).length).toBeGreaterThan(0);
+    expect(own.getAllByRole("button", { name: /banner-v02\.png/ }).length).toBeGreaterThan(0);
+    // The ask went through the SHARED door's read, addressed by this letter's id.
+    expect(asked.some((a) => a.id === "mine")).toBe(true);
+    // …and the sibling's letter HELD its own list: a strip over a list nobody asked for is silent.
+    expect(held, "a letter drew its files without asking for its list").toContain("mine");
+    expect(held, "the opened letter drew its files without asking for its list").toContain("c");
   });
 
-  it("carries the focused pane's list discipline: every part, on every ask", async () => {
-    // The `includeInlineParts` wire, end to end on a SIBLING. The list is no longer coupled to
-    // which rendering is on screen (the 2026-09-19 ruling): every ask carries the flag, so a `cid:`
-    // photo in an older reply is reachable from the first paint — there is no files-only frame
-    // between mount and a prose signal for a picture to be missing in.
-    conversation = [A, MINE_WITH_FILES, C];
-    attachmentsChrome = readyAttachments({ mine: SENT_FILES });
-    await mountPane(C);
-
-    const asks = itemsAsked.filter((a) => a.id === "mine");
+  it("carries the focused pane's list discipline: every part, on every ask", () => {
+    const { door, asked } = fileDoor({ mine: SENT_FILES });
+    mount({ letters: [A, MINE_WITH_FILES, C], open: "c", parts: { files: door } });
+    const asks = asked.filter((a) => a.id === "mine");
     expect(asks.length).toBeGreaterThan(0);
     expect(asks.every((a) => a.inline), "one narrow ask would hide an embedded photo's tile").toBe(true);
   });
 
-  it("renders NO strip where the shell wires no attachments chrome — absent, not broken", async () => {
-    // The demo and any host without the capability: `chrome.attachments` is undefined, and the
-    // sibling must answer the way the focused pane does — no strip, no dead controls, no crash.
-    conversation = [A, MINE_WITH_FILES, C];
-    attachmentsChrome = null;
-    await mountPane(C);
-
-    expect(card("mine")?.querySelector(".att-strip")).toBeNull();
+  it("renders NO strip where the shell wires no attachments chrome — absent, not broken", () => {
+    mount({ letters: [A, MINE_WITH_FILES, C], open: "c", parts: { files: "none" } });
+    expect(within(letterOf("mine")!).queryAllByRole("button", { name: /banner/ })).toEqual([]);
   });
 
-  it("a sibling with NOTHING to show renders no strip — ready-empty is silence, not a notice", async () => {
-    conversation = [A, MINE_WITH_FILES, C];
-    attachmentsChrome = readyAttachments({ mine: SENT_FILES });
-    await mountPane(C);
-
-    // "a"'s list answered ready-with-nothing; its panel must not grow attachment chrome for it.
-    expect(card("a")?.querySelector(".att-strip")).toBeNull();
+  it("a sibling with NOTHING to show renders no strip — ready-empty is silence, not a notice", () => {
+    const { door } = fileDoor({ mine: SENT_FILES });
+    mount({ letters: [A, MINE_WITH_FILES, C], open: "c", parts: { files: door } });
+    // "a"'s list answered ready-with-nothing; its letter must not grow file controls for it.
+    expect(within(letterOf("a")!).queryAllByRole("button", { name: /Download|Preview/ })).toEqual([]);
+    expect(within(letterOf("a")!).queryByRole("status")).toBeNull();
   });
 });
 
 describe("a sibling tile's eye dispatches the preview for the SIBLING's message", () => {
-  it("pressing the eye on a sibling's previewable file records the sibling id, not the focused one", async () => {
-    // The other half of the sibling-preview finding: the card must dispatch
-    // `openAttachmentPreview` with ITS OWN message id (the shell's derive-close now accepts
-    // conversation members — `attachments-wired.test.ts` holds that half). Dispatching the
-    // focused id here would open the wrong message's file, or nothing.
-    conversation = [A, MINE, C];
-    attachmentsChrome = readyAttachments({
-      mine: [{ id: "att-9", filename: "look.png", mimeType: "image/png", sizeBytes: 9, state: "idle" }],
+  it("pressing the eye on a sibling's previewable file records the sibling id, not the focused one", () => {
+    const { door } = fileDoor({ mine: [file("att-9", "look.png")] });
+    const previewed: string[] = [];
+    mount({
+      letters: [A, MINE, C],
+      open: "c",
+      parts: { files: door, look: (m, a) => previewed.push(`${m}:${a}`) },
     });
-    await mountPane(C);
-
-    const eye = card("mine")?.querySelector<HTMLButtonElement>(".att-strip .att-tile");
+    const eye = within(letterOf("mine")!).queryByRole("button", { name: /Preview look\.png/ });
     expect(eye, "the sibling's previewable tile did not render").toBeTruthy();
-    await act(async () => { eye!.click(); });
+    fireEvent.click(eye!);
     expect(previewed).toContain("mine:att-9");
   });
 });
 
 describe("a landing not entered yet asks for no embedded picture", () => {
   it("previewing: no ask; entered: the focused panel and its siblings ask", async () => {
-    const asked: Array<[string, string[]]> = [];
-    attachmentsChrome = { ...readyAttachments({}), needCidImages: (id: string, cids: string[]) => { asked.push([id, cids]); } };
-    bodyHtml = '<table width="600"><tr><td><p>hello there</p><img src="cid:logo@x" width="40" height="40" alt="logo"></td></tr></table>';
-    const { createThreadRead } = await import("@ohmail/client-engine");
-    const wiring = { look: "tint", record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: () => {} };
-    threadRead = { ...wiring, previewing: true };
-    conversation = [A, B, C];
-    await mountPane(C);
-    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
-    expect(asked, "a preview asks for no picture").toEqual([]);
-    threadRead = { ...wiring, previewing: false };
-    await rerender!();
-    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
-    expect([...new Set(asked.map(([id]) => id))].sort()).toEqual(["a", "b", "c"]);
+    /* The letter's renderer asks for the embedded pictures its text names, where it is handed the way to ask. */
+    function AsksForItsPictures(props: LetterProps) {
+      const ask = props.onCidImages;
+      useEffect(() => {
+        ask?.(["logo@x"]);
+      }, [ask]);
+      return createElement("p", null, props.text);
+    }
+    const { door, cids } = fileDoor({});
+    const { meet } = mount({
+      letters: [A, B, C],
+      open: "c",
+      parts: { files: door, body: AsksForItsPictures },
+      meeting: ohboxMeeting("c", true),
+    });
+    expect(cids, "a preview asks for no picture").toEqual([]);
+    await meet(ohboxMeeting("c", false));
+    expect([...new Set(cids.map(([id]) => id))].sort()).toEqual(["a", "b", "c"]);
   });
 });

@@ -1108,16 +1108,16 @@ const TABLE = {
     `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here. The ✓ half also marks this mail read.`,
   /**
    * WHAT SCREEN OUT AND SPAM SEND, BEFORE EITHER IS PRESSED (`unsubscribeClaim`): the sender-level
-   * condition, now and for later mail, a fact where a held letter offers one-click. `domain`: `@domain`.
+   * condition for waiting mail, a fact where a held letter offers one-click. `domain`: `@domain`.
    */
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
-        ? `Screen out and Spam also send the waiting senders at ${target} a one-click unsubscribe request, and ask again for later mail from the domain that offers one.`
-        : `Where senders at ${target} offer one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`
+        ? `Screen out and Spam also send the waiting senders at ${target} a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+        : `Where senders at ${target} offer one-click unsubscribe, Screen out and Spam also ask to unsubscribe you for the waiting mail. Sent requests cannot be taken back.`
       : claim === "sends"
-        ? `Screen out and Spam also send ${target} a one-click unsubscribe request, and ask again for their later mail that offers one.`
-        : `Where ${target} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`,
+        ? `Screen out and Spam also send ${target} a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+        : `Where ${target} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you for the waiting mail. Sent requests cannot be taken back.`,
   /** phone: the ✓ affordance is a toggle in the bar, not a modifier key. */
   decideReadToggle: "& read",
   decideReadOn: "Filing as read — the count will not move.",
@@ -1847,13 +1847,9 @@ const TABLE = {
    * Undo stops the request; sent at once (`sent`, `maysent`), that it cannot be taken back.
    */
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
-    how === "sends"
-      ? `${said} Undo also stops their one-click unsubscribe request; once Undo is gone it is sent and cannot be taken back, and later mail of theirs that offers one-click is unsubscribed too.`
-      : how === "may"
-        ? `${said} Where they offer one-click unsubscribe, ohmail asks to unsubscribe you once Undo is gone, and again for their later mail; Undo stops it too.`
-        : how === "sent"
-          ? `${said} ohmail is sending them a one-click unsubscribe request, which cannot be taken back, and asks again for their later mail that offers one-click.`
-          : `${said} Where they offer one-click unsubscribe, ohmail asks to unsubscribe you now and for their later mail; a sent request cannot be taken back.`,
+    how === "sends" || how === "sent"
+      ? `${said} ohmail is sending a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+      : `${said} Where the waiting mail offers one-click unsubscribe, ohmail asks to unsubscribe you. Sent requests cannot be taken back.`,
   /**
    * THE SAME PRESS ON A MAILBOX THIS PHONE DOES NOT ORGANIZE — and it must not say "files".
    *

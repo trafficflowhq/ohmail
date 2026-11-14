@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
-import { mailboxes, mailboxCredentials, type Db } from "@trafficflow/db";
+import { mailboxes, mailboxCredentials, sessions, type Db } from "@trafficflow/db";
 import { mailboxOauthDeviceCeremonies } from "@trafficflow/db/cloud";
 import { MS_AUTHORIZE_SCOPES, DEVICE_CODE_GRANT_TYPE, type FetchLike } from "@trafficflow/core";
+import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { and, eq } from "drizzle-orm";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE DEVICE-CODE DOOR (cloud 0027) — the guards, each one written to fail first.
@@ -122,6 +123,8 @@ interface World {
   deps: ApiDeps;
   token: string;
   accountId: string;
+  userId: string;
+  sessionId: string;
   idp: ReturnType<typeof fakeIdp>;
   clock: { now: () => Date; advance: (ms: number) => void };
   H: (r: Request, over?: Partial<ApiDeps>) => Promise<Response>;
@@ -151,7 +154,7 @@ async function world(opts: {
       : {}),
   };
   return {
-    db, deps: base, token: s.token, accountId: s.accountId, idp, clock,
+    db, deps: base, token: s.token, accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, idp, clock,
     H: (r, over) => app.handle(r, { ...base, ...over, session: null, idempotency: null }),
   };
 }
@@ -217,8 +220,8 @@ describe("cloud 0027 — POST /mailboxes/oauth/microsoft/device/start", () => {
     // SEALED AT REST, exactly like a mailbox password: the ciphertext must not contain the value.
     expect(row!.deviceCodeEnc).not.toContain(DEVICE_CODE);
     expect(row!.deviceCodeKeyVersion).toBeGreaterThan(0);
-    expect(await w.deps.keyProvider.decrypt(row!.deviceCodeEnc, row!.deviceCodeKeyVersion))
-      .toBe(DEVICE_CODE);
+    const sealed = await w.deps.keyProvider.decrypt(row!.deviceCodeEnc, row!.deviceCodeKeyVersion);
+    expect(JSON.parse(sealed)).toEqual({ sessionId: w.sessionId, deviceCode: DEVICE_CODE });
     // Microsoft's own interval and expiry, clamped on the way in.
     expect(row!.pollIntervalMs).toBe(5_000);
     expect(row!.grantExpiresAt.getTime()).toBe(FIXED_NOW.getTime() + 900_000);
@@ -584,6 +587,126 @@ describe("cloud 0027 — GRANTED stores the mailbox, with its DOOR recorded", ()
   });
 });
 
+describe("device sign-in expires even when completion is in flight", () => {
+  const expire = (w: World, expiresAt: string) => w.clock.advance(Date.parse(expiresAt) - w.clock.now().getTime());
+
+  it("refuses approval that returns at the deadline without probing the mailbox", async () => {
+    let reachDeadline: () => void;
+    const w = await world({ idp: fakeIdp({ token: () => {
+      reachDeadline();
+      return granted();
+    } }) });
+    const { state, expiresAt } = await start(w);
+    reachDeadline = () => expire(w, expiresAt);
+
+    const { res, body } = await poll(w, state);
+    expect(w.idp.token.length).toBe(1);
+    expect(body.status).toBe("expired");
+    expect(res.status).toBe(200);
+    expect(vi.mocked(ImapAdapter.prototype.connect).mock.calls.length).toBe(0);
+    expect((await poll(w, state)).res.status).toBe(400);
+  });
+
+  it.each([
+    { change: "create", window: "probe" },
+    { change: "reconnect", window: "probe" },
+    { change: "create", window: "write" },
+    { change: "reconnect", window: "write" },
+  ])("rolls back $change when the deadline passes during the mailbox $window", async ({ change, window }) => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const existingMailbox = change === "reconnect";
+    if (existingMailbox) {
+      const first = await start(w);
+      expect((await poll(w, first.state)).res.status).toBe(201);
+    }
+    const credentials = () => w.db.select({ sealed: mailboxCredentials.secretEnc })
+      .from(mailboxCredentials).where(eq(mailboxCredentials.accountId, w.accountId));
+    const before = await credentials();
+    const { state, expiresAt } = await start(w);
+    const probe = vi.mocked(ImapAdapter.prototype.connect);
+    probe.mockClear();
+    const encrypt = w.deps.keyProvider.encrypt.bind(w.deps.keyProvider);
+    const seal = vi.spyOn(w.deps.keyProvider, "encrypt");
+    if (window === "probe") {
+      probe.mockImplementation(async () => { expire(w, expiresAt); });
+    } else {
+      seal.mockImplementation(async (value) => {
+        const sealed = await encrypt(value);
+        expire(w, expiresAt);
+        return sealed;
+      });
+    }
+
+    const { res, body } = await poll(w, state);
+    expect(probe.mock.calls.length).toBe(1);
+    expect(w.clock.now().getTime()).toBe(Date.parse(expiresAt));
+    expect(body.status).toBe("expired");
+    expect(res.status).toBe(200);
+    expect(seal.mock.calls.length).toBe(window === "probe" ? 0 : 1);
+    const boxes = await w.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, w.accountId));
+    expect(boxes).toHaveLength(existingMailbox ? 1 : 0);
+    const after = await credentials();
+    expect(after).toHaveLength(before.length);
+    expect(after[0]?.sealed === before[0]?.sealed).toBe(true);
+    expect((await poll(w, state)).res.status).toBe(400);
+  });
+});
+
+describe("device sign-in belongs to the session that started it", () => {
+  const signOut = (w: World) => w.H(req("POST", "/auth/logout", { bearer: w.token, body: "{}" }));
+
+  it("refuses another session of the same account and leaves the original grant usable", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    const other = await seedSessionFor(w.db, { accountId: w.accountId, userId: w.userId, now: FIXED_NOW });
+
+    const refused = await w.H(pollReq(other.token, state));
+    expect(refused.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+    expect((await poll(w, state)).res.status).toBe(201);
+  });
+
+  it("refuses a grant after the session that started it signs out", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    expect((await signOut(w)).status).toBe(204);
+    const other = await seedSessionFor(w.db, { accountId: w.accountId, userId: w.userId, now: FIXED_NOW });
+
+    const refused = await w.H(pollReq(other.token, state));
+    expect(refused.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+  });
+
+  it("stores no mailbox when the starting session signs out during the mailbox probe", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    let signOutStatus: number | undefined;
+    vi.spyOn(ImapAdapter.prototype, "connect").mockImplementation(async () => {
+      signOutStatus = (await signOut(w)).status;
+    });
+
+    const { res } = await poll(w, state);
+    expect(signOutStatus).toBe(204);
+    expect(res.status).toBe(401);
+    const rows = await w.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, w.accountId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses an older grant stored without a session binding", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    const sealed = await w.deps.keyProvider.encrypt(DEVICE_CODE);
+    await w.db.update(mailboxOauthDeviceCeremonies)
+      .set({ deviceCodeEnc: sealed.ciphertext, deviceCodeKeyVersion: sealed.keyVersion })
+      .where(eq(mailboxOauthDeviceCeremonies.state, state));
+
+    expect((await poll(w, state)).res.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+  });
+});
+
 describe("cloud 0027 — a cross-account poll is refused AND the ceremony survives it", () => {
   it("403, and the victim's ceremony is still live", async () => {
     /*
@@ -693,4 +816,26 @@ describe("cloud 0027 — where these routes are mounted, and at what cost", () =
     // there is no public client and no environment variable to arm one.
     expect(apiRoutes.filter((r) => r.pattern.includes("/device/"))).toHaveLength(0);
   });
+});
+
+
+it("a poll that finishes after sign-out cannot return pending display values", async () => {
+  const idp = fakeIdp();
+  let sessionEnded: (() => Promise<void>) | undefined;
+  const w = await world({ idp: {
+    ...idp,
+    fetch: async (url, init) => {
+      const reply = await idp.fetch(url, init);
+      if (url.endsWith("/token")) await sessionEnded?.();
+      return reply;
+    },
+  } });
+  const started = await start(w);
+  sessionEnded = async () => {
+    await w.db.update(sessions).set({ revokedAt: FIXED_NOW }).where(eq(sessions.id, w.sessionId));
+  };
+  const res = await w.H(pollReq(w.token, started.state));
+  expect(res.status).toBe(401);
+  const body = await payload<PollPayload>(res);
+  expect(body.userCode === undefined && body.verificationUri === undefined).toBe(true);
 });

@@ -526,7 +526,8 @@ describe("the readers of this tree", () => {
   const hit = (p: string) => readerHits(ROOT, [M(p)], readers);
 
   it("select the censuses that read a changed file", () => {
-    expect(hit("apps/webapp/app/views/OhboxView.tsx").has("apps/webapp/test/dispatch-seam-census.test.ts")).toBe(true);
+    /* Re-pointed to the new shell (RULING-NEW-SHELL-FIRST D (3)): the Ohbox's seat, which the press census walks. */
+    expect(hit("packages/app/src/ohbox/Seat.tsx").has("apps/webapp/test/dispatch-seam-census.test.ts")).toBe(true);
     expect(hit("packages/api/src/router.ts").has("packages/api/test/local-door-carries-no-admin.test.ts")).toBe(true);
     expect(hit("packages/db/src/schema-mail.ts").has("packages/db/test/schema-split.test.ts")).toBe(true);
     expect(decideScope({ root: ROOT, ctx: pr(), changes: [M("packages/db/drizzle/meta/_journal.json")] }).scope).toBe("whole");
@@ -539,6 +540,9 @@ describe("the readers of this tree", () => {
       ["packages/organizer/src/sync.ts", ["apps/worker/test/sync-role-census.test.ts"]],
       ["apps/mobile/app/compose.tsx", ["apps/mobile/test/privacy.test.ts", "apps/mobile/test/bearer-construction-census.test.ts"]],
       ["apps/webapp/app/views/HistoryView.tsx", ["apps/webapp/test/row-participants-wiring.test.ts", "apps/webapp/test/row-stamp-wiring.test.ts", "apps/webapp/test/shortcut-hint.test.tsx"]],
+      ["packages/app/src/history/HistoryList.tsx", ["apps/webapp/test/row-participants-wiring.test.ts"]],
+      ["packages/app-logic/src/ohbox/live-mirror.ts", ["apps/webapp/test/derived-stamp-census.test.ts"]],
+      ["packages/app/src/write/Reply.tsx", ["apps/webapp/test/ccbcc-fold.test.ts"]],
       ["apps/webapp/messages/en.json", ["apps/desktop/test/desktop-door-copy.test.ts", "apps/webapp/test/selfhost-says-this-server-census.test.ts", "apps/webapp/test/session-verdict-guard.test.ts"]],
     ];
     for (const [p, want] of cases) {

@@ -5,7 +5,7 @@
  * statement does.
  */
 import type { ReactNode } from "react";
-import { Page, RadioLines } from "@ohmail/ui/base";
+import { Page, RadioLines, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import {
   decisionCountSentence,
@@ -13,7 +13,7 @@ import {
   type WindowChoice,
 } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { HolderWait } from "./Consent.js";
-import { Foot, Next, Said, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
 import { RUNGS } from "./words.js";
 
 export function Window({ run, say }: StepProps): ReactNode {
@@ -65,7 +65,9 @@ export function Window({ run, say }: StepProps): ReactNode {
           />
         }
       >
-        <Said text={title} />
+        <Sentence size="xl" level={1} end="hot">
+          {title}
+        </Sentence>
       </Page>
     </StepForm>
   );

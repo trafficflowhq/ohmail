@@ -646,8 +646,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
   /** Every `/v1/access` dial that ended without a verdict, for {@link EntitlementsPort.accessFaults}. */
   let accessFaultCount = 0;
-  /** One read of the program: the verdict it cached, or `null` for every fault (then held). */
-  const ask = async (accountId: string, flight: Flight, need?: StorageNeed): Promise<AccessVerdict | null> => {
+  /** One read of the program. Only ordinary reads update the access cache and fault hold. */
+  const ask = async (
+    accountId: string, flight: Flight, need?: StorageNeed, forDispatch = false,
+  ): Promise<AccessVerdict | null> => {
     const at = clock();
     const res = await post("/v1/access", need ? { accountId, storageNeed: need } : { accountId }, flight);
     // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's
@@ -655,7 +657,25 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     if (res && res.status === 200) {
       const read = res.bodyIsJson ? verdictOf(res.body) : { bad: "body" };
       if ("bad" in read) named("/v1/access", res.status, read.bad);
-      else {
+      else if (forDispatch) {
+        const body = obj(res.body);
+        const entitlements = obj(body?.entitlements);
+        const reason = entitlements?.reason;
+        const balance = body?.balance;
+        if (!isAiRefusalReason(reason)) named("/v1/access", res.status, "entitlements.reason");
+        else if (!isCount(balance)) named("/v1/access", res.status, "balance");
+        else {
+          const permitsAi = read.ok && (reason === "active" || reason === "trialing"
+            || reason === "past_due_grace" || reason === "canceled");
+          const aiEnabled = entitlements?.aiEnabled === true;
+          if (aiEnabled !== (permitsAi && balance > 0)) {
+            named("/v1/access", res.status, "entitlements.aiEnabled");
+          } else {
+            // An admitted spend or setup draw can leave zero credits in an eligible state.
+            return read.ok ? { ...read, dispatchAiEnabled: permitsAi } : read;
+          }
+        }
+      } else {
         const card = pricesOf(obj(res.body)?.prices);
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);
@@ -683,6 +703,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       }
     }
     accessFaultCount += 1;
+    if (forDispatch) return null;
     // Expired holds leave as a new one is written, so the map keeps one budget's faults.
     const now = clock();
     for (const [id, until] of faultHeldUntil) if (until <= now) faultHeldUntil.delete(id);
@@ -758,8 +779,10 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return (await shared(accountId)) ?? held?.verdict ?? UNMETERED_ACCESS;
     },
 
-    async accessOrFault(accountId: string): Promise<AccessVerdict | "fault"> {
-      return (await shared(accountId)) ?? "fault";
+    async accessOrFault(accountId, opts): Promise<AccessVerdict | "fault"> {
+      if (!opts?.forDispatch) return (await shared(accountId)) ?? "fault";
+      const flight: Flight = { call: null as unknown as Promise<AccessVerdict | null>, startedAt: clock(), waited: true };
+      return (await ask(accountId, flight, undefined, true)) ?? "fault";
     },
 
     accessFaults: () => accessFaultCount,

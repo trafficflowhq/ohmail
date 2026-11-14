@@ -1,13 +1,13 @@
 import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, folderState, messageInstances, messages,
+  folderState, messageInstances, messages,
   resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits,
-  decisionCanBeApplied, readRequestEligibility, reverseCharge,
-  type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type ReverseChargeFact, type SpendPort,
+  decisionCanBeApplied, readAccountSettings, readRequestEligibility, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn,
+  type AccessPort, type AiUsageLine, type RefundObligationPort, type RefundObligationReason, type ReverseChargeFact, type SpendPort,
   type Tx,
 } from "@trafficflow/db";
 import { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
@@ -128,6 +128,7 @@ export interface ScreenerAutoSuggestDeps {
    * press, so "we did not supply one" is not a state it may operate in.
    */
   credits?: SpendPort;
+  access?: AccessPort;
   /**
    * A HOST DECLARING THAT NOTHING HERE IS METERED, which is not the same as omitting the gate. `true` is
    * the standalone desktop engine and nothing else: that tier is free, its model is the installer's own
@@ -229,28 +230,12 @@ export async function screenerAutoSuggestPass(
   if (!classifier) return EMPTY();
   if (!gate && !deps.unmetered) return EMPTY();
 
-  // ── THE OPT-IN PROBE, AND THE WATERMARK, IN ONE PK READ ────────────────────────────────────
-  //
-  // `auto_suggest_at IS NOT NULL` IS the opt-in — a NULL, an absent row and (up the stack) a
-  // failed read all mean OFF, and OFF spends nothing. The same column then serves as the
-  // watermark, which is why it was stored as a timestamp rather than a boolean in the first
-  // place: "was this on before or after that message arrived" is exactly the question bound (1)
-  // has to answer, and a boolean cannot.
-  //
-  // Read EVERY cycle, never cached: turning the switch off is the brake, and a cached ON would
-  // keep spending after somebody pulled it.
-  const [settings] = await db.select({
-    autoSuggestAt: accountSettings.autoSuggestAt,
-    // The cutline's three answers, on the PK read the opt-in probe already makes. A sender the
-    // cutline has retired is not a question, so buying advice about them spends money on a row
-    // no surface shows.
-    screeningBaselineAt: accountSettings.screeningBaselineAt,
-    dormancyDays: accountSettings.dormancyDays,
-    screeningScope: accountSettings.screeningScope,
-  })
-    .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-  const watermark = settings?.autoSuggestAt ?? null;
-  if (!watermark) return EMPTY();
+  // Read the stored watermark and cutline together. A failed read leaves the pass idle.
+  const settings = await readAccountSettings(db, accountId).catch(() => undefined);
+  const watermark = settings?.autoSuggestAt;
+  if (!(watermark instanceof Date) || !Number.isFinite(watermark.getTime())) return EMPTY();
+
+  const consent = suggestionConsentGate(db, accountId, watermark, deps.access);
 
   const now = deps.now?.() ?? new Date();
   const cutline = resolveCutline({
@@ -467,8 +452,16 @@ export async function screenerAutoSuggestPass(
           snippet: c.snippet,
           ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
           ...(facts ? { senderFacts: facts } : {}),
-        }, deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (l) => { usageLine = l; }) : undefined);
+        }, {
+          beforeDispatch: consent.beforeDispatch,
+          ...(deps.usageHook ? screenerUsageHook(deps.usageHook, accountId, (line) => { usageLine = line; }) : {}),
+        });
       } catch (err) {
+        if (err instanceof ModelConsentWithdrawn) {
+          if (chargedAttempt !== undefined) result.chargedAttempts--;
+          refundOnRelease = "drafter_failed";
+          break;
+        }
         // A DECLINE OR A REFUSAL AT THE SINK SKIPS THIS SENDER AND THE BATCH GOES ON. Each speaks
         // for one sender's mail, not the endpoint: stopping on it stalled every later held sender
         // behind the oldest one, each cycle, and kept a charge that bought nothing. The charge comes

@@ -1,126 +1,145 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { createElement } from "react";
+import { within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LocaleShell } from "../app/(product)/LocaleShell";
+import { fillFrom } from "../app/shell/locale";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
-import { DraftReplyCard } from "../app/shell/InlineReply";
-import { AutoSuggestRow } from "../app/shell/AutoSuggestRow";
-import { SuggestControl } from "../app/views/ScreenerView";
-import { DRAFT_REPLY_COST_CREDITS, type DraftReplyControl } from "@ohmail/app-logic/writing/draft-reply";
-import type { AutoOptInControl, SuggestBatchControl } from "../app/shell/screener-suggest";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  scriptSync, sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * AN UNMETERED HOST STATES NO CREDIT PRICE — read off the rendered offer, the auto-suggest confirm
- * and the Screener's quote. A self-hosted server, the standalone desktop and a paired computer
- * charge nothing, yet the shared shell said "This uses 15 credits of your AI budget" on every host.
- * The managed control keeps its sentence, with the number from `DRAFT_REPLY_COST_CREDITS`.
- */
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-let host: HTMLElement | null = null;
-let root: Root | null = null;
-
-afterEach(() => {
-  act(() => { root?.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
-});
-
-const noop = (): void => {};
-
-/** Renders `node` under a catalogue and, when given, a host fact; answers the text a person reads. */
-function render(node: React.ReactNode, opts: { locale: "en" | "de"; managed?: boolean }): string {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  const tree = (
-    <NextIntlClientProvider locale={opts.locale} messages={(opts.locale === "en" ? en : de) as never} timeZone="UTC">
-      {opts.managed === undefined ? node : (
-        <ManagedServiceContext.Provider value={opts.managed}>{node}</ManagedServiceContext.Provider>
-      )}
-    </NextIntlClientProvider>
-  );
-  act(() => { root!.render(tree); });
-  return host.textContent ?? "";
-}
-
-const offered = (): DraftReplyControl => ({
-  offered: true, phase: "offered", messageId: "m1", cost: DRAFT_REPLY_COST_CREDITS, notice: null,
-  open: noop, cancel: noop, confirm: noop, press: noop, fromText: "none", letter: "none", letterId: "letter:new", own: new Map(), keep: noop, forget: noop, moved: noop, restore: noop,
-});
-const draftCard = () => (
-  <DraftReplyCard chrome={{ control: offered(), pending: null, resolve: noop } as never} messageId="m1" />
-);
-
-const autoControl = (credits: number): AutoOptInControl => ({
-  supported: true, batchSize: 10, available: 3, phase: "ready",
-  quote: { senders: 3, credits }, notice: null, open: noop, cancel: noop,
-});
-const autoRow = (credits: number) => (
-  <AutoSuggestRow on={false} since={null} control={autoControl(credits)} setAutoSuggest={async () => true} />
-);
-
-const batch = (credits: number): SuggestBatchControl => ({
-  available: 4, resuggestable: 0, unanswered: 4, mode: "new", pool: 4, sizes: [4], size: 4,
-  phase: "ready", quote: { senders: 4, credits }, notice: null, progress: null,
-  open: noop, openAgain: noop, choose: noop, confirm: noop, cancel: noop,
-} as SuggestBatchControl);
+const build = vi.hoisted(() => ({ selfHost: false }));
+vi.mock("../app/hello", async (load) => ({
+  ...await load<typeof import("../app/hello")>(),
+  get SELF_HOST_BUILD() { return build.selfHost; },
+}));
 
 const CREDIT_WORDS = { en: /credit|AI budget/i, de: /Punkt|Guthaben|KI-Budget/i } as const;
+type Locale = keyof typeof CREDIT_WORDS;
 
-describe("the draft offer", () => {
-  it("CONTROL — a managed host states the price, and the number is the constant's", () => {
-    const text = render(draftCard(), { locale: "en" });
-    expect(text).toContain(`This uses ${DRAFT_REPLY_COST_CREDITS} credits of your AI budget.`);
-    expect(render(draftCard(), { locale: "de", managed: true }))
-      .toContain(`Das kostet ${DRAFT_REPLY_COST_CREDITS} Punkte deines KI-Budgets.`);
-  });
+beforeEach(installConfirmEnv);
+afterEach(teardownConfirmEnv);
 
-  it.each(["en", "de"] as const)("%s: an account the Screener already knows has no credits is told so, not offered a price", (locale) => {
-    const text = render(
-      <DraftReplyCard chrome={{ control: offered(), pending: null, resolve: noop, noCredits: true } as never} messageId="m1" />,
-      { locale, managed: true },
-    );
-    expect(text).toContain((locale === "en" ? en : de).aiRefusal.insufficientCredits);
-    expect(text).not.toContain(String(DRAFT_REPLY_COST_CREDITS));
+async function mountQuote(
+  hash: "#/screener" | "#/settings/screener",
+  locale: Locale,
+  managed: boolean,
+  count: number,
+) {
+  build.selfHost = !managed;
+  rememberOwner();
+  scriptSession(sessionFull);
+  scriptRefresh(refresh204);
+  const receivedAt = "2026-09-04T12:30:00Z";
+  const queue = Array.from({ length: count }, (_, index) => {
+    const id = `held-${index + 1}`;
+    return {
+      messageId: id,
+      mailboxId: "mb_1",
+      sender: { name: id, address: `${id}@example.invalid` },
+      receivedAt,
+      subject: `Letter ${index + 1}`,
+      snippet: "A held letter",
+    };
   });
+  scriptSync(() => Response.json({
+    changes: {
+      creates: queue.map((letter, index) => ({
+        type: "message", op: "create", id: letter.messageId, seq: index + 1, updatedAt: receivedAt,
+        entity: {
+          id: letter.messageId, accountId: ACCOUNT, mailboxId: letter.mailboxId, threadId: null,
+          subject: letter.subject, from: letter.sender, to: [], cc: [], date: receivedAt, sortAt: receivedAt,
+          folder: "ohmail/Screener", snippet: letter.snippet,
+          unread: true, hasAttachments: false, attachmentCount: 0, sensitivity: {}, labels: [],
+        },
+      })),
+      updates: [], moves: [], deletes: [],
+    },
+    cursor: "held", hasMore: false, serverTime: ISO,
+  }));
 
-  it.each(["en", "de"] as const)("%s: an unmetered host says what happens and states no price", (locale) => {
-    const text = render(draftCard(), { locale, managed: false });
-    expect(text).toContain(locale === "en" ? en.draftReply.offerBodyUnmetered : de.draftReply.offerBodyUnmetered);
-    expect(text).not.toMatch(CREDIT_WORDS[locale]);
-    expect(text).not.toContain(String(DRAFT_REPLY_COST_CREDITS));
-  });
-});
+  const quoteRequests: number[] = [];
+  const fallback = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    if (path === "/api/account/access") return Response.json({ metered: managed, aiEnabled: true });
+    if (path === "/api/consent") return Response.json({
+      seedConfirmedAt: "2026-09-04T11:00:00Z", screeningResetAt: null, dormancyDays: 60,
+      autoSuggestAt: null,
+      counts: { decidedSenders: 0, activeUndecidedSenders: count, dormantUndecidedSenders: 0 },
+    });
+    if (path === "/api/account/screening") return Response.json({
+      ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "",
+    });
+    if (path === "/api/screener") return Response.json({ items: queue, total: count, nextCursor: null });
+    if (path === "/api/screener/suggest") {
+      const ask = JSON.parse(String(init?.body)) as { dryRun?: boolean; senders: string[] };
+      expect(ask.dryRun).toBe(true);
+      quoteRequests.push(ask.senders.length);
+      const senders = ask.senders.length;
+      return Response.json({
+        dryRun: true, requested: senders, quoted: senders, quotedCredits: managed ? senders : 0,
+        charged: 0, suggestions: [], skipped: [],
+      });
+    }
+    if (path === "/api/mailboxes") {
+      return Response.json({ items: [{
+        id: "mb_1", address: "owner@example.invalid", status: "connected",
+        organizerRole: "organizer", organizeConsentedAt: "2026-09-04T11:00:00Z", lastSyncAt: "2026-09-04T12:30:00Z",
+      }] });
+    }
+    return fallback(input, init);
+  };
+
+  window.location.hash = hash;
+  const catalogue = locale === "en" ? en : de;
+  const container = await mountCloudShell((shell) => createElement(LocaleShell, {
+    initialLocale: locale,
+    initialMessages: fillFrom(en as never, catalogue as never) as never,
+    children: shell,
+  }));
+  const view = within(container);
+  await tick(1_000);
+  const offer = hash === "#/screener"
+    ? view.getByRole("button", { name: catalogue.screener.suggest.open })
+    : view.getByRole("switch", { name: catalogue.screener.suggest.autoTitle });
+  await act(async () => { offer.click(); });
+  if (hash === "#/settings/screener") {
+    expect(quoteRequests).toEqual([]);
+    const approve = view.getByRole("button", { name: catalogue.screener.suggest.autoQuoteApprove });
+    await act(async () => { approve.click(); });
+  }
+  await tick(1_000);
+  expect(quoteRequests).toEqual([count]);
+  return container;
+}
 
 describe("the auto-suggest confirm", () => {
-  it("CONTROL — a managed host states the cost sentence and the quote's credits", () => {
-    const text = render(autoRow(3), { locale: "en" });
-    expect(text).toContain(en.screener.suggest.autoCost);
-    expect(text).toContain("3 senders · 3 credits");
+  it("CONTROL — a managed host states the cost sentence and the quote's credits", async () => {
+    const view = within(await mountQuote("#/settings/screener", "en", true, 3));
+    expect(view.getByText(en.screener.suggest.autoCost).textContent).toBe(en.screener.suggest.autoCost);
+    expect(view.getByText("3 senders · 3 credits")).toBeTruthy();
   });
 
-  it.each(["en", "de"] as const)("%s: an unmetered host counts senders and names no credits", (locale) => {
-    const text = render(autoRow(0), { locale, managed: false });
-    expect(text).toContain(locale === "en" ? "3 senders" : "3 Absender");
-    expect(text).not.toMatch(CREDIT_WORDS[locale]);
+  it.each(["en", "de"] as const)("%s: an unmetered host counts senders and names no credits", async (locale) => {
+    const container = await mountQuote("#/settings/screener", locale, false, 3);
+    expect(within(container).getByText(locale === "en" ? "3 senders" : "3 Absender")).toBeTruthy();
+    expect(container.textContent).not.toMatch(CREDIT_WORDS[locale]);
   });
 });
 
 describe("the Screener's suggest quote", () => {
-  it("CONTROL — a managed host quotes senders and credits", () => {
-    expect(render(<SuggestControl control={batch(4)} />, { locale: "en" })).toContain("4 senders · 4 credits");
+  it("CONTROL — a managed host quotes senders and credits", async () => {
+    const view = within(await mountQuote("#/screener", "en", true, 4));
+    expect(view.getByText("4 senders · 4 credits")).toBeTruthy();
   });
 
-  it.each(["en", "de"] as const)("%s: an unmetered host quotes senders only", (locale) => {
-    const text = render(<SuggestControl control={batch(0)} />, { locale, managed: false });
-    expect(text).toContain(locale === "en" ? "4 senders" : "4 Absender");
-    expect(text).not.toMatch(CREDIT_WORDS[locale]);
+  it.each(["en", "de"] as const)("%s: an unmetered host quotes senders only", async (locale) => {
+    const container = await mountQuote("#/screener", locale, false, 4);
+    expect(within(container).getByText(locale === "en" ? "4 senders" : "4 Absender")).toBeTruthy();
+    expect(container.textContent).not.toMatch(CREDIT_WORDS[locale]);
   });
 });

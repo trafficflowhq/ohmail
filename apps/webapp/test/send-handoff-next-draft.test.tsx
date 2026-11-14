@@ -7,7 +7,7 @@ import {
 } from "./_draft-shell.js";
 import {
   composeSend, composeSubject, composerOn, discards, drainRow, dropSendOverlay, footLine, holdTheWire, key, letter,
-  navigate, openDraftRow, replyOn, replySend, rounds, sends,
+  letterEditor, navigate, openDraftRow, replyOn, replySend, rounds, sends,
 } from "./_handoff-steps.js";
 
 /**
@@ -34,10 +34,10 @@ async function sendA(s: DraftShell, handOff: boolean): Promise<() => void> {
   await composerOn(s, "d-a", "Plans for Friday");
   const release = holdTheWire(s);
   await press(composeSend(s.el)!, "Send A");
-  if (handOff) await waitFor(() => s.el.querySelector(".view-compose") == null, "the composer let go of A");
+  if (handOff) await waitFor(() => letterEditor(s.el) == null, "the composer let go of A");
   else await rounds(4);
   await navigate("#/drafts");
-  await waitFor(() => s.el.querySelector(".draft-row[data-id='d-b'] .draft-open") != null, "B in Drafts");
+  await waitFor(() => s.el.querySelector("[role=option][data-id='d-b']") != null, "B in Drafts");
   return release;
 }
 
@@ -132,7 +132,7 @@ describe("a compose send handed off, then the next draft opened as it finishes",
     await act(async () => { release(); });
     await waitFor(() => footLine().includes(en.sendingLine.sent), "Sent on the foot line");
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose") != null, "the composer");
+    await waitFor(() => letterEditor(s.el) != null, "the composer");
     expect(composeSubject(s.el), "the delivered message waited a beat in the composer").toBe("");
     expect(composeSend(s.el)?.textContent ?? "", "a Sent beat over an empty composer").not.toMatch(/^Sent/);
   }, 60_000);
@@ -143,7 +143,7 @@ describe("a compose send handed off, then the next draft opened as it finishes",
     await act(async () => { release(); });
     await rounds(48);
     await navigate("#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose") != null, "the composer");
+    await waitFor(() => letterEditor(s.el) != null, "the composer");
     expect(composeSubject(s.el), "the delivered message still sat in the composer").toBe("");
     expect(discards(s), "a settled send deleted a row").toEqual([]);
   }, 60_000);
@@ -157,9 +157,8 @@ describe("a handed-off reply settles at its confirmation", () => {
     await waitFor(() => footLine().includes(en.sendingLine.sent), "Sent on the foot line");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the dock again");
-    const label = ([...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-      .find((b) => /^Sen/.test(b.textContent ?? ""))?.textContent ?? "").trim();
-    expect(label, "the reopened dock stood on the last reply's Sent beat").toMatch(/^Send/);
+    const label = replySend(s.el)?.getAttribute("aria-label");
+    expect(label, "the reopened dock stood on the last reply's Sent beat").toBe("Send");
   }, 60_000);
 
   it("its own row leaving Drafts mid-flight, then Reply pressed again: the delivered reply's dock closes", async () => {

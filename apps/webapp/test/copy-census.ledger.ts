@@ -64,12 +64,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "oh", why: "wordmark — the boot screen's mark" },
     { text: "mail", why: "wordmark — its second half" },
   ],
-  "apps/webapp/app/shell/FirstRun.tsx": [
-    { text: "oh", why: "wordmark — the first half of the brand" },
-    { text: "mail", why: "wordmark — the second half" },
-    { text: "esc", why: "keycap — the flow's dismiss hint" },
-  ],
-  "apps/webapp/app/shell/SenderMenu.tsx": [
+  "apps/webapp/app/components/sender-menu/SenderMenu.tsx": [
     { text: "esc", why: "keycap — the resolve step's and the confirm's step-back hint" },
   ],
   "apps/webapp/app/shell/InlineReply.tsx": [
@@ -128,9 +123,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   ],
   "apps/webapp/app/views/SearchView.tsx": [
     { text: ".search-box input", why: "a CSS selector — how the view reaches its own query box inside its root, where the list selects the kept text and puts the caret back after Escape" },
-  ],
-  "apps/webapp/app/shell/todays-feeds.tsx": [
-    { text: "rail open", why: "machine text — the class names the frame's rail zone carries, which today's keys (`zone-nav`) find it by; no person reads it" },
   ],
   "apps/webapp/app/shell/ThreadMarks.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },

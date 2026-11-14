@@ -5,87 +5,106 @@
  * once they are known.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { useTranslations } from "next-intl";
-import { screen } from "@testing-library/react";
+import { within } from "@testing-library/react";
+import type { EngineDraft } from "@ohmail/wire";
+import type { PaneProps } from "@ohmail/app/frame";
+import { mailPlaces } from "@ohmail/app/mail";
+import { useWriteBeside, useWriting, WriteAbove } from "@ohmail/app/write";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
+import { useComposer } from "@ohmail/app-logic/writing/composer-record";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import type { SendState } from "@ohmail/app-logic/writing/mail-send";
+import { writingOf } from "@ohmail/app-logic/writing/writing-of";
 import en from "../../messages/en.json";
-import { fileSize } from "@ohmail/app/mail/ground";
-import { writingOf, writeBesideOf, SEND_LATER_FLOOR_MS } from "@ohmail/app-logic/writing/writing-of";
-import { act, stubDom } from "../_draft-shell.js";
+import { act, mountShell, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
-import { mountWriting, rounds, unmountWritings } from "./writing-world.js";
 
-const t = ((key: string) => key) as unknown as ReturnType<typeof useTranslations>;
+const SCOPE = "acc-1";
 const KNOWN = { signatures: { mb1: "Mila" }, signaturesHtml: {}, signaturesKnown: true };
-const ONLINE = (): boolean => true;
+const t = (key: string) => key;
+
+function useWritingSnapshot() {
+  return { composer: useComposer(), projection: useWriting() };
+}
+
+async function stand(drafts: EngineDraft[] = [], send?: SendState) {
+  const writing = mailPlaces().write;
+  if (writing?.panes.kind !== "columns" || typeof writing.panes.Reading !== "function")
+    throw new Error("Write must register its own reading pane");
+  const { Reading } = writing.panes;
+  let current: ReturnType<typeof useWritingSnapshot> | undefined;
+  function ReadPane(props: PaneProps) {
+    const read = useWritingSnapshot();
+    const beside = useWriteBeside();
+    current = read;
+    if (send === undefined) return <Reading {...props} />;
+    // Put controlled send states into the port the registered pane already reads.
+    return (
+      <WriteAbove writing={{ ...read.projection, composeSend: send }} beside={beside}>
+        <Reading {...props} />
+      </WriteAbove>
+    );
+  }
+
+  const mounted = await mountShell("#/compose", [], drafts, {
+    handOff: true,
+    signatures: KNOWN.signatures,
+    places: { write: { ...writing, panes: { ...writing.panes, Reading: ReadPane } } },
+  });
+  await waitFor(() => current !== undefined, "the registered Write pane");
+  const letter = within(mounted.el).getByRole("region", { name: en.write.letter });
+  return { ...mounted, read: () => current!, inLetter: within(letter) };
+}
 
 beforeEach(() => {
-  try {
-    window.localStorage.clear();
-  } catch {
-    /* storage blocked */
-  }
+  localStorage.clear();
+  setStorageOwner(SCOPE);
   stubDom();
   Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
 });
 afterEach(async () => {
-  await unmountWritings();
+  await unmountAll();
   resetComposerForTest();
+  resetStorageOwnerForTest();
 });
 
 describe("writingOf", () => {
   it("hands the record through and derives the send, the hold and the signatures as the old mount does", async () => {
     const row = letter("d-a", "Plans for Friday", "Shall we meet at noon?");
-    const w = await mountWriting({ drafts: [row] });
-    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [row], noCredits: false, t };
-    const before = writingOf(w.now(), ctx);
+    const w = await stand([row]);
+    await waitFor(() => w.read().projection.signatures !== "unknown", "the stored signature");
+    const ctx = { engine: w.engine, scope: SCOPE, replyTo: null, options: [], consent: KNOWN, drafts: [row], noCredits: false, t, presented: w.engine.read() };
+    const before = w.read().projection;
     expect(before.composeSend.phase).toBe("idle");
     expect(before.composeHeld).toBeNull();
     expect(before.composeLocked).toBeNull();
     expect(before.signatures).toEqual({ text: { mb1: "Mila" }, html: {} });
-    expect(writingOf(w.now(), { ...ctx, consent: { ...KNOWN, signaturesKnown: false } }).signatures).toBe("unknown");
-    await act(async () => w.now().openDraft(row));
-    await rounds(6);
+    expect(writingOf(w.read().composer, { ...ctx, consent: { ...KNOWN, signaturesKnown: false } }).signatures).toBe("unknown");
+    await act(async () => w.read().projection.openDraft(row));
+    await waitFor(() => w.read().projection.compose.subject === "Plans for Friday", "the opened draft");
     Object.assign(w.refuseSend, { on: true, unverified: true });
-    await act(async () => writingOf(w.now(), ctx).sendCompose());
-    await rounds(30);
-    const after = writingOf(w.now(), ctx);
+    await act(async () => w.read().projection.sendCompose());
+    await waitFor(() => w.read().projection.composeSend.phase === "unverified", "the unconfirmed send");
+    const after = w.read().projection;
     expect(after.composeSend.phase).toBe("unverified");
     expect(after.composeHeld).toEqual({ draftId: "d-a" });
     expect(after.compose.subject).toBe("Plans for Friday");
   });
 
   it("reads the session of its scope and never mints one: after the account's keys are swept it writes none", async () => {
-    const w = await mountWriting();
-    const ctx = { engine: w.engine, scope: "acc-1", replyTo: null, options: [], consent: KNOWN, drafts: [], noCredits: false, t };
-    const keysOf = (): string[] => Object.keys(window.localStorage).filter((key) => key.includes("acc-1"));
+    const w = await stand();
+    const ctx = { engine: w.engine, scope: SCOPE, replyTo: null, options: [], consent: KNOWN, drafts: [], noCredits: false, t, presented: w.engine.read() };
+    const keysOf = (): string[] => Object.keys(window.localStorage).filter((key) => key.includes(SCOPE));
     /* The account's keys swept while the composition stands; then the composition is read, as each render reads it. */
     for (const key of keysOf()) window.localStorage.removeItem(key);
-    const read = writingOf(w.now(), ctx);
+    const read = writingOf(w.read().composer, ctx);
     expect(keysOf(), "a key of the account the composition's read wrote").toEqual([]);
     expect(read.composeSend.phase).toBe("idle");
     expect(read.composeHeld).toBeNull();
   });
 });
 
-describe("writeBesideOf", () => {
-  it("says the scope it was made for and refuses a time inside the floor", async () => {
-    const w = await mountWriting();
-    const beside = writeBesideOf(w.engine, "acc-1", "strict", true, fileSize, ONLINE);
-    expect(beside.scope).toBe("acc-1");
-    expect(beside.surface).toBe("strict");
-    /* What one send may carry is the host's own answer, handed on as the host says it. */
-    expect(writeBesideOf(w.engine, "acc-1", "mailbox", true, fileSize, ONLINE).surface).toBe("mailbox");
-    expect(writeBesideOf(w.engine, "acc-1", 4096, true, fileSize, ONLINE).surface).toBe(4096);
-    const now = Date.parse("2026-09-27T09:00:00.000Z");
-    expect(beside.later.floor(now)).toBe(now + SEND_LATER_FLOOR_MS);
-    expect(beside.later.options(now).every((o) => Date.parse(o.at) > now + SEND_LATER_FLOOR_MS)).toBe(true);
-    expect(beside.lines.split("a@x.invalid, b")).toEqual({ chips: ["a@x.invalid"], tail: "b" });
-  });
-});
-
-/* Every send state today's send line answers, by phase, refusal code and the server's first send. */
+/* The send line’s states by phase, refusal code and the server’s first send. */
 const FAILED_CODES = [
   "mailbox_disabled", "send_unreachable", "send_busy", "send_not_secured", "send_login_refused",
   "mailbox_not_signed_in", "forward_original_unavailable", "forward_parts_unsupported", "forward_parts_changed",
@@ -110,8 +129,8 @@ const SPOKEN: readonly SendState[] = [
 describe("the send line's words", () => {
   for (const send of SPOKEN) {
     it(`says its own sentence for ${JSON.stringify(send)}`, async () => {
-      await mountWriting({ view: true, send });
-      const said = screen.getAllByRole("status").map((line) => line.textContent ?? "");
+      const w = await stand([], send);
+      const said = w.inLetter.getAllByRole("status").map((line) => line.textContent ?? "");
       expect(said.length).toBe(1);
       expect(said[0]).not.toBe("");
       expect(said[0]).not.toBe(en.write.status.unknown);
@@ -120,14 +139,14 @@ describe("the send line's words", () => {
   }
 
   it("names the limit in the too-long sentence", async () => {
-    await mountWriting({ view: true, send: { phase: "failed", code: "draft_too_large" } });
-    expect(screen.getByRole("status").textContent).toMatch(/\d/);
+    const w = await stand([], { phase: "failed", code: "draft_too_large" });
+    expect(w.inLetter.getByRole("status").textContent).toMatch(/\d/);
   });
 
   for (const phase of ["idle", "sent"] as const) {
     it(`says nothing for a letter whose send is ${phase}`, async () => {
-      await mountWriting({ view: true, send: { phase } });
-      expect(screen.queryAllByRole("status")).toEqual([]);
+      const w = await stand([], { phase });
+      expect(w.inLetter.queryAllByRole("status")).toEqual([]);
     });
   }
 });

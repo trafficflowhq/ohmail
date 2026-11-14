@@ -9,6 +9,7 @@ export interface RailFootTool {
   icon: IconName;
   /** Its name, with its key where it has one: "Command palette · Ctrl K". */
   label: string;
+  keyHint?: string;
   onPress?: () => void;
 }
 
@@ -57,11 +58,19 @@ export function RailFoot({ notice, pull, account, tools }: RailFootProps) {
             type="button"
             className="oh-control oh-railfoot-account"
             title={account.title}
+            aria-label={[account.name, account.note, account.address]
+              .filter((part, index, all) => all.indexOf(part) === index)
+              .join(" · ")}
             aria-current={account.current ? "page" : undefined}
             onClick={account.onPress}
           >
             <Avatar name={account.name} address={account.address} size="s" />
-            <span className="oh-railfoot-who">
+            <span
+              className="oh-railfoot-who"
+              title={[account.name, account.note, account.address]
+                .filter((part, index, all) => all.indexOf(part) === index)
+                .join(" · ")}
+            >
               <b className="oh-railfoot-name">{account.name}</b>
               <span className="oh-railfoot-note">{account.note}</span>
             </span>

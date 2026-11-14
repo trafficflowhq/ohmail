@@ -2,6 +2,7 @@
  * DRAFTS' MODEL: the scheduled sends first (soonest first), then the drafts, minus the rows a Discard hides. What the
  * list may say while the mirror is owed is the mail facts' (`settled`, `owed`), handed in, never guessed.
  */
+import { countWhen, listSurface, saysEmpty } from "@ohmail/client-engine";
 import type { EngineDraft } from "@ohmail/wire";
 import { createContext, useContext, useMemo } from "react";
 import type { UndoToastFn } from "../press/undo-door.js";
@@ -30,6 +31,7 @@ export interface DraftsModel {
   readonly drafts: readonly EngineDraft[];
   /** The mirror is read and holds nothing: the one time the list may say it is empty. */
   readonly empty: boolean;
+  readonly draftsSettled: boolean;
   /** The mirror is still owed: the list says it is on its way, never that nothing is there. */
   readonly loading: boolean;
   readonly door: DraftsDoor;
@@ -47,7 +49,7 @@ const sendsAt = (d: EngineDraft): number => {
 
 export function useDraftsList(input: DraftsInput): DraftsModel {
   const { door } = input;
-  const window = useDiscardWindow(door, input.report, input.words);
+  const window = useDiscardWindow(door, input.report, input.words, input.drafts);
   const { hidden } = window;
   const scheduled = useMemo(
     () => [...input.scheduled].sort((a, b) => sendsAt(a) - sendsAt(b)),
@@ -57,12 +59,14 @@ export function useDraftsList(input: DraftsInput): DraftsModel {
     () => (hidden.size === 0 ? input.drafts : input.drafts.filter((d) => !hidden.has(d.id))),
     [input.drafts, hidden],
   );
-  const nothing = scheduled.length === 0 && drafts.length === 0;
+  const facts = { settled: input.settled, count: scheduled.length + drafts.length, pending: input.owed };
+  const surface = listSurface(facts);
   return {
     scheduled,
     drafts,
-    empty: nothing && input.settled && !input.owed,
-    loading: nothing && (!input.settled || input.owed),
+    draftsSettled: countWhen(facts, true) === true,
+    empty: saysEmpty(surface),
+    loading: surface === "skeleton" || surface === "pending",
     door,
     discard: window.discard,
     refusal: window.refusal,

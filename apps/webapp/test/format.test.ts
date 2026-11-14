@@ -1,7 +1,8 @@
 import type { EmailAddress, EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appointmentStamp } from "@ohmail/client-engine";
-import { fullDateTime, recipientRows, rowStamp, waterlineStamp, writtenDateTime } from "../app/shell/format";
+import { lineStampOf } from "@ohmail/app-logic/streams";
+import { fullDateTime, recipientRows, rowStamp, writtenDateTime } from "../app/shell/format";
 import { setActiveFormatZone } from "../app/shell/locale";
 
 /**
@@ -149,56 +150,61 @@ describe("fullDateTime", () => {
  * "Mi 18:40". One grammar, composed from two parts.
  */
 describe("waterlineStamp", () => {
-  afterEach(() => setActiveFormatZone(null));
+  afterEach(() => vi.restoreAllMocks());
+
+  function readerIn(timeZone: string): void {
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({ ...options, timeZone });
+  }
   // A Friday: the fixed instants below are one to two days before it, inside the week.
   const NOW = new Date("2026-08-14T12:00:00.000Z");
 
   it("renders the instant in the READER'S zone, not the host's", () => {
     const at = "2026-08-12T23:30:00.000Z";
-    setActiveFormatZone("UTC");
-    expect(waterlineStamp(at, NOW, "en")).toBe("Wed 23:30");
+    readerIn("UTC");
+    expect(lineStampOf(at, NOW, "en")).toBe("Wed 23:30");
     /* The same instant is already the NEXT day in Zurich, so both halves move — the weekday and
        the clock. A fix that had moved only the hour would say "Wed 01:30". */
-    setActiveFormatZone("Europe/Zurich");
-    expect(waterlineStamp(at, NOW, "en")).toBe("Thu 01:30");
-    setActiveFormatZone("Pacific/Auckland");
-    expect(waterlineStamp(at, NOW, "en")).toBe("Thu 11:30");
+    readerIn("Europe/Zurich");
+    expect(lineStampOf(at, NOW, "en")).toBe("Thu 01:30");
+    readerIn("Pacific/Auckland");
+    expect(lineStampOf(at, NOW, "en")).toBe("Thu 11:30");
   });
 
   it("speaks the one grammar, with no locale comma in it", () => {
-    setActiveFormatZone("UTC");
-    expect(waterlineStamp("2026-08-12T18:40:00.000Z", NOW, "de")).toBe("Mi 18:40");
-    expect(waterlineStamp("2026-08-12T18:40:00.000Z", NOW, "de")).not.toContain(",");
+    readerIn("UTC");
+    expect(lineStampOf("2026-08-12T18:40:00.000Z", NOW, "de")).toBe("Mi 18:40");
+    expect(lineStampOf("2026-08-12T18:40:00.000Z", NOW, "de")).not.toContain(",");
   });
 
   it("midnight is 00, never 24", () => {
-    setActiveFormatZone("UTC");
-    expect(waterlineStamp("2026-08-12T00:07:00.000Z", NOW, "en")).toBe("Wed 00:07");
+    readerIn("UTC");
+    expect(lineStampOf("2026-08-12T00:07:00.000Z", NOW, "en")).toBe("Wed 00:07");
   });
 
   it("says nothing for an unparseable instant", () => {
-    setActiveFormatZone("UTC");
-    expect(waterlineStamp("not-a-date", NOW, "en")).toBe("");
+    readerIn("UTC");
+    expect(lineStampOf("not-a-date", NOW, "en")).toBe("");
   });
 
   /* PAST A WEEK THE DATE. A last visit eleven days ago read "Mon 18:40", which every other stamp
      in the product would read as this week's Monday. */
   it("names the date past the week, and the clock alone today", () => {
-    setActiveFormatZone("UTC");
-    expect(waterlineStamp("2026-08-03T18:40:00.000Z", NOW, "en")).toBe("3 Aug, 18:40");
-    expect(waterlineStamp("2026-08-07T18:40:00.000Z", NOW, "en")).toBe("7 Aug, 18:40");
-    expect(waterlineStamp("2026-08-08T18:40:00.000Z", NOW, "en")).toBe("Sat 18:40");
-    expect(waterlineStamp("2025-12-30T08:00:00.000Z", NOW, "en")).toBe("30 Dec 2025, 08:00");
-    expect(waterlineStamp("2026-08-14T08:05:00.000Z", NOW, "en")).toBe("08:05");
+    readerIn("UTC");
+    expect(lineStampOf("2026-08-03T18:40:00.000Z", NOW, "en")).toBe("3 Aug, 18:40");
+    expect(lineStampOf("2026-08-07T18:40:00.000Z", NOW, "en")).toBe("7 Aug, 18:40");
+    expect(lineStampOf("2026-08-08T18:40:00.000Z", NOW, "en")).toBe("Sat 18:40");
+    expect(lineStampOf("2025-12-30T08:00:00.000Z", NOW, "en")).toBe("30 Dec 2025, 08:00");
+    expect(lineStampOf("2026-08-14T08:05:00.000Z", NOW, "en")).toBe("08:05");
   });
 
   it("is the engine's appointment stamp, band for band", () => {
-    setActiveFormatZone("Europe/Zurich");
+    readerIn("Europe/Zurich");
     for (const iso of [
       "2026-08-14T06:00:00.000Z", "2026-08-10T06:00:00.000Z", "2026-08-01T06:00:00.000Z",
       "2025-08-01T06:00:00.000Z",
     ]) {
-      expect(waterlineStamp(iso, NOW, "de")).toBe(appointmentStamp(new Date(iso), NOW, "Europe/Zurich", "de"));
+      expect(lineStampOf(iso, NOW, "de")).toBe(appointmentStamp(new Date(iso), NOW, "Europe/Zurich", "de"));
     }
   });
 });

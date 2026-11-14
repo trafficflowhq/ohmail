@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
+import { decideScreenerRow as fileRow, screenerReport, screenerRow, screenerRowIds as rowIds } from "./fixtures/live-screener";
 
 /**
  * A SCREENING DECISION HOLDS WHILE YOU MOVE AROUND THE APP — and a refusal is never silent.
@@ -181,44 +182,9 @@ function installWorld(): void {
   }) as unknown as typeof globalThis.fetch;
 }
 
-const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
-
-/**
- * IS THIS ROW ON ITS WAY OUT — decided, animating away, gone in `OUT_MS`.
- *
- * A decided row does not vanish on the press: `visibleWaiting` keeps it for the exit animation
- * (`!s.pending.has(id) || s.out.has(id)`) and `ScreenerView` marks it `.out`. So "the first frame
- * after the press" is a row that is LEAVING, and asserting absence at `tick(0)` would be asserting
- * against the animation rather than against the decision. Both are checked below: exiting
- * immediately, absent once the 330ms is spent.
- */
+/** Whether this sender's row has begun the visible exit animation. */
 const isExiting = (c: HTMLElement, id: string): boolean =>
-  c.querySelector(`.row[data-id="${id}"]`)?.classList.contains("out") ?? false;
-
-/** The five destinations, in the order `RowActions` renders its menu items. */
-const DESTS = ["ohbox", "reads", "receipts", "screened", "spam"] as const;
-
-/**
- * File one row through ITS OWN quick-adjust menu.
- *
- * The controls render OUTSIDE `.row` — `.row-actions` is an absolutely positioned sibling inside
- * `.row-slot` (see `screener-row-actions-overlay.test.ts`) — so the slot is the scope, and scoping
- * to the slot is also what makes it impossible for this to hit a bulk control by accident.
- */
-async function fileRow(c: HTMLElement, id: string, dest: (typeof DESTS)[number]): Promise<void> {
-  const slot = c.querySelector(`.row[data-id="${id}"]`)?.closest(".row-slot");
-  if (!slot) throw new Error(`no .row-slot for ${id}; rows were ${rowIds(c).join(", ") || "(none)"}`);
-  const more = slot.querySelector<HTMLButtonElement>(".scn-act-more");
-  if (!more) throw new Error(`no .scn-act-more in the slot for ${id}`);
-  more.click();
-  await tick(0);
-  const items = [...slot.querySelectorAll<HTMLButtonElement>(".scn-act-dest")];
-  const btn = items[DESTS.indexOf(dest)];
-  if (!btn) throw new Error(`no "${dest}" item; the menu offered ${items.length}`);
-  btn.click();
-  await tick(0);
-}
+  Boolean(screenerRow(c, id)?.closest("[data-leaving]"));
 
 const ALPHA = "aaa1";
 const BETA = "bbb1";
@@ -368,7 +334,7 @@ describe("a decision the wire REFUSES comes back visibly, never silently", () =>
     expect(rowIds(c)).toContain(BETA);
     // …and the product SAYS so, on the rows themselves, which is the half that was missing.
     const noteOf = (id: string): string =>
-      c.querySelector(`.row[data-id="${id}"]`)?.textContent ?? "";
+      screenerRow(c, id)?.textContent ?? "";
     expect(noteOf(ALPHA), "the returned row carries no refusal note").toContain("Not saved");
     expect(noteOf(BETA), "the returned row carries no refusal note").toContain("Not saved");
   }, 30000);
@@ -384,7 +350,7 @@ describe("a decision the wire REFUSES comes back visibly, never silently", () =>
     await goTo("ohbox");
     await tick(200);
 
-    const toast = document.querySelector(".toast")?.textContent ?? "";
+    const toast = screenerReport();
     expect(toast, "no toast reported the refusal").toContain("could not be saved");
     // The sender as a PERSON reads them — `displayAddressee`, so the display name when there is
     // one. The fixture's rows carry `from.name` of "Sender <id>".
@@ -406,7 +372,7 @@ describe("a decision the wire REFUSES comes back visibly, never silently", () =>
     await tick(200);
     await goTo("screener");
     await tick(200);
-    expect(c.querySelector(`.row[data-id="${ALPHA}"]`)?.textContent).toContain("Not saved");
+    expect(screenerRow(c, ALPHA)?.textContent).toContain("Not saved");
 
     // The server has recovered by the time the reader tries again.
     w.refuseDecide = false;
@@ -415,7 +381,7 @@ describe("a decision the wire REFUSES comes back visibly, never silently", () =>
     // claim it makes ("your last decision did not land") is no longer about anything on screen.
     expect(isExiting(c, ALPHA), "the row did not start leaving on the retry").toBe(true);
     expect(
-      c.querySelector(`.row[data-id="${ALPHA}"]`)?.textContent,
+      screenerRow(c, ALPHA)?.textContent,
       "the refusal note survived the retry press",
     ).not.toContain("Not saved");
     await tick(400);

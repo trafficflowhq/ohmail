@@ -102,7 +102,7 @@
     align-items: center;
     justify-content: center;
     width: 100%;
-    min-height: 100%;
+    height: 100%;
     margin: auto;
   }
 
@@ -186,5 +186,32 @@
 
     border-radius: 0;
     box-shadow: var(--oh-quicklook-frame);
+  }
+}
+
+@layer oh {
+  .oh-quicklook-look[data-kind="image"] > [alt] {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  .oh-quicklook-look[data-kind="pdf"] {
+    position: relative;
+  }
+
+  .oh-quicklook-look[data-kind="pdf"] > [src] {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    pointer-events: none;
+  }
+
+  .oh-quicklook-look[data-kind="text"] > [data-file-text] {
+    align-self: start;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 }

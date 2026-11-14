@@ -2,8 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
 
 /**
  * THE SEED REVIEW SCREEN — the list is shown BEFORE it acts, and the button says what it does.
@@ -19,6 +17,11 @@ import messages from "../messages/en.json";
  * Mounted as the real component against a fetch mock, rather than through `AppShell`: the shell
  * decides WHEN to show it (that is `seedOwed`, and `history-view.test.ts` covers the shell's
  * partition), and what is under test here is what the screen itself says and sends.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the screen is the first run's own review
+ * (`packages/app/src/mailboxes/first-run/SeedReview.tsx`), over the web's own wire to the same routes
+ * (`CLOUD_SEED_REVIEW`, `consent-over-api.ts`) and the same fetch mock; "offered by the shell" and "opened from
+ * Settings" are the stage's offer, as the stage hands it. Every expectation is as it stood.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -52,31 +55,46 @@ let roots: Root[] = [];
 const mount = async (
   extra: { onNothingToDecide?: () => void } = {},
 ): Promise<{ container: HTMLElement; done: () => number; later: () => number }> => {
-  const { SeedReviewView } = await import("../app/views/SeedReviewView.js");
-  const { ThemeProvider } = await import("@ohmail/ui");
+  const { useSeedReview } = await import("@ohmail/app-logic/mailboxes/first-run/use-seed-review");
+  const { SeedReview } = await import("../../../packages/app/src/mailboxes/first-run/SeedReview.js");
+  const { sayOf } = await import("../../../packages/app/src/mailboxes/first-run/words.js");
+  const { TextProvider, useTextLookup } = await import("../../../packages/app/src/text/index.js");
+  const { CLOUD_SEED_REVIEW } = await import("../app/(product)/mailbox/consent-over-api.js");
+  const screener = (await import("../../../packages/app/messages/screener.en.json", { with: { type: "json" } })).default;
   let doneCalls = 0;
   let laterCalls = 0;
+  /* The offer as the stage hands it: offered by the shell (a hand-back when nobody is left), or opened from Settings. */
+  const offer = {
+    owed: true,
+    reopened: extra.onNothingToDecide === undefined,
+    reopen: () => {},
+    later: () => { laterCalls += 1; },
+    nothingToDecide: () => { extra.onNothingToDecide?.(); },
+    done: () => { doneCalls += 1; },
+  };
+  function Review() {
+    const review = useSeedReview({
+      wire: CLOUD_SEED_REVIEW,
+      onDone: offer.done,
+      ...(offer.reopened ? {} : { onNothingToDecide: offer.nothingToDecide }),
+    });
+    return h(SeedReview, { review, offer, say: sayOf(useTextLookup()) });
+  }
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
     root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-05T00:00:00.000Z"),
-        children: h(ThemeProvider, {
-          children: h(SeedReviewView, {
-            onDone: () => { doneCalls += 1; },
-            onLater: () => { laterCalls += 1; },
-            ...extra,
-          }),
-        }),
+      h(TextProvider, {
+        locale: "en", messages: screener as never, timeZone: "UTC",
+        children: h(Review, null),
       }),
     );
     await Promise.resolve();
   });
   // One more flush for the review fetch.
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
   return { container, done: () => doneCalls, later: () => laterCalls };
 };
 
@@ -148,7 +166,8 @@ describe("the sent-mail seed review", () => {
 
   it("names the people and the count before writing anything", async () => {
     const { container } = await mount();
-    expect(text(container)).toContain("You've written to 3 people.");
+    // The kit draws a title's closing full stop as its end dot: the sentence is the same.
+    expect(text(container)).toContain("You've written to 3 people.".replace(/\.$/, ""));
     expect(text(container)).toContain("Lena Roth");
     expect(text(container)).toContain("ben@studio.example");
     // Nothing was posted by looking at the list. The list is an offer.

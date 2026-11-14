@@ -80,3 +80,21 @@ export function useStableCallback<F extends AnyFunction>(fn: F): F {
   stable.current ??= forwardTo(latest);
   return stable.current;
 }
+
+/**
+ * A RECORD HELD WHILE NO MEMBER MOVED: `record` as it was last answered, kept while each of its members is the same
+ * value (`Object.is`) as the one held. A hook that answers a new object at every render (the shell's composer, the
+ * room's press seam) is handed whole to its one context through this, so its readers render when a member moves and
+ * not at every render of the component that holds it. The record's members keep their own identities; nothing is
+ * copied. The census admits a named record of a shell hook only in this form, handed whole to its one context.
+ */
+export function useRecordWhileSame<T extends object>(record: T): T {
+  const held = useRef(record);
+  if (!sameMembers(held.current, record)) held.current = record;
+  return held.current;
+}
+
+function sameMembers<T extends object>(a: T, b: T): boolean {
+  const keys = Object.keys(a) as (keyof T)[];
+  return keys.length === Object.keys(b).length && keys.every((key) => Object.is(a[key], b[key]));
+}

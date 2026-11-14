@@ -483,38 +483,49 @@ describe("sign-out clears the durable decision stores", () => {
     }
   });
 
-  it("the wake registration is revoked BEFORE the session that authorizes the delete is gone", () => {
-    /*
-     * THE ORDER IS THE FIX, not the call.
-     *
-     * The server's own sign-out prune is DEVICE-scoped — `logout` reads the session's `device_id`
-     * and deletes the push rows carrying it — and a browser ceremony mints no device row
-     * (`session-lifecycle.ts`'s `AUTO_MINT_DEVICE_LABELS` covers only the desktop kinds, and
-     * `auth-service.test.ts` asserts the exchanged web session's `deviceId` is null through the
-     * real ceremony). So the browser's row is deviceless, the prune returns early, and the row
-     * survives the sign-out while the sender goes on POSTing wakes to its endpoint — a signed-out
-     * shared browser woken for the previous account's mail.
-     *
-     * This browser is the only party that can name that row, and the credential that authorizes
-     * `DELETE /push/subscriptions/:id` is the very session `auth.logout()` revokes. Called after
-     * it, the delete answers 401 for ever. Asserted on the SOURCE and by POSITION, because a call
-     * in the right place and a call in the wrong place are the same call.
-     */
+  it("browser revocation removes the departing family's wake registration", async () => {
+    const { apiRoutes, createApp, csrfTokenFor } = await import("@trafficflow/api");
+    const { refreshTokens, sessions } = await import("@trafficflow/db");
+    const { pushSubscriptions } = await import("@trafficflow/db/cloud");
+    const { generateToken, hashToken } = await import("@trafficflow/services");
+    const { eq } = await import("drizzle-orm");
+    const { FIXED_NOW, makeDeps, req, seedSession } = await import("../../../packages/api/test/helpers.js");
+    const { withNodeBlobs } = await import("./fixtures/node-blobs");
+    const { db, deps } = await withNodeBlobs(() => makeDeps());
+    const makeWake = async () => {
+      const session = await seedSession(db, { now: FIXED_NOW });
+      const [row] = await db.select({ family: sessions.familyId }).from(sessions)
+        .where(eq(sessions.id, session.sessionId));
+      const refresh = generateToken();
+      await db.insert(refreshTokens).values({
+        accountId: session.accountId, userId: session.userId, sessionId: session.sessionId,
+        familyId: row!.family, tokenHash: hashToken(refresh),
+        expiresAt: new Date(FIXED_NOW.getTime() + 60_000), createdAt: FIXED_NOW,
+      });
+      await db.insert(pushSubscriptions).values({
+        accountId: session.accountId, sessionFamilyId: row!.family, transport: "webpush",
+        endpoint: `https://push.example.invalid/${session.sessionId}`,
+      });
+      return { access: session.token, refresh, family: row!.family };
+    };
+    const departed = await makeWake();
+    const other = await makeWake();
+    const csrf = csrfTokenFor(departed.access);
+    const res = await createApp(apiRoutes).handle(req("POST", "/auth/refresh/logout", {
+      cookie: `tf_session=${departed.access}; tf_refresh=${departed.refresh}; tf_csrf=${csrf}`,
+      headers: { "X-CSRF-Token": csrf, "X-Ohmail-Expected-Family": departed.family },
+    }), deps);
+    expect(res.status).toBe(204);
+    expect(res.headers.has("set-cookie")).toBe(false);
+    const remaining = await db.select({ family: pushSubscriptions.sessionFamilyId }).from(pushSubscriptions);
+    expect(remaining.length === 1 && remaining[0]?.family === other.family).toBe(true);
+  });
+
+  it("account erasure still revokes browser wakes before discarding the stored registration", () => {
     const src = readFileSync(`${APP}/sign-out.ts`, "utf8");
-    /* THE CALL, NOT A CALLER'S SPELLING, AND NOT IN A COMMENT. `await revokeWakeRegistration();`
-     * pinned the `await` and the semicolon, which is today's caller: a worker census read
-     * `await runSyncCycle(` the same way, the call moved inside a store lane, and it read zero
-     * hosts and passed for hours. Asking for the call alone then found `auth.logout()` in the
-     * DOCBLOCK that explains the ordering — this file names it three times in prose — so the
-     * comments are blanked first, offsets preserved, and the positions are the code's. */
     const code = src
       .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
       .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
-    const revoke = code.indexOf("revokeWakeRegistration(", code.indexOf("export async function signOut"));
-    const logout = code.indexOf("auth.logout(");
-    expect(revoke, "signOut must revoke the wake registration").toBeGreaterThan(-1);
-    expect(logout, "…and still log out").toBeGreaterThan(-1);
-    expect(revoke, "the delete is authenticated by the session logout revokes").toBeLessThan(logout);
     // And the erasure door reaches it too — `forgetThisBrowser` is the half account deletion
     // calls, and it must revoke BEFORE the sweep takes the id that names the row.
     const forget = code.indexOf("export async function forgetThisBrowser");
@@ -534,7 +545,7 @@ describe("sign-out clears the durable decision stores", () => {
        literal, because the call grew a second option (`serverHeld`) and a spelling match would
        have read an ordinary addition as a removed call site. */
     expect(src, "the second revoke must be skipped, not the call site removed")
-      .toMatch(/forgetThisBrowser\(owner, \{[\s\S]{0,200}?revokeWake: false/);
+      .toMatch(/forgetThisBrowser\(departed, \{[\s\S]{0,200}?revokeWake: false/);
     expect(src, "…and the erasure door must still revoke by default")
       .toContain("if (opts.revokeWake !== false) await revokeWakeRegistration();");
   });
@@ -553,89 +564,39 @@ describe("sign-out clears the durable decision stores", () => {
   });
 
   it("a stored ceremony is bound to its ACCOUNT, so a reused tab cannot render another's code", () => {
-    /*
-     * FOUND BY REVIEW on the fix that introduced the persistence. A tab is not a session: sign out,
-     * or erase the account, and sign in as somebody else inside the fifteen minutes a grant lives,
-     * and this tab's storage still holds the previous account's record. Restoring it with no owner
-     * check paints THEIR code and verification URI on the new account's settings pane — the server
-     * would refuse the poll with a 403, but only after the values were already on screen.
-     *
-     * Asserted on the SOURCE because the reader is module-private to the pane. What matters is that
-     * the record carries an account id, that the reader compares it, and that a mismatch discards
-     * the entry rather than merely declining to use it.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    expect(src, "the stored record must carry its owner").toMatch(/accountId: string;/);
-    expect(src, "the reader must compare the stored owner to the signed-in one")
-      .toContain("d.accountId !== accountId");
-    // A mismatch DELETES: leaving it would keep another account's record in a shared machine's tab
-    // until somebody happened to open this pane again.
-    expect(src).toMatch(/d\.accountId !== accountId\)\s*\{\s*forgetDevice\(\);/);
-    // And the restore is gated on the account being KNOWN — a null owner never matches, which is
-    // the fail-closed direction. The stage joined that line for a second reader (the connect form
-    // must not have a live code restored underneath it) and is pinned here so neither is dropped.
-    expect(src).toContain('if (!deviceAvailable || !accountId || stage !== "list") return;');
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const pane = readFileSync(`${APP_PARTS}/mailboxes/pane/OutlookConnect.tsx`, "utf8");
+    const part = readFileSync(`${APP_PARTS}/mailboxes/pane/pane.tsx`, "utf8");
+    expect(device, "the stored record must carry its owner").toMatch(/account: string;/);
+    const recall = device.slice(device.indexOf("function recall"), device.indexOf("function displayCode"));
+    expect(recall, "a stored handle is usable only by its signed-in account")
+      .toMatch(/if \(entry\?\.account === account[\s\S]*return \{ account, handle:/);
+    expect(recall, "a mismatch must remove the stored handle").toMatch(/forget\(\);\s*return null;/);
+    expect(device).toMatch(/resume\(\): void \{\s*const account = owner\(\);\s*if \(account === null[\s\S]*const entry = recall\(account\);/);
+    expect(device).toContain("view.account === owner() ? view.value : null");
+    expect(part).toContain("deviceReady={host.session.account !== null && host.session.account === host.session.scope}");
+    expect(pane).toContain("const code = resting && deviceReady && microsoft.device");
+    expect(pane).toContain("useEffect(() => code?.resume?.(), [code]);");
   });
 
   it("the record is only ever WRITTEN with a real owner, so the restore cannot delete a live one", () => {
-    /*
-     * FOUND BY REVIEW, third round. The pane makes three independent reads on mount and the Outlook
-     * affordance is enabled by the availability one, so a ceremony can legitimately start before the
-     * session read lands. Stamping whatever `accountId` held at that moment wrote an EMPTY owner —
-     * and the restore effect then read that record back, could not match it, and deleted it, while
-     * the in-memory poll loop carried on. The ceremony worked and the reload recovery was gone.
-     *
-     * The guard is that there is exactly ONE writer and it is gated on both facts, so a record with
-     * an empty owner is unrepresentable rather than merely unlikely.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    /*
-     * THE INVARIANT IS "EVERY WRITE IS OWNER-GUARDED", not "there is exactly one write".
-     *
-     * An earlier version of this test asserted the start path must not persist at all, which was
-     * the right property for the wrong reason and pushed the code into a passive effect as the sole
-     * writer — reopening the recovery gap it was meant to close, because an effect runs after the
-     * browser has been yielded to and a reload in that window loses the handle. There are now two
-     * paths deliberately (synchronous for the ordinary case, the effect for a late session read),
-     * so what has to hold is that NEITHER can write an owner it does not have.
-     */
-    const calls = [...src.matchAll(/^.*rememberDevice\(\{[^\n]*$/gm)].map((m) => m[0]!.trim());
-    expect(calls.length, "expected the two deliberate persistence paths").toBe(2);
-    for (const c of calls) {
-      expect(c, `an unguarded write: ${c}`).toMatch(/accountId(:| )/);
-    }
-    // The synchronous one is guarded inline; the effect one by an early return above it.
-    expect(src, "the synchronous write must be gated on a known owner")
-      .toContain("if (owner) rememberDevice({ ...live, accountId: owner });");
-    /*
-     * …and it must read the storage owner through the REF, not the render-time state. `startDeviceFlow`
-     * awaits a network round trip, and the session read can resolve during it — the very ordering
-     * this guard exists for, since a different read enables the button. A closure holding the
-     * render-time `accountId` would skip the synchronous write on exactly that path.
-     */
-    expect(src, "the async write must read the LATEST owner, not the captured one")
-      .toContain("const owner = accountIdRef.current;");
-    expect(src, "the ref must be written before the state it mirrors")
-      .toMatch(/accountIdRef\.current = user\.accountId;\s*\n\s*setAccountId\(user\.accountId\);/);
-    expect(src, "the late-session write must be gated on a known owner")
-      .toMatch(/if \(!device \|\| !accountId\) return;\s*\n\s*rememberDevice\(\{ \.\.\.device, accountId \}\);/);
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const calls = [...device.matchAll(/durableSessionSet\(DEVICE_SIGN_IN_KEY,[^\n]+/g)];
+    expect(calls, "every persistence path must be guarded").toHaveLength(1);
+    expect(device).toContain("const account = owner();");
+    expect(device).toContain("if (account === null || starting !== null || active !== null) return");
+    expect(device).toMatch(/await mailboxes\.deviceOAuthStart\(\{ expectedOwner: account,[^\n]+/);
+    expect(device).toContain("if (starting !== request || owner() !== account || !stillWanted()) return");
+    expect(device).toMatch(/const entry: StoredCeremony = \{ handle: reply\.state, deadline, account \};\s*durableSessionSet\(DEVICE_SIGN_IN_KEY, JSON\.stringify\(entry\)/);
   });
 
   it("a TERMINAL poll failure is shown outside the ceremony block it destroys", () => {
-    /*
-     * The ceremony's own error line lives inside the ceremony's markup, so setting it and nulling
-     * `device` in the same tick unmounted the container and the message with it — the code vanished
-     * with nothing said. A terminal refusal therefore goes to the pane-wide `error`, which outlives
-     * the block; a transient one stays on the ceremony's line, where the loop is still running.
-     */
-    const src = readFileSync(`${APP}/(product)/mailbox/MailboxSection.tsx`, "utf8");
-    const terminal = src.slice(
-      src.indexOf('if (codeOf(err) === "oauth_device_state_invalid"'),
-      src.indexOf("setDevicePollError(messageOf(err));", src.indexOf('if (codeOf(err) === "oauth_device_state_invalid"')),
-    );
-    expect(terminal, "a terminal failure must reach the pane-wide error").toContain("setError(messageOf(err))");
-    expect(terminal, "…and must not be left only on the line it is about to unmount")
-      .toContain("setDevicePollError(null)");
+    const device = readFileSync(`${APP}/(product)/mailbox/device-sign-in.ts`, "utf8");
+    const pane = readFileSync(`${APP_PARTS}/mailboxes/pane/OutlookConnect.tsx`, "utf8");
+    expect(device).toContain('finish(entry.account, { kind: "ended", why: "refused", refusal });');
+    expect(device).toMatch(/function finish\(account: string, value: CodeCeremony\): void \{\s*retireWork\(\);\s*forget\(\);\s*publish\(\{ account, value \}\);/);
+    expect(pane).toContain('if (code !== null && (result?.kind === "checking" || result?.kind === "shown"))');
+    expect(pane).toContain('{result?.kind === "ended" && !offer ? <DeviceSignIn result={result}');
   });
 
   /**

@@ -1,14 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun, firstRunStep } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act, cleanup } from "@testing-library/react";
 import { firstRunSubject } from "@ohmail/app-logic/doors/first-run-subject";
-import type { FirstRunHost, FirstRunMailboxInput } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingStep } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { firstRunStep } from "@ohmail/app-logic/mailboxes/first-run/step";
+import { O, fakeDoor, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * A RUN THAT NAMES NO MAILBOX ON AN INSTALL WITH SEVERAL ASKS WHICH. The stage took the install's
@@ -16,12 +14,14 @@ import type { OnboardingFacts, OnboardingStep } from "@ohmail/app-logic/doors/on
  * the consent landed on the refused attempt's bare row and the connected mailbox stayed
  * unconsented. Read off the rendered screen: the choice, each press naming its own mailbox, no
  * connect form and no consent. The one-row run keeps its row (the control).
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`); the install's rows are the ground's; a press on a mailbox names it in the
+ * run's address (the person's Back returns to the question), and leaving moves the address off the stage; the
+ * connect wire the mailbox step would dial is a scripted one whose calls are read. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const ROWS = [
   { id: "mb-refused", address: "box1@home.arpa" },
@@ -37,62 +37,58 @@ const unnamed = (): OnboardingFacts => ({
   queuedSenders: 0,
 });
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
+/** A mailbox row the ground hands: this install's, never consented. */
+const rowOf = (m: (typeof ROWS)[number]): FirstRunRow =>
+  ({
+    id: id(m.id), address: m.address, organizerRole: "organizer", organizedBy: null, organizerState: null,
+    organizerChecked: true, organizeConsentedAt: null, initialImportCompletedAt: null,
+  }) as FirstRunRow;
+
 async function mount(o: { choices?: typeof ROWS }) {
-  const connects: Array<{ input: FirstRunMailboxInput; mode: "seed" | "add" }> = [];
+  const wire = fakeDoor();
   const organized: string[] = [];
-  const chosen: string[] = [];
-  let leaves = 0;
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: (o.choices ?? []).map(rowOf),
     door: "local",
-    ai: "unset",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async (input, mode) => { connects.push({ input, mode }); return { id: "mb-new" }; },
-    organize: async (id) => { organized.push(id); return "stored"; },
-    complete: async () => { /* leaves */ },
-    setAiEnabled: async () => { /* answered */ },
-    forgetMailbox: async () => { /* removed */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: h(FirstRun, {
-          host,
-          facts: unnamed(),
-          onRefresh: () => { /* nothing moves here */ },
-          onLeave: () => { leaves += 1; },
-          pull: { screened: 0, history: 0, pulled: 0 },
-          decide: null,
-          mailboxId: null,
-          ...(o.choices ? { subjectChoices: o.choices, onChooseMailbox: (id: string) => { chosen.push(id); } } : {}),
-        }),
-      }),
-    }));
+    connect: wire.door,
+    verbs: {
+      ai: "unset",
+      organize: async (mailbox) => { organized.push(mailbox); return "stored"; },
+      complete: async () => { /* leaves */ },
+      setAiEnabled: async () => { /* answered */ },
+    },
   });
+  const el = st.el;
+  /** The mailbox each press named: the run's address it wrote. */
+  const chosen = () =>
+    st.writes().flatMap((w) => {
+      const named = /[?&]mailbox=([^&]+)/.exec(w.next);
+      return named && w.next.startsWith("#/first-run") ? [decodeURIComponent(named[1]!)] : [];
+    });
   const buttons = () => [...el.querySelectorAll("button")];
   return {
-    el, connects, organized, chosen,
-    left: () => leaves,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    el, organized,
+    connects: () => wire.calls.filter((c) => c.verb === "connect" || c.verb === "probe"),
+    chosen,
+    /** The person's Back to the question. */
+    back: () => st.visit("#/first-run"),
+    left: () => st.writes().filter((w) => !w.next.startsWith("#/first-run")).length,
+    heading: st.heading,
     press: async (label: string) => {
       /* The label without the key hint the primary verb carries in its own <kbd>. */
       const said = (x: HTMLButtonElement) => [...x.childNodes]
         .filter((n) => !(n instanceof HTMLElement && n.tagName === "KBD")).map((n) => n.textContent ?? "").join("").trim();
       const b = buttons().filter((x) => said(x) === label);
       expect(b.length, `one button saying ${label}`).toBe(1);
-      await act(async () => { b[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await act(async () => {
+        b[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        for (let i = 0; i < 12; i++) await Promise.resolve();
+      });
     },
   };
 }
@@ -108,14 +104,15 @@ describe("a first run that names no mailbox, on an install holding several", () 
     const s = await mount({ choices: ROWS });
     expect(s.heading()).toBe(t.chooseTitle);
     await s.press("box2@home.arpa");
+    await s.back();
     await s.press("box1@home.arpa");
-    expect(s.chosen).toEqual(["mb-connected", "mb-refused"]);
+    expect(s.chosen()).toEqual(["mb-connected", "mb-refused"]);
   });
 
   it("offers no connect form and writes no consent — and leaving is live", async () => {
     const s = await mount({ choices: ROWS });
     expect(s.el.querySelector("input"), "a field on the choice screen").toBeNull();
-    expect(s.connects).toEqual([]);
+    expect(s.connects()).toEqual([]);
     expect(s.organized).toEqual([]);
     await s.press(t.chooseLeave);
     expect(s.left()).toBe(1);

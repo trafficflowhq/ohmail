@@ -12,6 +12,7 @@
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
+import { elsewhereNoticeTitle } from "@ohmail/app-logic/mailboxes/pane/notices";
 import type { OrganizerNotice as OrganizerNoticeFact, OrganizerNoticeKind } from "@ohmail/app-logic/mail-state/mail-state";
 import { goSettings } from "./routing";
 
@@ -113,14 +114,16 @@ export function OrganizerNotice({
         {chunks}
       </button>
     );
+    const elsewhereSentence = (notice: OrganizerNoticeFact) => {
+      const title = elsewhereNoticeTitle(notice);
+      return t(title.key, title.values);
+    };
     const sentence = one
       ? kind === "stopped"
         ? one.name
           ? t.rich("noticeStopped", { ...mark, name: one.name, address: one.address })
           : t.rich("noticeStoppedUnknown", { ...mark, address: one.address })
-        : one.name
-          ? t("noticeElsewhere", { name: one.name, address: one.address })
-          : t("noticeElsewhereUnknown", { address: one.address })
+        : elsewhereSentence(one)
       : t.rich(kind === "stopped" ? "noticeStoppedMany" : "noticeElsewhereMany",
         { ...mark, c: count, count: rows.length });
     const said = refused.get(kind);

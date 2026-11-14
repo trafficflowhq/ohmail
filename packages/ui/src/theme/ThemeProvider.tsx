@@ -201,6 +201,8 @@ export function themeInitScript(
      * gets an ohmarchy landing with no way back. The product door passes true.
      */
     faces?: boolean;
+    /** Use paper while a signed-in host awaits an account look and has no saved face. */
+    deferLinuxFace?: boolean;
     faceStorageKey?: string;
     accountFaceStorageKey?: string;
     layoutStorageKey?: string;
@@ -222,7 +224,7 @@ export function themeInitScript(
     themeHalf +
     `var f=null;try{f=localStorage.getItem(${faceKey})}catch(e){}` +
     `if(f!=="paper"&&f!=="ohmarchy"){try{f=localStorage.getItem(${accountKey})}catch(e){}}` +
-    `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";` +
+    (opts.deferLinuxFace ? "" : `if(f!=="paper"&&f!=="ohmarchy")f=(/Linux/.test(navigator.platform||"")&&!/Android|CrOS/.test(navigator.userAgent||""))?"ohmarchy":"paper";`) +
     `if(f==="ohmarchy")try{document.documentElement.dataset.face="ohmarchy"}catch(e){}` +
     `var l=null;try{l=localStorage.getItem(${layoutKey})}catch(e){}` +
     `if(l==="zero")try{document.documentElement.dataset.layout="zero"}catch(e){}})()`
@@ -260,6 +262,8 @@ export interface ThemeProviderProps {
    * untouched.
    */
   faces?: boolean;
+  /** Defer automatic Linux styling until the host supplies the account's face or confirms there is none. */
+  deferLinuxFace?: boolean;
   /**
    * THE DOOR EVERY WRITE GOES THROUGH, handed in by the host — see {@link StorageDoor}. Omit it and this provider
    * persists nothing ({@link ThemePersistence} `unpersisted`): the choice holds for the session, no jar is touched,
@@ -286,6 +290,7 @@ export function ThemeProvider({
   accountFaceStorageKey = "ohmail.face.account",
   layoutStorageKey = "ohmail.layout",
   faces = false,
+  deferLinuxFace = false,
   storage,
   systemScheme,
 }: ThemeProviderProps) {
@@ -323,7 +328,8 @@ export function ThemeProvider({
   // undefined = not yet hydrated (the same contract as `stored === null` above; the face
   // needs a third state because null is meaningful — "adopted, and no pin exists").
   const [devicePin, setDevicePin] = useState<FaceName | null | undefined>(undefined);
-  const [accountFace, setAccountFaceState] = useState<FaceName | null>(null);
+  // Undefined means the account look is still unknown; null is a confirmed absence.
+  const [accountFace, setAccountFaceState] = useState<FaceName | null>();
   const [linux, setLinux] = useState(false);
   // undefined = not yet hydrated, devicePin's contract; null = adopted, no stored layout.
   const [layoutPin, setLayoutPin] = useState<LayoutName | null | undefined>(undefined);
@@ -351,9 +357,9 @@ export function ThemeProvider({
       return isFace(raw) ? raw : null;
     });
     setAccountFaceState((current) => {
-      if (current !== null) return current; // a live adoption beat the mirror — it wins
+      if (current !== undefined) return current; // a live adoption beat the mirror — it wins
       const raw = doorRef.current.get(accountFaceStorageKey);
-      return isFace(raw) ? raw : null;
+      return isFace(raw) ? raw : undefined;
     });
     setLayoutPin((current) => {
       if (current !== undefined) return current; // a click beat us to it — user wins
@@ -418,8 +424,8 @@ export function ThemeProvider({
   const resolved: ResolvedTheme = preference === "system" ? systemNow : preference;
   const next = nextSchemePreference(preference, systemNow);
   const nextResolved: ResolvedTheme = next === "system" ? systemNow : next;
-  const face: FaceName =
-    devicePin ?? accountFace ?? (linux ? "ohmarchy" : "paper");
+  const useLinuxDefault = linux && (!deferLinuxFace || accountFace !== undefined);
+  const face: FaceName = devicePin ?? accountFace ?? (useLinuxDefault ? "ohmarchy" : "paper");
   const layout: LayoutName = layoutPin ?? "classic";
   const teach: 0 | 1 = face === "ohmarchy" ? 1 : 0;
 
@@ -487,7 +493,7 @@ export function ThemeProvider({
       nextResolved,
       face,
       facePreference: devicePin ?? null,
-      accountFace,
+      accountFace: accountFace ?? null,
       linuxDevice: linux,
       setFace,
       layout,

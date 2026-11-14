@@ -6,8 +6,13 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { findByRole, getByRole } from "@testing-library/react";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
+import { NONE } from "@ohmail/app/host";
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
 import messages from "../messages/en.json";
-import { SettingsView } from "../app/views/SettingsView";
+import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
+import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
 import {
   NOTIFICATION_CHANNELS_KEY, NOTIFY_CACHE, NOTIFY_STATE_URL,
   type NotificationHost, type PushSyncOutcome,
@@ -36,11 +41,9 @@ import {
  *
  * ── AND STEP 3 IS NOT "OPENS THE NOTIFICATIONS PANE" ──────────────────────────────────────
  *
- * `AppShell` mounts `SettingsView` on `effectiveView === "settings"`, and the reconcile effect
- * lives in the VIEW body rather than in the notifications pane — so it fires when the reader
- * opens Settings at ALL. General, Account, About. That is what makes this a one-click reversal
- * of a privacy fix rather than an obscure path, and it is why the mount case below deliberately
- * renders a pane that is NOT notifications.
+ * The original Settings visit retries the stored preference regardless of which section opens.
+ * The reconciliation controls below enter Settings through General and use Notifications for
+ * its actual switches.
  *
  * Both ON-capable call sites are covered: the mount reconcile, and `setNotify` — the press.
  */
@@ -110,20 +113,29 @@ afterEach(async () => {
   await act(async () => { root?.unmount(); });
   root = null;
   host.remove();
+  window.history.replaceState(null, "", "/");
   window.localStorage.clear();
 });
 
+function WebSettings({ door }: { door: NotificationHost }) {
+  const scope = "account-b";
+  const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
+  const { host } = fakeHost({ engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings } });
+  const consent = useConsentState(false, scope, "none");
+  return h(ConsentContext.Provider, { value: consent }, h(MailFrame, {
+    host: { ...host, device: { ...host.device, address: frame.address, notifications: door } },
+  }));
+}
+
 async function renderPane(pane: string, notificationHost: NotificationHost): Promise<void> {
+  window.history.replaceState(null, "", `#/settings/${pane}`);
   await act(async () => {
     root!.render(
       h(NextIntlClientProvider, {
         locale: "en", messages, timeZone: "UTC",
         children: h(ThemeProvider, {
           children: h(ToastHost, {
-            children: h(SettingsView as never, {
-              notifications: null, tags: [], tagCounts: {},
-              initialPane: pane, notificationHost,
-            } as never),
+            children: h(WebSettings, { door: notificationHost }),
           }),
         }),
       }),
@@ -132,9 +144,9 @@ async function renderPane(pane: string, notificationHost: NotificationHost): Pro
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-/** Flip the pane's first switch — master — and let the act settle. */
+/** Flip the notifications master switch and let the act settle. */
 async function pressFirstSwitch(): Promise<void> {
-  const first = [...host.querySelectorAll<HTMLElement>('[role="switch"]')][0]!;
+  const first = getByRole(host, "switch", { name: messages.settings.notifyMaster });
   await act(async () => {
     first.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
@@ -146,7 +158,78 @@ const enabledNow = (): unknown => {
   return last === undefined ? undefined : JSON.parse(last.body).enabled;
 };
 
+async function openNotifications(): Promise<void> {
+  const row = getByRole(host, "button", { name: messages.settings.notifications });
+  await act(async () => { row.click(); });
+  await findByRole(host, "switch", { name: messages.settings.notifyMaster });
+}
+
+describe("browser notification preferences during a Settings visit", () => {
+  it("shows and keeps another tab's notification choices when opening Notifications from General", async () => {
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    const wired = hostAnswering("subscribed");
+    await renderPane("general", wired);
+
+    const changed = JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false });
+    await act(async () => {
+      window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, changed);
+      window.dispatchEvent(new StorageEvent("storage", { key: NOTIFICATION_CHANNELS_KEY, oldValue: ALL_ON, newValue: changed }));
+    });
+    await openNotifications();
+
+    expect(getByRole(host, "switch", { name: messages.settings.notifyMaster }).getAttribute("aria-checked")).toBe("false");
+    expect(wired.asked).toEqual([{ wanted: true, forced: true }]);
+    await pressFirstSwitch();
+    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!)).toMatchObject({ master: true, screener: false });
+  });
+
+  it("shows a permission revoked while General was open", async () => {
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    const wired = hostAnswering("subscribed");
+    let permission: ReturnType<NotificationHost["permission"]> = "granted";
+    await renderPane("general", { ...wired, permission: () => permission });
+
+    permission = "denied";
+    await openNotifications();
+
+    const master = getByRole(host, "switch", { name: messages.settings.notifyMaster });
+    expect(master.getAttribute("aria-checked")).toBe("false");
+    expect(master.hasAttribute("disabled")).toBe(true);
+    expect(wired.asked).toEqual([{ wanted: true, forced: true }]);
+  });
+
+  it("keeps another tab's master and channel choices when a channel press reaches storage first", async () => {
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    const wired = hostAnswering("subscribed");
+    await renderPane("notifications", {
+      ...wired,
+      emitter: { carries: ["ohbox", "screener"], acts: [], post() {}, ahead: NONE, takeBack() {} },
+    });
+    const ohbox = getByRole(host, "switch", { name: messages.settings.notifyOhbox });
+    expect(ohbox.getAttribute("aria-checked")).toBe("true");
+    wired.asked.length = 0;
+
+    // The other tab's write is readable before its storage event reaches this tab.
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, JSON.stringify({ ...JSON.parse(ALL_ON), master: false, screener: false }));
+    await act(async () => { ohbox.click(); });
+
+    expect(JSON.parse(window.localStorage.getItem(NOTIFICATION_CHANNELS_KEY)!)).toMatchObject({
+      master: false, ohbox: false, screener: false, scheduled: true, pairing: true,
+    });
+    expect(wired.asked).toEqual([{ wanted: false, forced: false }]);
+    expect(enabledNow()).toBe(false);
+  });
+});
+
 describe("the Settings door and the previous reader's registration", () => {
+  it("says notifications only work while open when closed-window wakes are unavailable", async () => {
+    window.localStorage.setItem(NOTIFICATION_CHANNELS_KEY, ALL_ON);
+    await renderPane("notifications", hostAnswering("unsupported"));
+
+    expect(host.textContent).toContain("This browser can show notifications only while ohmail is open.");
+    expect(enabledNow()).toBe(false);
+  });
+
   it("OPENING SETTINGS ON ANOTHER TAB does not arm the worker over a row that is not ours", async () => {
     /*
      * Step 3, and deliberately on the GENERAL pane: the effect is in the view body, so the
@@ -185,8 +268,7 @@ describe("the Settings door and the previous reader's registration", () => {
    *
    * It happened to take the ON path, and only because of two facts the test did not pin:
    * `DEFAULT_CHANNELS.ohbox` is true, so `{master:false}` merges to `ohbox:true` and flipping
-   * master alone makes `subscriptionWanted` true; and the first `[role="switch"]` in this pane
-   * happens to be master. Reorder the pane, flip a default, or tighten `pressMaster`'s gate, and
+   * master alone makes `subscriptionWanted` true. If the default or `pressMaster`'s gate changes,
    * this silently becomes an assertion about the OFF path — green for ever, over the exact site
    * the row was corrected to include.
    *
@@ -258,6 +340,7 @@ describe("SOURCE CENSUS — one gated way to arm, and no obvious ungated one", (
    * gets weakened to make it pass.
    */
   const APP = existsSync("apps/webapp/app") ? "apps/webapp/app" : "app";
+  const SETTINGS = "../../../packages/app/src/settings/browser/use-notification-settings.ts";
   const code = (rel: string): string => readFileSync(`${APP}/${rel}`, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n").map((l) => l.replace(/(^|\s)\/\/.*$/, "$1")).join("\n");
@@ -272,8 +355,8 @@ describe("SOURCE CENSUS — one gated way to arm, and no obvious ungated one", (
     const owner = "shell/notification-settings.ts";
     /** The behaviour moved out of the shell, read with it (a path from the app's folder). */
     const LOGIC = "../../../packages/app-logic/src";
-    /** The letter's body, moved out of the web app (a path from the app's folder). */
     const BODY = "../../../packages/letter-body/src";
+    const SHARED_APP = "../../../packages/app/src";
     const files = readdirSync(APP, { recursive: true, encoding: "utf8" })
       .filter((f) => /\.tsx?$/.test(f))
       .map((f) => f.split(sep).join("/"))
@@ -283,11 +366,14 @@ describe("SOURCE CENSUS — one gated way to arm, and no obvious ungated one", (
         .map((f) => `${LOGIC}/${f.split(sep).join("/")}`))
       .concat(readdirSync(`${APP}/${BODY}`, { recursive: true, encoding: "utf8" })
         .filter((f) => /\.tsx?$/.test(f))
-        .map((f) => `${BODY}/${f.split(sep).join("/")}`));
+        .map((f) => `${BODY}/${f.split(sep).join("/")}`))
+      .concat(readdirSync(`${APP}/${SHARED_APP}`, { recursive: true, encoding: "utf8" })
+        .filter((f) => /\.tsx?$/.test(f))
+        .map((f) => `${SHARED_APP}/${f.split(sep).join("/")}`));
     // The sweep must actually be sweeping: a glob that silently matched nothing would pass.
     expect(files.length, "the census walked no files").toBeGreaterThan(50);
     expect(files, "the census skipped the pane it was written for")
-      .toContain("views/SettingsView.tsx");
+      .toContain(SETTINGS);
 
     const offenders = files.filter((f) => /writeNotifyStateUnchecked/.test(code(f)));
     expect(
@@ -298,11 +384,11 @@ describe("SOURCE CENSUS — one gated way to arm, and no obvious ungated one", (
   });
 
   it("and the pane arms through the shared, bounded act — not through a writer of its own", () => {
-    const pane = code("views/SettingsView.tsx");
+    const pane = code(SETTINGS);
     // Both ON-capable sites go through it; two calls, no more, no fewer.
     expect([...pane.matchAll(/applyWakeIntent\(/g)]).toHaveLength(2);
     // …and the pane's sentence is set from the OUTCOME rather than from the wish.
-    expect(pane).toMatch(/\.then\(showDelivery\)/);
-    expect(pane).toMatch(/if \(alive\) showDelivery\(o\);/);
+    expect(pane).toMatch(/\.then\(\(outcome\) => showDelivery\(outcome, at\)\)/);
+    expect(pane).toMatch(/\.then\(\(outcome\) => showDelivery\(outcome, request\)\)/);
   });
 });

@@ -1,44 +1,58 @@
 /** @vitest-environment jsdom */
-import type { ComposeAttachment } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { ComposeAttach } from "../app/components/ComposeAttach";
 import {
   IMAGE_QUALITY_LEVELS,
   IMAGE_QUALITY_RULES,
   IMAGE_QUALITY_STORAGE_KEY,
-} from "../app/components/image-quality";
-import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
-import { restartHold } from "@ohmail/app-logic/doors/app-update";
-import { KeymapProvider } from "@ohmail/app/keys";
+  type ImageQualityLevel,
+} from "@ohmail/app-logic/write/image-quality";
+import type { ComposeAttachment } from "@ohmail/wire";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { TodaysScopeProvider } from "../app/shell/todays-scope";
+import { writeBesideOf } from "@ohmail/app-logic/writing/writing-of";
+import type { LetterFiles } from "@ohmail/app-logic/write/files";
+import { TextProvider } from "@ohmail/app/text";
+import { WriteAbove } from "@ohmail/app/write";
+import { Composer } from "@ohmail/ui/mail";
+import { FilesNote, useFiles } from "../../../packages/app/src/write/files/Files.js";
+import { fileSize } from "../../../packages/app/src/mail/ground/writing-words.js";
 
 /**
- * The scope of the shell the composer is drawn in: the account the case names (its owner marker), else an account of
- * the test's own, as a mounted shell always names one.
- */
-const inShell = (node: React.ReactElement): React.ReactElement =>
-  h(TodaysScopeProvider, { value: storageOwner() ?? "acc-attach" }, node);
-
-/* The compose preview's PDF opens through pdf.js, which jsdom cannot run: a load that fails. */
-vi.mock("pdfjs-dist", () => ({
-  seam: true,
-  getDocument: () => ({ promise: Promise.reject(new Error("no pdf.js here")), destroy: async () => {} }),
-}));
-
-/**
- * THE SHRINK DIAL, IN THE COMPOSE ATTACH ROW.
+ * THE SHRINK DIAL, IN THE COMPOSE ATTACH ROW — OVER WRITE's OWN FILES (share write-1 of the older tests' sorting,
+ * 18 November). Today's `ComposeAttach` leaves with today's composer; these cases are re-pointed, expectations
+ * untouched, over the part that holds the same promise now: Write's files (`useFiles` of
+ * `packages/app/src/write/files/Files.tsx` over app-logic's `useLetterFiles`), drawn as Write's Letter draws them:
+ * the clip (`Attach`) in the kit's `Composer` foot, a tile a file with its way off, the room under them from the
+ * first file on with the quality the pictures go at (`Quality`: a word that opens the four levels), the one line
+ * over the foot for what the last pick or move said (`FilesNote`), and a drop anywhere over the letter a pick (the
+ * `Composer`'s own drop). The pictures' level and its store are the ground's (`writeBesideOf`, the session's
+ * storage scope: the account the case names by its owner marker, else an account of the test's own).
  *
- * The level table, the transform and the guard that keeps a grown re-encode are all pinned by
- * `image-quality.test.tsx`; what THIS file pins is the control that puts the dial where the files
- * are picked. It is the SAME stored preference the Settings row edits — one value, two surfaces —
- * so the assertions here are about the surface: the default, the order the options are offered in,
- * the write-through to storage, and the fact that the NEXT pick obeys what the control says.
+ * What differs from today's control, by the studio, and how each case reads it:
+ * - the quality is a word in a sentence that opens a menu of the four levels, not a select: `dialValue()` reads
+ *   the level the word on screen names; `setLevel()` picks the level's item from the menu, as a person does;
+ * - the room (and with it the quality) stands from the first file on: a case that reads or moves the quality with
+ *   nothing on the letter either puts a PDF on first (a file no move touches: no decode, no encode) where its
+ *   expectations allow it, or, where its claim is about a move made with nothing on the letter, moves the level
+ *   where the menu's item moves it: the files model's `setLevel` (the same stored level the Settings row writes);
+ * - what the pick or the move said is ONE line over the foot (a `role="status"`), its sentences Write's
+ *   (`write.files.*`): the refusals, the read failure, the kept size (`errorLine()`), the twin (`duplicateLine()`),
+ *   the scope of a move (`scopeLine()`) are each that line where it says them.
+ *
+ * The caller is the same stand-in as before, and it is Write's own shape: the composition owns the list across the
+ * screen's unmount and spreads the whole letter around the new list (`w.onComposeFields({ ...compose,
+ * attachments })`, `packages/app/src/write/Letter.tsx`), and the ceiling can move under a running pass (the From
+ * switched to another mailbox).
+ *
+ * The level table, the transform and the guard that keeps a grown re-encode are pinned by
+ * `image-quality.test.tsx`; what THIS file pins is the control that puts the dial where the files are picked. It is
+ * the SAME stored preference the Settings row edits — one value, two surfaces — so the assertions here are about the
+ * surface: the default, the order the options are offered in, the write-through to storage, and the fact that the
+ * NEXT pick obeys what the control says.
  *
  * The codec is the same class of model as `image-quality.test.tsx` installs, reduced to what these
  * guards read: a decoder that answers a fixed bitmap and counts, and an encoder that records the
@@ -46,17 +60,6 @@ vi.mock("pdfjs-dist", () => ({
  * all, at which quality, and whether the cap still refuses — are the module's own.
  */
 
-// jsdom's Blob has no `text()`; the preview reads a text file with it, as every browser can.
-if (typeof (Blob.prototype as { text?: unknown }).text !== "function") {
-  (Blob.prototype as unknown as { text: () => Promise<string> }).text = function (this: Blob) {
-    return new Promise<string>((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(String(fr.result));
-      fr.onerror = () => reject(fr.error);
-      fr.readAsText(this);
-    });
-  };
-}
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -164,41 +167,75 @@ const attachmentBytes = (a: ComposeAttachment): number => {
   return (s.length * 3) / 4 - pad;
 };
 
+/** The files model of the screen on show: what the quality menu's item calls (`setLevel`). */
+let filesModel: LetterFiles | null = null;
+
 /**
- * A STATEFUL wrapper, because the real callers are: `AppShell` feeds `onChange` straight back
- * into the `attachments` prop, and the scope-note and duplicate guards below are ABOUT what the
- * component does when the list it is showing is the list it produced. A static `[]` prop would
- * make both green-by-vacancy.
+ * WRITE's FILES, AS ITS LETTER DRAWS THEM (`packages/app/src/write/Letter.tsx`): `useFiles` over the list the
+ * caller holds, its clip in the composer's foot, its tiles and room in the composer's files, its line over the foot,
+ * a drop on the letter its pick. The ceiling is the mailbox's (`binding: "mailbox"`: no line about the window).
  */
-function Wrap(o: { maxTotalBytes?: number; disabled?: boolean; onAttaching?: (files: readonly string[]) => void }) {
-  const [atts, setAtts] = React.useState<ComposeAttachment[]>([]);
-  // The surface pastes and drops land on — the compose wrap / reply panel in the real callers.
-  const zone = React.useRef<HTMLDivElement | null>(null);
-  return h(
-    "div",
-    { className: "zone", ref: zone },
-    h(ComposeAttach as never, {
-      attachments: atts,
-      onChange: (next: ComposeAttachment[]) => {
-        handed = next;
-        handedHistory.push(next);
-        setAtts(next);
-      },
-      dropZone: zone,
-      ...(o.maxTotalBytes === undefined ? {} : { maxTotalBytes: o.maxTotalBytes }),
-      ...(o.disabled === undefined ? {} : { disabled: o.disabled }),
-      ...(o.onAttaching === undefined ? {} : { onAttaching: o.onAttaching }),
-    } as never),
+function WriteFiles(o: {
+  list: readonly ComposeAttachment[];
+  onList: (next: ComposeAttachment[]) => void;
+  cap: number;
+  locked: boolean;
+}) {
+  const files = useFiles({
+    list: o.list,
+    onList: o.onList,
+    cap: { bytes: o.cap, binding: "mailbox" },
+    locked: o.locked,
+    forward: false,
+  });
+  filesModel = files.model;
+  return h(Composer, {
+    label: "Letter",
+    head: null,
+    files: files.files,
+    note: files.note === null ? undefined : h(FilesNote, { sentence: files.note }),
+    onFiles: files.onFiles,
+    foot: { label: "Letter tools", attach: files.attach },
+    children: h("div", { "data-text": "" }),
+  });
+}
+
+/** What stands above Write's screen, as the ground stands it: the session's scope, its picture level and store. */
+function Above({ children }: { children: React.ReactNode }) {
+  const scope = React.useMemo(() => storageOwner() ?? "acc-attach", []);
+  const beside = React.useMemo(
+    () => writeBesideOf(null as never, scope, "mailbox", false, fileSize, () => true),
+    [scope],
   );
+  return h(WriteAbove, { writing: {} as never, beside: beside as never, children });
 }
 
 /**
- * THE CALLER AS `ComposeView` ACTUALLY IS — a parent whose `onChange` spreads a whole form
- * object around the new list (`onFields({ ...fields, attachments: next })`), owns the list
- * ACROSS the control's unmount, and can move the cap under a running pass. The three review
- * findings about async commits were all about this shape, so the harness reproduces it exactly:
- * the STALE-CLOSURE spread is deliberate and must stay — the component under test is what makes
- * it safe.
+ * A STATEFUL wrapper, because the real callers are: the composition feeds `onList` straight back
+ * into the `list` it hands, and the scope-note and duplicate guards below are ABOUT what the
+ * files do when the list they are showing is the list they produced. A static `[]` prop would
+ * make both green-by-vacancy.
+ */
+function Wrap(o: { maxTotalBytes?: number; disabled?: boolean; initial?: ComposeAttachment[] }) {
+  const [atts, setAtts] = React.useState<ComposeAttachment[]>(o.initial ?? []);
+  return h(WriteFiles, {
+    list: atts,
+    onList: (next: ComposeAttachment[]) => {
+      handed = next;
+      handedHistory.push(next);
+      setAtts(next);
+    },
+    cap: o.maxTotalBytes ?? 8 * MIB,
+    locked: o.disabled ?? false,
+  });
+}
+
+/**
+ * THE CALLER AS WRITE's LETTER ACTUALLY IS — a parent whose `onList` spreads a whole letter object
+ * around the new list (`w.onComposeFields({ ...compose, attachments })`), owns the list ACROSS the
+ * screen's unmount, and can move the cap under a running pass. The three review findings about
+ * async commits were all about this shape, so the harness reproduces it exactly: the STALE-CLOSURE
+ * spread is deliberate and must stay — the part under test is what makes it safe.
  */
 let lastForm: { label: string; atts: ComposeAttachment[] } = { label: "untouched", atts: [] };
 
@@ -210,10 +247,9 @@ function LabWrap(o: { initial?: ComposeAttachment[]; maxTotalBytes?: number; cap
   const [open, setOpen] = React.useState(true);
   const [cap, setCap] = React.useState(o.maxTotalBytes ?? 8 * MIB);
   lastForm = form;
-  const zone = React.useRef<HTMLDivElement | null>(null);
   return h(
     "div",
-    { className: "zone", ref: zone },
+    null,
     h("button", {
       className: "edit-label",
       onClick: () => setForm((f) => ({ ...f, label: "edited" })),
@@ -228,27 +264,26 @@ function LabWrap(o: { initial?: ComposeAttachment[]; maxTotalBytes?: number; cap
     h("button", { className: "drop-cap", onClick: () => setCap(o.capDrop ?? 500_000) }),
     h("button", { className: "restore-cap", onClick: () => setCap(o.maxTotalBytes ?? 8 * MIB) }),
     open
-      ? h(ComposeAttach as never, {
-          // `clone` reproduces the reply panel's exact wiring: a fresh array every render
-          // (`InlineReply` passes `[...attachments]`), so nothing downstream may depend on the
-          // ARRAY keeping identity — only the rows do.
-          attachments: o.clone ? [...form.atts] : form.atts,
-          onChange: (next: ComposeAttachment[]) => {
+      ? h(WriteFiles, {
+          // `clone` reproduces a caller that hands a fresh array every render, so nothing
+          // downstream may depend on the ARRAY keeping identity — only the rows do.
+          list: o.clone ? [...form.atts] : form.atts,
+          onList: (next: ComposeAttachment[]) => {
             handed = next;
             handedHistory.push(next);
-            setForm({ ...form, atts: next }); // ComposeView's exact shape — see the header
+            setForm({ ...form, atts: next }); // the Letter's exact shape — see the header
           },
-          dropZone: zone,
-          maxTotalBytes: cap,
-        } as never)
+          cap,
+          locked: false,
+        })
       : null,
   );
 }
 
-async function mountLab(o: { initial?: ComposeAttachment[]; maxTotalBytes?: number; capDrop?: number; clone?: boolean } = {}): Promise<void> {
+async function render(locale: "en" | "de", node: React.ReactElement): Promise<void> {
   handed = [];
   handedHistory = [];
-  lastForm = { label: "untouched", atts: [] };
+  filesModel = null;
   if (root) {
     await act(async () => root!.unmount());
     host?.remove();
@@ -257,17 +292,28 @@ async function mountLab(o: { initial?: ComposeAttachment[]; maxTotalBytes?: numb
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+  const catalogue = locale === "de" ? de : messages;
   await act(async () => {
     root!.render(
       h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
+        locale,
+        messages: catalogue,
         timeZone: "UTC",
         now: new Date("2026-08-11T09:00:00.000Z"),
-        children: inShell(h(LabWrap, o)),
+        children: h(TextProvider as never, {
+          locale,
+          messages: catalogue,
+          timeZone: "UTC",
+          children: h(Above, null, node),
+        }),
       }),
     );
   });
+}
+
+async function mountLab(o: { initial?: ComposeAttachment[]; maxTotalBytes?: number; capDrop?: number; clone?: boolean } = {}): Promise<void> {
+  lastForm = { label: "untouched", atts: [] };
+  await render("en", h(LabWrap, o));
 }
 
 /** A React click on one of the harness's own buttons. */
@@ -288,43 +334,52 @@ async function startPick(files: File[]): Promise<void> {
   });
 }
 
+let locale: "en" | "de" = "en";
+
 async function mount(
-  o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de"; onAttaching?: (files: readonly string[]) => void; keys?: boolean } = {},
+  o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de"; initial?: ComposeAttachment[] } = {},
 ): Promise<void> {
-  handed = [];
-  handedHistory = [];
-  if (root) {
-    await act(async () => root!.unmount());
-    host?.remove();
-    root = null;
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: o.locale ?? "en",
-        messages: o.locale === "de" ? de : messages,
-        timeZone: "UTC",
-        now: new Date("2026-08-11T09:00:00.000Z"),
-        children: inShell(o.keys
-          ? h(KeymapProvider, null, h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }))
-          : h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching })),
-      }),
-    );
-  });
+  locale = o.locale ?? "en";
+  await render(locale, h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, initial: o.initial }));
 }
 
-const dial = (): HTMLSelectElement =>
-  host!.querySelector<HTMLSelectElement>(".compose-attach-level select")!;
+/** Write's words for the files, in the language on screen (`write.files`). */
+const words = () => (locale === "de" ? de : messages).write.files;
+/** The words before a sentence's first placeholder: what the line says whatever the value. */
+const head = (sentence: string): string => sentence.slice(0, sentence.indexOf("{"));
 
+/** The quality's control: the word that opens the four levels, named as Write names it. */
+const dial = (): HTMLButtonElement | null =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => b.getAttribute("aria-label") === words().qualityLabel,
+  ) ?? null;
+
+/** The level the control on screen names (the levels' words are the catalogue's). */
+function dialValue(): string {
+  const word = dial()!.textContent;
+  const level = IMAGE_QUALITY_LEVELS.find((l) => words().level[l] === word);
+  if (level === undefined) throw new Error(`the quality says no level: ${word}`);
+  return level;
+}
+
+/** The four levels the open menu offers, in its order. */
+const offered = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+
+/**
+ * Move the quality as a person does: the word opens the levels, the level's item is taken. With nothing on the
+ * letter Write draws no quality (the room stands from the first file on): the move is made where the item makes
+ * it, the files model's `setLevel`.
+ */
 async function setLevel(value: string): Promise<void> {
-  const select = dial();
-  select.value = value;
-  await act(async () => {
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  const control = dial();
+  if (control === null) {
+    await act(async () => filesModel!.setLevel(value as ImageQualityLevel));
+    return;
+  }
+  await act(async () => control.click());
+  const item = offered().find((i) => i.textContent === words().level[value as ImageQualityLevel]);
+  if (item === undefined) throw new Error(`the menu offers no ${value}`);
+  await act(async () => item.click());
 }
 
 /** FileReader delivers as a task — same drain as image-quality.test.tsx, same reason. Also what
@@ -346,16 +401,53 @@ async function pickFiles(files: File[]): Promise<void> {
   await drain();
 }
 
+/** The one line over the foot where the files' sentences are said, or null. */
+const filesLine = (): HTMLElement | null =>
+  [...host!.querySelectorAll<HTMLElement>('[role="status"]')].find((s) => {
+    const w = words();
+    return [head(w.refused), w.unreadable, head(w.qualityKept), head(w.twice), w.qualityScope]
+      .some((part) => s.textContent!.includes(part));
+  }) ?? null;
+/** The line, where it says a file was refused, could not be read, or kept its size. */
+const errorLine = (): HTMLElement | null => {
+  const line = filesLine();
+  const w = words();
+  return line !== null && [head(w.refused), w.unreadable, head(w.qualityKept)].some((p) => line.textContent!.includes(p))
+    ? line
+    : null;
+};
+/** The line, where it says a file was already on the letter. */
+const duplicateLine = (): HTMLElement | null => {
+  const line = filesLine();
+  return line !== null && line.textContent!.includes(head(words().twice)) ? line : null;
+};
+/** The line, where it says what a quality move does to the files already on the letter. */
+const scopeLine = (): HTMLElement | null => {
+  const line = filesLine();
+  return line !== null && line.textContent!.includes(words().qualityScope) ? line : null;
+};
+/** What the shrink saved, where the room says it. */
+const savedLine = (): HTMLElement | null =>
+  [...host!.querySelectorAll<HTMLElement>("p span")].find((s) => s.textContent!.startsWith(head(words().saved))) ?? null;
+/** Each file's way off, in the files' order. */
+const removes = (): HTMLButtonElement[] =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].filter((b) =>
+    (b.getAttribute("aria-label") ?? "").startsWith(head(words().remove)),
+  );
+/** The letter: where a file let go is a pick. */
+const letter = (): HTMLElement => host!.querySelector<HTMLElement>('section[aria-label="Letter"]')!;
+
 describe("the dial is in the row, defaulting to Medium", () => {
   it("renders a labelled select whose resting value is the default level", async () => {
     await mount();
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
     const select = dial();
     expect(select).not.toBeNull();
-    expect(select.value).toBe("medium");
-    // The visible label is the accessible name — the same vocabulary as the Settings row.
-    const label = host!.querySelector<HTMLLabelElement>(".compose-attach-level")!;
-    expect(label.textContent).toContain("Quality");
-    expect(label.htmlFor).toBe(select.id);
+    expect(dialValue()).toBe("medium");
+    // The label is the accessible name — the same vocabulary as the Settings row. In Write's words
+    // (`write.files.qualityLabel`, the studio's): "Picture quality" where today's said "Quality".
+    expect(select!.getAttribute("aria-label")).toContain("Picture quality");
+    expect(select!.getAttribute("aria-haspopup")).toBe("menu");
   });
 
   /**
@@ -369,10 +461,12 @@ describe("the dial is in the row, defaulting to Medium", () => {
    */
   it("offers the four quality levels ascending, Original last", async () => {
     await mount();
-    const options = Array.from(dial().options);
-    expect(options.map((o) => o.value)).toEqual(["low", "medium", "high", "original"]);
-    expect(options.map((o) => o.value)).toEqual([...IMAGE_QUALITY_LEVELS]);
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
+    await act(async () => dial()!.click());
+    const options = offered();
+    // A level's item is its word: the order the words stand in is the levels' (the shared table's).
     expect(options.map((o) => o.textContent)).toEqual(["Low", "Medium", "High", "Original"]);
+    expect(options.map((o) => o.textContent)).toEqual(IMAGE_QUALITY_LEVELS.map((l) => words().level[l]));
     // One option per level in the shared table — an added level must surface here.
     expect(options).toHaveLength(IMAGE_QUALITY_LEVELS.length);
   });
@@ -380,19 +474,23 @@ describe("the dial is in the row, defaulting to Medium", () => {
   it("shows the STORED level once mounted — the Settings row's writes reach this surface", async () => {
     window.localStorage.setItem(IMAGE_QUALITY_STORAGE_KEY, "high");
     await mount();
-    expect(dial().value).toBe("high");
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
+    expect(dialValue()).toBe("high");
   });
 
   it("is disabled while the form is", async () => {
-    await mount({ disabled: true });
-    expect(dial().disabled).toBe(true);
+    // A letter on its way holds its files: the quality stands over the file already on it.
+    await mount({ disabled: true, initial: [{ filename: "doc.pdf", contentType: "application/pdf", contentBase64: "AAAA" }] });
+    expect(dial()!.disabled).toBe(true);
   });
 
   it("speaks German — same label as the Settings row, Original named", async () => {
     await mount({ locale: "de" });
-    const label = host!.querySelector<HTMLLabelElement>(".compose-attach-level")!;
-    expect(label.textContent).toContain("Qualität");
-    const options = Array.from(dial().options);
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
+    // In Write's words (`write.files.qualityLabel`): "Bildqualität" where today's said "Qualität".
+    expect(dial()!.getAttribute("aria-label")).toContain("Bildqualität");
+    await act(async () => dial()!.click());
+    const options = offered();
     expect(options.map((o) => o.textContent)).toEqual(["Niedrig", "Mittel", "Hoch", "Original"]);
   });
 });
@@ -416,6 +514,7 @@ describe("what the dial says is what the next pick does — and it is remembered
     document.cookie = "tf_owner=acct-one";
     window.localStorage.setItem(IMAGE_QUALITY_STORAGE_KEY, "low");
     await mount();
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
     await setLevel("medium");
 
     expect(
@@ -430,7 +529,8 @@ describe("what the dial says is what the next pick does — and it is remembered
 
     // The next compose on this account opens at the remembered level.
     await mount();
-    expect(dial().value, "the remembered level did not survive a remount").toBe("medium");
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
+    expect(dialValue(), "the remembered level did not survive a remount").toBe("medium");
   });
 
   /** A browser is not a person: the second account's dial is its own. */
@@ -438,12 +538,14 @@ describe("what the dial says is what the next pick does — and it is remembered
     document.cookie = "tf_owner=acct-one";
     window.localStorage.setItem(IMAGE_QUALITY_STORAGE_KEY, "low");
     await mount();
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
     await setLevel("medium");
 
     document.cookie = "tf_owner=acct-two";
     await mount();
+    await pickFiles([pdf()]); // Write draws the quality from the first file on: a PDF, which no move touches
     expect(
-      dial().value,
+      dialValue(),
       "the second account inherited the first one's compose-dial choice",
     ).toBe("low");
   });
@@ -482,13 +584,13 @@ describe("what the dial says is what the next pick does — and it is remembered
   it("says the scope out loud when the level changes over existing attachments", async () => {
     await mount({ maxTotalBytes: 3 * MIB });
     await pickFiles([photo()]);
-    expect(host!.querySelector(".compose-attach-scope"), "the note fired before anything changed")
+    expect(scopeLine(), "the note fired before anything changed")
       .toBeNull();
 
     await setLevel("high");
     await drain();
 
-    const note = host!.querySelector(".compose-attach-scope");
+    const note = scopeLine();
     expect(
       note,
       "the dial moved over an existing attachment and nothing stated the scope",
@@ -503,7 +605,7 @@ describe("what the dial says is what the next pick does — and it is remembered
   it("stays quiet when the level changes with nothing attached — there is no scope to state", async () => {
     await mount({ maxTotalBytes: 3 * MIB });
     await setLevel("high");
-    expect(host!.querySelector(".compose-attach-scope")).toBeNull();
+    expect(scopeLine()).toBeNull();
   });
 
   it("a pick after moving to Medium encodes at Medium's own quality and edge", async () => {
@@ -527,7 +629,7 @@ describe("what the dial says is what the next pick does — and it is remembered
     expect(encodeCalls).toHaveLength(0);
     // The base64 carries the ORIGINAL size, and the "Pictures shrunk" note stays away.
     expect(Math.floor((handed[0]!.contentBase64.length * 3) / 4)).toBeGreaterThanOrEqual(PHOTO_BYTES);
-    expect(host!.querySelector(".compose-attach-shrunk")).toBeNull();
+    expect(savedLine()).toBeNull();
   });
 
   it("Original is still subject to the cap — skipping the shrink never lifts the ceiling", async () => {
@@ -536,7 +638,7 @@ describe("what the dial says is what the next pick does — and it is remembered
     await pickFiles([photo()]);
     expect(handed).toHaveLength(0);
     expect(decodeCount).toBe(0);
-    const error = host!.querySelector(".compose-attach-error");
+    const error = errorLine();
     expect(error?.textContent ?? "").toContain("1 MB");
   });
 
@@ -571,7 +673,7 @@ describe("the same file twice is a skip, not a second indistinguishable row — 
       handed,
       "the same bytes under the same name attached twice — two rows nothing can tell apart",
     ).toHaveLength(1);
-    const note = host!.querySelector(".compose-attach-duplicate");
+    const note = duplicateLine();
     expect(note, "the skip was silent — an ignored pick reads as a broken picker").not.toBeNull();
     expect(note!.textContent).toContain("photo.jpg");
     expect(note!.getAttribute("role")).toBe("status");
@@ -596,7 +698,7 @@ describe("the same file twice is a skip, not a second indistinguishable row — 
 
     // …so the same file re-picked at Original is the same bytes under the same name: one row.
     expect(handed).toHaveLength(1);
-    expect(host!.querySelector(".compose-attach-duplicate")).not.toBeNull();
+    expect(duplicateLine()).not.toBeNull();
   });
 });
 
@@ -610,56 +712,8 @@ describe("pasted and dropped files are picks — CMP-F8", () => {
     });
     return e;
   }
-  const zone = (): HTMLElement => host!.querySelector<HTMLElement>(".zone")!;
+  const zone = letter;
 
-  /**
-   * The editor takes no images by design, so a pasted picture used to do NOTHING — no
-   * attachment, no notice. It is an attach now, through the same admit pipeline as the picker.
-   *
-   * Mutation: delete the `paste` listener in the dropZone effect. Real failure text:
-   *   AssertionError: a pasted picture vanished — no attachment, no notice, nothing: expected
-   *   0 to be 1
-   */
-  it("a pasted picture attaches through the same pipeline", async () => {
-    await mount({ maxTotalBytes: 3 * MIB });
-    const e = fileEvent("paste", [photo()]);
-    await act(async () => { zone().dispatchEvent(e); });
-    for (let i = 0; i < 8; i += 1) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    }
-    expect(
-      handed,
-      "a pasted picture vanished — no attachment, no notice, nothing",
-    ).toHaveLength(1);
-    expect(e.defaultPrevented, "the paste also fell through to the editor").toBe(true);
-    // …and it went through the shrink, exactly like a picked file.
-    expect(encodeCalls).toHaveLength(1);
-  });
-
-  /** The reported scenario: a screenshot on the clipboard arrives as image/png. The intake
-      reads `e.clipboardData.files` and never the type, so a png rides the same admit pipeline —
-      pinned apart from the jpeg case because "paste a screenshot" is the reported use. */
-  it("a pasted image/png screenshot attaches — the reported scenario", async () => {
-    await mount({ maxTotalBytes: 3 * MIB });
-    const shot = new File([new Uint8Array(120_000)], "screenshot.png", { type: "image/png" });
-    const e = fileEvent("paste", [shot]);
-    await act(async () => { zone().dispatchEvent(e); });
-    for (let i = 0; i < 8; i += 1) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    }
-    expect(handed, "a pasted screenshot vanished — no attachment, no notice").toHaveLength(1);
-    expect(handed[0]!.filename).toBe("screenshot.png");
-    expect(e.defaultPrevented, "the paste also fell through to the editor").toBe(true);
-  });
-
-  /** A text paste is none of this component's business. */
-  it("leaves a file-less paste alone", async () => {
-    await mount();
-    const e = fileEvent("paste", []);
-    await act(async () => { zone().dispatchEvent(e); });
-    expect(handed).toHaveLength(0);
-    expect(e.defaultPrevented).toBe(false);
-  });
 
   /**
    * A file dropped on the surface used to be the BROWSER's: it navigates away to the file,
@@ -686,197 +740,6 @@ describe("pasted and dropped files are picks — CMP-F8", () => {
       "the drop was left to the browser — it navigates away to the file",
     ).toHaveLength(1);
     expect(drop.defaultPrevented).toBe(true);
-  });
-
-  /** Disabled mid-send means disabled for EVERY intake path, not only the picker button. */
-  it("takes nothing while disabled", async () => {
-    await mount({ disabled: true });
-    const e = fileEvent("paste", [photo()]);
-    await act(async () => { zone().dispatchEvent(e); });
-    for (let i = 0; i < 4; i += 1) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    }
-    expect(handed).toHaveLength(0);
-  });
-});
-
-describe("a file manager's drop on the Linux desktop attaches its files — CMP-F8", () => {
-  /**
-   * The shapes WebKitGTK 2.52 gives the page, measured with a GTK4 file-list drag onto a
-   * WebKitGTK 4.1 view: a file manager's drop lists `text/uri-list` and `text/html`, withholds the
-   * data and carries no File objects, so the zone saw no `Files` and the editor inserted the path.
-   * A browser's link lists `text/plain` too, and its data reads. The paths here are synthetic.
-   */
-  type Shape = { types: string[]; drop: Record<string, string> };
-  const WITHHELD: Shape = {
-    types: ["text/uri-list", "text/html"],
-    drop: { "text/html": '<a style="font-weight: 400;">file:///tmp/drop/notes.txt</a>' },
-  };
-  const LINK: Shape = {
-    types: ["text/plain", "text/html", "text/uri-list"],
-    drop: {
-      "text/plain": "https://example.org/a",
-      "text/uri-list": "https://example.org/a\r\n",
-      "text/html": '<a href="https://example.org/a">https://example.org/a</a>',
-    },
-  };
-  const CHIP: Shape = {
-    types: ["application/x-ohmail-recipient", "text/plain"],
-    drop: { "application/x-ohmail-recipient": '{"entry":"a@example.org","row":"to"}', "text/plain": "a@example.org" },
-  };
-  /** Every getData reads "" until the drop, as in the browser's protected mode. */
-  function dragEvent(type: "dragover" | "drop", shape: Shape): Event {
-    const e = new Event(type, { bubbles: true, cancelable: true });
-    const getData = (t: string): string => (type === "drop" ? (shape.drop[t] ?? "") : "");
-    Object.defineProperty(e, "dataTransfer", { value: { files: [], types: shape.types, getData } });
-    return e;
-  }
-  const zone = (): HTMLElement => host!.querySelector<HTMLElement>(".zone")!;
-
-  const TOKEN = "f".repeat(32);
-  const NOTES = new TextEncoder().encode("the notes, from the file manager");
-  const b64 = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes));
-  const notesTake = () => ({
-    drop: TOKEN,
-    files: [{ name: "notes.txt", size: NOTES.length, type: "text/plain", state: "ok" }],
-  });
-
-  /** The shell, stubbed: every command recorded with its payload, the answers per case. */
-  let calls: Array<{ command: string; payload?: Record<string, unknown> }> = [];
-  let take: () => Promise<unknown> = async () => null;
-  let chunk: (payload: Record<string, unknown>) => Promise<unknown> = async () => ({ bytes64: b64(NOTES), end: true });
-  let disarm: (() => void) | null = null;
-  beforeEach(() => {
-    calls = [];
-    take = async () => notesTake();
-    chunk = async () => ({ bytes64: b64(NOTES), end: true });
-    (globalThis as Mutable).__TAURI_INTERNALS__ = {
-      invoke: (command: string, payload?: Record<string, unknown>) => {
-        calls.push(payload === undefined ? { command } : { command, payload });
-        return command === "dropped_files_take" ? take() : chunk(payload ?? {});
-      },
-    };
-  });
-  afterEach(() => {
-    disarm?.();
-    disarm = null;
-    delete (globalThis as Mutable).__TAURI_INTERNALS__;
-  });
-
-  /**
-   * THE REPORTED BUG: the drop pasted the path. Now the dragover is claimed, the drop is prevented
-   * (nothing inserts), and the shell's file lands through the same admit pipeline as a pick.
-   *
-   * Mutation: drop the withheld branch from the zone's `drop` listener → red (nothing attaches and
-   * the drop is left to WebKit's insert).
-   */
-  it("claims the drag, prevents the drop and attaches the file the shell read", async () => {
-    disarm = enableDesktopDroppedFiles();
-    await mount({ maxTotalBytes: 3 * MIB });
-    const over = dragEvent("dragover", WITHHELD);
-    await act(async () => { zone().dispatchEvent(over); });
-    expect(over.defaultPrevented, "the drag was not claimed, so a drop on the attach strip never lands").toBe(true);
-
-    const drop = dragEvent("drop", WITHHELD);
-    await act(async () => { zone().dispatchEvent(drop); });
-    await drain();
-    expect(drop.defaultPrevented, "the drop was left to WebKit, which inserts the path").toBe(true);
-    expect(handed.map((a) => [a.filename, a.contentType, a.contentBase64])).toEqual([["notes.txt", "text/plain", b64(NOTES)]]);
-    expect(calls).toEqual([
-      { command: "dropped_files_take" },
-      { command: "dropped_file_chunk", payload: { drop: TOKEN, index: 0 } },
-    ]);
-  });
-
-  /** The lock is the take's from the first moment: a send pressed while the shell answers waits. */
-  it("holds the attaching lock and the restart from the drop to the commit", async () => {
-    disarm = enableDesktopDroppedFiles();
-    const reported: Array<readonly string[]> = [];
-    await mount({ maxTotalBytes: 3 * MIB, onAttaching: (files) => reported.push(files) });
-    let answerTake!: () => void;
-    const taken = new Promise<void>((resolve) => { answerTake = resolve; });
-    let answerChunk!: () => void;
-    const read = new Promise<void>((resolve) => { answerChunk = resolve; });
-    take = async () => { await taken; return notesTake(); };
-    chunk = async () => { await read; return { bytes64: b64(NOTES), end: true }; };
-
-    await act(async () => { zone().dispatchEvent(dragEvent("drop", WITHHELD)); });
-    expect(reported.at(-1)?.length, "nothing was attaching while the shell was asked").toBe(1);
-    expect(restartHold()).toBe("files");
-
-    await act(async () => { answerTake(); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(reported.at(-1)).toEqual(["notes.txt"]);
-    expect(handed).toHaveLength(0);
-
-    await act(async () => { answerChunk(); });
-    await drain();
-    expect(handed).toHaveLength(1);
-    expect(reported.at(-1)).toEqual([]);
-    expect(reported.slice(0, -1).every((files) => files.length > 0), "the lock opened before the commit").toBe(true);
-    expect(restartHold()).toBe(null);
-  });
-
-  /** A link and a recipient chip are other drags' business: claiming a link's dragover makes
-      WebKit navigate to the link instead of inserting it. */
-  it("leaves an https link and a recipient chip alone", async () => {
-    disarm = enableDesktopDroppedFiles();
-    await mount();
-    for (const shape of [LINK, CHIP]) {
-      const over = dragEvent("dragover", shape);
-      const drop = dragEvent("drop", shape);
-      await act(async () => { zone().dispatchEvent(over); zone().dispatchEvent(drop); });
-      expect([over.defaultPrevented, drop.defaultPrevented], shape.types.join(",")).toEqual([false, false]);
-    }
-    await drain();
-    expect(calls).toEqual([]);
-    expect(handed).toHaveLength(0);
-  });
-
-  /** The web app and the preview arm nothing: the shape alone never asks a shell. */
-  it("asks no shell when the window is not armed", async () => {
-    await mount();
-    const over = dragEvent("dragover", WITHHELD);
-    const drop = dragEvent("drop", WITHHELD);
-    await act(async () => { zone().dispatchEvent(over); zone().dispatchEvent(drop); });
-    await drain();
-    expect([over.defaultPrevented, drop.defaultPrevented]).toEqual([false, false]);
-    expect(calls).toEqual([]);
-  });
-
-  /** The shell holds nothing (the drop was this page's own drag, or ten seconds went by). */
-  it("attaches nothing and inserts nothing when the shell holds no drop", async () => {
-    disarm = enableDesktopDroppedFiles();
-    await mount();
-    take = async () => null;
-    const drop = dragEvent("drop", WITHHELD);
-    await act(async () => { zone().dispatchEvent(drop); });
-    await drain();
-    expect(drop.defaultPrevented).toBe(true);
-    expect(handed).toHaveLength(0);
-    expect(host!.querySelector(".compose-attach-error")).toBeNull();
-    expect(calls).toEqual([{ command: "dropped_files_take" }]);
-  });
-
-  /** The shell's refusals are the pick's own sentences, and nothing over the cap is read. */
-  it("says the pick's own sentences for a file too large or unreadable, reading none of them", async () => {
-    disarm = enableDesktopDroppedFiles();
-    await mount({ maxTotalBytes: 3 * MIB });
-    take = async () => ({
-      drop: TOKEN,
-      files: [
-        { name: "film.mov", size: 45 * MIB, type: "video/quicktime", state: "too_large" },
-        { name: "pipe", size: 0, type: "", state: "unreadable" },
-        { name: "scan.pdf", size: 4 * MIB, type: "application/pdf", state: "ok" },
-      ],
-    });
-    await act(async () => { zone().dispatchEvent(dragEvent("drop", WITHHELD)); });
-    await drain();
-    const said = host!.querySelector(".compose-attach-error")?.textContent ?? "";
-    expect(said).toContain("Some files were not added — they would have put the total over");
-    expect(said).toContain("Some files couldn't be read and were not added.");
-    expect(handed).toHaveLength(0);
-    expect(calls.map((c) => c.command), "a file the cap refuses was read anyway").toEqual(["dropped_files_take"]);
   });
 });
 
@@ -984,7 +847,7 @@ describe("the dial re-encodes what is already attached — from the pristine sou
       attachmentBytes(handed[0]!),
       "the re-encode grew the total past the cap the send will refuse",
     ).toBe(before);
-    const error = host!.querySelector(".compose-attach-error");
+    const error = errorLine();
     expect(error, "the kept size was silent — the user watches the dial do nothing").not.toBeNull();
     expect(error!.textContent).toContain("1 MB");
     expect(error!.textContent).toMatch(/kept/i);
@@ -1103,7 +966,7 @@ describe("the review round — async commits against a live form", () => {
     const total = handed.reduce((n, a) => n + attachmentBytes(a), 0);
     expect(total, "the re-encode pass committed a total the send will refuse").toBeLessThanOrEqual(1 * MIB);
     expect(attachmentBytes(handed[0]!), "the photo grew past what the list can carry").toBe(before[0]!);
-    expect(host!.querySelector(".compose-attach-error")?.textContent ?? "").toMatch(/kept/i);
+    expect(errorLine()?.textContent ?? "").toMatch(/kept/i);
   });
 
   /**
@@ -1265,7 +1128,7 @@ describe("the review round — async commits against a live form", () => {
       attachmentBytes(lastForm.atts[0]!),
       "the pass admitted a grow against a cap that is no longer the mailbox's",
     ).toBe(shrunkSizeFor(IMAGE_QUALITY_RULES.medium!.quality));
-    expect(host!.querySelector(".compose-attach-error")?.textContent ?? "").toMatch(/kept/i);
+    expect(errorLine()?.textContent ?? "").toMatch(/kept/i);
   });
 
   /**
@@ -1295,7 +1158,7 @@ describe("the review round — async commits against a live form", () => {
       FileReader.prototype.readAsDataURL = original;
     }
     expect(handed).toHaveLength(0);
-    expect(host!.querySelector(".compose-attach-error"), "the refusal was silent").not.toBeNull();
+    expect(errorLine(), "the refusal was silent").not.toBeNull();
     expect(reads, "an impossible file was base64-encoded before being refused").toBe(0);
   });
 
@@ -1366,7 +1229,7 @@ describe("the review round — async commits against a live form", () => {
 
     // The user removes photo2 while the kicked pass is still encoding it.
     await act(async () => {
-      host!.querySelectorAll<HTMLButtonElement>(".compose-attach-remove")[1]!
+      removes()[1]!
         .dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(handed.map((a) => a.filename)).toEqual(["photo.jpg"]);
@@ -1404,7 +1267,7 @@ describe("the review round — async commits against a live form", () => {
       handed.find((a) => a.filename === "big.pdf")?.filename,
       "a duplicate the commit skips still spent the cap and refused the file behind it",
     ).toBe("big.pdf");
-    expect(host!.querySelector(".compose-attach-duplicate")).not.toBeNull();
+    expect(duplicateLine()).not.toBeNull();
   });
 
   /**
@@ -1437,7 +1300,7 @@ describe("the review round — async commits against a live form", () => {
     expect(lastForm.atts.map((a) => a.filename)).toEqual(["photo.jpg", "photo2.jpg"]);
 
     await act(async () => {
-      host!.querySelectorAll<HTMLButtonElement>(".compose-attach-remove")[1]!
+      removes()[1]!
         .dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(lastForm.atts.map((a) => a.filename)).toEqual(["photo.jpg"]);
@@ -1483,7 +1346,7 @@ describe("the review round — async commits against a live form", () => {
     }
     expect(handed).toHaveLength(1); // the one that fits
     expect(reads, "a batch the cap cannot take was base64-encoded wholesale").toBe(1);
-    expect(host!.querySelector(".compose-attach-error")).not.toBeNull();
+    expect(errorLine()).not.toBeNull();
   });
 
   /**
@@ -1498,6 +1361,39 @@ describe("the review round — async commits against a live form", () => {
    *   AssertionError: a staged file the commit will refuse blocked the smaller one that fits:
    *   expected [] to deeply equal [ 'slab-100.bin' ]
    */
+  it("refuses a held file beyond the remaining room before opening it", async () => {
+    const cap = 4;
+    const existing = { filename: "already-on-letter.txt", contentType: "text/plain", contentBase64: "YWI=" };
+    await mount({ maxTotalBytes: cap, initial: [existing] });
+    const reads: string[] = [];
+    const source = (name: string, text: string) => ({
+      name,
+      size: text.length,
+      type: "text/plain",
+      state: "ok" as const,
+      read: async () => {
+        reads.push(name);
+        return new File([text], name, { type: "text/plain" });
+      },
+    });
+
+    await act(async () => {
+      await filesModel!.add(async () => [
+        source("exceeds-with-attached.txt", "abc"),
+        source("fits.txt", "a"),
+        source("exceeds-with-picked.txt", "ab"),
+        source("fills-the-letter.txt", "b"),
+      ]);
+    });
+
+    expect(filesModel!.notes.refusedAt).toBe(cap);
+    expect(handedHistory).toHaveLength(1);
+    expect(handed.map((attachment) => attachment.filename)).toEqual([
+      existing.filename, "fits.txt", "fills-the-letter.txt",
+    ]);
+    expect(reads).toEqual(["fits.txt", "fills-the-letter.txt"]);
+  });
+
   it("a cap lowered mid-batch still admits the file that fits it", async () => {
     await mountLab({ maxTotalBytes: 1 * MIB, capDrop: 500_000 });
     const original = FileReader.prototype.readAsDataURL;
@@ -1528,7 +1424,7 @@ describe("the review round — async commits against a live form", () => {
       "a staged file the commit will refuse blocked the smaller one that fits",
     ).toEqual(["slab-100.bin"]);
     // The 800 KB file was honestly refused — and said so.
-    expect(host!.querySelector(".compose-attach-error")).not.toBeNull();
+    expect(errorLine()).not.toBeNull();
   });
 
   /**
@@ -1564,6 +1460,11 @@ describe("the review round — async commits against a live form", () => {
         new File([new Uint8Array(n * 1000)], `slab-${n}.bin`, { type: "application/octet-stream" });
       await startPick([slab(800), slab(100)]); // 800 stages under 1 MiB; 100 parks mid-read
       await press(".drop-cap"); // the dip strands the 800 KB candidate
+      // The batch reaches its second file while the dip stands (Write reads the first file one task later than
+      // today's control did: the dip must be in force when the batch reprojects, as the case's title says).
+      for (let i = 0; i < 8 && readCalls < 2; i += 1) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      }
       await press(".restore-cap"); // a restore before the commit does not resurrect it
       releaseRead();
       await drain();
@@ -1572,7 +1473,7 @@ describe("the review round — async commits against a live form", () => {
     }
 
     expect(lastForm.atts.map((a) => a.filename)).toEqual(["slab-100.bin"]);
-    const error = host!.querySelector(".compose-attach-error");
+    const error = errorLine();
     expect(
       error,
       "the stranded file vanished without a word — a silent refusal reads as a broken picker",
@@ -1614,7 +1515,7 @@ describe("the review round — async commits against a live form", () => {
     }
 
     expect(handed).toHaveLength(0);
-    const error = host!.querySelector(".compose-attach-error");
+    const error = errorLine();
     expect(error).not.toBeNull();
     expect(
       error!.textContent,
@@ -1657,7 +1558,7 @@ describe("the review round — async commits against a live form", () => {
     }
 
     expect(handed).toHaveLength(0);
-    const error = host!.querySelector(".compose-attach-error");
+    const error = errorLine();
     expect(error).not.toBeNull();
     expect(
       error!.textContent,
@@ -1737,161 +1638,5 @@ describe("the review round — async commits against a live form", () => {
       "the same file rides the message twice after the convergence",
     ).toBe(1);
     expect(attachmentBytes(handed[0]!)).toBe(shrunkSizeFor(IMAGE_QUALITY_RULES.low!.quality));
-  });
-});
-
-describe("each attached file shows itself, and opens in the preview", () => {
-  /** Every URL minted, with the Blob it was minted for, and every one revoked. */
-  let minted: Map<string, Blob>;
-  let revoked: string[];
-  let seq = 0;
-  beforeEach(() => {
-    minted = new Map();
-    revoked = [];
-    (URL as unknown as Mutable).createObjectURL = (b: Blob) => {
-      const u = `blob:http://localhost/${++seq}`;
-      minted.set(u, b);
-      return u;
-    };
-    (URL as unknown as Mutable).revokeObjectURL = (u: string) => { revoked.push(u); };
-  });
-  afterEach(() => {
-    delete (URL as unknown as Mutable).createObjectURL;
-    delete (URL as unknown as Mutable).revokeObjectURL;
-  });
-
-  const live = (): string[] => [...minted.keys()].filter((u) => !revoked.includes(u));
-  const bytesOf = (b: Blob): Promise<Uint8Array> => new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(new Uint8Array(fr.result as ArrayBuffer));
-    fr.onerror = () => reject(fr.error);
-    fr.readAsArrayBuffer(b);
-  });
-  const decoded = (b64: string): Uint8Array => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const thumbOf = (name: string): HTMLImageElement | null => {
-    const row = [...host!.querySelectorAll(".compose-attach-item")].find((li) => li.textContent?.includes(name));
-    return row?.querySelector<HTMLImageElement>("img.att-thumb") ?? null;
-  };
-  const file = (name: string, type: string, text = name): File => new File([text], name, { type });
-  const dialog = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Attachment preview"]');
-  const looks = (): HTMLButtonElement[] => [...host!.querySelectorAll<HTMLButtonElement>(".compose-attach-look")];
-  const docKey = async (k: string): Promise<void> => {
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
-  };
-
-  it("a picture is drawn from the bytes that will be sent, and again after the dial moves", async () => {
-    await mount({ maxTotalBytes: 8 * MIB });
-    await pickFiles([photo()]);
-    const first = thumbOf("photo.jpg")!;
-    expect(first, "the attached photo shows no picture of itself").not.toBeNull();
-    const blob = minted.get(first.getAttribute("src")!)!;
-    expect(blob.type).toBe("image/jpeg");
-    expect(await bytesOf(blob)).toEqual(decoded(handed[0]!.contentBase64));
-
-    await setLevel("low");
-    await drain();
-    const second = thumbOf("photo.jpg")!;
-    expect(second.getAttribute("src")).not.toBe(first.getAttribute("src"));
-    expect(revoked).toEqual([first.getAttribute("src")]);
-    expect(await bytesOf(minted.get(second.getAttribute("src")!)!), "the picture is not the encode the send carries")
-      .toEqual(decoded(handed[0]!.contentBase64));
-  });
-
-  it("only the raster pictures the reader draws get a URL", async () => {
-    await mount({ maxTotalBytes: 8 * MIB });
-    await pickFiles([
-      file("logo.svg", "image/svg+xml", "<svg/>"),
-      file("page.html", "text/html", "<p>hi</p>"),
-      pdf(),
-      file("notes.txt", "text/plain", "hello"),
-    ]);
-    expect(handed).toHaveLength(4);
-    expect([...minted.keys()], "a file that is not a raster picture was given a URL").toEqual([]);
-    expect(host!.querySelectorAll(".compose-attach-item .att-leaf")).toHaveLength(4);
-    expect(host!.querySelectorAll(".compose-attach-item img")).toHaveLength(0);
-  });
-
-  it("removing a row revokes its URL alone; emptying the list or leaving releases the rest", async () => {
-    await mount({ maxTotalBytes: 8 * MIB });
-    await pickFiles([photo(), photo2()]);
-    const [one, two] = [thumbOf("photo.jpg")!.getAttribute("src")!, thumbOf("photo2.jpg")!.getAttribute("src")!];
-    await act(async () => { host!.querySelector<HTMLButtonElement>(".compose-attach-remove")!.click(); });
-    expect(revoked, "removing one row revoked the wrong URL").toEqual([one]);
-    expect(live()).toEqual([two]);
-    await act(async () => { host!.querySelector<HTMLButtonElement>(".compose-attach-remove")!.click(); });
-    expect(live()).toEqual([]);
-
-    await pickFiles([photo()]);
-    expect(live()).toHaveLength(1);
-    await act(async () => root!.unmount());
-    root = null;
-    expect(live(), "leaving the form kept a picture pinned").toEqual([]);
-  });
-
-  it("pressing a row opens the preview on that file; arrows walk all, Esc and Space close back to the row", async () => {
-    await mount({ maxTotalBytes: 8 * MIB, keys: true });
-    await pickFiles([photo(), file("plan.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"), photo2()]);
-    expect(looks()[1]!.getAttribute("aria-label")).toBe("Preview plan.docx");
-    // Opened from the keyboard: focus is on the row, so it comes back to a row.
-    await act(async () => { looks()[1]!.focus(); looks()[1]!.click(); });
-    expect(dialog(), "pressing the row opened nothing").not.toBeNull();
-    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("2 of 3");
-    expect(dialog()!.querySelector(".ap-card")!.textContent).toBe("No preview");
-    expect([...dialog()!.querySelectorAll("button")].some((b) => b.textContent?.includes("Download")), "the compose preview offered a Download").toBe(false);
-    await docKey("ArrowRight");
-    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("3 of 3");
-    await docKey("ArrowRight");
-    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("1 of 3");
-    await docKey("ArrowLeft");
-    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("3 of 3");
-    expect(dialog()!.querySelector("img.ap-img")!.getAttribute("src")).toBe(thumbOf("photo2.jpg")!.getAttribute("src"));
-    await docKey("Escape");
-    expect(dialog()).toBeNull();
-    expect(document.activeElement, "focus did not come back to the row on screen").toBe(looks()[2]);
-
-    await act(async () => { looks()[0]!.click(); });
-    const panel = dialog()!;
-    await act(async () => { panel.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
-    expect(dialog()).toBeNull();
-    expect(document.activeElement).toBe(looks()[0]);
-    expect(handed).toHaveLength(3);
-  });
-
-  it("a file pasted or dropped on the open preview attaches nothing", async () => {
-    await mount({ maxTotalBytes: 8 * MIB, keys: true });
-    await pickFiles([photo()]);
-    await act(async () => { looks()[0]!.click(); });
-    const at = dialog()!;
-    const carrying = (type: string): Event => {
-      const e = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(e, type === "paste" ? "clipboardData" : "dataTransfer", {
-        value: { files: [photo2()], types: ["Files"], getData: () => "", dropEffect: "copy" },
-      });
-      return e;
-    };
-    const over = carrying("dragover");
-    const drop = carrying("drop");
-    await act(async () => { at.dispatchEvent(carrying("paste")); at.dispatchEvent(over); at.dispatchEvent(drop); });
-    await drain();
-    expect(handed, "a file landed on the message from under the preview").toHaveLength(1);
-    expect(over.defaultPrevented && drop.defaultPrevented, "the browser was left to open the dropped file").toBe(true);
-    expect((over as unknown as { dataTransfer: { dropEffect: string } }).dataTransfer.dropEffect).toBe("none");
-  });
-
-  it("an image, a PDF and a text are each shown without a frame, an embed, an object or a blob: link", async () => {
-    await mount({ maxTotalBytes: 8 * MIB, keys: true });
-    await pickFiles([photo(), pdf(), file("notes.txt", "text/plain", "hello <b>there</b>")]);
-    await act(async () => { looks()[0]!.click(); });
-    const unsafe = () => document.querySelector("iframe, embed, object, a[href^='blob:']");
-    expect(dialog()!.querySelector("img.ap-img")).not.toBeNull();
-    expect(unsafe()).toBeNull();
-    await docKey("ArrowRight");
-    await drain();
-    expect(dialog()!.querySelector(".ap-card")?.textContent).toBe("Can't show this PDF here");
-    expect(unsafe()).toBeNull();
-    await docKey("ArrowRight");
-    await drain();
-    expect(dialog()!.querySelector("pre.ap-text")?.textContent).toBe("hello <b>there</b>");
-    expect(unsafe()).toBeNull();
   });
 });

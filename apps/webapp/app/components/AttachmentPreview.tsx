@@ -114,6 +114,9 @@ const EN = {
   pagesAria: "Pages",
   prevPage: "Previous page",
   nextPage: "Next page",
+  // The shared Quick Look renders the same actions with separate key caps and labels.
+  move: "Move",
+  pageHint: "Page",
   hintClose: "Space or Esc to close",
   hintMove: "← → to move",
   hintPage: "↑ ↓ to page",
@@ -203,6 +206,93 @@ const PDF_TARGET_WIDTH = 900;
 /** The text preview is capped for the same reason the mail renderer is (`MAX_HTML_CHARS`). */
 const MAX_TEXT_CHARS = 512 * 1024;
 
+/** The page canvas and loading task for this attachment surface. */
+function usePdfPage(blob: Blob | undefined) {
+  const [loaded, setLoaded] = useState<{ blob: Blob; doc: PDFDocumentProxy } | null>(null);
+  const [failed, setFailed] = useState<Blob | null>(null);
+  const [shown, setShown] = useState<{ blob: Blob; page: number } | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const doc = loaded?.blob === blob ? loaded?.doc : undefined;
+  const page = shown && shown.blob === blob ? shown.page : 1;
+  const numPages = doc?.numPages ?? 0;
+
+  useEffect(() => {
+    setFailed(null);
+    setLoaded(null);
+    setShown(null);
+    if (!blob) return;
+    let live = true;
+    let task: PdfTask | null = null;
+    void (async () => {
+      try {
+        const open = await loadPdfjs();
+        if (!live) return;
+        // pdf.js transfers the buffer to the worker, so each load reads a fresh one.
+        const data = await blob.arrayBuffer();
+        if (!live) return;
+        task = open({ data, disableAutoFetch: true, disableStream: true });
+        const doc = await task.promise;
+        if (live) setLoaded({ blob, doc });
+      } catch {
+        discard(task);
+        task = null;
+        if (live) setFailed(blob);
+      }
+    })();
+    return () => {
+      live = false;
+      discard(task);
+      task = null;
+    };
+  }, [blob]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!doc || !canvas || !blob) return;
+    let live = true;
+    let render: RenderTask | undefined;
+    void (async () => {
+      try {
+        const p = await doc.getPage(page);
+        if (!live) return;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const base = p.getViewport({ scale: 1 });
+        const scale = Math.min(PDF_TARGET_WIDTH / base.width, MAX_CANVAS_EDGE / Math.max(base.width, base.height), 3);
+        const vp = p.getViewport({ scale });
+        const canvasContext = canvas.getContext("2d");
+        if (!canvasContext) return;
+        canvas.width = Math.floor(vp.width * dpr);
+        canvas.height = Math.floor(vp.height * dpr);
+        canvas.style.width = `${Math.floor(vp.width)}px`;
+        canvas.style.height = `${Math.floor(vp.height)}px`;
+        render = p.render({
+          canvas: null,
+          canvasContext,
+          viewport: vp,
+          ...(dpr !== 1 ? { transform: [dpr, 0, 0, dpr, 0, 0] } : {}),
+        });
+        await render.promise;
+      } catch {
+        if (live) setFailed(blob);
+      }
+    })();
+    return () => {
+      live = false;
+      render?.cancel();
+    };
+  }, [blob, doc, page]);
+
+  const goPage = useCallback((delta: number) => {
+    if (!blob || !numPages) return;
+    setShown((current) => ({
+      blob,
+      page: Math.min(numPages, Math.max(1, (current?.blob === blob ? current.page : 1) + delta)),
+    }));
+  }, [blob, numPages]);
+
+  return { canvasRef, page, numPages, goPage, pdfError: blob !== undefined && failed === blob };
+}
+
 /* ── the overlay ──────────────────────────────────────────────────────────────────────── */
 
 export interface AttachmentPreviewProps {
@@ -263,122 +353,13 @@ export function AttachmentPreview({
     if (active.state === "idle") ensure(active.id);
   }, [active, canPreview, ensure]);
 
-  /* ── PDF document + page state, owned here so ↑/↓ and the page counter can see it ──
-   *
-   * THE LOADING TASK IS KEPT ALONGSIDE THE DOCUMENT, and it is the half that can be torn
-   * down: `getDocument()` returns the task, `task.promise` resolves to the document, and
-   * `task.destroy()` is the only call that aborts the load and terminates the worker. */
-  const [pdf, setPdf] = useState<{
-    id: string;
-    task: PdfTask;
-    doc: PDFDocumentProxy;
-    numPages: number;
-  } | null>(null);
-  const [page, setPage] = useState(1);
-  const [pdfError, setPdfError] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const renderTaskRef = useRef<RenderTask | null>(null);
-
-  // Load the document when a ready PDF becomes active. The ArrayBuffer is read FRESH here —
-  // pdf.js transfers it to its worker and detaches it, so a cached buffer fails the second open.
-  useEffect(() => {
-    if (!active || kind !== "pdf" || active.state !== "ready") return;
-    const blob = blobOf(active.id);
-    if (!blob) return;
-    const id = active.id;
-    let cancelled = false;
-    setPdfError(false);
-    (async () => {
-      // Declared out here so every exit — cancelled, thrown, or resolved — can reach the
-      // task it started. A load abandoned without this leaves a worker parsing bytes nobody
-      // will look at.
-      let task: PdfTask | null = null;
-      try {
-        const open = await loadPdfjs();
-        const buf = await blob.arrayBuffer();
-        // Core api only — no scripting layer, so no PDF JavaScript runs. `disableAutoFetch` +
-        // `disableStream` keep it from issuing range requests; the source is a Blob, and the one
-        // fetch is this origin's standard font data (`STANDARD_FONTS`), never a CDN.
-        task = open({ data: buf, disableAutoFetch: true, disableStream: true });
-        const doc = await task.promise;
-        if (cancelled) {
-          discard(task);
-          return;
-        }
-        setPdf({ id, task, doc, numPages: doc.numPages });
-        setPage(1);
-      } catch {
-        discard(task);
-        if (!cancelled) setPdfError(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // `active.state` is what turns idle→ready; `active.id` is the navigation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id, active?.state, kind]);
-
-  // Tear the document down when it is replaced or the overlay unmounts — the worker holds it
-  // open otherwise. This runs on EVERY close, so anything that throws here reaches React's
-  // error boundary and takes the app down with it; `discard` therefore swallows a rejection
-  // from a worker that is already gone rather than leaving it unhandled.
-  useEffect(() => {
-    return () => {
-      if (pdf) discard(pdf.task);
-    };
-  }, [pdf]);
-
-  // Render the current page. A superseded render is cancelled first — pdf.js refuses two
-  // renders on one canvas, and a fast ↑/↓ would otherwise throw.
-  useEffect(() => {
-    if (!pdf || pdf.id !== activeId) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const p = await pdf.doc.getPage(page);
-        if (cancelled) return;
-        const dpr = Math.min(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1, 2);
-        const base = p.getViewport({ scale: 1 });
-        let scale = Math.min(PDF_TARGET_WIDTH / base.width, 3);
-        const longEdge = Math.max(base.width, base.height) * scale;
-        if (longEdge > MAX_CANVAS_EDGE) scale *= MAX_CANVAS_EDGE / longEdge;
-        const vp = p.getViewport({ scale });
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        canvas.width = Math.floor(vp.width * dpr);
-        canvas.height = Math.floor(vp.height * dpr);
-        canvas.style.width = `${Math.floor(vp.width)}px`;
-        canvas.style.height = `${Math.floor(vp.height)}px`;
-        renderTaskRef.current?.cancel();
-        // `canvas: null` with a context is pdf.js's documented way to render into a context the
-        // caller owns; it hands the bytes to a 2D context and never to a document.
-        const task = p.render({
-          canvas: null,
-          canvasContext: ctx,
-          viewport: vp,
-          ...(dpr !== 1 ? { transform: [dpr, 0, 0, dpr, 0, 0] } : {}),
-        });
-        renderTaskRef.current = task;
-        await task.promise;
-      } catch {
-        /* a cancelled render rejects; nothing to do. A real parse failure surfaced at load. */
-      }
-    })();
-    return () => {
-      cancelled = true;
-      renderTaskRef.current?.cancel();
-    };
-  }, [pdf, activeId, page]);
-
-  const numPages = pdf && pdf.id === activeId ? pdf.numPages : 0;
+  const pdfId = active && kind === "pdf" && active.state === "ready" ? active.id : undefined;
+  const latestBlobOf = useRef(blobOf);
+  latestBlobOf.current = blobOf;
+  const pdfBlob = useMemo(() => pdfId === undefined ? undefined : latestBlobOf.current(pdfId), [pdfId]);
+  const { canvasRef, page, numPages, goPage, pdfError } = usePdfPage(pdfBlob);
+  const pdf = numPages ? { id: activeId, numPages } : null;
   const isPdfMultiPage = numPages > 1;
-  const goPage = useCallback(
-    (delta: number) => setPage((p) => Math.min(numPages || 1, Math.max(1, p + delta))),
-    [numPages],
-  );
 
   /* ── text state ── */
   const [text, setText] = useState<{ id: string; body: string; truncated: boolean } | null>(null);

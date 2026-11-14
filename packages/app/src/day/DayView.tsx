@@ -16,6 +16,7 @@ import {
   clockOf,
   dayHead,
   hourLabels,
+  otherHourLabels,
   isoOfDay,
   nowIn,
   pillChip,
@@ -27,6 +28,7 @@ import {
 } from "@ohmail/app-logic/calendar";
 import type { CalendarEventView, CalendarView, CalendarViewProps } from "../calendar/view.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
+import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { useLocale, useText } from "../text/index.js";
 import "./day.css";
 
@@ -36,12 +38,14 @@ export const daySpan = (anchor: PlainDate): readonly PlainDate[] => [anchor];
 export function DayView(props: CalendarViewProps) {
   const t = useText("day");
   const locale = useLocale();
+  const swipe = useCalendarSwipe(props.stepDay);
   const { anchor, settings, plan, clock, openId } = props;
   const days = daySpan(anchor);
   const hours = useHoursScroller({
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
     room: plan,
+    focusMinute: props.cursor,
     spanKey: isoOfDay(anchor),
     openId,
     openTop: () => model.days[0]!.blocks.find((b) => b.item.id === openId)?.top ?? null,
@@ -59,35 +63,15 @@ export function DayView(props: CalendarViewProps) {
   });
   const open = (e: CalendarEventView): void => props.onOpen(e.ref);
   const said = (s: Segment<CalendarEventView>): string => `${clockOf(s.from)} ${s.item.title}`;
-  const freeText = (minutes: number): string => {
-    const h = Math.floor(minutes / 60);
-    const m = Math.round(minutes % 60);
-    return m === 0 ? t("freeHours", { hours: h }) : t("freeHoursMinutes", { hours: h, minutes: m });
-  };
-
-  const capsule = (d: TimeGridDay<CalendarEventView>, side: "above" | "below") => {
-    const list = side === "above" ? d.above : d.below;
-    const nearest = list.length > 0 ? d.blocks.find((b) => b.item.id === list[0]!.item.id) : undefined;
-    return nearest === undefined ? null : (
-      <OutOfSightCapsule
-        side={side}
-        items={list.map((s) =>
-          s.item.tone === null
-            ? { kind: "outlined" as const, text: said(s) }
-            : { kind: "calendar" as const, tone: s.item.tone, text: said(s) },
-        )}
-        label={t(side, { count: list.length })}
-        onPress={() => hours.show(nearest.top, side)}
-      />
-    );
-  };
+  const freeText = (minutes: number) => freeHours(t, minutes);
 
   const kitDays: KitDay[] = model.days.map((d) => ({
     ...dayHead(d.day, locale),
     id: d.id,
     today: d.today,
-    above: capsule(d, "above"),
-    below: capsule(d, "below"),
+    cursor: props.cursor != null ? { minutes: props.cursor, length: 60 } : undefined,
+    above: outOfSight(d, "above", t, said, hours.show),
+    below: outOfSight(d, "below", t, said, hours.show),
     free: d.free.map((f) => ({ minutes: f.at, text: freeText(f.minutes) })),
     children: d.blocks.map((b) => (
       <EventChip
@@ -96,6 +80,7 @@ export function DayView(props: CalendarViewProps) {
         {...blockChip(b, b.item.id === openId)}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
+        onPointerDown={props.onDrag ? (event) => props.onDrag?.(b.item.id, event) : undefined}
       />
     )),
   }));
@@ -108,6 +93,7 @@ export function DayView(props: CalendarViewProps) {
       label={t("chipAllDay", { title: p.item.title })}
       style={{ gridColumn: "2 / 3", gridRow: p.row + 1 }}
       onPress={() => open(p.item)}
+      onPointerDown={props.onDrag ? (event) => props.onDrag?.(p.item.id, event) : undefined}
     />
   ));
 
@@ -127,14 +113,28 @@ export function DayView(props: CalendarViewProps) {
       <TimeGrid
         days={kitDays}
         heads={false}
-        allDay={<AllDayRow label={t("allDay")}>{lane}</AllDayRow>}
+        allDay={
+          <AllDayRow label={t("allDay")} targets={kitDays.map((day) => day.id)}>
+            {lane}
+          </AllDayRow>
+        }
+        {...(props.dragPreview ? { dragPreview: props.dragPreview } : {})}
         firstHour={0}
         hourLabels={hourLabels(0, 24)}
+        secondAxis={
+          settings.secondZone
+            ? {
+                label: settings.secondZone,
+                hours: otherHourLabels(anchor, clock.zone, settings.secondZone, clock.zones),
+              }
+            : undefined
+        }
         hourHeight={hours.hourPx}
         now={
           model.now === null ? undefined : { minutes: model.now.minutes, label: clockOf(model.now.minutes) }
         }
         scrollRef={hours.ref}
+        scrollGestures={swipe}
         onScroll={hours.onScroll}
       />
     </section>
@@ -142,3 +142,32 @@ export function DayView(props: CalendarViewProps) {
 }
 
 export const dayView: CalendarView = { View: DayView, span: (anchor) => daySpan(anchor) };
+
+function freeHours(t: ReturnType<typeof useText>, minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m === 0 ? t("freeHours", { hours: h }) : t("freeHoursMinutes", { hours: h, minutes: m });
+}
+
+function outOfSight(
+  day: TimeGridDay<CalendarEventView>,
+  side: "above" | "below",
+  t: ReturnType<typeof useText>,
+  say: (segment: Segment<CalendarEventView>) => string,
+  show: ReturnType<typeof useHoursScroller>["show"],
+) {
+  const list = side === "above" ? day.above : day.below;
+  const nearest = list.length > 0 ? day.blocks.find((b) => b.item.id === list[0]!.item.id) : undefined;
+  return nearest === undefined ? null : (
+    <OutOfSightCapsule
+      side={side}
+      items={list.map((s) =>
+        s.item.tone === null
+          ? { kind: "outlined" as const, text: say(s) }
+          : { kind: "calendar" as const, tone: s.item.tone, text: say(s) },
+      )}
+      label={t(side, { count: list.length })}
+      onPress={() => show(nearest.top, side)}
+    />
+  );
+}

@@ -13,8 +13,6 @@
  * measures it on the built artifact.
  */
 
-import type { GapLettersTransport } from "../../webapp/app/shell/GapLettersNotice";
-import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
@@ -43,7 +41,7 @@ export function mailboxFactsOverBearer(
  * `localRoutes` and rings its own drain on File; without this wire the shared shell withholds the
  * offer here, since a line nothing can answer would stand for ever.
  */
-export function gapLettersOverBearer(bearer: BearerManager): GapLettersTransport {
+export function gapLettersOverBearer(bearer: BearerManager): ReturnType<typeof gapLettersVia> {
   return gapLettersVia(bearer.fetch);
 }
 
@@ -82,7 +80,7 @@ export function olderBodyOverBearer(bearer: BearerManager): OlderBodyWire {
 /*
  * (`withoutFoldersFlag`), exactly as on the desktop's own standalone door.
  */
-export function junkOverBearer(bearer: BearerManager): JunkWire {
+export function junkOverBearer(bearer: BearerManager): ReturnType<typeof junkVia> {
   return junkVia(bearer.fetch);
 }
 

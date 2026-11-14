@@ -7,7 +7,6 @@ import type { ReactNode } from "react";
 import type { ScreenerState } from "@ohmail/app-logic/screener";
 import type { FrameStages } from "../../src/frame/contract.js";
 import { Frame } from "../../src/frame/Frame.js";
-import { KeymapProvider } from "../../src/keys/index.js";
 import { NONE } from "../../src/host/index.js";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "../../src/screener/index.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
@@ -199,11 +198,9 @@ export function mountPlace(
   });
   const tree = (m: ScreenerState) =>
     inWords(
-      <KeymapProvider>
-        <ScreenerAbove model={m} beside={opts.beside ?? BESIDE}>
-          <Frame host={host} />
-        </ScreenerAbove>
-      </KeymapProvider>,
+      <ScreenerAbove model={m} beside={opts.beside ?? BESIDE}>
+        <Frame host={host} />
+      </ScreenerAbove>,
       opts.lang,
     );
   const view = render(tree(model));

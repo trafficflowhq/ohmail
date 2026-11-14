@@ -9,6 +9,8 @@
 import {
   civilFromDays,
   eventTimeOf,
+  occurrenceOf,
+  recurrenceKeyString,
   MS_PER_DAY,
   parseDuration,
   parseRRule,
@@ -17,6 +19,7 @@ import {
   type EventStatus,
   type EventTime,
   type Series,
+  type ZoneSource,
 } from "@ohmail/cal-core";
 import type { CalendarEventRecord, CalendarTime } from "@ohmail/wire";
 
@@ -133,4 +136,23 @@ export function seriesOfRecords(records: readonly CalendarEventRecord[]): Record
     series.push({ uid: list[0]!.uid, master: ownEvent, overrides, cancelled: new Set() });
   }
   return { series, recordOf: (e) => back.get(e), masterOf: (e) => master.get(e) };
+}
+
+/** Resolve the selected recurrence against the current records, including range overrides. */
+export function recordAtOccurrence(
+  master: CalendarEventRecord,
+  records: readonly CalendarEventRecord[],
+  key: string,
+  zones: ZoneSource,
+): CalendarEventRecord | undefined {
+  const changed = records.filter(
+    (r) => r.calendarId === master.calendarId && r.uid === master.uid && r.recurrenceId && !r.heldBack,
+  );
+  const exact = changed.find((r) => !r.thisAndFuture && r.recurrenceId === key);
+  if (exact) return exact;
+  const was = keyTimeOf(key, eventTimeOf(master.start));
+  if (!was) return undefined;
+  const made = seriesOfRecords([master, ...changed]);
+  const found = occurrenceOf(made.series[0]!, was, zones);
+  return found && recurrenceKeyString(found.key) === key ? made.recordOf(found.event) : undefined;
 }

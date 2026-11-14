@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { Button, Dialog, Menu, MenuItem } from "@ohmail/ui/base";
-import { SettingNote, SettingsSheet, TagLine } from "@ohmail/ui/mail";
+import { Button, Dialog, Menu, MenuItem, TagDot } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet, TagLine } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
 import { newTagName, renamed, type TagsModel, type TagsModelTag } from "./model.js";
 import { TAGS_NAMESPACE } from "./namespace.js";
@@ -40,8 +40,20 @@ export function TagsPane({ model, at }: TagsPaneProps) {
   return (
     <SettingsSheet>
       {tags.length === 0 ? <SettingNote>{t("tagsEmpty")}</SettingNote> : null}
-      {tags.map((tag) =>
-        verbs && editing?.id === tag.id ? (
+      {tags.map((tag) => {
+        const value = t("tagMessages", { count: tag.count });
+        if (!verbs) {
+          return (
+            <SettingLine
+              key={tag.id}
+              label={tag.name}
+              value={value}
+              narrow="under"
+              lead={<TagDot hue={tag.hue} />}
+            />
+          );
+        }
+        return editing?.id === tag.id ? (
           <RenameLine
             key={tag.id}
             tag={tag}
@@ -57,34 +69,32 @@ export function TagsPane({ model, at }: TagsPaneProps) {
             key={tag.id}
             hue={tag.hue}
             name={tag.name}
-            value={t("tagMessages", { count: tag.count })}
+            value={value}
             colour={{
               label: t("tagRecolor", { name: tag.name }),
               expanded: colours?.id === tag.id,
-              onPress: verbs ? (anchor) => setColours({ id: tag.id, anchor }) : undefined,
+              onPress: (anchor) => setColours({ id: tag.id, anchor }),
             }}
             acts={
-              verbs ? (
-                <>
-                  <Button
-                    kind="quiet"
-                    size="s"
-                    ref={(el) => {
-                      keys.buttons.current.set(tag.id, el);
-                    }}
-                    onPress={() => setEditing({ id: tag.id, draft: tag.name })}
-                  >
-                    {t("tagRename")}
-                  </Button>
-                  <Button kind="quiet" size="s" opens="dialog" onPress={() => setAsking(tag)}>
-                    {t("tagDelete")}
-                  </Button>
-                </>
-              ) : undefined
+              <>
+                <Button
+                  kind="quiet"
+                  size="s"
+                  ref={(el) => {
+                    keys.buttons.current.set(tag.id, el);
+                  }}
+                  onPress={() => setEditing({ id: tag.id, draft: tag.name })}
+                >
+                  {t("tagRename")}
+                </Button>
+                <Button kind="quiet" size="s" opens="dialog" onPress={() => setAsking(tag)}>
+                  {t("tagDelete")}
+                </Button>
+              </>
             }
           />
-        ),
-      )}
+        );
+      })}
       {verbs ? <NewTag model={model} create={verbs.create} typed={at?.typeNew} t={t} /> : null}
       <SettingNote>{t("tagNote")}</SettingNote>
       {model.notOnServer ? <SettingNote>{model.notOnServer}</SettingNote> : null}

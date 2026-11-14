@@ -7,10 +7,12 @@
 import { useContext, useState, type KeyboardEvent } from "react";
 import { KeyHelp } from "@ohmail/ui/base";
 import { KeymapContext, SCROLL_KEYS, useKeyBindings, type BoundKey } from "@ohmail/app-logic/keys";
-import { useFrame } from "../../frame/commands.js";
+import { useFrame, usePaletteOffers } from "../../frame/commands.js";
 import type { OverProps } from "../../frame/contract.js";
 import { useText } from "../../text/index.js";
 import { sheetColumns } from "./rows.js";
+
+const SHEET_CHORD = "?";
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set([
   "Shift",
@@ -37,6 +39,7 @@ function keepsTheSheet(e: KeyboardEvent<HTMLDivElement>): boolean {
 
 export function KeySheet({ open, onClose }: OverProps) {
   const t = useText("shortcuts");
+  const trash = useText("trash");
   const store = useContext(KeymapContext);
   if (!store) throw new Error("the key sheet stands only under a <KeymapProvider>");
   const { commands, over } = useFrame();
@@ -50,7 +53,7 @@ export function KeySheet({ open, onClose }: OverProps) {
   useKeyBindings(
     [
       {
-        chord: "?",
+        chord: SHEET_CHORD,
         group: "app",
         label: t("sheet"),
         inWriting: true,
@@ -58,6 +61,20 @@ export function KeySheet({ open, onClose }: OverProps) {
       },
     ],
     "global",
+  );
+
+  usePaletteOffers(
+    "mail",
+    [
+      {
+        id: "mail.shortcuts",
+        label: t("title"),
+        icon: "key",
+        chord: SHEET_CHORD,
+        run: () => store.press(SHEET_CHORD),
+      },
+    ],
+    false,
   );
 
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -73,7 +90,8 @@ export function KeySheet({ open, onClose }: OverProps) {
       onClose={onClose}
       title={t("title")}
       close={t("close")}
-      columns={open ? sheetColumns(bindings, store.mod, t) : []}
+      initialFocus="close"
+      columns={open ? sheetColumns(bindings, store.mod, t, trash) : []}
       onKey={onKey}
     />
   );

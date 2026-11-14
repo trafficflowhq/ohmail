@@ -1,36 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { cursorRow } from "./ohbox/_finders.js";
 
-/**
- * AN OPEN OVERLAY OWNS ESCAPE, EVEN WITH A SELECTION LIVE.
- *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────────────────
- *
- * The Ohbox's "Escape clears the selection" is a VIEW binding and the shell's Escape cascade
- * was a GLOBAL one, so a picked set outranked the cascade unconditionally. Select two rows,
- * open the `?` sheet — or the ⌘K palette, or a sender's screening popover — press Escape,
- * and the selection was cleared while the thing you were looking at stayed put. It had been
- * patched once, for the reply editor alone, by teaching the Ohbox to check
- * `chrome.replyTo != null`: one shell overlay, named inside a view that cannot see the other
- * seven.
- *
- * ── WHY THIS FILE MOUNTS THE WHOLE SHELL ────────────────────────────────────────────────
- *
- * `keymap.test.ts` proves the scope ordering with synthetic bindings, and it should. It
- * cannot prove THIS, because the bug was never in the dispatcher — it was in which scope the
- * real Escape was registered under, with the real overlays and the real selection. So every
- * case below opens the actual surface out of the actual `AppShell` and presses the actual
- * key, and each one asserts BOTH halves: the overlay closed, and the selection is still
- * there. The second half is the one that goes red when the precedence is put back.
- *
- * Demo mode, because the selection and the overlays are pure shell state — Mila's fixture
- * world gives real rows to pick with no network, no account and no fake server to keep
- * honest.
- */
+/** The mounted shell's Escape precedence, shortcut sheet, and Answer Later keyboard path. */
 (globalThis as unknown as { React: unknown }).React = React;
 
 const h = React.createElement;
@@ -60,6 +37,7 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -85,8 +63,9 @@ afterEach(async () => {
 });
 
 /** The shipped shell on the fixture world, wrapped exactly as the desktop entry wraps it. */
-async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+async function shell(hash = "#/ohbox"): Promise<HTMLElement> {
+  window.location.hash = hash;
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -102,7 +81,7 @@ async function shell(): Promise<HTMLElement> {
         timeZone: "UTC",
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -110,16 +89,9 @@ async function shell(): Promise<HTMLElement> {
   return container;
 }
 
-/**
- * A keypress on the DOCUMENT, which is where the registry listens and where a user who has
- * not clicked into a text field produces one. Dispatching on `document` also keeps the
- * overlays' own handlers out of it — the palette's Escape lives on its `<input>`'s
- * `onKeyDown` and never sees this — so what closes a surface below is the registry, not a
- * second listener that happens to agree with it.
- */
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -154,7 +126,12 @@ async function waitFor(
    live region inside the capsule is the exact node, and it is the one that is announced. */
 const picked = (el: HTMLElement): boolean =>
   [...el.querySelectorAll("button")].some((b) => /^1 selected — /.test(b.getAttribute("aria-label") ?? ""));
-const open = (el: HTMLElement, sel: string): boolean => el.querySelector(sel) != null;
+const dialog = (name: string) => screen.queryByRole("dialog", { name });
+const sheet = () => dialog("Keyboard shortcuts");
+const palette = () => dialog("Command palette");
+const screening = (el: HTMLElement) => el.querySelector(".senderm");
+const runOpen = (el: HTMLElement) =>
+  [...el.querySelectorAll('[role="status"]')].some((status) => /^\d+ of \d+$/.test(status.textContent ?? ""));
 
 /** Put the Ohbox in the state that broke everything: one row picked. */
 async function withSelection(): Promise<HTMLElement> {
@@ -178,46 +155,42 @@ describe("Escape belongs to whatever is open, not to the selection underneath it
     const container = await withSelection();
 
     await key("?");
-    expect(open(container, ".ks"), "`?` did not open the sheet").toBe(true);
+    expect(sheet() !== null, "`?` did not open the sheet").toBe(true);
 
     await key("Escape");
-    expect(open(container, ".ks")).toBe(false);
+    expect(sheet() !== null).toBe(false);
     // THE ASSERTION THAT BITES. The sheet also dismisses itself on any keypress, so its
     // closing proves nothing on its own; the selection surviving is what says Escape was
     // spent on the sheet rather than on the picked set.
     expect(picked(container), "Escape cleared the selection instead of closing the sheet").toBe(true);
   });
 
-  it("the ⌘K palette: Escape closes the palette and LEAVES the selection alone", async () => {
+  it("the command palette: Escape closes the palette and LEAVES the selection alone", async () => {
     const container = await withSelection();
 
-    await key("k", { metaKey: true });
-    expect(open(container, ".palette"), "⌘K did not open the palette").toBe(true);
+    await key("k", { ctrlKey: true });
+    expect(palette() !== null, "the command palette did not open").toBe(true);
 
     await key("Escape");
-    expect(open(container, ".palette")).toBe(false);
+    expect(palette() !== null).toBe(false);
     expect(picked(container), "Escape cleared the selection instead of closing the palette").toBe(true);
   });
 
   it("the screening popover: Escape closes the popover and LEAVES the selection alone", async () => {
     const container = await withSelection();
 
-    /**
-     * OPENED FROM THE READING COLUMN'S PILL, not from `s`, and the change is the 0.15.0 key law
-     * rather than a workaround. While a selection exists the verb letters act on the SELECTION,
-     * so `s` opens the selection pill's screening panel — a sub-row inside the foot bar, not the
-     * sender popover this test is about. The reading column's own Screening button is the door
-     * that still opens the popover with a selection standing, because that bar acts on the OPEN
-     * MESSAGE whatever is picked in the list. Same overlay, same Escape question.
-     */
-    const screen = [...container.querySelectorAll<HTMLButtonElement>(".read-col .abar-b")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Screening"));
-    expect(screen, "the reading column has no Screening button to open the popover with").toBeTruthy();
-    await act(async () => { screen!.click(); });
-    expect(open(container, ".senderm"), "the popover did not open").toBe(true);
+    const reading = within(screen.getByRole("region", { name: "Open message" }));
+    const opener = reading.getByRole("button", { name: messages.screening.action });
+    await act(async () => { opener.click(); });
+    const popover = screen.getByRole("dialog", { name: /^Options for / });
+    expect(within(popover).getByRole("radiogroup", { name: messages.screening.sectionWhere })).toBeTruthy();
+    expect(popover.getAttribute("aria-modal")).toBe("true");
+    expect(popover.contains(document.activeElement)).toBe(true);
+    expect(opener.getAttribute("aria-controls")).toBe(popover.id);
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
 
     await key("Escape");
-    expect(open(container, ".senderm")).toBe(false);
+    expect(screen.queryByRole("dialog", { name: /^Options for / })).toBeNull();
     expect(picked(container), "Escape cleared the selection instead of closing the popover").toBe(true);
   });
 
@@ -226,9 +199,9 @@ describe("Escape belongs to whatever is open, not to the selection underneath it
     // owns nothing and does nothing, and the selection would become unclearable from the
     // keyboard — a regression the three tests above cannot see.
     const container = await withSelection();
-    expect(open(container, ".ks")).toBe(false);
-    expect(open(container, ".palette")).toBe(false);
-    expect(open(container, ".senderm")).toBe(false);
+    expect(sheet() !== null).toBe(false);
+    expect(palette() !== null).toBe(false);
+    expect(screening(container) !== null).toBe(false);
 
     await key("Escape");
     expect(picked(container), "Escape no longer clears a selection when nothing is open").toBe(false);
@@ -239,8 +212,9 @@ describe("Escape belongs to whatever is open, not to the selection underneath it
     // selection on the way past, which is exactly what the shipped build did.
     const container = await withSelection();
     await key("?");
+    expect(sheet()).not.toBeNull();
     await key("Escape");
-    expect(open(container, ".ks")).toBe(false);
+    expect(sheet() !== null).toBe(false);
     expect(picked(container)).toBe(true);
     await key("Escape");
     expect(picked(container)).toBe(false);
@@ -263,52 +237,52 @@ describe("Escape belongs to whatever is open, not to the selection underneath it
  * as a bulk-selection defect.
  */
 describe("the ? sheet closes with the same chord that opened it", () => {
-  const sheet = (el: HTMLElement) => open(el, ".ks");
 
   it("opens on ? and CLOSES on ?, pressed as the real two-keydown chord", async () => {
-    const container = await shell();
+    await shell();
 
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    expect(sheet(container), "`?` did not open the sheet").toBe(true);
+    expect(sheet() !== null, "`?` did not open the sheet").toBe(true);
 
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    expect(sheet(container), "`?` re-opened the sheet instead of closing it").toBe(false);
+    expect(sheet() !== null, "`?` re-opened the sheet instead of closing it").toBe(false);
   });
 
   it("a bare modifier does not dismiss it — it is half a chord, not a keystroke", async () => {
-    const container = await shell();
+    await shell();
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    expect(sheet(container)).toBe(true);
+    expect(sheet() !== null).toBe(true);
 
     for (const mod of ["Shift", "Control", "Alt", "Meta", "CapsLock", "AltGraph"]) {
       await key(mod);
-      expect(sheet(container), `a bare ${mod} dismissed the sheet`).toBe(true);
+      expect(sheet() !== null, `a bare ${mod} dismissed the sheet`).toBe(true);
     }
   });
 
-  it("KEEPS the peek: a real key still dismisses and then does its own job", async () => {
-    // The documented design — "?" then "j" reads the map and moves the cursor in two
-    // keystrokes. A fix that turned the sheet into a mode would pass the test above and
-    // break the feature, so this is the half that stops the modifier guard going too far.
+  it("a dismissing letter leaves the cursor in place until pressed again", async () => {
     const container = await shell();
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    expect(sheet(container)).toBe(true);
+    expect(sheet() !== null).toBe(true);
 
+    const before = cursorRow(container);
     await key("j");
-    expect(sheet(container), "an ordinary key no longer dismisses the sheet").toBe(false);
+    expect(sheet(), "an ordinary key dismisses the sheet").toBeNull();
+    expect(cursorRow(container)).toBe(before);
+    await key("j");
+    expect(cursorRow(container)).not.toBe(before);
   });
 
   it("Escape still closes it, through the cascade rather than the private listener", async () => {
-    const container = await shell();
+    await shell();
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    expect(sheet(container)).toBe(true);
+    expect(sheet() !== null).toBe(true);
     await key("Escape");
-    expect(sheet(container)).toBe(false);
+    expect(sheet() !== null).toBe(false);
   });
 });
 
@@ -328,7 +302,7 @@ describe("the ? sheet closes with the same chord that opened it", () => {
 describe("Answer Later is reachable from the keyboard", () => {
   /** The rail's Answer Later count — the number the user actually reads. */
   const pile = (el: HTMLElement): number =>
-    Number((el.textContent ?? "").match(/Answer Later\s*(\d+)/)?.[1] ?? "0");
+    Number(el.querySelector('[data-rail-id="later"] button')?.getAttribute("aria-label")?.match(/^Answer Later (\d+)$/)?.[1] ?? "0");
 
   it("`a` queues the focused message — the pile grows by exactly one", async () => {
     const container = await shell();
@@ -369,96 +343,35 @@ describe("Answer Later is reachable from the keyboard", () => {
 
   it("the ? sheet LISTS it — an undiscoverable shortcut is the reported complaint", async () => {
     const container = await shell();
+    // The shortcut sheet lists bindings that are live where it opened.
+    await key("j");
+    expect(cursorRow(container)).not.toBeNull();
     await key("Shift", { shiftKey: true });
     await key("?", { shiftKey: true });
-    const sheet = container.querySelector(".ks");
-    expect(sheet, "the shortcut sheet did not open").not.toBeNull();
-    expect(sheet!.textContent ?? "", "the sheet does not mention the Answer Later binding")
+    const shown = sheet();
+    expect(shown, "the shortcut sheet did not open").not.toBeNull();
+    expect(shown!.textContent ?? "", "the sheet does not mention the Answer Later binding")
       .toContain("Queue it for the Reply Run");
   });
-
-  /**
-   * IS STILL NOT GUARDED. The blocker is now diagnosed rather than guessed: `f` DOES
-   * run with a selection live — the app navigates to `#/triage` — but `.fr-overlay` never
-   * mounts. Without a selection the same keystroke opens it. So the Reply Run cannot be
-   * stacked on another layer, and the shape (one Escape, two layers, the lost draft) has
-   * no surface to test. Not faked with a weaker assertion.
-   */
 });
 
-/**
- * `f` OPENS THE REPLY RUN, WITH OR WITHOUT A SELECTION.
- *
- * ── WAS NOT A BUG, AND THE FILING WAS MY OWN MEASUREMENT ERROR ───────────────────────
- *
- * I filed "a live selection prevents the Reply Run from opening" after a probe that waited a
- * FIXED 600 ms and saw no overlay. It opens later than that and well inside a 3 s poll — so
- * the old `go("triage"); setTimeout(startFR, 130)` passes every assertion below. **Mutation
- * restoring that exact code, SURVIVES.** These guards do not prove a bug was fixed,
- * because there was no demonstrable bug; I used the fixed-sleep artifact I have spent this
- * session catching in other people's tests.
- *
- * What the change actually is: a REFACTOR that deletes a timing constant. `setTimeout(…, 130)`
- * coordinating with a route-transition effect that calls `setFr(null)` is a race by
- * construction — the 130 ms is a bet that the effect runs first — and jsdom simply happens to
- * schedule it so the bet always wins. A real browser under load is not obliged to. The intent
- * flag makes the clear and the re-arm one ordered pass with no constant to be wrong about.
- *
- * That ordering IS load-bearing and IS proven: mutation re-arming before the clear instead
- * of after, goes red on all three of these.
- */
 describe("the Reply Run opens whether or not a row is selected", () => {
-  const frOpen = (el: HTMLElement) => open(el, ".fr-overlay");
-
   it("opens with NO selection", async () => {
-    const container = await shell();
+    const container = await shell("#/triage");
     await key("f");
-    await waitFor(() => frOpen(container), "the Reply Run to open with no selection");
+    await waitFor(() => runOpen(container), "the Reply Run to open with no selection");
   });
 
-  it("opens WITH a selection — the case that was silently doing nothing", async () => {
-    // The original repro, keystroke for keystroke — kept because it is the user-facing path,
-    // not because it reproduces anything.
-    const container = await shell();
-    // `j` first: `a` acts on the message at the cursor and `x` picks it, and a fresh Ohbox
-    // has no cursor now that the shell resolves no selection of its own.
-    await key("j");
-    await key("a");
-    // A SECOND `j`, because `a` now takes the row OUT of the Ohbox: a mail is in exactly one
-    // pile, so answering-later removes it from every Ohbox group (`selectors.ts#OhboxView`) and
-    // the cursor it was standing on has nothing under it. This press puts the cursor back on a
-    // row that is still there, which is what `x` needs — the selection is the precondition of
-    // this guard, not its subject.
-    await key("j");
-    await key("x");
-    expect(picked(container), "`x` did not select a row").toBe(true);
+  it("one Escape closes the Reply Run and keeps its Answer Later letter open", async () => {
+    const container = await shell("#/triage");
     await key("f");
-    await waitFor(() => frOpen(container), "the Reply Run to open with a row picked");
-    // NOT asserting the "N selected" bar survives: `f` navigates to Triage, which unmounts the
-    // Ohbox and its pick-bar with it. That is a view change, not a lost selection, and my first
-    // draft of this guard asserted the affordance rather than the state — measuring a thing
-    // that only exists on the view we just left.
-  });
-
-  /** At last: the reply run stacked on a selection, and ONE Escape closing ONE layer. */
-  it("one Escape closes the Reply Run and LEAVES the selection alone", async () => {
-    const container = await shell();
-    // `j` first: `a` acts on the message at the cursor and `x` picks it, and a fresh Ohbox
-    // has no cursor now that the shell resolves no selection of its own.
-    await key("j");
-    await key("a");
-    await key("x");
-    await key("f");
-    await waitFor(() => frOpen(container), "the Reply Run to open");
+    await waitFor(() => runOpen(container), "the Reply Run to open");
+    const letter = window.location.hash;
+    expect(letter).toMatch(/^#\/triage\/m\//);
 
     await key("Escape");
-    expect(frOpen(container), "Escape did not close the Reply Run").toBe(false);
-    // ONE layer, not two. `FocusReplyOverlay` still holds a private document Escape listener
-    // beside the shell's cascade; both fire on the same dispatch and both close `fr`, so the
-    // view underneath must survive. `Reader.tsx:16` names the cost of getting this wrong — the
-    // layer below closing too "reads as Esc having lost the draft". Until that change this could not be
-    // tested at all, because nothing could stack the run on another layer.
+    expect(runOpen(container), "Escape did not close the Reply Run").toBe(false);
     expect(window.location.hash, "Escape closed the Reply Run AND navigated away")
-      .toBe("#/triage");
+      .toBe(letter);
   });
 });

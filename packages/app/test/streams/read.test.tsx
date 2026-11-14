@@ -5,19 +5,18 @@
  * file's.
  */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { letter, mountStream, said, streamInput, type StreamSaid } from "./world.js";
 
 const ITEM = 300;
 const VIEW = 600;
 const LETTERS = Array.from({ length: 8 }, (_, i) => letter(`n${i}`, { subject: `Issue ${i}`, unread: true }));
 
-function layOut(): HTMLElement {
+function layOut(count = LETTERS.length): HTMLElement {
   const stream = screen.getByRole("region", { name: "News stream" });
   const scroller = stream.querySelector<HTMLElement>(".oh-sheet-scroll")!;
-  const items = [...scroller.querySelectorAll<HTMLElement>("[data-stream-item]")];
   Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => VIEW });
-  Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => items.length * ITEM });
+  Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => count * ITEM });
   scroller.getBoundingClientRect = () => ({
     top: 0,
     bottom: VIEW,
@@ -29,20 +28,22 @@ function layOut(): HTMLElement {
     y: 0,
     toJSON: () => ({}),
   });
-  items.forEach((el, i) => {
-    el.getBoundingClientRect = () => {
-      const top = i * ITEM - scroller.scrollTop;
-      return {
-        top,
-        bottom: top + ITEM,
-        left: 0,
-        right: 600,
-        width: 600,
-        height: ITEM,
-        x: 0,
-        y: top,
-        toJSON: () => ({}),
-      };
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const id = this.dataset.streamItem ?? this.dataset.streamWindowItem;
+    if (!id || !scroller.contains(this)) return rect.call(this);
+    const i = LETTERS.findIndex((letter) => letter.id === id);
+    const top = i * ITEM - scroller.scrollTop;
+    return {
+      top,
+      bottom: top + ITEM,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: ITEM,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
     };
   });
   return scroller;
@@ -86,6 +87,7 @@ afterEach(() => {
   cleanup();
   delete (document as { visibilityState?: unknown }).visibilityState;
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 const written = () => s.seen.flat();
@@ -99,11 +101,38 @@ describe("News is read by scrolling through it", () => {
     expect(written()).toEqual([]);
   });
 
+  it.each([
+    ["horizontal wheel", { deltaX: 120, deltaY: 0 }],
+    ["upward wheel at the head", { deltaY: -120 }],
+  ])("writes nothing after a %s on a stationary overflowing stream", (_gesture, delta) => {
+    mountStream({ place: "news", input: streamInput(LETTERS, s) });
+    const scroller = layOut();
+    firstFrame(scroller);
+    fireEvent.wheel(scroller, delta);
+    act(() => void vi.advanceTimersByTime(2_000));
+    expect(scroller.scrollTop).toBe(0);
+    expect(written()).toEqual([]);
+  });
+
+  it("an arrival cannot earn the rest after a stationary wheel", () => {
+    const { repile } = mountStream({ place: "news", input: streamInput(LETTERS, s) });
+    const scroller = layOut(LETTERS.length + 1);
+    firstFrame(scroller);
+    fireEvent.wheel(scroller, { deltaY: -120 });
+    repile([...LETTERS, letter("arrival", { unread: true })]);
+    nextFrame();
+    act(() => void vi.advanceTimersByTime(2_000));
+    expect(scroller.scrollTop).toBe(0);
+    expect(written()).toEqual([]);
+  });
+
   it("reads at once what a hand carries past, and the item it rests on after 0.6 s, not before", () => {
     mountStream({ place: "news", input: streamInput(LETTERS, s) });
     const scroller = layOut();
+    firstFrame(scroller);
     fireEvent.wheel(scroller, { deltaY: 120 });
     scrollTo(scroller, 400);
+    nextFrame();
     expect(written()).toEqual(["n0"]);
     act(() => void vi.advanceTimersByTime(599));
     expect(written()).toEqual(["n0"]);
@@ -123,7 +152,7 @@ describe("News is read by scrolling through it", () => {
 
   it("reads a stream that fits whole on a wheel step, and not on an arrow key", () => {
     mountStream({ place: "news", input: streamInput(LETTERS.slice(0, 2), s) });
-    const scroller = layOut();
+    const scroller = layOut(2);
     // The arrow steps the stream: its landing scrolls.
     scroller.scrollTo = ((o: ScrollToOptions) => scrollTo(scroller, o.top ?? 0)) as typeof scroller.scrollTo;
     fireEvent.keyDown(scroller, { key: "ArrowDown" });
@@ -135,8 +164,10 @@ describe("News is read by scrolling through it", () => {
   it("writes nothing more at the rest when the tab turns hidden inside the 0.6 s", () => {
     mountStream({ place: "news", input: streamInput(LETTERS, s) });
     const scroller = layOut();
+    firstFrame(scroller);
     fireEvent.wheel(scroller, { deltaY: 120 });
     scrollTo(scroller, 400);
+    nextFrame();
     expect(written()).toEqual(["n0"]);
     hideTab();
     act(() => void vi.advanceTimersByTime(2000));
@@ -145,7 +176,7 @@ describe("News is read by scrolling through it", () => {
 
   it("writes nothing on a wheel step over a stream that fits whole while the tab is hidden", () => {
     mountStream({ place: "news", input: streamInput(LETTERS.slice(0, 2), s) });
-    const scroller = layOut();
+    const scroller = layOut(2);
     hideTab();
     fireEvent.wheel(scroller, { deltaY: 40 });
     act(() => void vi.advanceTimersByTime(2000));
@@ -155,8 +186,10 @@ describe("News is read by scrolling through it", () => {
   it("holds a letter marked unread: a later scroll and rest leave it unread", () => {
     const { repile, view } = mountStream({ place: "news", input: streamInput(LETTERS, s) });
     const scroller = layOut();
+    firstFrame(scroller);
     fireEvent.wheel(scroller, { deltaY: 120 });
     scrollTo(scroller, 400);
+    nextFrame();
     expect(written()).toEqual(["n0"]);
     // The engine says n0 is read; then the panel marks it unread again.
     repile(LETTERS.map((m) => (m.id === "n0" ? { ...m, unread: false } : m)));
@@ -169,7 +202,8 @@ describe("News is read by scrolling through it", () => {
     expect(written().filter((id) => id === "n0")).toEqual(["n0"]);
     // Nor does the leave flip it.
     view.unmount();
-    expect(s.leaves.at(-1)?.messageIds ?? []).not.toContain("n0");
+    expect(s.leaves).toHaveLength(1);
+    expect(s.leaves[0]!.messageIds).not.toContain("n0");
   });
 
   it("moves the waterline on leaving, once, and only after a hand drove the stream", () => {
@@ -190,6 +224,24 @@ describe("News is read by scrolling through it", () => {
     expect(s.leaves[0]!.messageIds).toEqual(["n0"]);
   });
 
+  it("a link to an item is a preview: the stream lands on it and reads nothing, not at the landing, not at rest", () => {
+    /* jsdom scrolls nothing: the landing at the mount stands where the case lays it out. */
+    const was = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function () {} as typeof was;
+    onTestFinished(() => {
+      HTMLElement.prototype.scrollTo = was;
+    });
+    mountStream({ place: "news", input: streamInput(LETTERS, s, { fresh: 8 }), open: "n2" });
+    const scroller = layOut();
+    scroller.scrollTo = ((o: ScrollToOptions) => scrollTo(scroller, o.top ?? 0)) as typeof scroller.scrollTo;
+    firstFrame(scroller);
+    for (let i = 0; i < 5; i += 1) nextFrame();
+    scrollTo(scroller, 2 * ITEM);
+    nextFrame();
+    act(() => void vi.advanceTimersByTime(2000));
+    expect(written()).toEqual([]);
+  });
+
   it("starts the leave's run where a far landing rests: what the landing carried past was never displayed", () => {
     const { view, address } = mountStream({ place: "news", input: streamInput(LETTERS, s, { fresh: 8 }) });
     const scroller = layOut();
@@ -197,6 +249,7 @@ describe("News is read by scrolling through it", () => {
     firstFrame(scroller);
     act(() => address.write("#/reads/m/n6", "push"));
     for (let i = 0; i < 5; i += 1) nextFrame();
+    expect(scroller.scrollTop).toBe(6 * ITEM - 14);
     fireEvent.wheel(scroller, { deltaY: 40 });
     scrollTo(scroller, 1800);
     nextFrame();

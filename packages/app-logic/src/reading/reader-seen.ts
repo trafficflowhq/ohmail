@@ -8,6 +8,7 @@ import {
 } from "@ohmail/client-engine";
 import { cssRect } from "../geometry/index.js";
 import { SCROLL_KEYS } from "../keys/index.js";
+import { useStableCallback } from "../press/stable-callback.js";
 import { pageModal } from "../session/modal-gate.js";
 import { stampLive } from "../session/programmatic-scroll.js";
 import type { ThreadWalkChannel } from "./thread-walk-channel.js";
@@ -202,7 +203,7 @@ export function panelsOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_D
 }
 
 /** The scroller's visible box, its bottom above the sticky action bar or the reply dock. */
-export function viewOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_DOM): ThreadView {
+export function viewOf(scroller: HTMLElement, names: Pick<ThreadDomNames, "stops" | "stopsRoot"> = THREAD_DOM): ThreadView {
   const top = cssRect(scroller).top;
   let bottom = top + scroller.clientHeight;
   const root = names.stopsRoot === undefined ? scroller : scroller.closest(names.stopsRoot);
@@ -537,11 +538,12 @@ export type ReaderMarkSeen = (ids: string[], unread: boolean, via?: "glance", re
  * THE VISIT OF A READER OFF THE OHBOX — Folder, History, a tag, the triage piles and the sheet over
  * them. One record per shown message, unentered until `enter` (an open, ↵, → into the column) or the
  * adapter's own press, wheel or hand scroll. `land` marks a visit a step key made (↓/↑, j/k): it is
- * entered once the cursor rests on it ({@link LANDING_REST_MS}). Any change of the shown id ends the
- * visit, its landing with it, and coming back starts over; an `enter` or a `land` for an id the next
- * commit does not show is dropped. Reads go out as glances naming the shown message as the row read
- * (`readRow`), so an Ohbox letter read here is an open read. A letter marked unread (a panel's ⋯, the
- * bar's `holdUnread`, or its own flag turning while shown) is held for the view's visit
+ * entered once the cursor rests on it ({@link LANDING_REST_MS}). A pending landing survives a delayed
+ * address until its letter is shown, a different letter replaces the one shown at the key press, or
+ * another landing takes its place. Leaving a shown letter ends its visit, and coming back starts over.
+ * An `enter` for an id the next commit does not show is dropped. Reads go out as glances naming the
+ * shown message as the row read (`readRow`), so an Ohbox letter read here is an open read. A letter
+ * marked unread (a panel's ⋯, the bar's `holdUnread`, or its own flag turning while shown) is held for the view's visit
  * ({@link UnreadHold}): neither a rest nor an arrow scroll (`keyScroll`) enters it again.
  */
 export function useReaderVisit({ shown, markSeen }: {
@@ -568,8 +570,15 @@ export function useReaderVisit({ shown, markSeen }: {
     records.current.set(id, r);
     return r;
   };
+  const pendingLanding = useRef<{ id: string; from: string | null } | null>(null);
   useEffect(() => {
-    for (const id of [...records.current.keys()]) if (id !== shownId) records.current.delete(id);
+    const landing = pendingLanding.current;
+    if (landing !== null && (shownId === landing.id || (shownId !== null && shownId !== landing.from))) {
+      pendingLanding.current = null;
+    }
+    for (const id of records.current.keys()) {
+      if (id !== shownId && id !== pendingLanding.current?.id) records.current.delete(id);
+    }
   });
   const enter = useCallback((id: string) => {
     const r = records.current.get(id) ?? createThreadRead();
@@ -579,13 +588,14 @@ export function useReaderVisit({ shown, markSeen }: {
     bump((n) => n + 1);
   }, []);
   const landings = useRef(new WeakSet<ThreadRead>());
-  const land = useCallback((id: string) => {
+  const land = useStableCallback((id: string) => {
+    pendingLanding.current = { id, from: shownId };
     const r = records.current.get(id) ?? createThreadRead();
     records.current.set(id, r);
     if (landings.current.has(r)) return;
     landings.current.add(r);
     bump((n) => n + 1);
-  }, []);
+  });
   /** ↑/↓ scrolled the column (`zone-nav`'s `onScrollKey`): entered, as a rested landing is, unless it shows a held letter. */
   const keyScroll = useCallback((id: string, scroller: HTMLElement | null) => {
     if (!hold.shows(scroller)) enter(id);

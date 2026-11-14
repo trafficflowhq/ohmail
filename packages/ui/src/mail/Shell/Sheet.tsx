@@ -5,6 +5,12 @@ import "./sheet.css";
 interface PaperProps {
   /** `plain`: a sheet. `list`: a column that is one sheet and cuts what scrolls in it. `wide`: a pane over two columns. */
   kind: "plain" | "list" | "wide";
+  /** This sheet owns scrolling and keeps room for the dock. */
+  scroll?: boolean;
+  /** Room at the head of a phone list, with extra clearance where the dock stands over its foot. */
+  phoneListPadding?: "top" | "dock";
+  /** A sheet that fills the rest of the pane and meets its bottom edge. */
+  flushBottom?: boolean;
   /** The column's name, where it is a region of the window. */
   label?: string;
   /** The column has the keyboard: the face that rings such a column draws its ring. */
@@ -15,6 +21,10 @@ interface PaperProps {
 interface ReadingProps {
   /** The reading column: every message a sheet of its own on the ground, under one head. */
   kind: "reading";
+  /** A modal has the controls while this sheet is still drawn. */
+  inert?: boolean;
+  /** The whole sheet, including its foot, for returning focus when it closes. */
+  ref?: Ref<HTMLDivElement>;
   label?: string;
   focused?: boolean;
   /**
@@ -26,14 +36,24 @@ interface ReadingProps {
   top?: ReactNode;
   /** What stands beside the sheets: a conversation's squares. A single letter has nothing there and starts at the edge. */
   gutter?: ReactNode;
-  /** What stays while the sheets scroll under it. */
+  /** The first content in the scroller. */
   head?: ReactNode;
+  /** A heading above the scrollport, kept visible while the sheets scroll. */
+  fixedHead?: ReactNode;
   /** What floats over the column's foot: the action panel. */
   foot?: ReactNode;
+  /** Align the action panel with the phone reading column's leading edge. */
+  flushFoot?: boolean;
   /** The way back to the column's start (`JumpBack`): it stands at the column's right corner, over the foot. */
   jump?: ReactNode;
   /** The box the sheets scroll in, handed out: the read rule and the way back read it. */
   scroller?: Ref<HTMLDivElement>;
+  /** Its name when the reader can reach the scroller as its own region. */
+  scrollLabel?: string;
+  /** The caller holds its own scroll position when the contents move. */
+  manualScrollAnchor?: boolean;
+  /** The Paper scroller can paint through the frame's top inset. */
+  extendTop?: boolean;
   /** The sheets, oldest first. */
   children?: ReactNode;
 }
@@ -62,16 +82,28 @@ export function Sheet(props: SheetProps) {
   const focused = props.focused ? "" : undefined;
   if (props.kind !== "reading") {
     return (
-      <div className="oh-sheet" data-kind={props.kind} data-focused={focused} {...region}>
+      <div
+        className="oh-sheet"
+        data-kind={props.kind}
+        data-phone-list-padding={props.phoneListPadding}
+        data-flush-bottom={props.flushBottom ? "" : undefined}
+        data-focused={focused}
+        data-scroll={props.scroll ? "" : undefined}
+        {...region}
+      >
         {props.children}
       </div>
     );
   }
-  const { back, top, gutter, head, foot, jump, scroller, children } = props;
+  const { back, top, gutter, head, fixedHead, foot, jump, scroller, scrollLabel, children } = props;
   return (
     <div
+      ref={props.ref}
+      inert={props.inert}
       className="oh-sheet"
       data-kind="reading"
+      data-flush-foot={props.flushFoot ? "" : undefined}
+      data-extend-top={props.extendTop ? "" : undefined}
       data-gutter={gutter ? "" : undefined}
       data-focused={focused}
       {...region}
@@ -92,9 +124,18 @@ export function Sheet(props: SheetProps) {
           {top}
         </div>
       ) : null}
+      {fixedHead ? <div className="oh-sheet-fixed-head">{fixedHead}</div> : null}
       <div className="oh-sheet-body">
         <div className="oh-sheet-gutter">{gutter}</div>
-        <div ref={scroller} className="oh-sheet-scroll" data-reading-scroll="" tabIndex={-1}>
+        <div
+          ref={scroller}
+          className="oh-sheet-scroll"
+          data-reading-scroll=""
+          role={scrollLabel ? "region" : undefined}
+          aria-label={scrollLabel}
+          data-manual-anchor={props.manualScrollAnchor ? "" : undefined}
+          tabIndex={-1}
+        >
           {head}
           <div className="oh-sheet-run">{children}</div>
         </div>

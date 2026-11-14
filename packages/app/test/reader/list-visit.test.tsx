@@ -50,7 +50,7 @@ describe("with the list's visit of the open letter", () => {
       open: "m1",
       meeting: { visit: withSet, blank: null },
     });
-    fireEvent.click(within(panel()).getByRole("button", { name: "Mark read" }));
+    fireEvent.click(within(panel()).getByRole("button", { name: "Mark 2 unread messages as read" }));
     expect(withSet.act).toHaveBeenCalledWith("unread");
     cleanup();
     mountReader({
@@ -59,6 +59,27 @@ describe("with the list's visit of the open letter", () => {
       meeting: { visit: visitOf("m1", []), blank: null },
     });
     expect(within(panel()).getByRole("button", { name: "Mark unread" })).toBeTruthy();
+  });
+
+  it("the read slot says how many letters its press marks read, where it marks more than the open one", () => {
+    const two = visitOf("m1", ["m1", "m0"]);
+    mountReader({
+      letters: [letter("m1", { unread: true })],
+      open: "m1",
+      meeting: { visit: two, blank: null },
+    });
+    const slot = within(panel()).getByRole("button", { name: "Mark 2 unread messages as read" });
+    expect(slot.textContent, "the word drawn stays the slot's").toContain("Mark read");
+    fireEvent.click(slot);
+    expect(two.act).toHaveBeenCalledWith("unread");
+    cleanup();
+    /* One letter: the slot's own word says it whole. */
+    mountReader({
+      letters: [letter("m1", { unread: true })],
+      open: "m1",
+      meeting: { visit: visitOf("m1", ["m1"]), blank: null },
+    });
+    expect(within(panel()).getByRole("button", { name: "Mark read" })).toBeTruthy();
   });
 
   it("on a letter that came back the panel offers no read slot: its read is its release, which the list's row offers", () => {

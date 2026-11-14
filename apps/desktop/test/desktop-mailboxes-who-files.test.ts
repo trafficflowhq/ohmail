@@ -4,6 +4,11 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider, createTranslator } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { getByRole, queryByRole, within } from "@testing-library/react";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { DesktopFrame } from "../src/DesktopFrame.js";
+import type { EngineStatus } from "../src/bridge-fetch.js";
+import { linkSlot } from "../src/link-in.js";
 
 import messages from "../../webapp/messages/en.json";
 import messagesDe from "../../webapp/messages/de.json";
@@ -27,6 +32,12 @@ const copy = (messages as unknown as { mailboxes: Record<string, string> }).mail
 const copyDe = (messagesDe as unknown as { mailboxes: Record<string, string> }).mailboxes;
 
 let FACTS: MailboxFacts[] | null = null;
+const refresh = vi.fn();
+const publishedStatus = vi.fn();
+const removeMailbox = vi.fn(async (_url: string, _method: string | undefined) => new Response(null, { status: 200 }));
+const signOut = vi.fn(async () => ({
+  status: { state: "not_configured", mode: null }, stillListedFrom: null, waiting: null,
+}));
 
 vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
   const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
@@ -39,7 +50,7 @@ vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
       mailboxes: FACTS,
       mirrored: 0,
       freshness: { state: "current" },
-      refresh: () => {},
+      refresh,
     }),
   };
 });
@@ -49,9 +60,11 @@ vi.mock("../src/bridge-fetch.js", async () => {
   const quiet = async () => new Response(null, { status: 202 });
   return {
     ...real,
-    bridgeFetch: quiet,
-    retryingBridgeFetch: quiet,
-    engineLogout: async () => ({ status: { state: "not_configured", mode: null }, stillListedFrom: null, waiting: null }),
+    bridgeFetch: (url: string, init?: RequestInit) => /^\/local\/mailboxes\/[^/]+$/.test(url)
+      ? removeMailbox(url, init?.method) : quiet(),
+    retryingBridgeFetch: async (url: string) => url === "/mailboxes" || url === "/mailboxes?counts=1"
+      ? Response.json({ items: FACTS ?? [] }) : quiet(),
+    engineLogout: () => signOut(),
   };
 });
 
@@ -78,32 +91,78 @@ const REFUSED: MailboxFacts = {
 
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
+let pane: HTMLElement | null = null;
 
 async function render(
-  props: { door: string; host?: string | null; flavor?: string | null },
+  props: { door: "local" | "cloud"; host?: string | null; flavor?: EngineStatus["flavor"] },
   locale: "en" | "de" = "en",
 ): Promise<string> {
-  const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+  window.history.replaceState(null, "", "#/settings/mailboxes");
+  const catalogue = locale === "en" ? messages : messagesDe;
+  const idle = () => undefined;
+  const engine = new OhmailEngine({ adapter: {
+    sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] },
+      cursor: "1", hasMore: false, serverTime: "2026-08-07T09:00:00.000Z" }),
+    mutate: async () => ({ changes: [], seq: null }),
+    withdrawSend: async () => ({ outcome: "unsupported" }),
+    fetchBody: async () => null,
+  } });
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
   await act(async () => {
     root!.render(h(
       IntlProvider,
-      { locale, messages: (locale === "en" ? messages : messagesDe) as never, timeZone: "UTC" } as never,
+      { locale, messages: catalogue as never, timeZone: "UTC" } as never,
       h(ThemeProvider, { storageKey: "ohmail.theme" } as never,
-        h(ToastHost, null, h(DesktopMailboxes, props as never))),
+        h(ToastHost, null, h(DesktopFrame, {
+          engine,
+          status: {
+            state: "serving", mode: props.door, mailboxId: ORGANIZING.id,
+            ...(props.flavor ? { flavor: props.flavor } : {}),
+          },
+          session: "live", sessionRefused: false, sealFailed: false,
+          paired: props.host != null, hostLabel: props.host ?? null, freshness: null, account: null,
+          storage: null, mayLinkOut: true, manageOffered: false, withdrawManage: idle,
+          rereadAccess: idle, reuseSweeps: [], recheckSweeps: async () => undefined,
+          ai: null, setAi: idle, onStatus: publishedStatus, openOverlay: idle, takeOver: idle,
+          firstRunOpen: false, firstRun: undefined, takesMailLinks: true, scope: ORGANIZING.id,
+          onUnread: idle, liveBody: async () => ({ kind: "refused", reason: "gone" } as const),
+          links: linkSlot(), connection: { read: () => null, subscribe: () => idle },
+        }))),
     ));
   });
-  return mountPoint.querySelector(".mbx-org")?.textContent ?? "";
+  pane = getByRole(mountPoint, "region", { name: catalogue.settings.mailboxes });
+  return pane.querySelector(".mbx-org")?.textContent ?? "";
 }
 
-beforeEach(() => { FACTS = null; });
+beforeEach(() => {
+  FACTS = null;
+  refresh.mockClear();
+  publishedStatus.mockClear();
+  removeMailbox.mockClear();
+  signOut.mockClear();
+});
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   mountPoint?.remove();
   root = null;
   mountPoint = null;
+  pane = null;
+  window.history.replaceState(null, "", "/");
+});
+
+it("an older engine without a door version still removes the mailbox", async () => {
+  FACTS = [ORGANIZING];
+  await render({ door: "local" });
+  const mailbox = within(pane!);
+  await act(async () => mailbox.getByRole("button", { name: copy.remove }).click());
+  const confirm = mailbox.getByRole("alertdialog", { name: copy.removeTitle!.replace("{address}", ORGANIZING.address) });
+  await act(async () => within(confirm).getByRole("button", { name: copy.removeConfirm }).click());
+  expect(removeMailbox.mock.calls).toEqual([[`/local/mailboxes/${ORGANIZING.id}`, "DELETE"]]);
+  expect(refresh).toHaveBeenCalled();
+  expect(signOut).not.toHaveBeenCalled();
+  expect(publishedStatus).not.toHaveBeenCalled();
 });
 
 describe("the desktop pane names who files the mailbox", () => {
@@ -140,16 +199,15 @@ describe("the desktop pane names who files the mailbox", () => {
   });
 
   it("a hosted or paired row offers no countermand: that door serves no takeover", async () => {
-    const organizeHere = (): HTMLButtonElement | undefined => [...mountPoint!.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim() === copy.organizeHere);
+    const organizeHere = () => queryByRole(pane!, "button", { name: copy.organizeHere });
     FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
     await render({ door: "local" });
-    expect(organizeHere(), "CONTROL — the standalone door lost its countermand").toBeDefined();
+    expect(organizeHere(), "CONTROL — the standalone door lost its countermand").not.toBeNull();
     await act(async () => { root!.unmount(); });
     mountPoint?.remove();
-    for (const props of [{ door: "cloud", flavor: "managed" }, { door: "cloud", host: "studio" }]) {
+    for (const props of [{ door: "cloud", flavor: "managed" }, { door: "cloud", host: "studio" }] as const) {
       const said = await render(props);
-      expect(organizeHere(), `${JSON.stringify(props)} offers a press its door cannot serve`).toBeUndefined();
+      expect(organizeHere(), `${JSON.stringify(props)} offers a press its door cannot serve`).toBeNull();
       expect(said, "the hosted row says this computer keeps organizing").not.toMatch(/this computer/i);
       await act(async () => { root!.unmount(); });
       mountPoint?.remove();
@@ -168,10 +226,10 @@ describe("the desktop pane names who files the mailbox", () => {
 describe("the desktop pane's heading names the door, never ohmail Cloud for a server or a computer", () => {
   /* The heading said "Cloud mailboxes" on every hosted door, a self-hosted server's and a paired
      computer's included. The local and managed doors are the controls and keep their words. */
-  const heading = (): string => mountPoint?.querySelector("h2")?.textContent ?? "";
+  const heading = (): string => getByRole(pane!, "heading", { level: 2 }).textContent ?? "";
   /* Text node by node: `textContent` fuses a label and the sentence after it into one word. */
   const said = (): string => {
-    const walker = document.createTreeWalker(mountPoint!, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(pane!, NodeFilter.SHOW_TEXT);
     const parts: string[] = [];
     while (walker.nextNode()) parts.push(walker.currentNode.textContent ?? "");
     return parts.join(" ");
@@ -241,7 +299,7 @@ describe("a mailbox whose new mail is not being fetched, in the desktop window",
   /** The time as the pane says it, through the pane's own formatter and register. */
   const stamp = (): string => waterlineStamp(SINCE, new Date(), activeFormatLocale());
   const LATE: MailboxFacts = { ...ORGANIZING, lastSyncAt: SINCE, fetching: { behind: true, since: SINCE } };
-  const text = (): string => mountPoint?.textContent ?? "";
+  const text = (): string => pane?.textContent ?? "";
   /** The healthy lines' own words, whatever time follows them. */
   const lastChecked = (locale: "en" | "de"): string => said[locale]("desktopLastChecked", { when: "" }).trim();
   const unmountNow = async (): Promise<void> => {
@@ -263,7 +321,7 @@ describe("a mailbox whose new mail is not being fetched, in the desktop window",
     expect(text()).toContain(said.en("notCheckedNoteCloud", { hasSince: "yes", since: stamp() }));
     // Said once on the row: its line carries it, and no state word repeats it beside.
     expect(text().split(said.en("notChecked", { hasSince: "no", since: "" })).length - 1).toBe(1);
-    expect(mountPoint!.querySelectorAll('[role="group"] [role="status"]'), "an empty state cell was drawn").toHaveLength(0);
+    expect(pane!.querySelectorAll('[role="group"] [role="status"]'), "an empty state cell was drawn").toHaveLength(0);
   });
 
   it("with no time on record it says so without one", async () => {

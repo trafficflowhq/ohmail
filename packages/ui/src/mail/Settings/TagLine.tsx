@@ -90,8 +90,12 @@ export function TagLine(props: TagLineProps) {
   const keys = (event: KeyboardEvent<HTMLDivElement>) => {
     /* A word still being composed (an input method) ends with Enter: that Enter is the word's, not the line's. */
     if ((event.target as Element).tagName !== "INPUT" || event.nativeEvent.isComposing) return;
-    if (event.key === "Enter") field.onEnter?.();
-    else if (event.key === "Escape" && field.onEscape) {
+    if (event.key === "Enter" && field.onEnter) {
+      // Saving returns focus to Rename. This Enter belongs to the field.
+      event.preventDefault();
+      event.stopPropagation();
+      field.onEnter();
+    } else if (event.key === "Escape" && field.onEscape) {
       event.stopPropagation();
       field.onEscape();
     }

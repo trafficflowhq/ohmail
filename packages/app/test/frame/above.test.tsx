@@ -1,16 +1,14 @@
 /** @vitest-environment jsdom */
 /**
- * WHAT STANDS ABOVE THE PANES, AND THE BODY THAT STAYS. A host may stand one component above every pane
- * (`features.above`): it is mounted once per mounted frame, under the scope, and no walk between places mounts it
- * again. A place may keep its wide body mounted while a place of another body is on screen, and a part of the shell
- * may ask for that body over whatever place the address names. A place of two columns may stand a component of its
- * own above both of them, and nothing else.
+ * WHAT STANDS ABOVE THE PANES. A host may stand one component above every pane (`features.above`): it is mounted
+ * once per mounted frame, under the scope, and no walk between places mounts it again. A wide body is mounted with its
+ * place and unmounted when the place is left. A place of two columns may stand a component of its own above both of
+ * them, and nothing else.
  */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Frame } from "../../src/frame/Frame.js";
-import { useKeptPane } from "../../src/frame/commands.js";
 import type { FramePlaces, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeHost, NO_ENGINE, type FakeHostInput } from "../support/fake-host.js";
@@ -38,24 +36,19 @@ function Above({ children }: { children: ReactNode }) {
   return <FromAbove.Provider value="the shell above">{children}</FromAbove.Provider>;
 }
 
-/** Whether a part of the shell asks for the kept body now: a test sets it. */
-const asked = { set: (_: boolean): void => undefined };
 function Today({ route, keysHere }: PaneProps) {
   useCounted("today");
-  const [over, setOver] = useState(false);
-  asked.set = setOver;
-  useKeptPane(over);
   return (
     <p>
       today at {route.place}, under {useContext(FromAbove)}, keys {keysHere ? "here" : "away"}
     </p>
   );
 }
-const today = (id: PlaceEntry["id"], kept: boolean): PlaceEntry => ({
+const today = (id: PlaceEntry["id"]): PlaceEntry => ({
   id,
   body: "today",
   rail: null,
-  panes: kept ? { kind: "wide", Wide: Today, kept: true } : { kind: "wide", Wide: Today },
+  panes: { kind: "wide", Wide: Today },
 });
 
 function Elsewhere(_: PaneProps) {
@@ -106,7 +99,6 @@ function frameOf(input: Partial<FakeHostInput> & { places: Partial<FramePlaces> 
 }
 const visit = (address: FakeAddress, to: string) => act(() => address.visit(to));
 const rail = () => screen.getByRole("navigation", { name: "Places" });
-const main = () => screen.getByRole("main");
 
 beforeEach(() => {
   for (const part of Object.keys(mounts)) delete mounts[part];
@@ -117,7 +109,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("what a host stands above every pane", () => {
-  const places = { ohbox: ohbox(false), news: today("news", true), search: elsewhere };
+  const places = { ohbox: ohbox(false), news: today("news"), search: elsewhere };
 
   it("is mounted once under the scope, and a walk over three places of three bodies mounts neither it nor the rail again", () => {
     const address = fakeAddress("#/ohbox");
@@ -159,57 +151,10 @@ describe("what a host stands above every pane", () => {
   });
 });
 
-describe("the body a place keeps", () => {
-  const places = {
-    ohbox: ohbox(false),
-    news: today("news", true),
-    later: today("later", true),
-    search: elsewhere,
-  };
-  /** The kept body's box: the wide pane that holds today's words. */
-  const keptBox = () => screen.getByText(/today at/).parentElement!;
+describe("a wide body", () => {
+  const places = { ohbox: ohbox(false), news: today("news"), search: elsewhere };
 
-  it("has one mount over wide, columns and wide, hidden and inert while the columns show", () => {
-    const address = fakeAddress("#/reads");
-    render(frameOf({ places, address }));
-    expect(counted("today")).toEqual({ mounts: 1, live: 1 });
-    expect({ hidden: keptBox().hidden, inert: keptBox().hasAttribute("inert") }).toEqual({
-      hidden: false,
-      inert: false,
-    });
-    expect(screen.getByText(/keys here/)).toBeTruthy();
-
-    visit(address, "#/ohbox");
-    expect(within(main()).getByText(/the list/)).toBeTruthy();
-    expect(counted("today"), "the kept body was unmounted").toEqual({ mounts: 1, live: 1 });
-    expect({ hidden: keptBox().hidden, inert: keptBox().hasAttribute("inert") }).toEqual({
-      hidden: true,
-      inert: true,
-    });
-    expect(screen.getByText(/keys away/), "the hidden body was told the keys are here").toBeTruthy();
-
-    visit(address, "#/triage");
-    expect(screen.getByText(/today at later/)).toBeTruthy();
-    expect(counted("today"), "the kept body was mounted again").toEqual({ mounts: 1, live: 1 });
-    expect({ hidden: keptBox().hidden, inert: keptBox().hasAttribute("inert") }).toEqual({
-      hidden: false,
-      inert: false,
-    });
-    expect(counted("list"), "the columns stayed mounted under the wide pane").toEqual({ mounts: 1, live: 0 });
-  });
-
-  it("is the first node of the main landmark at every place, and stays that node", () => {
-    const address = fakeAddress("#/reads");
-    render(frameOf({ places, address }));
-    const box = keptBox();
-    for (const to of ["#/ohbox", "#/search", "#/triage", "#/ohbox"]) {
-      visit(address, to);
-      expect(keptBox(), `another node at ${to}`).toBe(box);
-      expect(main().firstElementChild, `not first at ${to}`).toBe(box);
-    }
-  });
-
-  it("a wide body that is not kept unmounts when its place is left, as before", () => {
+  it("unmounts when its place is left, as before", () => {
     const address = fakeAddress("#/search");
     render(frameOf({ places, address }));
     expect(counted("elsewhere")).toEqual({ mounts: 1, live: 1 });
@@ -218,34 +163,15 @@ describe("the body a place keeps", () => {
     expect(screen.queryByText("a wide place of another body")).toBeNull();
 
     cleanup();
-    const unkept = { ohbox: ohbox(false), news: today("news", false) };
     const second = fakeAddress("#/reads");
-    render(frameOf({ places: unkept, address: second }));
+    render(frameOf({ places, address: second }));
     visit(second, "#/ohbox");
-    expect(screen.queryByText(/today at/), "a body no entry keeps stayed mounted").toBeNull();
-  });
-
-  it("stands over a place of two columns while a part of the shell asks for it, and the place's list is not mounted", () => {
-    const address = fakeAddress("#/ohbox");
-    render(frameOf({ places, address }));
-    expect(counted("list")).toEqual({ mounts: 1, live: 1 });
-    expect(keptBox().hidden).toBe(true);
-
-    act(() => asked.set(true));
-    expect(keptBox().hidden, "the kept pane stayed hidden").toBe(false);
-    expect(screen.getByText(/today at ohbox/)).toBeTruthy();
-    expect(counted("list"), "the place's list is still mounted under it").toEqual({ mounts: 1, live: 0 });
-    expect(screen.queryByText(/the reading column/)).toBeNull();
-    expect(counted("today")).toEqual({ mounts: 1, live: 1 });
-
-    act(() => asked.set(false));
-    expect(keptBox().hidden).toBe(true);
-    expect(counted("list"), "the columns did not come back").toEqual({ mounts: 2, live: 1 });
+    expect(screen.queryByText(/today at/), "a body of a place left stayed mounted").toBeNull();
   });
 });
 
 describe("what a place stands above its two columns", () => {
-  const places = { ohbox: ohbox(true), news: today("news", true), search: elsewhere };
+  const places = { ohbox: ohbox(true), news: today("news"), search: elsewhere };
 
   it("is mounted and unmounted with them, reaches both panes, and never mounts the rail again", () => {
     const address = fakeAddress("#/ohbox");
@@ -298,6 +224,14 @@ describe("what a host stands above reaches everything the root holds", () => {
   it("a registered place's count is drawn in the rail at the side", () => {
     render(frameOf({ places, above: GroundAbove, address: fakeAddress("#/ohbox") }));
     expect(within(rail()).getByRole("button", { name: "Ohbox 7" })).toBeTruthy();
+  });
+
+  it("the dock draws and names the registered place's count", () => {
+    render(
+      frameOf({ places, above: GroundAbove, address: fakeAddress("#/ohbox"), window: fakeWindow("phone") }),
+    );
+    const ohbox = within(rail()).getByRole("button", { name: "Ohbox, 7" });
+    expect(within(ohbox).getByText("7")).toBeTruthy();
   });
 
   it("and in the whole rail that More opens over a dock at the foot", () => {

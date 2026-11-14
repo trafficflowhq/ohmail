@@ -86,13 +86,12 @@ async function seedAccount(
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
 
-  if (pref) {
-    await db.insert(accountSettings).values({
-      accountId,
-      ...(pref.bar !== undefined ? { ohboxBar: pref.bar } : {}),
-      ...(pref.policy !== undefined ? { ohboxPolicy: pref.policy } : {}),
-    });
-  }
+  await db.insert(accountSettings).values({
+    accountId,
+    autoSuggestAt: NOW,
+    ...(pref?.bar !== undefined ? { ohboxBar: pref.bar } : {}),
+    ...(pref?.policy !== undefined ? { ohboxPolicy: pref.policy } : {}),
+  });
   return accountId;
 }
 

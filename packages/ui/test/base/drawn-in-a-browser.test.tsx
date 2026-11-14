@@ -4191,6 +4191,35 @@ describe("a row of a stream, a row's own button and a row's place as a word", ()
   );
 });
 
+it("keeps a tall menu inside the phone and lets a person scroll to its last command", async () => {
+  await opened(
+    <div style={{ position: "relative", height: "100dvh" }}>
+      <Menu open onClose={() => {}} label="More" anchor={{ x: 30, y: 220 }}>
+        {Array.from({ length: 16 }, (_, i) => (
+          <MenuItem key={i} onPress={() => {}}>
+            {`Command ${i + 1}`}
+          </MenuItem>
+        ))}
+      </Menu>
+    </div>,
+    { device: "phone", window: [360, 460] },
+    async (tab) => {
+      const menu = tab.getByRole("menu", { name: "More" });
+      const last = menu.getByRole("menuitem").last();
+      const bounds = (await menu.boundingBox())!;
+      const foot = bounds.y + bounds.height;
+      const lastFoot = () => last.evaluate((item) => item.getBoundingClientRect().bottom);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(foot).toBeLessThanOrEqual(460);
+      expect(await lastFoot()).toBeGreaterThan(foot);
+      await menu.hover();
+      await tab.mouse.wheel(0, 1200);
+      await expect.poll(lastFoot).toBeLessThanOrEqual(foot);
+      await last.click({ trial: true });
+    },
+  );
+});
+
 describe("words too long for their room in a menu", () => {
   it.each([
     ["paper", "phone", 1],

@@ -46,7 +46,7 @@ function rowOf(p: Placed, now: ReaderNow): TodayRow {
     startMinute,
     allDay: span.allDay,
     now: begun && !ended(p, now),
-    toAnswer: o.record.myAnswer === "none",
+    toAnswer: o.calendar.access !== "busy" && o.record.myAnswer === "none",
   };
 }
 
@@ -85,7 +85,7 @@ export function comingUpOf(
   const who = address.trim().toLowerCase();
   if (who === "") return [];
   return occurrences
-    .filter((o) => named(o, who))
+    .filter((o) => o.calendar.access !== "busy" && named(o, who))
     .map((o) => placed(o, now))
     .filter((p): p is Placed => p !== null && p.span.last >= now.day && !ended(p, now))
     .map((p) => rowOf(p, now))

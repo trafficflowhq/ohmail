@@ -26,7 +26,7 @@ import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { addressHref } from "../shell/address-view";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
-import { useTodaysScope } from "../shell/todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 import "./search-keys.css";
 
 export { ARCHIVE_TIMEOUT_MS } from "@ohmail/app-logic/search";
@@ -88,11 +88,11 @@ export function SearchView({
   useZoneNav(useTranslations("shortcuts"), {});
 
   /**
-   * The scope the order is remembered under: the shell's this view is drawn in (`useTodaysScope`), so the desktop
+   * The scope the order is remembered under: the shell's this view is drawn in (`useScopeHere`), so the desktop
    * keeps one order per MAILBOX and the paired page one per pairing. Drawn in no shell (`false`), the order holds for
    * the mount and is stored nowhere.
    */
-  const scope = useTodaysScope() ?? false;
+  const scope = useScopeHere() ?? false;
   const rootRef = useRef<HTMLElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   /* The box this view puts the caret back in. `SearchBox` forwards no ref, so it is found inside this view's root. */

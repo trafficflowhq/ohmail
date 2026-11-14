@@ -48,8 +48,8 @@
     color: inherit;
     font-weight: var(--w-mid);
   }
-  .oh-button[data-kind="two"]:hover,
-  .oh-button[data-kind="quiet"]:hover {
+  .oh-button[data-kind="two"]:hover:where(:not([aria-pressed="true"])),
+  .oh-button[data-kind="quiet"]:hover:where(:not([aria-pressed="true"])) {
     background: var(--oh-hover, var(--hover));
   }
   .oh-button[data-bare] {
@@ -126,4 +126,19 @@
     background: transparent;
     color: inherit;
   }
+}
+
+:root[data-touch="1"] [data-filter-row] > .oh-button[data-size="s"] {
+  position: relative;
+  height: calc(var(--h-s) - var(--s2));
+}
+
+:root[data-touch="1"] [data-filter-row] > .oh-button[data-size="s"]::after {
+  position: absolute;
+  inset: calc(-1 * var(--s1)) 0;
+  content: "";
+}
+
+:root[data-touch="1"] [data-filter-list][data-people] [data-filter-row] > .oh-button {
+  flex: none;
 }

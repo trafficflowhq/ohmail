@@ -8,10 +8,10 @@ export type BindingGroup = "navigate" | "message" | "screener" | "app";
  * FIRST press of any message verb on a fresh list did nothing (⌫ read as broken, reported from a
  * real Ohbox). The declaring site says which; omitting this keeps the old behaviour, making the
  * rule additive. A TOKEN, never a sentence: the dispatcher acts on `"no_cursor"` alone; every other
- * member is a reason the `?` sheet turns into words. Trash's two are keys that cannot work there
+ * member is a reason the `?` sheet turns into words. Trash's reasons describe keys that cannot work there
  * and must keep falling through.
  */
-export type DisabledReason = "no_cursor" | "no_erase" | "trash_unavailable" | "layout_same";
+export type DisabledReason = "no_cursor" | "no_erase" | "restore_only" | "trash_unavailable" | "layout_same";
 
 export interface KeyBinding {
   /**
@@ -29,6 +29,8 @@ export interface KeyBinding {
   /** What it does, in the user's words. This IS the overlay row. */
   label: string;
   run: (e: KeyboardEvent) => void;
+  /** Teach a shortcut handled inside a control, without dispatching it from this registry. */
+  helpOnly?: boolean;
   /**
    * Fire even while focus is in a text field. Default false — the typing guard exists so
    * `j` types a `j`. Escape and ⌘K opt in, because a field you cannot leave is a trap.

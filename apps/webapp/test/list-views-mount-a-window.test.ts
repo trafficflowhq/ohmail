@@ -6,7 +6,7 @@ import ts from "typescript";
 /**
  * EVERY LIST VIEW MOUNTS ITS WINDOW, NOT ITS LIST. A switch into the Screener mounted all its
  * waiting senders and the Windows reading paid for it on every visit (switch p95 1 394 ms against
- * 200). This reads each view's `<ListRows>` as an AST: every row-producing `.map(` inside one is
+ * 200). This reads each view's `<ListRows>` or `<Rows>` as an AST: every row-producing `.map(` inside one is
  * over a `.slice(…)` whose bounds come from `useListWindow`, or is named below with its bound. A
  * doctored source runs through the same reader first, so a reader that finds nothing cannot pass.
  * And a view that windows renders ONE top spacer carrying `data-window-top`, never behind a
@@ -15,6 +15,8 @@ import ts from "typescript";
  */
 
 const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
+const DRAFTS = "DraftsList.tsx";
+const DRAFTS_SOURCE = resolve(process.cwd(), "packages/app/src/drafts/DraftsList.tsx");
 
 /**
  * THE MAPS THAT ARE NOT A WINDOW, AND WHAT BOUNDS EACH. A row here is a decision somebody can
@@ -72,10 +74,26 @@ function windowNames(file: ts.SourceFile): Set<string> {
 
 function readListViews(source: string, name = "View.tsx"): Reading {
   const file = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Bind the scanned source in isolation. Only local declarations matter to this check.
+  const options: ts.CompilerOptions = { noLib: true, noResolve: true, types: [] };
+  const checker = ts.createProgram([name], options, {
+    ...ts.createCompilerHost(options),
+    getSourceFile: (path) => path === name ? file : undefined,
+  }).getTypeChecker();
   const names = windowNames(file);
   const fromWindow = (arg: ts.Expression): boolean => {
     const text = arg.getText(file);
     return /\bwin\./.test(text) || [...names].some((n) => new RegExp(`\\b${n}\\b`).test(text));
+  };
+  const fromWindowSlice = (expr: ts.Expression): boolean =>
+    ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)
+    && expr.expression.name.text === "slice" && expr.arguments.length === 2
+    && expr.arguments.every(fromWindow);
+  const namedWindowSlice = (receiver: ts.Identifier): boolean => {
+    const decl = checker.getSymbolAtLocation(receiver)?.valueDeclaration;
+    return decl !== undefined && ts.isVariableDeclaration(decl)
+      && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const) !== 0
+      && decl.initializer !== undefined && fromWindowSlice(decl.initializer);
   };
   let listRows = 0;
   let callsWindow = false;
@@ -101,7 +119,7 @@ function readListViews(source: string, name = "View.tsx"): Reading {
       return;
     }
     if (ts.isJsxElement(node) && ts.isIdentifier(node.openingElement.tagName)
-        && node.openingElement.tagName.text === "ListRows") {
+        && ["ListRows", "Rows"].includes(node.openingElement.tagName.text)) {
       listRows += 1;
       for (const child of node.children) walk(child, true);
       return;
@@ -111,9 +129,7 @@ function readListViews(source: string, name = "View.tsx"): Reading {
     if (inRows && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
         && node.expression.name.text === "map") {
       const recv = node.expression.expression;
-      const windowed = ts.isCallExpression(recv) && ts.isPropertyAccessExpression(recv.expression)
-        && recv.expression.name.text === "slice" && recv.arguments.length === 2
-        && recv.arguments.every(fromWindow);
+      const windowed = fromWindowSlice(recv) || (ts.isIdentifier(recv) && namedWindowSlice(recv));
       maps.push({
         line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
         receiver: recv.getText(file),
@@ -148,6 +164,7 @@ function refusals(file: string, r: Reading): string[] {
 
 const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
 const readings = new Map(viewFiles.map((f) => [f, readListViews(readFileSync(join(VIEWS_DIR, f), "utf8") + (f === "OhboxView.tsx" ? readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts"), "utf8") : ""), f)]));
+readings.set(DRAFTS, readListViews(readFileSync(DRAFTS_SOURCE, "utf8"), DRAFTS));
 
 describe("every list view mounts its window", () => {
   it("the reader sees a planted raw map, and admits the window's own slice", () => {
@@ -170,6 +187,43 @@ describe("every list view mounts its window", () => {
       }`);
     expect(admitted.maps.map((m) => m.windowed)).toEqual([true]);
     expect(refusals("Admitted.tsx", admitted)).toEqual([]);
+
+    const named = readListViews(`
+      function V({ items }) {
+        const win = useListWindow({ scrollerRef, count: items.length });
+        const visible = items.slice(win.start, win.end);
+        return <Rows label="x"><div data-window-top="" />{visible.map(row)}</Rows>;
+      }`);
+    expect(named.maps.map((m) => m.windowed)).toEqual([true]);
+    expect(refusals("Named.tsx", named)).toEqual([]);
+    const bypass = readListViews(`
+      function V({ items }) {
+        const win = useListWindow({ scrollerRef, count: items.length });
+        const visible = items.slice(win.start, items.length);
+        return <Rows label="x"><div data-window-top="" />{visible.map(row)}</Rows>;
+      }`);
+    expect(bypass.maps.map((m) => m.windowed)).toEqual([false]);
+    expect(refusals("Bypass.tsx", bypass)).toHaveLength(1);
+  });
+
+  it("refuses a full-list map even when another scope slices a list with the same name", () => {
+    const shadowed = readListViews(`
+      function Windowed({ items }) {
+        const win = useListWindow({ scrollerRef, count: items.length });
+        const visible = items.slice(win.start, win.end);
+        return <Rows label="x"><div data-window-top="" />{visible.map(row)}</Rows>;
+      }
+      function Unwindowed({ items }) {
+        const visible = items;
+        return <Rows label="y">{visible.map(row)}</Rows>;
+      }`);
+    expect(shadowed.maps.map(({ receiver, windowed }) => [receiver, windowed])).toEqual([
+      ["visible", true],
+      ["visible", false],
+    ]);
+    expect(refusals("Shadowed.tsx", shadowed)).toEqual([
+      "Shadowed.tsx:9: visible.map inside <ListRows> is not a window slice",
+    ]);
   });
 
   it("a slice with a literal bound is not a window, and a list with no window call is refused", () => {
@@ -209,14 +263,18 @@ describe("every list view mounts its window", () => {
   });
 
   it("reads the views it is about", () => {
-    for (const f of ["ScreenerView.tsx", "HistoryView.tsx", "TagView.tsx", "TriageView.tsx", "DraftsView.tsx"]) {
-      expect(readings.get(f)?.listRows ?? 0, `${f} holds no <ListRows> — the census reads nothing there`).toBeGreaterThan(0);
+    for (const f of ["ScreenerView.tsx", "HistoryView.tsx", "TagView.tsx", "TriageView.tsx", DRAFTS]) {
+      expect(readings.get(f)?.listRows ?? 0, `${f} holds no row list — the census reads nothing there`).toBeGreaterThan(0);
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow`).toBe(true);
     }
     const screener = readings.get("ScreenerView.tsx")!.maps;
     expect(screener.filter((m) => m.windowed).map((m) => m.receiver)).toEqual([
       "items.slice(itemsFrom, itemsTo)",
       "decidedRows.slice(decidedFrom, decidedTo)",
+    ]);
+    expect(readings.get(DRAFTS)?.maps.map(({ receiver, windowed }) => [receiver, windowed])).toEqual([
+      ["scheduled", true],
+      ["drafts", true],
     ]);
   });
 

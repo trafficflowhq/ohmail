@@ -4,10 +4,10 @@
  * the operator's key. On a self-hosted server with no model, "yes" is not offered.
  */
 import { useState, type ReactNode } from "react";
-import { Page, RadioLines } from "@ohmail/ui/base";
+import { Page, RadioLines, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import { NONE } from "../../host/index.js";
-import { Foot, Next, Said, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, leadOf, refusalOf, type StepProps } from "./parts.js";
 import { AI_YES, PROVIDER_STEP } from "./words.js";
 
 export function Ai({ run, say, door }: StepProps): ReactNode {
@@ -42,7 +42,9 @@ export function Ai({ run, say, door }: StepProps): ReactNode {
         }
         acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
       >
-        <Said text={title} />
+        <Sentence size="xl" level={1} end="hot">
+          {title}
+        </Sentence>
       </Page>
     </StepForm>
   );
@@ -59,7 +61,9 @@ export function Provider({ run, say, door, slots }: StepProps): ReactNode {
         material={form && slots.aiProvider !== NONE ? slots.aiProvider() : undefined}
         acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
       >
-        <Said text={say(form ? "onboarding.aiTitle" : step.title)} />
+        <Sentence size="xl" level={1} end="hot">
+          {say(form ? "onboarding.aiTitle" : step.title)}
+        </Sentence>
       </Page>
     </StepForm>
   );

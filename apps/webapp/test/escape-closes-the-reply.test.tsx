@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,8 +24,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
-const { KeymapProvider } = await import("@ohmail/app/keys");
-const { RichEditor } = await import("../app/shell/RichEditor");
+const { KeymapProvider } = await import("../../../test/support/keymap-provider");
+const { MailRichEditor } = await import("@ohmail/app/mail");
 const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
 
 let roots: Root[] = [];
@@ -56,10 +57,12 @@ beforeEach(() => {
 afterEach(async () => {
   // Off the view first: a view's drag hook's cleanup reads `document.body`, which a document root's
   // unmount has already taken away.
-  if (document.querySelector(".view-history")) {
-    const { go } = await import("../app/shell/routing");
-    await act(async () => { go("drafts"); window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(() => document.querySelector(".view-history") == null, "teardown could not leave the view");
+  if (page().queryByRole("listbox", { name: "History" })) {
+    await act(async () => {
+      window.location.hash = "#/drafts";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() => page().queryByRole("listbox", { name: "History" }) == null, "teardown could not leave the view");
   }
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
@@ -98,7 +101,7 @@ async function press(target: EventTarget, key: string, init: KeyboardEventInit =
 
 /** The shipped shell, rendered the way the App Router renders it: React's root IS `document`. */
 async function shellOnDocument(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const root = createRoot(document as unknown as Element);
   roots.push(root);
@@ -112,7 +115,7 @@ async function shellOnDocument(): Promise<void> {
           now: new Date("2026-08-02T09:00:00.000Z"),
           children: h(ThemeProvider, {
             storageKey: null,
-            children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+            children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
           }),
         }))),
     );
@@ -120,12 +123,13 @@ async function shellOnDocument(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
 }
 
-const replySurface = (): HTMLElement | null => document.querySelector(".reply-editor .rte-surface");
-const compose = (): Element | null => document.querySelector(".view-compose");
-const composeSurface = (): HTMLElement | null => document.querySelector(".compose-editor .rte-surface");
+const page = () => within(document.body);
+const replySurface = () => page().queryByRole("textbox", { name: messages.write.reply.text });
+const compose = () => page().queryByRole("region", { name: "New message" });
+const composeSurface = () => compose() && within(compose()!).queryByRole("textbox", { name: messages.write.text });
 
 async function openReply(): Promise<HTMLElement> {
-  await waitFor(() => document.querySelector(".view-history") != null, "the shell did not open on History");
+  await waitFor(() => page().queryByRole("listbox", { name: "History" }) != null, "the shell did not open on History");
   await press(document, "j");
   await press(document, "r");
   await waitFor(() => replySurface() != null, "`r` did not open the inline reply");
@@ -144,9 +148,9 @@ describe("Escape in the shipped reply and compose bodies", { timeout: 30_000 }, 
   it("CONTROL: Escape in the address suggestions closes only the suggestions", async () => {
     await shellOnDocument();
     await openCompose();
-    const to = document.querySelector<HTMLInputElement>("#compose-to")!;
+    const to = within(compose()!).getByRole<HTMLInputElement>("combobox", { name: "To" });
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-    const shown = (): number => document.querySelectorAll(".view-compose .rcp-opt").length;
+    const shown = (): number => within(compose()!).queryAllByRole("option").length;
     for (const prefix of ["a", "e", "m", "s"]) {
       await act(async () => { to.focus(); setter.call(to, prefix); to.dispatchEvent(new Event("input", { bubbles: true })); });
       if (shown() > 0) break;
@@ -162,7 +166,7 @@ describe("Escape in the shipped reply and compose bodies", { timeout: 30_000 }, 
     await shellOnDocument();
     const surface = await openReply();
     await press(surface, "Escape");
-    await waitFor(() => document.querySelector(".reply-editor") == null, "Escape in the reply body left the reply open");
+    await waitFor(() => replySurface() == null, "Escape in the reply body left the reply open");
   });
 
   it("a written inline reply closes on Escape and keeps what was written", async () => {
@@ -170,7 +174,7 @@ describe("Escape in the shipped reply and compose bodies", { timeout: 30_000 }, 
     const surface = await openReply();
     await act(async () => { typeInto(surface, "Half a thought"); });
     await press(surface, "Escape");
-    await waitFor(() => document.querySelector(".reply-editor") == null, "Escape in a written reply left it open");
+    await waitFor(() => replySurface() == null, "Escape in a written reply left it open");
     await press(document, "r");
     await waitFor(() => replySurface() != null, "`r` did not reopen the reply");
     expect(editorOf(replySurface()!).getText(), "closing the reply lost what was written").toContain("Half a thought");
@@ -210,10 +214,10 @@ describe("Escape in the editor reaches the binding that closes it", () => {
         children: h(KeymapProvider, null,
           h(Closer),
           h("input", { id: "plain", "aria-label": "plain" }),
-          h(RichEditor, { value: EMPTY_RICH, onChange: () => {}, ariaLabel: "Reply body" })),
+          h(MailRichEditor, { value: EMPTY_RICH, onChange: () => {}, label: "Reply body", placeholder: "", editable: true, focusAtMount: false, onHandle: () => {} })),
       }));
     });
-    await waitFor(() => host.querySelector(".rte-surface") != null, "the editor never mounted");
+    await waitFor(() => within(host).queryByRole("textbox", { name: "Reply body" }) != null, "the editor never mounted");
     return { runs: () => runs, host };
   }
 
@@ -226,7 +230,7 @@ describe("Escape in the editor reaches the binding that closes it", () => {
   it("Escape in the editor reaches the binding, and the editor did not claim it", async () => {
     const m = await mount();
     let claimedByEditor = true;
-    const surface = m.host.querySelector<HTMLElement>(".rte-surface")!;
+    const surface = within(m.host).getByRole("textbox", { name: "Reply body" });
     // Read at the surface, before the keymap's document listener claims the key it runs.
     const look = (e: Event) => { claimedByEditor = e.defaultPrevented; };
     surface.parentElement!.addEventListener("keydown", look);
@@ -238,7 +242,7 @@ describe("Escape in the editor reaches the binding that closes it", () => {
 
   it("CONTROL: an editor binding that takes Escape keeps it", async () => {
     const m = await mount();
-    const surface = m.host.querySelector<HTMLElement>(".rte-surface")!;
+    const surface = within(m.host).getByRole("textbox", { name: "Reply body" });
     let took = 0;
     editorOf(surface).registerPlugin(keymap({ Escape: () => { took += 1; return true; } }));
     const e = await press(surface, "Escape");
@@ -249,7 +253,7 @@ describe("Escape in the editor reaches the binding that closes it", () => {
 
   it("CONTROL: an Escape that ends an IME composition stays the editor's", async () => {
     const m = await mount();
-    await press(m.host.querySelector(".rte-surface")!, "Escape", { isComposing: true });
+    await press(within(m.host).getByRole("textbox", { name: "Reply body" }), "Escape", { isComposing: true });
     expect(m.runs(), "the Escape that cancels a composition closed the editor").toBe(0);
   });
 });

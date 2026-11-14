@@ -2,28 +2,49 @@
  * TAGS' LIST. One tag: its letters across every place, read in place, with Rename and Delete in the list's menu.
  * Every tag (no tag named): each tag a group that shuts and opens, its letters under it.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useListWindow } from "@ohmail/app-logic/lists";
 import { useTagsModel, type TagsModel } from "@ohmail/app-logic/tags";
 import { Empty } from "@ohmail/ui/base";
 import { GroupHeading, ListHead } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
+import { useFrame } from "../frame/index.js";
 import { LetterRows, ListColumn, ListMenu } from "../place-list/index.js";
 import { useText, type Text } from "../text/index.js";
 import { TagDelete, TagRename } from "./TagAsks.js";
 
 export function TagsList({ plan }: PaneProps) {
   const model = useTagsModel();
+  return <TagsColumn key={model.tag?.id ?? ""} plan={plan} model={model} />;
+}
+
+function TagsColumn({ plan, model }: { plan: PaneProps["plan"]; model: TagsModel }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const { rows, cursor } = model.list;
+  const win = useListWindow({
+    scrollerRef: scroller,
+    count: model.tag === null ? 0 : rows.length,
+    cursor:
+      model.tag === null || cursor === null
+        ? undefined
+        : { id: cursor, index: rows.findIndex((row) => row.id === cursor) },
+  });
+  const { commands } = useFrame();
   const t = useText("tags");
   const [asked, setAsked] = useState<"rename" | "delete" | null>(null);
   const menuAt = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (model.gone) commands.go({ place: "ohbox", open: null }, { replace: true });
+  }, [commands, model.gone]);
+  if (model.gone) return null;
   const tag = model.tag;
   const head = (
     <ListHead
       title={tag?.name ?? t("title")}
       hot={tag !== null && model.list.rows.some((m) => m.unread)}
       count={
-        tag !== null && model.list.rows.length > 0
-          ? t("count.letters", { count: model.list.rows.length })
+        tag !== null && model.count !== undefined && model.count > 0
+          ? t("count.letters", { count: model.count })
           : undefined
       }
       aside={
@@ -48,11 +69,16 @@ export function TagsList({ plan }: PaneProps) {
     />
   );
   return (
-    <ListColumn head={head} plan={plan}>
-      {tag !== null ? <OneTag model={model} t={t} /> : <EveryTag model={model} t={t} />}
+    <ListColumn
+      head={head}
+      plan={plan}
+      cursor={model.list.cursor}
+      scrollerRef={scroller}
+      manualScrollAnchor={tag !== null && win.end - win.start < rows.length}
+    >
+      {tag !== null ? <OneTag model={model} t={t} win={win} /> : <EveryTag model={model} t={t} />}
       {model.loading ? <Empty label={t("loading")} /> : null}
       {model.empty ? <Empty label={tag === null ? t("empty.none") : t("empty.tag")} /> : null}
-      {model.gone ? <Empty label={t("gone")} /> : null}
       {tag !== null && asked === "rename" ? (
         <TagRename tag={tag} model={model} anchor={menuAt} close={() => setAsked(null)} />
       ) : null}
@@ -63,13 +89,20 @@ export function TagsList({ plan }: PaneProps) {
   );
 }
 
-function OneTag({ model, t }: { model: TagsModel; t: Text }) {
+function OneTag({ model, t, win }: { model: TagsModel; t: Text; win: ReturnType<typeof useListWindow> }) {
   if (model.list.rows.length === 0) return null;
   return (
     <LetterRows
       label={model.tag?.name ?? t("title")}
       rows={model.list.rows}
-      openId={model.list.openId}
+      windowed={{
+        start: win.start,
+        top: win.padTop,
+        bottom: win.padBottom,
+        rowHeight: win.rowHeight,
+        slots: model.list.rows.slice(win.start, win.end),
+      }}
+      cursor={model.list.cursor}
       press={model.list.press}
       stamp={model.stamp}
       file={t("row.file")}
@@ -95,7 +128,7 @@ function EveryTag({ model, t }: { model: TagsModel; t: Text }) {
             <LetterRows
               label={g.tag.name}
               rows={g.rows}
-              openId={model.list.openId}
+              cursor={model.list.cursor}
               press={model.list.press}
               stamp={model.stamp}
               file={t("row.file")}

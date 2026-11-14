@@ -14,11 +14,18 @@ import type {
 } from "@ohmail/wire";
 import type { Db } from "../context.js";
 import { CALENDAR_EVENT_MAX_BYTES } from "../sync-page-byte-budget.js";
+import { proofPlaceOf, PROVEN_REPEATS, repeatDeleteScopes, type RepeatShape } from "@ohmail/cal-providers/repeat-shapes";
+import { eventTimeOf, parseRRule } from "@ohmail/cal-core";
+import { intlZones } from "@ohmail/cal-core/time/zones";
+import { personalSeriesOf, seriesDeleteMembers, storedObjectFacts } from "@ohmail/cal-providers/series";
+import { availabilityOf, zoneForAvailability } from "./availability.js";
 import { writeMarksOf } from "./write-marks.js";
 
 type Builders = {
   [K in CalendarRecordKind]: (db: Db, accountId: string, ids: readonly string[]) => Promise<Map<string, CalendarRecords[K]>>;
 };
+
+const ZONES = intlZones();
 
 const iso = (d: Date | null): string | null => (d === null ? null : d.toISOString());
 
@@ -46,6 +53,17 @@ function time(kind: string, value: string, zone: string | null): CalendarTime {
 }
 
 const times = (v: unknown): CalendarTime[] => (Array.isArray(v) ? (v as CalendarTime[]) : []);
+
+const PERSONAL_SERIES_SHAPES: readonly RepeatShape[] = [
+  "daily/never", "daily/until", "daily/count", "weekly/never", "weekly/until", "weekly/count",
+];
+
+function canEditPersonalSeries(provider: string, serverUrl: string | null): boolean {
+  if (provider !== "caldav") return false;
+  const place = proofPlaceOf(provider, serverUrl);
+  const proven = place && PROVEN_REPEATS[place];
+  return !!proven && PERSONAL_SERIES_SHAPES.every((shape) => proven.includes(shape));
+}
 
 async function buildConnections(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarConnectionRecord>> {
   if (ids.length === 0) return new Map();
@@ -97,7 +115,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
   if (ids.length === 0) return new Map();
   const rows = await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone,
+    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, lastSyncedAt: calCalendars.lastSyncedAt,
     errorCode: calCalendars.errorCode, updatedAt: calCalendars.updatedAt,
   }).from(calCalendars).where(and(eq(calCalendars.accountId, accountId), inArray(calCalendars.id, [...ids])));
@@ -109,7 +127,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     color: r.color,
     access: accessOf(r.access),
     shown: r.shown,
-    timeZone: r.timeZone,
+    timeZone: r.access === "busy" && r.timeZone !== null ? zoneForAvailability(r.timeZone, r.availabilityKey) : r.timeZone,
     window: r.windowStart !== null && r.windowEnd !== null ? { from: String(r.windowStart), to: String(r.windowEnd) } : null,
     defaultAlarms: alarms.get(r.id) ?? [],
     lastSyncedAt: iso(r.lastSyncedAt),
@@ -124,13 +142,20 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
  */
 export function cutToFit(record: CalendarEventRecord): CalendarEventRecord {
   if (Buffer.byteLength(JSON.stringify(record), "utf8") <= CALENDAR_EVENT_MAX_BYTES) return record;
-  return { ...record, notes: null, invitees: [], writes: record.writes.map((w) => ({ ...w, act: null })), cut: true };
+  const details = { ...record };
+  delete details.deleteMembers;
+  delete details.deleteScopes;
+  if (
+    (record.deleteMembers !== undefined || record.deleteScopes !== undefined) &&
+    Buffer.byteLength(JSON.stringify(details), "utf8") <= CALENDAR_EVENT_MAX_BYTES
+  ) return details;
+  return { ...details, notes: null, invitees: [], writes: details.writes.map((w) => ({ ...w, act: null })), cut: true };
 }
 
 async function buildEvents(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarEventRecord>> {
   if (ids.length === 0) return new Map();
   const rows = await db.select({
-    id: calEvents.id, calendarId: calEvents.calendarId, uid: calEvents.uid, recurrenceId: calEvents.recurrenceId,
+    access: calCalendars.access, availabilityKey: calCalendars.availabilityKey, id: calEvents.id, calendarId: calEvents.calendarId, uid: calEvents.uid, recurrenceId: calEvents.recurrenceId,
     thisAndFuture: calEvents.thisAndFuture, sequence: calEvents.sequence, status: calEvents.status, title: calEvents.title,
     notes: calEvents.notes, place: calEvents.place, callLink: calEvents.callLink,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone,
@@ -139,8 +164,24 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     repeatRule: calEvents.repeatRule, excludedDates: calEvents.excludedDates, addedDates: calEvents.addedDates,
     busy: calEvents.busy, private: calEvents.private, organizer: calEvents.organizer, organizerName: calEvents.organizerName,
     myAnswer: calEvents.myAnswer, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
-  }).from(calEvents).where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
-  const found = rows.map((r) => r.id);
+  }).from(calEvents)
+    .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
+    .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
+  const detailed = rows.filter((r) => r.access !== "busy");
+  const candidates = detailed.filter((r) => (r.access === "owner" || r.access === "writer") && !r.heldBack && r.recurrenceId === "" && r.repeatRule).map((r) => r.id);
+  const sources = candidates.length === 0 ? [] : await db.select({
+    id: calEvents.id, original: calEvents.original, provider: calConnections.provider, serverUrl: calConnections.serverUrl,
+  }).from(calEvents)
+    .innerJoin(calCalendars, and(eq(calEvents.calendarId, calCalendars.id), eq(calCalendars.accountId, accountId)))
+    .innerJoin(calConnections, and(eq(calCalendars.connectionId, calConnections.id), eq(calConnections.accountId, accountId)))
+    .where(and(eq(calEvents.accountId, accountId), eq(calConnections.provider, "caldav"), inArray(calEvents.id, candidates)));
+  const editable = new Set(sources.filter((r) => canEditPersonalSeries(r.provider, r.serverUrl) && personalSeriesOf(r.original)).map((r) => r.id));
+  const deletion = new Map(sources.flatMap((source) => {
+    const members = seriesDeleteMembers(source.original, ZONES);
+    return members && !storedObjectFacts(source.original, null).excludesByRule
+      ? [[source.id, { members, place: proofPlaceOf("caldav", source.serverUrl) }] as const] : [];
+  }));
+  const found = detailed.map((r) => r.id);
   const alarms = await alarmsBy(db, accountId, "eventId", found);
   const marks = await writeMarksOf(db, accountId, found);
   const invitees = new Map<string, CalendarInvitee[]>();
@@ -157,10 +198,17 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       invitees.set(p.eventId, list);
     }
   }
-  return new Map(rows.map((r) => {
+  const records = new Map<string, CalendarEventRecord>();
+  for (const r of rows) {
     const rules = r.repeatRule === null ? [] : r.repeatRule.split("\n").map((l) => l.trim()).filter((l) => l !== "");
     const excluded = times(r.excludedDates);
     const added = times(r.addedDates);
+    const source = deletion.get(r.id);
+    const start = time(r.startKind, r.startLocal, r.startZone);
+    const first = eventTimeOf(start);
+    const rule = rules.length === 1 && !added.length ? parseRRule(rules[0]!) : null;
+    const deleteScopes = source && rule && first
+      ? repeatDeleteScopes(source.place, rule, first, ZONES, Date.now()) : [];
     const record: CalendarEventRecord = {
       id: r.id,
       calendarId: r.calendarId,
@@ -173,13 +221,15 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       notes: r.notes,
       place: r.place,
       callLink: r.callLink,
-      start: time(r.startKind, r.startLocal, r.startZone),
+      start,
       end: r.endKind === null || r.endLocal === null ? null : time(r.endKind, r.endLocal, r.endZone),
       duration: r.duration,
       startsAt: r.startsAt.toISOString(),
       endsAt: iso(r.endsAt),
       occurrenceAt: iso(r.occurrenceAt),
       repeat: rules.length > 0 || excluded.length > 0 || added.length > 0 ? { rules, excluded, added } : null,
+      ...(editable.has(r.id) && !invitees.has(r.id) && r.myAnswer === null && { personalSeries: true as const }),
+      ...(source && deleteScopes.length > 0 && { deleteMembers: source.members, deleteScopes }),
       busy: r.busy,
       private: r.private,
       organizer: r.organizer === null ? null : { address: r.organizer, name: r.organizerName },
@@ -191,8 +241,10 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       writes: marks.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };
-    return [r.id, cutToFit(record)];
-  }));
+    const visible = r.access === "busy" ? availabilityOf(record, r.availabilityKey) : record;
+    if (visible) records.set(r.id, cutToFit(visible));
+  }
+  return records;
 }
 
 async function buildSuggestions(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarSuggestionRecord>> {

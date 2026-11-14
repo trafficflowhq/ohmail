@@ -159,6 +159,8 @@ export interface UseListWindowOptions {
   /** First-frame row height, before one has been measured. */
   estimate?: number;
   overscan?: number;
+  /** A changed list cursor must be mounted even when it jumps past the current slice. */
+  cursor?: { readonly id: string; readonly index: number };
   /**
    * Rows placed ABOVE every index so far, counted up — History's arrivals. A move of `d` moves
    * every measured index down by `d` with its row, and holds the row under the top edge while
@@ -178,6 +180,7 @@ export function useListWindow({
   count,
   estimate = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
+  cursor,
   inserted = 0,
 }: UseListWindowOptions): ListWindow {
   const [scrollTop, setScrollTop] = useState(0);
@@ -419,6 +422,18 @@ export function useListWindow({
     }
     anchor.current = { index: idx, offset: off, count, origin: o, inRows: edge > 0 };
   });
+
+  const cursorId = cursor?.id;
+  const cursorIndex = cursor?.index ?? -1;
+  const lastCursor = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (lastCursor.current === cursorId) return;
+    lastCursor.current = cursorId;
+    const el = scrollerRef.current;
+    if (el === null || cursorIndex < 0 || (cursorIndex >= start && cursorIndex < end)) return;
+    el.scrollTop = offsetOf(cursorIndex);
+    setScrollTop(el.scrollTop);
+  }, [cursorId, cursorIndex, start, end, offsetOf, scrollerRef]);
 
   if (!windowed) {
     return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, visibleStart, visibleEnd, toTop };

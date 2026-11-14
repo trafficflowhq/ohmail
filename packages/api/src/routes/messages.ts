@@ -190,8 +190,7 @@ export const messageRoutes: Route[] = [
         // The memory for a refund this request may owe. Composed by the same host that composes
         // `credits`; the service refuses a metered press that arrives without one.
         ...(refundObligationsOf(deps) ? { obligations: refundObligationsOf(deps)! } : {}),
-        // Read ONLY when the gate has already refused: a `state` refusal this account's own
-        // access view contradicts is answered 503 rather than billed (`ai-refusal.ts`).
+        // Fresh account access is checked before sending the draft to the model.
         ...(accessPortOf(deps) ? { access: accessPortOf(deps)! } : {}),
         attemptKey: deps.idempotency ? clientIdempotencyKey(deps.idempotency.key) : undefined,
         idempotency: deps.idempotency

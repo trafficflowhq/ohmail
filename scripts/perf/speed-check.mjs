@@ -164,7 +164,7 @@ function pageProbe() {
       }
       return false;
     },
-    hits: () => shown(document.querySelector(".view-search [data-hit]")),
+    hits: (selector) => shown(document.querySelector(selector)),
   };
   w.__speedArm = (what, arg, timeoutMs) => new Promise((done) => {
     let t0 = null;

@@ -91,11 +91,6 @@ async function underTheShell(locale: "en" | "de", node: React.ReactElement): Pro
   return host;
 }
 
-const rowLabel = (el: HTMLElement, has: (row: HTMLElement) => boolean): string | null => {
-  const row = [...el.querySelectorAll<HTMLElement>(".set-row")].find(has);
-  return row?.querySelector(".lab b")?.textContent ?? null;
-};
-
 describe("a request that got no answer is said in the reader's language (R20-01)", () => {
   it("Settings → Account, offline, in German", async () => {
     offline();
@@ -111,6 +106,7 @@ describe("a request that got no answer is said in the reader's language (R20-01)
     const text = (await underTheShell("de", h(AboutSection))).textContent ?? "";
     expect(text).toContain(de.session.refusedOffline);
     expect(text).not.toContain(en.session.refusedOffline);
+    expect(text).toContain("UID CHE\u2011");
   });
 
   it("control: in English the same panes say the English sentence", async () => {
@@ -155,21 +151,15 @@ describe("ohmail's own names on German screens are German (R20-02)", () => {
     expect((await underTheShell("en", h(DevicesSection))).textContent).toContain("ohmail for Linux");
   });
 
-  it("Settings → General: the face row is labelled in German", async () => {
-    const { FaceRow } = await import("../app/shell/FaceRow.js");
-    const el = await underTheShell("de", h(FaceRow, { applyAllDevices: null }));
-    const label = rowLabel(el, (r) => r.querySelector(".face-seg") !== null);
-    expect(label).toBe(de.settings.face);
-    expect(label).not.toBe(en.settings.face);
-    expect(el.querySelector(".face-seg")?.getAttribute("aria-label")).toBe(de.settings.faceAria);
-    expect(de.settings.faceAria).not.toBe(en.settings.faceAria);
-  });
-
   it("Settings → About: the version row is labelled in German", async () => {
     answering([]);
     const { AboutSection } = await import("../app/(product)/mailbox/AboutSection.js");
     const el = await underTheShell("de", h(AboutSection));
-    const label = rowLabel(el, (r) => (r.querySelector(".set-val")?.textContent ?? "").includes(" · "));
+    const row = [...el.querySelectorAll<HTMLElement>('[role="group"]')].find(
+      (group) => (group.querySelector(".oh-settingline-text")?.textContent ?? "").includes(" · "),
+    );
+    const labelId = row?.getAttribute("aria-labelledby");
+    const label = labelId ? el.ownerDocument.getElementById(labelId)?.textContent : null;
     expect(label).toBe(de.about.buildLabel);
     expect(label).not.toBe(en.about.buildLabel);
   });

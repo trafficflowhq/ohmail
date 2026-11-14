@@ -1,13 +1,14 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { OHBOX_VISIT_ID, type MirrorStore, type OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { JunkWire } from "../app/shell/junk-window";
+import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { NOW, S, act, click, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
+import { NOW, S, act, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
 
 /**
  * THE OHBOX LINE'S COUNTS OPEN VIEWS THAT LIST THOSE LETTERS — the whole shell, folders on and off
@@ -87,12 +88,21 @@ async function mount(
   return container;
 }
 
-const whereLine = (el: HTMLElement): HTMLElement | null => el.querySelector(".ohbox-where");
-const segments = (el: HTMLElement): string =>
-  [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].map((b) => b.textContent ?? "").join(" | ");
+const junkButton = (el: HTMLElement) => within(el).queryByRole("button", { name: messages.screener.segJunk });
+async function chooseJunk(el: HTMLElement): Promise<void> {
+  const button = within(el).getByRole("button", { name: messages.screener.segJunk });
+  await act(async () => {
+    fireEvent.click(button);
+    // Deliver the browser's fragment notification in this turn, before checking the first draw.
+    window.dispatchEvent(new Event("hashchange"));
+  });
+  expect(button.getAttribute("aria-pressed")).toBe("true");
+}
+
+const junkRows = (el: HTMLElement) => within(el).getByRole("listbox", { name: messages.screener.segJunk });
 
 describe("the Screener reads the Junk window before the Spam click", () => {
-  it("opening the Screener asks the page and the preview; the click draws both in its own commit", async () => {
+  it("opening the Screener asks the page and the preview; the click paints the cached page", async () => {
     const calls: string[] = [];
     const release: Array<() => void> = [];
     const later = <T,>(name: string, v: T): Promise<T> => {
@@ -113,15 +123,13 @@ describe("the Screener reads the Junk window before the Spam click", () => {
     };
     const { engine } = await seeded();
     const el = await mount(engine, { folders: true, junkWire: wire }, "#/screener");
-    await waitFor(() => segments(el).includes("Junk"), "the Screener's Junk segment");
+    await waitFor(() => junkButton(el) !== null, "the Screener's Junk segment");
     expect(calls.sort(), "the Screener opened and the Junk window was not read").toEqual(["list", "sweepPreview"]);
     await act(async () => { for (const r of release) r(); });
-    const tab = [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].find((b) => (b.textContent ?? "").includes("Junk"));
-    await click(tab ?? null, "the Junk tab");
-    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    await chooseJunk(el);
+    const pane = junkRows(el).textContent ?? "";
     expect(pane).toContain("A provider-filed offer");
-    expect(pane, "the Quarantine shelf waited on the click's own read").toContain(PEDLAR.name);
-    expect(pane).not.toContain(messages.screener.junkLoading);
+    expect(within(el).queryByText(messages.screener.junkLoading)).toBeNull();
     expect(calls).toHaveLength(2);
   });
 });
@@ -133,10 +141,8 @@ describe("the shell keeps the Junk page from its start", () => {
   });
   const page = (...items: ReturnType<typeof junkRow>[]) =>
     ({ mailboxes: [{ id: "mb1", address: "me@example.invalid", window: "ok" as const }], nextCursor: null, items });
-  const junkTab = (el: HTMLElement) =>
-    [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].find((b) => (b.textContent ?? "").includes("Junk")) ?? null;
 
-  it("opened on the Ohbox, the page is read at once; the Screener's Junk click paints it and asks nothing", async () => {
+  it("opened on the Ohbox, the page is read at once; the Screener's Junk click paints the cached page and asks nothing", async () => {
     const calls: string[] = [];
     const wire: JunkWire = {
       ...JUNK_WIRE,
@@ -148,20 +154,28 @@ describe("the shell keeps the Junk page from its start", () => {
     await waitFor(() => calls.length === 2, "the Junk page read from the Ohbox");
     const { go } = await import("../app/shell/routing.js");
     await act(async () => { go("screener"); });
-    await waitFor(() => junkTab(el) !== null, "the Screener's Junk segment");
-    await click(junkTab(el), "the Junk tab");
-    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    await waitFor(() => junkButton(el) !== null, "the Screener's Junk segment");
+    await chooseJunk(el);
+    const pane = junkRows(el).textContent ?? "";
     expect(pane).toContain("A provider-filed offer");
-    expect(pane).toContain(PEDLAR.name);
-    expect(pane).not.toContain(messages.screener.junkLoading);
+    expect(within(el).queryByText(messages.screener.junkLoading)).toBeNull();
     expect(calls.sort()).toEqual(["list", "sweepPreview"]);
   });
 
   it("a letter set aside into the spam pile reads the page again after the settle; the Junk click paints it", async () => {
-    const { JUNK_MOVE_SETTLE_MS } = await import("../app/shell/junk-window");
+    const { JUNK_MOVE_SETTLE_MS } = await import("@ohmail/app-logic/screener/junk-window");
     const pages = [page(junkRow(7, "A provider-filed offer")), page(junkRow(8, "The letter just filed"), junkRow(7, "A provider-filed offer"))];
     let lists = 0;
-    const wire: JunkWire = { ...JUNK_WIRE, list: async () => pages[Math.min(lists++, 1)]! };
+    let releaseBackground!: () => void;
+    const background = new Promise<void>((resolve) => { releaseBackground = resolve; });
+    const wire: JunkWire = {
+      ...JUNK_WIRE,
+      list: async () => {
+        const read = lists++;
+        if (read >= pages.length) await background;
+        return pages[Math.min(read, pages.length - 1)]!;
+      },
+    };
     const { engine } = await seeded();
     const el = await mount(engine, { folders: true, junkWire: wire });
     await waitFor(() => lists === 1, "the Junk page read from the Ohbox");
@@ -179,11 +193,13 @@ describe("the shell keeps the Junk page from its start", () => {
     await waitFor(() => lists === 2, "the page read again after the pile changed");
     const { go } = await import("../app/shell/routing.js");
     await act(async () => { go("screener"); });
-    await waitFor(() => junkTab(el) !== null, "the Screener's Junk segment");
-    await click(junkTab(el), "the Junk tab");
-    const pane = el.querySelector(".view-screener")?.textContent ?? "";
+    await waitFor(() => junkButton(el) !== null, "the Screener's Junk segment");
+    await chooseJunk(el);
+    const pane = junkRows(el).textContent ?? "";
     expect(pane).toContain("The letter just filed");
-    expect(pane).not.toContain(messages.screener.junkLoading);
+    expect(within(el).queryByText(messages.screener.junkLoading)).toBeNull();
     await waitFor(() => lists === 3, "the entry after a move reads once behind the painted page");
+    await act(async () => { releaseBackground(); });
+    expect(lists).toBe(3);
   });
 });

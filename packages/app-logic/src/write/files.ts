@@ -14,18 +14,29 @@
  * - nothing commits after the screen went away: a discarded letter stays discarded.
  */
 import type { ComposeAttachment } from "@ohmail/wire";
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import type { ImageQualityLevel } from "@ohmail/client-engine";
-import { holdFilesForRestart } from "../doors/app-update.js";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
+import { encodableImageType, type ImageQualityLevel } from "@ohmail/client-engine";
 import {
   admit,
   readAsBase64,
+  remainingRoom,
   requalified,
   same,
   totalBytes,
+  type DroppedFile,
   type Picked,
   type Pictures,
 } from "./file-rules.js";
+
+import { useAttaching } from "./attaching.js";
 
 export * from "./file-rules.js";
 
@@ -72,7 +83,11 @@ export interface LetterFilesInput {
   readonly onList: (next: ComposeAttachment[]) => void;
   readonly cap: number;
   readonly pictures: Pictures;
+  /** The letter that owns a file pick can change without the composer unmounting. */
+  readonly letterEpochNow?: () => number;
 }
+
+type FilePick = readonly File[] | (() => Promise<readonly DroppedFile[] | null>);
 
 export interface LetterFiles {
   /** The names still being read: Send waits for them. */
@@ -81,7 +96,7 @@ export interface LetterFiles {
   /** The quality pictures go at; `none`: no control. */
   readonly level: ImageQualityLevel | "none";
   readonly used: number;
-  add(files: readonly File[]): Promise<void>;
+  add(pick: FilePick): Promise<void>;
   remove(at: number): void;
   setLevel(level: ImageQualityLevel): void;
 }
@@ -133,43 +148,6 @@ function useLive(input: LetterFilesInput, setNotes: Live["setNotes"]): Live {
     () => ({ list, cap, pending, gen, level, setNotes, stands, commit }),
     [setNotes, stands, commit],
   );
-}
-
-/** The names of the picks still being read; a pick being read holds an app restart. */
-function useAttaching(stands: () => boolean) {
-  const [attaching, setAttaching] = useState<readonly string[]>([]);
-  const inFlight = useRef(new Map<number, readonly string[]>());
-  const seq = useRef(0);
-  const restart = useRef<(() => void) | null>(null);
-  const report = useCallback((): void => {
-    const names = [...inFlight.current.values()].flat();
-    if (names.length > 0) restart.current ??= holdFilesForRestart();
-    else {
-      restart.current?.();
-      restart.current = null;
-    }
-    if (stands()) setAttaching(names);
-  }, [stands]);
-  useEffect(
-    () => () => {
-      restart.current?.();
-      restart.current = null;
-    },
-    [],
-  );
-  const begin = useCallback(
-    (names: readonly string[]): (() => void) => {
-      const pick = ++seq.current;
-      inFlight.current.set(pick, names);
-      report();
-      return () => {
-        inFlight.current.delete(pick);
-        report();
-      };
-    },
-    [report],
-  );
-  return { attaching, begin };
 }
 
 /** The pictures on the letter, re-encoded at `next` from their picked bytes, landed as one list. */
@@ -227,23 +205,15 @@ async function readOne(
   file: File,
   picked: Picked[],
   said: { refuse(cap: number): void; twice: string[] },
+  stillHere: () => boolean,
+  signal: AbortSignal,
 ): Promise<void> {
   const picture = await encode(file, pictures, at);
+  if (!stillHere()) return;
   const cap = live.cap.current;
-  /* Reprojected against the list and the ceiling as they stand now: a staged file the ceiling no longer admits is
-     refused now, and a file over what is left is refused before it is read. */
-  let projected = totalBytes(live.list.current);
-  for (let i = 0; i < picked.length;) {
-    if (projected + picked[i]!.bytes <= cap) {
-      projected += picked[i]!.bytes;
-      i += 1;
-    } else {
-      picked.splice(i, 1);
-      said.refuse(cap);
-    }
-  }
-  if (projected + picture.blob.size > cap) return said.refuse(cap);
-  const contentBase64 = await readAsBase64(picture.blob);
+  if (picture.blob.size > remainingRoom(live.list.current, cap, picked, said.refuse)) return said.refuse(cap);
+  const contentBase64 = await readAsBase64(picture.blob, signal);
+  if (!stillHere()) return;
   const filename = file.name || "attachment";
   const attachment: ComposeAttachment = { filename, contentType: picture.contentType, contentBase64 };
   if ([...live.list.current, ...picked.map((p) => p.attachment)].some((a) => same(a, attachment))) {
@@ -264,7 +234,13 @@ async function readOne(
 }
 
 /** A pick: every file read, then ONE commit over the list as it stands; every refusal said. */
-async function intake(live: Live, pictures: Pictures, files: readonly File[]): Promise<void> {
+async function intake(
+  live: Live,
+  pictures: Pictures,
+  files: readonly (File | DroppedFile)[],
+  stillHere: () => boolean,
+  signal: AbortSignal,
+): Promise<void> {
   live.setNotes(QUIET);
   const level = live.level.current;
   const at: ImageQualityLevel = level === "none" ? "original" : level;
@@ -277,14 +253,32 @@ async function intake(live: Live, pictures: Pictures, files: readonly File[]): P
     twice: [] as string[],
   };
   const picked: Picked[] = [];
-  for (const file of files) {
+  for (const source of files) {
+    if (!stillHere()) return;
     try {
-      await readOne(live, pictures, at, file, picked, said);
+      const deferred = "read" in source;
+      if (deferred) {
+        const cap = live.cap.current;
+        const keepsSize =
+          pictures === "none" || at === "original" || encodableImageType(source.type) === null;
+        if (
+          source.state === "too_large" ||
+          (source.state === "ok" &&
+            keepsSize &&
+            source.size > remainingRoom(live.list.current, cap, picked, said.refuse))
+        ) {
+          said.refuse(cap);
+          continue;
+        }
+      }
+      const file = deferred ? await source.read(signal, stillHere) : source;
+      if (!stillHere()) return;
+      await readOne(live, pictures, at, file, picked, said, stillHere, signal);
     } catch {
       unreadable = true;
     }
   }
-  if (!live.stands()) return;
+  if (!stillHere()) return;
   const latest = live.list.current;
   const done = admit(latest, picked, live.cap.current);
   if (done.refusedAt !== null) said.refuse(done.refusedAt);
@@ -305,10 +299,21 @@ async function intake(live: Live, pictures: Pictures, files: readonly File[]): P
 
 /** The letter's files over the composition's list. */
 export function useLetterFiles(input: LetterFilesInput): LetterFiles {
-  const { list, pictures } = input;
+  const { list, pictures, letterEpochNow } = input;
   const [notes, setNotes] = useState<FilesNotes>(QUIET);
   const live = useLive(input, setNotes);
   const { attaching, begin } = useAttaching(live.stands);
+  const fileScope = useRef<AbortController | null>(null);
+  const letterEpoch = letterEpochNow?.();
+  useLayoutEffect(
+    () => () => {
+      fileScope.current?.abort();
+      fileScope.current = null;
+      live.gen.current += 1;
+      live.pending.current = null;
+    },
+    [letterEpoch, live],
+  );
   const [level, setLevelState] = useState<ImageQualityLevel | "none">("none");
 
   /* The stored level, read after the first paint (no storage on a server render); a list left encoded at another
@@ -326,16 +331,28 @@ export function useLetterFiles(input: LetterFilesInput): LetterFiles {
   }, [pictures, live]);
 
   const add = useCallback(
-    async (files: readonly File[]): Promise<void> => {
-      if (files.length === 0) return;
-      const end = begin(files.map((f) => f.name || "attachment"));
+    async (pick: FilePick): Promise<void> => {
+      if (!live.stands() || letterEpochNow?.() !== letterEpoch) return;
+      const dropped = typeof pick === "function";
+      if (!dropped && pick.length === 0) return;
+      const pending = begin(dropped ? ["attachment"] : pick.map((file) => file.name || "attachment"));
+      const signal = (fileScope.current ??= new AbortController()).signal;
+      const stillHere = () => live.stands() && !signal.aborted && letterEpochNow?.() === letterEpoch;
+      signal.addEventListener("abort", pending.end, { once: true });
       try {
-        await intake(live, pictures, files);
+        const files = dropped ? await pick() : pick;
+        if (!files?.length || !stillHere()) return;
+        if (dropped) pending.setNames(files.map((file) => file.name || "attachment"));
+        await intake(live, pictures, files, stillHere, signal);
+      } catch (error) {
+        if (!dropped) throw error;
+        if (stillHere()) setNotes({ ...QUIET, unreadable: true });
       } finally {
-        end();
+        signal.removeEventListener("abort", pending.end);
+        pending.end();
       }
     },
-    [begin, live, pictures],
+    [begin, letterEpoch, letterEpochNow, live, pictures],
   );
 
   const remove = useCallback(

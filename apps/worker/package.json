@@ -11,5 +11,9 @@
     "@ohmail/cal-core": "*",
     "@ohmail/cal-providers": "*",
     "@ohmail/organizer": "*"
+  },
+  "devDependencies": {
+    "@trafficflow/api": "*",
+    "@trafficflow/services": "*"
   }
 }

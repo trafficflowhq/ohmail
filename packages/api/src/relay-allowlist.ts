@@ -25,6 +25,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "DELETE", pattern: "/calendar/writes/:id" },
   { method: "DELETE", pattern: "/devices/:id" },
   { method: "DELETE", pattern: "/drafts/:id" },
+  { method: "DELETE", pattern: "/drafts/:id/conditional" },
   { method: "DELETE", pattern: "/drafts/:id/schedule" },
   { method: "DELETE", pattern: "/folders/:id" },
   { method: "DELETE", pattern: "/folders/:id/op" },

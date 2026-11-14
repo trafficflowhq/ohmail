@@ -1,44 +1,51 @@
 /** @vitest-environment jsdom */
 /**
- * WHAT THE OLD CHROME CARRIED THAT TODAY'S VIEWS STILL NEED IN THE FRAME. Today's keys step into the rail (`h`, and
- * ArrowLeft from a row): the frame's fed rail stands where today's zone model looks for it. A settings section on a
- * narrow window has its way back to the section list, which the old top bar carried.
+ * The frame honours the existing shortcuts into the mail rail and gives a narrow Settings section a way back.
  */
-import { fireEvent } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { act, engineOver, msg, S, setup, shell, storeWith, teardown, waitFor } from "../_view-shell";
+import {
+  ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+} from "../fixtures/live-walk-shell";
+import { fireEvent, getByRole } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WEB_PANE_PARTS } from "../../app/(product)/mailbox/pane-parts";
+import messages from "../../messages/en.json";
 
-beforeEach(setup);
-afterEach(teardown);
-
-const inRail = (): boolean => document.activeElement?.closest("nav[aria-label='Main']") != null;
+beforeEach(() => {
+  installShellEnv();
+  localStorage.clear();
+});
+afterEach(async () => {
+  await teardownShellEnv();
+  vi.unstubAllGlobals();
+});
 
 describe("today's keys and the frame's rail", () => {
   for (const [what, init] of [["h", { key: "h" }], ["ArrowLeft", { key: "ArrowLeft" }]] as const) {
     it(`${what} from a row steps into the rail`, async () => {
-      const store = await storeWith([msg("m1")]);
-      const el = await shell(store, engineOver(store));
-      /* A row of the Ohbox: an option of its listbox (today's views keep `.row`). */
-      await waitFor(() => el.querySelector(":is(.row, [role=option])[data-id='m1']") != null, "the row");
-      const row = el.querySelector<HTMLElement>(":is(.row, [role=option])[data-id='m1']")!;
+      const synced = page(1);
+      answerSyncWith(() => synced.clone());
+      window.location.hash = "#/ohbox";
+      const shell = await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
+      await tick(1_000);
+      const row = getByRole(shell, "option", { name: /subject of m1/i });
+      const rail = getByRole(shell, "navigation", { name: "Places" });
       await act(async () => { row.focus(); });
-      expect(inRail()).toBe(false);
-      await act(async () => { fireEvent.keyDown(document.activeElement ?? document.body, init); });
-      await waitFor(inRail, "focus in the rail");
+      expect(rail.contains(document.activeElement)).toBe(false);
+      await act(async () => { fireEvent.keyDown(row, init); });
+      await tick(0);
+      expect(rail.contains(document.activeElement)).toBe(true);
     });
   }
 });
 
 describe("a settings section on a narrow window", () => {
   it("has its way back to the section list", async () => {
-    S.mobile = true;
-    const store = await storeWith([]);
-    const el = await shell(store, engineOver(store), "#/settings/general");
-    const back = await (async () => {
-      await waitFor(() => el.querySelector("button[aria-label='Back to Settings']") != null, "the way back");
-      return el.querySelector<HTMLButtonElement>("button[aria-label='Back to Settings']")!;
-    })();
-    await act(async () => { back.click(); });
+    vi.stubGlobal("innerWidth", 430);
+    window.location.hash = "#/settings/general";
+    const shell = await mountShell([], { general: WEB_PANE_PARTS.general });
+    await act(async () => { getByRole(shell, "button", { name: messages.settings.back }).click(); });
+    await tick(1_000);
     expect(window.location.hash).toBe("#/settings");
+    expect(getByRole(shell, "navigation", { name: messages.settings.navAria })).toBeTruthy();
   });
 });

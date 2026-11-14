@@ -8,8 +8,9 @@
  * space finishes it (`from:` and `to:` a person, `in:` a place the answer counted, `has:` files, `is:unread`) and
  * leaves the field; one met inside the words stays words. Elsewhere it is searched as words, and that is said.
  */
-import { useMemo, type UIEvent } from "react";
+import { useMemo, useRef, type UIEvent } from "react";
 import type { AddressBookEntry } from "@ohmail/client-engine";
+import { useFocusFollows } from "@ohmail/app-logic/keys";
 import {
   justFinished,
   onePersonMeant,
@@ -34,7 +35,6 @@ import { SearchFilters } from "./SearchFilters.js";
 import { SearchPersonRow, SearchRefine } from "./SearchNarrow.js";
 import { SearchPeople } from "./SearchPeople.js";
 import { SearchResults } from "./SearchResults.js";
-import { SearchSort } from "./SearchSort.js";
 import { SearchVerdictLine } from "./SearchVerdictLine.js";
 import { saidOf } from "./verdict-words.js";
 import "./search.css";
@@ -100,6 +100,8 @@ export function SearchList({ route, plan }: PaneProps) {
   const t = useText("search");
   const locale = useLocale();
   const { scrollerRef } = model;
+  const root = useRef<HTMLDivElement>(null);
+  useFocusFollows(root, { enter: false });
   const people = model.searchBy === "people";
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const el = event.currentTarget;
@@ -154,11 +156,20 @@ export function SearchList({ route, plan }: PaneProps) {
         beside={beside}
         open={typing.open}
         words={typing.words}
+        key={model.query}
         onPick={pickPerson}
       />
     ) : null;
   const body = !asked ? (
-    meant
+    <div
+      className={model.resting ? "sr-resting" : undefined}
+      data-address-rows={model.resting ? "" : undefined}
+    >
+      {meant}
+      {model.resting && model.mailboxTotal !== null ? (
+        <ListLine>{t("mailboxTotal", { count: model.mailboxTotal })}</ListLine>
+      ) : null}
+    </div>
   ) : model.length === 0 || model.egg ? (
     <>
       {meant}
@@ -167,23 +178,22 @@ export function SearchList({ route, plan }: PaneProps) {
   ) : (
     <>
       {meant}
-      <SearchResults model={model} beside={beside} openId={route.open} count={said.count} />
       <SearchVerdictLine model={model} lines={said.lines} />
+      <SearchResults model={model} beside={beside} openId={route.open} count={said.count} />
     </>
   );
   return (
-    <div className="sr-list">
+    <div className="sr-list" data-filter-list="" data-people={people ? "" : undefined} ref={root}>
       <ListHead
         title={t("title")}
         below={
-          <div className="sr-below">
+          <div className="sr-below" data-filter-stack="">
             <SearchField model={model} onType={typed} onEnter={enter} named={named} />
             {people ? <SearchPersonRow model={model} beside={beside} /> : null}
             <SearchFilters
               model={model}
               beside={beside}
               more={people ? <SearchRefine model={model} today={new Date()} /> : null}
-              after={asked ? <SearchSort model={model} /> : null}
             />
             {/* Typed scopes are searched as words where they are no filter: said, rather than an answer of nothing. */}
             {model.operatorsTyped ? <ListLine fine>{t("noOperators")}</ListLine> : null}

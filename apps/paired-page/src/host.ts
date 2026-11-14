@@ -4,6 +4,8 @@
  * through it yet; the old shell is still handed its inputs one by one (`HostGate.tsx`), and this
  * is the same decisions, said once, in the record the next shell takes.
  */
+import { PairedScreenerSettings } from "@ohmail/app/settings/browser";
+import { NO_PANE_PARTS, type MailPaneParts } from "@ohmail/app/mail";
 import {
   CANNOT,
   NONE,
@@ -11,6 +13,8 @@ import {
   type Entries,
   type FrameSupplies,
   type HostContract,
+  type HostDevice,
+  type HostLanguage,
   type HostReads,
   type HostSession,
   type MayBeNone,
@@ -23,6 +27,7 @@ type Supplied<T> = Exclude<T, typeof NONE>;
 export interface PairedFacts {
   /** The pairing: the partition of what the page keeps. Null until it is paired. */
   readonly scope: string | null;
+  readonly mirrorAccount: string | null;
   /** What one send from this page may carry, in bytes. */
   readonly sendCeiling: number;
   readonly build: { readonly version: string | null; readonly commit: string | null };
@@ -39,8 +44,47 @@ export interface PairedSupplies {
   /** Account, as sign-out alone; the strip that says a change will not be kept; the Screener's section. */
   readonly features: Entries<"account" | "accountStrip" | "screener">;
   readonly notifications: DeviceNotifications;
+  /** The language's controls the page's own provider stands (the window's, `DesktopLocale`). */
+  readonly language: HostDevice["language"];
+  /** The way to an address the app itself makes: a new tab of the phone's browser. */
+  readonly openLink: Supplied<HostDevice["openLink"]>;
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
+}
+
+/** The window's language controls as the contract takes them: the language drawn and the adoption, nothing else. */
+export function languageOf(controls: HostLanguage | null): HostDevice["language"] {
+  return controls === null ? NONE : { locale: controls.locale, adoptLocale: controls.adoptLocale };
+}
+
+/**
+ * THE PAGE'S DOOR OF SETTINGS' ACCOUNT SECTION: the sign-out alone, over the pairing's own sign-out (its death sweeps
+ * this browser, and its landing says what the computer heard), so the door answers "left" and the page shows the
+ * landing. The sign-out alone asks nobody who is signed in, and leads nowhere to erase or to sign in.
+ */
+export function pairedAccountDoor(signOut: () => Promise<void>) {
+  return {
+    who: async () => ({ ok: false, word: "signed_out" }) as const,
+    signOut: async () => {
+      await signOut();
+      return "left" as const;
+    },
+    toErase: () => undefined,
+    toSignIn: () => undefined,
+  };
+}
+
+/** The paired browser uses its device settings and the consent row served by the computer. */
+export function pairedPaneParts(
+  useDoor: () => ReturnType<typeof pairedAccountDoor>,
+  general: MailPaneParts["general"],
+) {
+  return {
+    ...NO_PANE_PARTS,
+    account: { useDoor, password: NONE },
+    general,
+    screener: PairedScreenerSettings,
+  } as const;
 }
 
 export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSupplies): HostContract {
@@ -51,9 +95,12 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       confirmed: NONE,
       state: NONE,
       scope: facts.scope,
+      mirrorAccount: facts.mirrorAccount,
       account: null,
+      accountAddress: null,
       signOut: has.signOut,
       recover: has.frame.recover,
+      today: NONE,
     },
     reads: { mailboxes: has.mailboxes, copyAge: NONE, access: NONE },
     wires: {
@@ -120,12 +167,14 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
         version: facts.build.version,
         commit: facts.build.commit,
         mailtoLeaves: true,
+        desktopDownload: null,
       },
       notifications: has.notifications,
       badge: NONE,
-      language: NONE,
-      openLink: NONE,
+      language: has.language,
+      openLink: has.openLink,
       pickFile: NONE,
+      // A phone's browser saves a file from the address it fetched: no shell saves by id.
       saveFile: NONE,
       defaultMail: NONE,
       address: has.frame.address,

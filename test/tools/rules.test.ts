@@ -6,11 +6,7 @@ import { Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
-import ohmail, {
-  isDoorFile,
-  OWNER_MARKER_NAME,
-  shellAdaptersAdded,
-} from "../../tools/eslint-plugin-ohmail/index.mjs";
+import ohmail, { isDoorFile, OWNER_MARKER_NAME } from "../../tools/eslint-plugin-ohmail/index.mjs";
 import {
   borderVerdict,
   declaredVerdict,
@@ -293,7 +289,6 @@ describe("the lint rules, run on source text", () => {
         "apps/webapp/app/api-client.ts",
         "packages/app-logic/src/storage/storage-owner.ts",
       ],
-      todaysScopeReaders: ["apps/webapp/app/views/search.ts"],
     };
     const at = "/repo/packages/app-logic/src/press/a.ts";
     const lookup = (code: string, filename = at, options: unknown[] = [readers]) =>
@@ -485,26 +480,11 @@ describe("the lint rules, run on source text", () => {
     });
 
     it("refuses every file when it has no list of readers", () => {
-      for (const options of [
-        [],
-        [{ root: "/repo" }],
-        [{ root: "/repo", readers: [], todaysScopeReaders: ["x.ts"] }],
-      ]) {
+      for (const options of [[], [{ root: "/repo" }], [{ root: "/repo", readers: [] }]]) {
         expect(lookup("export const a = 1;", at, options)).toEqual([
           expect.stringMatching(/so every file is refused/),
         ]);
       }
-    });
-
-    it("lets the closed list read the shell's scope and refuses every other file", () => {
-      const code = 'import { useTodaysScope } from "../shell/todays-scope"; export const a = useTodaysScope;';
-      expect(lookup(code, "/repo/apps/webapp/app/views/search.ts")).toEqual([]);
-      expect(lookup(code, "/repo/apps/webapp/app/views/other.ts")).toEqual([
-        expect.stringMatching(/^useTodaysScope is read by the closed list/),
-      ]);
-      expect(lookup("export const a = 1;", "/repo/apps/webapp/app/views/search.ts")).toEqual([
-        expect.stringMatching(/is listed .* and imports none of them/),
-      ]);
     });
   });
 
@@ -569,79 +549,6 @@ describe("the lint rules, run on source text", () => {
           expect.stringMatching(/so every file is refused/),
         ]);
       }
-    });
-  });
-
-  describe("the old shell's side of the frame, closed", () => {
-    const shell = "/repo/apps/webapp/app/shell";
-    const list = {
-      root: "/repo",
-      folder: "apps/webapp/app/shell",
-      files: [
-        { file: "TodaysOhboxAbove.ts", contexts: ["TodaysOhboxFed"] },
-        { file: "reader-parts.ts", contexts: ["TodaysReaderFed"] },
-        { file: "todays-ground.ts" },
-      ],
-    };
-    const closed = (code: string, filename: string, options: unknown[] = [list]) =>
-      lint("old-shell-adapters", code, options, filename);
-    const feed = (name: string) =>
-      `import { createContext } from "react"; export const ${name} = createContext<string | null>(null);`;
-
-    it("refuses a new file of that side by its name, and passes the listed ones and the folder's other files", () => {
-      for (const name of ["TodaysScreenerAbove.ts", "todays-search.ts"]) {
-        expect(closed("export const a = 1;", `${shell}/${name}`)).toEqual([
-          expect.stringMatching(new RegExp(`^${name} is a new file of the old shell's side of the frame`)),
-        ]);
-      }
-      expect(closed("export const a = 1;", `${shell}/todays-ground.ts`)).toEqual([]);
-      expect(closed("export const a = 1;", `${shell}/format.ts`)).toEqual([]);
-      /* The name alone is not it: `today.ts` and `Todaysomething.ts` are no such files. */
-      expect(closed("export const a = 1;", `${shell}/today.ts`)).toEqual([]);
-      expect(closed("export const a = 1;", `${shell}/Todaysomething.ts`)).toEqual([]);
-    });
-
-    it("refuses a context the old shell would feed a place through, in any file of the folder, but the listed ones", () => {
-      for (const name of ["TodaysScreenerFed", "TodaysSearch", "ScreenerFed"]) {
-        expect(closed(feed(name), `${shell}/AppShell.ts`)).toEqual([
-          expect.stringMatching(new RegExp(`^${name} is a context the old shell would feed a place through`)),
-        ]);
-      }
-      expect(closed(feed("TodaysOhboxFed"), `${shell}/TodaysOhboxAbove.ts`)).toEqual([]);
-      /* A listed file declares the contexts its row names, and no other of that kind. */
-      expect(closed(feed("TodaysScreenerFed"), `${shell}/reader-parts.ts`)).toEqual([
-        expect.stringMatching(/^TodaysScreenerFed is a context/),
-      ]);
-      expect(
-        closed(
-          'import * as React from "react"; export const NewsFed = React.createContext(null);',
-          `${shell}/a.ts`,
-        ),
-      ).toEqual([expect.stringMatching(/^NewsFed is a context/)]);
-      /* A context of another kind is not it, nor a name that only holds the word. */
-      expect(closed(feed("ListGone"), `${shell}/list-view.ts`)).toEqual([]);
-      expect(closed("export const TodaysScreenerFed = 1;", `${shell}/a.ts`)).toEqual([]);
-    });
-
-    it("binds the files of that folder itself, and refuses each of them when it has no list", () => {
-      expect(closed(feed("TodaysScreenerFed"), "/repo/apps/webapp/app/views/TodaysScreenerAbove.ts")).toEqual(
-        [],
-      );
-      expect(closed(feed("TodaysScreenerFed"), `${shell}/sub/TodaysScreenerAbove.ts`)).toEqual([]);
-      for (const options of [[], [{ root: "/repo" }], [{ ...list, files: [] }]]) {
-        expect(closed("export const a = 1;", `${shell}/format.ts`, options)).toEqual([
-          expect.stringMatching(/so every file of the old shell is refused/),
-        ]);
-      }
-    });
-
-    it("says what was added to the list against a base: the list only shrinks", () => {
-      const before = [{ file: "a.ts", contexts: ["AFed"] }, { file: "b.ts" }];
-      expect(shellAdaptersAdded(before, before)).toEqual([]);
-      expect(shellAdaptersAdded([{ file: "a.ts" }], before)).toEqual([]);
-      expect(
-        shellAdaptersAdded([{ file: "a.ts", contexts: ["AFed", "BFed"] }, { file: "c.ts" }], before),
-      ).toEqual(["a.ts: the context BFed", "c.ts"]);
     });
   });
 });

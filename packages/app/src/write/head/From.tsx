@@ -4,9 +4,10 @@
  * and nothing when no mailbox can be named (a From line is a claim). Said in place: a sender switched to match the
  * recipient's domain, and a draft's own mailbox that cannot send, with the one it goes from instead.
  */
-import { useRef, useState } from "react";
+import { useContext, useId, useRef, useState } from "react";
 import { Menu, MenuItem, Slot } from "@ohmail/ui/base";
 import type { RecipientsProps } from "@ohmail/ui/mail";
+import { MailStateContext } from "@ohmail/app-logic/mail-state";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useText } from "../../text/index.js";
 import type { WriteFrom } from "../ports.js";
@@ -17,8 +18,11 @@ export function useFromLine(
   onPick: (mailboxId: string) => void,
 ): RecipientsProps["from"] {
   const t = useText("write");
+  const stateId = useId();
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement | null>(null);
+  const roster = useContext(MailStateContext)?.mailboxes;
+  const tag = roster?.find((mailbox) => mailbox.id === from.mailboxId)?.displayName?.trim();
   if (from.address === null) return undefined;
   const state = from.domainMatched
     ? t("from.matched")
@@ -33,6 +37,7 @@ export function useFromLine(
           ref={anchor}
           label={t("from.choose", { address: shown })}
           expanded={open}
+          describedBy={state === undefined ? undefined : stateId}
           onPress={locked ? undefined : () => setOpen(true)}
         >
           {shown}
@@ -55,5 +60,5 @@ export function useFromLine(
     ) : (
       shown
     );
-  return { label: t("from.label"), value, ...(state !== undefined ? { state } : {}) };
+  return { label: t("from.label"), value, tag, ...(state !== undefined ? { state, stateId } : {}) };
 }

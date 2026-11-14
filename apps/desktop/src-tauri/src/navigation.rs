@@ -164,20 +164,24 @@ pub fn guard(config: &Config, debug_build: bool) -> impl Fn(&Url) -> bool + Send
 
 /// The policy a file of the app's own that is not a page is answered with.
 pub const NON_DOCUMENT_CSP: &str = "default-src 'none'";
+pub const PDF_FRAME_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src blob:; connect-src 'none'; font-src blob: data:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-scripts";
 
 /// THE NON-DOCUMENT RULE. Tauri puts the window's policy on its pages only, and a worker is bound
 /// by the policy of its own script's response, not the page's: without this, pdf.js's worker
 /// (`src/window-pdfjs.ts`) could fetch, import and eval anything. So every response on the app's
 /// scheme that is not `text/html` and carries no policy gets `default-src 'none'`. A page ignores
 /// the header on a script, a style or a picture it loads; a policy already set is never replaced.
-pub fn confine_non_documents(_request: Request<Vec<u8>>, response: &mut Response<Cow<'static, [u8]>>) {
+pub fn confine_non_documents(request: Request<Vec<u8>>, response: &mut Response<Cow<'static, [u8]>>) {
     let headers = response.headers_mut();
     let document = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
         .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/html"));
-    if !document && !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+    if request.uri().path() == "/pdf-preview.html" && document {
+        // Tauri otherwise supplies the enclosing mail window's CSP to every HTML asset.
+        headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(PDF_FRAME_CSP));
+    } else if !document && !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
         headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(NON_DOCUMENT_CSP));
     }
 }

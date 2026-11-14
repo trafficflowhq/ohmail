@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { screen, within } from "@testing-library/react";
 import {
   MutationRejectedError,
   OhmailEngine,
@@ -74,7 +75,7 @@ let sendFails = false;
 const REAL_MUTATE = OhmailEngine.prototype.mutate;
 
 beforeEach(() => {
-  window.location.hash = "";
+  window.location.hash = "#/triage";
   dispatched = [];
   sendFails = false;
   try {
@@ -150,7 +151,7 @@ afterEach(async () => {
 
 /** The shipped shell on the fixture world. */
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -166,7 +167,7 @@ async function shell(): Promise<HTMLElement> {
         timeZone: "UTC",
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }),
         }),
       }),
     );
@@ -200,55 +201,35 @@ async function drain(): Promise<void> {
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
 }
 
-/**
- * The run's editable surface.
- *
- * It is a rich editor now and no longer the overlay's own `<textarea>`. That is not a cosmetic
- * upgrade: the run writes into the SAME per-message scratch buffer the inline reply does, so a
- * plain textarea here would have shown a formatted reply as flattened text and then stored the
- * flattening over it on the first keystroke. The overlay keeps its textarea for every caller
- * that hands in no editor — see `FocusReplyOverlay`'s `editor` prop.
- */
-const editor = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".fr-card .rte-surface");
-const subjectOnScreen = (el: HTMLElement): string =>
-  el.querySelector(".fr-card h3")?.textContent ?? "";
-const progress = (el: HTMLElement): string =>
-  el.querySelector(".fr-prog span")?.textContent ?? "";
-const footButtons = (el: HTMLElement): HTMLButtonElement[] =>
-  [...el.querySelectorAll<HTMLButtonElement>(".fr-foot button")];
-const toastText = (el: HTMLElement): string => el.querySelector(".toast")?.textContent ?? "";
-
-/**
- * The Answer Later pile as Triage renders it, underneath the overlay.
- *
- * It used to read `.pile-item b` out of a `PilesStack` tile. Triage is the Ohbox's list-plus-
- * reader composition now (`TriageView`), so the pile is `.rows` and an entry's sender is the
- * row's `.who` — the same string the tile's `<b>` held (`senderName` is `from.name ||
- * from.address`, which is what `triagePiles` put in `title`). Scoped to the LIST column so the
- * reading column beside it, which renders the selected message in full, cannot contribute a
- * name to a pile-membership assertion.
- */
-function answerLater(el: HTMLElement): string[] {
-  return [
-    ...el.querySelectorAll<HTMLElement>(".view-triage .list-col .rows .row .who"),
-  ].map((b) => b.textContent ?? "");
-}
+const run = () => screen.queryByRole("toolbar", { name: "Reply run" });
+const reading = () => within(screen.getByRole("region", { name: "Reading" }));
+const editor = () => reading().queryByRole("textbox", { name: "Reply body" });
+const subjectOnScreen = (): string => reading().getByRole("heading", { level: 2 }).textContent ?? "";
+const progress = (): string => reading().getAllByRole("status").find(
+  (status) => /^\d+ of \d+$/.test(status.textContent ?? ""),
+)?.textContent ?? "";
+const done = () => within(run()!).getByRole("button", { name: "Done → next" });
+const failureText = () => reading().getAllByRole("status").map((status) => status.textContent).join(" ");
+const answerLater = (): string[] =>
+  within(screen.getByRole("listbox", { name: "Answer Later" })).getAllByRole("option")
+    .map((row) => row.getAttribute("aria-label") ?? "");
+const hasFirstItem = (): boolean => answerLater().some((name) => name.includes(FIRST_TITLE));
 
 const kindsOf = (kind: string): EngineMutation[] => dispatched.filter((m) => m.kind === kind);
 
-async function typeReply(el: HTMLElement, text: string): Promise<void> {
-  const box = editor(el);
+async function typeReply(text: string): Promise<void> {
+  const box = editor();
   if (!box) throw new Error("the Reply Run has no editor on screen");
   // Through ProseMirror: setting DOM text produces no transaction and therefore no change the
   // shell can see, which would leave every assertion below testing an empty document.
   await act(async () => { typeInto(box, text); });
 }
 
-/** Open the run from the Ohbox, exactly as `f` does for a user. */
-async function openRun(el: HTMLElement): Promise<void> {
+/** The mounted pile owns the run and its shortcut. */
+async function openRun(): Promise<void> {
+  await screen.findByRole("button", { name: "Reply Run" });
   await key("f");
-  await waitFor(() => editor(el) != null, "the Reply Run to open on a message");
+  await waitFor(() => run() !== null && editor() !== null, "the Reply Run to open on a message");
 }
 
 describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", () => {
@@ -259,18 +240,17 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
    */
   it("a step whose send FAILS keeps the message in the pile and keeps the typed reply", async () => {
     sendFails = true;
-    const el = await shell();
-    await openRun(el);
+    await shell();
+    await openRun();
 
-    const stepSubject = subjectOnScreen(el);
-    const stepProgress = progress(el);
-    const pileBefore = answerLater(el);
-    expect(pileBefore, "the demo Answer Later pile is empty — nothing below would prove anything")
-      .toContain(FIRST_TITLE);
+    const stepSubject = subjectOnScreen();
+    const stepProgress = progress();
+    const pileBefore = answerLater();
+    expect(hasFirstItem(), "the demo Answer Later pile is empty — nothing below would prove anything").toBe(true);
 
-    await typeReply(el, TYPED);
+    await typeReply(TYPED);
     await act(async () => {
-      footButtons(el)[0]!.click();
+      done().click();
     });
     await drain();
 
@@ -282,37 +262,37 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
       .toEqual([]);
 
     // The run did not move past a message that has not been answered.
-    expect(subjectOnScreen(el), "the run advanced past a reply that was never sent")
+    expect(subjectOnScreen(), "the run advanced past a reply that was never sent")
       .toBe(stepSubject);
-    expect(progress(el)).toBe(stepProgress);
+    expect(progress()).toBe(stepProgress);
 
     // The words are still on screen…
     // The DOCUMENT'S text — `.value` on a `contenteditable` is `undefined`, which would read
     // as "the reply was discarded" in the very assertion checking that it was not.
-    expect(editorOf(editor(el)!).getText(), "the typed reply was discarded by a failed send")
+    expect(editorOf(editor()!).getText(), "the typed reply was discarded by a failed send")
       .toBe(TYPED);
     // …and in the per-message scratch buffer, so a reload does not lose them either.
     expect(window.localStorage.getItem(replyDraftKey(FIRST_ID, storageOwner()))).toBe(TYPED);
 
     // The reminder is intact, so the user can discover what they still owe.
-    expect(answerLater(el), "a failed send emptied the pile").toEqual(pileBefore);
+    expect(answerLater(), "a failed send emptied the pile").toEqual(pileBefore);
 
     // And they are told. A send that did not happen must never be silent — in the product's
     // own plain sentence, never the server's wire (ruling 2026-08-21; the whole argument is on
     // `SendStatus.tsx` and pinned in `send-status-copy.test.tsx`).
-    expect(toastText(el), "a failed send said nothing at all").toContain("Sending didn't work");
+    expect(failureText(), "a failed send said nothing at all").toContain("Sending didn't work");
   });
 
   /** The other side of the same rule: one delivery, one discharge, through `settle`. */
   it("a step whose send SUCCEEDS clears the item exactly once, through settle", async () => {
-    const el = await shell();
-    await openRun(el);
-    const stepSubject = subjectOnScreen(el);
-    expect(answerLater(el)).toContain(FIRST_TITLE);
+    await shell();
+    await openRun();
+    const stepSubject = subjectOnScreen();
+    expect(hasFirstItem()).toBe(true);
 
-    await typeReply(el, TYPED);
+    await typeReply(TYPED);
     await act(async () => {
-      footButtons(el)[0]!.click();
+      done().click();
     });
     await drain();
 
@@ -327,10 +307,10 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
     expect(cleared[0]).toMatchObject({ messageId: FIRST_ID, state: "none" });
 
     await waitFor(
-      () => subjectOnScreen(el) !== stepSubject,
+      () => subjectOnScreen() !== stepSubject,
       "the run to advance after a confirmed send",
     );
-    expect(answerLater(el), "the answered message is still in the pile").not.toContain(FIRST_TITLE);
+    expect(hasFirstItem(), "the answered message is still in the pile").toBe(false);
     // `settle` owns the scratch buffer too — the draft is spent, not left behind.
     expect(window.localStorage.getItem(replyDraftKey(FIRST_ID, storageOwner()))).toBeNull();
   });
@@ -344,26 +324,26 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
    * no mail, which is the shape this slice exists to remove.
    */
   it("Done on an empty editor sends nothing, discharges nothing and does not advance", async () => {
-    const el = await shell();
-    await openRun(el);
-    const stepSubject = subjectOnScreen(el);
+    await shell();
+    await openRun();
+    const stepSubject = subjectOnScreen();
 
     await act(async () => {
-      footButtons(el)[0]!.click();
+      done().click();
     });
     await drain();
 
     expect(kindsOf("mail_send"), "Done posted an empty reply").toEqual([]);
     expect(kindsOf("triage_set"), "Done discharged a debt with nothing written").toEqual([]);
-    expect(subjectOnScreen(el)).toBe(stepSubject);
+    expect(subjectOnScreen()).toBe(stepSubject);
 
     // Skip is what moves on — and it discharges nothing either.
     await act(async () => {
-      footButtons(el)[1]!.click();
+      within(run()!).getByRole("button", { name: "Skip" }).click();
     });
-    expect(subjectOnScreen(el), "Skip did not advance the run").not.toBe(stepSubject);
+    expect(subjectOnScreen(), "Skip did not advance the run").not.toBe(stepSubject);
     expect(kindsOf("triage_set"), "Skip discharged the item it skipped").toEqual([]);
-    expect(answerLater(el), "Skip removed the message from the pile").toContain(FIRST_TITLE);
+    expect(hasFirstItem(), "Skip removed the message from the pile").toBe(true);
   });
 
   /**
@@ -377,14 +357,14 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
    * and this goes to 2 (the "No silent AI actions" invariant).
    */
   it("two Done presses in one tick are ONE delivery — the run goes through useMailSend", async () => {
-    const el = await shell();
-    await openRun(el);
-    await typeReply(el, TYPED);
+    await shell();
+    await openRun();
+    await typeReply(TYPED);
 
     await act(async () => {
-      const done = footButtons(el)[0]!;
-      done.click();
-      done.click();
+      const press = done();
+      press.click();
+      press.click();
     });
     await drain();
 
@@ -410,28 +390,17 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
   it("Done is refused for the window the editor is already read-only in", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const shellSrc = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8",
-    );
-    /* ONE DERIVATION for both, which is the whole point: the editor stops being editable and the
-       verb stops being pressable on the same reading of the same lane's phase. Structural because
-       the window closes inside the act that opens it — a fake adapter settles the send before the
-       assertion could read the DOM, which is a harness fact and not the product's. */
-    expect(
-      shellSrc,
-      "the run's Done is not refused while its own send is out, so a press there does nothing at "
-      + "all under a label reading \"Sending…\" — and it must never be given a lane of its own, "
-      + "because two keys for one message are two copies at the recipient",
-    ).toContain('donePending={frPhase === "sending" || frPhase === "queued"}');
-    expect(
-      shellSrc,
-      "the editor's own read-only window stopped being the same reading",
-    ).toContain('editable={frPhase !== "sending" && frPhase !== "queued"}');
-    /* AND THE LANE IS STILL SHARED — the run and the message's inline editor are one message. */
-    expect(
-      shellSrc,
-      "the run took a send lane of its own, so one reply can now be delivered twice",
-    ).toContain("const frSend = frItem?.messageId ? mailSend.stateOf(frItem.messageId) : null;");
+    const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+    const reply = read("packages/app/src/write/Reply.tsx");
+    const gate = read("packages/app/src/write/reply-gate.ts");
+    const run = read("packages/app/src/reader/actions/ReplyRun.tsx");
+    expect(reply).toContain("const going = SEND_IN_FLIGHT_PHASES.has(reply.send.phase)");
+    expect(reply).toContain("editable={!going && drafted?.drafting !== true}");
+    expect(gate).toContain("going: SEND_IN_FLIGHT_PHASES.has(reply.send.phase)");
+    expect(gate).toContain("sendVerb(sendWord, mayGo, going,");
+    expect(run).toContain('{ ...send, label: t("run.done")');
+    expect(reply).toContain("w.sendReply(reply.messageId)");
+    expect(gate).toContain('const lane = reply.mode === "forward" ? inlineForwardKey(reply.messageId) : reply.messageId;');
   });
 
   /**
@@ -441,24 +410,18 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
    * a per-STEP React map keyed on an index the next run re-issues could never have survived.
    */
   it("the typed reply survives leaving the run and coming back to it", async () => {
-    const el = await shell();
-    await openRun(el);
-    await typeReply(el, TYPED);
+    await shell();
+    await openRun();
+    await typeReply(TYPED);
 
     await key("Escape");
-    expect(editor(el), "Escape did not close the Reply Run").toBeNull();
+    expect(run(), "Escape did not close the Reply Run").toBeNull();
     await key("g");
     await key("o");
-    // The OHBOX ON SCREEN, not merely the hash. `f` is an intent honoured by the
-    // route-transition effect, so pressing it in the window between the hash moving and
-    // React seeing it navigates to the route the shell still thinks it is on — no
-    // `hashchange`, no transition, no run. That window is sub-frame for a human and only a
-    // test can be inside it; waiting on the rendered view is what keeps this measuring the
-    // product instead of the scheduler.
-    await waitFor(() => el.querySelector(".view-ohbox") != null, "the Ohbox to render");
-
-    await openRun(el);
-    expect(editorOf(editor(el)!).getText(), "the reply was lost by walking away from the run")
+    await screen.findByRole("heading", { name: "Ohbox" });
+    await key("f");
+    await waitFor(() => run() !== null && editor() !== null, "the Reply Run to reopen from Ohbox");
+    expect(editorOf(editor()!).getText(), "the reply was lost by walking away from the run")
       .toBe(TYPED);
     expect(kindsOf("triage_set"), "walking away discharged the item").toEqual([]);
   });

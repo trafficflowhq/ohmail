@@ -1,7 +1,8 @@
+import { useEffect, useState } from "react";
 import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
-import type { ScreenerModel, ScreenerSuggest } from "./model.js";
+import type { ScreenerModel, ScreenerSuggest, ScreenerUnsubscribe } from "./model.js";
 import { useWrite, WrittenSwitch } from "./written.js";
 
 /**
@@ -9,7 +10,6 @@ import { useWrite, WrittenSwitch } from "./written.js";
  * the ones that do not, and the one whose consequence leaves the building sits last.
  */
 export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
-  const t = useText("settings");
   const { suggest, ownSuggest, act, unsubscribe } = model;
   if (!suggest && !ownSuggest && !act && !unsubscribe) return null;
   return (
@@ -37,43 +37,69 @@ export function SuggestSheet({ model }: { readonly model: ScreenerModel }) {
           {act.said.why ? <SettingNote>{act.said.why}</SettingNote> : null}
         </>
       ) : null}
-      {unsubscribe ? (
-        <>
-          <WrittenSwitch
-            label={t("autoUnsub.title")}
-            on={unsubscribe.on}
-            note={unsubscribe.on ? t("autoUnsub.on") : t("autoUnsub.off")}
-            failed={t("autoUnsub.failed")}
-            set={(next) => unsubscribe.setBlocked(!next)}
-          />
-          <SettingNote>
-            {t(unsubscribe.from === "computer" ? "autoUnsub.microcopyComputer" : "autoUnsub.microcopy")}
-          </SettingNote>
-        </>
-      ) : null}
+      {unsubscribe ? <UnsubscribeSwitch control={unsubscribe} /> : null}
     </SettingsSheet>
   );
 }
 
+export function UnsubscribeSwitch({ control }: { readonly control: ScreenerUnsubscribe }) {
+  const t = useText("settings");
+  return (
+    <>
+      <WrittenSwitch
+        label={t("autoUnsub.title")}
+        on={control.on}
+        note={control.on ? t("autoUnsub.on") : t("autoUnsub.off")}
+        failed={t("autoUnsub.failed")}
+        set={(next) => control.setBlocked(!next)}
+      />
+      <SettingNote>
+        {t(control.from === "computer" ? "autoUnsub.microcopyComputer" : "autoUnsub.microcopy")}
+      </SettingNote>
+    </>
+  );
+}
+
 /**
- * On opens the confirm, which prices the next batch: no price, no consent. Off writes at once: turning it off spends
+ * On explains what the quote sends. The quote and the consent write each need a press. Off writes at once: turning it off spends
  * nothing and removes an authorisation, so nothing stands between a person and the brake.
  */
 function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
   const write = useWrite();
-  const confirming = !suggest.on && suggest.phase !== "closed";
+  const t = useText("screener");
+  const [reviewing, setReviewing] = useState(false);
+  useEffect(() => {
+    if (suggest.on !== false) setReviewing(false);
+  }, [suggest.on]);
+  const confirming = suggest.on === false && reviewing;
+  const awaitingApproval = suggest.phase === "closed";
+  const cancel = () => {
+    setReviewing(false);
+    suggest.cancel();
+  };
   const { said } = suggest;
   const turn = (on: boolean) =>
     write.run(async () => {
       await suggest.set(on);
-      suggest.cancel();
+      cancel();
     });
   return (
     <>
       <SettingLine
         label={said.title}
-        toggle={{ on: suggest.on, onChange: (next) => (next ? suggest.open() : turn(false)) }}
-        off={write.pending}
+        toggle={{
+          on: suggest.on === true,
+          onChange: (next) => {
+            if (suggest.on === null) return;
+            if (!next) {
+              turn(false);
+            } else if (!reviewing) {
+              suggest.cancel();
+              setReviewing(true);
+            }
+          },
+        }}
+        off={write.pending || suggest.on === null}
       />
       <SettingNote>{said.state}</SettingNote>
       {confirming ? (
@@ -84,10 +110,24 @@ function AutoSuggest({ suggest }: { readonly suggest: ScreenerSuggest }) {
           {said.quote ? <SettingNote>{said.quote}</SettingNote> : null}
           {said.notice ? <SettingNote>{said.notice}</SettingNote> : null}
           {write.failed ? <SettingNote warn>{said.failed}</SettingNote> : null}
-          <Button kind="ink" size="s" disabled={!suggest.priced || write.pending} onPress={() => turn(true)}>
-            {said.turnOn}
-          </Button>
-          <Button kind="quiet" size="s" disabled={write.pending} onPress={() => suggest.cancel()}>
+          {awaitingApproval ? (
+            <>
+              <SettingNote>{t("suggest.autoQuoteDisclosure")}</SettingNote>
+              <Button kind="ink" size="s" onPress={suggest.open}>
+                {t("suggest.autoQuoteApprove")}
+              </Button>
+            </>
+          ) : (
+            <Button
+              kind="ink"
+              size="s"
+              disabled={!suggest.priced || write.pending}
+              onPress={() => turn(true)}
+            >
+              {said.turnOn}
+            </Button>
+          )}
+          <Button kind="quiet" size="s" disabled={write.pending} onPress={cancel}>
             {said.cancel}
           </Button>
         </>

@@ -1,0 +1,37 @@
+@layer oh {
+  .subject-picture {
+    display: grid;
+    grid-template-rows: repeat(2, 1fr);
+    gap: var(--s1);
+    width: 100%;
+    min-height: var(--h-xl);
+    padding: var(--s2);
+    border-radius: var(--r-row);
+    background: var(--sheet);
+    font-size: var(--t-meta);
+  }
+
+  .subject-picture[data-shared] {
+    grid-template-rows: auto repeat(2, 1fr);
+  }
+
+  .subject-picture-letter {
+    display: grid;
+    align-content: start;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+  }
+
+  .subject-picture-line {
+    display: block;
+    width: 70%;
+    height: var(--oh-hair);
+    background: var(--btn-ring);
+  }
+
+  .subject-picture-line:last-child {
+    width: 45%;
+  }
+}

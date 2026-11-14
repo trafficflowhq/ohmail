@@ -19,7 +19,7 @@ import type { SyncStatus } from "../session/sync-scheduler.js";
  * classified through `(product)/session-outcome.ts`.
  */
 export type OwnerOutcome =
-  | { kind: "owner"; accountId: string }
+  | { kind: "owner"; accountId: string; address?: string; familyId?: string }
   | { kind: "none" }
   | { kind: "unknown"; retryAfterMs: number | null };
 
@@ -206,6 +206,9 @@ export function useDerivedVersion(): number {
     () => 0,
   );
 }
+
+/** A mirror value read at the stamp answered by {@link useDerivedVersion}. */
+export const atStamp = <T>(_stamp: number, value: T): T => value;
 
 /**
  * WHICH SEARCH INDEX ANSWERED — {@link OhmailEngine.searchIndexRevision}, subscribed.

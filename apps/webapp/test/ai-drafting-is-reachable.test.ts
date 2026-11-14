@@ -41,16 +41,19 @@ import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply"
  *    fix.
  */
 
-import { shellSliceOf } from "./source-anchor";
-
 const ROOT = existsSync(resolve("apps/webapp/app")) ? resolve(".") : resolve("../..");
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), "utf8");
 
 describe("the premise that drafting is disabled, checked in the four places it would have to be", () => {
   it("a reader can ask for a drafted reply — the verb is in the message menu", () => {
-    const pane = read("apps/webapp/app/shell/MessagePane.tsx");
+    /* Re-pointed by path (the older tests' sorting): today's reader pane leaves with the switch. The
+       new reader draws Draft reply behind its letter's More (`ActionBar.tsx`'s item, pressed: the verb's `draft`),
+       and the verb is handed wherever a drafter stands (`use-verbs.ts`). */
+    const bar = read("packages/app/src/reader/actions/ActionBar.tsx");
+    const verbs = read("packages/app/src/reader/actions/use-verbs.ts");
     expect(
-      /id:\s*"draft"/.test(pane) && /onAction\("draft"\)/.test(pane),
+      /<DraftReplyItem draft=\{verbs\.draft\}/.test(bar) && /t\("verb\.draftReply"\)/.test(bar)
+        && /draft:\s*drafter !== null && message !== null \? \(\) => drafter\(message\.id\)/.test(verbs),
       "the ⋯ menu no longer offers Draft reply",
     ).toBe(true);
   });
@@ -60,8 +63,13 @@ describe("the premise that drafting is disabled, checked in the four places it w
     // was planned and not connected. It is connected.
     /* The message verbs moved to `shell-verbs.ts` at ARCH-022; the arm is read inside
        `onMessageAction`'s own declaration, from whichever frame the manifest says holds it. */
-    const arm = shellSliceOf("onMessageAction");
-    expect(/case "draft":[\s\S]{0,1600}?draftReply\.open\(/.test(arm)).toBe(true);
+    /* Re-pointed by path: today's `onMessageAction` arm leaves with the switch. The reader's Draft
+       reply is Write's (`write/entry.tsx`'s `useDraft`, the reader's port), and a list's row answers through
+       `answerThrough` (`app-logic/src/writing/answer.ts`): both open the reply and ask the drafter. */
+    const entry = read("packages/app/src/write/entry.tsx");
+    const useDraft = entry.slice(entry.indexOf("function useDraft()"));
+    expect(/writing\.openReply\([\s\S]{0,200}?writing\.draftReply\.open\(/.test(useDraft)).toBe(true);
+    expect(/composer\.draftReply\.open\(/.test(read("packages/app-logic/src/writing/answer.ts"))).toBe(true);
     expect(read("apps/webapp/app/(product)/mailbox/draft-reply-wire.ts")).toContain("/messages/${id}/draft");
   });
 

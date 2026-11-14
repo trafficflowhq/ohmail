@@ -24,6 +24,8 @@
     --oh-face-mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
     --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
     --oh-touch: 0;
+    --oh-layer-recessed: -1;
+    --oh-layer-raised: 1;
     --oh-layer-jump: 5;
     --oh-layer-over: 40;
     --oh-layer-top: 60;

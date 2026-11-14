@@ -1,36 +1,12 @@
 /* The first run's own placement: where its parts stand, never how they look. Own classes: `mbx-run-`. */
 
-/* The stage: how far the run is, the step, the confirm in place and the factor's dialog, one under the other. */
+/* The stage: how far the run is, the step and the factor's dialog, one under the other. */
 .mbx-run,
 .mbx-run-step,
-.mbx-run-material,
-.mbx-run-confirm,
-.mbx-run-progress {
+.mbx-run-material {
   display: grid;
   gap: var(--s4);
   min-width: 0;
-}
-
-/* The phases of the walk: a row of dots, each said by its phase's name. */
-.mbx-run-rail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.mbx-run-phase {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-}
-
-/* Narrow: the phases' names go and the step is named once. */
-.mbx-run-at {
-  margin: 0;
 }
 
 /* A row of presses, the foot's verbs, and a ticked line with its words: a row that wraps. */
@@ -40,6 +16,18 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s2);
+}
+
+/* The foot fills the page's action slot, including the space it needs to wrap at large text sizes. */
+.mbx-run-acts {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.mbx-run-acts > [type="button"],
+.mbx-run-acts > [type="submit"] {
+  max-inline-size: 100%;
+  white-space: normal;
 }
 
 /* A line that says what is going on beside the material. */

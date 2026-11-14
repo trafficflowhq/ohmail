@@ -2,11 +2,7 @@
    takes no room of the rows' run and stays at the run's top; the list it holds ends where the rail starts. */
 @layer oh {
   .oh-monthrail {
-    /* Measures of this part that no token carries yet. */
-    --oh-monthrail-w: 52px;
-    --oh-monthrail-step: 26px;
-    --oh-monthrail-gap: 2px;
-    --oh-monthrail-pad: 3px;
+    --oh-monthrail-w: var(--month-rail-touch-width);
     --oh-monthrail-layer: 2;
     --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--s2));
   }
@@ -36,15 +32,15 @@
     width: var(--oh-monthrail-w);
     display: flex;
     flex-direction: column;
-    gap: var(--oh-monthrail-gap);
-    padding: var(--oh-monthrail-pad);
+    gap: var(--month-rail-gap);
+    padding: var(--month-rail-padding);
     border-radius: var(--r-row);
     background: var(--soft-sheet);
     box-shadow: var(--oh-ring-btn);
   }
 
   .oh-monthrail-step {
-    height: var(--oh-monthrail-step);
+    height: var(--month-rail-pointer-step);
     border-radius: var(--r-pill);
     color: var(--ink2);
     font-size: var(--t-meta);
@@ -73,11 +69,29 @@
 
   /* With a pointer the rail is narrower. */
   :root[data-touch="0"] .oh-monthrail {
-    --oh-monthrail-w: 46px;
+    --oh-monthrail-w: var(--month-rail-pointer-width);
   }
 
   /* Under a finger a step is as tall as the smallest control a finger takes. */
   :root[data-touch="1"] .oh-monthrail-step {
     height: var(--h-s);
+  }
+
+  /* The row and the rail keep a little space between their edges. */
+  .oh-monthrail[data-spaced] {
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--s3));
+  }
+
+  :root[data-touch="0"] .oh-monthrail[data-spaced] {
+    --month-rail-row-gap: calc((var(--s1) + var(--s2)) / 2);
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--month-rail-row-gap));
+  }
+
+  :root[data-touch="0"] .oh-monthrail[data-spaced]:not([data-bare]) .oh-row-first {
+    gap: var(--month-rail-row-gap);
+  }
+
+  :root[data-device="phone"] .oh-monthrail[data-spaced] .oh-monthrail-steps {
+    top: var(--s2);
   }
 }

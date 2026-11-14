@@ -31,13 +31,13 @@
  * remains the reliability floor. jsdom: no layout, so the window rests at its opening slice and
  * jumps drive through `ensure` exactly as in a browser.
  */
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cssRect, cssViewport } from "../geometry/index.js";
 import { afterPaint } from "./visit.js";
 
 /** A never-measured card's OUTER height — `contain-intrinsic-size`'s 200px box guess plus the
- *  card's standing 20px bottom margin, matching what the measured cache stores. */
-export const STREAM_CARD_ESTIMATE_PX = 220;
+ *  mounted card's 16px bottom margin, matching what the measured cache stores. */
+export const STREAM_CARD_ESTIMATE_PX = 216;
 
 /** The opening window where no height is known at all (a server render). */
 export const STREAM_MOUNT_FALLBACK = 8;
@@ -115,6 +115,8 @@ export function useStreamWindow({
   ids,
   getRoot,
   armed = true,
+  cardAttribute = "data-sid",
+  endFlight,
 }: {
   /** The stream's card order, top to bottom — message ids, the height cache's key. */
   ids: readonly string[];
@@ -123,8 +125,12 @@ export function useStreamWindow({
   getRoot: () => HTMLElement | null;
   /** Are the cards drawn yet? The lookahead grows only after the opening slice has painted. */
   armed?: boolean;
+  cardAttribute?: string;
+  /** The active keyboard flight, identified by the hand that started it. */
+  endFlight?: () => number | null;
 }): StreamWindow {
   const total = ids.length;
+  const selector = `[${cardAttribute}]`;
   const [opening, setOpening] = useState(() => openingCount(windowColumnPx()));
   const openingRef = useRef(opening);
   openingRef.current = opening;
@@ -139,6 +145,21 @@ export function useStreamWindow({
   idsRef.current = ids;
   /** Kept in step with the RENDERED (clamped) range at the bottom of every render. */
   const rangeRef = useRef(range);
+
+  const flightId = useRef(endFlight);
+  flightId.current = endFlight;
+  const heldEnd = useRef<number | null>(null);
+  const keepEnd = () => {
+    if (heldEnd.current === null || heldEnd.current !== flightId.current?.()) return;
+    const el = getRoot();
+    if (!el || !el.clientHeight || rangeRef.current.end !== idsRef.current.length) return;
+    const top = el.scrollHeight - el.clientHeight;
+    if (top - el.scrollTop > 2) el.scrollTo({ top, behavior: "instant" });
+  };
+  const keepEndRef = useRef(keepEnd);
+  keepEndRef.current = keepEnd;
+  // Replacing the estimated foot with real cards can move the end of the scrollable range.
+  useLayoutEffect(() => keepEndRef.current());
 
   const heightOf = (id: string): number => heights.current.get(id) ?? STREAM_CARD_ESTIMATE_PX;
 
@@ -175,7 +196,7 @@ export function useStreamWindow({
     const ro = new ResizeObserver((entries) => {
       for (const en of entries) {
         const c = en.target as HTMLElement;
-        const sid = c.dataset.sid;
+        const sid = c.getAttribute(cardAttribute);
         const box = en.borderBoxSize?.[0]?.blockSize ?? c.offsetHeight;
         if (!sid || !(box > 0)) continue;
         if (marginPx.current === null) {
@@ -184,6 +205,7 @@ export function useStreamWindow({
         }
         heights.current.set(sid, box + marginPx.current);
       }
+      keepEndRef.current();
     });
     roRef.current = ro;
     return () => {
@@ -191,13 +213,13 @@ export function useStreamWindow({
       roRef.current = null;
       observed.current = new Set();
     };
-  }, []);
+  }, [cardAttribute]);
   /* Which cards the observer watches follows the mounted set: a walk of the DOM, no layout read. */
   useEffect(() => {
     const el = getRoot();
     const ro = roRef.current;
     if (!el || !ro) return;
-    const now = new Set<Element>(el.querySelectorAll(".scast[data-sid]"));
+    const now = new Set<Element>(el.querySelectorAll(selector));
     for (const c of observed.current) if (!now.has(c)) ro.unobserve(c);
     for (const c of now) if (!observed.current.has(c)) ro.observe(c);
     observed.current = now;
@@ -252,7 +274,7 @@ export function useStreamWindow({
       if (fl.on) return false;
       /** The non-card head above the first card (title row, hints): first card's offset minus
        *  the top spacer standing over it. Zero when nothing is mounted or laid out. */
-      const first = el.querySelector<HTMLElement>(".scast[data-sid]");
+      const first = el.querySelector<HTMLElement>(selector);
       let headPx = 0;
       if (first) {
         const cur = rangeRef.current;
@@ -318,6 +340,10 @@ export function useStreamWindow({
     };
     let frame = 0;
     const onScroll = () => {
+      const id = flightId.current?.();
+      if (id != null && el.clientHeight > 0 && el.scrollHeight - el.clientHeight - el.scrollTop <= 2) {
+        heldEnd.current = id;
+      }
       fl.heard = true;
       if (frame) return;
       frame = requestAnimationFrame(() => {
@@ -339,7 +365,7 @@ export function useStreamWindow({
     // `getRoot` is a render-scope closure; the element it returns is stable for the life of
     // the mounted stream, so it is deliberately not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total]);
+  }, [total, selector]);
 
   /**
    * THE LOOKAHEAD ARRIVES AFTER THE FIRST PAINT. The entry commit mounts the opening slice only;
@@ -421,6 +447,7 @@ export function useStreamWindow({
 
   const reset = useCallback(() => {
     pin.current = null;
+    heldEnd.current = null;
     const fl = flight.current;
     fl.on = false;
     fl.lastTop = null;

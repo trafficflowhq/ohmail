@@ -7,7 +7,7 @@
  */
 import { expect, vi } from "vitest";
 import { flushSync } from "react-dom";
-import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
+import { ISO, act, answerStoreWith, answerSyncWith, liveAccountResponse, mailbox, mountShell, tick } from "./live-walk-shell.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 import { readSlot as seatedReadSlot, reportPress, reportSays } from "../ohbox/_finders.js";
 
@@ -41,7 +41,7 @@ const thread = (tid: string, ids: string[]) => create("thread", tid, {
   lastMessageAt: ISO, participants: [], updatedAt: ISO,
 });
 const json = (body: unknown, status = 200): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  liveAccountResponse(Response.json(body, { status }));
 
 export type ReadPatch = { ids: string[]; unread: boolean; via?: string };
 /** Every `PATCH /messages` the engine sent, in order. */
@@ -69,7 +69,7 @@ const takeLater = (): unknown[] => {
  */
 export async function mountThread(
   messages: unknown[],
-  opts: { threadIds?: Record<string, number>; bodies?: Parameters<typeof answerStoreWith>[1] } = {},
+  opts: { threadIds?: Record<string, number>; bodies?: Parameters<typeof answerStoreWith>[1]; webContactScreening?: boolean } = {},
 ): Promise<HTMLElement> {
   resetResumeLaneForTests();
   seq = 0;
@@ -107,7 +107,9 @@ export async function mountThread(
     }
     return base(input as RequestInfo, init);
   }) as unknown as typeof globalThis.fetch;
-  const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO })]);
+  const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO, organizerChecked: opts.webContactScreening })], {
+    webContactScreening: opts.webContactScreening,
+  });
   await settle();
   return host;
 }

@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { apiRoutes, createApp, csrfTokenFor } from "@trafficflow/api";
+import { apiRoutes, createApp, csrfTokenFor, sessionCookies } from "@trafficflow/api";
 import { refreshTokens, sessions } from "@trafficflow/db";
 import { pushSubscriptions } from "@trafficflow/db/cloud";
 import { generateToken, hashToken } from "@trafficflow/services";
@@ -74,6 +74,11 @@ afterEach(() => {
   Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   document.cookie = "tf_csrf=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+  localStorage.removeItem("ohmail.session.pendingSignOut");
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith("ohmail.session.scopeCleanup.")) localStorage.removeItem(key);
+  }
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -147,11 +152,16 @@ describe("sign out ends, and asks the server even behind a renewal", () => {
  * answered, the browser has not taken the answer in yet. Real timers: PGlite may stall under fake ones.
  * `closable`: every request stays on its way, unseen by the server, until `close()` (a tab closed at that moment).
  */
-async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => boolean; closable?: boolean } = {}): Promise<{
-  account: string; refresh: string; revoked: () => Promise<boolean>; familyLive: () => Promise<boolean>;
+const isLogoutClear = (init: RequestInit) => new Headers(init.headers).get("X-Ohmail-Clear-Logout") === "1";
+
+async function heldBrowser(opts: {
+  hold?: (url: string, init: RequestInit) => boolean; closable?: boolean; knownFamily?: boolean; holdPurge?: boolean;
+} = {}): Promise<{
+  account: string; family: string; refresh: string; revoked: () => Promise<boolean>; familyLive: () => Promise<boolean>;
   httpOnly: Map<string, { value: string; path: string }>; db: Awaited<ReturnType<typeof makeDeps>>["db"];
   sent: Array<{ url: string; init: RequestInit }>; held: Array<{ url: string; release: () => void }>; releaseAll: () => void;
   close: () => Promise<void>;
+  replaceSession: () => Promise<{ account: string; family: string }>;
 }> {
   const { db, deps } = await withNodeBlobs(() => makeDeps());
   const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
@@ -167,6 +177,7 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
   ]);
   document.cookie = `tf_csrf=${csrfTokenFor(s.token)}; Path=/`;
   document.cookie = `tf_owner=${s.accountId}; Path=/`;
+  if (opts.knownFamily !== false) document.cookie = `tf_family=${row!.familyId}; Path=/`;
   const apply = (lines: string[]): void => {
     for (const line of lines) {
       const [pair = "", ...attrs] = line.split(";").map((a) => a.trim());
@@ -178,6 +189,24 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
         else httpOnly.set(name, { value, path: attrs.find((a) => /^path=/i.test(a))?.slice(5) ?? "/" });
       } else document.cookie = gone ? `${name}=; Path=/; Max-Age=0` : `${name}=${value}; Path=/`;
     }
+  };
+  const replaceSession = async () => {
+    const replacement = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const [next] = await db.select({ familyId: sessions.familyId }).from(sessions)
+      .where(eq(sessions.id, replacement.sessionId));
+    const nextRefresh = generateToken();
+    await db.insert(refreshTokens).values({
+      accountId: replacement.accountId, userId: replacement.userId, sessionId: replacement.sessionId,
+      familyId: next!.familyId, tokenHash: hashToken(nextRefresh),
+      expiresAt: new Date(FIXED_NOW.getTime() + 2 * 60 * 60 * 1000), createdAt: FIXED_NOW,
+    });
+    const { withSessionCookieLock } = await import("../app/session-refresh.js");
+    await withSessionCookieLock(async () => {
+      apply(sessionCookies({
+        accessToken: replacement.token, refreshToken: nextRefresh, tokenType: "Bearer", expiresIn: 900,
+      }, csrfTokenFor(replacement.token), deps.authConfig, replacement.accountId, next!.familyId));
+    });
+    return { account: replacement.accountId, family: next!.familyId };
   };
   const app = createApp(apiRoutes);
   const sent: Array<{ url: string; init: RequestInit }> = [];
@@ -208,7 +237,7 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
           apply(res.headers.getSetCookie());
           resolve(res);
         };
-        if (res.headers.get("clear-site-data") === null && !keep) settle();
+        if (!keep && (res.headers.get("clear-site-data") === null || opts.holdPurge === false)) settle();
         else held.push({ url, release: settle });
       }, reject);
       if (opts.closable === true) onTheWay.push({ init, go, drop: abort });
@@ -234,7 +263,7 @@ async function heldBrowser(opts: { hold?: (url: string, init: RequestInit) => bo
   const familyLive = async (): Promise<boolean> => (await db.select({ revokedAt: refreshTokens.revokedAt })
     .from(refreshTokens).where(eq(refreshTokens.familyId, row!.familyId))).some((r) => r.revokedAt === null);
   return {
-    account: s.accountId, refresh, revoked, familyLive, httpOnly, db, sent, held, close,
+    account: s.accountId, family: row!.familyId, refresh, revoked, familyLive, httpOnly, db, sent, held, close, replaceSession,
     releaseAll: () => { for (const h of held.splice(0)) h.release(); },
   };
 }
@@ -268,7 +297,7 @@ describe("an answer that crosses the Sign out press never names the account agai
 
   it("a renewal out at the press: its 204 leaves the reserved word, and the door's 204 ends the family", async () => {
     vi.useRealTimers();
-    const world = await heldBrowser({ hold: (url, init) => RENEWAL(url, init) || url === DOOR });
+    const world = await heldBrowser({ hold: (url, init) => RENEWAL(url, init) || (url === DOOR && !isLogoutClear(init)) });
     try {
       const { resumeSession } = await import("../app/session-refresh.js");
       const { signOut } = await import("../app/sign-out.js");
@@ -310,7 +339,7 @@ describe("an answer that crosses the Sign out press never names the account agai
       const out = signOut(world.account);
       await until(isHeld(world, DOOR));
       release(world, CHECK);
-      expect(await check).toEqual({ kind: "owner", accountId: world.account });
+      expect(await check).toEqual({ kind: "owner", accountId: world.account, familyId: world.family });
       expect(readOwnerMarker().kind, "the check's answer named the account under the pending sign-out").toBe("signed-out");
       expect(bindRefusal(world.account)).toBe("owner_signed_out");
       release(world, DOOR);
@@ -326,7 +355,7 @@ describe("an answer that crosses the Sign out press never names the account agai
     await silentTab();
     const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
     const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
-    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
+    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account, familyId: world.family });
     expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
   }, 30_000);
 
@@ -388,7 +417,7 @@ describe("an answer that crosses the Sign out press never names the account agai
     await lapsedTab(world);
     const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
     const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
-    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
+    expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account, familyId: world.family });
     expect(renewals(world), "premise: the check renewed").toBe(1);
     expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
   }, 30_000);
@@ -416,6 +445,13 @@ describe("an answer Chrome holds for its cache walk never holds the sign-out or 
       expect(purges[0]!.init.body).toBeUndefined();
       // The purge's own answer carries the clear and is still held: the press never waited on it.
       expect(world.held.map((h) => h.url)).toEqual(["/auth/refresh"]);
+      const { signOutTrouble } = await import("../app/sign-out-trouble.js");
+      expect(signOutTrouble(out)?.key).toBe("signOutCleanupPending");
+      expect(out.cleared).toBe(false);
+      release(world, "/auth/refresh");
+      await out.cacheCleanup?.settled;
+      expect(signOutTrouble(out)).toBeNull();
+      expect(out.cleared).toBe(true);
     } finally {
       world.releaseAll();
     }
@@ -458,30 +494,477 @@ describe("a tab closed at the Sign out press still ends the session at the serve
     await out;
   }, 30_000);
 
-  it("the wake row's DELETE on its way, the door not yet asked: both reach the server, the DELETE first", async () => {
+  it("pagehide presents the confirmed family while the cookie lock is held", async () => {
     vi.useRealTimers();
     const world = await heldBrowser({ closable: true });
-    const endpoint = "https://push.example/ep/closed-tab";
-    const id = randomUUID();
-    await world.db.insert(pushSubscriptions).values({ id, accountId: world.account, transport: "webpush", endpoint });
-    localStorage.setItem("ohmail.notifications.subscriptionId", id);
-    localStorage.setItem("ohmail.notifications.subscriptionEndpoint", endpoint);
-    const subscription = { endpoint, unsubscribe: () => Promise.resolve(true) };
-    Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true,
-      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(subscription) } }) },
+    const { signOut } = await import("../app/sign-out.js");
+    const { withSessionCookieLock } = await import("../app/session-refresh.js");
+    const gate = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const lock = withSessionCookieLock(async () => {
+      held.resolve();
+      await gate.promise;
     });
+    await held.promise;
+    const out = signOut(world.account, { expectedFamily: world.family });
     try {
-      const { signOut } = await import("../app/sign-out.js");
-      const out = signOut(world.account);
-      await until(() => world.sent.some((s) => s.url === `/api/push/subscriptions/${id}`));
-      expect(world.sent.some((s) => s.url === DOOR), "premise: the door waits behind the DELETE").toBe(false);
       await world.close();
-      expect({ wakeRows: (await world.db.select().from(pushSubscriptions)).length, familyLive: await world.familyLive() },
-        "the closed tab left its session or its wake row at the server").toEqual({ wakeRows: 0, familyLive: false });
-      await out;
+      const requests = world.sent.filter((s) => s.url === DOOR);
+      expect(requests).toHaveLength(1);
+      expect(new Headers(requests[0]!.init.headers).get("X-Ohmail-Expected-Family") === world.family).toBe(true);
+      expect(await world.familyLive()).toBe(false);
+      expect(world.httpOnly.has("tf_refresh")).toBe(true);
     } finally {
-      Reflect.deleteProperty(navigator, "serviceWorker");
+      gate.resolve();
+      await lock;
+      await out;
+    }
+  }, 30_000);
+
+  it("a legacy pagehide revokes the family and its wake row without clearing the browser", async () => {
+    vi.useRealTimers();
+    const world = await heldBrowser({ closable: true, knownFamily: false });
+    await world.db.insert(pushSubscriptions).values({
+      id: randomUUID(), accountId: world.account, transport: "webpush",
+      endpoint: "https://push.example/ep/closed-tab", sessionFamilyId: world.family,
+    });
+    const { signOut } = await import("../app/sign-out.js");
+    const { withSessionCookieLock } = await import("../app/session-refresh.js");
+    const gate = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const lock = withSessionCookieLock(async () => {
+      held.resolve();
+      await gate.promise;
+    });
+    await held.promise;
+    const out = signOut(world.account);
+    try {
+      await world.close();
+      expect(world.sent.filter((s) => s.url === DOOR)).toHaveLength(1);
+      expect((await world.db.select().from(pushSubscriptions))).toHaveLength(0);
+      expect(await world.familyLive()).toBe(false);
+      expect(world.httpOnly.has("tf_refresh")).toBe(true);
+    } finally {
+      gate.resolve();
+      await lock;
+      await out;
     }
   }, 30_000);
 });
+
+
+describe("signing out without Web Locks", () => {
+  it.each(["confirmed family", "older session"] as const)(
+    "a delayed logout for a %s leaves the replacement sign-in and its browser data intact",
+    async (kind) => {
+      vi.useRealTimers();
+      Reflect.deleteProperty(navigator, "locks");
+      const world = await heldBrowser({
+        hold: (url, init) => url === "/auth/refresh/logout" && !isLogoutClear(init),
+        knownFamily: kind === "confirmed family",
+      });
+      const { signOut } = await import("../app/sign-out.js");
+      const { readOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+      const { readSessionFamily } = await import("../app/signed-out-signal");
+      const out = kind === "confirmed family"
+        ? signOut(world.account, { expectedFamily: world.family }) : signOut(world.account);
+      const shared = "ohmail.face.account";
+      const departed = `ohmail.screener.intents.${world.account}`;
+      localStorage.setItem(departed, "departed");
+      try {
+        await until(isHeld(world, "/auth/refresh/logout"));
+        expect(await world.familyLive()).toBe(false);
+        const replacement = await world.replaceSession();
+        localStorage.setItem(shared, "replacement");
+        release(world, "/auth/refresh/logout");
+        await out;
+
+        expect(readOwner() === replacement.account).toBe(true);
+        expect(readSessionFamily() === replacement.family).toBe(true);
+        expect(world.httpOnly.has("tf_session") && world.httpOnly.has("tf_refresh")).toBe(true);
+        expect(world.sent.some((s) => isLogoutClear(s.init))).toBe(false);
+        expect(localStorage.getItem(shared)).toBe("replacement");
+        expect(localStorage.getItem(departed)).toBeNull();
+      } finally {
+        world.releaseAll();
+        localStorage.removeItem(shared);
+        localStorage.removeItem(departed);
+      }
+    }, 30_000,
+  );
+});
+
+
+it("a browser with Web Locks and no confirmed family keeps shared stores and cookies", async () => {
+  vi.useRealTimers();
+  const world = await heldBrowser({ knownFamily: false });
+  const { signOut } = await import("../app/sign-out.js");
+  const shared = "ohmail.face.account";
+  localStorage.setItem(shared, "shared");
+  try {
+    expect((await signOut(world.account)).serverRefused).toBeNull();
+    expect(await world.familyLive()).toBe(false);
+    expect(world.httpOnly.has("tf_refresh")).toBe(true);
+    expect(world.sent.some((s) => isLogoutClear(s.init))).toBe(false);
+    expect(localStorage.getItem(shared)).toBe("shared");
+  } finally {
+    localStorage.removeItem(shared);
+  }
+}, 30_000);
+
+
+it.each([
+  { knownFamily: true, withLocks: false },
+  { knownFamily: false, withLocks: true },
+])("reports incomplete cleanup when shared data survives (known family $knownFamily, locks $withLocks)",
+  async ({ knownFamily, withLocks }) => {
+    vi.useRealTimers();
+    if (!withLocks) Reflect.deleteProperty(navigator, "locks");
+    const world = await heldBrowser({ knownFamily });
+    const { signOut } = await import("../app/sign-out.js");
+    const { signOutTrouble } = await import("../app/sign-out-trouble.js");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
+    const draft = "ohmail.ui.compose";
+    const wake = "ohmail.notifications.subscriptionId";
+    localStorage.setItem(draft, "fixture draft");
+    localStorage.setItem(wake, "fixture registration");
+    try {
+      const out = await signOut(world.account);
+      expect(await world.familyLive()).toBe(false);
+      expect(world.httpOnly.has("tf_refresh")).toBe(true);
+      expect(readOwnerMarker().kind).toBe("signed-out");
+      expect(localStorage.getItem(draft)).toBe("fixture draft");
+      expect(localStorage.getItem(wake)).toBe("fixture registration");
+      expect(out.cleared).toBe(false);
+      expect(signOutTrouble(out)).toEqual({ key: "signOutUnverified" });
+    } finally {
+      localStorage.removeItem(draft);
+      localStorage.removeItem(wake);
+    }
+  }, 30_000,
+);
+
+it("stops a scoped sweep when the same account gains a new family", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser();
+  const { signOut } = await import("../app/sign-out.js");
+  const first = `ohmail.ui.compose.${world.account}.first`;
+  const next = `ohmail.ui.compose.${world.account}.next`;
+  localStorage.setItem(first, "departed draft");
+  localStorage.setItem(next, "departed draft");
+  const remove = Storage.prototype.removeItem;
+  const spy = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+    remove.call(this, key);
+    if (this === localStorage && key === first) {
+      document.cookie = `tf_owner=${world.account}; Path=/`;
+      document.cookie = "tf_family=replacement-family; Path=/";
+      localStorage.setItem(next, "replacement draft");
+    }
+  });
+  try {
+    expect((await signOut(world.account)).cleared).toBe(false);
+    expect(localStorage.getItem(first)).toBeNull();
+    expect(localStorage.getItem(next)).toBe("replacement draft");
+    expect(world.sent.some((entry) => isLogoutClear(entry.init))).toBe(false);
+  } finally {
+    spy.mockRestore();
+    localStorage.removeItem(first);
+    localStorage.removeItem(next);
+  }
+}, 30_000);
+
+it("a pending finisher with no departed account reports the surviving private data", async () => {
+  vi.useRealTimers();
+  const world = await heldBrowser({ knownFamily: false });
+  const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out.js");
+  const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
+  const draft = "ohmail.ui.compose";
+  const wake = "ohmail.notifications.subscriptionId";
+  localStorage.setItem(draft, "fixture draft");
+  localStorage.setItem(wake, "fixture registration");
+  markSignedOutPending();
+  try {
+    const result = await finishPendingSignOut({ isCancelled: () => false, attempts: 1 });
+    expect(await world.familyLive()).toBe(false);
+    expect(world.httpOnly.has("tf_refresh")).toBe(true);
+    expect(localStorage.getItem(draft)).toBe("fixture draft");
+    expect(localStorage.getItem(wake)).toBe("fixture registration");
+    expect(result).toEqual({ outcome: "stopped", said: { key: "signOutUnverified" } });
+  } finally {
+    localStorage.removeItem(draft);
+    localStorage.removeItem(wake);
+  }
+}, 30_000);
+
+
+it("the same pending sign-out can finish its cleanup after Web Locks are available", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser({ holdPurge: false });
+  const { signOut } = await import("../app/sign-out.js");
+  const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out.js");
+  const draft = "ohmail.ui.compose";
+  const wake = "ohmail.notifications.subscriptionId";
+  localStorage.setItem(draft, "fixture draft");
+  localStorage.setItem(wake, "fixture registration");
+  try {
+    expect((await signOut(world.account)).cleared).toBe(false);
+    expect(localStorage.getItem(draft)).toBe("fixture draft");
+    expect(localStorage.getItem(wake)).toBe("fixture registration");
+    installLocks();
+    const done = await finishPendingSignOut({ isCancelled: () => false, attempts: 1 });
+    if (done.cleanup) {
+      expect(done.outcome).toBe("stopped");
+      expect(done.said).toEqual({ key: "signOutCleanupPending" });
+      expect(await done.cleanup).toBeNull();
+    } else {
+      expect(done).toEqual({ outcome: "confirmed", said: null });
+    }
+    expect(localStorage.getItem(draft)).toBeNull();
+    expect(localStorage.getItem(wake)).toBeNull();
+    expect(world.httpOnly.has("tf_session") || world.httpOnly.has("tf_refresh")).toBe(false);
+  } finally {
+    localStorage.removeItem(draft);
+    localStorage.removeItem(wake);
+  }
+}, 30_000);
+
+
+it("reports incomplete server sign-out for a live family after cleaning this device", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser();
+  const { signOut } = await import("../app/sign-out.js");
+  const { signOutTrouble } = await import("../app/sign-out-trouble.js");
+  const draft = `ohmail.ui.compose.${world.account}.fixture`;
+  localStorage.setItem(draft, "fixture draft");
+  const send = globalThis.fetch;
+  globalThis.fetch = (input, init) => String(input).endsWith("/auth/refresh/logout")
+    ? Promise.resolve().then(() => { throw new TypeError("Network unavailable"); })
+    : send(input, init);
+  try {
+    const out = await signOut(world.account);
+    expect(await world.familyLive()).toBe(true);
+    expect(signOutTrouble(out)?.key).toBe("signOutServerRefused");
+    expect(localStorage.getItem(draft)).toBeNull();
+    expect(world.httpOnly.has("tf_refresh")).toBe(true);
+  } finally {
+    localStorage.removeItem(draft);
+  }
+}, 30_000);
+
+it("reports incomplete cleanup if the cache purge rejects after dispatch", async () => {
+  vi.useRealTimers();
+  const world = await heldBrowser();
+  const { signOut } = await import("../app/sign-out.js");
+  const { signOutTrouble } = await import("../app/sign-out-trouble.js");
+  const send = globalThis.fetch;
+  let purges = 0;
+  globalThis.fetch = (input, init) => {
+    if (new Headers(init?.headers).get("x-ohmail-clear") !== "cache") return send(input, init);
+    purges += 1;
+    return Promise.resolve().then(() => { throw new TypeError("Cache purge unavailable"); });
+  };
+  const out = await signOut(world.account);
+  expect(await world.familyLive()).toBe(false);
+  await out.cacheCleanup?.settled;
+  expect(purges).toBe(2);
+  expect(signOutTrouble(out)?.key).toBe("signOutUnverified");
+}, 30_000);
+
+
+it("clears an owed draft before reopening the same account and preserves subsequent drafts", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser();
+  const { finishAccountCleanup, PENDING_SIGN_OUT_KEY, signOut } = await import("../app/sign-out.js");
+  const { accountCleanupOwed } = await import("../app/pending-sign-out-storage.js");
+  const draft = `ohmail.ui.compose.${world.account}.fixture`;
+  localStorage.setItem(draft, "departed draft");
+  const remove = Storage.prototype.removeItem;
+  const refused = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+    if (this === localStorage && key === draft) return;
+    remove.call(this, key);
+  });
+  try {
+    const out = await signOut(world.account);
+    expect(out.serverRefused).toBeNull();
+    expect(out.cleared).toBe(false);
+    expect(accountCleanupOwed(world.account)).toBe(true);
+    expect(localStorage.getItem(draft)).toBe("departed draft");
+    localStorage.removeItem(PENDING_SIGN_OUT_KEY);
+    expect(accountCleanupOwed(world.account), "a later pending operation must not erase the cleanup fence").toBe(true);
+    refused.mockRestore();
+    document.cookie = `tf_owner=${world.account}; Path=/`;
+    document.cookie = "tf_family=replacement-family; Path=/";
+    expect(await finishAccountCleanup(world.account, "replacement-family")).toBe(true);
+    expect(localStorage.getItem(draft)).toBeNull();
+    localStorage.setItem(draft, "replacement draft");
+    expect(await finishAccountCleanup(world.account, "replacement-family")).toBe(true);
+    expect(localStorage.getItem(draft)).toBe("replacement draft");
+  } finally {
+    refused.mockRestore();
+    localStorage.removeItem(draft);
+  }
+}, 30_000);
+
+it("keeps a confirmed revocation usable for sign-in when a later logout request could not be sent", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser();
+  const { signOut } = await import("../app/sign-out.js");
+  const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out.js");
+  const first = await signOut(world.account);
+  expect(first.serverRefused).toBeNull();
+  expect(first.cleared).toBe(false);
+  expect(await world.familyLive()).toBe(false);
+  const requests = vi.fn(() => Promise.reject(new TypeError("Network unavailable")));
+  globalThis.fetch = requests;
+  expect(await finishPendingSignOut({ isCancelled: () => false, attempts: 1 }))
+    .toEqual({ outcome: "stopped", said: { key: "signOutUnverified" } });
+  expect(requests).not.toHaveBeenCalled();
+}, 30_000);
+
+it("an ownerless legacy sign-out cannot attribute a different account's private stores to itself", async () => {
+  vi.useRealTimers();
+  const world = await heldBrowser({ knownFamily: false });
+  const { finishPendingSignOut } = await import("../app/(product)/login/finish-sign-out.js");
+  const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
+  const { finishAccountCleanup } = await import("../app/sign-out.js");
+  const { IDBFactory } = await import("fake-indexeddb");
+  const { mirrorDbName } = await import("@ohmail/client-engine");
+  const disk = new IDBFactory();
+  vi.stubGlobal("indexedDB", disk);
+  const unattached = "ohmail.ui.compose";
+  localStorage.setItem(unattached, "unattributed draft");
+  markSignedOutPending();
+  try {
+    expect((await finishPendingSignOut({ isCancelled: () => false, attempts: 1 })).outcome).toBe("stopped");
+    expect(await world.familyLive()).toBe(false);
+    const replacement = await world.replaceSession();
+    expect(replacement.account === world.account).toBe(false);
+    const draft = `ohmail.ui.compose.${replacement.account}.fixture`;
+    const queue = `ohmail.screener.intents.${replacement.account}`;
+    localStorage.setItem(draft, "replacement draft");
+    localStorage.setItem(queue, "replacement queue");
+    const mirror = mirrorDbName(replacement.account);
+    await new Promise<void>((resolve, reject) => {
+      const request = disk.open(mirror);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => { request.result.close(); resolve(); };
+    });
+    try {
+      expect(await finishAccountCleanup(replacement.account, replacement.family)).toBe(true);
+      expect(localStorage.getItem(draft)).toBe("replacement draft");
+      expect(localStorage.getItem(queue)).toBe("replacement queue");
+      expect((await disk.databases()).some(({ name }) => name === mirror)).toBe(true);
+      expect(localStorage.getItem(unattached)).toBe("unattributed draft");
+    } finally {
+      localStorage.removeItem(draft);
+      localStorage.removeItem(queue);
+    }
+  } finally {
+    vi.unstubAllGlobals();
+    localStorage.removeItem(unattached);
+  }
+}, 30_000);
+
+it("a failed legacy revocation removes the authenticated departed account's private draft", async () => {
+  vi.useRealTimers();
+  const world = await heldBrowser({ knownFamily: false });
+  const { signOut } = await import("../app/sign-out.js");
+  const draft = `ohmail.ui.compose.${world.account}.fixture`;
+  localStorage.setItem(draft, "departed draft");
+  const send = globalThis.fetch;
+  globalThis.fetch = (input, init) => String(input).endsWith("/auth/refresh/logout")
+    ? Promise.reject(new TypeError("Network unavailable"))
+    : send(input, init);
+  try {
+    expect((await signOut(world.account)).serverRefused).not.toBeNull();
+    expect(await world.familyLive()).toBe(true);
+    expect(localStorage.getItem(draft)).toBeNull();
+  } finally {
+    localStorage.removeItem(draft);
+  }
+}, 30_000);
+
+it("an unlocked sign-out carries the retired draft obligation through another account's sign-in", async () => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser();
+  const { finishAccountCleanup, signOut } = await import("../app/sign-out.js");
+  const { composeDraftKey, readComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
+  const { readReplyDraft, replyDraftKey } = await import("@ohmail/app-logic/writing/mail-send");
+  const reply = replyDraftKey("fixture-message", null);
+  const legacy = "ohmail.ui.compose";
+  const departed = composeDraftKey(world.account);
+  localStorage.setItem(reply, "unattributed reply");
+  localStorage.setItem(legacy, JSON.stringify({ subject: "unattributed old draft" }));
+  localStorage.setItem(departed, JSON.stringify({ subject: "owned old draft" }));
+  try {
+    expect((await signOut(world.account)).cleared).toBe(false);
+    expect(localStorage.getItem(departed)).toBeNull();
+    expect(localStorage.getItem("ohmail.session.scopeCleanup.legacy")).not.toBeNull();
+    const replacement = await world.replaceSession();
+    expect(await finishAccountCleanup(replacement.account, replacement.family)).toBe(true);
+    expect(readComposeDraft(replacement.account).subject).toBe("");
+    expect(readReplyDraft("fixture-message", replacement.account)).toEqual(EMPTY_RICH);
+    expect(localStorage.getItem(reply)).toBe("unattributed reply");
+    expect(localStorage.getItem(legacy)).not.toBeNull();
+    expect(localStorage.getItem("ohmail.session.scopeCleanup.legacy")).not.toBeNull();
+  } finally {
+    localStorage.removeItem(reply);
+    localStorage.removeItem(legacy);
+    localStorage.removeItem(departed);
+  }
+}, 30_000);
+
+it.each([false, true])("a late unlocked logout clears only the retired compose draft (retry %s)", async (retry) => {
+  vi.useRealTimers();
+  Reflect.deleteProperty(navigator, "locks");
+  const world = await heldBrowser({ hold: (url) => url === "/auth/refresh/logout", holdPurge: false });
+  const { signOut } = await import("../app/sign-out.js");
+  const { finishRetiredComposeCleanup } = await import("../app/pending-sign-out-storage");
+  const { readOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+  const retired = "ohmail.ui.compose";
+  const preference = "ohmail.face.account";
+  localStorage.setItem(retired, "retired draft");
+  const out = signOut(world.account);
+  try {
+    await until(isHeld(world, "/auth/refresh/logout"));
+    expect(await world.familyLive()).toBe(false);
+    const replacement = await world.replaceSession();
+    const replacementDraft = `ohmail.ui.compose.${replacement.account}.fixture`;
+    localStorage.setItem(preference, "replacement");
+    localStorage.setItem(replacementDraft, "replacement draft");
+    const remove = Storage.prototype.removeItem;
+    const removal = retry ? vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+      if (this !== localStorage || key !== retired) remove.call(this, key);
+    }) : undefined;
+    try {
+      release(world, "/auth/refresh/logout");
+      await out;
+      expect(readOwner() === replacement.account).toBe(true);
+      expect(world.httpOnly.has("tf_refresh")).toBe(true);
+      expect(world.sent.some((entry) => isLogoutClear(entry.init))).toBe(false);
+      expect(localStorage.getItem(preference)).toBe("replacement");
+      expect(localStorage.getItem(replacementDraft)).toBe("replacement draft");
+      if (retry) {
+        expect(localStorage.getItem(retired)).toBe("retired draft");
+        removal?.mockRestore();
+        finishRetiredComposeCleanup();
+      }
+      expect(localStorage.getItem(retired)).toBeNull();
+      expect(localStorage.getItem(replacementDraft)).toBe("replacement draft");
+    } finally {
+      removal?.mockRestore();
+      localStorage.removeItem(replacementDraft);
+    }
+  } finally {
+    world.releaseAll();
+    localStorage.removeItem(retired);
+    localStorage.removeItem(preference);
+  }
+}, 30_000);

@@ -2,12 +2,13 @@
  * THE YEAR: twelve small months. A day with something is bold; a run of two days or more is marked on its
  * days. A press on a day opens its Day, on a month's name its Month.
  */
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { Dot, RefusalLine } from "@ohmail/ui/base";
 import { MiniMonth } from "@ohmail/ui/calendar";
 import {
   dayLong,
   monthName,
+  monthOfDay,
   weekdayNames,
   yearMonths,
   yearOf,
@@ -32,6 +33,13 @@ export function YearView({ input, acts, edge }: YearViewProps) {
   const t = useText("year");
   const locale = useLocale();
   const year = Number(yearOf(input.anchor));
+  const pickedMonth = monthOfDay(input.anchor);
+  const pickedSection = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (input.device !== "desktop") {
+      pickedSection.current?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [input.device, pickedMonth]);
   const data = useMemo(
     () =>
       yearMonths({
@@ -48,6 +56,7 @@ export function YearView({ input, acts, edge }: YearViewProps) {
   );
   const letters = weekdayNames(locale, input.weekStart, "narrow");
   const thisYear = yearOf(input.today);
+  const tones = new Map(input.events.map((event) => [event.id, event.tone]));
   return (
     <div className="cal-yr" data-device={input.device}>
       <HeldNotice
@@ -62,7 +71,12 @@ export function YearView({ input, acts, edge }: YearViewProps) {
         {data.months.map((m) => {
           const name = monthName(m.month, locale);
           return (
-            <section key={m.month} className="cal-yr-month" data-month={m.month}>
+            <section
+              key={m.month}
+              className="cal-yr-month"
+              data-month={m.month}
+              ref={m.month === pickedMonth ? pickedSection : undefined}
+            >
               <h2 className="oh-text oh-display cal-yr-head">
                 <button
                   type="button"
@@ -75,6 +89,7 @@ export function YearView({ input, acts, edge }: YearViewProps) {
                 </button>
               </h2>
               <MiniMonth
+                size="year"
                 weekdays={letters}
                 days={m.days.map((d) => ({
                   id: d.id,
@@ -84,14 +99,8 @@ export function YearView({ input, acts, edge }: YearViewProps) {
                   picked: d.picked,
                   outside: d.outside,
                   busy: d.busy,
-                  band: d.run
-                    ? d.run.first && d.run.last
-                      ? "only"
-                      : d.run.first
-                        ? "start"
-                        : d.run.last
-                          ? "end"
-                          : "in"
+                  run: d.run
+                    ? { tone: tones.get(d.run.key) ?? "neutral", first: d.run.first, last: d.run.last }
                     : undefined,
                 }))}
                 weekNumbers={
@@ -99,7 +108,9 @@ export function YearView({ input, acts, edge }: YearViewProps) {
                     ? m.rows.map((r) => ({ number: r.week, label: t("weekLabel", { number: r.week }) }))
                     : undefined
                 }
-                onDayPress={(id) => acts.view("day", id)}
+                onDayPress={(id) =>
+                  input.device === "phone" ? acts.view("month", `${m.month}-01`) : acts.view("day", id)
+                }
                 onWeekPress={(row) => acts.view("week", m.rows[row]!.first)}
               />
             </section>

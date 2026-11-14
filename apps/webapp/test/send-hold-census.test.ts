@@ -55,6 +55,8 @@ const NONE_OWED = (): boolean => false;
  *    compose for good once a row the mirror will never answer for is written down.
  */
 
+const WRITING_PROJECTION = "../../../../packages/app-logic/src/writing/writing-of.ts";
+
 const SHELL = (f: string): string =>
   readFileSync(resolve(process.cwd(), `apps/webapp/app/shell/${f}`), "utf8");
 
@@ -102,7 +104,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
     + "heldLaneRow (the row a promoted lane writes into rather than beside), dropPriorRow (the "
     + "older row a reply's send from its own create's row leaves), and sentElsewhereOf (the row a lane "
     + "last wrote, sent from another device: read when a dock opens and while one is open)"],
-  ["AppShell.tsx", 1, "the render that feeds the compose's send state"],
+  [WRITING_PROJECTION, 1, "the projection that feeds the compose's send state"],
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
@@ -156,9 +158,8 @@ describe("the send hold is answered in one place, and every write site asks", ()
         // row still has to be classified: the assertion below is an exact list, not a subset.
         'return status === "sent" || status === "unverified" || status === "pending" ? status : undefined;',
       ],
-      // IN SOURCE ORDER, which is what the assertion below compares. Both moved to
-      // `shell-compose.ts` with the verbs that read them (ARCH-022); the empty entry below keeps
-      // `AppShell.tsx` asked, so a comparison written back into the shell frame still refuses.
+      // The comparison order follows the composer. The projection is scanned too, so its
+      // consumer cannot introduce a second answer to the hold question.
       "../../../../packages/app-logic/src/writing/shell-compose.ts": [
         // Reads the HOLD's own answer, as the composer's sent-elsewhere read does: a `sent` by status
         // is another device's send, and Reply ends the lane's row as a delete ends it.
@@ -167,12 +168,12 @@ describe("the send hold is answered in one place, and every write site asks", ()
         // draft AND a row a send left unconfirmed; handing the press the ordinary one would ask
         // the predicate a question it answers `free` and send beside the held row. The verdict is
         // still `holdOf`'s — `replySendState` asks it about the row this line picks.
-        'drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft")?.id ?? null);',
+        'drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft"',
         // Not the hold: it decides whether this device's own editor state may seed the reopened
         // form, which is about where the block state was last written, not about a send.
         'if (d.status !== "draft") return {};',
       ],
-      "AppShell.tsx": [],
+      [WRITING_PROJECTION]: [],
       // The predicate's own file, where the question is allowed to be answered — and, in source
       // order after it, `discardDecision` reading the HOLD's status: a projection of `holdOf`'s
       // answer into what the Drafts list's Discard does with it, not a second reading of the row.
@@ -278,7 +279,7 @@ describe("the send hold is answered in one place, and every write site asks", ()
     ).toBe(1);
 
     /* ONE FILE IN THE SHELL PULLS IT, and it is the hook that owns the send. */
-    const pullers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "../../../../packages/app-logic/src/writing/shell-compose.ts"]
+    const pullers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", WRITING_PROJECTION, "../../../../packages/app-logic/src/writing/shell-compose.ts"]
       .filter((f) => code(SHELL(f)).some((l) => /\.flushPending\(/.test(l)));
     expect(
       pullers,
@@ -302,18 +303,16 @@ describe("the send hold is answered in one place, and every write site asks", ()
      * different rule, and both would look correct in isolation — the shape that produced
      * `heldRowUnverified` disagreeing with `holdOf` about the same row.
      *
-     * Counted as JSX ATTRIBUTES, not as the word: `locked` is a local in `ComposeView` and a
-     * property name in its own type, and a census that fired on those would be a census that
-     * fires on innocent content — which discards real work and gets loosened until it fires on
-     * nothing.
+     * Count the assignments of the projected hold. The form reads this field to control its
+     * editor and both send buttons. The predicate and its stored sources have no projection.
      */
-    const producers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", "AppShell.tsx", "../../../../packages/app-logic/src/writing/shell-compose.ts"]
-      .flatMap((f) => [...SHELL(f).matchAll(/\blocked=\{/g)].map(() => f));
+    const producers = ["../../../../packages/app-logic/src/writing/compose-autosave.ts", "../../../../packages/app-logic/src/writing/mail-send.ts", WRITING_PROJECTION, "../../../../packages/app-logic/src/writing/shell-compose.ts"]
+      .flatMap((f) => [...SHELL(f).matchAll(/\bcomposeLocked:\s*/g)].map(() => f));
     expect(
       producers,
       "the compose's hold is set from more than one place. A refusal with two authors has two "
       + "rules, and the one that runs second wins silently — ask the hook and pass its answer.",
-    ).toEqual(["AppShell.tsx"]);
+    ).toEqual([WRITING_PROJECTION]);
     /* TWO, and both are named: the entry on `MailSendApi` and the single implementation in the
        returned object. A third is a second answer to the question the prop above renders. */
     expect(
@@ -574,8 +573,15 @@ describe("what a site may do under each answer", () => {
       /if \(row === null && readComposeRow\(owner\.current\) !== null && hold\.kind === "unknown"\) return \{ kind: "nothing" \};/,
     );
     /* AND THE LIST'S DELETE, which was the write site the census did not count. */
-    expect(shell, "the Drafts list's Delete writes without asking the predicate")
-      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,320}\}, scope\);\n\s*const decision = discardDecision\(hold\);\n\s*if \(decision\.kind === "refuse"\) \{\n\s*setDiscardRefusal\(/);
+    const decideDraftDiscard = sliceOfDeclaration(shell, "decideDraftDiscard");
+    expect(decideDraftDiscard).toMatch(/discardDecision\(holdOf\(engine, \{[\s\S]{0,320}\}, scope\)\)/);
+    expect(decideDraftDiscard).toMatch(/return decision\.kind === "refuse" \? decision : \{ kind: "go" \}/);
+    const discardDraftRow = sliceOfDeclaration(shell, "discardDraftRow");
+    expect(discardDraftRow, "the Drafts list's Delete writes without asking the predicate")
+      .toMatch(/const decision = decideDraftDiscard\(draftId\);\s*if \(decision\.kind === "refuse"\) return \{ kind: "blocked", why: decision\.why \};[\s\S]+engine\.mutate\(\{ kind: "draft_discard", draftId \}\)/);
+    expect(sliceOfDeclaration(shell, "discardDraft")).toMatch(
+      /const v = await discardDraftRow\(listed\);[\s\S]+case "blocked": setDiscardRefusal\(/,
+    );
     expect(shell, "the race the server refuses by name is not told to anybody")
       .toMatch(/res\.error\?\.code === "send_recorded"/);
     /* AND THE ONE STATUS THAT SETTLES RATHER THAN PARKS, on both sides of the seam. */
@@ -614,7 +620,7 @@ const SETTLE_SITES: Array<[file: string, count: number, sites: string]> = [
     + "(`refusedWithRow`); a Discard empties the editor before the wire, so its 409 restores nothing"],
   // The shell frame keeps none: both endings moved with the verbs (ARCH-022), and a zero here is
   // the claim that no third ending was written back beside the JSX.
-  ["AppShell.tsx", 0, "nothing — the endings live with the verbs"],
+  [WRITING_PROJECTION, 0, "nothing — the endings live with the verbs"],
 ];
 
 /** The SUM, apart from the rows, for `CALL_SITES_TOTAL`'s reason. */
@@ -682,8 +688,10 @@ describe("a compose's ending is written in one place", () => {
      */
     const shell = SHELL("../../../../packages/app-logic/src/writing/shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
-    /* The positive half — the name `(b)` DOES use resolves to a slice with the arm in it. */
-    expect(sliceOfDeclaration(shell, "discardDraft")).toContain("emptyEditorsOf(draftId, heldRow)");
+    /* The positive half finds the shared Discard action and the call that detaches its editor. */
+    expect(sliceOfDeclaration(shell, "discardDraftRow")).toContain(
+      'discardEditorsOf(draftId, heldRow, engine.read().get<EngineDraft>("draft", draftId))();',
+    );
   });
 });
 

@@ -1,25 +1,15 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, Folder } from "@ohmail/wire";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  MemoryMirrorStore,
-  OhmailEngine,
-  type EntityReader,
-  type SyncChange,
-  type UnsubscribeLetter,
-} from "@ohmail/client-engine";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { UnsubscribeLetter } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
-import { shellSliceOf } from "./source-anchor";
-import { queueDoor } from "./fixtures/queue-door.js";
-
+import { clickMounted, withMountedSender } from "./fixtures/mounted-sender-sheet.js";
+import {
+  ACCOUNT, ISO, act, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
+  teardownScreeningWeb, tick, warmScreeningWeb,
+} from "./fixtures/screening-web.js";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
+import { within } from "@testing-library/react";
 /**
  * ── THE SHEET IS REACHED, NOT MERELY BUILT ──────────────────────────────────
  *
@@ -43,12 +33,10 @@ import { queueDoor } from "./fixtures/queue-door.js";
  * accessibility tree, or rendered but never wired.
  */
 
-let seq = 0;
-
 function msg(id: string, from: string, folder: Folder): EngineMessage {
   return {
     id,
-    accountId: "acct",
+    accountId: ACCOUNT,
     mailboxId: "mb",
     threadId: null,
     messageIdHeader: null,
@@ -70,110 +58,115 @@ function msg(id: string, from: string, folder: Folder): EngineMessage {
   };
 }
 
-async function mirror(list: EngineMessage[]): Promise<MemoryMirrorStore> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(list.map((m): SyncChange => ({
-    type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-  })));
-  return store;
+beforeAll(warmScreeningWeb, 30_000);
+let mounted = false;
+async function clearLetterMenu() {
+  if (mounted) await teardownScreeningWeb();
+  mounted = false;
 }
+afterEach(clearLetterMenu);
 
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-
-afterEach(() => {
-  act(() => root?.unmount());
-  host?.remove();
-  root = null;
-  host = null;
-});
-
-interface Rendered {
-  onChoose: ReturnType<typeof vi.fn>;
-  onOpenDetail: ReturnType<typeof vi.fn>;
-  el: HTMLElement;
+interface RequestWrite {
+  path: string;
+  method: string;
+  body: Record<string, unknown>;
 }
-
 async function render(
-  list: EngineMessage[],
-  seedId: string,
-  /**
-   * The account switch (mail 0054) as `AppShell` resolves it, defaulted here to the component's
-   * own default so every existing case in this file keeps asserting the shipped behaviour.
-   * `address` is the contact-chip override (viewer), resolved exactly as `AppShell` does.
-   */
-  /** `claimsOnly`: the store's queue answers, naming these senders' screen-out as filing their claims alone. */
-  opts: { autoUnsubscribe?: boolean; address?: string; letters?: readonly UnsubscribeLetter[]; claimsOnly?: readonly string[] } = {},
-): Promise<Rendered> {
-  const store = await mirror(list);
-  let reader: EntityReader = store;
-  if (opts.claimsOnly !== undefined) {
-    const named = opts.claimsOnly;
-    const engine = new OhmailEngine({
-      store,
-      adapter: {
-        sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: "2026-08-01T10:00:00.000Z" }),
-        mutate: async () => ({ changes: [], seq: null }),
-        fetchBody: async () => null,
-        screenerWaiting: queueDoor(list.filter((m) => m.folder === "ohmail/Screener").map((m) => ({
-          messageId: m.id, address: m.from.address, receivedAt: m.date ?? "",
-          ...(m.senderCheck ? { checked: { ...m.senderCheck, ...(named.includes(m.from.address) ? { claimsOnly: true } : {}) } } : {}),
-        }))),
-      } as never,
+  list: EngineMessage[], seedId: string,
+  opts: { autoUnsubscribe?: boolean; address?: string; letters?: readonly UnsubscribeLetter[]; atScreener?: boolean } = {},
+) {
+  const seed = list.find(({ id }) => id === seedId)!;
+  const person = opts.address ?? seed.from.address;
+  const contactName = [...seed.cc, ...seed.to].find(({ address }) => address === person)?.name ?? person;
+  const opened = opts.address && contactName === person
+    ? { ...seed, cc: [...seed.cc, { name: null, address: person }] }
+    : seed;
+  const rows = list.map((row, index) => ({
+    ...(row.id === seedId ? opened : row),
+    ...(opts.letters?.[index]?.authVerdict ? { authVerdict: opts.letters[index]!.authVerdict } : {}),
+  }));
+  const writes: RequestWrite[] = [];
+  let seq = rows.length * 2;
+  installScreeningWeb(opts.atScreener ? "#/screener" : `#/ohbox/m/${seedId}`, (path, query, method, init) => {
+    const reply = (data: unknown, status = 200, written = false) => Response.json(data, {
+      status,
+      headers: { "X-Ohmail-Account": ACCOUNT, ...(written ? { "X-Sync-Seq": String(++seq) } : {}) },
     });
-    await engine.refreshScreenerWaiting();
-    reader = engine.read();
-  }
-  const sender = senderScreening(reader, seedId, opts.address)!;
-  const onChoose = vi.fn();
-  const onOpenDetail = vi.fn();
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      React.createElement(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        // `children` as a PROP, not a third argument: `NextIntlClientProvider` declares it
-        // required in its own props type, and the variadic form does not satisfy that under
-        // `tsc`. `apps/webapp` typechecks its tests, so the variadic form fails the build.
-        children: React.createElement(SenderMenu, {
-          state: { messageId: seedId, x: 0, y: 0 },
-          sender,
-          onChoose,
-          onOpenDetail,
-          ...(opts.autoUnsubscribe === undefined ? {} : { autoUnsubscribe: opts.autoUnsubscribe }),
-          ...(opts.letters === undefined ? {} : { lettersFor: () => opts.letters! }),
-          onClose: () => {},
-        }),
-      }),
-    );
+    if (path === "/api/mailboxes") return reply({ items: [{
+      id: "mb", address: ["fixture", "mailbox.example"].join("@"), status: "connected", organizerRole: "organizer",
+      organizerChecked: true, providerConfirms: true, createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
+    }] });
+    if (path === "/api/consent") return reply({
+      seedConfirmedAt: ISO, screeningResetAt: null, dormancyDays: 60, blockAutoUnsubscribeAt: opts.autoUnsubscribe === false ? ISO : null,
+    });
+    if (path === "/api/sync") return query.get("types") === "rule"
+      ? syncScreeningWeb([], 0)
+      : syncScreeningWeb(rows.flatMap((message, index) => {
+        const letter = opts.letters?.[index];
+        return [
+          { type: "message", op: "create", id: message.id, seq: index * 2 + 1, updatedAt: message.updatedAt, entity: message },
+          ...(letter && letter.posture !== null ? [{
+            type: "message_body", op: "create", id: message.id, seq: index * 2 + 2, updatedAt: message.updatedAt,
+            entity: {
+              messageId: message.id, state: "ready", text: "Hello", html: null,
+              loadedRemoteContent: false, unsubscribe: letter.posture, unsubscribeUrl: null, withheld: null,
+            },
+          }] : []),
+        ];
+      }), rows.length * 2);
+    if (method !== "GET" && /^\/api\/(messages|screener|rules)(?:\/|$)/.test(path)) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      writes.push({ path, method, body });
+      if (path === "/api/rules") return reply({
+        ...body, id: "new-rule", priority: 0, enabled: true, provenance: "manual",
+        createdAt: ISO, updatedAt: ISO, stats: { hits: 0, lastHitAt: null, demotions: 0 },
+      }, 201, true);
+      const moved = rows.find(({ id }) => path === `/api/messages/${id}/move`);
+      if (moved) return reply({ ...moved, folder: body.folder }, 200, true);
+      return reply({ messageId: seedId, appliedFolder: body.dest, createdRuleId: "new-rule" }, 200, true);
+    }
+    return undefined;
   });
-  return { onChoose, onOpenDetail, el: host };
+  mounted = true;
+  const frame = within(await mountScreeningWeb());
+  await tick(4000);
+  if (opts.atScreener) {
+    const listbox = within(frame.getByRole("listbox", { name: messages.screener.title }));
+    await clickMounted(listbox.getByRole("option", { name: (name) => name.startsWith(`${person}:`) }));
+    return { el: frame.getByRole("region", { name: messages.frame.landmark.reading }), writes, person };
+  }
+  const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
+  await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(contactName) }));
+  const page = within(document.body);
+  const contact = within(page.getByRole("dialog", { name: messages.message.contactAria.replace("{who}", contactName) }));
+  await clickMounted(contact.getByRole("menuitem", { name: messages.screening.action }));
+  return {
+    el: page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", person) }),
+    writes,
+    person,
+  };
 }
 
 const click = async (node: Element | null | undefined) => {
   expect(node, "the control this test drives does not exist").toBeTruthy();
-  await act(async () => {
-    node!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+  await act(async () => { node!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
-
-const byText = (el: HTMLElement, selector: string, text: string) =>
-  [...el.querySelectorAll(selector)].find((n) => (n.textContent ?? "").includes(text));
+const domain = (el: HTMLElement, name: RegExp = /^Everyone at x\.example/) => within(el).queryByRole("radio", { name });
+const option = (el: HTMLElement, name: RegExp) => within(el).getByRole("option", { name });
+const ruleControl = (el: HTMLElement) => within(el).queryByRole("switch", { name: messages.screening.ruleToggleAria });
+const retroControl = (el: HTMLElement) => within(el).queryByRole("switch", { name: messages.screening.retroToggleAria });
+const rulesWritten = (writes: RequestWrite[]) => writes.filter(({ path }) => path === "/api/rules").map(({ body }) => body);
+const afterDecision = () => tick(UNDO_MS + 500);
 
 describe("the scope switch is on the sheet and does something", () => {
   it("offers the domain, states its size, and dispatches with scope='domain'", async () => {
-    const { onChoose, el } = await render([
+    const { writes, el, person } = await render([
       msg("a", "no-reply-1@x.example", "ohmail/News"),
       msg("b", "no-reply-2@x.example", "ohmail/News"),
       msg("c", "no-reply-3@x.example", "ohmail/News"),
     ], "a");
 
-    const domainBtn = byText(el, ".sm-scope button", "Everyone at x.example");
+    const domainBtn = domain(el);
     expect(domainBtn).toBeTruthy();
     // The COUNT is on the control, which is the mitigation for "everyone at gmail.com":
     // the wide option can only be chosen with its size visible.
@@ -182,11 +175,12 @@ describe("the scope switch is on the sheet and does something", () => {
 
     // It starts on the ADDRESS — defaulting to the domain would silently widen what every
     // existing habit-click does.
-    expect(el.querySelector(".sm-scope button.on")!.textContent).toContain("This address");
+    expect(within(el).getByRole("radio", { name: /^This address/, checked: true }).textContent).toContain("This address");
 
     await click(domainBtn);
-    await click(byText(el, "li", "Receipts"));
-    expect(onChoose).toHaveBeenCalledWith("receipts", "domain", true, true);
+    await click(option(el, /^Receipts/));
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "domain", match: "x.example", destination: "ohmail/Receipts", applyRetro: true })]);
   });
 
   it("is not offered at all for an address with no domain", async () => {
@@ -199,79 +193,34 @@ describe("the scope switch is on the sheet and does something", () => {
     // on purpose. Render a second radiogroup here and it still goes red.
     const { el } = await render([msg("a", "malformed-no-at-sign", "INBOX")], "a");
     expect(el.querySelector("[role=radiogroup]")).toBeNull();
-    expect(byText(el, "button", "Everyone at")).toBeUndefined();
+    expect(domain(el, /^Everyone at/)).toBeNull();
   });
 });
 
 describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
-  it("screening a waiting sender out opens the disclosure instead of committing", async () => {
-    // A held letter that offers one-click from a sender its provider confirmed: a fact (`unsubscribe-claim.ts`).
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
-      letters: [{ posture: "one_click", authVerdict: "pass" }],
-    });
-
-    await click(byText(el, "li", "Screened"));
-    // THE ASSERTION THAT MATTERS: nothing has been dispatched yet.
-    expect(onChoose).not.toHaveBeenCalled();
-
-    const confirm = el.querySelector(".sm-confirm");
-    expect(confirm).toBeTruthy();
-    expect(confirm!.textContent).toContain("one-click unsubscribe request");
-
-    await click(byText(el, ".sm-confirm-row button", "Screen out and unsubscribe"));
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
-  });
-
   it("names the domain and the number of senders when the scope is the domain", async () => {
-    const { el } = await render([
-      msg("a", "one@bulk.example", "ohmail/Screener"),
-      msg("b", "two@bulk.example", "ohmail/Screener"),
-    ], "a");
-
-    await click(byText(el, ".sm-scope button", "Everyone at bulk.example"));
-    await click(byText(el, "li", "Screened"));
-
-    const confirm = el.querySelector(".sm-confirm");
-    expect(confirm!.textContent).toContain("2 senders");
-    expect(confirm!.textContent).toContain("bulk.example");
-  });
-
-  /* A CLAIM THROUGH A LIST'S ADDRESS THE PERSON LET IN (mail 0150): the server's screen-out sets the
-     claims aside alone and sends no request, so nothing is disclosed and no rule is promised for it. */
-  const listClaim = (id: string): EngineMessage => ({
-    ...msg(id, "post@lists.example", "ohmail/Screener"), from: { name: "PostFinance", address: "post@lists.example" },
-    senderCheck: { reason: "impersonation", brand: "PostFinance", domainShared: false, list: true },
-  });
-
-  it("a list the person let in: Screen out commits with no disclosure, and the foot says it makes no rule", async () => {
-    const { onChoose, el } = await render([listClaim("a")], "a", {
-      letters: [{ posture: "one_click", authVerdict: "pass" }], claimsOnly: ["post@lists.example"],
-    });
-    expect(el.querySelector(".sm-foot")!.textContent)
-      .toContain("Screen out and Spam are the exception here: they set aside only the messages that claim to be PostFinance, and make no rule.");
-    expect(byText(el, "li", "Screened")!.querySelector(".sm-warn"), "Screen out marked as sending mail").toBeNull();
-    await click(byText(el, "li", "Screened"));
-    expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
-  });
-
-  it("CONTROL: a list the store says no claims-only press for opens the disclosure, and the foot promises the rule alone", async () => {
-    const { onChoose, el } = await render([listClaim("a")], "a", {
-      letters: [{ posture: "one_click", authVerdict: "pass" }], claimsOnly: [],
-    });
-    expect(el.querySelector(".sm-foot")!.textContent).not.toContain("exception");
-    await click(byText(el, "li", "Screened"));
-    expect(onChoose).not.toHaveBeenCalled();
-    expect(el.querySelector(".sm-confirm")).toBeTruthy();
-  });
-
-  it("cancelling dispatches nothing and puts the destinations back", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a");
-    await click(byText(el, "li", "Screened"));
-    await click(byText(el, ".sm-confirm-row button", "Cancel"));
-    expect(onChoose).not.toHaveBeenCalled();
-    expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(el.querySelector("ul[role=listbox]")).toBeTruthy();
+    const senders = ["one@bulk.example", "two@bulk.example"];
+    const { el, writes } = await render(
+      senders.map((sender, index) => msg(String(index + 1), sender, "ohmail/Screener")),
+      "1", { atScreener: true, letters: senders.map(() => ({ posture: "one_click", authVerdict: "pass" })) },
+    );
+    await click(within(el).getByRole("button", { name: "Decision scope" }));
+    const page = within(document.body);
+    await click(page.getByRole("menuitemradio", { name: "whole domain" }));
+    const actions = within(within(el).getByRole("toolbar", { name: messages.screener.place.panel }));
+    await click(actions.getByRole("button", { name: "Screen out" }));
+    expect(writes).toEqual([]);
+    const question = page.queryByRole("dialog", { name: messages.screener.place.unsub.screened });
+    expect(question).not.toBeNull();
+    expect(question!.textContent).toContain("2 senders");
+    expect(question!.textContent).toContain("bulk.example");
+    await click(within(question!).getByRole("button", { name: messages.screener.place.unsub.screened }));
+    await afterDecision();
+    expect(writes.filter(({ path }) => path.startsWith("/api/screener/"))).toEqual([{
+      path: "/api/screener/1",
+      method: "POST",
+      body: { decision: "no", dest: "ohmail/Screened", scope: "domain", applyRetro: false, unsubscribeIds: ["1", "2"] },
+    }]);
   });
 
   /**
@@ -280,109 +229,11 @@ describe("the unsubscribe coupling is disclosed BEFORE it runs", () => {
    * through the warning that is real.
    */
   it("a sender already past the gate commits straight away — no rule, nothing armed", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
-    await click(byText(el, "li", "Screened"));
+    const { writes, el, person } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
+    await click(option(el, /^Screened/));
     expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
-  });
-
-  /**
-   * ── THE ACCOUNT SWITCH, AT THE SURFACE (mail 0054) ──────────────────────────────────────
-   *
-   * The other honest negative, and the one this slice adds. The plan still reports
-   * `unsubscribes: true` for a waiting sender — nothing about the CODE PATH changed — but the
-   * account has turned auto-unsubscribe off, so the request will not be made and the sheet must
-   * not ask for consent to it.
-   *
-   * An empty confirm is not a harmless extra step: it is exactly how people learn to click
-   * through the confirm that IS real, which is the same argument the header makes for not
-   * warning on a rule written past the gate.
-   *
-   * Wire the prop to a constant `true`, or drop it from `commit`'s condition, and this goes red.
-   */
-  it("OFF: a waiting sender commits straight away, with no disclosure of a request nobody will send", async () => {
-    const { onChoose, el } = await render(
-      [msg("a", "spam@bulk.example", "ohmail/Screener")], "a", { autoUnsubscribe: false },
-    );
-
-    await click(byText(el, "li", "Screened"));
-
-    expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
-  });
-
-  it("OFF: spam likewise — both reject destinations read the same switch", async () => {
-    const { onChoose, el } = await render(
-      [msg("a", "spam@bulk.example", "ohmail/Screener")], "a", { autoUnsubscribe: false },
-    );
-
-    await click(byText(el, "li", "Spam"));
-
-    expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("spam", "sender", true, true);
-  });
-
-  /**
-   * THE DEFAULT IS THE DISCLOSURE, and it is asserted separately from the cases above because it
-   * is a claim about the COMPONENT'S OWN default rather than about a value `AppShell` passes.
-   *
-   * A mount that has not been taught about the switch — a test, an older caller, a surface added
-   * later — keeps asking, because the failure worth preventing is the silent one: a click that
-   * quietly leaves a mailing list. Change the parameter default to `false` and this goes red
-   * while every OTHER test in this describe stays green, which is the point of pinning it here.
-   */
-  /**
-   * THE CONFIRM SAYS WHAT THIS SENDER IS SENT. The server asks for any of the sender's
-   * mail offering one-click, now and later, so held letters offering none, read or not, still get the
-   * request as that condition; a seen one-click letter makes it a fact.
-   */
-  it("held mail read and offering no one-click: the confirm still says the sender-level condition", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
-      letters: [{ posture: "no_header", authVerdict: "pass" }],
-    });
-    await click(byText(el, "li", "Screened"));
-    expect(onChoose, "a press that may ask a list committed with no word").not.toHaveBeenCalled();
-    expect(el.querySelector(".sm-confirm")?.getAttribute("data-unsub")).toBe("may_send");
-    expect(el.querySelector(".sm-confirm")!.textContent).toContain("now and for their later mail");
-  });
-
-  it("the shell hands the sheet each held letter's posture, read from the body the server sent", () => {
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    const at = shell.indexOf("<SenderMenu");
-    const mount = shell.slice(at, shell.indexOf("/>", shell.indexOf("onClose={() => setSenderMenu(null)}", at)));
-    expect(at, "the sheet is mounted in the shell").toBeGreaterThan(-1);
-    expect(mount).toMatch(/lettersFor=\{\(scope\) => senderMenuFor\.scopes\[scope\]\.messages/);
-    expect(mount).toContain("unsubscribeLetterOf(engine.read(), m.id)");
-  });
-
-  it("a one-click letter its provider did not confirm: the condition, not the fact", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
-      letters: [{ posture: "one_click", authVerdict: "unavailable" }],
-    });
-    await click(byText(el, "li", "Screened"));
-    expect(onChoose).not.toHaveBeenCalled();
-    expect(el.querySelector(".sm-confirm")?.getAttribute("data-unsub")).toBe("may_send");
-    expect(byText(el, ".sm-confirm-row button", "Screen out and unsubscribe")).toBeUndefined();
-  });
-
-  it("a held letter still unread: the same condition, and its commit is Continue rather than a promise", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a", {
-      letters: [{ posture: "no_header", authVerdict: null }, { posture: null, authVerdict: null }],
-    });
-    await click(byText(el, "li", "Screened"));
-    const confirm = el.querySelector(".sm-confirm");
-    expect(confirm?.getAttribute("data-unsub")).toBe("may_send");
-    expect(confirm!.textContent).toContain("where they offer one-click unsubscribe, ohmail also asks to unsubscribe you on your behalf, now and for their later mail");
-    expect(byText(el, ".sm-confirm-row button", "Screen out and unsubscribe")).toBeUndefined();
-    await click(byText(el, ".sm-confirm-row button", "Continue"));
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
-  });
-
-  it("the prop defaults to ON: a caller that passes nothing still discloses", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "ohmail/Screener")], "a");
-    await click(byText(el, "li", "Screened"));
-    expect(onChoose).not.toHaveBeenCalled();
-    expect(el.querySelector(".sm-confirm")).toBeTruthy();
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/Screened", applyRetro: true })]);
   });
 });
 
@@ -399,35 +250,39 @@ describe("the sheet resolved to a chip's address", () => {
       ...msg("seed", "sender@corp.example", "INBOX"),
       cc: [{ name: "Cy Cole", address: "cy@x.example" }],
     };
-    const { onChoose, el } = await render([seed], "seed", { address: "cy@x.example" });
+    const { writes, el, person } = await render([seed], "seed", { address: "cy@x.example" });
 
     const head = el.querySelector(".sm-head")!;
     expect(head.textContent).toContain("Cy Cole");
     expect(head.textContent).not.toContain("sender@corp.example");
     // The scope switch names the CHIP's domain, so the wide option widens the right subject.
-    expect(byText(el, ".sm-scope button", "Everyone at x.example")).toBeTruthy();
+    expect(domain(el)).toBeTruthy();
 
-    await click(byText(el, "li", "News"));
-    expect(onChoose).toHaveBeenCalledWith("reads", "sender", true, true);
+    await click(option(el, /^News/));
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/News", applyRetro: true })]);
   });
 });
 
 describe("the way into the detail view", () => {
   it("carries the scope that is on screen", async () => {
-    const { onOpenDetail, el } = await render([
+    const letters = [
       msg("a", "one@x.example", "INBOX"),
       msg("b", "two@x.example", "INBOX"),
-    ], "a");
-
-    const detail = el.querySelector(".sm-detail")!;
+    ];
+    const { el } = await render(letters, "a");
+    const detail = within(el).getByRole("button", { name: /See all 1 message/ });
     expect(detail.textContent).toContain("See all 1 message");
     await click(detail);
-    expect(onOpenDetail).toHaveBeenLastCalledWith("sender");
+    expect(within(document.body).getByRole("dialog", { name: new RegExp(letters[0]!.from.address) })).toBeTruthy();
 
-    await click(byText(el, ".sm-scope button", "Everyone at x.example"));
-    expect(el.querySelector(".sm-detail")!.textContent).toContain("See all 2 messages");
-    await click(el.querySelector(".sm-detail"));
-    expect(onOpenDetail).toHaveBeenLastCalledWith("domain");
+    await clearLetterMenu();
+    const wide = await render(letters, "a");
+    await click(domain(wide.el));
+    const audit = within(wide.el).getByRole("button", { name: /See all 2 messages/ });
+    expect(audit.textContent).toContain("See all 2 messages");
+    await click(audit);
+    expect(within(document.body).getByRole("dialog", { name: /x\.example/ })).toBeTruthy();
   });
 });
 
@@ -439,30 +294,79 @@ describe("the way into the detail view", () => {
  * repository's own recurring failure one more time. These drive the control.
  */
 describe("the rule toggle", () => {
-  it("is on by default, and that is what reaches onChoose", async () => {
-    const { onChoose, el } = await render([msg("a", "one@x.example", "INBOX")], "a");
-    const toggle = el.querySelector(".sm-rule")!;
-    expect(toggle, "the rule toggle does not exist").toBeTruthy();
-    expect(toggle.getAttribute("role")).toBe("switch");
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
+  // The letter menu explicitly applies the rule to past mail. This is separate from the waiting card.
+  async function expectLetterMenuDecision(
+    destination: "screened" | "spam", name: string, opts: Parameters<typeof render>[2],
+    confirmation?: string,
+  ): Promise<void> {
+    await clearLetterMenu();
+    const letters = [msg("a", "waiting@bulk.example", "ohmail/Screener")];
+    if (opts?.letters?.length === 2) {
+      letters.push({
+        ...msg("earlier", letters[0]!.from.address, "ohmail/Screener"),
+        date: "2026-07-31T09:00:00.000Z",
+      });
+    }
+    const { writes, el } = await render(letters, "a", opts);
+    const sheet = within(el);
+    const label = name === "Screened" ? /^Screened out/ : new RegExp(`^${name}`);
+    await click(sheet.getByRole("option", { name: label }));
+    if (confirmation) {
+      expect(writes).toEqual([]);
+      await click(sheet.getByRole("button", { name: confirmation }));
+    } else {
+      expect(sheet.queryByRole("button", { name: /unsubscribe|^Continue$/i })).toBeNull();
+    }
+    await afterDecision();
+    const grant = confirmation ? ["a"] : undefined;
+    const decisions = writes.filter(({ path }) => path === "/api/screener/a");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.body).toEqual(expect.objectContaining({
+      scope: "sender", applyRetro: true,
+      dest: destination === "screened" ? "ohmail/Screened" : "ohmail/Quarantine",
+    }));
+    expect(decisions[0]!.body.unsubscribeIds).toEqual(grant);
+  }
 
-    await click(byText(el, "li", "News"));
-    expect(onChoose).toHaveBeenCalledWith("reads", "sender", true, true);
+  it("does not offer to unsubscribe from an earlier letter", async () => {
+    await expectLetterMenuDecision("screened", "Screened", {
+      letters: [{ posture: "no_header", authVerdict: "pass" }, { posture: "one_click", authVerdict: "pass" }],
+    });
+  });
+
+  it("is on by default, and that is what reaches onChoose", async () => {
+    const { writes, el, person } = await render([msg("a", "one@x.example", "INBOX")], "a");
+    const sheet = within(el);
+    expect(sheet.getByRole("switch", { name: messages.screening.ruleToggleAria }).getAttribute("aria-checked")).toBe("true");
+    expect(sheet.getByRole("switch", { name: messages.screening.retroToggleAria }).getAttribute("aria-checked")).toBe("true");
+    await click(sheet.getByRole("option", { name: /^News/ }));
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/News", applyRetro: true })]);
+    await expectLetterMenuDecision("screened", "Screened", {
+      letters: [{ posture: "one_click", authVerdict: "pass" }],
+    }, "Screen out and unsubscribe");
+    await expectLetterMenuDecision("screened", "Screened", { autoUnsubscribe: false });
+    await expectLetterMenuDecision("spam", "Spam", { autoUnsubscribe: false });
+    await expectLetterMenuDecision("screened", "Screened", {
+      letters: [{ posture: null, authVerdict: null }, { posture: "no_header", authVerdict: null }],
+    }, "Continue");
   });
 
   it("turning it off is the explicit non-default, and it travels", async () => {
-    const { onChoose, el } = await render([msg("a", "one@x.example", "INBOX")], "a");
-    await click(el.querySelector(".sm-rule"));
-    expect(el.querySelector(".sm-rule")!.getAttribute("aria-checked")).toBe("false");
+    const { writes, el, person } = await render([msg("a", "one@x.example", "INBOX")], "a");
+    await click(ruleControl(el));
+    expect(ruleControl(el)!.getAttribute("aria-checked")).toBe("false");
 
-    await click(byText(el, "li", "News"));
-    expect(onChoose).toHaveBeenCalledWith("reads", "sender", false, true);
+    await click(option(el, /^News/));
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([]);
+    expect(writes).toContainEqual(expect.objectContaining({ path: "/api/messages/a/move", body: expect.objectContaining({ folder: "ohmail/News" }) }));
   });
 
   it("is not offered for a WAITING sender — the decide promotes the rule regardless", async () => {
     // A switch that cannot change the outcome is a control that lies about having one.
     const { el } = await render([msg("a", "one@x.example", "ohmail/Screener")], "a");
-    expect(el.querySelector(".sm-rule")).toBeNull();
+    expect(ruleControl(el)).toBeNull();
   });
 
   /**
@@ -472,10 +376,11 @@ describe("the rule toggle", () => {
    * rather than to `ScreeningPlan.unsubscribes` makes this go red.
    */
   it("screening past the gate to a reject folder commits straight away, rule and all", async () => {
-    const { onChoose, el } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
-    await click(byText(el, "li", "Screened"));
+    const { writes, el, person } = await render([msg("a", "spam@bulk.example", "INBOX")], "a");
+    await click(option(el, /^Screened/));
     expect(el.querySelector(".sm-confirm")).toBeNull();
-    expect(onChoose).toHaveBeenCalledWith("screened", "sender", true, true);
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/Screened", applyRetro: true })]);
   });
 });
 
@@ -488,7 +393,7 @@ describe("the footer keeps telling the truth", () => {
     const foot = () => el.querySelector(".sm-foot")!.textContent!;
     expect(foot()).not.toContain("This message moves there now");
     expect(foot()).toContain("Future mail from two@x.example files there too");
-    await click(el.querySelector(".sm-retro"));
+    await click(retroControl(el));
     expect(foot()).toContain("Mail already here stays where it is");
   });
 
@@ -497,7 +402,7 @@ describe("the footer keeps telling the truth", () => {
       msg("a", "one@x.example", "ohmail/Screener"),
       msg("b", "two@x.example", "ohmail/Screener"),
     ], "a");
-    await click(byText(el, ".sm-scope button", "Everyone at x.example"));
+    await click(domain(el));
     expect(el.querySelector(".sm-foot")!.textContent).toContain("anyone at x.example");
   });
 
@@ -530,7 +435,7 @@ describe("the footer keeps telling the truth", () => {
     expect(foot()).toContain("leaves alone messages you have replied to, filed yourself here or in another mail app, or set aside");
     expect(foot(), "a count the press no longer makes").not.toContain("Up to 50");
 
-    await click(el.querySelector(".sm-rule"));
+    await click(ruleControl(el));
     expect(foot()).toContain("It makes no rule, so future mail is unchanged.");
   });
 
@@ -541,12 +446,12 @@ describe("the footer keeps telling the truth", () => {
    */
   it("the opt-out withdraws the retroactive claim as well, not only the future one", async () => {
     const { el } = await render([msg("a", "one@x.example", "INBOX")], "a");
-    await click(el.querySelector(".sm-rule"));
+    await click(ruleControl(el));
     const foot = el.querySelector(".sm-foot")!.textContent!;
     expect(foot).not.toContain("already filed for you");
     expect(foot).not.toContain("revoke the rule");
     // …and the past-mail row goes with it: no rule, nothing for it to be a question about.
-    expect(el.querySelector(".sm-retro")).toBeNull();
+    expect(retroControl(el)).toBeNull();
   });
 
   it("follows the SCOPE as well — a domain rule is not described as one address's", async () => {
@@ -554,7 +459,7 @@ describe("the footer keeps telling the truth", () => {
       msg("a", "one@x.example", "INBOX"),
       msg("b", "two@x.example", "INBOX"),
     ], "a");
-    await click(byText(el, ".sm-scope button", "Everyone at x.example"));
+    await click(domain(el));
     expect(el.querySelector(".sm-foot")!.textContent)
       .toContain("This message moves there now, and future mail from anyone at x.example files there too");
   });
@@ -572,7 +477,7 @@ describe("the footer keeps telling the truth", () => {
     ], "a");
     // The count moved WITH the claim in 0.19: it sits on the switch that turns the retroactive
     // apply on, not on the rule's label, so the rule's own sentence is about the future alone.
-    expect(el.querySelector(".sm-rule")!.textContent, "the rule label promises only the future")
+    expect(ruleControl(el)!.textContent, "the rule label promises only the future")
       .not.toContain("messages");
     const note = el.querySelector(".sm-retro small")!.textContent!;
     expect(note).toContain("2 messages");
@@ -592,19 +497,19 @@ describe("the footer keeps telling the truth", () => {
  */
 describe("the past-mail option", () => {
   it("turns off without taking the rule with it", async () => {
-    const { onChoose, el } = await render([
+    const { writes, el, person } = await render([
       msg("a", "one@x.example", "INBOX"),
       msg("b", "one@x.example", "ohmail/News"),
     ], "a");
-    const retro = el.querySelector(".sm-retro")!;
+    const retro = retroControl(el)!;
     expect(retro, "the past-mail option does not exist").toBeTruthy();
     expect(retro.getAttribute("role")).toBe("switch");
     expect(retro.getAttribute("aria-checked"), "the default is ON").toBe("true");
 
     await click(retro);
-    expect(el.querySelector(".sm-retro")!.getAttribute("aria-checked")).toBe("false");
+    expect(retroControl(el)!.getAttribute("aria-checked")).toBe("false");
     // The rule is untouched — that is the whole point of the second control.
-    expect(el.querySelector(".sm-rule")!.getAttribute("aria-checked")).toBe("true");
+    expect(ruleControl(el)!.getAttribute("aria-checked")).toBe("true");
 
     const foot = el.querySelector(".sm-foot")!.textContent!;
     expect(foot).toContain("files there too");
@@ -617,41 +522,53 @@ describe("the past-mail option", () => {
     expect(foot, "the letter pressed on moves, and the sheet says so").toContain("This message moves there now");
     expect(foot, "a promise the press breaks").not.toContain("Mail already here stays where it is");
 
-    await click(byText(el, "li", "News"));
-    expect(onChoose).toHaveBeenCalledWith("reads", "sender", true, false);
+    await click(option(el, /^News/));
+    await afterDecision();
+    expect(rulesWritten(writes)).toEqual([expect.objectContaining({ kind: "sender", match: person, destination: "ohmail/News", applyRetro: false })]);
   });
 
-  /**
-   * THE SEAM THIS FILE EXISTS FOR — the switch REACHES the dispatch. Every case above renders the
-   * component and reads `onChoose`, which is green even when the shell then throws the answer
-   * away: drop the argument at `AppShell`'s `planScreeningChange` call and the switch is a
-   * decoration whose mutation nothing else notices. Read as source, on `contact-chips.test.tsx`'s
-   * precedent for this same call: a rendered `AppShell` is not reachable from this suite, and a
-   * wiring fact with a silent failure mode is worth asserting by the shape of the call.
-   */
-  it("the answer reaches the plan through the shell, not only through onChoose", () => {
-    // From the repo root, which is where this suite runs (CLAUDE.md): under `jsdom`
-    // `import.meta.url` is not a file URL and `fileURLToPath` throws, which would be a red for the
-    // harness rather than for the wiring.
-    /* TWO FRAMES, BECAUSE THE CLAIM HAS TWO HALVES SINCE ARCH-022: the JSX that hands the
-       sheet's answer over stayed in `AppShell.tsx`, and the verbs that hand it to the planner
-       moved to `shell-verbs.ts`. Each half is asked of the frame that holds it, and the verbs
-       are asked inside their OWN declarations rather than file-wide — a file-wide match would
-       pass on any other call spelled the same way. */
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell, "the sheet hands its four answers and the step's to changeScreening")
-      .toMatch(/onChoose=\{\(dest, scope, makeRule, applyRetro, press\) => changeScreening\(/);
-    expect(shellSliceOf("changeScreening"), "…and the shell hands the fifth to the planner")
-      .toMatch(/planScreeningChange\(sender, dest, scope, makeRule, applyRetro\)/);
-    expect(shellSliceOf("confirmSubjectRule"), "the subject sheet's answer is threaded the same way")
-      .toMatch(/planSubjectRule\(ctx, term, dest, field, applyRetro\)/);
-  });
+  it("the answer reaches the plan through the shell, not only through onChoose", async () => {
+    await withMountedSender(async ({ sheet, writes, sender }) => {
+      await clickMounted(sheet.getByRole("switch", { name: messages.screening.retroToggleAria }));
+      await clickMounted(sheet.getByRole("option", { name: /^News/ }));
+      expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([]);
+      await tick(UNDO_MS + 500);
+      expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([{
+        method: "POST", path: "/api/rules",
+        body: expect.objectContaining({ kind: "sender", match: sender, destination: "ohmail/News", applyRetro: false }),
+      }]);
+    });
+    for (const applyRetro of [false, true]) {
+      await withMountedSender(async ({ sheet, writes, sender }) => {
+        await clickMounted(sheet.getByRole("button", { name: messages.screening.subjectRuleOpen }));
+        const editor = within(document.body).getByRole("dialog", {
+          name: messages.screening.subjectAria.replace("{who}", sender),
+        });
+        await clickMounted(within(editor).getByRole("option", { name: messages.screener.pileReads }));
+        const retro = within(editor).getByRole("switch", { name: messages.screening.retroToggleAria });
+        expect(retro.getAttribute("aria-checked")).toBe("true");
+        if (!applyRetro) await clickMounted(retro);
+        expect(retro.getAttribute("aria-checked")).toBe(String(applyRetro));
+        expect(writes).toEqual([]);
+        await clickMounted(within(editor).getByRole("button", {
+          name: messages.screening.subjectConfirmGo.replace("{dest}", messages.screener.pileReads),
+        }));
+        await tick(500);
+        expect(writes.filter(({ path }) => path.startsWith("/api/rules"))).toEqual([{
+          method: "POST", path: "/api/rules",
+          body: expect.objectContaining({
+            kind: "sender", match: sender, subjectContains: "A note from Ada", destination: "ohmail/News", applyRetro,
+          }),
+        }]);
+      });
+    }
+  }, 30_000);
 
   it("is offered only while the rule is on — it is subordinate to it, not a peer", async () => {
     const { el } = await render([msg("a", "one@x.example", "INBOX")], "a");
-    expect(el.querySelector(".sm-retro")).toBeTruthy();
-    await click(el.querySelector(".sm-rule"));
-    expect(el.querySelector(".sm-retro"), "no rule, nothing to apply to past mail").toBeNull();
+    expect(retroControl(el)).toBeTruthy();
+    await click(ruleControl(el));
+    expect(retroControl(el), "no rule, nothing to apply to past mail").toBeNull();
   });
 
   /**

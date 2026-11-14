@@ -5,6 +5,7 @@
  * place in the list (`aria-setsize`, `aria-posinset`) and the marks a reading finds it by (`data-hit`, `data-index`)
  * around the kit's row, which stays a button; the cursor is the item's `aria-current` and the row's own mark.
  */
+import { fragmentOf } from "../frame/route.js";
 import { Fragment, type ReactNode } from "react";
 import type { SearchHit } from "@ohmail/client-engine";
 import type { SearchListModel } from "@ohmail/app-logic/search";
@@ -12,6 +13,7 @@ import { GroupHeading, ListLine, Row, Rows } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { SearchBeside } from "./beside.js";
 import { fuzzyTerm, hitWho, markedSubject } from "./row-words.js";
+import { SearchSort } from "./SearchSort.js";
 
 /** The owed slot's row stands for nobody. */
 const OWED_PEOPLE: readonly [] = [];
@@ -27,7 +29,7 @@ export function SearchResults({
   /** The letter open in the reading column, if any. */
   openId: string | null;
   /** The count beside Results, as it is printed. */
-  count: string;
+  count?: string;
 }) {
   const t = useText("search");
   const item = (hit: SearchHit, i: number, similar: boolean, placed: boolean): ReactNode => (
@@ -58,8 +60,11 @@ export function SearchResults({
       {model.partsSaid ? <ListLine fine>{t("saidPart")}</ListLine> : null}
     </>
   );
+  const sort = <SearchSort model={model} />;
   const heading = (
-    <GroupHeading count={count}>{model.similar ? t("similarHead") : t("results")}</GroupHeading>
+    <GroupHeading count={count} aside={sort}>
+      {model.similar ? t("similarHead") : t("results")}
+    </GroupHeading>
   );
 
   if (model.listing === "store") {
@@ -80,7 +85,7 @@ export function SearchResults({
       <>
         {heading}
         {model.similarFrom !== null ? similarHint : null}
-        <Rows>
+        <Rows listLabel={t("aria")}>
           <div aria-hidden data-window-top="" style={{ height: model.window.padTop }} />
           {slots}
           {model.window.padBottom > 0 ? <div aria-hidden style={{ height: model.window.padBottom }} /> : null}
@@ -102,14 +107,19 @@ export function SearchResults({
       {exact.length > 0 ? (
         <>
           {heading}
-          <Rows>{exact}</Rows>
+          <Rows listLabel={t("aria")}>{exact}</Rows>
         </>
       ) : null}
       {near.length > 0 ? (
         <Fragment key="similar">
-          <GroupHeading>{t("similarHead")}</GroupHeading>
+          <GroupHeading
+            count={exact.length === 0 ? count : undefined}
+            aside={exact.length === 0 ? sort : undefined}
+          >
+            {t("similarHead")}
+          </GroupHeading>
           {similarHint}
-          <Rows>{near}</Rows>
+          <Rows listLabel={t("similarHead")}>{near}</Rows>
         </Fragment>
       ) : null}
     </>
@@ -163,6 +173,7 @@ export function SearchHitRow({
       open={open}
       onOpen={() => onOpen(hit)}
       /* The address is the way to everything from and to that person. */
+      contactHref={fragmentOf({ place: "address", sub: m.from.address, open: null, stage: null, words: {} })}
       onContact={() => beside.go.address(m.from.address)}
     />
   );

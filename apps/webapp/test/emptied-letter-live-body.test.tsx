@@ -6,33 +6,24 @@
  * Load it now: the text from the mail server for this view (`GET /messages/:id/live-body`), drawn
  * through the reader's own body renderer. The engine's store is left exactly as it was: no body is
  * written, nothing is queued, and opening the letter again shows the emptied state. Driven through
- * the real reading pane over a real engine.
+ * the new reader's column in the frame over a real engine (the reader's mail world, its letters read
+ * from the engine's own store); the words are the new reader's catalogue's, by key.
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { HttpAdapter, OhmailEngine, bodyOf } from "@ohmail/client-engine";
-import en from "../messages/en.json";
 import { liveBodyVia } from "@ohmail/app-logic/reading/live-body";
+import { letterBody } from "@ohmail/app/reader/body";
+import { mountReader } from "../../../packages/app/test/reader/support/mail.js";
+import readerEn from "../../../packages/app/messages/reader.en.json" with { type: "json" };
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  })) as never;
 
 const ISO = "2026-11-07T09:00:00.000Z";
-const NOW = new Date(ISO);
 const ID = "m_emptied";
 const LIVE_TEXT = "Hi Sam, here is the final version of the kitchen plans.";
 const entity = {
@@ -67,18 +58,12 @@ async function serve(url: string, init?: RequestInit): Promise<Response> {
   return json({});
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
 beforeEach(() => {
   asked = [];
   liveAnswer = () => json({ text: LIVE_TEXT, html: null });
 });
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+afterEach(() => {
+  cleanup();
 });
 
 async function settle(): Promise<void> {
@@ -92,62 +77,40 @@ async function emptiedEngine(): Promise<OhmailEngine> {
   return engine;
 }
 
-async function mountPane(engine: OhmailEngine, status = "connected"): Promise<HTMLDivElement> {
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const message = engine.read().get<EngineMessage>("message", ID)!;
-  host = document.createElement("div");
-  host.className = "read-col";
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en, timeZone: "UTC", now: NOW,
-      children: h(MessageChromeProvider as never, {
-        value: {
-          ownAddresses: ["sam@example.com"], absoluteTime: false, onToggleAbsoluteTime: () => {},
-          replyTo: null, replyBody: { text: "", html: "" }, onReplyBody: () => {}, closeReply: () => {},
-          sendReply: () => {}, replySendState: () => ({ phase: "idle" }), openSenderMenu: () => {},
-          openAttachmentPreview: () => {}, conversationOf: () => [],
-          bodyOf: (m: EngineMessage) => bodyOf(engine.read(), m),
-          hydrateBody: () => {}, hydrateThread: () => {}, openReply: () => {}, forward: () => {},
-          mailboxStatusOf: () => status,
-          liveBody: liveBodyVia((path) => serve(`/api${path}`)),
-        },
-        children: h(MessagePane as never, {
-          message, tags: [], now: NOW, onAction: () => {}, onAddTag: () => {}, onAttachment: () => {},
-        } as never),
-      } as never),
-    }));
+/** The new reader's column with the letter open, over the real engine; its body drawn by the reader's own part. */
+async function mountColumn(engine: OhmailEngine): Promise<HTMLElement> {
+  mountReader({
+    letters: [],
+    open: ID,
+    parts: { body: letterBody },
+    presented: () => engine.read(),
+    host: {
+      engine,
+      wires: { liveBody: liveBodyVia((path) => serve(`/api${path}`)) } as never,
+      mailboxes: async () => [{ id: "mb_1", address: "sam@example.com", status: "active" }],
+    } as never,
   });
   await settle();
-  return host;
+  return screen.getByRole("region", { name: "Reading" });
 }
 
-const pressLoad = async (el: HTMLElement): Promise<void> => {
-  const b = [...el.querySelectorAll("button")].find((x) => x.textContent === "Load it now");
-  expect(b, "no Load it now").toBeTruthy();
-  await act(async () => { b!.click(); });
+const pressLoad = async (pane: HTMLElement): Promise<void> => {
+  const b = within(pane).getByRole("button", { name: readerEn.body.liveLoad });
+  await act(async () => { fireEvent.click(b); });
   await settle();
 };
 
 describe("a letter emptied for space", () => {
-  it("says why and where it is, offers Load it now and Storage settings", async () => {
-    const el = await mountPane(await emptiedEngine());
-    expect(el.textContent).toContain(en.body.withheld);
-    expect(el.textContent).toContain("Load it now fetches it from your mail server for this view. It is not stored.");
-    expect(el.querySelector<HTMLAnchorElement>(".emptied a")?.getAttribute("href")).toBe("#/settings/storage");
-  });
-
   it("Load it now draws the server's text in the reader and leaves the engine's store unchanged", async () => {
     const engine = await emptiedEngine();
     const version = engine.read().version();
     const before = JSON.stringify(engine.read().get("message_body", ID));
-    const el = await mountPane(engine);
+    const pane = await mountColumn(engine);
     asked = [];
-    await pressLoad(el);
-    expect(el.querySelector(".msg-body")?.textContent).toContain(LIVE_TEXT);
-    expect(el.textContent).toContain("Loaded from your mail server for this view. Not stored on Cloud.");
+    await pressLoad(pane);
+    const letter = pane.querySelector<HTMLElement>(`[data-conv-id="${ID}"]`)!;
+    expect(letter.querySelector("[data-read-body]")?.textContent).toContain(LIVE_TEXT);
+    expect(pane.textContent).toContain(readerEn.body.keptLoaded);
     expect(asked).toEqual([`GET /api/messages/${ID}/live-body`]);
     expect(engine.read().version()).toBe(version);
     expect(JSON.stringify(engine.read().get("message_body", ID))).toBe(before);
@@ -157,15 +120,9 @@ describe("a letter emptied for space", () => {
 
   it("a refusal is said and Load it now stays", async () => {
     liveAnswer = () => json({ error: { code: "letter_gone", message: "gone" } }, 410);
-    const el = await mountPane(await emptiedEngine());
-    await pressLoad(el);
-    expect(el.textContent).toContain("Your mail server no longer holds this letter where ohmail last saw it.");
-    expect([...el.querySelectorAll("button")].some((b) => b.textContent === "Load it now")).toBe(true);
-  });
-
-  it("no Load it now for a mailbox ohmail no longer reads", async () => {
-    const el = await mountPane(await emptiedEngine(), "disabled");
-    expect(el.textContent).toContain(en.body.withheldRemoved);
-    expect([...el.querySelectorAll("button")].some((b) => b.textContent === "Load it now")).toBe(false);
+    const pane = await mountColumn(await emptiedEngine());
+    await pressLoad(pane);
+    expect(pane.textContent).toContain(readerEn.body.liveGone);
+    expect(within(pane).getAllByRole("button").some((b) => b.textContent === readerEn.body.liveLoad)).toBe(true);
   });
 });

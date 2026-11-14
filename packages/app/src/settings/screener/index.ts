@@ -1,5 +1,6 @@
 /** Settings › Screener. A shell builds the model from its wires; {@link screenerOffers} says which parts it may hold. */
 export { ScreenerPane } from "./ScreenerPane.js";
+export { UnsubscribeSwitch } from "./SuggestSheet.js";
 export {
   screenerHasAny,
   screenerOffers,

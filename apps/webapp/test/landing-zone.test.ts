@@ -430,7 +430,7 @@ const UNARMED_RULES = [
     ],
   },
   {
-    source: "/((?!demo).*)",
+    source: "/((?!demo)(?!pdf-preview\\.html$).*)",
     headers: [
       { key: "Content-Security-Policy", value: policy("'none'") },
       { key: "X-Content-Type-Options", value: "nosniff" },
@@ -463,11 +463,14 @@ describe("headerRules: unarmed byte for byte, armed with no policy of ours on th
     expect(UNARMED_RULES[1]!.headers[0]!.value).toBe(BASELINE_CSP);
     const rules = await rulesOf(null, null);
     const worker = await workerPath();
-    expect(rules).toHaveLength(UNARMED_RULES.length + 1);
+    expect(rules).toHaveLength(UNARMED_RULES.length + 2);
     expect(rules.filter((r) => r.source === worker)).toStrictEqual([
       { source: worker, headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
     ]);
-    expect(JSON.stringify(rules.filter((r) => r.source !== worker))).toBe(JSON.stringify(UNARMED_RULES));
+    const frame = "/pdf-preview.html";
+    expect(csps(rules, frame)).toEqual([expect.stringContaining("connect-src 'none'")]);
+    expect(headersAt(rules, frame)).not.toContainEqual({ key: "X-Frame-Options", value: "DENY" });
+    expect(JSON.stringify(rules.filter((r) => r.source !== worker && r.source !== frame))).toBe(JSON.stringify(UNARMED_RULES));
   });
 
   it("armed: every zone path carries the three static headers and no policy", async () => {

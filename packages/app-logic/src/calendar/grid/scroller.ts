@@ -22,6 +22,7 @@ export interface HoursScrollerInput {
   readonly hours: { readonly from: number; readonly to: number };
   /** An hour's height before the sheet has been measured. */
   readonly hourDefault: number;
+  readonly focusMinute?: number | null;
   /** What the sheet's room depends on: measured again when it changes. */
   readonly room: unknown;
   /** The span's own name: a new one stands on the hours in view again. */
@@ -32,8 +33,24 @@ export interface HoursScrollerInput {
 }
 
 /** An hour's height that fits `span` hours into `height` px. */
-export const fitHour = (height: number, spanHours: number): number =>
-  Math.max(HOUR_LEAST, Math.floor(height / Math.max(1, spanHours)));
+export const fitHour = (height: number, spanHours: number, least = HOUR_LEAST): number =>
+  Math.max(least, Math.floor(height / Math.max(1, spanHours)));
+
+function gridRoom(el: HTMLDivElement) {
+  const css = getComputedStyle(el);
+  const pixels = (name: string) => parseFloat(css.getPropertyValue(name)) || 0;
+  const clearance = css.getPropertyValue("--cal-grid-foot").trim();
+  // For a calculation, the kit's footer spacer exposes the resolved token in pixels.
+  const foot =
+    clearance && !clearance.endsWith("px")
+      ? parseFloat(getComputedStyle(el, "::after").height) || 0
+      : pixels("--cal-grid-foot");
+  return {
+    view: Math.max(0, el.clientHeight - foot),
+    air: pixels("--cal-grid-air"),
+    least: pixels("--cal-grid-hour-min") || HOUR_LEAST,
+  };
+}
 
 /** Where the hours stand: on the open event when it lies outside the hours in view, else at their first hour. */
 export function homeTop(o: { from: number; hourPx: number; viewPx: number; openTop: number | null }): number {
@@ -51,7 +68,16 @@ export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
 
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el !== null && el.clientHeight > 0) setHourPx(fitHour(el.clientHeight, spanHours));
+    if (el === null) return;
+    const measure = () => {
+      const { view, air, least } = gridRoom(el);
+      if (view > 0) setHourPx(fitHour(view - 2 * air, spanHours, least));
+    };
+    measure();
+    if (typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [room, spanHours]);
 
   const placedFor = useRef<string | null>(null);
@@ -61,18 +87,27 @@ export function useHoursScroller(input: HoursScrollerInput): HoursScroller {
     const el = ref.current;
     if (el === null || placedFor.current === key) return;
     placedFor.current = key;
-    el.scrollTop = homeTop({ from: hours.from, hourPx, viewPx: el.clientHeight, openTop: openTop() });
+    el.scrollTop = homeTop({ from: hours.from, hourPx, viewPx: gridRoom(el).view, openTop: openTop() });
   });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null || input.focusMinute == null) return;
+    const top = (input.focusMinute * hourPx) / 60;
+    if (top < el.scrollTop || top + hourPx > el.scrollTop + gridRoom(el).view) {
+      el.scrollTop = Math.max(0, top - hourPx);
+    }
+  }, [input.focusMinute, hourPx]);
 
   const onScroll = (e: UIEvent<HTMLDivElement>): void => {
     const el = e.currentTarget;
-    setInView({ from: (el.scrollTop / hourPx) * 60, to: ((el.scrollTop + el.clientHeight) / hourPx) * 60 });
+    setInView({ from: (el.scrollTop / hourPx) * 60, to: ((el.scrollTop + gridRoom(el).view) / hourPx) * 60 });
   };
   const show = (top: number, side: "above" | "below"): void => {
     const el = ref.current;
     if (el !== null)
       el.scrollTop =
-        side === "above" ? Math.max(0, top - hourPx / 2) : Math.max(0, top - el.clientHeight + hourPx);
+        side === "above" ? Math.max(0, top - hourPx / 2) : Math.max(0, top - gridRoom(el).view + hourPx);
   };
   return { ref, hourPx, inView, onScroll, show };
 }

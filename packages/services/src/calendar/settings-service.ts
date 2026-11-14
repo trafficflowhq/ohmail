@@ -34,8 +34,10 @@ const DEFAULTS: Stored = {
   enabledAt: null, secondZone: null, weekNumbers: false, dayFromMinute: null, dayToMinute: null, newEventsCalendarId: null,
 };
 
-function wireOf(s: Stored): CalendarSettingsWire {
+function wireOf(stored: Stored | undefined): CalendarSettingsWire {
+  const s = stored ?? DEFAULTS;
   return {
+    ...(stored === undefined ? { unconfigured: true } : {}),
     enabledAt: s.enabledAt === null ? null : s.enabledAt.toISOString(),
     secondZone: s.secondZone,
     weekNumbers: s.weekNumbers,
@@ -99,9 +101,9 @@ const same = (a: Stored, b: Stored): boolean =>
   && a.dayFromMinute === b.dayFromMinute && a.dayToMinute === b.dayToMinute
   && a.newEventsCalendarId === b.newEventsCalendarId;
 
-async function storedOf(db: ServiceContext["db"], accountId: string): Promise<Stored> {
+async function storedOf(db: ServiceContext["db"], accountId: string): Promise<Stored | undefined> {
   const [row] = await db.select().from(calSettings).where(eq(calSettings.accountId, accountId)).limit(1);
-  return row === undefined ? DEFAULTS : {
+  return row === undefined ? undefined : {
     enabledAt: row.enabledAt, secondZone: row.secondZone, weekNumbers: row.weekNumbers,
     dayFromMinute: row.dayFromMinute, dayToMinute: row.dayToMinute, newEventsCalendarId: row.newEventsCalendarId,
   };
@@ -124,7 +126,8 @@ export async function setCalendarSettings(
     const now = ctx.now();
     // The stamp's row first, held where it stands: every settings writer takes it before its own row.
     await lockSettingsStamp(tx, ctx.accountId, now);
-    const before = await storedOf(carryBinding(ctx.db, tx), ctx.accountId);
+    const stored = await storedOf(carryBinding(ctx.db, tx), ctx.accountId);
+    const before = stored ?? DEFAULTS;
     const { enabled, ...rest } = patch;
     const next: Stored = {
       ...before, ...rest,
@@ -142,7 +145,7 @@ export async function setCalendarSettings(
       )).limit(1);
       if (cal === undefined) throw new ServiceError("not_found", 404, "no calendar of this account takes new events under that id");
     }
-    if (same(before, next)) return { settings: wireOf(before), seq: null };
+    if (same(before, next)) return { settings: wireOf(stored), seq: null };
     await moveSettingsStamp(tx, ctx.accountId, now);
     const columns = {
       enabledAt: next.enabledAt, secondZone: next.secondZone, weekNumbers: next.weekNumbers,

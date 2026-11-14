@@ -1,6 +1,6 @@
 /**
  * WHY SOME OF A SENDER'S MAIL STAYED — the phone's half of the web sender sheet's lines
- * (`apps/webapp/app/shell/SenderMenu.tsx#stayedLines`, `sender-screening.ts#subjectOf`, the
+ * (`apps/webapp/app/components/sender-menu/SenderMenu.tsx#stayedLines`, `sender-screening.ts#subjectOf`, the
  * reference; the webapp shell is not importable from React Native). The reasons are the server's
  * (`GET /screener/stayed`, read through `engine.whyStayed`); this module only says which rows to
  * ask about and groups the answer by place and reason, so the lines count the rows the lists show.

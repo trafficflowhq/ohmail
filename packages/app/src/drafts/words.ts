@@ -5,7 +5,7 @@ import type { DiscardRefusalWhy, DiscardWords } from "@ohmail/app-logic/drafts";
 import { useText, type Text } from "../text/index.js";
 
 /** Everybody it is for, by name where it has one, or nothing. */
-export function recipientsOf(d: EngineDraft): string {
+export function recipientsOf(d: Pick<EngineDraft, "to" | "cc" | "bcc">): string {
   return [...d.to, ...d.cc, ...d.bcc].map((a) => a.name || a.address).join(", ");
 }
 
@@ -22,6 +22,8 @@ export function discardWordsOf(t: Text): DiscardWords {
   return {
     discarded: t("reportDiscarded"),
     undo: t("reportUndo"),
+    changed: t("discardChanged"),
+    unsupported: t("discardUnsupported"),
     notSent: t("discardedNotSent"),
     refused: (reason) => (reason === null ? t("discardRefusedUnnamed") : t("discardRefused", { reason })),
     queued: (wait) => (wait === "organizer" ? t("discardAwaitingOrganizer") : t("discardQueued")),

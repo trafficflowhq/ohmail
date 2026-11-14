@@ -3,7 +3,8 @@ import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
@@ -12,12 +13,10 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * A WORD THAT MATCHES NOTHING GETS ITS VERDICT AS SOON AS A WORD THAT MATCHES — on the shipped
- * mount, over account A's shape (synthetic rows at its size, a Zipf vocabulary with codes in the
+ * mount, over a large synthetic mailbox (a Zipf vocabulary with codes in the
  * snippets). The verdict is the store's first page; the device pass runs once per question, before
  * the store's debounce, and its typo tier (an empty exact tier only) costs milliseconds. Real
  * timers: the reading is typed word -> rendered sentence, the freeze cell's own measure.
@@ -25,7 +24,6 @@ import { KeymapProvider } from "@ohmail/app/keys";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
-const h = React.createElement;
 
 const NOW = new Date("2026-09-25T12:00:00.000Z");
 const ROWS = 3666;
@@ -112,16 +110,6 @@ async function engineOver(rows: EngineMessage[], word: string, typo: string): Pr
   return new OhmailEngine({ adapter, store, now: () => NOW });
 }
 
-/** `SearchViewLive`'s wiring: the query in the parent, the mirror's version and the index revision subscribed. */
-function Live({ engine, door }: { engine: OhmailEngine; door: { type?: (q: string) => void } }) {
-  const [query, setQuery] = React.useState("");
-  door.type = setQuery;
-  const subscribe = React.useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
-  const version = React.useSyncExternalStore(subscribe, () => engine.read().version(), () => 0);
-  const indexRev = React.useSyncExternalStore(subscribe, () => engine.searchIndexRevision(), () => 0);
-  return h(SearchView, { engine, version, indexRev, now: NOW, query, onQuery: setQuery, onOpen: () => {} });
-}
-
 const SENTENCES = {
   searching: "Searching your whole mailbox…",
   matched: /Searched your whole mailbox — [\d,]+ matched/,
@@ -132,6 +120,7 @@ const SENTENCES = {
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 const text = (): string => host.textContent ?? "";
 const verdicts = (): string[] =>
   Object.entries(SENTENCES).filter(([, s]) => (typeof s === "string" ? text().includes(s) : s.test(text()))).map(([k]) => k);
@@ -162,10 +151,9 @@ const TYPO = `${WORD.slice(0, 3)}q${WORD.slice(4)}`;
 async function mount(): Promise<{ engine: OhmailEngine; door: { type?: (q: string) => void } }> {
   const engine = await engineOver(rows, WORD, TYPO);
   await engine.warmSearchIndex();
-  const door: { type?: (q: string) => void } = {};
-  root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(KeymapProvider, { children: h(Live, { engine, door }) }) }));
-  await until(() => door.type !== undefined && host.querySelector(".search-box input") !== null);
-  return { engine, door };
+  root.render(<RegisteredSearch engine={engine} now={NOW} />);
+  await within(host).findByRole("textbox", { name: messages.search.aria });
+  return { engine, door: { type: (query: string) => typeSearch(host, query) } };
 }
 
 /** Typed word -> the first render that holds a whole-mailbox verdict, in ms; the box emptied first. */
@@ -181,6 +169,7 @@ async function typedToVerdict(door: { type?: (q: string) => void }, word: string
 
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -188,6 +177,7 @@ beforeEach(() => {
 afterEach(() => {
   root.unmount();
   host.remove();
+  leaveSearch();
 });
 
 describe("the no-match verdict is not held behind the device pass (a large mailbox)", () => {
@@ -221,7 +211,7 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
       if (key !== "" && seen[seen.length - 1] !== key) seen.push(key);
     };
     door.type!(NO_MATCH);
-    await until(() => verdicts().includes("nothing"), look);
+    await until(() => seen.includes("searching") && !verdicts().includes("searching"), look);
     await sleep(LATENCY_MS * 3);
     look();
     expect(seen).toEqual(["searching", "nothing"]);
@@ -231,7 +221,7 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
     // and how far into a long message the search reads.
     expect(text()).not.toContain("Nothing matched.");
     expect(text().match(/nothing matched/gi)?.length).toBe(1);
-    expect(host.querySelector('[data-testid="search-depth"]')?.textContent).toBe("A long message is searched in its first 65,536 characters.");
+    expect(within(host).getByText("A long message is searched in its first 65,536 characters.").textContent).toBe("A long message is searched in its first 65,536 characters.");
   }, 30_000);
 
   it("the time on the line is the wait a person had, never the store's own ms (40 here)", async () => {
@@ -254,14 +244,14 @@ describe("the no-match verdict is not held behind the device pass (a large mailb
       if (key !== "" && seen[seen.length - 1] !== key) seen.push(key);
     };
     door.type!(TYPO);
-    await until(() => host.querySelector('[data-similar="head"]') !== null, look);
+    await until(() => within(host).queryByRole("heading", { name: /^Similar/ }) !== null, look);
     const before = rowIds();
     await until(() => verdicts().includes("near"), look);
     await sleep(LATENCY_MS * 3);
     look();
     // Closest words are said as near, never as matched.
     expect(seen).toEqual(["searching", "near"]);
-    expect(host.querySelector('[data-similar="head"]')?.textContent).toContain("Nothing matched exactly, so these are the closest words.");
+    expect(within(host).getByText("Nothing matched exactly, so these are the closest words.")).toBeTruthy();
     const after = rowIds();
     const kept = before.filter((id) => after.includes(id));
     expect(kept.length).toBeGreaterThan(0);

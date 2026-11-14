@@ -40,7 +40,7 @@ export interface SignInCalls {
   readonly returned: Watched<SignInReturn | null>;
   readonly code:
     | {
-        begin(provider: SignInProvider): Promise<Answered<null>>;
+        begin(provider: SignInProvider, stillWanted?: () => boolean): Promise<Answered<null>>;
         readonly live: Watched<CodeCeremony | null>;
         stop(): void;
       }
@@ -55,6 +55,8 @@ export interface ConnectCalls {
   readonly discover: ((domain: string, signal: AbortSignal) => Promise<unknown>) | None;
   readonly signIn: SignInCalls | None;
   readonly localServerWait: boolean;
+  /** The door accepts a manual incoming server without an outgoing one. */
+  readonly incomingOnly?: true;
 }
 
 /** The password field's own handle: the seal of what it holds, and forgetting it. The string never leaves the field. */
@@ -73,4 +75,5 @@ export interface ConnectFormInput {
   /** Whose browser this is: asked before a press leaves; its sentence goes with a press that changes the way in. */
   readonly guard?: { before(): Promise<boolean>; clear(): void } | undefined;
   onDone(outcome: ConnectOutcome): void;
+  onCodeStarted?(): void;
 }

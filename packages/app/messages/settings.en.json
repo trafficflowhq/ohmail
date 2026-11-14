@@ -182,6 +182,7 @@
     "notifyUnsupported": "This device has no notification centre, so there is nothing to send here.",
     "notifyOsHeld": "This switch decides whether ohmail asks your computer to show a notice. Whether it then appears is your computer's decision, and it is changed in the system settings rather than here.",
     "notifyClosedBody": "New mail.",
+    "notifyWakeUnsupported": "This browser can show notifications only while ohmail is open.",
     "notifyNoServerKey": "This server has not set up a signing key, so it cannot wake this browser. The switches above still apply while ohmail is open.",
     "notifyRowRemains": "This browser will not be woken any more, but the server still has a registration for it. It is removed the next time you turn this off.",
     "notifyNotRegistered": "This browser could not be registered for wakes just now. It is retried the next time you open these settings.",

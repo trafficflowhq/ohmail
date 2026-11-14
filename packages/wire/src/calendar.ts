@@ -181,6 +181,17 @@ export interface CalendarEventRecord {
   /** The moment of the occurrence this record replaces; `null` when it replaces none. */
   occurrenceAt: ISODateTime | null;
   repeat: CalendarRepeat | null;
+  /** The original is a personal series whose simple whole-day repeat this server can edit. */
+  personalSeries?: true;
+  /** Delete scopes proven by the service for this stored series. */
+  deleteScopes?: readonly CalendarRemoveScope["kind"][];
+  /** Complete stored CalDAV audience, including components outside the sync window. */
+  deleteMembers?: readonly {
+    readonly at: number | null;
+    readonly range: boolean;
+    readonly organizer: string | null;
+    readonly guests: readonly { readonly address: string; readonly name: string | null }[];
+  }[];
   busy: boolean;
   private: boolean;
   organizer: { address: string; name: string | null } | null;
@@ -249,6 +260,8 @@ export interface CalendarWindow {
 
 /** `GET /calendar/settings`, and what its `PATCH` answers: the account's calendar settings. */
 export interface CalendarSettingsWire {
+  /** The account has no saved calendar settings yet. */
+  unconfigured?: true;
   /** When the account switched its calendar on; null while it is off. */
   enabledAt: ISODateTime | null;
   /** A second time zone a day or a week shows beside the person's own (an IANA name), or null. */
@@ -433,8 +446,17 @@ export type CalendarEventAct =
       kind: "calendar_event_update";
       scope: CalendarChangeScope;
       change: Partial<CalendarEventFields>;
+      /** Apply the chosen scope only while the provider's series remains personal. */
+      personalSeries?: true;
+      /** The people this editor expects the provider to notify, checked under the same tag as its write. */
+      audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
     })
-  | (CalendarEventBase & { kind: "calendar_event_delete"; scope: CalendarRemoveScope })
+  | (CalendarEventBase & {
+      kind: "calendar_event_delete";
+      scope: CalendarRemoveScope;
+      /** Audience confirmed against the stored object for this scope. */
+      audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
+    })
   | (CalendarEventBase & { kind: "calendar_event_move"; toCalendarId: string })
   | (CalendarEventBase & {
       kind: "calendar_event_answer";

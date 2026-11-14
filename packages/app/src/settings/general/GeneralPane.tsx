@@ -11,6 +11,7 @@ import {
 import { useText, type Text } from "../../text/index.js";
 import type { GeneralModel, LookFace, ServerSwitch, ThemeChoice } from "./model.js";
 import { GENERAL_NAMESPACE } from "./namespace.js";
+import "./subject-picture.css";
 
 export interface GeneralPaneProps {
   readonly model: GeneralModel;
@@ -50,7 +51,7 @@ function LanguageSheet({ language, t }: { language: NonNullable<GeneralModel["la
   };
   return (
     <SettingsSheet wants={failed ? { word: t("notSaved"), line: t("languageFailed") } : undefined}>
-      <SettingLine label={t("language")} narrow="under">
+      <SettingLine label={t("language")}>
         <Seg
           label={t("languageAria")}
           value={language.value}
@@ -58,7 +59,7 @@ function LanguageSheet({ language, t }: { language: NonNullable<GeneralModel["la
           options={language.choices.map((id) => ({ value: id, label: t(`languageName.${id}`) }))}
         />
       </SettingLine>
-      <SettingNote>{t(language.local ? "languageHintLocal" : "languageHint")}</SettingNote>
+      <p className="oh-vh">{t(language.local ? "languageHintLocal" : "languageHint")}</p>
     </SettingsSheet>
   );
 }
@@ -82,7 +83,7 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
   );
   return (
     <SettingsSheet title={g("appearance")}>
-      <SettingLine label={t("theme")} narrow="under">
+      <SettingLine label={t("theme")}>
         <Seg<ThemeChoice>
           label={t("themeAria")}
           value={theme.value}
@@ -94,7 +95,6 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
           ]}
         />
       </SettingLine>
-      <SettingNote>{t("themeHint")}</SettingNote>
       {scope ? (
         <SettingLine
           label={t("face")}
@@ -118,7 +118,6 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
         {tile("paper", t("facePaper"))}
         {tile("ohmarchy", t("faceOhmarchy"), g("followsOmarchy"))}
       </SettingTiles>
-      <SettingNote>{t("faceHint")}</SettingNote>
       <SettingLine label={t("textSize")} narrow="under">
         <Seg
           label={t("textSizeAria")}
@@ -130,18 +129,34 @@ function AppearanceSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Tex
           options={textSize.choices.map((n) => ({ value: String(n), label: t("textSizeValue", { n }) }))}
         />
       </SettingLine>
-      <SettingNote>{t("textSizeHint")}</SettingNote>
     </SettingsSheet>
   );
 }
 
 function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text }) {
-  const { imageQuality, afterVerb, images, pixels } = model;
+  const { imageQuality, afterVerb, subject, images, pixels } = model;
   const imagesWrite = useServerWrite();
   const pixelsWrite = useServerWrite();
   const failed = imagesWrite.failed ? t("images.failed") : pixelsWrite.failed ? t("pixels.failed") : null;
   return (
     <SettingsSheet title={g("messages")} wants={failed ? { word: t("notSaved"), line: failed } : undefined}>
+      <SettingLine label={g("subject")} />
+      <SettingTiles label={g("subject")}>
+        <SettingTile
+          name={g("subjectHead")}
+          on={subject.value === "head"}
+          onPress={() => subject.set("head")}
+        >
+          <SubjectPicture each={false} g={g} />
+        </SettingTile>
+        <SettingTile
+          name={g("subjectEach")}
+          on={subject.value === "each"}
+          onPress={() => subject.set("each")}
+        >
+          <SubjectPicture each g={g} />
+        </SettingTile>
+      </SettingTiles>
       <SettingLine label={t("imageQuality")} narrow="under">
         <Seg
           label={t("imageQualityAria")}
@@ -161,8 +176,23 @@ function MessagesSheet({ model, t, g }: { model: GeneralModel; t: Text; g: Text 
       </SettingLine>
       <SettingNote>{t("afterVerbHint")}</SettingNote>
       {images ? <ImagesLines images={images} write={imagesWrite} t={t} /> : null}
-      {images && pixels ? <PixelsLines pixels={pixels} write={pixelsWrite} t={t} /> : null}
+      {pixels ? <PixelsLines pixels={pixels} write={pixelsWrite} t={t} /> : null}
     </SettingsSheet>
+  );
+}
+
+function SubjectPicture({ each, g }: { each: boolean; g: Text }) {
+  return (
+    <span className="subject-picture" data-shared={each ? undefined : ""} aria-hidden="true">
+      {!each && <b>{g("subjectSample")}</b>}
+      {["subjectSample", "subjectReplySample"].map((sample) => (
+        <span className="subject-picture-letter" key={sample}>
+          {each && <b>{g(sample)}</b>}
+          <i className="subject-picture-line" />
+          <i className="subject-picture-line" />
+        </span>
+      ))}
+    </span>
   );
 }
 

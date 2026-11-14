@@ -107,7 +107,8 @@ export function SenderDetail({
   /* WHAT SCREEN OUT AND SPAM SEND, said under the bar before either is pressed. The held bodies this
      screen hydrates carry each letter's one-click posture, so the line firms up as they land. */
   const claim = seg === "waiting" ? w.actions.unsubClaimOf(row, w.screener.waiting) : "none";
-  const unsub = claim === "none" ? null : Copy.decideUnsub(claim, target, row.scope === "domain");
+  const unsubscribeIds = claim === "none" ? [] : w.actions.unsubscribeIdsOf(row, w.screener.waiting);
+  const unsub = claim === "none" || !unsubscribeIds.length ? null : Copy.decideUnsub(claim, target, row.scope === "domain");
   /* What a press writes, said before it; on a list's claims the store says a screen-out files alone
      (mail 0150), what it files, and no rule for Screen out and Spam. */
   const { ruleLine, listClaim } = decideLinesOf(row, row.scope, target, seg === "waiting");
@@ -300,7 +301,7 @@ export function SenderDetail({
           suggested={row.ai?.dest ?? null}
           onScope={(scope) => w.actions.setScope(row, scope)}
           onDecide={(dest, read) => {
-            w.actions.decide(row, dest, read, w.screener.waiting);
+            w.actions.decide(row, dest, read, w.screener.waiting, unsubscribeIds);
             onClose?.();
           }}
         />

@@ -142,9 +142,10 @@ export abstract class EngineReads extends EngineState {
   /**
    * TELL ME WHICH MESSAGES A PAGE REMOVES, as it removes them — {@link subscribe} says only that
    * something moved, which is no use to anything that has to read the row one last time. Fired
-   * synchronously from {@link noteMessagesRemoved}, before the apply; see there for why.
+   * synchronously from {@link noteMessagesRemoved}, before the apply. The second argument names the
+   * effective deletions after resolving newer changes and already-applied records.
    */
-  onMessagesRemoved(listener: (ids: readonly string[]) => void): () => void {
+  onMessagesRemoved(listener: (ids: readonly string[], applied: ReadonlySet<string>) => void): () => void {
     this.removalListeners.add(listener);
     return () => this.removalListeners.delete(listener);
   }

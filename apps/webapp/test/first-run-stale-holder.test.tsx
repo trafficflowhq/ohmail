@@ -1,18 +1,15 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
+import { act, cleanup } from "@testing-library/react";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import deCatalogue from "../../../packages/app/messages/mailboxes.de.json" with { type: "json" };
 import { holderStopped } from "@ohmail/app-logic/reading/reader-holder";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { M, O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * THE CLAIM QUESTION OVER A HOLDER THAT STOPPED CHECKING IN (desktop 0.25.1).
@@ -21,14 +18,17 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * who took "Just read it here" left the mailbox organized by nobody. The lease's `stopped` verdict
  * reaches the screen as `organizerState`, and `holderStopped` is the one reading of it.
  * HOW TO WATCH IT FAIL: make `holderStopped` answer `false` — the stale cases go red.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`) over a ground the case moves (`_first-run-stage.tsx`), its
+ * words the stage's catalogue; a choice is the claim question's radio by its name; the lead is the step's line. The
+ * census reads the step where the new stage says it (`Elsewhere.tsx`) and reads the holder's state
+ * (`use-agree.ts`), today's first run not walked while it still stands. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
-const tm = messages.mailboxes;
+const t = O;
+const tm = M;
+const de = deCatalogue;
 const NAME = "Office laptop";
 
 const NOBODY: OnboardingMailbox = {
@@ -45,60 +45,51 @@ const LIVE: OnboardingMailbox = {
 };
 const STALE: OnboardingMailbox = { ...LIVE, organizerState: "stopped" };
 
-const facts = (mailbox: OnboardingMailbox): OnboardingFacts => ({
-  door: "local", mailbox, account: { onboardingCompletedAt: null }, ai: "unset", queuedSenders: 0,
-});
-
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
+/** The row the ground hands: the account's id and address beside exactly the case's facts. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow =>
+  ({ id: id("mb-1"), address: "me@example.invalid", holderSince: "1 Sept 2026", ...mailbox }) as FirstRunRow;
+
 async function mount(mailbox: OnboardingMailbox) {
-  let current = facts(mailbox);
+  let current = rowOf(mailbox);
   const organizedWith: unknown[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [current],
     door: "local",
-    ai: current.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      organizedWith.push(body);
-      current = { ...current, mailbox: { ...current.mailbox!, organizeConsentedAt: "2026-09-26T05:40:00.000Z" } };
-      return "stored";
+    live: () => [current],
+    verbs: {
+      ai: "unset",
+      organize: async (_id, body) => {
+        organizedWith.push(body);
+        current = { ...current, organizeConsentedAt: "2026-09-26T05:40:00.000Z" };
+        return "stored";
+      },
+      complete: async () => { /* stamped */ },
+      setAiEnabled: async () => { /* answered */ },
     },
-    complete: async () => { /* stamped */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun, {
-      host, facts: current, onRefresh: () => bump((n) => n + 1), onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
-      organizedSince: "1 Sept 2026",
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
   });
-  const radios = (): HTMLInputElement[] => [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
+  const el = st.el;
+  const NAMES = { here: [t.elsewhereChoiceHere, t.elsewhereChoiceHereStopped], read: [t.elsewhereChoiceRead] };
+  const radios = (): HTMLElement[] => [...el.querySelectorAll<HTMLElement>("[role=radio]")];
+  const valueOf = (r: HTMLElement): "here" | "read" | null => {
+    const name = (r.querySelector(".oh-radioline-word")?.textContent ?? "").trim();
+    return NAMES.here.includes(name) ? "here" : NAMES.read.includes(name) ? "read" : null;
+  };
   return {
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
-    lead: () => (el.querySelector("p.sub")?.textContent ?? "").trim(),
+    heading: st.heading,
+    /** The step's lead: the line under its sentence. */
+    lead: () => (el.querySelector("h1")?.closest("main")?.querySelector(".oh-page-line")?.textContent ?? "").trim(),
     text: () => el.textContent ?? "",
-    picked: () => radios().find((i) => i.checked)?.value ?? null,
+    picked: () => {
+      const on = radios().find((r) => r.getAttribute("aria-checked") === "true");
+      return on ? valueOf(on) : null;
+    },
     pick: async (value: "here" | "read") => {
-      const radio = radios().find((i) => i.value === value);
+      const radio = radios().find((r) => valueOf(r) === value);
       if (!radio) throw new Error(`no ${value} option`);
       await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
     },
@@ -219,7 +210,10 @@ describe("holderStopped reads the decider's stop and nothing else", () => {
  */
 describe("census: one step, one predicate", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/app", "apps/mobile/src"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/app/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/app", "apps/mobile/src"];
+  /* Today's first run leaves with the switch (FOR-S7 group 5) and no host mounts it: the step is the new stage's now,
+     and the file is not walked while it still stands. */
+  const LEAVING = new Set(["apps/webapp/app/shell/FirstRun.tsx"]);
   const KEYS = [
     "elsewhereLead", "elsewhereLeadStopped", "elsewhereChoiceHereWhy", "elsewhereChoiceHereStoppedWhy",
     "elsewhereChoiceReadWhy", "elsewhereChoiceReadStoppedWhy",
@@ -229,25 +223,29 @@ describe("census: one step, one predicate", () => {
       if (name === "node_modules" || name === "dist" || name === "build" || name === ".next") continue;
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p, out);
-      else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+      else if (/\.(ts|tsx)$/.test(name) && !LEAVING.has(relative(REPO, p))) out.push(p);
     }
     return out;
   };
   const files = ROOTS.flatMap((r) => walk(join(REPO, r)));
   const code = (p: string) => withoutComments(readFileSync(p, "utf8"));
 
+  /* The stage names a sentence by its namespace too (`"onboarding.elsewhereLead"`). */
   it("the step's sentences are rendered by FirstRun.tsx alone", () => {
     expect(files.length, "the walk read nothing").toBeGreaterThan(100);
     const sites = files
-      .filter((p) => KEYS.some((k) => code(p).includes(`"${k}"`)))
+      .filter((p) => KEYS.some((k) => code(p).includes(`"${k}"`) || code(p).includes(`"onboarding.${k}"`)))
       .map((p) => relative(REPO, p));
-    expect(sites).toEqual(["apps/webapp/app/shell/FirstRun.tsx"]);
+    expect(sites).toEqual(["packages/app/src/mailboxes/first-run/Elsewhere.tsx"]);
   });
 
+  /* The step's state is read where the stage decides it (`use-agree.ts`) and drawn by `Elsewhere.tsx`. */
   it("FirstRun.tsx reads the holder's state only through holderStopped", () => {
-    const src = code(join(REPO, "apps/webapp/app/shell/FirstRun.tsx"));
+    const src = code(join(REPO, "packages/app-logic/src/mailboxes/first-run/use-agree.ts"));
+    const drawn = code(join(REPO, "packages/app/src/mailboxes/first-run/Elsewhere.tsx"));
     expect(src).toMatch(/holderStopped\(facts\.mailbox\)/);
     expect(src.match(/organizerState/g) ?? [], "an inline reading of the lease state").toEqual([]);
+    expect(drawn.match(/organizerState/g) ?? [], "an inline reading of the lease state").toEqual([]);
   });
 
 });

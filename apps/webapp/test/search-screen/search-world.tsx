@@ -17,7 +17,7 @@ import {
 } from "@ohmail/client-engine";
 import { useSearchList } from "@ohmail/app-logic/search";
 import type { LayoutPlan, PaneProps, Route } from "@ohmail/app/frame";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { NONE } from "@ohmail/app/host";
 import { SearchAbove, SearchList, searchBlankOf, type SearchBeside } from "@ohmail/app/search";
 import { TextProvider, type Messages } from "@ohmail/app/text";
@@ -176,6 +176,7 @@ function Search({
   open,
   first,
   searchBy,
+  readMailboxTotal,
 }: {
   engine: OhmailEngine;
   side: SearchBeside;
@@ -184,6 +185,7 @@ function Search({
   open: string | null;
   first: string;
   searchBy: "people" | "words";
+  readMailboxTotal?: () => Promise<number | null>;
 }) {
   const [query, setQuery] = useState(first);
   const boxRef = useRef<HTMLInputElement>(null);
@@ -201,6 +203,8 @@ function Search({
     scrollerRef,
     t: (key) => key,
     searchBy,
+    readMailboxTotal,
+    people: side.people === NONE ? undefined : side.people,
   });
   const pane: PaneProps = { route: { ...ROUTE, open }, plan, keysHere: true };
   return (
@@ -227,6 +231,7 @@ export async function search(
     query?: string;
     /** Whether the host's server takes a person, unread and the days. Left out: words, as today's server. */
     searchBy?: "people" | "words";
+    readMailboxTotal?: () => Promise<number | null>;
   } = {},
 ): Promise<World> {
   const said: Said = { opened: [], went: [], exits: 0 };
@@ -246,6 +251,7 @@ export async function search(
             open={opts.open ?? null}
             first={opts.query ?? ""}
             searchBy={opts.searchBy ?? "words"}
+            readMailboxTotal={opts.readMailboxTotal}
           />
         </KeymapProvider>
       </TextProvider>,

@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeScreenerService } from "@trafficflow/services";
-import { rules, folderState, idempotencyKeys, mailboxes, messages, organizerRequests } from "@trafficflow/db";
+import { accountSettings, rules, folderState, idempotencyKeys, mailboxes, messages, organizerRequests } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedScreenerHeld, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
@@ -111,10 +111,28 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     return { db, deps: { ...deps, services: { ...deps.services!, screener } } };
   }
 
+  it("drops an automatic HTTP suggestion when the account has stored Off", async () => {
+    const calls = { n: 0 };
+    const { db, deps } = await withClassifier(calls);
+    const session = await seedSession(db, { now: FIXED_NOW });
+    const sender = "held@example.invalid";
+    await db.insert(accountSettings).values({ accountId: session.accountId, autoSuggestAt: null });
+    await seedScreenerHeld(db, { accountId: session.accountId, fromAddress: sender });
+
+    const response = await H(req("POST", "/screener/suggest", {
+      bearer: session.token, body: JSON.stringify({ senders: [sender], automatic: true }),
+    }), deps);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ charged: 0, suggestions: [] });
+    expect(calls.n).toBe(0);
+  });
+
   it("buys for the named senders, and the NEXT GET serves the stored answer without a model call", async () => {
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "bob@ex.example" });
 
@@ -162,6 +180,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const flagged = await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "bank@ex.example" });
     await db.update(messages).set({ noAi: true }).where(eq(messages.id, flagged.id));
@@ -181,6 +200,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     const calls = { n: 0 };
     const { db, deps } = await withClassifier(calls);
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const body = JSON.stringify({ senders: ["alice@ex.example"] });
 
@@ -226,6 +246,7 @@ describe("POST /screener/suggest — generation is an explicit, priced purchase"
     });
     const deps = { ...base, services: { ...base.services!, screener } };
     const s = await seedSession(db, { now: FIXED_NOW });
+    await db.insert(accountSettings).values({ accountId: s.accountId, autoSuggestAt: FIXED_NOW });
     await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "alice@ex.example" });
     const body = JSON.stringify({ senders: ["alice@ex.example"] });
     const send = (b: string) => H(req("POST", "/screener/suggest", {
@@ -316,6 +337,30 @@ describe("POST /screener/:id — decide (defer + idempotency)", () => {
     const conflict = await H(req("POST", `/screener/${item.id}`, {
       bearer: s.token, headers: { "idempotency-key": "sc1" }, body: JSON.stringify({ decision: "no" }),
     }), deps);
+    expect(conflict.status).toBe(409);
+  });
+
+  it("replays the filing when a retry drops its live unsubscribe grant", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const held = await seedScreenerHeld(db, { accountId: s.accountId, fromAddress: "sender" + "@" + "example.invalid" });
+    const onScreenOut = vi.fn(async () => ({ considered: 1 }));
+    const screener = makeScreenerService({ unsubscribe: { onScreenOut } });
+    const send = (body: object) => H(req("POST", `/screener/${held.id}`, {
+      bearer: s.token, headers: { "idempotency-key": "filing-with-grant" }, body: JSON.stringify(body),
+    }), { ...deps, services: { ...deps.services!, screener } });
+    const filing = { decision: "no", scope: "confirmed_sender", confirmedIds: [held.id], applyRetro: false };
+
+    const first = await send({ ...filing, unsubscribeIds: [held.id] });
+    expect(first.status).toBe(200);
+    expect(onScreenOut).toHaveBeenCalledTimes(1);
+    const { unsubscribed, ...receipt } = await first.json();
+    expect(unsubscribed).toEqual({ done: 1, of: 1 });
+    const replay = await send(filing);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(receipt);
+    expect(onScreenOut).toHaveBeenCalledTimes(1);
+    const conflict = await send({ ...filing, applyRetro: true });
     expect(conflict.status).toBe(409);
   });
 

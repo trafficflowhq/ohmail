@@ -3,14 +3,14 @@
  * be looked at opens the shell's one look, any other press saves. A file that did not arrive says one whole sentence
  * and offers what helps, on its tile, or nothing where nothing helps.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { FileNotArrived, FileTile, Files as KitFiles } from "@ohmail/ui/mail";
 import { faultOf, fileLookOf, thumbnailOf } from "@ohmail/app-logic/reader";
 import { useFrame } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
 import { useLocale, useText } from "../../text/index.js";
-import { useParts } from "../parts.js";
-import type { ReaderFile, ReaderFiles } from "../ports.js";
+import { FilePreview, type PdfLook } from "../look/FilePreview.js";
+import type { ReaderFile, ReaderFiles, ReaderParts } from "../ports.js";
 
 const KIND: Record<ReturnType<typeof fileLookOf>, string> = {
   image: "IMG",
@@ -41,11 +41,20 @@ function sizeOf(bytes: number, locale: string): string {
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: n < 10 && u > 0 ? 1 : 0 }).format(n)} ${units[u]}`;
 }
 
-function Tile({ messageId, item, files }: { messageId: string; item: ReaderFile; files: ReaderFiles }) {
+function Tile({
+  messageId,
+  item,
+  files,
+  preview,
+}: {
+  messageId: string;
+  item: ReaderFile;
+  files: ReaderFiles;
+  preview: ((id: string) => void) | null;
+}) {
   const t = useText("attachments");
   const tb = useText("body");
   const { host } = useFrame();
-  const { look } = useParts();
   const locale = useLocale();
   const kind = kindOf(item);
   const size = sizeOf(item.sizeBytes, locale);
@@ -65,7 +74,7 @@ function Tile({ messageId, item, files }: { messageId: string; item: ReaderFile;
     return <FileNotArrived state="failed" kind={kind} name={item.filename} line={t(fault.key)} way={way} />;
   }
   const thumb = thumbnailOf(item);
-  const lookable = look !== NONE && fileLookOf(item.mimeType) !== "other";
+  const look = fileLookOf(item.mimeType) !== "other" ? preview : null;
   return (
     <FileTile
       kind={kind}
@@ -73,20 +82,35 @@ function Tile({ messageId, item, files }: { messageId: string; item: ReaderFile;
       size={item.inline ? `${size} · ${t("embedded")}` : size}
       look={thumb ? <img src={thumb} alt="" /> : undefined}
       main={{
-        label: lookable ? t("preview", { name: item.filename }) : t("download", { name: item.filename }),
-        onPress: () =>
-          lookable
-            ? (look as (m: string, a: string) => void)(messageId, item.id)
-            : files.open(messageId, item.id),
+        label: look ? t("preview", { name: item.filename }) : t("download", { name: item.filename }),
+        onPress: () => (look ? look(item.id) : files.open(messageId, item.id)),
       }}
-      save={{ label: t("download", { name: item.filename }), onPress: () => files.open(messageId, item.id) }}
+      save={{
+        label: t("download", { name: item.filename }),
+        busy: item.saving,
+        onPress: () => files.open(messageId, item.id),
+      }}
     />
   );
 }
 
-export function LetterFiles({ messageId }: { messageId: string }) {
+export function LetterFiles({
+  messageId,
+  selection,
+  parts,
+}: {
+  messageId: string;
+  selection?: string;
+  parts: Pick<ReaderParts, "files" | "look">;
+}) {
   const t = useText("attachments");
-  const { files } = useParts();
+  const { files, look } = parts;
+  const [picked, setPicked] = useState<{ id: string; selection: string | undefined } | null>(null);
+  const activeId = picked?.selection === selection ? picked?.id : undefined;
+  useEffect(() => setPicked(null), [selection]);
+  const select = (id: string) => setPicked({ id, selection });
+  const preview =
+    look === NONE ? null : typeof look === "function" ? (id: string) => look(messageId, id) : select;
   /* Keyed on the hold alone: the door changes identity while it fetches (Download all), a hold must not. */
   const hold = files === NONE ? undefined : files.hold;
   useEffect(() => hold?.(messageId), [hold, messageId]);
@@ -102,7 +126,9 @@ export function LetterFiles({ messageId }: { messageId: string }) {
     );
   }
   if (list.state !== "ready") return null;
-  const items = list.items.filter((item) => !item.calendarBody);
+  /* The door already leaves out an invitation's calendar body that a listed calendar file carries (Google's pair); one
+     it lists is the event's one copy (Exchange, Outlook), a file the person can save. */
+  const items = list.items;
   if (items.length === 0) return null;
   const many = items.length > 1;
   return (
@@ -119,8 +145,78 @@ export function LetterFiles({ messageId }: { messageId: string }) {
       }
     >
       {items.map((item) => (
-        <Tile key={item.id} messageId={messageId} item={item} files={files} />
+        <Tile key={item.id} messageId={messageId} item={item} files={files} preview={preview} />
       ))}
+      {activeId && typeof look === "object" && items.some((item) => item.id === activeId) ? (
+        <LetterPreview
+          messageId={messageId}
+          items={items}
+          activeId={activeId}
+          select={select}
+          close={() => setPicked(null)}
+          files={files}
+          usePdf={look.usePdf}
+        />
+      ) : null}
     </KitFiles>
+  );
+}
+
+function LetterPreview({
+  messageId,
+  items,
+  activeId,
+  select,
+  close,
+  files,
+  usePdf,
+}: {
+  messageId: string;
+  items: readonly ReaderFile[];
+  activeId: string;
+  select: (id: string) => void;
+  close: () => void;
+  files: ReaderFiles;
+  usePdf: PdfLook;
+}) {
+  const t = useText("attachmentPreview");
+  const attachments = useText("attachments");
+  const locale = useLocale();
+  const index = items.findIndex((item) => item.id === activeId);
+  const item = items[index]!;
+  const { releasePreviews, ensure } = files;
+  useEffect(() => () => releasePreviews?.(messageId), [messageId, releasePreviews]);
+  useEffect(() => {
+    if (item.state === "idle" && fileLookOf(item.mimeType) !== "other") ensure(messageId, activeId);
+  }, [activeId, ensure, item.mimeType, item.state, messageId]);
+  const facts = [
+    kindOf(item),
+    sizeOf(item.sizeBytes, locale),
+    ...(items.length > 1 ? [t("count", { index: index + 1, total: items.length })] : []),
+  ];
+  return (
+    <FilePreview
+      item={item}
+      facts={facts.join(" · ")}
+      blob={files.blobOf?.(messageId, activeId)}
+      usePdf={usePdf}
+      onClose={close}
+      step={
+        items.length > 1
+          ? (delta) => select(items[(index + delta + items.length) % items.length]!.id)
+          : undefined
+      }
+      retry={() => ensure(messageId, activeId, { retry: true })}
+      download={{ label: t("download"), busy: item.saving, onPress: () => files.open(messageId, activeId) }}
+      all={
+        items.length > 1
+          ? {
+              label: attachments("downloadAll"),
+              busy: files.downloadingAll(messageId),
+              onPress: () => files.downloadAll(messageId, { includeInlineParts: true }),
+            }
+          : undefined
+      }
+    />
   );
 }

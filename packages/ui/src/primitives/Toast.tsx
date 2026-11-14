@@ -24,6 +24,8 @@ export interface ToastOptions {
   actionKey?: string;
   /** Auto-dismiss in ms; defaults to 2600 (6000+ recommended with an action). */
   duration?: number;
+  /** The stored deadline of an action whose window started before the report was shown. */
+  actionDeadline?: number;
   /**
    * Aborted by the caller when its window closes EARLY — leaving the Screener commits every
    * pending decision — and the Undo capsule is withdrawn at once if it still holds the slot, so a

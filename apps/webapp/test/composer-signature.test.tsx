@@ -2,11 +2,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { createElement as h } from "react";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
 import {
   SIG_FOLLOWING,
   effectiveSignature,
@@ -15,7 +10,14 @@ import {
   type SignatureState,
 } from "@ohmail/app-logic/writing/signature";
 import { readReplyMeta, writeReplyMeta } from "@ohmail/app-logic/writing/mail-send";
-import { composePlan, type ComposeFields } from "@ohmail/app-logic/writing/compose";
+import { composePlan, resetComposerForTest, type ComposeFields } from "@ohmail/app-logic/writing/compose";
+import { writeBesideOf } from "@ohmail/app-logic/writing/writing-of";
+import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { fireEvent, screen } from "@testing-library/react";
+import en from "../messages/en.json";
+import { act } from "./_draft-shell.js";
+import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
 
 /**
  * ═══ THE SIGNATURE ON AN OUTGOING MESSAGE — the model, the serialization, the block ═════════
@@ -149,75 +151,62 @@ describe("the per-message editor meta — the reopen scratch the subject and the
 
 /* ══ the block — rendered state, the strike, the inline edit ═══════════════════════════════ */
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-async function mountBlock(props: {
-  sig: SignatureState;
-  onSig: (next: SignatureState) => void;
-  signatures: Readonly<Record<string, string>>;
-  mailboxId: string | null;
-  disabled?: boolean;
-}): Promise<void> {
-  const { SignatureBlock } = await import("../app/shell/SignatureBlock.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(SignatureBlock, { disabled: false, ...props }),
-      }),
-    );
-  });
-}
-
+/*
+ * OVER WRITE (the older tests' sorting, share write-1): today's `SignatureBlock` leaves with the switch. The block is
+ * Write's, under the letter's text (`packages/app/src/write/text/`), read through the seat's own test door
+ * (`_write-1-writing.tsx`: the composition under Write as the ground mounts it): the text the textbox "Signature", the
+ * strike its button "Remove signature", what the block reports the composition's `sig`. Where no letter can stand (no
+ * mailbox to name one), Write's own model answers (`writeBesideOf(...).signature`, what the block draws from).
+ */
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+  await unmountWritings();
+  resetComposerForTest();
   vi.restoreAllMocks();
 });
 
+const SIG = en.write.signature;
+const blockText = (): HTMLElement | null => screen.queryByRole("textbox", { name: SIG.label });
+const blockDrawn = (): HTMLElement | null => blockText() ?? screen.queryByRole("group", { name: SIG.label });
+
 describe("SignatureBlock — a distinct, removable, editable block", () => {
   it("shows the resolved sender's text; × reports the strike; typing reports the edit", async () => {
-    const seen: SignatureState[] = [];
-    await mountBlock({
-      sig: SIG_FOLLOWING, onSig: (n) => seen.push(n), signatures: MAP, mailboxId: "mb-one",
-    });
-    const block = host!.querySelector<HTMLElement>(".sig-block")!;
-    expect(block, "no block for a sender with a stored signature").not.toBeNull();
-    const text = block.querySelector<HTMLTextAreaElement>(".sig-text")!;
-    expect(text.value).toBe("Best regards\nAnna");
+    const w = await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
+    const text = blockText();
+    expect(text, "no block for a sender with a stored signature").not.toBeNull();
+    expect(text!.textContent).toBe("Best regards\nAnna");
 
-    // The strike — one press, `removed` reported, nothing else invented.
-    block.querySelector<HTMLButtonElement>(".sig-remove")!.click();
-    expect(seen).toEqual([{ kind: "removed" }]);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: SIG.remove })); });
+    await rounds(2);
+    expect(w.now().compose.sig).toEqual({ kind: "removed" });
+    await unmountWritings();
 
-    // The inline edit — the user's text, reported verbatim.
+    // The edit, on a block standing again (the strike above took this one away).
+    const again = await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
+    const typed = blockText()!;
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, "value",
-      )!.set!;
-      setter.call(text, "Best regards\nAnna B.");
-      text.dispatchEvent(new Event("input", { bubbles: true }));
+      typed.focus();
+      typed.textContent = "Best regards\nAnna B.";
+      fireEvent.input(typed);
+      fireEvent.blur(typed);
     });
-    expect(seen[1]).toEqual({ kind: "edited", text: "Best regards\nAnna B." });
+    await rounds(2);
+    expect(again.now().compose.sig).toEqual({ kind: "edited", text: "Best regards\nAnna B." });
   });
 
   it("renders NOTHING when struck, when the sender stores nothing, and when nothing can name one", async () => {
-    await mountBlock({ sig: { kind: "removed" }, onSig: () => {}, signatures: MAP, mailboxId: "mb-one" });
-    expect(host!.querySelector(".sig-block")).toBeNull();
-    await act(async () => { root!.unmount(); }); root = null; host?.remove();
+    await mountWriting({ view: true, signatures: { mb1: "Best regards\nAnna" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: SIG.remove })); });
+    await rounds(2);
+    expect(blockDrawn()).toBeNull();
+    await unmountWritings();
 
-    await mountBlock({ sig: SIG_FOLLOWING, onSig: () => {}, signatures: MAP, mailboxId: "mb-none" });
-    expect(host!.querySelector(".sig-block")).toBeNull();
-    await act(async () => { root!.unmount(); }); root = null; host?.remove();
+    await mountWriting({ view: true, signatures: { "mb-none": "someone else's" } });
+    expect(blockDrawn()).toBeNull();
+    await unmountWritings();
 
-    await mountBlock({ sig: SIG_FOLLOWING, onSig: () => {}, signatures: MAP, mailboxId: null });
-    expect(host!.querySelector(".sig-block")).toBeNull();
+    // No mailbox to name one: no letter stands, so Write's own model answers, as the block reads it.
+    const beside = writeBesideOf(new OhmailEngine({ adapter: new FixturesAdapter(), store: new MemoryMirrorStore() }), "acc-1", "strict", false, () => "", () => true);
+    expect(beside.signature(SIG_FOLLOWING, null, { text: MAP, html: {} })).toBeNull();
   });
 });
 

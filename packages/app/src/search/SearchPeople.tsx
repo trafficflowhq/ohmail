@@ -35,34 +35,56 @@ export function SearchPeople({
   const [all, setAll] = useState(false);
   const side = open !== null && (open.key === "from" || open.key === "to") ? open.key : null;
   if (model.person !== null || beside.people === NONE || model.addressOnly) return null;
-  if (side === null && words === "") return null;
-  const who = peopleFor(side !== null ? open!.value : words, beside.people());
+  if (side === null && words === "" && !model.resting) return null;
+  const who = model.resting
+    ? model.restingPeople
+    : peopleFor(side !== null ? open!.value : words, beside.people()).map((person) => ({ person }));
   if (who.length === 0) return null;
-  const few = side !== null ? FEW : FEW_WITH_WORDS;
+  const few = model.resting || side !== null ? FEW : FEW_WITH_WORDS;
   const shown = all ? who : who.slice(0, few);
   const heading = side === "from" ? t("facetFrom") : side === "to" ? t("to") : t("people");
   return (
     <>
-      <GroupHeading count={String(who.length)}>{heading}</GroupHeading>
-      <Rows>
-        {shown.map((p) => (
-          <div role="listitem" key={p.address}>
-            <Row
-              who={p.name === "" ? p.address : p.name}
-              address={p.name === "" ? undefined : p.address}
-              people={[{ name: p.name === "" ? p.address : p.name, address: p.address }]}
-              subject=""
-              amount={t("peopleCount", { count: p.count })}
-              onOpen={() => onPick(p, side ?? "any")}
-            />
-          </div>
-        ))}
+      <GroupHeading
+        count={String(who.length)}
+        aside={
+          who.length > few ? (
+            <Button kind="quiet" size="s" expanded={all} onPress={() => setAll((was) => !was)}>
+              {all ? t("fewer") : t("all")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {heading}
+      </GroupHeading>
+      <Rows listLabel={heading}>
+        {shown.map((entry) => {
+          const p = entry.person;
+          const name = p.name || p.address;
+          const address = p.name === "" ? undefined : p.address;
+          const amount =
+            "from" in entry
+              ? entry.from === 0
+                ? t("peopleTo", { count: entry.to })
+                : entry.to === 0
+                  ? t("peopleFrom", { count: entry.from })
+                  : t("peopleBoth", { from: entry.from, to: entry.to })
+              : t("peopleCount", { count: p.count });
+          return (
+            <div role="listitem" key={p.address}>
+              <Row
+                who={name}
+                address={model.resting ? undefined : address}
+                preview={model.resting ? address : undefined}
+                people={[{ name, address: p.address }]}
+                subject=""
+                amount={amount}
+                onOpen={() => onPick(p, side ?? "any")}
+              />
+            </div>
+          );
+        })}
       </Rows>
-      {who.length > few ? (
-        <Button kind="quiet" size="s" onPress={() => setAll((was) => !was)}>
-          {all ? t("fewer") : t("all")}
-        </Button>
-      ) : null}
     </>
   );
 }

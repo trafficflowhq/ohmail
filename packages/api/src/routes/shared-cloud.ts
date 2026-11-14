@@ -86,7 +86,7 @@ export async function webSession<T extends SessionEstablished>(
   // caller sent, which is what makes it a server-verified id and therefore safe to name a local
   // mirror with.
   const cookies = sessionCookies(
-    est.tokens!, csrfTokenFor(est.tokens!.accessToken), deps.authConfig, est.user?.accountId ?? null,
+    est.tokens!, csrfTokenFor(est.tokens!.accessToken), deps.authConfig, est.user?.accountId ?? null, deps.credentialFamily,
   );
   const { tokens: _tokens, ...body } = est;
   return json(body, 200, cookies);
@@ -108,7 +108,7 @@ export function enrollmentSession(
   // cookies are the only part that has to go. See {@link cookieSurface}.
   if (!cookieSurface(deps)) return json(est, status);
   return json(est, status, enrollmentCookies(
-    est.enrollmentToken, csrfTokenFor(est.enrollmentToken), deps.authConfig,
+    est.enrollmentToken, csrfTokenFor(est.enrollmentToken), deps.authConfig, deps.credentialFamily,
   ));
 }
 
@@ -127,6 +127,7 @@ export function enrollmentResult<T extends { session?: SessionEstablished }>(dep
     // The enrollment session that is being RETIRED here never carried one (see
     // `enrollmentCookies`); the full session replacing it does, from its own user.
     r.session.user?.accountId ?? null,
+    deps.credentialFamily,
   );
   const { tokens: _tokens, ...session } = r.session;
   return json({ ...r, session }, 200, cookies);

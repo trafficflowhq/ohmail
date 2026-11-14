@@ -66,6 +66,11 @@
     padding-top: 0;
   }
 
+  /* A phone's Settings column has no leading gutter beside its bottom action. */
+  :root[data-device="phone"] .oh-sheet:has(.oh-settingshead) > .oh-sheet-foot {
+    left: 0;
+  }
+
   /* ohmarchy: a hairline under it; beside the list its line is the list head's whole height. */
   :root[data-face="ohmarchy"] .oh-settingshead {
     --oh-settingshead-lead: var(--ringw);

@@ -1,0 +1,24 @@
+/* Supplement to the older Full Stop token sheet. These values were measured
+   in the Full Stop component rules. */
+
+:root {
+  /* core/cal.css: the first column's product-arrival animation-delay. */
+  --d-product-stagger: calc(40ms * var(--m-time));
+
+  /* core/room.css: the appopen starting transform and the shell's transform-origin. */
+  --x-app-open: scale(0.94);
+  --x-app-origin: 50% 55%;
+
+  /* core/app.css: the leading capsule and its icon in the phone Reader header. */
+  --sheet-back-height: 40px;
+  --sheet-back-max-width: 60%;
+  --sheet-back-icon: 22px;
+  --sheet-back-gap: 2px;
+}
+
+:root[data-rm="1"],
+[data-rm="1"] {
+  /* core/cal.css and core/room.css: reduced-motion arrivals fade in place with no delay. */
+  --d-product-stagger: 0ms;
+  --x-app-open: none;
+}

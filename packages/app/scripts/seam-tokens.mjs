@@ -1,16 +1,11 @@
 #!/usr/bin/env node
 /**
- * TWO DESIGNS ON ONE PAGE: THE SEAM SHEETS. The old token sheets and the new one both write on `:root`, and a
- * few names mean different things in each (`--float` is a colour in one and a shadow in the other). For every
- * rule that declares such a name, this writes the same declarations again one level down: the new meanings
- * under `.oh-root` (the frame), the old ones under `.today` (today's views inside it). Direct declarations at
- * three depths, so nothing depends on the order the sheets load in or on what `:root` resolves to.
- *
- *   node packages/app/scripts/seam-tokens.mjs            print what differs, exit 1 when a sheet is stale
- *   node packages/app/scripts/seam-tokens.mjs --write    write the frame's sheet (and today's with --today)
+ * Keep the frame's tokens under its own root. The host documents also load the older tokens at
+ * the document root. Some shared names have different values, including the frame's shadow.
+ * Run with --write to regenerate the frame sheet.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -19,7 +14,6 @@ export const OLD_SHEETS = [`${TOKENS}/tokens.css`, `${TOKENS}/faces.css`, `${TOK
 /* The kit's base writes measures of its own on the root that read the shared names: they are the new design's too. */
 export const NEW_SHEETS = [`${TOKENS}/design/tokens.css`, "packages/ui/src/base/base.css"];
 export const FRAME_SHEET = "packages/app/src/frame/seam.generated.css";
-export const TODAY_SHEET = "apps/webapp/app/shell/today-tokens.generated.css";
 
 /** The rules of a sheet, each with the media query it stands in, if any. Comments are dropped. */
 export function rulesOf(css) {
@@ -116,7 +110,7 @@ function sheet(rules, shared, under, from) {
   return out.join("\n");
 }
 
-/** Both seam sheets, as the token sheets in `root` make them. */
+/** The shared names and the frame sheet, generated from the source tokens. */
 export function seamSheets(root = ROOT) {
   const read = (files) => files.flatMap((file) => rulesOf(readFileSync(join(root, file), "utf8")));
   const oldRules = read(OLD_SHEETS);
@@ -125,28 +119,20 @@ export function seamSheets(root = ROOT) {
   return {
     shared,
     frame: sheet(newRules, shared, ".oh-root", NEW_SHEETS),
-    today: sheet(oldRules, shared, ".today", OLD_SHEETS),
   };
 }
 
 function main(argv) {
   const sheets = seamSheets();
-  const targets = [[FRAME_SHEET, sheets.frame]];
-  if (argv.includes("--today") || existsSync(join(ROOT, TODAY_SHEET)))
-    targets.push([TODAY_SHEET, sheets.today]);
+  const path = join(ROOT, FRAME_SHEET);
   if (argv.includes("--write")) {
-    for (const [file, text] of targets) writeFileSync(join(ROOT, file), text);
-    console.log(
-      `seam-tokens: wrote ${targets.map(([file]) => file).join(", ")} (${sheets.shared.length} shared names)`,
-    );
+    writeFileSync(path, sheets.frame);
+    console.log(`seam-tokens: wrote ${FRAME_SHEET} (${sheets.shared.length} shared names)`);
     return 0;
   }
-  const stale = targets.filter(
-    ([file, text]) => !existsSync(join(ROOT, file)) || readFileSync(join(ROOT, file), "utf8") !== text,
-  );
-  for (const [file] of stale)
-    console.log(`seam-tokens: ${relative(ROOT, join(ROOT, file))} is stale; run with --write`);
-  return stale.length ? 1 : 0;
+  if (existsSync(path) && readFileSync(path, "utf8") === sheets.frame) return 0;
+  console.log(`seam-tokens: ${FRAME_SHEET} is stale; run with --write`);
+  return 1;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])

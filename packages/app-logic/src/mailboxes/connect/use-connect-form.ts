@@ -8,7 +8,8 @@
  * to that field and asks it for the seal at the press. What the hook returns, what it keeps for a caller and what it
  * hands on when the form ends hold no password.
  */
-import { useMemo, type RefObject } from "react";
+import { useMemo, useSyncExternalStore, type RefObject } from "react";
+import { localTestPending } from "../../doors/local-server-host.js";
 import { hostFieldOf, useAddressFirst } from "./address-first.js";
 import { inputOf, patchOf, validPort } from "./body.js";
 import { NONE, type ConnectFormInput, type PasswordHandle } from "./calls.js";
@@ -162,17 +163,26 @@ function askingOf(machine: Machine): ConnectForm["asking"] {
 }
 
 /** Whether the form holds enough to press: an edit its password; a new connection its tile, address, servers and password. */
-function readyOf(machine: Machine, facts: ConnectFacts, canEdit: boolean): boolean {
+function readyOf(machine: Machine, facts: ConnectFacts, door: ConnectFormInput["door"]): boolean {
   if (!machine.hasPassword) return false;
-  if (facts.purpose === "edit" || facts.purpose === "reconnect") return canEdit;
+  if (facts.purpose === "edit" || facts.purpose === "reconnect") return door.edit !== NONE;
   const { typed } = machine.state;
   const preset = presetOf(typed, facts);
   if (preset === null || !filled(typed.address)) return false;
-  return preset.manual !== true || (filled(typed.imapHost) && filled(typed.smtpHost));
+  return (
+    preset.manual !== true ||
+    (filled(typed.imapHost) && (door.incomingOnly === true || filled(typed.smtpHost)))
+  );
 }
 
 export function useConnectForm(input: ConnectFormInput): ConnectForm {
   const { door, purpose, subject } = input;
+  const pendingLocalTest = useSyncExternalStore(
+    localTestPending.subscribe,
+    localTestPending.read,
+    localTestPending.read,
+  );
+  const longWait = door.localServerWait && pendingLocalTest;
   const edits = purpose === "edit" || purpose === "reconnect";
   const ways = useWays(door.signIn);
   const runsCode = door.signIn !== NONE && door.signIn.code !== NONE;
@@ -207,6 +217,8 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
   const signIn = useSignInPress(input, machine, way, instead);
 
   const press = (verb: Parked["verb"]): void => {
+    // A submit event can arrive even when the button is disabled.
+    if (door.localServerWait && localTestPending.read()) return;
     const act = pressOf(verb, machine, facts);
     if (act !== null) dispatch({ kind: "press", act });
   };
@@ -250,10 +262,10 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     lines: linesOf(state.consents, hosts),
     busy: signIn.signingIn ? "signIn" : gate.at === "trying" ? gate.act.verb : null,
     asking: askingOf(machine),
-    ready: readyOf(machine, facts, door.edit !== NONE),
+    ready: !longWait && readyOf(machine, facts, door),
     looking: !edits && addressFirst.looking,
     found: found.imap !== null || found.smtp !== null ? found : null,
-    longWait: door.localServerWait && gate.at === "trying" && gate.act.verb === "test",
+    longWait,
     password: machine.password,
     type: (field, value) => dispatch({ kind: "typed", field, value }),
     choose: (id) => {

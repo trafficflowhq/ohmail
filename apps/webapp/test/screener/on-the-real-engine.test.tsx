@@ -8,7 +8,7 @@ import { createUndoDoor } from "@ohmail/app-logic/press/undo-door";
 import { useScreenerModel, type ScreenerText, type SuggestionOverlay } from "@ohmail/app-logic/screener";
 import type { Translator } from "@ohmail/app-logic/text/translator";
 import { Frame } from "@ohmail/app/frame";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { NONE } from "@ohmail/app/host";
 import { ScreenerAbove, screenerPlace, type ScreenerBeside } from "@ohmail/app/screener";
 import { TextProvider, useTextLookup, type Messages } from "@ohmail/app/text";
@@ -147,6 +147,7 @@ function Seated({
     outstanding: [],
     ownAddresses: [],
     shownAt: () => [],
+    decisionVerdict: null,
     releaseWindow: null,
   });
   const { host } = useMemo(

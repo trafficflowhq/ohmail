@@ -1,8 +1,11 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScreenerJunk, ScreenerJunkItem } from "../../src/screener/index.js";
-import { BESIDE, modelOf, mountPlace, sender, type Asked } from "./screener-world.js";
+import { BESIDE, modelOf, mountPlace, sender, WORDS, type Asked } from "./screener-world.js";
+
+import { QuarantineMove } from "../../src/screener/list/QuarantineMove.js";
+import { TextProvider } from "../../src/text/index.js";
 
 /**
  * JUNK, the third section where the shell hands its window over the mail server's own Junk folder: who filed each
@@ -338,4 +341,32 @@ describe("Junk on one column", () => {
       "von deinem Mailserver",
     );
   });
+});
+
+it("closes the Quarantine confirmation when a fresh preview arrives for the same count", () => {
+  const request = vi.fn();
+  const view = (confirmation: string, confirmationRequired = false) => (
+    <TextProvider locale="en" timeZone="UTC" messages={WORDS.en}>
+      <QuarantineMove
+        sweep={{
+          phase: "offer",
+          preview: { mailboxes: [], movable: 2, pending: false, confirmation, confirmationRequired },
+          requesting: false,
+          request,
+          dismiss: () => {},
+        }}
+      />
+    </TextProvider>
+  );
+  const { rerender } = render(view("old-preview"));
+  fireEvent.click(screen.getByRole("button", { name: "Move to Junk" }));
+  expect(screen.getByRole("dialog", { name: "Move to Junk" })).toBeTruthy();
+
+  rerender(view("fresh-preview", true));
+  expect(screen.queryByRole("dialog", { name: "Move to Junk" })).toBeNull();
+  expect(request).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Move to Junk" }));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move 2 messages" }));
+  expect(request.mock.calls).toEqual([["fresh-preview"]]);
 });

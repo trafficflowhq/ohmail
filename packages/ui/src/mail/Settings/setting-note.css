@@ -22,4 +22,8 @@
     flex: none;
     margin-top: var(--oh-settingnote-sign-drop);
   }
+
+  [role="dialog"] .oh-settingnote > .oh-settingnote-copy {
+    overflow-wrap: anywhere;
+  }
 }

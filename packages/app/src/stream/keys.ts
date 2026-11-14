@@ -36,7 +36,7 @@ export function useStreamKeys(on: boolean, root: Element | null, model: StreamMo
       const to = stepOf(latest.current, by);
       if (to === null) return;
       e.preventDefault();
-      latest.current.open(to);
+      latest.current.stepTo(to);
     };
     win.addEventListener("keydown", onKey);
     return () => win.removeEventListener("keydown", onKey);

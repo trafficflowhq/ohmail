@@ -5,6 +5,8 @@
 import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { fillOver, TextProvider, type Messages } from "../../../src/text/index.js";
+import screeningDe from "../../../messages/screener.de.json" with { type: "json" };
+import screeningEn from "../../../messages/screener.en.json" with { type: "json" };
 import settingsDe from "../../../messages/settings.de.json" with { type: "json" };
 import settingsEn from "../../../messages/settings.en.json" with { type: "json" };
 import sharedDe from "../../../messages/shared.de.json" with { type: "json" };
@@ -26,6 +28,7 @@ const EN: Messages = {
   ...aiEn,
   ...aboutEn,
   ...screenerEn,
+  ...screeningEn,
   ...awayEn,
   ...rulesEn,
 };
@@ -35,6 +38,7 @@ const DE: Messages = {
   ...aiDe,
   ...aboutDe,
   ...screenerDe,
+  ...screeningDe,
   ...awayDe,
   ...rulesDe,
 };
@@ -56,14 +60,16 @@ export function wordsUnder(lang: "en" | "de", namespace: string): Readonly<Recor
 }
 
 export function drawn(node: ReactNode, lang: "en" | "de" = "en") {
-  return render(
-    <TextProvider
-      locale={lang}
-      messages={ACTING_WORDS[lang]}
-      timeZone="Europe/Zurich"
-      now={new Date("2026-11-16T09:00:00Z")}
-    >
-      {node}
-    </TextProvider>,
-  );
+  return render(node, {
+    wrapper: ({ children }) => (
+      <TextProvider
+        locale={lang}
+        messages={ACTING_WORDS[lang]}
+        timeZone="Europe/Zurich"
+        now={new Date("2026-11-16T09:00:00Z")}
+      >
+        {children}
+      </TextProvider>
+    ),
+  });
 }

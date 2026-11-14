@@ -8,7 +8,8 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { Button, Field, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
-import { laterPlan, type LaterRefusal } from "@ohmail/app-logic/write/later";
+import { localInputValue } from "@ohmail/app-logic/text/format";
+import { LATER_CHOICES, SCHEDULE_KEY, laterPlan, type LaterRefusal } from "@ohmail/app-logic/write/later";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";
 
@@ -73,11 +74,13 @@ function LaterCard({
     onPick(at);
   };
   const [day = "", clock = ""] = typed.split("T");
+  const lastDay =
+    plan.latest === null ? undefined : localInputValue(new Date(plan.latest).toISOString()).slice(0, 10);
   const custom = later.compose(typed, floor);
   const own = useRef<HTMLFormElement | null>(null);
   const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   keys.current = laterKeys(plan.refusal === null, plan.custom?.at ?? null, plan.presets, pick, () =>
-    own.current?.querySelector("input")?.focus(),
+    own.current?.querySelector("input")?.focus({ preventScroll: true }),
   );
   /* On the card itself, before it keeps the key from what lies under it. */
   useEffect(() => {
@@ -109,6 +112,7 @@ function LaterCard({
             <Field
               label={t("later.day")}
               type="date"
+              max={lastDay}
               value={day}
               onChange={(d) => setTyped(`${d}T${clock}`)}
             />
@@ -171,21 +175,18 @@ function laterKeys(
     if (at !== undefined) pick(at);
   };
   return (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === SCHEDULE_KEY && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (custom !== null) pick(custom);
       return;
     }
     const typing = e.target instanceof HTMLInputElement;
     if (!times || typing || e.metaKey || e.ctrlKey || e.altKey) return;
-    const id = { "1": "evening", "2": "tomorrow", "3": "monday" }[e.key];
-    if (id !== undefined) {
-      e.preventDefault();
-      preset(id);
-    } else if (e.key === "4") {
-      e.preventDefault();
-      own();
-    }
+    if (!Object.hasOwn(LATER_CHOICES, e.key)) return;
+    const choice = LATER_CHOICES[e.key as keyof typeof LATER_CHOICES];
+    e.preventDefault();
+    if (choice === "custom") own();
+    else preset(choice);
   };
 }
 

@@ -1,21 +1,20 @@
 /** @vitest-environment jsdom */
 /**
- * THE OLD SHELL'S COMPOSITION STANDS ONCE PER FRAME, ABOVE EVERY PANE. The real shell as the tests' door mounts it,
- * with the places every host hands: the Ohbox seated (a place of its own body), every other one of today's views. A
- * walk between the seated Ohbox and a view of today's mounts nothing of the composition a second time and asks the
- * consent wire nothing again; a send pressed before the walk is answered on the machine that sent it; and at the
- * seated Ohbox the app is whole: the rail, the notices, the palette, the key sheet and the way to the composer.
+ * THE COMPOSITION STANDS ONCE PER FRAME, ABOVE EVERY PANE. The shell as the tests' door mounts it: the frame over the
+ * mail ground with the places the mail entry hands. A walk between two places mounts nothing of the composition a
+ * second time and asks the consent wire nothing again; a send pressed before the walk is answered on the machine
+ * that sent it; and at the Ohbox the app is whole: the rail, the notices, the palette, the key sheet and the way to
+ * the composer. The same counts over the web's real entry, `CloudShell` itself, are `composition-once-entry.test.tsx`.
  *
  * Each part is counted live through a wrapper of its own module: the real hook or provider runs, the wrapper counts
  * its mounts.
  *
- * AND WHAT A PLACE READS OF THE MAIL GROUND, OVER BOTH CALLERS, the same cases and the same expectations: over a
- * tests' host that hands the mail ground (two places that read it as a seat does, nothing of the old shell), and
- * over the old shell with those two places at two of its ids, where the shell makes every call and fills the
- * ground's contexts. The mail state, the consent row and the partition stand once for the frame's life over a walk
- * between the two, the consent wire is asked once, the engine is told one cutline, and a place reads the very row
- * and the very record the one call and the one derivation answered. A place that called for the row itself would be
- * seen: the wire is asked a second time.
+ * AND WHAT A PLACE READS OF THE MAIL GROUND, OVER TWO HOSTS, the same cases and the same expectations: over a host
+ * that hands the mail ground and these two places alone, and over what the mail entry hands every browser host (its
+ * ground, its stages, its reader and every place it seats) with those two places at two of its ids. The mail state,
+ * the consent row and the partition stand once for the frame's life over a walk between the two, the consent wire is
+ * asked once, the engine is told one cutline, and a place reads the very row and the very record the one call and
+ * the one derivation answered. A place that called for the row itself would be seen: the wire is asked a second time.
  *
  * AND THE TWO DOORS OF A LETTER, read by a place as `useDoors()`: one file door and one picture door for the frame's
  * life, the very same two at every place; no letter loads a picture by itself before the account's own answer has
@@ -36,17 +35,24 @@ import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { letterPictures, useDoors, type Doors } from "@ohmail/app-logic/reader";
 import { usePresentedMirror } from "@ohmail/app-logic/reading";
-import { PLACE_IDS, useFrame, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
+import { Frame, PLACE_IDS, useFrame, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
 import { NONE, type ImageWire, type None } from "@ohmail/app/host";
-import { MailGround } from "@ohmail/app/mail";
-import { ConsentMount, MailStateMount, PresentedMount, WritingMount } from "@ohmail/app/mail/ground";
+import { MailGround, mailReader, NO_PANE_PARTS, NO_STAGE_PARTS, useMailSupplies, useThemeLook, type MailHostParts } from "@ohmail/app/mail";
+import { letterBody } from "@ohmail/app/reader/body";
+/* The ground's mounts one by one, by path: the ground stands them inside `MailGround`; the second entry
+   `@ohmail/app/mail/ground` leaves with the switch. */
+import { ConsentMount } from "../../../../packages/app/src/mail/ground/ConsentMount.js";
+import { MailStateMount } from "../../../../packages/app/src/mail/ground/MailStateMount.js";
+import { PresentedMount } from "../../../../packages/app/src/mail/ground/PresentedMount.js";
+import { ScreenerMount } from "../../../../packages/app/src/mail/ground/ScreenerMount.js";
+import { WritingMount } from "../../../../packages/app/src/mail/ground/WritingMount.js";
 import { TextProvider } from "@ohmail/app/text";
 import en from "../../messages/en.json";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { useComposer } from "@ohmail/app-logic/writing/composer-record";
 import { act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "../_draft-shell.js";
 import { settleEditor } from "../_first-paint.js";
-import { hostFromTodaysInputs } from "../_todays-shell";
+import { hostFromTodaysInputs } from "../_mail-shell";
 import { engineOver, msg, NOW, setup, storeWith, teardown } from "../_view-shell";
 
 type Part = "mailState" | "consentRow" | "composer" | "fileDoor" | "pictureDoor";
@@ -58,10 +64,33 @@ const seen = vi.hoisted(() => ({
   wires: new WeakSet<object>(),
   /** The partition's one derivation: its mounts, how many stand now, and every record it answered. */
   partition: { mounts: 0, live: 0 },
+  /** The press seam: its mounts, and how many stand now. */
+  seam: { mounts: 0, live: 0 },
+  /** The restart hold's relay over the one send machine: its mounts, and how many stand now. */
+  relay: { mounts: 0, live: 0 },
   records: new WeakSet<object>(),
   /** Every row the consent row's one call answered. */
   rows: new WeakSet<object>(),
 }));
+
+vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/press/shell-dispatch")>();
+  const { useEffect } = await import("react");
+  return {
+    ...real,
+    useShellDispatch: (...args: Parameters<typeof real.useShellDispatch>) => {
+      const seam = real.useShellDispatch(...args);
+      useEffect(() => {
+        seen.seam.mounts += 1;
+        seen.seam.live += 1;
+        return () => {
+          seen.seam.live -= 1;
+        };
+      }, []);
+      return seam;
+    },
+  };
+});
 
 vi.mock("@ohmail/app/mail-state", async (load) => {
   const real = await load<typeof import("@ohmail/app/mail-state")>();
@@ -148,6 +177,24 @@ vi.mock("@ohmail/app-logic/writing/shell-compose", async (load) => {
   };
 });
 
+vi.mock("../../../../packages/app/src/mail/ground/SendWaitsRelay.js", async (load) => {
+  const real = await load<typeof import("../../../../packages/app/src/mail/ground/SendWaitsRelay.js")>();
+  const { useEffect } = await import("react");
+  return {
+    ...real,
+    SendWaitsHold: () => {
+      useEffect(() => {
+        seen.relay.mounts += 1;
+        seen.relay.live += 1;
+        return () => {
+          seen.relay.live -= 1;
+        };
+      }, []);
+      return real.SendWaitsHold();
+    },
+  };
+});
+
 vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
   const real = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
   const { useEffect } = await import("react");
@@ -202,9 +249,9 @@ const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind =
 const said = (): string => screen.queryAllByRole("status").map((notice) => notice.textContent ?? "").join(" | ");
 const saysSending = (): boolean => said().includes(SENDING);
 const saysOfMila = (): boolean => said().includes("Mila");
-/** The seated Ohbox is on screen: the frame draws its reading column. A view of today's stands in the wide pane. */
-const atTheOhbox = (): boolean => screen.queryByRole("region", { name: "Reading" }) !== null;
-const TODAYS_ADDRESS = "#/history";
+const atTheOhbox = (): boolean => screen.queryByRole("heading", { name: "Ohbox" }) !== null;
+const HISTORY_ADDRESS = "#/history";
+const railEntries = (): number => within(screen.getByRole("navigation", { name: "Places" })).getAllByRole("button").length;
 const subject = (): HTMLElement | null => screen.queryByRole("textbox", { name: en.compose.subject });
 /** How many entries the rail today's views feed holds; none where no fed rail stands. */
 const fedRailEntries = (): number => {
@@ -238,7 +285,7 @@ function holdTheSend(s: DraftShell): () => void {
 }
 /** The letter from Drafts into the composer, Send pressed, the composer handed off with the send still on the wire. */
 async function sendTheLetter(s: DraftShell): Promise<() => void> {
-  const open = () => within(s.el).queryByRole("button", { name: /Plans for Friday/ });
+  const open = () => within(s.el).queryByRole("option", { name: /Plans for Friday/ });
   await waitFor(() => open() !== null, "the letter in Drafts");
   await press(open(), "open the letter");
   await waitFor(() => (subject() as HTMLInputElement | null)?.value === "Plans for Friday", "the composer on the letter");
@@ -259,63 +306,68 @@ beforeEach(() => {
     seen.live[part] = 0;
   }
   seen.asks = 0;
+  seen.relay.mounts = 0;
+  seen.relay.live = 0;
   seen.partition.mounts = 0;
   seen.partition.live = 0;
+  seen.seam.mounts = 0;
+  seen.seam.live = 0;
   read.length = 0;
 });
 afterEach(async () => {
   await unmountAll();
 });
 
-describe("the old shell's composition over a walk from the seated Ohbox to a view of today's and back", () => {
-  it("mounts the mail state, the consent row, the composer and the two doors once, and asks the consent wire once", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox with its letter");
-    await rounds(8);
-    expect({ mounts: { ...seen.mounts }, live: { ...seen.live }, asks: seen.asks }, "as the frame mounted").toEqual({
-      mounts: ONCE, live: ONCE, asks: 1,
-    });
+/**
+ * AS IT READS ONCE THE WEB'S ENTRY HANDS THE MAIL GROUND, through the tests' door of the new shell: the frame over the
+ * mail ground and the mail places, nothing of today's shell above the panes. Every part of the composition stands
+ * once for the frame's life over a walk between the seated places, the consent wire is asked once, the press seam is
+ * the one the frame's room mounts, and the rail is the registrations', not a rail today's views feed.
+ */
+describe("the mail ground's composition over the web's entry, over a walk between the seated places", () => {
+  const ALL_ONCE = { ...ONCE, partition: 1, seam: 1 };
+  const live = () => ({ ...seen.live, partition: seen.partition.live, seam: seen.seam.live });
+  const mounts = () => ({ ...seen.mounts, partition: seen.partition.mounts, seam: seen.seam.mounts });
 
-    await visit(TODAYS_ADDRESS);
-    await waitFor(() => !atTheOhbox(), "History, a view of today's");
+  it("mounts the press seam, the mail state, the consent row, the partition, the composer and the two doors once, and asks the consent wire once", async () => {
+    const s = await mountShell("#/ohbox", [message("m1")], []);
+    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the Ohbox on the mail ground, with its letter");
     await rounds(8);
-    expect({ ...seen.live }, "at a view of today's every part still stands, once").toEqual(ONCE);
+    expect({ mounts: mounts(), live: live(), asks: seen.asks }, "as the frame mounted").toEqual({
+      mounts: ALL_ONCE, live: ALL_ONCE, asks: 1,
+    });
+    expect(screen.queryByRole("navigation", { name: "Places" }), "the rail of the registrations").not.toBeNull();
+    expect(fedRailEntries(), "a rail today's views feed").toBe(0);
+
+    await visit("#/compose");
+    await waitFor(() => subject() !== null, "the place that writes");
+    await rounds(8);
+    expect(live(), "at the place that writes every part still stands, once").toEqual(ALL_ONCE);
 
     await visit("#/ohbox");
-    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox again");
+    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the Ohbox again");
     await rounds(8);
-    expect({ mounts: { ...seen.mounts }, live: { ...seen.live }, asks: seen.asks }, "after the walk").toEqual({
-      mounts: ONCE, live: ONCE, asks: 1,
+    expect({ mounts: mounts(), live: live(), asks: seen.asks }, "after the walk").toEqual({
+      mounts: ALL_ONCE, live: ALL_ONCE, asks: 1,
     });
   }, 60_000);
 
-  it("a send pressed before the walk is one send, answered on the machine that sent it, its notice gone", async () => {
-    const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
-    const release = await sendTheLetter(s);
-    await waitFor(saysSending, "the notice says the send is on its way");
-
-    await visit("#/ohbox");
-    await waitFor(atTheOhbox, "the seated Ohbox");
+  it("the door stands the frame over the ground with nothing of today's shell: one press seam, the room's own, and no rail a view feeds", async () => {
+    await mountShell("#/ohbox", [message("m1")], []);
+    await waitFor(() => screen.queryByRole("navigation", { name: "Places" }) !== null, "the frame's own rail");
     await rounds(8);
-    expect(saysSending(), "at the seated Ohbox the notice still says the send is on its way").toBe(true);
-
-    await act(async () => { release(); });
-    await waitFor(() => !saysSending() && saysOfMila(), "the answer applied: the notice says it went");
-    await waitFor(() => !saysOfMila(), "the notice settles away", 400);
-
-    await visit(TODAYS_ADDRESS);
-    await waitFor(() => !atTheOhbox(), "a view of today's again");
-    await rounds(20);
-    expect(sends(s), "one send left for one press").toHaveLength(1);
-    expect({ ...seen.mounts }, "nothing of the composition was mounted again").toEqual(ONCE);
+    expect(fedRailEntries(), "a rail today's views feed").toBe(0);
+    expect({ seam: seen.seam.live, mailState: seen.live.mailState, consentRow: seen.live.consentRow, partition: seen.partition.live })
+      .toEqual({ seam: 1, mailState: 1, consentRow: 1, partition: 1 });
+    expect(seen.asks, "the asks one frame made of its consent wire").toBe(1);
   }, 60_000);
 });
 
 /**
  * THE HOST'S DRAFT WIRE REACHES THE COMPOSER, through the shell the tests' door mounts. Two hosts that differ only in
- * the draft wire they hand: one that counts what it is asked, and none. A letter opened in a view of today's and its
- * More menu: over the wire Draft reply opens the offer, and the wire is asked to draft on Draft it only; over none
- * no Draft reply is offered and nothing is asked.
+ * the draft wire they hand: one that counts what it is asked, and none. A letter opened and its More menu: over the
+ * wire Draft reply opens the reply with the drafter's control, and the wire is asked to draft on that control's press
+ * only; over none no Draft reply is offered and nothing is asked.
  */
 describe.each([
   ["hands a draft wire", true, ["m1"]],
@@ -336,7 +388,7 @@ describe.each([
       /* This host has no door for a draft made of the person's own words. */
       fromText: "none",
     };
-    const s = await mountShell(TODAYS_ADDRESS, [message("m1")], [], hands ? { draftReplyWire: wire } : {});
+    const s = await mountShell(HISTORY_ADDRESS, [message("m1")], [], hands ? { draftReplyWire: wire } : {});
     const row = () => within(s.el).queryByRole("option", { name: /Subject m1$/ });
     await waitFor(() => row() !== null, "the letter in History");
     await press(row(), "open the letter");
@@ -349,9 +401,13 @@ describe.each([
     expect(draftReply !== null, "Draft reply in the letter's More").toBe(hands);
     if (draftReply !== null) {
       await press(draftReply, "Draft reply");
-      await waitFor(() => screen.queryByRole("group", { name: en.draftReply.offerTitle }) !== null, "the offer");
-      expect(asked.create, "the offer asked the wire to draft before Draft it").toEqual([]);
-      await press(screen.getByRole("button", { name: en.draftReply.confirm }), "Draft it");
+      /* The reply opens on the letter with the drafter's control at its foot, its price said on it before its press
+         (Write's reply drafts in one press, where today's sheet asked first): the wire is asked on that press only. */
+      const control = (): HTMLElement | null =>
+        within(s.el).queryAllByRole("button", { name: en.write.draft.verb }).find((b) => b.closest('[role="menu"]') === null) ?? null;
+      await waitFor(() => control() !== null, "the drafter's control at the reply's foot");
+      expect(asked.create, "the wire asked to draft before the control's press").toEqual([]);
+      await press(control(), "Draft reply at the reply's foot");
       await waitFor(() => asked.create.length > 0, "the wire asked to draft");
     }
     expect(asked.create, "what the wire was asked to draft").toEqual(drafted);
@@ -362,16 +418,16 @@ describe("at the seated Ohbox the app is whole", () => {
   it("the fed rail, a notice of today's feeds, the palette, the key sheet and the way to the composer stand; today's reader sheet does not", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
     const release = await sendTheLetter(s);
-    await visit(TODAYS_ADDRESS);
-    await waitFor(() => !atTheOhbox() && fedRailEntries() > 0, "History beside its fed rail");
+    await visit("#/history");
+    await waitFor(() => screen.queryByRole("heading", { name: "History" }) !== null, "the mounted History list");
     await waitFor(saysSending, "the notice says the send is on its way");
-    const entries = fedRailEntries();
-    expect(entries, "a view of today's stands beside a fed rail").toBeGreaterThan(0);
+    const entries = railEntries();
+    expect(entries, "History stands beside the registered rail").toBeGreaterThan(0);
 
     await visit("#/ohbox");
     await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox");
     await rounds(8);
-    expect({ rail: fedRailEntries(), notice: saysSending() }, "the rail and the notice at the seated Ohbox").toEqual({
+    expect({ rail: railEntries(), notice: saysSending() }, "the rail and the notice at the seated Ohbox").toEqual({
       rail: entries, notice: true,
     });
     expect(screen.queryByRole("dialog", { name: en.reader.pane, hidden: true }), "today's reader sheet").toBeNull();
@@ -451,38 +507,44 @@ let stood: Root | null = null;
 async function loaded() {
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { EngineProvider } = await import("../../app/shell/engine");
-  const { TodaysFrame } = await import("../../app/shell/TodaysFrame");
-  const { NO_TODAYS } = await import("../../app/shell/todays-inputs");
-  const { useTodaysSupplies } = await import("../../app/shell/todays-supplies");
-  return { ThemeProvider, ToastHost, EngineProvider, TodaysFrame, NO_TODAYS, useTodaysSupplies };
+  return { ThemeProvider, ToastHost, EngineProvider };
 }
+/** What a browser host hands of its own, as an entry names it once: the letter's renderer, and no door of its own. */
+const OWN_PARTS: MailHostParts = {
+  reader: mailReader({ body: letterBody, look: NONE }),
+  stageParts: NO_STAGE_PARTS,
+  paneParts: NO_PANE_PARTS,
+};
 let parts: Awaited<ReturnType<typeof loaded>> | null = null;
 
 /**
- * THE TWO CALLERS, one host each over the same inputs (the window and the address as every shell hands them, the
- * same wire, the same facts). `ground`: these places and no other, `MailGround` above them: the ground's own mounts
- * make every call. `shell`: the places every host hands with these standing at two of their ids, the old shell's
- * composition above them: the old shell makes every call and fills the ground's contexts.
+ * THE TWO HOSTS, one each over the same inputs (the window and the address as every shell hands them, the same wire,
+ * the same facts), and in both the ground's own mounts make every call. `ground`: these places and no other,
+ * `MailGround` above them. `entry`: everything the mail entry hands a browser host (`useMailSupplies`: its ground,
+ * its stages, its reader, every place it seats), with these standing at two of its ids.
  */
-type Caller = "ground" | "shell";
+type Caller = "ground" | "entry";
 function Stood({ caller, engine, places, consent, images }: {
   caller: Caller; engine: OhmailEngine; places: Places; consent: ConsentTransport; images?: ImageWire | None;
 }) {
-  const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
-  const frame = useTodaysSupplies(NONE);
+  const frame = useMailSupplies(window, useThemeLook(), NONE, OWN_PARTS);
   const host = useMemo(() => {
     /* The picture wire only where a case hands one (or says none): every other case mounts as it always did. */
     const inputs = {
       demo: false, engine, consentTransport: consent, mailboxFacts: ownFacts, ...(images === undefined ? {} : { imageWire: images }),
     };
-    if (caller === "shell") {
-      return hostFromTodaysInputs(inputs, engine, { ...frame, places: { ...frame.places, ...places } as FramePlaces }, NONE);
+    if (caller === "entry") {
+      /* What the mail entry hands is handed on whole (its stages, its reader, the ground above), as the tests' door
+         and every entry hand it, with the case's two places at two of its ids. */
+      const seated = { ...frame.places, ...places } as FramePlaces;
+      const made = hostFromTodaysInputs(inputs, engine, { ...frame, places: seated }, NONE);
+      return { ...made, features: { ...made.features, places: seated, stages: frame.stages, reader: frame.reader, above: frame.above } };
     }
     const only = { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ...places } as unknown as FramePlaces;
     const made = hostFromTodaysInputs(inputs, engine, { ...frame, places: only }, NONE);
     return { ...made, features: { ...made.features, places: only, above: MailGround } };
   }, [caller, engine, frame, places, consent, images]);
-  return h(TodaysFrame, { host, todays: NO_TODAYS });
+  return h(Frame, { host });
 }
 async function stand(
   caller: Caller, engine: OhmailEngine, places: Places,
@@ -507,7 +569,7 @@ const ONE_EACH = { mailState: 1, consentRow: 1, partition: 1 };
 
 describe.each([
   ["a host that hands the mail ground", "ground"],
-  ["the old shell, filling the ground's contexts", "shell"],
+  ["what the mail entry hands a browser host", "entry"],
 ] as const)("what a place reads of the ground over %s", (_, caller) => {
   beforeEach(() => {
     setup();
@@ -545,9 +607,8 @@ describe.each([
     const second = lastAt("the second place");
     expect(seen.rows.has(second.row), "the second place read a row the one call did not answer").toBe(true);
     expect(second.partition, "another place reads another record").toBe(first.partition);
-    /* Over the ground a reader is handed the same row while nothing of it moved; the old shell's row is a new
-       object at each of its renders, until it is gone. */
-    if (caller === "ground") expect(second.row, "another place reads another row").toBe(first.row);
+    /* A reader is handed the same row while nothing of it moved. */
+    expect(second.row, "another place reads another row").toBe(first.row);
 
     await visit(FIRST);
     await waitFor(() => at("the first place"), "the first place again");
@@ -564,8 +625,7 @@ describe.each([
     await stand(caller, engine, WITH_A_SECOND_CALLER);
     await waitFor(() => at("the first place") && seen.asks > 1, "the second caller's own ask");
     await rounds(8);
-    /* Two rows stand in the one frame, and the wire heard more than the one ask a frame owes (the old shell draws a
-       place's pane twice at its mount, so its second caller asks twice). */
+    /* Two rows stand in the one frame, and the wire heard more than the one ask a frame owes. */
     expect(seen.live.consentRow, "the rows that stand in one frame").toBe(2);
     expect(seen.asks, "the asks one frame made of its consent wire").toBeGreaterThan(1);
   }, 60_000);
@@ -635,7 +695,7 @@ const drawn = (): string => screen.queryByRole("region", { name: "the files" })?
 
 describe.each([
   ["a host that hands the mail ground", "ground"],
-  ["the old shell, filling the ground's contexts", "shell"],
+  ["what the mail entry hands a browser host", "entry"],
 ] as const)("the two doors of a letter over %s", (_, caller) => {
   const minted: string[] = [];
   const revoked: string[] = [];
@@ -807,15 +867,17 @@ const writingPlaces = (mount: "above every place" | "with this place's body"): P
   news: { id: "news", body: "writes-1", rail: null, panes: { kind: "wide", Wide: writesAt("the first place", mount) } },
   receipts: { id: "receipts", body: "writes-2", rail: null, panes: { kind: "wide", Wide: writesAt("the second place", mount) } },
 });
-/** The ground's pieces under the composer, and no composer: a place of the plant stands the mount with its own body. */
+/**
+ * The ground's pieces under the composer, and no composer: a place of the plant stands the mount with its own body.
+ * The Screener's model stands above it, as `MailGround` has it: the composer's price reads the Screener's standing.
+ */
 function GroundWithNoComposer({ children }: { readonly children: ReactNode }): ReactNode {
-  return h(MailStateMount, null, h(ConsentMount, null, h(PresentedMount, null, children)));
+  return h(MailStateMount, null, h(ConsentMount, null, h(PresentedMount, null, h(ScreenerMount, null, children))));
 }
 function StoodOverTheGround({ engine, places, above }: {
   engine: OhmailEngine; places: Places; above: (props: { readonly children: ReactNode }) => ReactNode;
 }) {
-  const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
-  const frame = useTodaysSupplies(NONE);
+  const frame = useMailSupplies(window, useThemeLook(), NONE, OWN_PARTS);
   const consent = useMemo(answering, []);
   const host = useMemo(() => {
     const only = { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ...places } as unknown as FramePlaces;
@@ -824,7 +886,7 @@ function StoodOverTheGround({ engine, places, above }: {
     );
     return { ...made, features: { ...made.features, places: only, above } };
   }, [engine, frame, places, consent, above]);
-  return h(TodaysFrame, { host, todays: NO_TODAYS });
+  return h(Frame, { host });
 }
 async function standOverTheGround(engine: OhmailEngine, places: Places, above: (props: { readonly children: ReactNode }) => ReactNode) {
   parts ??= await loaded();
@@ -889,6 +951,7 @@ describe("one send machine over a host that hands the mail ground", () => {
     await rounds(8);
     expect(sendSays("the second place"), "the place walked to reads the machine that sent").toBe("the reply's send: sending");
     expect({ mounts: seen.mounts.composer, live: seen.live.composer }, "the composer over the walk").toEqual({ mounts: 1, live: 1 });
+    expect({ ...seen.relay }, "the restart hold's relay over the walk, beside the one machine").toEqual({ mounts: 1, live: 1 });
 
     await act(async () => { wire.release(); });
     await waitFor(() => sendSays("the second place") !== "the reply's send: sending", "the answer applied on the machine that sent it");

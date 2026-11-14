@@ -13,7 +13,9 @@ export function usePendingDoor(pending: PendingSignOut): PendingSignOutDoor {
   const said = pending.said === null
     ? null
     : pending.said.key === "signOutServerRefused"
-      ? ta(pending.said.key, { reason: pending.said.reason })
+      ? pending.said.cleanupIncomplete
+        ? ta("signOutServerRefusedUnverified", { reason: pending.said.reason })
+        : ta(pending.said.key, { reason: pending.said.reason })
       : ta(pending.said.key);
   return {
     said,

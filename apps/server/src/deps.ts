@@ -618,8 +618,7 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
     // The spend half, read off the bag so there is ONE port per program. Metered, the Screener's
     // terms (the exclusive claim, the setup pool) are the ACTION's (`SPEND_ACTIONS.screener`).
     ...(spendHalf() ? { credits: spendHalf()! } : {}),
-    // THE SAME OBJECT, for the one read that happens only after the gate has refused: a `state`
-    // refusal this account's own access view contradicts is answered 503 rather than billed.
+    // The same port verifies current AI access before dispatch and explains spend refusals.
     ...(accessHalf() ? { access: accessHalf()! } : {}),
     // THE PRICE, from the same instance. No card ⇒ no quote and no purchase.
     ...(accessHalf() ? { pricing: pricingOf(accessHalf()!) } : {}),

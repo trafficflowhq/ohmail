@@ -65,7 +65,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -75,7 +75,7 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -305,9 +305,11 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
       window.dispatchEvent(new Event("hashchange"));
     });
 
-    const rowEl = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
-    expect(rowEl, "the booked message is not in the Resurface pile").toBeTruthy();
-    const done = rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done");
+    const bookedRow = () => host!.querySelector<HTMLElement>(
+      `[role="listbox"][aria-label="Resurface"] [role="option"][data-id="${id}"]`,
+    );
+    expect(bookedRow(), "the booked message is not in the Resurface pile").toBeTruthy();
+    const done = doneBeside(bookedRow());
 
     sent = [];
     await click(done);
@@ -325,7 +327,7 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
     expect(seen[0]!.via).toBeUndefined();
 
     // The pile lets go of the row in the same gesture.
-    expect(host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`)).toBeNull();
+    expect(bookedRow()).toBeNull();
   });
 });
 

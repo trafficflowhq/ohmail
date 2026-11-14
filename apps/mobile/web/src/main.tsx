@@ -8,12 +8,14 @@ import { bridge, kept } from "./boot";
 import catalogue from "./catalogue";
 import mounted from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
+import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { unsentDraftsOf, type NoticePermission } from "./engine-package";
 import { benchDoor, type BenchDoor } from "./bench";
 import type { LinkInTarget } from "../../src/shell/bridge-kinds";
 import { otherAppDoor } from "./other-app";
 import { note, type Bridge } from "./bridge";
+import { bridgeFetch } from "./bridge-fetch";
 import { createPhoneEngine, keptStoreOf } from "./engine";
 import { phoneFrameSupplies } from "./frame-supplies";
 import { phoneHost } from "./host";
@@ -65,7 +67,17 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   let permission: NoticePermission = config.notifications;
   const frame = phoneFrameSupplies(mounted, config.place, (fragment) => void bridge.request("place", { fragment }).catch(() => {}));
   const facts = { setting: config.setting, scope: config.scope, accountId: config.accountId, build: config.build };
+  const read = bridgeFetch(bridge, config.scope);
   const host = phoneHost(engine, facts, {
+    search: {
+      by: config.setting === "standalone" ? "people" : () => readSearchBy(read),
+      mailboxTotal: async () => {
+        const response = await read("/mailboxes?counts=1");
+        if (!response.ok) return null;
+        const answer = await response.json() as { items?: unknown };
+        return Array.isArray(answer?.items) ? mailboxTotalOf(answer.items) : null;
+      },
+    },
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },
     frame,
     notifications: {

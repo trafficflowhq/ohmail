@@ -29,13 +29,20 @@ import { build, type Plugin } from "esbuild";
  * the run and a file somebody else may commit.
  */
 
+/*
+ * RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): every browser host mounts ONE component, `MailFrame`
+ * of `shell/browser-mail.tsx`, so the build starts there, and the workspace's own packages are bundled from their
+ * source (`ohmail-source`, as the hosts' bundlers read them): the new shell's parts live in `packages/`, where
+ * today's lived in this app. The editor is Write's (`packages/app/src/write/editor/`), the panes Settings' place
+ * and Write's letter.
+ */
 const APP = resolve(__dirname, "../app");
-const ENTRY = resolve(APP, "shell/AppShell.tsx");
+const REPO = resolve(__dirname, "../../..");
+const ENTRY = resolve(APP, "shell/browser-mail.tsx");
 
 /** The editor's own modules, and the packages only they can pull in. */
 const EDITOR = [
-  /[/\\]app[/\\]shell[/\\]RichEditor\.tsx$/,
-  /[/\\]app[/\\]shell[/\\]LinkPopover\.tsx$/,
+  /[/\\]packages[/\\]app[/\\]src[/\\]write[/\\]editor[/\\]RichEditor\.tsx$/,
   /@tiptap[+/]/,
   /[/\\]prosemirror-[a-z-]+[/\\]/,
 ];
@@ -60,6 +67,14 @@ const appGraph: Plugin = {
         return { path: args.path, external: true };
       }
       if (/^@tiptap\//.test(args.path) || /^prosemirror-/.test(args.path)) return null;
+      /* The workspace's own packages are the new shell: bundled from source, by their manifests' exports. */
+      if (/^@ohmail\//.test(args.path)) return null;
+      if (args.path.startsWith("@/")) {
+        const base = resolve(REPO, "apps/webapp", args.path.slice(2).replace(/\.js$/, ""));
+        for (const c of [`${base}.tsx`, `${base}.ts`, `${base}/index.ts`, `${base}/index.tsx`]) {
+          if (existsSync(c)) return { path: c };
+        }
+      }
       return { path: args.path, external: true };
     });
   },
@@ -72,8 +87,8 @@ async function manifest(inject: boolean): Promise<{ statics: string[]; all: stri
     plugins.unshift({
       name: "inject-static-editor",
       setup(b) {
-        b.onLoad({ filter: /AppShell\.tsx$/ }, (args) => ({
-          contents: `${readFileSync(args.path, "utf8")}\nimport "./RichEditor";\n`,
+        b.onLoad({ filter: /browser-mail\.tsx$/ }, (args) => ({
+          contents: `${readFileSync(args.path, "utf8")}\nimport "@ohmail/app/write/editor";\n`,
           loader: "tsx",
         }));
       },
@@ -91,12 +106,13 @@ async function manifest(inject: boolean): Promise<{ statics: string[]; all: stri
     logLevel: "silent",
     jsx: "automatic",
     loader: { ".ts": "ts", ".tsx": "tsx" },
+    conditions: ["ohmail-source"],
     plugins,
   });
   const outputs = out.metafile.outputs;
   const entry = Object.keys(outputs).find((k) => outputs[k]!.entryPoint === ENTRY.replace(/\\/g, "/")
-    || outputs[k]!.entryPoint?.endsWith("app/shell/AppShell.tsx"));
-  if (entry === undefined) throw new Error("the build emitted no entry chunk for AppShell.tsx");
+    || outputs[k]!.entryPoint?.endsWith("app/shell/browser-mail.tsx"));
+  if (entry === undefined) throw new Error("the build emitted no entry chunk for browser-mail.tsx");
   // The chunks a browser must have before first paint: the entry, and everything it reaches by a
   // plain import. `dynamic-import` edges are the seam and stop the walk.
   const seen = new Set<string>([entry]);
@@ -124,14 +140,15 @@ describe("the mailbox shell's first load carries no editor", () => {
   beforeAll(async () => { shipped = await manifest(false); }, 120_000);
 
   it("reads: the statically mounted ScreenerView is in the first-load chunks", () => {
-    // Without this the refusals below could pass on an empty or broken manifest.
-    expect(shipped.statics.some((i) => i.endsWith("app/views/ScreenerView.tsx"))).toBe(true);
+    // Without this the refusals below could pass on an empty or broken manifest. Re-pointed: the place every host
+    // draws at once is the Ohbox's seat.
+    expect(shipped.statics.some((i) => i.endsWith("packages/app/src/ohbox/Seat.tsx"))).toBe(true);
     expect(shipped.statics.length).toBeGreaterThan(100);
   });
 
   it("reads: the editor WAS built — it is in the manifest, in a chunk nothing static reaches", () => {
     expect(hits(shipped.all).length).toBeGreaterThan(0);
-    expect(shipped.all.some((i) => i.endsWith("app/shell/RichEditor.tsx"))).toBe(true);
+    expect(shipped.all.some((i) => i.endsWith("packages/app/src/write/editor/RichEditor.tsx"))).toBe(true);
   });
 
   it("no editor module is in the first-load chunks", () => {
@@ -139,13 +156,13 @@ describe("the mailbox shell's first load carries no editor", () => {
   });
 
   it("neither deferred pane is in the first-load chunks either", () => {
-    expect(shipped.statics.some((i) => i.endsWith("app/views/ComposeView.tsx"))).toBe(false);
-    expect(shipped.statics.some((i) => i.endsWith("app/views/SettingsView.tsx"))).toBe(false);
+    expect(shipped.statics.some((i) => i.endsWith("packages/app/src/write/Letter.tsx"))).toBe(false);
+    expect(shipped.statics.some((i) => i.endsWith("packages/app/src/settings/place.tsx"))).toBe(false);
   });
 
   it("control: a static editor import in the shell puts it back, and this guard reds", async () => {
     const reverted = await manifest(true);
     expect(hits(reverted.statics).length).toBeGreaterThan(0);
-    expect(reverted.statics.some((i) => i.endsWith("app/shell/RichEditor.tsx"))).toBe(true);
+    expect(reverted.statics.some((i) => i.endsWith("packages/app/src/write/editor/RichEditor.tsx"))).toBe(true);
   }, 120_000);
 });

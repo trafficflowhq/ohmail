@@ -1,7 +1,8 @@
 "use client";
 
+import { useStableCallback } from "../press/stable-callback.js";
 import type { EngineMessage, OhmailView } from "@ohmail/wire";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ListOlderOutcome, OhmailEngine } from "@ohmail/client-engine";
 
 /**
@@ -166,8 +167,10 @@ export function useOlderMail(
    */
   belongs?: (fetched: readonly EngineMessage[]) => ReadonlySet<string>,
 ): OlderMail {
-  const coverage = engine.storeCoverage();
-  const available = engine.listOlderAvailable() && coverage.state !== "whole";
+  const serves =
+    (view !== "folder" || folderId !== undefined) && engine.listOlderAvailable?.() === true;
+  const coverage = serves ? engine.storeCoverage() : { state: "whole" };
+  const available = serves && coverage.state !== "whole";
   const pending = available && coverage.state === "unread";
   const [page, setPage] = useState<Page>(EMPTY);
   /* THE STORE IS ASKED, post-commit, whenever the engine says it is owed an answer — on mount, and
@@ -259,8 +262,8 @@ export function useOlderMail(
     setPage(EMPTY);
   }
 
-  const loadMore = useCallback(() => {
-    if (!available) return;
+  const loadMore = useStableCallback(() => {
+    if (!available || committed.current.scope !== scope || committed.current.engine !== engine) return;
     const p = pagingFor();
     if (p.inFlight || p.done) return;
     p.inFlight = true;
@@ -332,8 +335,7 @@ export function useOlderMail(
           };
         });
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, view, available, folderId, startBelow, scope]);
+  });
 
   /**
    * THE LATCH'S BOOKKEEPING, POST-COMMIT — the observations themselves happen in the memo

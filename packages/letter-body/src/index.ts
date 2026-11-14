@@ -7,6 +7,6 @@
  * renderer for it: `rendered-links.ts` (the composer, an invitation's note, the desktop's entry)
  * and `mail-doc-cache.ts` (sign-out).
  */
-export { MessageBody, COPY as MAIL_BODY_COPY, type BodyControl, type MessageBodyProps } from "./MessageBody";
+export { MessageBody, previewBlockNotice, COPY as MAIL_BODY_COPY, type BodyControl, type MessageBodyProps } from "./MessageBody";
 export { BodyText, COPY as BODY_TEXT_COPY } from "./BodyText";
 export { BlockNoticeGloss, type BlockNotice } from "./BlockNotice";

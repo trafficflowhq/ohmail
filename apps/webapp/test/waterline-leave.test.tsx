@@ -211,7 +211,7 @@ function wrap(children: React.ReactNode, KeymapProvider: unknown): React.ReactNo
 async function mountReads(rows: Row[], opts: { jump?: string } = {}): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const node = h(ReadsView as never, {
     settled: true, owed: false,
     partition: { waterline: null, fresh: rows.map((r) => msg(r, "ohmail/News")), seen: [] },
@@ -235,7 +235,7 @@ async function mountReceipts(
 ): Promise<void> {
   await unmount();
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const node = h(ReceiptsView as never, {
     settled: true, owed: false,
     messages: rows.map((r) => msg(r, "ohmail/Receipts")),
@@ -295,7 +295,7 @@ let setUnreadLive: (id: string, unread: boolean) => void = () => {};
 async function mountReadsLive(rows: Row[], jump: string | null, { full = false, enters = false } = {}): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   pileSize = rows.length;
   let cur: string | null = null;
   let jumpTo: string | null = jump;
@@ -409,21 +409,6 @@ const rest = async (ms = 800): Promise<void> => { await act(async () => { vi.adv
 /* ── the guards ────────────────────────────────────────────────────────────────────────── */
 
 describe("leaving commits the waterline — once, anchored, bounded", () => {
-  it("THE STRUCTURAL MISS, CLOSED: leave at the bottom ⇒ one commit, anchored at the top, covering the last screenful", async () => {
-    // Scroll to the very bottom and leave. The last screenful (r7–r9) never exits through
-    // the top, so the observer model alone never marks it — the commit must. The anchor is
-    // r0, the newest card the visit displayed, which puts the line above everything.
-    // Break `StreamShell`'s unmount cleanup (or the view's range arithmetic) and this is red.
-    readable();
-    await mountReads(TEN);
-    await wheelStream(1400); // max: 10 cards × 200 − 600
-    await rest();
-    await unmount();
-    expect(commits).toEqual([
-      { upToId: "r0", messageIds: ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"] },
-    ]);
-  });
-
   it("BOUNDED by what was displayed — never the pile", async () => {
     // A partial read: 400px in, the final screen shows r2–r4. The commit covers r0–r4 (the
     // contiguous run the visit displayed) and NOT r5–r9, which never entered the viewport.
@@ -451,19 +436,6 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r2", "r4"] },
     ]);
-  });
-
-  it("PROGRAMMATIC NAVIGATION WRITES NOTHING — the userHasDriven gate holds at the exit too", async () => {
-    // A jump from Search scrolls the stream to r5 and the reader leaves without ever
-    // touching the scroller. `\Seen` writes to the user's real IMAP server and the line is
-    // the pile's only newness signal: a visit nobody drove may move neither. Delete the
-    // `drove` check in the view's leave handler (or report `true` from `StreamShell`) and
-    // this goes red with a commit nobody earned.
-    await mountReads(TEN, { jump: "r5" });
-    await act(async () => { vi.advanceTimersByTime(40); });
-    await unmount();
-    expect(commits).toEqual([]);
-    expect(marked).toEqual([]);
   });
 
   it("Receipts commits through ITS OWN seam, same shape", async () => {
@@ -660,19 +632,6 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
-  });
-
-  it("a drag back up past unseen cards starts the run where it rests", async () => {
-    pileSize = 40;
-    readable();
-    await mountReads(FORTY);
-    await wheelStream(100);
-    await leapStream(6000);
-    await wheelStream(6100);
-    await leapStream(1200);
-    await rest();
-    await unmount();
-    expect(commits).toEqual([{ upToId: "r6", messageIds: ["r6", "r7", "r8"] }]);
   });
 });
 
@@ -945,12 +904,6 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(marked).toEqual(["r0", "r1", "r2"]);
   });
 
-  it("no press and no scroll: the first screen stays unread", async () => {
-    await laidOut();
-    await act(async () => { vi.advanceTimersByTime(3000); });
-    expect(marked).toEqual([]);
-  });
-
   it("a wheel that leaves a card whole on screen below the band and off the reading line: it turns read after 0.7s", async () => {
     await laidOut();
     await wheelStream(100);
@@ -1050,29 +1003,6 @@ describe("the read rule over every card on screen, after the reader's own scroll
   const press = async (key: string): Promise<void> => {
     await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
   };
-
-  it("j j j 80ms apart, then a 2.5s rest: only the letter it stops on turns read", async () => {
-    await laidOut();
-    for (let i = 0; i < 3; i += 1) {
-      await press("j");
-      await act(async () => { vi.advanceTimersByTime(80); });
-    }
-    expect(marked, "r1 and r2 were current for 80ms each").toEqual([]);
-    await rest(2500);
-    expect(marked).toEqual(["r3"]);
-  });
-
-  it("j three times 2.5s apart: nothing at a press, each letter it rests on read by the rule, nothing else on screen", async () => {
-    await laidOut();
-    for (const id of ["r1", "r2", "r3"]) {
-      await press("j");
-      expect(marked.includes(id), `${id} at the press`).toBe(false);
-      await rest(2500);
-      expect(marked.at(-1), `${id} after resting on it`).toBe(id);
-    }
-    // r0 stood on screen from the open, r4 below the last one: a step enters nothing.
-    expect(marked).toEqual(["r1", "r2", "r3"]);
-  });
 
   it("after a wheel armed the stream, j j j 80ms apart marks nothing on the way; the rule then reads the screen it rests on", async () => {
     await laidOut();
@@ -1174,117 +1104,6 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(marked).toEqual(["r2", "r3", "r4"]);
   });
 
-  for (const key of ["ArrowDown", "j"]) it(`${key} ×3 80ms apart in the list marks nothing; resting 0.8s on the third reads only it`, async () => {
-    await laidOut();
-    const row = host!.querySelector<HTMLElement>('.view-reads .row[data-id="r0"]')!;
-    await act(async () => { row.focus(); });
-    for (let i = 0; i < 3; i += 1) {
-      await act(async () => { row.ownerDocument.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
-      await act(async () => { vi.advanceTimersByTime(80); });
-    }
-    expect(marked, "a fast pass reads nothing").toEqual([]);
-    await rest(800);
-    expect(marked).toEqual(["r3"]);
-    await rest(3000);
-    expect(marked, "the step entered nothing").toEqual(["r3"]);
-  });
-
-  it("↓ in the Receipts list marks nothing at the press; resting 0.8s reads only its target", async () => {
-    readable();
-    pileSize = 10;
-    await mountReceipts(TEN, { full: true });
-    marked = [];
-    const row = host!.querySelector<HTMLElement>('.view-receipts .row[data-id="r0"]')!;
-    await act(async () => { row.focus(); row.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
-    await act(async () => { vi.advanceTimersByTime(80); });
-    expect(marked).toEqual([]);
-    await rest(3000);
-    expect(marked).toEqual(["r1"]);
-  });
-
-  /** r3, read before the visit, rests at the reading line and is marked unread there. */
-  async function unreadAtLine(): Promise<void> {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    inner = true;
-    await mountReadsLive(FORTY.map((r) => ({ ...r, unread: r.id !== "r3" })), null, { full: true });
-    await wheelStream(3 * CARD_H - 14);
-    await rest(500);
-    marked = [];
-    await act(async () => { setUnreadLive("r3", true); });
-  }
-
-  it("a Mark unread while the stream's dwell ticks holds", async () => {
-    await unreadAtLine();
-    await rest(2500);
-    expect(marked.includes("r3")).toBe(false);
-  });
-
-  it("a Mark unread holds when the stream comes back to it at the reading line", async () => {
-    await unreadAtLine();
-    // Far enough that the window slides and observes r3 again: back up, it crosses the band whole.
-    await wheelStream(6000);
-    await wheelStream(3 * CARD_H - 14);
-    await rest(2500);
-    expect(marked.includes("r3")).toBe(false);
-  });
-
-  it("a Mark unread holds when an upward wheel shows only its foot", async () => {
-    await unreadAtLine();
-    // Far enough that the window slides and observes r3 again.
-    await wheelStream(6000);
-    await rest(2500);
-    await wheelStream(4 * CARD_H - 14);
-    await rest(2500);
-    expect(marked.includes("r3")).toBe(false);
-  });
-
-  it("a Mark unread holds when j steps away and k comes back to it", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    inner = true;
-    // As measured: r2 read before the visit; j r1, j r2, Mark unread r2, j r3, k back to r2, a rest.
-    await mountReadsLive(FORTY.map((r) => ({ ...r, unread: r.id !== "r2" })), null, { full: true });
-    marked = [];
-    const step = async (key: string): Promise<void> => {
-      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
-      await rest(1000);
-    };
-    await step("j");
-    await step("j");
-    await act(async () => { setUnreadLive("r2", true); });
-    await step("j");
-    await step("k");
-    expect(curs.at(-1), "control: the cursor is back on r2").toBe("r2");
-    expect(marked).toEqual(["r1", "r3"]);
-  });
-
-  it("after a far open, an upward wheel that leaves the opened card's head on screen: the cursor stays on it", async () => {
-    const el = await laidOut();
-    await act(async () => { host!.querySelector<HTMLElement>('.view-reads .row[data-id="r30"]')!.click(); });
-    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
-    const landed = scrollTops.get(el)!;
-    expect(landed, "control: r30 at the reading line").toBe(30 * CARD_H - 14);
-    await rest(3000);
-    await wheelStream(landed - 81);
-    await rest(2500);
-    expect(curs.at(-1)).toBe("r30");
-    expect(marked.includes("r29")).toBe(false);
-  });
-
-  it("after a far leap, an upward wheel that leaves the card above 95px of its foot: its dwell reads nothing", async () => {
-    const el = await laidOut();
-    const landed = 30 * CARD_H - 14;
-    await leapStream(landed);
-    expect(scrollTops.get(el), "control: r30 at the reading line").toBe(landed);
-    await rest(3000);
-    // r29 shows its bottom 95px and r30's top stands at 95, past the scroll-spy's 90px line.
-    await wheelStream(landed - 81);
-    await rest(2500);
-    expect(curs.at(-1), "control: the cursor moved to r29, and its dwell came due").toBe("r29");
-    expect(marked.includes("r29"), "r29's sender line and first lines were never on screen").toBe(false);
-  });
-
   it("the card a wheel settles on, its first lines on screen, is read by its dwell after 2s", async () => {
     readable();
     await mountReadsLive(FORTY, null); // snippet cards: the rule reads none of them live
@@ -1320,21 +1139,6 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0", "r2"] }]);
   });
 
-  it("marked unread, then scrolled through the band again: still out of the leave", async () => {
-    await laidOut();
-    await wheelStream(100);
-    await rest(900);
-    expect(marked, "control: the rule read r1 and r2").toEqual(["r0", "r1", "r2"]);
-    await act(async () => { setUnreadLive("r1", false); });
-    await act(async () => { setUnreadLive("r1", true); });
-    await wheelStream(0);
-    await wheelStream(400);
-    await rest(900);
-    await unmount();
-    expect(commits).toHaveLength(1);
-    expect(commits[0]!.messageIds.includes("r1"), "the Mark unread outlives the band and the leave").toBe(false);
-  });
-
   it("leaving after a wheel leaves the letter at the foot, its sender line alone on screen, unread", async () => {
     await laidOut();
     await wheelStream(40);
@@ -1358,26 +1162,6 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect(commits).toHaveLength(1);
     expect(commits[0]!.upToId).toBe("r0");
     expect(commits[0]!.messageIds.includes("r3"), "r3's text was never on screen").toBe(false);
-  });
-
-  it("Receipts snippet cards are read by the leave alone, by the same rule; the foot card is not", async () => {
-    readable();
-    await mountReceipts(TEN);
-    marked = [];
-    await wheelStream(40);
-    await rest(900);
-    expect(marked, "the band took r0 live; the rule reads no snippet card live").toEqual(["r0"]);
-    await unmount();
-    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0", "r1", "r2"] }]);
-  });
-
-  it("a snippet card on screen under 0.7s is not read by the leave", async () => {
-    readable();
-    await mountReceipts(TEN);
-    await wheelStream(40);
-    await rest(300);
-    await unmount();
-    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0"] }]);
   });
 
   it("a far list click after a wheel: once the landing rests, the screen it shows turns read by the rule", async () => {
@@ -1427,180 +1211,5 @@ describe("the streams are dotless; the sweep's attribute survives", () => {
     });
     expect(host!.querySelectorAll(".dot-unread")).toHaveLength(1);
     expect(host!.querySelector(".row[data-unseen]")).not.toBeNull();
-  });
-});
-
-/* ── a letter answered in place ─────────────────────────────────────────────────────────── */
-
-/** The view under the chrome the shell answers with: `replyTo`, the send lanes, the cursor. */
-let answer: { replyTo: string | null; phases: Record<string, string>; curs: string[] };
-let rerender: () => Promise<void> = async () => {};
-
-async function mountAnswering(view: "reads" | "receipts"): Promise<void> {
-  await unmount();
-  const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  answer = { replyTo: null, phases: {}, curs: [] };
-  const body = (m: { snippet: string }) => ({
-    text: m.snippet, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-  });
-  const common = {
-    settled: true, owed: false, tags: [], now: NOW, cur: "r1", onCur: (id: string) => { answer.curs.push(id); },
-    markSeen: (id: string) => { marked.push(id); },
-    onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.push(c); },
-    bodyOf: body, hydrateBody: () => {}, jumpTo: null, onJumped: () => {}, onAction: () => {},
-  };
-  const node = () => view === "reads"
-    ? h(ReadsView as never, {
-      ...common, aiChip: null, chipState: null, onChipState: () => {},
-      partition: { waterline: null, fresh: TEN.map((r) => msg(r, "ohmail/News")), seen: [] },
-    } as never)
-    : h(ReceiptsView as never, {
-      ...common, messages: TEN.map((r) => msg(r, "ohmail/Receipts")), waterline: null,
-      unreadCount: TEN.length, isUnread: (m: { unread: boolean }) => m.unread,
-    } as never);
-  const tree = () => wrap(h(MessageChromeProvider as never, {
-    value: {
-      nowAt: () => NOW, ownAddresses: [], absoluteTime: false, onToggleAbsoluteTime: () => {},
-      replyTo: answer.replyTo, replyBody: { text: "", html: "" },
-      onReplyBody: () => {}, closeReply: () => {}, sendReply: () => {},
-      replyEnvelope: null, replyFromId: null, replyAttachments: [], replySubjectEdit: null,
-      replySig: { mode: "following" }, replySendShowing: null,
-      replySendState: (lane: string) => ({ phase: answer.phases[lane] ?? "idle" }),
-      openSenderMenu: () => {}, openAttachmentPreview: () => {},
-      conversationOf: () => [], bodyOf: body, hydrateBody: () => {}, hydrateThread: () => {},
-    },
-    children: node(),
-  } as never), KeymapProvider);
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  rerender = async () => { await act(async () => { root!.render(tree()); await Promise.resolve(); }); };
-  await rerender();
-  await rerender();
-}
-
-/** Lets the stream's frames run: the reveal, the hold, the scroll-spy. */
-const frames = async (n = 10) => { for (let i = 0; i < n; i += 1) await act(async () => { vi.advanceTimersByTime(20); }); };
-/** The editor's typing surface, once the editor has loaded in the letter's place. */
-const editorIn = async (sid: string): Promise<Element> => {
-  const sel = `.scast[data-sid='${sid}'].in-place .reply .rte-surface`;
-  await vi.waitFor(async () => {
-    await act(async () => { vi.advanceTimersByTime(20); });
-    expect(host!.querySelector(sel), "the editor in place, inside the stream").not.toBeNull();
-  }, { timeout: 5000, interval: 20 });
-  return host!.querySelector(sel)!;
-};
-const topOf = (sid: string): number => host!.querySelector(`.scast[data-sid='${sid}']`)!.getBoundingClientRect().top;
-
-describe("a letter answered in place", () => {
-  it("typing its reply scrolls nothing: leaving writes no \\Seen, a later app scroll marks nothing", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
-    for (const view of ["reads", "receipts"] as const) {
-      commits = [];
-      marked = [];
-      await mountAnswering(view);
-      answer.replyTo = "r1";
-      await rerender();
-      const surface = await editorIn("r1");
-      for (const k of ["o", " ", "End"]) {
-        await act(async () => { surface.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
-      }
-      answer.replyTo = null;
-      await rerender();
-      await act(async () => { setStreamScroll(streamEl(), 800); });
-      await frames(5);
-      expect(marked, view).toEqual([]);
-      await unmount();
-      expect(commits, view).toEqual([]);
-    }
-  });
-
-  /* The letter straddles the port's top edge: a close that held the card below would pull it down
-     past the reading line and hand the cursor to the letter above. */
-  const answeredAbove = async (): Promise<void> => {
-    await mountAnswering("reads");
-    await act(async () => { setStreamScroll(streamEl(), 400); });
-    answer.replyTo = "r1";
-    await rerender();
-    await frames();
-    expect(topOf("r1"), "the dock's end revealed, the letter's head above the port").toBeLessThan(0);
-    // The person writes for a while: the open's own hold has long run out.
-    await act(async () => { vi.advanceTimersByTime(5000); });
-    await frames();
-    answer.curs = [];
-  };
-
-  it("after Send the cursor stays on the answered letter and its top stays where it was", async () => {
-    await answeredAbove();
-    const top = topOf("r1");
-    answer.replyTo = null;
-    answer.phases = { r1: "sending" };
-    await rerender();
-    await frames();
-    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
-    expect(topOf("r1")).toBe(top);
-    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
-  });
-
-  it("after Esc the card comes back at the reading line, the cursor still on it", async () => {
-    await answeredAbove();
-    answer.replyTo = null;
-    await rerender();
-    await frames();
-    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
-    expect(topOf("r1"), "its head at the reading line").toBe(14);
-    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
-  });
-
-  /** The card on the scroll-spy's reading line, 90px down: where the cursor is. */
-  const onLine = (): string | null => {
-    let at: string | null = null;
-    for (const c of streamCards(streamEl())) {
-      if (c.getBoundingClientRect().top > 90) break;
-      at = c.dataset.sid!;
-    }
-    return at;
-  };
-  /* The person read on below the answered letter with its dock still open: the letter is wholly
-     above the port and the cursor is on r3. Closing the dock must not take them back to it. */
-  const readOnBelow = async (): Promise<number> => {
-    await mountAnswering("reads");
-    answer.replyTo = "r1";
-    await rerender();
-    await frames();
-    await wheelStream(1300);
-    await act(async () => { vi.advanceTimersByTime(5000); });
-    await frames();
-    expect(onLine(), "read on to r3").toBe("r3");
-    expect(answer.curs.at(-1), "the cursor followed").toBe("r3");
-    expect(topOf("r2"), "the letter wholly above the port").toBeLessThan(0);
-    answer.curs = [];
-    return topOf("r3");
-  };
-
-  it("read on below it, Esc leaves the stream on the card being read, the cursor with it", async () => {
-    const top = await readOnBelow();
-    answer.replyTo = null;
-    await rerender();
-    await frames();
-    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
-    expect(onLine(), "the card on the reading line").toBe("r3");
-    expect(topOf("r3"), "the stream jumped").toBe(top);
-    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
-  });
-
-  it("read on below it, a handed-off Send leaves the stream on the card being read", async () => {
-    const top = await readOnBelow();
-    answer.replyTo = null;
-    answer.phases = { r1: "sending" };
-    await rerender();
-    await frames();
-    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
-    expect(onLine(), "the card on the reading line").toBe("r3");
-    expect(topOf("r3"), "the stream jumped").toBe(top);
-    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
   });
 });

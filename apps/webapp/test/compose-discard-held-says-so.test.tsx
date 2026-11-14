@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,11 +15,8 @@ import { settleFirstPaint } from "./_first-paint.js";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
- * THE COMPOSER'S DISCARD OF A HELD MESSAGE SAYS WHAT IT DID. A message whose send is not confirmed
- * is never deleted from the composer — its row is kept — and the confirmation said "This deletes
- * what you've written", then the composer closed without a word. The question now says the row
- * stays, and the press says why it was not deleted. Driven through the shipped shell.
- * Mutation: the question's held branch removed → case 1 red; the toast removed → case 1 red.
+ * Discard keeps a draft whose send is unconfirmed and tells the person why.
+ * A free draft is discarded on the first press and can be brought back with Undo.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -30,7 +28,6 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let sent: EngineMutation[] = [];
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
 const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
 const settle = async (n = 8): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
@@ -46,7 +43,7 @@ async function goto(hash: string): Promise<void> {
 }
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -55,26 +52,21 @@ async function mountShell(): Promise<void> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-09-27T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
       }),
     }));
   });
   await settle(10);
 }
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
+const letter = () => within(within(host!).getByRole("region", { name: "New message" }));
 
 async function makeADraft(): Promise<string> {
   await goto("#/compose");
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Bis Montag");
+  await act(async () => {
+    fireEvent.change(letter().getByRole("combobox", { name: "To" }), { target: { value: "lena@atelier.example, " } });
+    fireEvent.change(letter().getByRole("textbox", { name: "Subject" }), { target: { value: "Bis Montag" } });
+  });
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
   const id = window.localStorage.getItem(composeRowKey(storageOwner()));
@@ -90,10 +82,8 @@ function parkTheRow(draftId: string): void {
   }]));
 }
 
-const btnIn = (sel: string, label: string): HTMLButtonElement | null =>
-  Array.from(host!.querySelectorAll<HTMLButtonElement>(`${sel} button`))
-    .find((b) => (b.textContent ?? "").trim() === label) ?? null;
-const toastText = (): string => q<HTMLElement>(".toast[role='status']")?.textContent ?? "";
+const notices = (): string[] =>
+  within(host!).queryAllByRole("status").map((status) => status.textContent ?? "");
 const compose = messages.compose as unknown as Record<string, string>;
 
 beforeEach(() => {
@@ -138,34 +128,30 @@ afterEach(async () => {
 });
 
 describe("Discard, pressed in the composer on a message whose send is not confirmed", () => {
-  it("1 — the question says the draft stays, and the press says why it was not deleted", async () => {
+  it("Discard keeps an unconfirmed draft and says why", async () => {
     await mountShell();
     const id = await makeADraft();
     parkTheRow(id);
     await goto("#/");
     await goto("#/compose");
 
-    await press(q<HTMLButtonElement>(".compose-foot .compose-cancel")!);
-    const what = q<HTMLElement>("#compose-cancel-what")?.textContent ?? "";
-    expect(what, "the question still promises a delete the press will not make").toBe(compose.cancelWhatHeld);
-
-    await press(btnIn(".compose-confirm", compose.cancelConfirm!)!);
+    await press(letter().getByRole("button", { name: "Discard" }));
     await settle(10);
-    expect(toastText(), "the composer closed over a kept draft without a word").toContain(compose.discardHeld);
+    expect(notices(), "the composer closed over a kept draft without a word").toContain(compose.discardHeld);
     expect(sent.filter((m) => m.kind === "draft_discard"), "a held draft was deleted").toEqual([]);
     await goto("#/drafts");
-    expect(q(`.draft-row[data-id="${id}"]`), "the held draft is gone from Drafts").not.toBeNull();
+    const kept = within(host!).getByRole("option", { name: /Bis Montag/ });
+    expect(kept.getAttribute("data-id"), "the original held draft is gone from Drafts").toBe(id);
   }, 30_000);
 
-  it("CONTROL: a draft nothing is waiting on is still deleted, and the question says so", async () => {
+  it("CONTROL: one press discards a free draft and offers Undo", async () => {
     await mountShell();
     const id = await makeADraft();
 
-    await press(q<HTMLButtonElement>(".compose-foot .compose-cancel")!);
-    expect(q<HTMLElement>("#compose-cancel-what")?.textContent).toBe(compose.cancelWhat);
-    await press(btnIn(".compose-confirm", compose.cancelConfirm!)!);
+    await press(letter().getByRole("button", { name: "Discard" }));
     await settle(10);
-    expect(toastText()).not.toContain(compose.discardHeld);
+    expect(notices()).not.toContain(compose.discardHeld);
+    expect(within(host!).getByRole("button", { name: "Undo" })).toBeTruthy();
     expect(sent.filter((m) => m.kind === "draft_discard").map((m) => (m as { draftId?: string }).draftId)).toEqual([id]);
   }, 30_000);
 });

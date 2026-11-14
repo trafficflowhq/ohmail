@@ -91,11 +91,11 @@ const check = () => import(pathToFileURL(CHECK).href) as Promise<{
 const WARNED = [
   " ⚠ Compiled with warnings in 12.1s",
   "",
-  "./app/shell/kept-piles.tsx",
+  "./app/(product)/mailbox/CloudShell.tsx",
   "Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
   "",
   "Import trace for requested module:",
-  "./app/shell/kept-piles.tsx",
+  "./app/(product)/mailbox/CloudShell.tsx",
   "",
   " ✓ Generating static pages (16/16)",
 ].join("\n");
@@ -104,7 +104,7 @@ describe("the webapp next build job refuses a missing export", () => {
   it("names the module and the import a build log warns about", async () => {
     const { importErrors } = await check();
     expect(importErrors(WARNED)).toEqual([
-      "./app/shell/kept-piles.tsx: Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
+      "./app/(product)/mailbox/CloudShell.tsx: Attempted import error: 'Activity' is not exported from 'react' (imported as 'Activity').",
     ]);
     expect(importErrors(" ✓ Compiled successfully in 12.3s\n ✓ Generating static pages (16/16)")).toEqual([]);
   });

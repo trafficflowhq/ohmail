@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { PLACES } from "../../journeys/vocabulary/places.js";
 import { keyOf } from "../registry.mjs";
 import { markElement } from "./page.mjs";
+import { mailChanges, type World } from "./matched.js";
 import { asDeclared, COMPARED, differ, isPhone, LOOKS, verdict, type Declared, type Element, type Reading, type Row } from "./rows.js";
 import { SUBJECTS } from "./subjects.js";
 
@@ -24,6 +25,33 @@ const reading = (more: Reading = {}): Reading => ({
   ...more,
 });
 
+describe("the same mailbox inputs", () => {
+  it("syncs filed mail, stream flags and drafts into their own real entity types", () => {
+    const at = "2026-01-01T12:00:00Z";
+    const world: World = {
+      tagCatalog: [{ id: "label", name: "Receipts", hue: "moss" }, { id: "older-id", name: "Travel", hue: "moss" }], tagged: { b: ["label"] },
+      calendar: null,
+      now: at, zone: "Europe/Zurich", account: { displayName: "Reader", signIn: "reader" }, mailboxes: [], waiting: [], unread: 0,
+      threads: [
+        { section: "news", letter: { id: "a", mailbox: "work", at, subject: "News", preview: "", pile: null },
+          members: [{ name: "Writer", address: "writer", at, me: false, unread: true }] },
+        { section: "receipts", letter: { id: "b", mailbox: "work", at, subject: "Receipt", preview: "", pile: "parked" },
+          members: [{ name: "Shop", address: "shop", at, me: false, unread: false }] },
+      ],
+      upcoming: [{ id: "later", title: "A reminder", from: { name: "Writer", address: "writer" }, mailbox: "work", due: "Tue 6 Jan, 08:00" }],
+      drafts: [{ id: "c", mailboxId: "work", subject: "A draft", to: [], body: "Draft body", at }],
+    };
+    expect(mailChanges(world, "person").changes.creates).toMatchObject([
+      { type: "message", entity: { accountId: "person", mailboxId: "work", folder: "ohmail/News", unread: true } },
+      { type: "message", entity: { mailboxId: "work", folder: "ohmail/Receipts", unread: false, labels: ["label"], triage: { state: "set_aside" } } },
+      { type: "message", entity: { mailboxId: "work", subject: "A reminder", triage: { state: "bubbled_up", bubbleUpAt: "2026-01-06T07:00:00.000Z" } } },
+      { type: "draft", entity: { mailboxId: "work", subject: "A draft", body: "Draft body" } },
+      { type: "tag", entity: { id: "label", name: "Receipts", createdAt: "2026-01-01T11:59:58.000Z" } },
+      { type: "tag", entity: { id: "older-id", name: "Travel", createdAt: "2026-01-01T11:59:59.000Z" } },
+    ]);
+  });
+});
+
 describe("the differ", () => {
   it("writes a changed weight as one row with both values", () => {
     const rows = differ(AT, [LABEL], { [LABEL.name]: reading({ fontWeight: "400" }) }, { [LABEL.name]: reading() }, 1);
@@ -37,6 +65,14 @@ describe("the differ", () => {
   it("holds a box to the comparison's tolerance and a drawn value to its string", () => {
     const rows = differ(AT, [LABEL], { [LABEL.name]: reading({ x: 13, w: 122, fontSize: "16.5px" }) }, { [LABEL.name]: reading() }, 1);
     expect(rows.map((r) => r.property)).toEqual(["w", "fontSize"]);
+  });
+
+  it("compares the count and all its dimensions when both entries hold the same mail", () => {
+    const badge: Element = { ...LABEL, name: "Ohbox.count", count: true };
+    const app = { [badge.name]: reading({ text: "11", w: 24 }) };
+    const reference = { [badge.name]: reading({ text: "5", w: 16 }) };
+    expect(differ(AT, [badge], app, reference, 1)).toEqual([]);
+    expect(differ(AT, [badge], app, reference, 1, true).map((r) => r.property)).toEqual(["text", "w"]);
   });
 
   it("says an element one side draws and the other has not, once", () => {

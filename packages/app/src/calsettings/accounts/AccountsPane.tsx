@@ -3,8 +3,15 @@
  * A control stands only where the setup's port has its door: no port, no Add, no Sign in again, no switch.
  */
 import { useState } from "react";
-import { Button, Empty } from "@ohmail/ui/base";
-import { AccountRow, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { Empty } from "@ohmail/ui/base";
+import {
+  AccountRow,
+  ActionPanel,
+  SettingLine,
+  SettingNote,
+  SettingsSheet,
+  type PanelVerb,
+} from "@ohmail/ui/mail";
 import {
   accountsOf,
   newEventsCalendarOf,
@@ -12,6 +19,7 @@ import {
   type CalendarAccount,
   type CalendarSetupPort,
 } from "@ohmail/app-logic/calendar/setup";
+import { useCalendarCheck } from "../../calendar/check.js";
 import { useFrame, useReport } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
 import type { PaneBodyProps } from "../../settings/contract.js";
@@ -35,22 +43,25 @@ export const NO_DOORS: CalendarSetupPort = {
   saveSettings: "none",
 };
 
-export function AccountsPane(_: PaneBodyProps) {
+export function AccountsPane({ sheet }: PaneBodyProps) {
   const t = useText("calsettings");
-  const { commands } = useFrame();
+  const check = useCalendarCheck();
+  const { commands, host } = useFrame();
   const report = useReport();
   const when = useWhen();
   const mirror = useCalendarMirror();
   const given = useSetupPort();
   const doors = given === NONE ? NO_DOORS : given;
   const settings = useCalendarSettings(mirror?.port ?? null, doors);
+  const [savingEnabled, setSavingEnabled] = useState(false);
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   if (mirror === null) {
-    return (
+    const unavailable = (
       <SettingsSheet>
         <SettingNote>{t("unread")}</SettingNote>
       </SettingsSheet>
     );
+    return sheet ? sheet(unavailable) : unavailable;
   }
   const setup = (words: Readonly<Record<string, string>>) =>
     commands.go({ place: "week", stage: { id: "calSetup", words: { ...words, from: "settings" } } });
@@ -62,11 +73,31 @@ export function AccountsPane(_: PaneBodyProps) {
     save === "none"
       ? "none"
       : (id: string) => void save({ newEventsCalendarId: id }).then((done) => done || report(t("notSaved")));
+  const enabled = settings.said?.enabledAt !== null;
+  const canSwitch = host.features.places.settings !== NONE && save !== NONE && settings.said !== null;
+  const useCalendar = canSwitch
+    ? calendarToggle(t("accounts.useCalendar"), enabled, savingEnabled, (on) => {
+        if (savingEnabled) return;
+        setSavingEnabled(true);
+        void save({ enabled: on }).then((done) => {
+          setSavingEnabled(false);
+          if (!done) report(t("notSaved"));
+        });
+      })
+    : null;
   const add =
-    doors.connect === "none"
+    !enabled || doors.connect === "none"
       ? undefined
       : { label: t("accounts.add"), icon: "plus" as const, onPress: () => setup({ step: "way" }) };
-  if (accounts.length === 0) return <Empty label={t("accounts.none")} act={add} />;
+  if (accounts.length === 0) {
+    const empty = (
+      <>
+        {useCalendar}
+        <Empty label={t("accounts.none")} act={add} />
+      </>
+    );
+    return sheet ? sheet(empty) : empty;
+  }
 
   const wayWord = (a: CalendarAccount) => {
     const host = a.way === "caldav" || a.way === "ics" ? a.connection.serverHost : null;
@@ -90,8 +121,9 @@ export function AccountsPane(_: PaneBodyProps) {
     return at === null ? [] : [t("accounts.checkedAt", { when: at })];
   };
 
-  return (
+  const content = (
     <>
+      {useCalendar}
       {accounts.map((a) => (
         <AccountRow
           key={a.connection.id}
@@ -113,11 +145,47 @@ export function AccountsPane(_: PaneBodyProps) {
           />
         </AccountRow>
       ))}
-      {add ? (
-        <Button kind="two" icon={add.icon} onPress={add.onPress}>
-          {add.label}
-        </Button>
-      ) : null}
     </>
+  );
+  const foot =
+    add || (enabled && check) ? <AccountsToolbar add={add} check={enabled ? check : null} /> : null;
+  return sheet ? (
+    sheet(content, foot)
+  ) : (
+    <>
+      {content}
+      {foot}
+    </>
+  );
+}
+
+function AccountsToolbar({
+  add,
+  check,
+}: {
+  add: Pick<PanelVerb, "label" | "icon" | "onPress"> | undefined;
+  check: ReturnType<typeof useCalendarCheck>;
+}) {
+  const t = useText("calsettings");
+  const actions: PanelVerb[] = [];
+  if (add) actions.push({ ...add, id: "add-account", kind: "ink", rank: 0 });
+  if (check)
+    actions.push({
+      id: "check-accounts",
+      label: t("accounts.checkNow"),
+      icon: "pull",
+      busy: check.busy,
+      disabled: check.busy,
+      onPress: check.run,
+      rank: 0,
+    });
+  return actions.length ? <ActionPanel label={t("accounts.title")} items={actions} /> : null;
+}
+
+function calendarToggle(label: string, enabled: boolean, saving: boolean, onChange: (on: boolean) => void) {
+  return (
+    <SettingsSheet>
+      <SettingLine label={label} off={saving} toggle={{ on: enabled, onChange }} />
+    </SettingsSheet>
   );
 }

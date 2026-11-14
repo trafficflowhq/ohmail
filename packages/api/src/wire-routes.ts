@@ -20,7 +20,7 @@ export const WIRE_ROUTES = [
   "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in",
   "GET /calendar/settings", "PATCH /calendar/settings",
   "POST /calendar/writes", "DELETE /calendar/writes/:id", "POST /calendar/writes/:id/retry", "POST /calendar/places/suggest",
-  "POST /drafts", "DELETE /drafts/:id", "GET /drafts/:id", "POST /drafts/from-text",
+  "POST /drafts", "DELETE /drafts/:id", "DELETE /drafts/:id/conditional", "GET /drafts/:id", "POST /drafts/from-text",
   "PUT /drafts/:id", "POST /drafts/:id/resolve", "DELETE /drafts/:id/schedule", "POST /drafts/:id/schedule",
   "POST /drafts/:id/schedule-with-files", "POST /drafts/:id/send", "GET /drafts/:id/send-attempt",
   "POST /folders", "DELETE /folders/:id", "PATCH /folders/:id", "DELETE /folders/:id/op", "GET /hello",

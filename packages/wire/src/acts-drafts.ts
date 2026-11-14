@@ -1,7 +1,7 @@
 /**
  * THE ACTS THAT WRITE AND SEND A LETTER: members of `EngineMutation` (`acts.ts`).
  */
-import type { EmailAddress } from "./base.js";
+import type { EmailAddress, ISODateTime } from "./base.js";
 import type { ComposeAttachment } from "./drafts.js";
 
 export type SendAct =
@@ -183,7 +183,14 @@ export type DraftAct =
    * reports as `not_found` without going near the wire — the right answer for a draft a
    * concurrent drain already removed.
    */
-  | { kind: "draft_discard"; draftId: string }
+  | {
+      kind: "draft_discard";
+      draftId: string;
+      /** The version shown when a delayed Discard was pressed. */
+      ifContentRevision?: string;
+      /** The version stamp for mirrors without a content revision. */
+      ifUpdatedAt?: ISODateTime;
+    }
   /**
    * Answer for a send this server could not confirm — `POST /drafts/:id/resolve`, the one
    * sanctioned exit from the held state. An `unverified` draft said "check your Sent folder"
@@ -193,4 +200,10 @@ export type DraftAct =
    * compare-and-swap on `unverified`, so a repeat answers 200 and the other outcome arriving
    * second cannot reopen a resolution. No durable key needed.
    */
-  | { kind: "draft_resolve"; draftId: string; outcome: "arrived" | "not_arrived" };
+  | {
+      kind: "draft_resolve";
+      draftId: string;
+      outcome: "arrived" | "not_arrived";
+      /** The held draft's server timestamp when the person saw the question. */
+      ifUpdatedAt?: string;
+    };

@@ -147,6 +147,7 @@ export interface GenerateProposalsDeps {
    * worse than showing yesterday's.
    */
   authorize?: (patterns: WorkflowPattern[]) => Promise<boolean>;
+  beforeDispatch?: () => Promise<void>;
   /** Where the dropped answers are counted, by class and never by content. Absent ⇒ silent. */
   log?: Logger;
 }
@@ -168,7 +169,10 @@ export async function generateProposals(
   // pass still runs to completion — the empty result clears the open set exactly as it always
   // did — it is only the MONEY question that is skipped.
   if (patterns.length > 0 && deps.authorize && !(await deps.authorize(patterns))) return [];
-  const proposals = patterns.length === 0 ? [] : await deps.port.propose(patterns);
+  if (patterns.length > 0 && deps.beforeDispatch) await deps.beforeDispatch();
+  const proposals = patterns.length === 0 ? [] : deps.beforeDispatch
+    ? await deps.port.propose(patterns, { beforeDispatch: deps.beforeDispatch })
+    : await deps.port.propose(patterns);
 
   // BEFORE the write below: an answer that cannot be stored must never cost the open set.
   const { proposals: valid, dropped } = deriveProposals(proposals, patterns);

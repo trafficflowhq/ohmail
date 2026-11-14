@@ -14,6 +14,8 @@ import {
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
@@ -94,7 +96,6 @@ let host: HTMLDivElement | null = null;
 
 async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike; bump: () => Promise<void> }> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
   let force: (() => void) | null = null;
   function Probe(): null {
@@ -103,7 +104,7 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike;
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const raw = engine.read();
     latest = useScreenerState(
-      engine, null, v, (() => {}) as never, useScreenerText(), undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
+      engine, null, v, (() => {}) as never, useScreenerWords(), undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
     ) as unknown as StateLike;
     return null;
   }
@@ -111,7 +112,7 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike;
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(Probe) }));
+    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(TextProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: h(Probe) }) }));
   });
   await settleFirstPaint();
   return {

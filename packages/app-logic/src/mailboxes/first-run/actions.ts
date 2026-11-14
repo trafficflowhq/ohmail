@@ -122,6 +122,7 @@ function gatedSender(a: StageActionsInput, goTo: (next: OnboardingStep) => void)
         async () => {
           await verbs.organize(act.mailboxId, { intent: "takeover" }).catch(factorOr("elsewhereStepUp"));
           outcome = { ok: true };
+          cursor.answerClaim();
           agree.claimedHere();
           agree.asked(act.mailboxId);
         },
@@ -193,11 +194,17 @@ export function useStageActions(a: StageActionsInput): StageActions {
     answerClaim: () => {
       const choice = agree.choice;
       if (choice === null) return;
-      cursor.answerClaim();
       /* "Just read it here" writes nothing about organizing: the run finishes on the reader's summary. */
-      if (choice === "read") return goTo("summary");
+      if (choice === "read") {
+        cursor.answerClaim();
+        return goTo("summary");
+      }
       /* In a first run the window's press is what claims; only a consented mailbox claims at once. */
-      if (!facts.mailbox?.organizeConsentedAt) return forward();
+      if (!facts.mailbox?.organizeConsentedAt) {
+        cursor.answerClaim();
+        return forward();
+      }
+      /* Leave the claim question standing while the takeover waits for the door's answer. */
       const act = agree.takeoverAct();
       if (act !== null) gated.press(act);
     },

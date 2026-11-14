@@ -16,6 +16,7 @@ export {
   flipSnap,
   motionEase,
   motionMs,
+  motionPx,
   motionReduced,
   motionShape,
 } from "../motion/motion.js";
@@ -57,6 +58,8 @@ export { Avatar } from "./Primitives/Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Primitives/Avatar.js";
 export { Faces } from "./Primitives/Faces.js";
 export type { FacesProps } from "./Primitives/Faces.js";
+export { AddressText } from "./Primitives/AddressText.js";
+export type { AddressTextProps } from "./Primitives/AddressText.js";
 export { Sign } from "./Primitives/Sign.js";
 export type { SignProps } from "./Primitives/Sign.js";
 export { avatarHue, hueStyle } from "./Primitives/hue.js";
@@ -141,3 +144,4 @@ export { Opening } from "./Pages/Opening.js";
 export type { OpeningProps } from "./Pages/Opening.js";
 export { RowsShape } from "./Pages/RowsShape.js";
 export type { RowsShapeProps } from "./Pages/RowsShape.js";
+export { cycleTab, useOverlayFocus } from "./Overlays/overlay-focus.js";

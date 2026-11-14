@@ -1,3 +1,4 @@
+import { repeatDeleteScopes } from "@ohmail/cal-providers/repeat-shapes";
 /**
  * THE CALENDAR'S WRITES, AS THE SERVER RECORDS THEM. A person's act on an event becomes one
  * `cal_writes` row under the key the device made for the press; nothing here reaches a provider.
@@ -24,7 +25,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
 import { intlZones } from "@ohmail/cal-core/time/zones";
 import { PROVEN_REPEATS, proofPlaceOf, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
-import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, storedObjectFacts } from "@ohmail/cal-providers/series";
+import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, confirmedDeleteAudience, storedObjectFacts } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
   CalendarWriteReceipt,
@@ -270,6 +271,7 @@ const ms = (d: Date): number => d.getTime();
 async function standing(
   tx: Tx, accountId: string, event: { id: string; updatedAt: Date }, act: Extract<CalendarEventAct, { base: string }>,
 ): Promise<{ after: string | null; refusal: CalendarWriteFault | null }> {
+  if (act.kind === "calendar_event_update" && act.personalSeries && Date.parse(act.base) !== ms(event.updatedAt)) return { after: null, refusal: "version_stale" };
   if (Date.parse(act.base) === ms(event.updatedAt) && act.after === undefined) return { after: null, refusal: null };
   if (act.after !== undefined) {
     const [prev] = await tx.select({ id: calWrites.id, state: calWrites.state, updatedAt: calWrites.updatedAt }).from(calWrites)
@@ -409,7 +411,7 @@ async function recordOnEvent(
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone, startsAt: calEvents.startsAt,
     endKind: calEvents.endKind, endLocal: calEvents.endLocal, endZone: calEvents.endZone,
     title: calEvents.title, notes: calEvents.notes, place: calEvents.place, callLink: calEvents.callLink, busy: calEvents.busy, private: calEvents.private,
-    original: calEvents.original,
+    original: calEvents.original, partial: calEvents.partial,
   }).from(calEvents).where(and(
     eq(calEvents.id, act.eventId), eq(calEvents.accountId, accountId), eq(calEvents.calendarId, cal.id),
   )).limit(1), { mode: "update" });
@@ -419,6 +421,13 @@ async function recordOnEvent(
 
   // Someone else's event takes the account's answer and nothing else; a series is written as a whole or by the days it names.
   // The drain asks the same rule of what it sends, so what it would not send is not recorded.
+  if (act.kind === "calendar_event_update" && act.personalSeries) {
+    const [guest] = await tx.select({ id: calAttendees.eventId }).from(calAttendees)
+      .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id))).limit(1);
+    if (cal.provider !== "caldav" || writeRowOf(event) !== "series" || event.myAnswer !== null || guest || !personalSeriesOf(held.original)) {
+      throw readOnly("this series is no longer a personal whole-day series");
+    }
+  }
   const own = await ownOrganizerAddresses(tx, accountId, cal.principal);
   const why = writeActRefusal(event, act, changedDaysOf(event, writeRowOf(event) === "series" ? await changedRows(tx, accountId, cal.id, event.uid) : 0), own);
   if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
@@ -438,6 +447,10 @@ async function recordOnEvent(
     const c = act.change;
     const after = c.repeat !== undefined ? (c.repeat === null ? null : parseRRule(c.repeat)) : moved !== undefined ? parseRRule(moved) : rule;
     assertProven(d, after, c.start === undefined ? first : eventTimeOf(storedTime(c.start)));
+  }
+  if (act.kind === "calendar_event_delete" && rule !== null && first !== null &&
+    !repeatDeleteScopes(d.place, rule, first, ZONES, d.now, d.proven).includes(act.scope.kind)) {
+    throw invalid("this delete scope is not supported for the stored series");
   }
   const firstEnd = timeOfStored(event.endKind, event.endLocal, event.endZone);
   if ("scope" in act && act.scope.kind !== "record" && rule !== null && first !== null && firstEnd !== null) {
@@ -473,7 +486,19 @@ async function recordOnEvent(
     throw new ServiceError("calendar_write_left", 409, "a change of the days from a day on is half done on this series: it is tried again or let go first");
   }
   await assertRoom(tx, accountId, event.id);
-  const { after, refusal } = await standing(tx, accountId, event, act);
+  const standingWrite = await standing(tx, accountId, event, act);
+  const { after } = standingWrite;
+  let refusal = standingWrite.refusal;
+  if (act.kind === "calendar_event_delete") {
+    const deleteGuests = !event.partial && (cal.provider === "google" || cal.provider === "microsoft")
+      ? await tx.select({ address: calAttendees.address, name: calAttendees.name }).from(calAttendees)
+        .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id)))
+      : undefined;
+    if (!event.versionTag || Date.parse(act.base) !== ms(event.updatedAt) ||
+      !confirmedDeleteAudience(d.place, { ...event, deleteGuests }, rule !== null, act.scope, act.audience, ZONES)) {
+      refusal = "version_stale";
+    }
+  }
   if ((act.kind === "calendar_event_update" || act.kind === "calendar_event_delete") && act.scope.kind === "following") {
     return recordFollowing(tx, accountId, key, act, event, cal, { after, refusal }, d);
   }
@@ -671,7 +696,7 @@ async function recordFollowing(
   }
   const second = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: made.act.eventId, op: "create",
-    payload: writePayloadOf(made.act, first.id, { of: key, n: 2, from: { eventId: event.id, at: act.scope.at, named: made.named } }),
+    payload: writePayloadOf(made.act, first.id, { of: key, n: 2, from: { eventId: event.id, at: act.scope.at, named: made.named, ...(act.kind === "calendar_event_update" && act.personalSeries && { personalSeries: true }) } }),
     baseVersionTag: null, idempotencyKey: `${key}:2`, state: "pending",
   });
   if (second === null) throw invalid("the second part of this press is recorded already");

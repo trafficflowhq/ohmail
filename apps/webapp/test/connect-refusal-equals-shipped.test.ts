@@ -6,7 +6,7 @@ import {
   certificateOfferOf, gateOf, noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, refusalOf, saidOf,
   type SaidContext,
 } from "@ohmail/app-logic/mailboxes/connect/refusal";
-import { CONNECT_STATES, contextOfState } from "@ohmail/app-logic/mailboxes/connect/states";
+import { CONNECT_STATES, contextOfState } from "../../../packages/app-logic/test/mailboxes/connect/refusal-states.js";
 import type { Refusal } from "@ohmail/app-logic/mailboxes/connect/types";
 import { ApiError, messageOf } from "../app/api-client";
 import { gatedRefusal } from "../app/(product)/mailbox/gated-refusal";

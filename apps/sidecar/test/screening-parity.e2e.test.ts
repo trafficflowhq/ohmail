@@ -531,6 +531,11 @@ describe("a standalone install asks the SAME question of a model on its own mach
     await deliverCredentialMail(cfg);
     await l.sidecar.syncUntilQuiet();
 
+    const consent = await l.client.fetch("/consent/settings", {
+      method: "PATCH", headers: auth(l), body: JSON.stringify({ autoSuggest: true }),
+    });
+    expect(consent.ok).toBe(true);
+
     const res = await l.client.fetch("/screener/suggest", {
       method: "POST",
       headers: { ...auth(l), "idempotency-key": randomUUID() },

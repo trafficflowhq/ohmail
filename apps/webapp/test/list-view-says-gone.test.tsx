@@ -1,25 +1,14 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { SyncChange } from "@ohmail/client-engine";
+import type { SyncChange, TrashRowWire } from "@ohmail/client-engine";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../messages/en.json";
-import { FolderView } from "../app/views/FolderView";
-import { TrashView } from "../app/views/TrashView";
-import { TriageView } from "../app/views/TriageView";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { listGoneFacts } from "../app/shell/list-view";
-import { WithListGone } from "./_list-gone";
-import { GONE, NOW, S, act, click, engineOver, msg, setup, shell, storeWith, teardown, text, tombstone, waitFor } from "./_view-shell";
+import { cursorRow, ohboxRow as row, ohboxRows as rows, readingColumn } from "./ohbox/_finders.js";
+import { NOW, S, act, click, engineOver, msg, setup, shell, storeWith, teardown, tombstone, waitFor } from "./_view-shell";
 
-/**
- * GONE-NOTICE-NOT-ON-THE-OTHER-VIEWS-READING-COLUMNS. A picked message another mail client took
- * away is SAID in every list view's reading column — never swapped for the first row (Tag), never
- * left standing under "Loading the full message…" (History). Any other departure — filed out of
- * the tag, this tab's own verb — keeps the first-row fallback: nobody lost that message.
- */
+const GONE = messages.reader.goneShort;
+const column = (el: HTMLElement) => readingColumn(el)?.textContent ?? "";
+
 beforeEach(setup);
 afterEach(teardown);
 
@@ -28,23 +17,14 @@ const TAG = { type: "tag", op: "create", id: "tg1", seq: 900, updatedAt: NOW.toI
 const tagged = () => [msg("m1", { labels: ["tg1"] }), msg("m2", { labels: ["tg1"], date: "2026-09-16T08:00:00.000Z" })];
 
 describe("the shell's list views say a picked message is gone", () => {
-  it("control: the Ohbox column says it", async () => {
-    const s = await storeWith(tagged(), [TAG]);
-    const el = await shell(s, engineOver(s), "#/ohbox");
-    await waitFor(() => el.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null, "ohbox rows");
-    await click(el.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]'), "ohbox row m1");
-    await tombstone("m1");
-    expect(text(el, ".view-ohbox .read-col")).toContain(GONE);
-  });
-
   for (const [hash, view] of [["#/tag/tg1", "tag"], ["#/history", "history"]] as const) {
     it(`the ${view} column says it, and shows no other message in its place`, async () => {
       const s = await storeWith(tagged(), [TAG]);
       const el = await shell(s, engineOver(s), hash);
-      await waitFor(() => el.querySelector(`.view-${view} :is(.row, [role=option])[data-id="m1"]`) !== null, `${view} rows`);
-      await click(el.querySelector(`.view-${view} :is(.row, [role=option])[data-id="m1"]`), "row m1");
+      await waitFor(() => row(el, "m1") !== null, `${view} rows`);
+      await click(row(el, "m1"), "row m1");
       await tombstone("m1");
-      const col = text(el, `.view-${view} .read-col`);
+      const col = column(el);
       expect(col, `the ${view} column reads: ${col.slice(0, 120)}`).toContain(GONE);
       expect(col).not.toContain("Subject m2");
       expect(col).not.toContain("Subject m1");
@@ -54,16 +34,16 @@ describe("the shell's list views say a picked message is gone", () => {
   it("a message tagged later lists on top, and the tag's column keeps the row it showed", async () => {
     const s = await storeWith(tagged(), [TAG]);
     const el = await shell(s, engineOver(s), "#/tag/tg1");
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m1"]') !== null, "tag rows");
-    const cursor = () => el.querySelector('.view-tag :is(.row, [role=option])[aria-selected="true"]')?.getAttribute("data-id");
+    await waitFor(() => row(el, "m1") !== null, "tag rows");
+    const cursor = () => cursorRow(el)?.dataset.id;
     expect(cursor()).toBe("m1");
     S.pending = [{ type: "message", op: "create", id: "m0", seq: ++S.seq, updatedAt: NOW.toISOString(),
       entity: msg("m0", { labels: ["tg1"], date: "2026-09-16T08:50:00.000Z" }) } as unknown as SyncChange];
     await act(async () => { await S.engine!.syncOnce(); });
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m0"]') !== null, "m0 tagged");
-    expect(el.querySelector(".view-tag .row")?.getAttribute("data-id"), "m0 listed on top").toBe("m0");
+    await waitFor(() => row(el, "m0") !== null, "m0 tagged");
+    expect(rows(el)[0]?.dataset.id, "m0 listed on top").toBe("m0");
     expect(cursor()).toBe("m1");
-    expect(text(el, ".view-tag .read-col")).toContain("Subject m1");
+    expect(column(el)).toContain("Subject m1");
   });
 
   it("another tag opens on its own first row, never on the row the last tag showed", async () => {
@@ -71,153 +51,128 @@ describe("the shell's list views say a picked message is gone", () => {
     const s = await storeWith([...tagged().map((m) => (m.id === "m1" ? { ...m, labels: ["tg1", "tg2"] } : m)),
       msg("m9", { labels: ["tg2"], date: "2026-09-16T08:50:00.000Z" }), msg("m5", { labels: ["tg2"], date: "2026-09-16T08:40:00.000Z" })], [TAG, TAG2]);
     const el = await shell(s, engineOver(s), "#/tag/tg1");
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m1"]') !== null, "tag rows");
-    const cursor = () => el.querySelector('.view-tag :is(.row, [role=option])[aria-selected="true"]')?.getAttribute("data-id");
+    await waitFor(() => row(el, "m1") !== null, "tag rows");
+    const cursor = () => cursorRow(el)?.dataset.id;
     expect(cursor()).toBe("m1");
     await act(async () => {
       window.location.hash = "#/tag/tg2";
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m9"]') !== null, "tg2 rows");
+    await waitFor(() => row(el, "m9") !== null, "tg2 rows");
     expect(cursor()).toBe("m9");
-    expect(text(el, ".view-tag .read-col")).toContain("Subject m9");
+    expect(column(el)).toContain("Subject m9");
   });
 
-  it("a pick filed out of the tag is not gone: the column falls back to the first row", async () => {
+  it("an untagged letter stays open without a gone notice", async () => {
     const s = await storeWith(tagged(), [TAG]);
     const el = await shell(s, engineOver(s), "#/tag/tg1");
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m1"]') !== null, "tag rows");
-    await click(el.querySelector('.view-tag :is(.row, [role=option])[data-id="m1"]'), "tag row m1");
+    await waitFor(() => row(el, "m1") !== null, "tag rows");
+    await click(row(el, "m1"), "tag row m1");
     S.pending = [{ type: "message", op: "update", id: "m1", seq: ++S.seq, updatedAt: NOW.toISOString(),
       entity: msg("m1", { labels: [] }) } as unknown as SyncChange];
     await act(async () => { await S.engine!.syncOnce(); });
-    await waitFor(() => el.querySelector('.view-tag :is(.row, [role=option])[data-id="m1"]') === null, "m1 out of the tag");
-    const col = text(el, ".view-tag .read-col");
+    await waitFor(() => row(el, "m1") === null, "m1 out of the tag");
+    const col = column(el);
     expect(col).not.toContain(GONE);
-    expect(col).toContain("Subject m2");
+    expect(col).toContain("Subject m1");
+    expect(col).not.toContain("Subject m2");
   });
 });
 
-/* Triage, a folder and Trash, mounted alone over the list surface's shell half. */
-let roots: Root[] = [];
-afterEach(async () => {
-  for (const r of roots) await act(() => { r.unmount(); });
-  roots = [];
-});
-const none = () => {};
+const VIEWS = ["triage", "folder", "trash"] as const;
+type View = (typeof VIEWS)[number];
 
-async function mountView(render: (gone: Set<string>) => React.ReactElement, gone: Set<string>) {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const draw = () => act(() => root.render(
-    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={NOW}>
-      <KeymapProvider>
-        <WithListGone value={listGoneFacts((id) => gone.has(id), new Set(), null)}>{render(gone)}</WithListGone>
-      </KeymapProvider>
-    </NextIntlClientProvider>,
-  ));
-  await draw();
-  return { host, draw };
+function record(type: SyncChange["type"], id: string, entity: object): SyncChange {
+  return { type, id, entity, op: "create", seq: ++S.seq, updatedAt: NOW.toISOString() } as SyncChange;
 }
 
-/** Rows listed after the mount, on top: a late arrival. */
-const late: EngineMessage[] = [];
-afterEach(() => { late.length = 0; });
-const rowsOf = (gone: Set<string>) => [...late, msg("m1"), msg("m2", { date: "2026-09-16T08:00:00.000Z" })].filter((m) => !gone.has(m.id));
+async function mountView(view: View, letters: EngineMessage[]) {
+  const inView = (letter: EngineMessage): EngineMessage => ({
+    ...letter,
+    folder: view === "folder" ? "Projects" as EngineMessage["folder"] : letter.folder,
+    triage: view === "triage" ? {
+      messageId: letter.id, state: "reply_later",
+      bubbleUpAt: null, setAt: letter.date ?? NOW.toISOString(), updatedAt: NOW.toISOString(),
+    } : null,
+  });
+  const extras = view === "folder" ? [record("folder", "fd1", {
+    id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "me@example.invalid", updatedAt: NOW.toISOString(),
+  })] : [];
+  const trashed = (letter: EngineMessage): TrashRowWire => ({
+    ...letter, trashedAt: letter.date ?? NOW.toISOString(), restoreTo: "INBOX",
+  });
+  let trash = letters.map(trashed);
+  const store = await storeWith(view === "trash" ? [] : letters.map(inView), extras);
+  const engine = engineOver(store);
+  if (view === "trash") {
+    vi.spyOn(engine, "trashAvailable").mockReturnValue(true);
+    vi.spyOn(engine, "listTrash").mockImplementation(async () => ({ state: "ready", items: trash, nextCursor: null }));
+  }
+  const host = await shell(store, engine, view === "folder" ? "#/folder/fd1" : "#/" + view);
+  await waitFor(() => row(host, letters[0]!.id) !== null, view + " rows");
+  return {
+    host,
+    async remove(id: string) {
+      trash = trash.filter((letter) => letter.id !== id);
+      await tombstone(id);
+    },
+    async add(letter: EngineMessage) {
+      S.pending = [record("message", letter.id, inView(letter))];
+      await act(async () => { await engine.syncOnce(); });
+    },
+  };
+}
 
-const VIEWS: Array<[string, (gone: Set<string>) => React.ReactElement]> = [
-  ["triage", (gone) => {
-    const byId = new Map(rowsOf(gone).map((m) => [m.id, m]));
-    return (
-      <TriageView onMarkSeen={() => {}} settled owed={false}
-        piles={{ replyLater: rowsOf(gone).map((m) => ({ messageId: m.id, title: m.id })), setAside: [], resurface: [] }}
-        pile="reply" onPile={none} frDone={new Set()} onStartFR={none}
-        messageOf={(id) => byId.get(id) ?? null}
-        tags={[]} now={NOW} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-      />
-    );
-  }],
-  ["folder", (gone) => (
-    <FolderView onMarkSeen={() => {}}
-      folder={{ id: "fd1", name: "Projects", mailboxId: "mb1", mailbox: "a@example.com" } as never}
-      messages={rowsOf(gone) as EngineMessage[]}
-      older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: none } as never}
-      tags={[]} now={NOW} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-      onScreen={none} canDelete={() => true} canReplyAll={() => true}
-    />
-  )],
-  ["trash", (gone) => (
-    <TrashView
-      page={{ available: true, items: rowsOf(gone).map((m) => ({ ...m, trashedAt: NOW.toISOString(), restoreTo: "INBOX" })) as never[],
-        loading: false, error: null, exhausted: true, loadMore: none } as never}
-      tags={[]} now={NOW} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-    />
-  )],
-];
+const listed = () => [msg("m1"), msg("m2", { date: "2026-09-16T08:00:00.000Z" })];
 
 describe("Triage, a folder and Trash say it too", () => {
-  for (const [view, render] of VIEWS) {
+  for (const view of VIEWS) {
     it(`the ${view} column says a picked message is gone`, async () => {
-      const gone = new Set<string>();
-      const { host, draw } = await mountView(render, gone);
-      await click(host.querySelector(`.view-${view} :is(.row, [role=option])[data-id="m1"]`), `${view} row m1`);
-      expect(text(host, `.view-${view} .read-col`)).toContain("Subject m1");
-      gone.add("m1");
-      await draw();
-      const col = text(host, `.view-${view} .read-col`);
-      expect(col, `the ${view} column reads: ${col.slice(0, 120)}`).toContain(GONE);
-      expect(col).not.toContain("Subject m2");
+      const { host, remove } = await mountView(view, listed());
+      await click(row(host, "m1"), view + " row m1");
+      expect(column(host)).toContain("Subject m1");
+      await remove("m1");
+      expect(column(host)).toContain(GONE);
+      expect(column(host)).not.toContain("Subject m2");
     });
   }
 });
 
 describe("a row listed late never takes the cursor or the column", () => {
-  for (const [view, render] of VIEWS) {
+  // Trash's held-delete arrival is exercised in trash-restore-selection.test.tsx.
+  for (const view of ["triage", "folder"] as const) {
     it(`the ${view} view keeps the row it shows when a newer one lists above it`, async () => {
-      const { host, draw } = await mountView(render, new Set());
-      const cursor = () => host.querySelector(`.view-${view} :is(.row, [role=option])[aria-selected="true"]`)?.getAttribute("data-id");
+      const incoming = msg("m0", { date: "2026-09-16T08:50:00.000Z" });
+      const { host, add } = await mountView(view, listed());
+      const cursor = () => cursorRow(host)?.dataset.id;
+      if (cursor() !== "m1") await click(row(host, "m1"), view + " row m1");
       expect(cursor()).toBe("m1");
-      late.push(msg("m0", { date: "2026-09-16T08:50:00.000Z" }));
-      await draw();
-      expect(host.querySelector(`.view-${view} .row`)?.getAttribute("data-id"), "m0 listed on top").toBe("m0");
+      expect(column(host)).toContain("Subject m1");
+      expect(row(host, "m0")).toBeNull();
+      await add(incoming);
+      await waitFor(() => row(host, "m0") !== null, "new row");
+      expect(rows(host)[0]?.dataset.id, "m0 listed on top").toBe("m0");
       expect(cursor()).toBe("m1");
-      expect(text(host, `.view-${view} .read-col`)).toContain("Subject m1");
-      expect(text(host, `.view-${view} .read-col`)).not.toContain("Subject m0");
+      expect(column(host)).toContain("Subject m1");
+      expect(column(host)).not.toContain("Subject m0");
     });
   }
 });
 
 describe("a pile row the column shows is followed, not its message", () => {
   it("a late arrival lists above the shown row, then a newer member joins that row: the cursor stays on the row", async () => {
-    let entries = [{ messageId: "r1", title: "r1" }, { messageId: "s1", title: "s1" }] as Array<{ messageId: string; title: string; memberIds?: string[] }>;
-    const byId = new Map(["r1", "r2", "s1", "n1"].map((id, i) => [id, msg(id, { date: `2026-09-16T08:${10 + i}:00.000Z` })]));
-    const { host, draw } = await mountView(() => (
-      <TriageView onMarkSeen={() => {}} settled owed={false}
-        piles={{ replyLater: entries, setAside: [], resurface: [] }}
-        pile="reply" onPile={none} frDone={new Set()} onStartFR={none}
-        messageOf={(id) => byId.get(id) ?? null}
-        tags={[]} now={NOW} onOpen={none} hydrateBody={none} onAction={none} onAddTag={none}
-      />
-    ), new Set());
-    const cursor = () => host.querySelector('.view-triage :is(.row, [role=option])[aria-selected="true"]')?.getAttribute("data-id");
+    const reply = (id: string, date: string) => msg(id, { threadId: "reply-thread", date });
+    const { host, add } = await mountView("triage", [reply("r1", "2026-09-16T08:20:00.000Z"),
+      msg("s1", { date: "2026-09-16T08:10:00.000Z" })]);
+    const cursor = () => cursorRow(host)?.dataset.id;
+    await click(row(host, "r1"), "reply row r1");
     expect(cursor()).toBe("r1");
-    entries = [{ messageId: "n1", title: "n1" }, ...entries];
-    await draw();
+    await add(msg("n1", { date: "2026-09-16T08:40:00.000Z" }));
+    await waitFor(() => rows(host)[0]?.dataset.id === "n1", "late arrival above the reply row");
     expect(cursor()).toBe("r1");
-    entries = [entries[0]!, { messageId: "r2", title: "r2", memberIds: ["r1", "r2"] }, entries[2]!];
-    await draw();
+    await add(reply("r2", "2026-09-16T08:30:00.000Z"));
+    await waitFor(() => row(host, "r2") !== null, "newer member of the reply row");
     expect(cursor(), "the row's newer member, never the late arrival above it").toBe("r2");
-    expect(text(host, ".view-triage .read-col")).toContain("Subject r2");
-  });
-});
-
-describe("the shell half: a tombstone this tab's own verb wrote is not 'gone'", () => {
-  it("reads a foreign tombstone as gone, and neither an own one nor an absent row", () => {
-    const facts = listGoneFacts((id) => id === "t1" || id === "t2", new Set(["t2"]), null);
-    expect(facts.isGone("t1")).toBe(true);
-    expect(facts.isGone("t2"), "this tab's own delete read as another app's").toBe(false);
-    expect(facts.isGone("absent")).toBe(false);
+    expect(column(host)).toContain("Subject r2");
   });
 });

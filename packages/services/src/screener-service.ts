@@ -13,11 +13,11 @@ import {
   automaticAiAdmits,
   SCREENER_SUGGESTION_PROVENANCE,
   UNPRICED,
-  reverseCharge, type ReverseChargeFact,
+  readSuggestionGrant, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
-  senderHasHeldClaimSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderHasHeldClaimSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
   readListClaimsFiledAlone, listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -186,13 +186,8 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    */
   credits?: SpendPort;
   /**
-   * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
-   *
-   * It is what makes a 402 corroborated: a `state` refusal is cross-checked against a fresh read
-   * of this account's access, and one that says AI is available answers 503 instead of demanding
-   * money (`ai-refusal.ts` holds the rule for this call site and the drafting one). ABSENT is a
-   * host that wired no such reader, and then a `state` refusal answers exactly what it always
-   * answered — the cross-check narrows a payment demand, it never widens one.
+   * The managed account's AI access is rechecked before dispatch. A spend refusal also uses it
+   * to corroborate a payment demand.
    */
   access?: AccessPort;
   /**
@@ -1005,10 +1000,22 @@ export class ScreenerReadService {
    *  the other's.
    * ══════════════════════════════════════════════════════════════════════════════════════════
    */
+  private screenerRequestPayload(v: {
+    scope: "sender" | "domain"; address: string; domain: string; decision: "yes" | "no";
+    appliedFolder: Destination; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
+  }) {
+    const { scope, address, domain, decision, appliedFolder, applyRetro, confirmedIds } = v;
+    return {
+      scope: confirmedIds ? (scope === "sender" ? "confirmed_sender" : "confirmed_domain") : scope,
+      address, appliedFolder, decision, match: scope === "sender" ? address : domain, applyRetro,
+      ...(confirmedIds ? { confirmedIds } : {}),
+    };
+  }
+
   private async validateScreenerDecision(ctx: ServiceContext, id: string, b: ScreenBody): Promise<{
     scope: "sender" | "domain"; decision: "yes" | "no"; dest: Destination | undefined;
     target: AppliedScreenerRow; address: string; domain: string; appliedFolder: Destination;
-    applyRetro: boolean;
+    applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
   }> {
     // ── THE ROUTE HANDS THIS BODY OVER UNVALIDATED ──────────────────────────────────────────
     //
@@ -1018,10 +1025,14 @@ export class ScreenerReadService {
     // that the same word also decides how much mail moves and how many strangers get an
     // unsubscribe request, a typo silently selecting a branch is no longer survivable. Named
     // here rather than in the route because this is the only reader of the field.
-    const scope = b.scope ?? "sender";
-    if (scope !== "sender" && scope !== "domain") {
-      throw new ServiceError("validation_failed", 400, "scope must be 'sender' or 'domain'");
+    const parsed = parseDecisionScope(b.scope ?? "sender", b.confirmedIds, b.unsubscribeIds);
+    if (!parsed) {
+      throw new ServiceError("validation_failed", 400, "scope must be sender or domain with a valid confirmed message set when required");
     }
+    if (parsed.confirmedIds && !parsed.confirmedIds.includes(id)) {
+      throw new ServiceError("validation_failed", 400, "the confirmed set must contain the screener item");
+    }
+    const { scope, confirmedIds } = parsed;
     // ── `decision` IS CHECKED NOW, AND IT WAS NOT ───────────────────────────────────────────
     //
     // This used to be a bare `b.decision === "yes" ? … : …`, so EVERY other value — `"Yes"`, a
@@ -1046,7 +1057,7 @@ export class ScreenerReadService {
     if (b.applyRetro !== undefined && typeof b.applyRetro !== "boolean") {
       throw new ServiceError("validation_failed", 400, "applyRetro must be a boolean");
     }
-    const applyRetro = b.applyRetro ?? true;
+    const applyRetro = confirmedIds === undefined && (b.applyRetro ?? true);
     // A pre-0.22 client's decision still names the News pile `ohmail/Reads` — the same pile.
     const destRaw = typeof b.dest === "string" ? canonicalDestination(b.dest) : b.dest;
     if (destRaw !== undefined) {
@@ -1110,7 +1121,7 @@ export class ScreenerReadService {
       throw new ServiceError("shared_provider_domain", 422, SHARED_PROVIDER_REFUSAL_SENTENCE);
     }
 
-    return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };
+    return { ...parsed, decision, dest, target, address, domain, appliedFolder, applyRetro };
   }
 
   /**
@@ -1189,12 +1200,12 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
     },
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<{ result: ScreenDecisionResult; seq: number | null }> {
-    const { scope, decision, address, domain, appliedFolder, target, applyRetro } = v;
+    const { scope, decision, address, domain, appliedFolder, target, applyRetro, confirmedIds, unsubscribeIds } = v;
     let rerouted: AppliedScreenerRow[] = [];
     let filed: string[] = [];
     // `null` when the decision wrote no change: the key already held it and nothing moved.
@@ -1220,6 +1231,7 @@ export class ScreenerReadService {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
+          ...(confirmedIds ? { within: confirmedScreenerRows(confirmedIds) } : {}),
           // A press: the decision is the person's, so a `no` licenses the unsubscribe pass, and it
           // converges the sender's existing rule rather than adding one beside it.
           decidedBy: "person", overExisting: "converge",
@@ -1250,10 +1262,7 @@ export class ScreenerReadService {
        * covered by nobody. The drain NEVER queues (see `applyScreenerDecision`'s result doc);
        * only this door does, which bounds the mesh at one hop.
        */
-      const payload = {
-        scope, address, appliedFolder, decision,
-        match: scope === "domain" ? domain : address, applyRetro,
-      };
+      const payload = this.screenerRequestPayload(v);
       const awaiting: string[] = [];
       const requested: ScreenRequestedMailbox[] = [];
       if (applied.claimsOnly) {
@@ -1385,26 +1394,13 @@ export class ScreenerReadService {
       }
     }
 
-    // AFTER the tx has committed, never inside, and only on a REJECT; `onScreenOut` never throws
-    // — a sender who cannot be unsubscribed is still screened out. THE TRIGGER IS THE CONSENT,
-    // NOT THE FOLDER: this read `appliedFolder === NO_FOLDER`, which `dest: "ohmail/Quarantine"`
-    // would have made quietly false for every SPAM press. `unsubscribe-service.ts` names its
-    // actionable set as `ohmail/Screened` and `ohmail/Quarantine` — the user said no — so
-    // `decision === "no"` is the same senders and the sentence that file is written against. The
-    // narrowing is still done twice: `onScreenOut` filters to those two folders itself.
-    // `rerouted`, not `heldMail`: a row this decision did not claim may not be unsubscribed for.
-    // NOT performed on the drain's apply of a reader's request — see `applyScreenerDecision`'s
-    // header.
-    // No rule, no screen-out of the sender: a forged letter through a list's address never unsubscribes.
-    if (this.deps.unsubscribe && decision === "no" && !claimsOnly) {
-      const targets = rerouted.map((m) => m.messageId);
-      // The sweep is REPORTED now rather than discarded. It used to be awaited and thrown away,
-      // which was honest only while the fan-out ran every target: under a per-request ceiling the
-      // caller would otherwise be told a decision was applied with no way to know that the
-      // courtesy it started is still running somewhere. `considered` is what this request
-      // actually looked at; the rest are the drain's.
-      const sweep = await this.deps.unsubscribe.onScreenOut(ctx, targets);
+    // Only this press can grant a send, and only for messages it filed in this account.
+    // Reader handoffs and filing-only decisions have no grant.
+    if (this.deps.unsubscribe && decision === "no" && !claimsOnly && unsubscribeIds?.length) {
+      const granted = new Set(unsubscribeIds);
+      const targets = rerouted.map((m) => m.messageId).filter((id) => granted.has(id));
       if (targets.length > 0) {
+        const sweep = await this.deps.unsubscribe.onScreenOut(ctx, targets);
         result.unsubscribed = { done: sweep.considered, of: targets.length };
       }
     }
@@ -1454,15 +1450,14 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
     },
     eligibility: RequestEligibility,
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenRequestResult> {
-    const { scope, decision, address, domain, appliedFolder, applyRetro } = v;
+    const { scope, decision, address, appliedFolder, confirmedIds } = v;
     const requestId = randomUUID();
-    const match = scope === "domain" ? domain : address;
     const decidedAt = ctx.now();
 
     const dto: ScreenRequestResult = {
@@ -1480,7 +1475,8 @@ export class ScreenerReadService {
         let claims: AppliedScreenerRow[] = [];
         if (decision === "no" && scope === "sender") {
           if (await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId) != null) throw new AccountErasedError(ctx.accountId);
-          claims = await readListClaimsFiledAlone(tx, ctx.accountId, address, checkUncheckedById);
+          claims = await readListClaimsFiledAlone(tx, ctx.accountId, address, checkUncheckedById,
+            confirmedIds ? confirmedScreenerRows(confirmedIds) : undefined);
         }
         if (claims.length > 0) {
           const requested = await this.requestClaimMoves(tx, ctx, id, claims, appliedFolder);
@@ -1509,7 +1505,7 @@ export class ScreenerReadService {
             // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
             // that function's `ApplyScreenerDecisionInput`. `match` rides along for
             // `listOutstandingForAccount`'s own read; the drain does not use it.
-            payload: { scope, address, appliedFolder, decision, match, applyRetro },
+            payload: this.screenerRequestPayload(v),
             holder: eligibility.by,
             requestId,
             decidedAt,
@@ -1526,7 +1522,7 @@ export class ScreenerReadService {
             if (t.mailboxId === v.target.mailboxId) continue;
             const r = await writeReaderRequest(tx, ctx, {
               mailboxId: t.mailboxId, kind: "screener.decide",
-              payload: { scope, address, appliedFolder, decision, match, applyRetro },
+              payload: this.screenerRequestPayload(v),
               holder: t.holder, decidedAt,
             });
             requested.push({ mailboxId: t.mailboxId, requestId: r.requestId, holder: t.holder });
@@ -1882,7 +1878,7 @@ export class ScreenerService extends ScreenerReadService {
    */
   private readonly classifier?: ClassifierPort;
   private readonly credits?: SpendPort;
-  /** The access half for the refusal cross-check. See {@link ScreenerSuggestDeps.access}. */
+  /** The access half for dispatch and the refusal cross-check. */
   private readonly access?: AccessPort;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
@@ -2166,6 +2162,11 @@ export class ScreenerService extends ScreenerReadService {
       purchases.push({ index, sender, row: r });
     });
 
+    const grant = automatic
+      ? (purchases.length > 0 ? await readSuggestionGrant(asTx(ctx), ctx.accountId) : null)
+      : undefined;
+    const consent = suggestionConsentGate(asTx(ctx), ctx.accountId, grant, this.access);
+
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
     const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
       /**
@@ -2178,6 +2179,10 @@ export class ScreenerService extends ScreenerReadService {
        * (`spend_unavailable`) that spent nothing; `refusal: "fault"` so a run producing nothing
        * answers 503, not a demand for money.
        */
+      if (consent.withdrawn) {
+        refused[index] = { sender, reason: "spend_unavailable" };
+        return;
+      }
       if (!(await laneGate.acquire(laneDeadline))) {
         refused[index] = { sender, reason: "spend_unavailable" };
         stops[index] = "spend_unavailable";
@@ -2193,6 +2198,10 @@ export class ScreenerService extends ScreenerReadService {
 
     /** The purchase itself, inside a lane slot. */
     const buyAdmitted = async ({ index, sender, row: r }: Purchase): Promise<void> => {
+      if (consent.withdrawn) {
+        refused[index] = { sender, reason: "spend_unavailable" };
+        return;
+      }
       // The BARE key: the MESSAGE, which is what makes a re-ask of the same held mail free and
       // what makes the cron and this press claim the same work. The source is composed by
       // whoever answers.
@@ -2207,8 +2216,8 @@ export class ScreenerService extends ScreenerReadService {
       /** Set only where the gate hands this lane the claim; `inflight` names another holder. */
       let claimed = false;
       let released = false;
-      /** The model declined this sender; its credit leaves `charged` once the refund settles. */
-      let declined = false;
+      /** A withheld or declined request leaves `charged` once the refund settles. */
+      let refundedIfSettled = false;
       /** The model call's usage, carried by the release below — a model fault's line included. */
       const usage = usageLines(this.usageHost, ctx.accountId, "screener");
       /**
@@ -2232,7 +2241,7 @@ export class ScreenerService extends ScreenerReadService {
           accountId: ctx.accountId, action: "screener", attemptKey, attempt: refunding, reason: "drafter_failed", meta,
           ...usage.field(),
         }, (f) => saySuggestRefund(f, ctx.accountId, refunding));
-        if (declined && receipt === "settled") charged -= price ?? 0;
+        if (refundedIfSettled && receipt === "settled") charged -= price ?? 0;
       };
       try {
         if (gate) {
@@ -2341,14 +2350,19 @@ export class ScreenerService extends ScreenerReadService {
             snippet: r.snippet,
             ...(ohboxBar ? { ohboxBar } : {}),
             ...(facts ? { senderFacts: facts } : {}),
-          }, usage.call);
+          }, { ...usage.call, beforeDispatch: consent.beforeDispatch });
         } catch (err) {
+          if (err instanceof ModelConsentWithdrawn) {
+            refused[index] = { sender, reason: "spend_unavailable" };
+            refundedIfSettled = true;
+            return;
+          }
           // A DECLINE IS SAID FOR THIS SENDER AND REFUNDED. Asking again draws the same refusal, so
           // the free retry `model_unavailable` promises would be a promise about nothing: the charge
           // stays set for the door below to reverse, and leaves `charged` once that reversal settles.
           if (err instanceof ModelDeclinedError) {
             refused[index] = { sender, reason: "model_declined" };
-            declined = true;
+            refundedIfSettled = true;
             return;
           }
           suggestLog.warn("screener_suggest_model_failed", {

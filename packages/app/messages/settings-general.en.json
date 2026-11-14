@@ -4,6 +4,11 @@
     "messages": "Messages",
     "lookChoice": "Choose a look",
     "followsOmarchy": "follows Omarchy",
+    "subject": "Subject",
+    "subjectHead": "One heading",
+    "subjectEach": "On each message",
+    "subjectSample": "Glaze order #2291",
+    "subjectReplySample": "Re: Glaze order #2291",
     "picture": {
       "title": "Ohbox",
       "first": "Giulia Ferrari",

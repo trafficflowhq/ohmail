@@ -662,9 +662,15 @@ describe("a reader's visit off the Ohbox (useReaderVisit)", () => {
     expect(visit.wiring?.restMs, "b came by another path").toBeUndefined();
     act(() => show(letter("a")));
     expect(visit.wiring?.restMs, "back on a: a new visit").toBeUndefined();
+    // A key press can land before the browser commits the matching address.
     act(() => visit.land("c"));
     act(() => show(letter("c")));
-    expect(visit.wiring?.restMs, "c was not shown when it was landed on").toBeUndefined();
+    expect(visit.wiring?.restMs, "the address arriving a commit later still rests").toBe(LANDING_REST_MS);
+    // A different address that arrives first cancels the pending landing.
+    act(() => visit.land("a"));
+    act(() => show(letter("b")));
+    act(() => show(letter("a")));
+    expect(visit.wiring?.restMs, "a superseded landing is dropped").toBeUndefined();
   });
 
   it("an arrow scroll of the column enters the letter, never while the column shows it held unread (⋯ Mark unread)", () => {

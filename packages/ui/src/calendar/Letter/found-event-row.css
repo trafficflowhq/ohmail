@@ -81,3 +81,9 @@
     margin-left: var(--oh-found-show);
   }
 }
+
+/* Keep the callout's text measure and Add placement beside the reserved action space. */
+[data-stream-item] > .oh-message > .oh-found .oh-found-acts:has(> .oh-slot) {
+  --stream-action-room: calc(var(--h-s) + var(--s3));
+  padding-inline-end: var(--stream-action-room);
+}

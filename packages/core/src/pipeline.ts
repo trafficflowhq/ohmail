@@ -49,7 +49,10 @@ import type { CorrespondentEvidence } from "./correspondent.js";
 // the hosted half for as long as the barrel happened not to reach it. Naming the leaf itself is
 // what makes that a property instead of a coincidence.
 import { classifyAttemptKey } from "@trafficflow/db/ledger-source";
-import type { MailboxMustBeLive } from "@trafficflow/db";
+import {
+  modelConsentGate, ModelConsentWithdrawn, reverseCharge,
+  type MailboxMustBeLive, type RefundObligationPort, type SpendOutcome,
+} from "@trafficflow/db";
 import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RepoChangeInput, RoutingPort, FolderStateRow,
@@ -611,6 +614,8 @@ export interface PlanDeps {
   routing?: RoutingPort;
   /** The AI spend gate. Absent ⇒ unmetered; see {@link CreditGate}. */
   credits?: CreditGate;
+  readModelConsent?: () => Promise<boolean>;
+  consentRefunds?: RefundObligationPort;
   /**
    * The authserv-ids the account's own provider signs `Authentication-Results` with, lowercased.
    * Configuration, not a `mailboxes` column: a statement about WHOM THIS DEPLOYMENT BELIEVES — a
@@ -1507,6 +1512,8 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
     // refused there rather than doubled (see `sourceFor`). Computing it writes nothing — only the
     // spend below can move money — so it is safe to build before the gate runs.
     const attemptKey = classifyAttemptKey(mailboxId, key);
+    const consent = deps.readModelConsent ? modelConsentGate(deps.readModelConsent) : undefined;
+    let charge: SpendOutcome | undefined;
     // AI gate: classify only on the unclear residue, never for sensitive/no_ai mail, and only
     // when the account may spend. The classifier is not even constructed for sensitive messages,
     // so the raw secret never leaves the process. THE ORDER OF THIS CONDITION IS THE INVARIANT:
@@ -1533,12 +1540,14 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
       // key already. `aiSpendPermitted` reads the six-verdict answer for this path: proceed on
       // `ok` and `duplicate` (already paid), skip on everything else — including `inflight`,
       // where another caller is running the model for this exact mail right now.
+      (!consent || await consent.allowed()) &&
       (credits == null || aiSpendPermitted(
-        await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
+        charge = await credits.spend(accountId, "classify_ingest", attemptKey, { mailboxId })))
     ) {
       let result: ClassifierResult | undefined;
       try {
-        result = await classifier.classify({
+        await consent?.beforeDispatch();
+        const input = {
           from: normalized.from,
           subject: normalized.subject,
           snippet: bodySnippet(normalized),
@@ -1547,7 +1556,8 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
           // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what
           // the model proposes on this unclear residue; it never itself moves the message.
           ohboxBar: deps.ohboxBar,
-        });
+        };
+        result = await (consent ? classifier.classify(input, { beforeDispatch: consent.beforeDispatch }) : classifier.classify(input));
       } catch (err) {
         // Rethrow, deliberately, and do NOT refund — two decisions. The rethrow: a classifier
         // FAULT, not out-of-credits. Degrading would file by rules and never look again, making a
@@ -1564,7 +1574,22 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
         // `desired` is the rules' answer. Rethrown, it stalled the mailbox behind the message
         // (the retry draws the same decline), so new mail and read state stopped behind it. The
         // charge comes back where it was metered: the worker's circuit, which owns the open charge.
-        if (!(err instanceof ModelDeclinedError)) throw err;
+        if (err instanceof ModelConsentWithdrawn) {
+          if (credits?.release) {
+            try {
+              if (charge?.verdict === "ok") {
+                await reverseCharge({ release: credits.release.bind(credits) }, deps.consentRefunds, {
+                  accountId, action: "classify_ingest", attemptKey, attempt: charge.attempt,
+                  reason: "drafter_failed", meta: { mailboxId },
+                }, (fact) => deps.log?.warn("classifier_consent_refund", { mailboxId, fact: fact.fact }));
+              } else if (charge?.verdict === "duplicate") {
+                await credits.release(accountId, { action: "classify_ingest", attemptKey, refund: false, meta: { mailboxId } });
+              }
+            } catch {
+              deps.log?.warn("classifier_consent_refund_failed", { mailboxId });
+            }
+          }
+        } else if (!(err instanceof ModelDeclinedError)) throw err;
       }
       if (result) {
         const patternKey = `sender:${normalized.from.address}→${result.destination}`;

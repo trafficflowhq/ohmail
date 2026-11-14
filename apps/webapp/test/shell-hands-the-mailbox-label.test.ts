@@ -1,67 +1,97 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import ts from "typescript";
-import { describe, expect, it } from "vitest";
-import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+/** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ADDRESS, routeOf, useFrame } from "@ohmail/app/frame";
+import { mailPlaces } from "@ohmail/app/mail";
+import * as room from "../../../packages/app/src/frame/room.js";
+import { json } from "./account/account-harness";
+import {
+  act, closeMailPage, inboxPage, MAILBOX, mountMailPage, prepareMailPage, tick,
+} from "./fixtures/mounted-mail-page";
 
-/**
- * A VIEW THAT CAN NAME THE MAILBOX IS HANDED THE RESOLVER. `mailboxLabelOf` is optional on every
- * view that takes it, so a shell that never passes it compiles and the view stays silent above
- * one mailbox — the Screener did exactly that for a batch. The set of views is DERIVED: every
- * `*View` the shell renders whose own file declares
- * the prop, so a third view that gains it is asked too.
- */
-const APP = resolve(process.cwd(), "apps/webapp/app");
-const read = (rel: string): string => readFileSync(resolve(APP, rel), "utf8");
+const WORK = { ...MAILBOX, displayName: "Work" };
+const HOME = { ...MAILBOX, id: "mb_home", address: ["home", "mail.invalid"].join("@"), displayName: "Home" };
+const BOXES = [WORK, HOME];
+const FOLDERS = ["ohmail/News", "ohmail/Receipts", "ohmail/Screener", "INBOX", "Trash", "Archive"];
 
-/** Each `<XView …>` in `source`: its tag and what its `mailboxLabelOf` attribute passes, if any. */
-function viewsIn(source: string): { tag: string; passes: string | null }[] {
-  const sf = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const out: { tag: string; passes: string | null }[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      const tag = node.tagName.getText(sf);
-      if (/^[A-Z]\w*View$/.test(tag)) {
-        let passes: string | null = null;
-        for (const a of node.attributes.properties) {
-          if (!ts.isJsxAttribute(a) || a.name.getText(sf) !== "mailboxLabelOf") continue;
-          const e = a.initializer && ts.isJsxExpression(a.initializer) ? a.initializer.expression : undefined;
-          passes = e ? e.getText(sf) : "";
-        }
-        out.push({ tag, passes });
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return out;
+afterEach(() => {
+  vi.restoreAllMocks();
+  closeMailPage();
+});
+
+async function mountedDeliveries(withhold?: string) {
+  const inbox = await inboxPage(FOLDERS.length * BOXES.length).json();
+  const [rule, ...letters] = inbox.changes.creates;
+  const rows = letters.map((row: (typeof letters)[number], index: number) => {
+    const box = BOXES[index % BOXES.length]!;
+    const folder = FOLDERS[Math.floor(index / BOXES.length)]!;
+    const name = `Delivery ${index + 1}`;
+    return {
+      ...row, entity: { ...row.entity, mailboxId: box.id, folder, subject: name,
+        from: folder === "INBOX" ? row.entity.from : { name, address: [`sender-${index}`, "mail.invalid"].join("@") },
+      },
+    };
+  });
+  if (withhold) {
+    const real = room.useMailboxWord;
+    vi.spyOn(room, "useMailboxWord").mockImplementation(() => {
+      const resolve = real();
+      return useFrame().route.place === withhold ? () => null : resolve;
+    });
+  }
+  await prepareMailPage({
+    "GET /api/mailboxes": () => json({ items: BOXES }),
+    "GET /api/sync": () => json({ ...inbox, changes: { ...inbox.changes, creates: [rule, ...rows] } }),
+  });
+  const page = await mountMailPage();
+  const mounted = new Map<string, Array<{ name: string; actual: string | undefined; expected: string }>>();
+  for (const id of labelPlaces()) {
+    const fragment = `#/${ADDRESS[id]}`;
+    expect(routeOf(fragment).place).toBe(id);
+    await act(async () => { window.location.hash = fragment; });
+    await tick(0);
+    const options = rows.flatMap(({ entity }: (typeof rows)[number]) => {
+      const option = page.queryByRole("option", { name: new RegExp(`\\b${entity.subject}(?:\\b|$)`) });
+      if (!option) return [];
+      const mailbox = BOXES.find(({ id }) => id === entity.mailboxId)!;
+      return [{ name: entity.subject, actual: within(option).queryByTitle(/^Delivered to /)?.title,
+        expected: `Delivered to ${mailbox.displayName}` }];
+    });
+    mounted.set(id, options);
+  }
+  return mounted;
 }
 
-const takesTheLabel = (tag: string): boolean => {
-  try {
-    return /\bmailboxLabelOf\?\s*:/.test(withoutComments(read(`views/${tag}.tsx`)));
-  } catch {
-    return false;
+function labelPlaces() {
+  const registered = mailPlaces();
+  return (Object.keys(ADDRESS) as Array<keyof typeof ADDRESS>).filter((id) => registered[id]?.rowMailboxLabels);
+}
+
+function assertLabels(rows: Awaited<ReturnType<typeof mountedDeliveries>>) {
+  expect([...rows.keys()]).toEqual(labelPlaces());
+  for (const [place, options] of rows) {
+    expect(options.map(({ expected }) => expected)).toEqual(expect.arrayContaining(BOXES.map((box) => `Delivered to ${box.displayName}`)));
+    for (const { name, actual, expected } of options) expect(actual, `${place}: ${name}`).toBe(expected);
   }
-};
+}
 
 describe("the shell hands the mailbox label to every view that can draw it", () => {
-  const rendered = viewsIn(read("shell/AppShell.tsx"));
-  const owed = rendered.filter((v) => takesTheLabel(v.tag));
-
-  it("the derived set is the two views that take the prop — never empty", () => {
-    expect([...new Set(owed.map((v) => v.tag))].sort()).toEqual(["ReadsView", "ScreenerView"]);
+  it("the derived set is the two views that take the prop — never empty", async () => {
+    const mounted = await mountedDeliveries();
+    expect([...mounted.keys()]).toEqual(expect.arrayContaining(["news", "screener"]));
+    assertLabels(mounted);
   });
 
-  it("each is passed the shell's one resolver", () => {
-    for (const v of owed) expect(v.passes, `<${v.tag}> is rendered without mailboxLabelOf`).toBe("mailboxLabelOf");
+  it("each is passed the shell's one resolver", async () => {
+    const mounted = await mountedDeliveries();
+    expect(mounted.size).toBeGreaterThan(0);
+    assertLabels(mounted);
   });
 
-  it("…and a render without the attribute is what it refuses", () => {
-    const planted = viewsIn("const a = <ScreenerView state={s} />; const b = <ReadsView mailboxLabelOf={mailboxLabelOf} />;");
-    expect(planted).toEqual([
-      { tag: "ScreenerView", passes: null },
-      { tag: "ReadsView", passes: "mailboxLabelOf" },
-    ]);
+  it("…and a render without the attribute is what it refuses", async () => {
+    const mounted = await mountedDeliveries("news");
+    expect(mounted.get("news")).toHaveLength(2);
+    expect(mounted.get("news")!.every(({ actual }) => actual === undefined)).toBe(true);
+    expect(() => assertLabels(mounted)).toThrow(/news: Delivery/);
   });
 });

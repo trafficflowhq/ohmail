@@ -6,8 +6,18 @@
     flex: 1;
     display: grid;
     place-items: center;
-    align-content: center;
     min-height: 0;
+  }
+
+  .oh-blankcolumn:has(> :nth-child(2)) {
+    align-content: center;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oh-blankcolumn-content {
+    display: grid;
+    justify-items: center;
+    max-width: 100%;
     padding: var(--s6);
     text-align: center;
   }
