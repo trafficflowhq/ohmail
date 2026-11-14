@@ -16,8 +16,11 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   linkDesktop: true, authorizeDesktop: true, resume: true, session: true, appError: true,
   account: ["signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutBusy", "signOut"],
   // The shell's frame: rail, dock, palette, list chrome, the key table it registers.
-  rail: true, palette: true, ribbon: true, reader: true, shortcuts: true,
+  rail: true, palette: true, ribbon: true, shortcuts: true,
   triage: true, message: true, tag: true, trash: true,
+  // Today's reading column's seven. The new reader's sentences ride the chunk until a shell hands the reader in;
+  // what its first screen draws joins this table by key in that change.
+  reader: ["gone", "goneTrash", "hint", "back", "pane", "closeColumn", "hintReturn"],
   ohbox: [
     "title", "meta", "tail", "emptyPlain", "doorbell", "doorbellAction", "doorbellAria",
     "doorbellNotYet", "doorbellNotYetAction", "doorbellNotYetAria",

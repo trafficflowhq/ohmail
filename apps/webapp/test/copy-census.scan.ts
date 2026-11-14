@@ -445,10 +445,15 @@ export function handedReaderNamespaces(repo: string, roots: string[], glue: Hand
  * no reader of its own and calls anything with a string first (`x("…")`, `x.rich("…")`, and a
  * reader reached through a record, `text.screener("…")`, which the scan cannot read): each must
  * be a row of {@link HANDED_READERS}, or its reads are outside the census. A file that only names
- * the type (`ohbox/types.ts`, the input's declaration) makes no call and holds no read.
+ * the type (`ohbox/types.ts`, the input's declaration) makes no call and holds no read, and a
+ * string's own method on another value (`key.indexOf(".")`) is no reader, unless its name is
+ * also a catalogue namespace (`text.search("…")` stays a read).
  */
 export function filesHandedAReader(repo: string, roots: string[]): string[] {
   const out: string[] = [];
+  const namespaces = Object.keys(JSON.parse(fs.readFileSync(path.join(repo, "apps/webapp/messages/en.json"), "utf8")));
+  const stringMethod = (name: string): boolean =>
+    Object.getOwnPropertyNames(String.prototype).includes(name) && !namespaces.includes(name);
   for (const file of sourceFiles(repo, roots)) {
     const sf = parse(file);
     const takesTranslator = sf.statements.some((st) =>
@@ -462,7 +467,8 @@ export function filesHandedAReader(repo: string, roots: string[]): string[] {
       if (ts.isVariableDeclaration(n) && n.initializer && readerNamespace(n.initializer) !== undefined) binds = true;
       if (
         ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
-        && (ts.isIdentifier(n.expression) || ts.isPropertyAccessExpression(n.expression))
+        && (ts.isIdentifier(n.expression)
+          || ts.isPropertyAccessExpression(n.expression) && !stringMethod(n.expression.name.text))
       ) readShaped = true;
       if (!binds) ts.forEachChild(n, visit);
     };

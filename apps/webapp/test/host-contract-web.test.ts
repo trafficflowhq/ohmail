@@ -52,6 +52,7 @@ const entries = (...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    reader: NONE,
     calendar: has.frame.calendar,
   });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */

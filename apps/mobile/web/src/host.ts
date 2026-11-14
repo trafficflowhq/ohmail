@@ -89,6 +89,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       screener: NONE, help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      reader: NONE,
       calendar: has.frame.calendar,
     },
     device: {

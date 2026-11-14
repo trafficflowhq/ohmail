@@ -9,7 +9,8 @@
  * window instead (`link_ask_open` in `engine.rs`).
  */
 import { useEffect, useState } from "react";
-import { color, radius, shadow, typography } from "@ohmail/tokens";
+import { typography } from "@ohmail/tokens";
+import { design } from "@ohmail/tokens/design";
 
 /** Where a marked link's address waits. Written only by the sanitizer's post-pass and the prose path's asked link. */
 export const ASK_ATTR = "data-ohmail-ask";
@@ -30,28 +31,33 @@ export interface AskCopy {
 /** The page loads nothing, runs nothing and submits nothing. */
 const ASK_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
 
-const L = color.light;
-const D = color.dark;
+/* The design's paper face, light and dark: the page stands on the ground, the card is a sheet, the one button is solid. */
+const P = design.faces.paper.light;
+const PD = design.faces.paper.dark;
 const ASK_PAGE_CSS = [
   ":root{color-scheme:light dark}",
-  `body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${L.canvas};color:${L.ink};` +
-    `font:${typography.size.prose}/1.55 ${typography.family.ui}}`,
-  `main{box-sizing:border-box;width:min(440px,calc(100% - 32px));margin:24px 0;padding:28px 26px 24px;background:${L.float};` +
-    `border-radius:${radius.card};box-shadow:${shadow.light.lift2}}`,
-  `h1{margin:0 0 10px;font-size:${typography.size.h1Mobile};font-weight:${typography.weight.bold};` +
-    `letter-spacing:${typography.tracking.display};line-height:${typography.leading.tight}}`,
-  `p{margin:0 0 8px;color:${L.ink2}}`,
-  `.url{margin:14px 0 18px;padding:8px 10px;border-radius:${radius.keycap};background:${L.tint2};color:${L.ink};` +
-    `font:${typography.size.control}/1.5 ${typography.family.mono};overflow-wrap:anywhere}`,
-  `a{display:inline-block;padding:9px 18px;border-radius:${radius.pill};background:${L.accent};color:${L.onAccent};` +
-    `font-weight:${typography.weight.semibold};text-decoration:none;overflow-wrap:anywhere}`,
-  `a:focus-visible{outline:2px solid ${L.accentHair};outline-offset:2px}`,
-  `.stay{margin:16px 0 0;font-size:${typography.size.body};color:${L.ink3}}`,
+  `body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${P.ground};color:${P.ink};` +
+    `font:${P["t-ui"]}/1.4 ${P["f-text"]}}`,
+  `main{box-sizing:border-box;width:min(480px,calc(100% - 32px));margin:24px 0;padding:32px;background:${P.sheet};` +
+    `border-radius:${P["r-sheet"]}}`,
+  `h1{margin:0 0 10px;font-family:${P["f-display"]};font-size:${P["t-head"]};font-weight:${P["w-display"]};` +
+    `letter-spacing:${P.track};line-height:${typography.leading.tight};overflow-wrap:anywhere}`,
+  `p{margin:0;color:${P.ink2}}`,
+  `.url{margin:18px 0 24px;padding:10px 12px;border-radius:${P["r-row"]};background:${P["soft-sheet"]};color:${P.ink};` +
+    `font:${P["t-meta"]}/1.6 ${typography.family.mono};overflow-wrap:anywhere}`,
+  `a{display:inline-flex;align-items:center;gap:10px;padding:13px 24px;border-radius:${P["r-pill"]};background:${P.solid};` +
+    `color:${P["on-solid"]};font-weight:${P["w-bold"]};text-decoration:none;overflow-wrap:anywhere}`,
+  "a svg{flex:none;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}",
+  `a:focus-visible{outline:2px solid ${P.focus};outline-offset:2px}`,
+  `.stay{margin:24px 0 0;font-size:${P["t-meta"]};color:${P.ink3}}`,
   "@media (prefers-color-scheme:dark){" +
-    `body{background:${D.canvas};color:${D.ink}}main{background:${D.float};box-shadow:${shadow.dark.lift2}}p{color:${D.ink2}}` +
-    `.url{background:${D.tint2};color:${D.ink}}a{background:${D.accent};color:${D.onAccent}}` +
-    `a:focus-visible{outline-color:${D.accentHair}}.stay{color:${D.ink3}}}`,
+    `body{background:${PD.ground};color:${PD.ink}}main{background:${PD.sheet}}p{color:${PD.ink2}}` +
+    `.url{background:${PD["soft-sheet"]};color:${PD.ink}}a{background:${PD.solid};color:${PD["on-solid"]}}` +
+    `a:focus-visible{outline-color:${PD.focus}}.stay{color:${PD.ink3}}}`,
 ].join("");
+
+/** The arrow on the button: a path drawn here, nothing fetched. */
+const ARROW = "M5 11 11 5M6 5h5v5";
 
 /**
  * The page that asks about one address. Built as elements and serialised, never joined from
@@ -86,7 +92,14 @@ export function askPage(url: string, copy: AskCopy): string {
   add(main, "p", {}, copy.elsewhere);
   add(main, "p", {}, copy.goes(host));
   add(main, "p", { class: "url" }, url);
-  add(main, "a", { href: url, rel: "noopener noreferrer" }, copy.open(host));
+  const go = add(main, "a", { href: url, rel: "noopener noreferrer" });
+  const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", ARROW);
+  svg.append(path);
+  go.append(svg, doc.createTextNode(copy.open(host)));
   add(main, "p", { class: "stay" }, copy.stay);
   return `<!doctype html>${doc.documentElement.outerHTML}`;
 }

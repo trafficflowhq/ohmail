@@ -1,0 +1,245 @@
+[
+  {
+    "keys": [
+      "device=duo&open=lt-journal&posture=folded&screen=reading",
+      "device=duo&open=lt-journal&posture=folded&screen=reading&turn=1",
+      "device=duo&open=lt-journal&posture=open&screen=reading",
+      "device=duo&open=lt-journal&posture=land&screen=reading",
+      "device=duo&open=lt-journal&posture=table&screen=reading",
+      "device=book&open=lt-journal&posture=folded&screen=reading",
+      "device=book&open=lt-journal&posture=folded&screen=reading&turn=1",
+      "device=book&open=lt-journal&posture=open&screen=reading",
+      "device=book&open=lt-journal&posture=land&screen=reading",
+      "device=book&open=lt-journal&posture=table&screen=reading"
+    ],
+    "notDrawn": "state",
+    "reason": "A posture of a folding phone (folded, open, laid flat, on a table, turned): the states page stands the frame in a window of a phone, a foldable or a computer, never a posture; the reader's place in each posture is phone-touch's.",
+    "since": "2026-11-15",
+    "removedBy": "phone-touch"
+  },
+  {
+    "keys": ["open=lt-order&screen=reading&show=link"],
+    "notDrawn": "state",
+    "reason": "The desktop's own window asks before a marked link opens, over the reader (the shell's dialog); the page draws no shell.",
+    "since": "2026-11-15",
+    "removedBy": "desktop-layer"
+  },
+  {
+    "keys": ["device=phone&open=lt-order&screen=reading&show=link"],
+    "notDrawn": "state",
+    "reason": "The phone's sheet asks before a marked link opens, over the reader; the page draws no phone shell.",
+    "since": "2026-11-15",
+    "removedBy": "phone-touch"
+  },
+  {
+    "keys": ["open=lt-order&said=linkgone&screen=reading"],
+    "notDrawn": "state",
+    "reason": "The desktop's window says a link it was not told of is gone (its shell's report); the page draws no shell.",
+    "since": "2026-11-15",
+    "removedBy": "desktop-layer"
+  },
+  {
+    "keys": [
+      "device=phone&open=lt-export&rd=undrawn&screen=reading",
+      "device=phone&open=lt-export&rd=unreadable&screen=reading",
+      "device=phone&open=lt-order&rd=fromphone&screen=reading&state=asked",
+      "device=phone&open=lt-order&rd=fromcomputer&screen=reading&state=asked",
+      "device=phone&open=lt-order&rd=refused&screen=reading&state=asked",
+      "device=phone&open=lt-order&rd=toolarge&screen=reading&state=asked"
+    ],
+    "notDrawn": "state",
+    "reason": "The phone's own answers to a file (drawn on the phone, from the computer, refused, too large): the phone shell's sheet over the reader; the page draws no phone shell.",
+    "since": "2026-11-15",
+    "removedBy": "phone-shell"
+  },
+  {
+    "keys": ["open=lt-invite&screen=reading", "open=lt-owa&screen=reading"],
+    "notDrawn": "state",
+    "reason": "An invitation in a letter (its event, Outlook's link): the calendar's part of a letter.",
+    "since": "2026-11-15",
+    "removedBy": "cal-invite"
+  },
+  {
+    "keys": ["at=1&open=lt-away&screen=reading"],
+    "notDrawn": "state",
+    "reason": "The account's away answer above the letter: Settings' away answer, which the reader is not handed.",
+    "since": "2026-11-15",
+    "removedBy": "settings"
+  },
+  {
+    "keys": [
+      "open=lt-files&screen=reading",
+      "open=lt-files&screen=reading&state=fetching",
+      "open=lt-files&screen=reading&state=ohmail",
+      "open=lt-files&screen=reading&state=busy",
+      "open=lt-files&screen=reading&state=server",
+      "open=lt-files&screen=reading&state=unsecured",
+      "open=lt-files&screen=reading&state=login",
+      "open=lt-files&screen=reading&state=reconnect",
+      "open=lt-files&screen=reading&state=signin",
+      "open=lt-files&screen=reading&state=gone",
+      "open=lt-files&screen=reading&state=refused",
+      "open=lt-files&screen=reading&state=offline",
+      "open=lt-files&screen=reading&state=session",
+      "open=lt-files&screen=reading&state=list"
+    ],
+    "notDrawn": ["files"],
+    "reason": "A file that did not arrive is drawn as the studio drew it after the tag (B12-2: a whole sentence, its button on the tile), which these registered pictures (taken at the tag) predate; the files are held to the kit's FileNotArrived pictures by the kit's own comparison (packages/ui/test/compare, mail/letters).",
+    "since": "2026-11-15",
+    "removedBy": "compare (the registry's move past the tag)"
+  },
+  {
+    "keys": [
+      "device=phone&open=lt-journal&screen=reading",
+      "device=phone&open=lt-invoice&screen=reading",
+      "device=fold&open=lt-order&screen=reading",
+      "open=lt-kino&screen=reading&state=asked",
+      "open=lt-order&screen=reading&show=note&state=asked",
+      "open=lt-club&screen=reading&show=note",
+      "open=lt-journal&scheme=dark&screen=reading",
+      "open=lt-journal&scheme=dark&screen=reading&state=original",
+      "open=lt-bank&scheme=dark&screen=reading",
+      "open=lt-order&scheme=dark&screen=reading",
+      "open=lt-reto&screen=reading",
+      "open=lt-reto&screen=reading&state=design",
+      "device=phone&open=lt-journal&screen=reading&state=text"
+    ],
+    "out": [
+      {
+        "role": "button",
+        "name": "Images blocked"
+      },
+      {
+        "role": "button",
+        "name": "Stylesheet blocked"
+      },
+      {
+        "role": "group",
+        "name": "View"
+      },
+      {
+        "role": "button",
+        "name": "Show as text"
+      },
+      {
+        "role": "button",
+        "name": "Show images"
+      },
+      {
+        "role": "button",
+        "name": "Original"
+      },
+      {
+        "role": "button",
+        "name": "Adapt to dark"
+      },
+      {
+        "role": "button",
+        "name": "Show original"
+      }
+    ],
+    "reason": "What a designed letter's markup makes the body say and offer (a picture or a stylesheet kept out, how the letter is shown): the reference's letters are the studio's designs, which never come into this repository; the page's letters are plain text or one line of markup.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": [
+      "screen=reading",
+      "device=phone&screen=reading",
+      "device=fold&screen=reading",
+      "device=foldl&screen=reading",
+      "face=ohmarchy&screen=reading",
+      "scheme=dark&screen=reading",
+      "face=ohmarchy&scheme=dark&screen=reading",
+      "open=lt-gone&screen=reading"
+    ],
+    "unnamed": [
+      {
+        "role": "region",
+        "name": "Reading"
+      },
+      {
+        "role": "region",
+        "name": "Open message"
+      }
+    ],
+    "reason": "The reading column's two landmarks (the frame's column, the open letter's sheet), which the reference does not name.",
+    "since": "2026-11-15",
+    "removedBy": "the reference's next tag"
+  },
+  {
+    "keys": [
+      "device=phone&open=lt-journal&screen=reading",
+      "device=phone&open=lt-journal&screen=reading&state=text"
+    ],
+    "samePicture": true,
+    "reason": "A designed letter shown as its text: the page's letters are text already, so the two draw alike.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": [
+      "open=lt-journal&scheme=dark&screen=reading",
+      "open=lt-journal&scheme=dark&screen=reading&state=original"
+    ],
+    "samePicture": true,
+    "reason": "An adaptable designed letter shown as its sender made it: the page's letter is one line of markup, which the dark scheme draws alike either way.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": ["open=lt-export&screen=reading", "open=lt-export&screen=reading&state=unsupported"],
+    "samePicture": true,
+    "reason": "A file the look cannot draw, in the look: the look is the shell's overlay (by the security ruling), which the page does not open.",
+    "since": "2026-11-15",
+    "removedBy": "write (the look's own place)"
+  },
+  {
+    "keys": ["open=lt-order&screen=reading", "open=lt-order&screen=reading&show=note&state=asked"],
+    "samePicture": true,
+    "reason": "A letter whose pictures wait for the person's ask, and its note: the page's letter carries a tracker and no picture to ask for, so it draws as the letter.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": ["open=lt-kino&screen=reading", "open=lt-kino&screen=reading&state=asked"],
+    "samePicture": true,
+    "reason": "A letter whose pictures wait for the person's ask: the page's letter is text and names no picture, so it draws as the letter.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": ["open=lt-reto&screen=reading", "open=lt-reto&screen=reading&state=design"],
+    "samePicture": true,
+    "reason": "A designed letter shown in its design: the page's letter is text, so its design draws as its text.",
+    "since": "2026-11-15",
+    "removedBy": "never in this repository: the studio's letters stay private"
+  },
+  {
+    "keys": ["screen=linkask", "face=ohmarchy&screen=linkask"],
+    "samePicture": true,
+    "reason": "The ask page opens in a tab of its own from the letter's sandboxed frame and cannot know the face the person chose: it stands on the paper face in both.",
+    "since": "2026-11-15",
+    "removedBy": "never: the page is built under its own policy with no state of the app"
+  },
+  {
+    "keys": ["scheme=dark&screen=linkask", "face=ohmarchy&scheme=dark&screen=linkask"],
+    "samePicture": true,
+    "reason": "The ask page opens in a tab of its own from the letter's sandboxed frame and cannot know the face the person chose: it stands on the paper face in both.",
+    "since": "2026-11-15",
+    "removedBy": "never: the page is built under its own policy with no state of the app"
+  },
+  {
+    "keys": ["open=lt-raw&screen=reading"],
+    "pairs": [
+      {
+        "role": "button",
+        "name": "Mon 9 Nov 22:48",
+        "as": "yesterday 22:48"
+      }
+    ],
+    "reason": "The reference prints this letter's stamp from a typed string of the studio's data (\"Mon 9 Nov 22:48\") where every other letter of the day before says \"yesterday\" and the clock; the reader keeps the product's rule (the web's tipWhen: today the clock, the day before \"yesterday\" and the clock). Its box, its state and its drawing still bind.",
+    "since": "2026-11-15",
+    "removedBy": "the reference's next tag (the studio's slip, told to the studio by the dispatcher)"
+  }
+]
