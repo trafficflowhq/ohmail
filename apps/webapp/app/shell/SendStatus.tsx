@@ -13,9 +13,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { formatFileSize } from "@ohmail/ui";
-import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { SENDING_LONG_MS, type SendState, type ShowSend } from "@ohmail/app-logic/writing/mail-send";
-import { sendLine, type SendTone } from "@ohmail/app-logic/writing/send-line";
+import { sendLine, sendLineValuesOver, type SendTone } from "@ohmail/app-logic/writing/send-line";
 import { activeFormatLocale } from "./locale";
 import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
 
@@ -33,14 +32,14 @@ export function lineSeen(el: Element | null): boolean {
 /* The line a send state says is app-logic's (`writing/send-line.ts`); handed on under the names it always had here. */
 export { sendLine, type SendTone };
 
-/** The ceiling as the sentences name it, `{size}` in every line that takes one. */
 /** A file's size in the person's language, as every line of the letter names one (the new screen's `size`). */
 export function fileSize(bytes: number): string {
   return formatFileSize(bytes, activeFormatLocale());
 }
 
+/** The ceiling as the sentences name it, `{size}` in every line that takes one. */
 export function sendLineValues(): { size: string } {
-  return { size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()) };
+  return sendLineValuesOver(fileSize);
 }
 
 export function SendStatus({

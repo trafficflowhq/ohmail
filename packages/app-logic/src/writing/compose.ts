@@ -8,7 +8,7 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "@ohmail/client-engine";
-import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "../storage/durable.js";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet, localStorageDoor } from "../storage/durable.js";
 import { isDemoOwned } from "../storage/storage-owner.js";
 import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
@@ -656,6 +656,18 @@ export function composeSessionId(owner: StorageScope): string | null {
   } catch {
     return null; // private mode, or a full quota — see the header on what `null` means
   }
+}
+
+/**
+ * THE SESSION AS IT STANDS, NEVER MINTED: the stored id, or `null` where none is stored or the jar cannot be read.
+ * For a reader that may write no key of the account: a render, and a composer whose mount is gone. A `null`
+ * session names no record, the same answer a fresh session gives.
+ */
+export function readComposeSession(owner: StorageScope): string | null {
+  adoptHandoff(owner);
+  // The jar's own door: a read it refuses answers `null`.
+  const held = localStorageDoor("compose.session").get(composeSessionKey(owner));
+  return held !== null && held.length > 0 ? held : null;
 }
 
 /**

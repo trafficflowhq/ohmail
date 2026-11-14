@@ -921,6 +921,7 @@ packages/app-logic/src/text/format.ts	max-lines	1	ruling:composition-lift
 packages/app-logic/src/text/format.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/text/idn.ts	prettier	1	ruling:lift-b-removals
 packages/app-logic/src/text/row-copy.ts	prettier	1	ruling:composition-lift
+packages/app-logic/src/write/image-quality.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/writing/compose-autosave.ts	max-lines	1	ruling:lift-b-write
 packages/app-logic/src/writing/compose-autosave.ts	max-lines-per-function	4	ruling:lift-b-write
 packages/app-logic/src/writing/compose-autosave.ts	no-restricted-globals	2	ruling:lift-b-write
@@ -949,6 +950,8 @@ packages/app-logic/src/writing/reply-autosave.ts	no-restricted-globals	2	ruling:
 packages/app-logic/src/writing/reply-autosave.ts	prettier	1	ruling:lift-b-removals
 packages/app-logic/src/writing/reply-autosave.ts	react-hooks/exhaustive-deps	3	ruling:lift-b-write
 packages/app-logic/src/writing/rich-text.ts	prettier	1	ruling:lift-b-removals
+packages/app-logic/src/writing/schedule-files.ts	prettier	1	ruling:composition-lift
+packages/app-logic/src/writing/send-handoff.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/writing/send-line.ts	max-lines-per-function	1	ruling:composition-lift
 packages/app-logic/src/writing/send-line.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/writing/send-lock.ts	max-lines	1	ruling:lift-b-write

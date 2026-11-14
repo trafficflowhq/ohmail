@@ -20,6 +20,8 @@ export {
   motionShape,
 } from "../motion/motion.js";
 export type { AnimateOptions, DurationToken, EaseToken, ShapeToken } from "../motion/motion.js";
+/* The size of a file, said once (`format/file-size.ts`): pure, and the same sentence in every part that names one. */
+export { formatFileSize } from "../format/file-size.js";
 export { design, v } from "./tokens.js";
 export type { MotionRole, TokenName } from "./tokens.js";
 

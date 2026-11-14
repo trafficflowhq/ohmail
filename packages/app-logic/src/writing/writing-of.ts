@@ -1,31 +1,53 @@
 /**
- * TODAY'S COMPOSITION, AS THE NEW SCREEN READS IT: the composer record (`useShellCompose`) handed to `write` as its
- * `Writing`, with the members today's shell derives at the old view's mount derived here the same way, and the
- * shell's pure helpers as its `WriteBeside`. Nothing mounts it but its cases until a host seats the place `write`.
+ * THE COMPOSITION, AS THE SCREEN READS IT: the one composer's record (`useShellCompose`) as the screen `write` takes
+ * it (its `Writing`, member for member), with the members a caller derives of it (the send on screen, the hold and
+ * its row, the reply planned, the signatures once they are known), and the pure helpers beside the screen (its
+ * `WriteBeside`). The screen's own types are the screen's: what these two answer is checked against them where the
+ * composer's one mount hands it over (`WritingMount.tsx` of the mail ground), and a case calls them over a
+ * composition of its own.
  */
-import type { useTranslations } from "next-intl";
-import type { EngineDraft, FromOption, OhmailEngine } from "@ohmail/client-engine";
-import { addressBook, effectiveSignature, effectiveSignatureHtml, matchAddresses } from "@ohmail/client-engine";
-import { composeSessionId, readComposeRow } from "@ohmail/app-logic/writing/compose";
+import type {
+  EngineDraft,
+  FromOption,
+  ImageQualityLevel,
+  OhmailEngine,
+  SignatureState,
+} from "@ohmail/client-engine";
 import {
-  COMPOSE_SEND_KEY,
-  composeStateOnScreen,
-  heldRowUnverified,
-} from "@ohmail/app-logic/writing/mail-send";
-import { holdOf } from "@ohmail/app-logic/writing/send-lock";
-import { DRAFT_REPLY_COST_CREDITS, NEW_LETTER } from "@ohmail/app-logic/writing/draft-reply";
-import type { Writing, WriteBeside, WriteDraftChrome, WriteDraftControl } from "@ohmail/app/write";
-import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
-import { composedLocalInput, localInputValue, scheduleLabel, sendLaterMornings, todayEvening } from "./format";
-import { activeFormatZone } from "./locale";
-import { gatedInvalid, joinRecipients, moveRecipient, splitRecipients } from "./RecipientField";
-import { filesNotKeptFor, useScheduleFiles } from "./schedule-files";
-import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
-import { fileSize, sendLine, sendLineValues } from "./SendStatus";
-import { replyOf } from "./todays-write-reply";
-import { compressImage, readImageQualityLevel, writeImageQualityLevel } from "../components/image-quality";
+  addressBook,
+  effectiveSignature,
+  effectiveSignatureHtml,
+  matchAddresses,
+} from "@ohmail/client-engine";
+import type { ConsentState } from "../consent/consent-state.js";
+import { activeFormatZone } from "../text/format-words.js";
+import {
+  composedLocalInput,
+  localInputValue,
+  scheduleLabel,
+  sendLaterMornings,
+  todayEvening,
+} from "../text/format.js";
+import type { Translator } from "../text/translator.js";
+import type { SendSurface } from "../write/files.js";
+import { compressImage, readImageQualityLevel, writeImageQualityLevel } from "../write/image-quality.js";
+import { readComposeRow, readComposeSession } from "./compose.js";
+import { DRAFT_REPLY_COST_CREDITS, NEW_LETTER, type DraftReplyControl } from "./draft-reply.js";
+import { COMPOSE_SEND_KEY, composeStateOnScreen, heldRowUnverified } from "./mail-send.js";
+import {
+  gatedInvalid,
+  joinRecipients,
+  moveRecipient,
+  splitRecipients,
+  type RecipientMove,
+} from "./recipient-lines.js";
+import { filesNotKeptFor, useScheduleFiles } from "./schedule-files.js";
+import { sendLine, sendLineValuesOver } from "./send-line.js";
+import { holdOf } from "./send-lock.js";
+import type { ShellCompose } from "./shell-compose.js";
+import { replyOf } from "./writing-reply.js";
 
-/** A time for Send later must stand this far ahead of the press (today's composer's floor). */
+/** A time for Send later must stand this far ahead of the press (the composer's floor). */
 export const SEND_LATER_FLOOR_MS = 3 * 60_000;
 
 export interface WritingContext {
@@ -39,7 +61,8 @@ export interface WritingContext {
   readonly drafts: readonly EngineDraft[];
   /** The account's balance was last refused as empty (the Screener's standing): the draft control says so, no price. */
   readonly noCredits: boolean;
-  readonly t: ReturnType<typeof useTranslations>;
+  /** The whole catalogue's reader, as the composer is handed it. */
+  readonly t: Translator;
 }
 
 const NOTHING = (): void => undefined;
@@ -48,7 +71,10 @@ const NOTHING = (): void => undefined;
  * The screen's draft control over a host that names no drafter. The composer answers no control there (`null`): no
  * hook stands behind this one, so it draws nothing (`offered: false`) and none of its doors can ask anything.
  */
-const NO_DRAFTER: WriteDraftControl = {
+type NotOffered = {
+  readonly [K in keyof DraftReplyControl]: K extends "offered" ? false : DraftReplyControl[K];
+};
+const NO_DRAFTER: NotOffered = {
   offered: false,
   phase: "closed",
   messageId: null,
@@ -63,19 +89,27 @@ const NO_DRAFTER: WriteDraftControl = {
   letterId: NEW_LETTER,
   own: new Map(),
   keep: NOTHING,
+  forget: NOTHING,
+  moved: NOTHING,
+  restore: NOTHING,
 };
-const NO_DRAFT_CHROME: WriteDraftChrome = { control: NO_DRAFTER, pending: null, resolve: NOTHING };
+const NO_DRAFT_CHROME = { control: NO_DRAFTER, pending: null, resolve: NOTHING };
 
-/** The composition as `write` reads it: the record's own members, and the derived ones as the old view's mount has them. */
-export function writingOf(compose: ShellCompose, ctx: WritingContext): Writing {
+/** The composition as `write` reads it: the record's own members, and the ones a caller derives of it. */
+export function writingOf(compose: ShellCompose, ctx: WritingContext) {
   const { engine, scope, t } = ctx;
   const row = readComposeRow(scope);
-  const hold = holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: row, session: composeSessionId(scope) }, scope);
+  /* Read in a render, so never minted: a render writes no key of the account. None names no record. */
+  const session = readComposeSession(scope);
+  const hold = holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: row, session }, scope);
   const send = heldRowUnverified(
-    composeStateOnScreen(compose.mailSend.stateOf(COMPOSE_SEND_KEY), compose.mailSend.pressHere(COMPOSE_SEND_KEY)),
+    composeStateOnScreen(
+      compose.mailSend.stateOf(COMPOSE_SEND_KEY),
+      compose.mailSend.pressHere(COMPOSE_SEND_KEY),
+    ),
     row,
     hold,
-    composeSessionId(scope),
+    session,
   );
   return {
     compose: compose.compose,
@@ -111,7 +145,7 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext): Writing {
     replyBook: compose.replyBook,
     replySendState: compose.replySendState,
     heldReplyRow: compose.heldReplyRow,
-    sendReply: (messageId) => compose.sendReply(messageId),
+    sendReply: (messageId: string) => compose.sendReply(messageId),
     openReply: compose.openReply,
     openForward: compose.openForward,
     confirmForward: compose.confirmForward,
@@ -127,65 +161,90 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext): Writing {
           ? { ...compose.draftReplyChrome, noCredits: true }
           : compose.draftReplyChrome,
     openDraft: compose.openDraft,
-    writeTo: (address, name) => compose.writeTo(address, name),
+    writeTo: (address: string, name?: string) => compose.writeTo(address, name),
     composeSend: send,
     composeLocked: compose.composeHeldBySend
-      ? { sentence: t(engine.outboxUnreadable?.() === true ? "compose.sendingOutboxUnread" : "compose.sendingFromLastSession") }
+      ? {
+          sentence: t(
+            engine.outboxUnreadable?.() === true
+              ? "compose.sendingOutboxUnread"
+              : "compose.sendingFromLastSession",
+          ),
+        }
       : null,
     composeHeld: row !== null && send.phase === "unverified" ? { draftId: row } : null,
     composeFilesNotKept: filesNotKeptFor(ctx.drafts, row),
     signatures: ctx.consent.signaturesKnown
       ? { text: ctx.consent.signatures, html: ctx.consent.signaturesHtml }
-      : "unknown",
+      : ("unknown" as const),
     discardCompose: compose.discardCompose,
     discardReply: compose.discardReply,
   };
 }
 
+/** The three recipient rows of a letter, as their wire strings. */
+interface Rows {
+  to: string;
+  cc: string;
+  bcc: string;
+}
+/** The account's stored signatures by mailbox, with their formatted halves. */
+interface Stored {
+  readonly text: Readonly<Record<string, string>>;
+  readonly html: Readonly<Record<string, string>>;
+}
+
 /**
- * The shell's pure helpers beside the screen, for the session's storage scope. `surfaceMax` is the shell's own
- * `sendSurfaceMaxTotalBytes`: absent, the hosted request's strict bound; null, none of the window's own. `metered`:
- * the host's managed-service fact (`useManagedService`), whether a draft's price is said.
+ * The pure helpers beside the screen, for the session's storage scope. `surface` is the host's own answer for what
+ * one send may carry (its `sendCeiling`: the hosted request's strict bound, the mailbox's own, or a number of bytes),
+ * handed on as the host says it. `metered`: whether the host is the managed service, where a draft's price is said.
+ * `size`: a file's size in the person's language, as whoever holds the size words says it. `online`: whether the
+ * device is on a network now, asked at the press by whoever reads the device's own fact.
  */
-export function todaysWriteBeside(
+export function writeBesideOf(
   engine: OhmailEngine,
   scope: string,
-  surfaceMax: number | null | undefined,
+  surface: SendSurface,
   metered: boolean,
-): WriteBeside {
+  size: (bytes: number) => string,
+  online: () => boolean,
+) {
   return {
     scope,
     metered,
-    surface: surfaceMax === undefined ? "strict" : surfaceMax === null ? "mailbox" : surfaceMax,
-    online: () => typeof navigator === "undefined" || navigator.onLine !== false,
+    surface,
+    online,
     sendLine,
-    sendLineValues,
+    sendLineValues: () => sendLineValuesOver(size),
     lines: {
       split: splitRecipients,
       join: joinRecipients,
-      move: ({ rows, move }) => moveRecipient({ ...rows }, { ...move }),
+      move: ({ rows, move }: { rows: Readonly<Rows>; move: Readonly<RecipientMove> }) =>
+        moveRecipient({ ...rows }, { ...move }),
       refused: gatedInvalid,
     },
-    suggest: (typed, taken) => {
+    suggest: (typed: string, taken: readonly string[]) => {
       const skip = new Set(taken.map((a) => a.toLowerCase()));
       return matchAddresses(addressBook(engine.read()), typed.trim(), 6)
         .filter((e) => !skip.has(e.address))
         .map((e) => ({ name: e.name, address: e.address, they: e.name !== "" }));
     },
     later: {
-      options: (now) => {
+      options: (now: number) => {
         const base = new Date(now);
         const evening = todayEvening(base).instant;
         const { tomorrow, monday } = sendLaterMornings(base);
         return [
-          ...(evening.getTime() - now > SEND_LATER_FLOOR_MS ? [{ id: "evening", at: evening.toISOString() }] : []),
+          ...(evening.getTime() - now > SEND_LATER_FLOOR_MS
+            ? [{ id: "evening", at: evening.toISOString() }]
+            : []),
           { id: "tomorrow", at: tomorrow },
           ...(monday !== null ? [{ id: "monday", at: monday }] : []),
         ];
       },
-      floor: (now) => now + SEND_LATER_FLOOR_MS,
-      label: (at) => scheduleLabel(at, new Date()),
-      seed: (now) => {
+      floor: (now: number) => now + SEND_LATER_FLOOR_MS,
+      label: (at: string) => scheduleLabel(at, new Date()),
+      seed: (now: number) => {
         /* Ceiled to the next whole minute (the field holds minutes), and checked through the inverse: in an autumn
            fold the seeded clock names two instants and the earlier one can sit under the floor; then an hour on. */
         const seedOf = (ms: number): string =>
@@ -196,28 +255,30 @@ export function todaysWriteBeside(
           ? seedOf(now + SEND_LATER_FLOOR_MS + 3_600_000)
           : seed;
       },
-      compose: (value, notBefore) => {
+      compose: (value: string, notBefore: number) => {
         const c = composedLocalInput(value, new Date(notBefore));
         if (c === null) return null;
         const two = (n: number): string => String(n).padStart(2, "0");
         return {
           at: c.instant.toISOString(),
           shifted:
-            c.verdict === "shifted_forward" ? { booked: `${two(c.hour)}:${two(c.minute)}`, asked: value.slice(11, 16) } : null,
+            c.verdict === "shifted_forward"
+              ? { booked: `${two(c.hour)}:${two(c.minute)}`, asked: value.slice(11, 16) }
+              : null,
         };
       },
       zone: activeFormatZone,
-      useFiles: (asking) => useScheduleFiles(engine, asking),
+      useFiles: (asking: boolean) => useScheduleFiles(engine, asking),
     },
-    size: fileSize,
-    signature: (state, mailboxId, stored) => {
+    size,
+    signature: (state: SignatureState, mailboxId: string | null, stored: Stored) => {
       const text = effectiveSignature(state, stored.text, mailboxId);
       return text === null ? null : { text, html: effectiveSignatureHtml(state, stored.html, mailboxId) };
     },
     pictures: {
       level: () => readImageQualityLevel(scope),
-      setLevel: (level) => writeImageQualityLevel(level, scope),
-      compress: async (file, level) => {
+      setLevel: (level: ImageQualityLevel) => writeImageQualityLevel(level, scope),
+      compress: async (file: Blob, level: ImageQualityLevel) => {
         const picture = await compressImage(file, level);
         return { blob: picture.blob, contentType: picture.contentType };
       },

@@ -114,7 +114,6 @@ import {
 import { sendLine } from "./send-line.js";
 import { useSendText } from "./mail-send-text.js";
 import type { MailboxFacts } from "../mail-state/mail-state.js";
-import { readColumnHidden } from "../layout/narrow.js";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text.js";
 import { documentHidden } from "../session/document-hidden.js";
 import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "../doors/app-update.js";
@@ -230,8 +229,19 @@ export interface ShellComposeInput {
   draftReplyWire: DraftReplyWire | "none";
   /** Only `view`, and only so the autosave knows whether the compose form is on screen. */
   route: { readonly view: string };
-  /** The host's way to one of the composer's places: the compose form, Drafts, the Ohbox. */
-  go: (to: ComposerPlace) => void;
+  /**
+   * The host's way to one of the composer's places: the compose form, Drafts, the Ohbox. `open: null`: a send has
+   * left the compose form, and its list is arrived at with no letter open.
+   */
+  go: (to: ComposerPlace, how?: { readonly open: null }) => void;
+  /**
+   * A reply, a forward or a drafted reply stands under this letter now. The host shows the letter where its reply
+   * would otherwise stand unseen (a layout of one column, where the reading column is the open letter), and does
+   * nothing where the reply is on screen already. Which it is, is the host's own layout to say.
+   */
+  showLetter: (letter: string) => void;
+  /** The host's way to a letter where it is presented, with its reply open: a reply draft opens in its conversation. */
+  openWithReply: (letter: EngineMessage) => void;
   /** The three signature members, gated together by `signaturesKnown` — see `consent-state.ts`. */
   consent: Pick<ConsentState, "signatures" | "signaturesHtml" | "signaturesKnown">;
   /** `GET /mailboxes` as the roster reported it, or `null` for "we cannot see" — the From list. */
@@ -242,20 +252,17 @@ export interface ShellComposeInput {
   ownAddresses: string[];
   fallbackMailboxId: string | null;
   /**
-   * THE INLINE REPLY'S ID — the shell's state, not this module's. The route transition closes the
-   * editor with every other overlay (`shell-open-state.ts`), so the shell owns it and both hooks
-   * read it; this one opens, retargets and closes through the setter.
+   * THE INLINE REPLY'S ID: the state of whoever mounts the composer, not this module's. A change of place closes
+   * the editor with whatever else stands over the place left, so the mount owns it; this module opens, retargets
+   * and closes through the setter.
    */
   replyTo: string | null;
   setReplyTo: Dispatch<SetStateAction<string | null>>;
-  /** Below 700px the reading column is hidden, so an open reply opens the reader too. */
-  setReaderFor: Dispatch<SetStateAction<string | null>>;
   /** The Reply Run's cursor — a settled send advances it. */
   fr: { step: number; items: TriagePileEntry[] } | null;
   setFr: Dispatch<SetStateAction<{ step: number; items: TriagePileEntry[] } | null>>;
   setFrDone: Dispatch<SetStateAction<Set<string>>>;
   setFrValues: Dispatch<SetStateAction<Record<string, RichValue>>>;
-  setOhboxSel: Dispatch<SetStateAction<string | null>>;
   /** The mirror as the views see it — Send + Done reads the source's section from it at the press. */
   presented: EntityReader;
   /** The row's own Done door, with no sentence of its own — `resurface_done` dispatches the same way. */
@@ -270,8 +277,6 @@ export interface ShellComposeInput {
    * Absent: never, and every send waits in its editor as before.
    */
   mayHandOffFor?: (mailboxId: string | null) => boolean;
-  /** A reading stream on screen answers this message in place (`stream-in-place.tsx`): no sheet. */
-  inPlaceHost?: (messageId: string) => boolean;
   /** Whose compose, reply and send keys these are: the shell's storage scope, read once as it mounts. */
   scope: StorageScope;
 }
@@ -280,10 +285,9 @@ export interface ShellComposeInput {
 export type ShellCompose = ReturnType<typeof useShellCompose>;
 
 export function useShellCompose({
-  engine, reader, t, words, toast, draftReplyWire, route, go, consent, facts, mailboxes, drafts, ownAddresses,
-  fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
-  setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
-  inPlaceHost, scope,
+  engine, reader, t, words, toast, draftReplyWire, route, go, showLetter, openWithReply, consent, facts, mailboxes,
+  drafts, ownAddresses, fallbackMailboxId, replyTo, setReplyTo, fr, setFr, setFrDone, setFrValues,
+  mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
 }: ShellComposeInput) {
   /** The route as it is now, for an ending that arrives after the person moved on. */
   const routeViewRef = useRef(route.view);
@@ -539,10 +543,10 @@ export function useShellCompose({
       setReplyMode("reply");
       setReplyTo(messageId);
       setReplyBody(body);
-      // MOBILE. Under 700px the reading column is `display:none` (app.css), so an inline
-      // reply would mount into a pane nobody can see and `r` would look broken — measured on
-      // the shipped build at 390px. There, the reader IS the open message, so open it.
-      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
+      // ONE COLUMN. Where the reading column is not on screen an inline reply would mount into a
+      // pane nobody can see and `r` would look broken — measured on the shipped build at 390px.
+      // There, the reader IS the open message, so the host opens it (`showLetter`).
+      showLetter(messageId);
     };
     resumeLane(messageId, open, all);
   });
@@ -657,8 +661,8 @@ export function useShellCompose({
       setReplyMode("forward");
       setReplyTo(messageId);
       setReplyBody(body);
-      // The same mobile rule `openReply` states: below 700px the dock lives in the reader.
-      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
+      // The same one-column rule `openReply` states: there the dock lives in the reader.
+      showLetter(messageId);
     };
     // The forward's own lane: its scratch, or the account's forward row for this message.
     const resume = (): void => resumeLane(replyDraftKey("forward", messageId), open, false);
@@ -954,9 +958,9 @@ export function useShellCompose({
     setReplyTo(messageId);
     setReplyBody(next);
     writeReplyDraft(messageId, next, scope);
-    // Same mobile rule `openReply` states: under 700px the reading column is display:none,
-    // so an editor mounted there is one nobody can see.
-    if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
+    // Same one-column rule `openReply` states: an editor mounted in a column that is not on
+    // screen is one nobody can see.
+    showLetter(messageId);
   });
 
   /**
@@ -1033,8 +1037,6 @@ export function useShellCompose({
   const releaseDraftIdRef = useRef<string | null>(null);
   const releaseBindingRef = useRef<() => void>(() => {});
   const composeNotSentRef = useRef<() => void>(() => {});
-  /** Late-bound for the same reason as {@link settleComposeRef} — see below where it is assigned. */
-  const openMessageRef = useRef<(m: EngineMessage, opts?: { reply?: boolean }) => void>(() => {});
   /**
    * WHICH DRAFT ROW SEEDED WHICH REPLY EDITOR — `message id → draft id`, written by `openDraft`
    * when a reply draft opens in its message's own inline editor. The lane takes that row and the
@@ -1417,7 +1419,7 @@ export function useShellCompose({
     if (parent && (forward || row === undefined || !isRichEmpty(readReplyDraft(lane, scope)))) {
       // A dock closed at the hand-off gets its audience, files and From back as it opens (`pressBackOf`).
       if (forward) openForward(id); else openReply(id);
-      openMessageRef.current(parent, { reply: true });
+      openWithReply(parent);
       return true;
     }
     if (row === undefined) return false;
@@ -2135,8 +2137,7 @@ export function useShellCompose({
       setCompose(EMPTY_COMPOSE);
       // A send that finished after the person moved on (the hand-off) leaves them where they are.
       if (routeViewRef.current !== "compose" || composeHandedOff.current) return;
-      setOhboxSel(null);
-      go(toList);
+      go(toList, { open: null });
     },
     onEmptied: () => {
       setCompose(EMPTY_COMPOSE);
@@ -2373,10 +2374,9 @@ export function useShellCompose({
            draft opened into the dock is another message, and keeps its own audience. */
         const owed = handedPress.current.get(parent.id);
         if (owed !== undefined && owed.row !== d.id) handedPress.current.delete(parent.id);
-        /* The message's own inline editor, seeded with what was written. `openMessageRef` and
-           not `openMessage` directly: that callback needs the screener row map and the consent
-           partition and is therefore declared far below this one, so the reference is late-bound
-           for the same reason `settleComposeRef` is. */
+        /* The message's own inline editor, seeded with what was written. The host opens the
+           letter where it is presented (`openWithReply`): which place that is, and how the reply
+           rides a walk there, is the host's to know. */
         // The lane takes the row: the reply's pauses write it and its Send sends it.
         setReplyBody(adoptReplyRow(parent.id, d, body, null, false));
         // A REPLY, whatever the dock last was: a forward left open would send this text as one.
@@ -2389,8 +2389,8 @@ export function useShellCompose({
         const seed = handleOf(engine, d);
         if (seed.kind === "row") replySeedDrafts.current.set(parent.id, seed.id);
         else replySeedDrafts.current.delete(parent.id);
-        // The editor opens WITH the message, past the route transition that closes overlays.
-        openMessageRef.current(parent, { reply: true });
+        // The editor opens WITH the message, past the change of place that closes overlays.
+        openWithReply(parent);
         return;
       }
       /* OVER A LETTER WHOSE SEND IS ON ITS WAY: its own row just shows it; another row opens only
@@ -2991,8 +2991,7 @@ export function useShellCompose({
         handedPress.current.set(COMPOSE_SEND_KEY, { m, row: null });
         composeHandedOff.current = true;
         if (routeViewRef.current !== "compose") return;
-        setOhboxSel(null);
-        go("ohbox");
+        go("ohbox", { open: null });
       }
       : undefined;
     // The send carries the words and makes its own row: a create the pause left on the outbox goes.
@@ -3320,7 +3319,6 @@ export function useShellCompose({
     onReplySubject,
     openDraft,
     openForward,
-    openMessageRef,
     openReply,
     plan,
     pressSendAndDone,

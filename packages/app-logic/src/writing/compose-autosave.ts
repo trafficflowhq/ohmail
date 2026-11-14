@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { localStorageDoor } from "../storage/durable.js";
 import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, EngineDraft, KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
@@ -19,8 +20,9 @@ import type { ComposeFields, ComposeRowHolds } from "./compose.js";
 import { COMPOSE_SEND_KEY, composeBufferFingerprint, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send.js";
 import { holdOf, releaseSendLockForRow, sendRecordNames, sendRecordsNaming, type Hold } from "./send-lock.js";
 import {
-  clearComposeDraft, composeSessionId, markComposeRowHolds, parseRecipients, readComposeDraft,
-  readComposeCreates, readComposeRow, readComposeRowHolds, whenComposerReady, writeComposeCreates, writeComposeRow,
+  clearComposeDraft, composeDraftKey, composeSessionId, markComposeRowHolds, parseRecipients, readComposeDraft,
+  readComposeCreates, readComposeRow, readComposeRowHolds, readComposeSession, whenComposerReady, writeComposeCreates,
+  writeComposeRow,
 } from "./compose.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, type CreateClaim,
@@ -984,6 +986,24 @@ export function useComposeAutosave(opts: {
   /** Whether the lane's send carries this composer's message: a create always, a row it names, or a press under this binding. */
   const carried = (row: string | null): boolean => row === null || pressedAt.current === epoch.current
     || sendNamesRow(engine, COMPOSE_SEND_KEY, row);
+  /**
+   * THIS COMPOSER IS GONE: its mount ended (the scope did, an account's sign-out). Set by the cleanup declared above
+   * the belt, so it is set before the belt's leaving save. A save of a composer that is gone still goes to the
+   * account; it mints no session, and writes the row and its holds only beside its letter ({@link unitStands}).
+   * Not `gone`: that is the write's own word for a row deleted elsewhere.
+   */
+  const composerGone = useRef(false);
+  /** The message's session for a save: read and never minted once the composer is gone. */
+  const sessionNow = (): string | null =>
+    composerGone.current ? readComposeSession(owner.current) : composeSessionId(owner.current);
+  /**
+   * MAY THE ROW AND ITS HOLDS BE WRITTEN NOW: always while the composer stands; once it is gone, only while its
+   * stored letter under its scope stands. A row is half of the letter's unit and never stands without it: the account's
+   * sweep took the letter, and a row written after it is adopted under an empty form when the account comes back,
+   * whose next letter is then written over the one saved here.
+   */
+  const unitStands = (): boolean =>
+    !composerGone.current || localStorageDoor("compose.draft").get(composeDraftKey(owner.current)) !== null;
   /** The save on the wire, so a flush arriving mid-round-trip waits it out instead of deduping. */
   const inFlightP = useRef<Promise<void> | null>(null);
 
@@ -1032,7 +1052,7 @@ export function useComposeAutosave(opts: {
        a compose with an armed save was measured being replaced by the reopen of a row the server
        holds as unconfirmed. */
     const hold = holdOf(engine, {
-      lane: COMPOSE_SEND_KEY, draftId: readComposeRow(owner.current), session: composeSessionId(owner.current),
+      lane: COMPOSE_SEND_KEY, draftId: readComposeRow(owner.current), session: sessionNow(),
     }, owner.current);
     if (hold.kind === "parked") return { kind: "nothing" };
     /**
@@ -1120,9 +1140,11 @@ export function useComposeAutosave(opts: {
           if (era === epoch.current && pendingLand.current?.row === row) {
             pendingLand.current = null;
             const prev = readComposeRowHolds(owner.current);
-            markComposeRowHolds({
-              row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), ...(base.current ? { rev: base.current } : {}),
-            }, owner.current);
+            if (unitStands()) {
+              markComposeRowHolds({
+                row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), ...(base.current ? { rev: base.current } : {}),
+              }, owner.current);
+            }
           }
           outcome = { kind: "failed", reason: result.error?.message ?? null };
           return;
@@ -1149,10 +1171,12 @@ export function useComposeAutosave(opts: {
               parts: Boolean(f.forwardOf && f.forwardParts),
             };
             const prev = readComposeRowHolds(owner.current);
-            markComposeRowHolds({
-              row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), pending: hash,
-              ...(base.current ? { rev: base.current } : {}),
-            }, owner.current);
+            if (unitStands()) {
+              markComposeRowHolds({
+                row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), pending: hash,
+                ...(base.current ? { rev: base.current } : {}),
+              }, owner.current);
+            }
           }
           openWrite.current = false;
           outcome = { kind: "saved" };
@@ -1173,10 +1197,12 @@ export function useComposeAutosave(opts: {
         // ADOPTED, not assumed. `entityId` is the server's id and is present only on a
         // confirmed create; without it the next pass would create a second row, which is the
         // whole failure this hook exists to avoid.
+        // The row and its holds stand beside the letter, or not at all — see `unitStands`.
+        const unit = unitStands();
         if (row === null && result.entityId) {
           setDraftId(result.entityId);
           // Beside the state, for the reload — see the adoption effect above.
-          writeComposeRow(result.entityId, owner.current);
+          if (unit) writeComposeRow(result.entityId, owner.current);
           /* NOTHING IS WRITTEN ONTO A RECORD HERE, and the reason is worth stating because an
              earlier version of this did exactly that. A save cannot reach this line while an
              unresolved record names the message — the refusal above answers it at write time —
@@ -1190,7 +1216,7 @@ export function useComposeAutosave(opts: {
         pendingLand.current = null;
         if (result.revision) base.current = result.revision;
         const savedRow = row ?? result.entityId;
-        if (savedRow) {
+        if (savedRow && unit) {
           markComposeRowHolds({ row: savedRow, sig: savedHash.current, ...(base.current ? { rev: base.current } : {}) }, owner.current);
         }
         if (mailbox) savedMailbox.current = mailbox;
@@ -1217,7 +1243,7 @@ export function useComposeAutosave(opts: {
     }
     // SENT ELSEWHERE: let go of the row, as its `sent` arriving by `/sync` does; never a new row here.
     if (sentAlready && row !== null && draftIdRef.current === row
-      && !sendRecordNames(COMPOSE_SEND_KEY, row, composeSessionId(owner.current), owner.current)) {
+      && !sendRecordNames(COMPOSE_SEND_KEY, row, sessionNow(), owner.current)) {
       letGo("sent", row);
       return { kind: "nothing" };
     }
@@ -1304,6 +1330,13 @@ export function useComposeAutosave(opts: {
     // `elsewhereAt`: a row let go of at mount changes no other input, and its words wait on this.
   }, [engine, fields, mailboxId, keepRowMailbox, active, draftId, sendInFlight, writeNow, elsewhereAt]);
 
+  /* Declared ABOVE the belt: at unmount the cleanups run in this order, so the composer is gone before it leaves. */
+  useEffect(() => {
+    composerGone.current = false;
+    return () => {
+      composerGone.current = true;
+    };
+  }, []);
   /**
    * THE BELT ON EVERY CLOSE PATH NO DOOR CAN INTERCEPT — the rail, a `g` jump, the browser's
    * Back, the shell unmounting. Routing is hash-driven, so none of them passes through a function

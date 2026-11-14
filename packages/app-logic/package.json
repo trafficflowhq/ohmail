@@ -1360,6 +1360,12 @@
       "node": "./dist/write/files.js",
       "default": "./src/write/files.ts"
     },
+    "./write/image-quality": {
+      "types": "./src/write/image-quality.ts",
+      "ohmail-source": "./src/write/image-quality.ts",
+      "node": "./dist/write/image-quality.js",
+      "default": "./src/write/image-quality.ts"
+    },
     "./write/later": {
       "types": "./src/write/later.ts",
       "ohmail-source": "./src/write/later.ts",
@@ -1395,6 +1401,18 @@
       "ohmail-source": "./src/writing/compose-from.ts",
       "node": "./dist/writing/compose-from.js",
       "default": "./src/writing/compose-from.ts"
+    },
+    "./writing/composer-lists": {
+      "types": "./src/writing/composer-lists.ts",
+      "ohmail-source": "./src/writing/composer-lists.ts",
+      "node": "./dist/writing/composer-lists.js",
+      "default": "./src/writing/composer-lists.ts"
+    },
+    "./writing/composer-record": {
+      "types": "./src/writing/composer-record.ts",
+      "ohmail-source": "./src/writing/composer-record.ts",
+      "node": "./dist/writing/composer-record.js",
+      "default": "./src/writing/composer-record.ts"
     },
     "./writing/composer-types": {
       "types": "./src/writing/composer-types.ts",
@@ -1438,6 +1456,12 @@
       "node": "./dist/writing/mail-send-text.js",
       "default": "./src/writing/mail-send-text.ts"
     },
+    "./writing/recipient-lines": {
+      "types": "./src/writing/recipient-lines.ts",
+      "ohmail-source": "./src/writing/recipient-lines.ts",
+      "node": "./dist/writing/recipient-lines.js",
+      "default": "./src/writing/recipient-lines.ts"
+    },
     "./writing/reply-autosave": {
       "types": "./src/writing/reply-autosave.ts",
       "ohmail-source": "./src/writing/reply-autosave.ts",
@@ -1455,6 +1479,18 @@
       "ohmail-source": "./src/writing/rich-text.ts",
       "node": "./dist/writing/rich-text.js",
       "default": "./src/writing/rich-text.ts"
+    },
+    "./writing/schedule-files": {
+      "types": "./src/writing/schedule-files.ts",
+      "ohmail-source": "./src/writing/schedule-files.ts",
+      "node": "./dist/writing/schedule-files.js",
+      "default": "./src/writing/schedule-files.ts"
+    },
+    "./writing/send-handoff": {
+      "types": "./src/writing/send-handoff.ts",
+      "ohmail-source": "./src/writing/send-handoff.ts",
+      "node": "./dist/writing/send-handoff.js",
+      "default": "./src/writing/send-handoff.ts"
     },
     "./writing/send-line": {
       "types": "./src/writing/send-line.ts",
@@ -1485,6 +1521,12 @@
       "ohmail-source": "./src/writing/signature.ts",
       "node": "./dist/writing/signature.js",
       "default": "./src/writing/signature.ts"
+    },
+    "./writing/writing-of": {
+      "types": "./src/writing/writing-of.ts",
+      "ohmail-source": "./src/writing/writing-of.ts",
+      "node": "./dist/writing/writing-of.js",
+      "default": "./src/writing/writing-of.ts"
     },
     "./writing/send-lock": {
       "types": "./src/writing/send-lock.ts",
