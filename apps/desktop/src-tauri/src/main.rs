@@ -166,6 +166,10 @@ mod text_scale;
 // A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
 mod unclean_exit;
 
+// The released app or a nightly preview of the next version, and the check that the bundler's
+// identifier and the cargo feature name the same one. Always compiled.
+mod variant;
+
 // The window's CSP per platform, read through Tauri's own config merge: each overlay names its
 // webview's one spelling of the command scheme, and the base stays closed.
 #[cfg(test)]
@@ -218,6 +222,11 @@ fn main() {
     }
 
     let context = tauri::generate_context!();
+    // A preview's identifier and a preview's code go together or the app opens nothing: either
+    // half alone would read the released install's key or its folder (`variant.rs`).
+    if let Err(why) = variant::variant_agrees(&context.config().identifier, variant::PREVIEW) {
+        panic!("ohmail: {why}");
+    }
     // Other code's stderr to `stderr.log` beside the log, before setup starts a web process. The
     // identifier is the context's: the Flatpak overlay changes it.
     #[cfg(feature = "local-engine")]

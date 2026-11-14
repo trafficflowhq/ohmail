@@ -6,7 +6,7 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
 /**
  * THE LINUX TEST JOBS MAY RUN ON THE MAINTAINERS' OWN RUNNERS, AND A FORK'S PULL REQUEST NEVER DOES.
  *
- * The suite's jobs and the two engine jobs carry one `runs-on:` expression, byte for byte. It names the maintainers'
+ * The suite's jobs, the two engine jobs and the nightly preview's build carry one `runs-on:` expression, byte for byte. It names the maintainers'
  * self-hosted runners (`self-hosted`, `ohmail-zorin`) only when the repository variable OHMAIL_LINUX_RUNNER reads
  * `zorin`, the run is this repository's own, no bot started it (neither `github.actor` nor `github.triggering_actor`
  * ends in `[bot]`), and it is the nightly schedule, a push to main or to `next` (the second long-lived line, protected as main is),
@@ -22,8 +22,10 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  * flatpak-builder unzips with a tool that image does not carry.
  *
  * What must hold, read off the files and evaluated as written:
- *   · exactly the ten jobs carry the expression, with their names (and so the required contexts) unchanged; no other
- *     job does, and no file under .github/ but ci.yml and build.yml names the runners or the variable;
+ *   · exactly the eleven jobs carry the expression, with their names (and so the required contexts) unchanged; no other
+ *     job does, and no file under .github/ but ci.yml, build.yml and preview.yml names the runners or the variable;
+ *   · preview.yml's job, which builds the desktop app and is never to run on GitHub's runners, refuses one in its
+ *     first step: the expression's other end is `ubuntu-24.04`, and the job must build nothing there;
  *   · no job runs on the floating `ubuntu-latest`;
  *   · a routed job reads no secret, takes no environment and uses no cache — the runner is a machine of ours;
  *   · the expression routes as above, and each of its guards is watched failing.
@@ -40,6 +42,7 @@ export const ROUTED: Record<string, Record<string, string>> = {
     typecheck: "typecheck", desktop: "suite · desktop",
   },
   "build.yml": { engine: "engine · typecheck · build", "engine-ui-smoke": "engine-bearing UI · scan · smoke" },
+  "preview.yml": { "desktop-preview-linux": "preview · Linux desktop · AppImage" },
 };
 const NAMING = /self-hosted|ohmail-zorin|OHMAIL_LINUX_RUNNER/;
 const ROUTING = /ohmail-zorin|OHMAIL_LINUX_RUNNER/;
@@ -82,7 +85,7 @@ export function routeFindings(files: Record<string, string>): string[] {
         out.push(`${file}: ${j.name} routes to the self-hosted runners`);
       }
     }
-    /* Outside the ten runs-on lines, ci.yml and build.yml name the runners in comments only; any other file not at all. */
+    /* Outside the eleven runs-on lines, ci.yml, build.yml and preview.yml name the runners in comments only; any other file not at all. */
     const routedLines = new Set(Object.keys(routed).length ? [`    runs-on: ${ROUTE}`] : []);
     const pattern = file in ROUTED ? ROUTING : NAMING;
     executed(text).forEach((l) => {
@@ -218,7 +221,7 @@ describe("the value evaluator (test/support/workflow-if.ts)", () => {
 describe("the Linux test jobs and the switch to the self-hosted runners", () => {
   const files = githubFiles();
 
-  it("exactly the ten jobs carry the routing expression byte for byte, their names kept; no other job or file names the runners", () => {
+  it("exactly the eleven jobs carry the routing expression byte for byte, their names kept; no other job or file names the runners", () => {
     expect(Object.keys(files)).toEqual(expect.arrayContaining(["ci.yml", "build.yml", "android.yml", "guard.yml", "dco.yml", "assert-pr-guard.sh"]));
     expect(routeFindings(files)).toEqual([]);
     const carrying = Object.entries(files).flatMap(([f, t]) => jobsOf(t).filter((j) => field(j.body, "runs-on") === ROUTE).map((j) => `${f}:${j.name}`));
@@ -231,6 +234,26 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
         expect(executed(j.body).join("\n"), `${f}: ${j.name}`).not.toMatch(/\bsecrets\.|^ {4}environment:|uses: actions\/cache[@/]/m);
       }
     }
+  });
+
+  it("the preview's build refuses a GitHub-hosted runner before any other step, and no pull request starts it", () => {
+    /** The job's steps as written, comments dropped, in order. */
+    const stepsOf = (text: string) => executed(jobsOf(text).find((j) => j.name === "desktop-preview-linux")!.body).join("\n").split(/\n(?= {6}- )/).slice(1);
+    const first = stepsOf(files["preview.yml"])[0]!;
+    expect(first).not.toMatch(/\buses:/);
+    expect(first).toMatch(/\bexit 1\b/);
+    /* The step's own condition, evaluated as written on each pool. */
+    const condition = /^ {8}if: (.+)$/m.exec(first)?.[1] ?? "";
+    expect(evalIf(condition, { "runner.environment": "github-hosted" })).toBe(true);
+    expect(evalIf(condition, { "runner.environment": "self-hosted" })).toBe(false);
+    /* A dispatch, and a push to `next` alone: a pull request, a fork's included, never starts the build. */
+    const on = /\non:\n([\s\S]*?)\n(?=[a-z])/.exec(executed(files["preview.yml"]).join("\n"))?.[1] ?? "";
+    expect([...on.matchAll(/^ {2}([a-z_]+):/gm)].map((m) => m[1]).sort()).toEqual(["push", "workflow_dispatch"]);
+    expect(on).toMatch(/^ {4}branches: \[next\]$/m);
+    /* Planted: the guard dropped, and a routed-away run would go on to check out and build on GitHub's runners. */
+    const unguarded = files["preview.yml"].replace(/ {6}- name: This build runs on the maintainers' own runners only\n(?: {8}.*\n)+?\n/, "");
+    expect(unguarded).not.toBe(files["preview.yml"]);
+    expect(stepsOf(unguarded)[0]).toMatch(/^ {6}- uses: actions\/checkout@/);
   });
 
   it("routes to the self-hosted runners only when the switch reads zorin, for this repository's maintainers' runs", () => {

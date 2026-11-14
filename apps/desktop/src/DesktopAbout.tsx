@@ -14,10 +14,10 @@ import { Button, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } f
 import { MIRROR_ENTITY_TYPES } from "@ohmail/client-engine";
 
 import { bridgeAvailable, type EngineStatus } from "./bridge-fetch.js";
-import { BUILD_LABEL } from "./build-id.js";
+import { BUILD_LABEL, BUILD_SHA } from "./build-id.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { isDesktopHost, isManagedDoor, pairedHostOf } from "./doors.js";
-import { selfUpdates } from "./distribution.js";
+import { isPreview, selfUpdates } from "./distribution.js";
 import { DesktopUpdate } from "./DesktopUpdate.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
@@ -95,6 +95,15 @@ export function DesktopAbout({ status }: { status: EngineStatus }) {
         description={DOOR_COPY.aboutAppWhy}
         value={BUILD_LABEL}
       />
+      {/* A nightly preview says so under the build it is, with the whole commit: the mark on
+          every screen carries the short one. A released build has no such row. */}
+      {isPreview() ? (
+        <SettingsRow
+          label={DOOR_COPY.aboutPreviewLabel}
+          description={DOOR_COPY.aboutPreviewWhy}
+          value={BUILD_SHA || DOOR_COPY.aboutPreviewUnstamped}
+        />
+      ) : null}
       <SettingsRow
         label={DOOR_COPY.aboutPublisher}
         description={DOOR_COPY.aboutPublisherWhy}

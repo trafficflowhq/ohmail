@@ -252,6 +252,17 @@ pub fn serve_arm_args(port: u16) -> [String; 4] {
     ]
 }
 
+/// Why a PREVIEW build does not publish itself to the tailnet, or `None` on the released app.
+///
+/// The registration is one per computer, on the port above: a preview that armed it would take
+/// the route an installed ohmail on the same computer serves its other devices through, and
+/// withdraw it when it stood down.
+pub fn preview_arm_refusal(preview: bool) -> Option<&'static str> {
+    preview.then_some(
+        "A preview build does not serve other devices: this computer's installed ohmail keeps that route.",
+    )
+}
+
 /// Withdraw the registration: `serve --https=443 off` — the CLI's own documented off-switch
 /// ("To disable the proxy, run: tailscale serve --https=443 off").
 pub fn serve_disarm_args() -> [String; 3] {
@@ -1501,6 +1512,9 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     autostart: bool,
     lan: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    if let Some(why) = preview_arm_refusal(crate::variant::PREVIEW) {
+        return Err(why.to_string());
+    }
     if port == 0 {
         // The frozen contract: 1–65535. Port 0 means "any free port", and the registration
         // this command creates points at ONE.

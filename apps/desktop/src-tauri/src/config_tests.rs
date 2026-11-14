@@ -1384,3 +1384,40 @@ fn a_removed_seal_is_flushed_whether_this_call_or_the_engine_removed_it() {
     remove_sealed_session(&root, Mode::Cloud).expect("the real flush never refuses a sign-out");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A preview build signs in to a preview server and to nothing people's mail depends on: this
+/// computer, or a name only a tailnet's own devices reach. Planted first with the hosted
+/// service's own address, which is the door this exists to keep shut.
+#[test]
+fn a_preview_opens_only_a_server_on_this_computer_or_a_tailnet() {
+    let door = |url: &str| {
+        Config::Cloud(CloudDoor { cloud_url: url.to_string(), ..match cloud_door() {
+            Config::Cloud(c) => c,
+            Config::Local(_) => unreachable!("cloud_door is a cloud door"),
+        } })
+    };
+    for refused in [
+        MANAGED_CLOUD_BASE,
+        "https://api.ohmail.app/",
+        "https://mail.example.org/api",
+        "https://ts.net",
+        "https://desk.tail1234.ts.net.example.org",
+        "https://192.168.1.20:8443",
+        "https://not a host",
+    ] {
+        let why = preview_door_refusal(&door(refused));
+        assert!(why.is_some_and(|w| w.contains("tailnet")), "{refused} was admitted");
+    }
+    for admitted in [
+        "https://desk.tail1234.ts.net:9443",
+        "https://desk.tail1234.ts.net./api",
+        "https://DESK.Tail1234.TS.NET",
+        "http://127.0.0.1:9300",
+        "http://localhost:3080/api",
+        "https://[::1]:9443",
+    ] {
+        assert_eq!(preview_door_refusal(&door(admitted)), None, "{admitted} was refused");
+    }
+    // The local door names a mailbox, not a server of ours, and is never this rule's question.
+    assert_eq!(preview_door_refusal(&local_door()), None);
+}

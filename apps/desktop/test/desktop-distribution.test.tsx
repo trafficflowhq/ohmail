@@ -6,8 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import messages from "../../webapp/messages/en.json";
-import { DISTRIBUTIONS, linksOutToBilling, selfUpdates } from "../src/distribution.js";
-import type { AccessRefusedFacts } from "../src/bridge-fetch.js";
+import { DISTRIBUTIONS, isPreview, linksOutToBilling, selfUpdates } from "../src/distribution.js";
+import type { AccessRefusedFacts, EngineStatus } from "../src/bridge-fetch.js";
+import { buildVariant } from "../scripts/build-variant.mjs";
 
 /**
  * ═══ THE MAC APP STORE BUILD WITHHOLDS TWO SURFACES, AND THE DOWNLOAD PAGE'S KEEPS THEM ═══
@@ -110,14 +111,70 @@ async function cloudDoor(distribution: string): Promise<{ text: string; buttons:
   return { text: el.textContent ?? "", buttons: [...el.querySelectorAll("button")].map((b) => b.textContent ?? "") };
 }
 
+/** The mark every screen carries and Settings → About, under one distribution, as their text. */
+async function markAndAbout(distribution: string, commit: string): Promise<{ mark: string; about: string }> {
+  vi.resetModules();
+  vi.doMock("../src/distribution.js", () => ({
+    DISTRIBUTIONS: ["direct", "mas", "preview"],
+    DISTRIBUTION: distribution,
+    selfUpdates: () => distribution === "direct",
+    linksOutToBilling: () => distribution === "direct",
+    isPreview: () => distribution === "preview",
+  }));
+  vi.doMock("../src/build-id.js", () => ({ BUILD_LABEL: "1.0.11", BUILD_VERSION: "1.0.11", BUILD_SHA: commit }));
+  const { PreviewMark } = await import("../src/PreviewMark.js") as { PreviewMark: () => React.ReactElement | null };
+  const { DesktopAbout } = await import("../src/DesktopAbout.js") as {
+    DesktopAbout: (p: { status: EngineStatus }) => React.ReactElement;
+  };
+  const status = { state: "serving", mode: "local", credentialState: "ready", address: "mila@preview.test", mailboxId: "mbx-1" } as EngineStatus;
+  const text = async (node: React.ReactElement): Promise<string> => {
+    if (root) await act(() => { root?.unmount(); });
+    host?.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host as HTMLDivElement);
+    await act(() => {
+      root?.render(h(NextIntlClientProvider, { locale: "en", messages: messages as never, timeZone: "UTC", children: node }));
+    });
+    return (host as HTMLDivElement).textContent ?? "";
+  };
+  const out = { mark: await text(h(PreviewMark)), about: await text(h(DesktopAbout, { status })) };
+  vi.doUnmock("../src/build-id.js");
+  return out;
+}
+
 describe("the distribution decides two surfaces, and nothing else does", () => {
   it("the predicates answer per distribution, and `direct` is the control", () => {
     expect(selfUpdates("direct")).toBe(true);
     expect(linksOutToBilling("direct")).toBe(true);
     expect(selfUpdates("mas")).toBe(false);
     expect(linksOutToBilling("mas")).toBe(false);
-    /* Exactly two, so a third added without a decision about these surfaces fails here. */
-    expect([...DISTRIBUTIONS]).toEqual(["direct", "mas"]);
+    /* A nightly preview is replaced by the next night's build and has no hosted account to bill. */
+    expect(selfUpdates("preview")).toBe(false);
+    expect(linksOutToBilling("preview")).toBe(false);
+    expect([isPreview("direct"), isPreview("mas"), isPreview("preview")]).toEqual([false, false, true]);
+    /* Exactly three, so a fourth added without a decision about these surfaces fails here. */
+    expect([...DISTRIBUTIONS]).toEqual(["direct", "mas", "preview"]);
+  });
+
+  it("a preview says it is one on every screen and in About, with its commit; a released build says nothing", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const preview = await markAndAbout("preview", commit);
+    expect(preview.mark).toBe(messages.desktopDoor.previewMark.replace("{commit}", "0123456"));
+    expect(preview.about).toContain(messages.desktopDoor.aboutPreviewLabel);
+    expect(preview.about).toContain(commit);
+    /* The next night's build is its update, so About offers no check of its own. */
+    expect(preview.about).not.toContain(messages.update.label);
+
+    const unstamped = await markAndAbout("preview", "");
+    expect(unstamped.mark).toBe(messages.desktopDoor.previewMarkUnstamped);
+    expect(unstamped.about).toContain(messages.desktopDoor.aboutPreviewUnstamped);
+
+    /* THE CONTROL: the same two surfaces on the download build. */
+    const direct = await markAndAbout("direct", commit);
+    expect(direct.mark).toBe("");
+    expect(direct.about).not.toContain(messages.desktopDoor.aboutPreviewLabel);
+    expect(direct.about).not.toContain(commit);
   });
 
   it("the lock keeps its way back on the download build and drops it on the store build", async () => {
@@ -157,9 +214,11 @@ describe("the distribution decides two surfaces, and nothing else does", () => {
 
   it("one flag moves BOTH halves, so a window and a shell cannot disagree about the distribution", () => {
     const build = readFileSync("apps/desktop/scripts/build-engine-app.mjs", "utf8");
-    /* The window's literal is set from the same variable the cargo feature is appended from. */
+    /* The window's literal is set from the same word the cargo features are selected by. */
     expect(build).toContain("OHMAIL_DISTRIBUTION: distribution");
-    expect(build).toContain('["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(",")');
+    expect(build).toContain("buildVariant({ distribution, platform: process.platform })");
+    expect(buildVariant({ distribution: "mas", platform: "darwin" }).features).toBe("local-engine,mas");
+    expect(buildVariant({ distribution: "direct", platform: "darwin" }).features).toBe("local-engine");
     /* THE CONTROL: a second `--features` flag is what this replaced, and it must not come back —
        whether a repeated flag appends or replaces is the CLI's business, not an artifact's. */
     expect([...build.matchAll(/"--features"/g)]).toHaveLength(1);

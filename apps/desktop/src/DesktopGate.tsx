@@ -68,7 +68,8 @@ import { DOOR_COPY, keyringSentence, machineWord } from "./door-copy.js";
 import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
-import { linksOutToBilling } from "./distribution.js";
+import { isPreview, linksOutToBilling } from "./distribution.js";
+import { PreviewMark } from "./PreviewMark.js";
 import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { liveBodyVia } from "../../webapp/app/shell/live-body";
@@ -277,6 +278,7 @@ export function DesktopGate() {
     <>
       <GateScreens onLinkAsk={setAsk} />
       {ask ? <LinkAsk key={ask.token} ask={ask} onClose={() => setAsk(null)} /> : null}
+      <PreviewMark />
     </>
   );
 }
@@ -1723,7 +1725,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
         /* SETTINGS → GENERAL, THE DEFAULT-MAIL ROW. Present whenever the shell answered — the
            question is about this COMPUTER, not about a door, so both doors get it. Every read
            and verb in the row is a shell command (`DesktopDefaultMail.tsx`). */
-        {...(status ? { defaultMailSection: <DefaultMailRow /> } : {})}
+        {...(status && !isPreview() ? { defaultMailSection: <DefaultMailRow /> } : {})}
         /* THE ONE-TIME DEFAULT-MAIL ASK — in the stage's card slot above the mail, once a mailbox is
            connected, and never twice: either answer persists, and "already the default" persists too;
            the Settings row is the durable way back for "Not now". In the flow, so it covers no Save.

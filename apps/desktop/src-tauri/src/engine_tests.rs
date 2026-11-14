@@ -2933,6 +2933,58 @@ fn the_older_coordinates_are_the_ones_the_earlier_version_wrote() {
     assert_ne!(LEGACY_KEYSTORE_SERVICE, KEYSTORE_SERVICE);
 }
 
+/// A preview runs beside a released install, so it keeps its key under a name of its own and
+/// never asks for an earlier version's. The released app's name is a name a device already
+/// carries and stays what it was.
+#[test]
+fn a_preview_keeps_its_own_key_and_never_reads_an_installs() {
+    assert_eq!(keystore_service(false), "ohmail");
+    assert_eq!(keystore_service(true), "ohmail-preview");
+    assert_eq!(KEYSTORE_SERVICE, keystore_service(cfg!(feature = "preview")));
+    let installed = a_key('c');
+    assert_eq!(older_key(false, || Stored::Key(installed.clone())), Stored::Key(installed));
+    assert_eq!(
+        older_key(true, || panic!("a preview asked for the released install's key")),
+        Stored::Empty
+    );
+}
+
+/// With no stored door the data directory may come from the environment, and a shell that still
+/// names the released install's folder there must not hand it to a preview.
+#[test]
+fn a_preview_opens_its_own_data_directory_whatever_the_environment_names() {
+    let installed = "/home/someone/.local/share/io.ohmail.desktop";
+    let shell = |name: &str| -> Option<String> {
+        match name {
+            DATA_DIR_VAR => Some(installed.to_string()),
+            "OHMAIL_MODE" => Some("local".to_string()),
+            _ => None,
+        }
+    };
+    assert_eq!(launch_env(DATA_DIR_VAR, true, &shell), None);
+    assert_eq!(launch_env("OHMAIL_MODE", true, &shell), Some("local".to_string()));
+    // The released app keeps the development path: the environment names the directory.
+    assert_eq!(launch_env(DATA_DIR_VAR, false, &shell), Some(installed.to_string()));
+
+    // And the plan a preview's reading leads to opens the app's own folder.
+    let own = PathBuf::from("/home/someone/.local/share/io.ohmail.preview");
+    let read = |name: &str| -> Option<String> {
+        match name {
+            ENGINE_PATH_VAR => Some("/opt/ohmail/engine.mjs".to_string()),
+            NODE_PATH_VAR => Some("/opt/ohmail/node".to_string()),
+            other => launch_env(other, true, &shell),
+        }
+    };
+    let look = |_: &Path| Found::Runnable;
+    match plan_with(&read, None, Some(&own), &[], None, &look) {
+        Plan::Spawn(launch) => assert_eq!(
+            launch.env,
+            vec![(OsString::from(DATA_DIR_VAR), own.into_os_string())],
+        ),
+        other => panic!("the preview's plan did not start an engine: {other:?}"),
+    }
+}
+
 // ── The key file ────────────────────────────────────────────────────────────────────────────
 //
 // Driven against a real directory rather than through closures, because the things that can go

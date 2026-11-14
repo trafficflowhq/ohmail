@@ -314,6 +314,27 @@ fn checked_cloud_url(value: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+/// Why a PREVIEW build may not open this door, or `None` when it may.
+///
+/// A preview is a nightly build of the next version, made to be tried against a preview server:
+/// one on this computer, or one on a tailnet (a `.ts.net` name, which only that tailnet's own
+/// devices reach). Any other server door is refused, the hosted service first of all, so a build
+/// nobody has released yet never signs in to a server people's mail depends on. The local door is
+/// a mailbox the person names themselves and is not this function's question.
+pub fn preview_door_refusal(config: &Config) -> Option<String> {
+    let Config::Cloud(door) = config else {
+        return None;
+    };
+    let private = door_host(&door.cloud_url).is_some_and(|host| {
+        is_loopback(&host) || host.trim_end_matches('.').ends_with(".ts.net")
+    });
+    (!private).then(|| {
+        "a preview build opens only a server on this computer or on your tailnet (a .ts.net \
+         address); use the released ohmail for this one"
+            .to_string()
+    })
+}
+
 /// The HOST a cloud door's address names, lower-cased — or `None` when it names none this process
 /// can read as written.
 ///

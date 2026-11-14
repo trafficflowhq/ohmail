@@ -153,7 +153,7 @@ export type RunEvent = { event: string; action?: string; ref: string; cron?: "da
 
 /** The filters each trigger may carry here; any other (a path filter included) refuses. */
 const FILTERS: Record<string, string[]> = {
-  push: ["branches", "tags"], pull_request: ["types"], pull_request_target: ["types"], release: ["types"],
+  push: ["branches", "tags", "paths"], pull_request: ["types"], pull_request_target: ["types"], release: ["types"],
   merge_group: ["types"], workflow_dispatch: ["inputs"],
 };
 
@@ -175,7 +175,8 @@ const cadence = (cron: string) => {
 /**
  * Whether a workflow's `on:` starts a run for the event: a push by its branch and tag globs (a push filtered on
  * one kind of ref starts nothing for the other), a pull request or a release by its `types` (a pull request's
- * default three when none), a schedule by its cadence.
+ * default three when none), a schedule by its cadence. A push's `paths` filter narrows it by the files the push
+ * changes, which an event here does not carry: it is read as the widest case, a push that changes them.
  */
 export function startsOn(on: unknown, ev: RunEvent): boolean {
   const triggers = (typeof on === "string" ? { [on]: null } : Array.isArray(on) ? Object.fromEntries(on.map((k) => [String(k), null])) : on ?? {}) as Record<string, unknown>;
