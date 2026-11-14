@@ -10,11 +10,12 @@
  */
 
 import {
-  ACCOUNT_ERASED, ERASED_ANSWER_HEADER, isCredentialRefusal, isSessionRefusal, readRefreshAnswer,
+  ACCOUNT_ERASED, clientHeaders, ERASED_ANSWER_HEADER, isCredentialRefusal, isSessionRefusal, readRefreshAnswer,
   REFRESH_REVOKED, sessionEndedResponse,
 } from "@ohmail/client-engine";
 import type { SessionRenewalDoor } from "@ohmail/client-engine";
 import type { RefreshWrite } from "../state/servers";
+import { sameOrigin } from "./request-base";
 
 /** The wire pair the redeem and the refresh both answer — the desktop manager's exact shape. */
 export interface BearerTokens {
@@ -166,6 +167,8 @@ export class BearerManagerRN implements SessionRenewalDoor {
   private readonly accountId: string | null;
   private readonly vault: RefreshVault;
   private readonly fetchImpl: FetchLike;
+  /** `x-ohmail-client: phone/<release>`, on every ask this manager makes of its own origin. */
+  private readonly clientPair: Readonly<Record<string, string>>;
   /** The single flight — one rotation at a time, because a duplicate presentation reads as theft. */
   private rotating: Promise<boolean> | null = null;
   /**
@@ -208,7 +211,10 @@ export class BearerManagerRN implements SessionRenewalDoor {
     accountId?: string | null;
     vault: RefreshVault;
     fetchImpl?: FetchLike;
+    /** The app's release (`app.json`), read by the composition and handed in: no expo import here. */
+    clientRelease?: string;
   }) {
+    this.clientPair = clientHeaders("phone", opts.clientRelease);
     this.origin = opts.origin.replace(/\/+$/, "");
     this.accountId = opts.accountId ?? null;
     this.access = opts.accessToken ?? null;
@@ -295,7 +301,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
   /** The extra-headers seam's value — `HttpAdapterOptions.headers` calls this per request. */
   headers(): Record<string, string> {
     // Every ask declares it understands `410 account_erased` (the server answers 401 otherwise).
-    const declared = { [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED };
+    const declared = { [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED, ...this.clientPair };
     return this.access !== null ? { ...declared, authorization: `Bearer ${this.access}` } : declared;
   }
 
@@ -373,7 +379,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
       try {
         res = await this.fetchImpl(`${this.origin}/auth/refresh`, {
           method: "POST",
-          headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED },
+          headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED, ...this.clientPair },
           body: JSON.stringify({ refreshToken: presented, attemptId }),
         });
       } catch {
@@ -446,11 +452,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
 
   /** Is this request for the origin this pair was minted by. An unreadable URL is not. */
   private ownOrigin(url: string): boolean {
-    try {
-      return new URL(url).origin === new URL(this.origin).origin;
-    } catch {
-      return false;
-    }
+    return sameOrigin(url, this.origin);
   }
 
   /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
@@ -527,7 +529,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     if (refresh === null) return false;
     const door = await this.fetchImpl(`${this.origin}/auth/refresh/logout`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...this.clientPair },
       body: JSON.stringify({ refreshToken: refresh }),
     });
     if (door.ok) return true;

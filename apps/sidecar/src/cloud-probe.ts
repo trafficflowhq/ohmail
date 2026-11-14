@@ -1,4 +1,5 @@
 import { originNeedsPin } from "@trafficflow/core/pair-link";
+import { namingFetch } from "./client-name.js";
 import { apiBaseFor, normalizeOrigin, OPERATOR_CA_FILE } from "./cloud-origin.js";
 import { createHostFetch, probeHostPin } from "./host-pin-probe.js";
 import type { Diagnostic } from "./log.js";
@@ -429,6 +430,8 @@ export interface CloudProbeDoor {
   operatorCaFile?: string;
   /** The test seam for a CANDIDATE dial — never the transport of the door being left. */
   fetchImpl?: typeof fetch;
+  /** The release this engine is a build of: every dial below names the engine with it (`client-name.ts`). */
+  clientRelease?: string;
   log?: Diagnostic;
   /**
    * The engine's own configured server, which the no-origin arm probes. `null` on the local
@@ -446,6 +449,8 @@ export const CLOUD_PROBE_ROUTE = "/cloud/probe";
  * `normalizeOrigin`. It asks `/hello`, because only `/hello` names the product and the flavor.
  */
 export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Promise<Response> {
+  /** Whichever transport an arm below dials with, the server it reaches is told who asks. */
+  const named = (transport: typeof fetch): typeof fetch => namingFetch(transport, door.clientRelease);
   let candidate: unknown = null;
   let wantFlavor: unknown = null;
   let wantPin: unknown = null;
@@ -478,7 +483,7 @@ export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Prom
         400,
       );
     }
-    return probeCloudServer(door.configured.base, door.configured.fetchImpl, door.configured.caFile);
+    return probeCloudServer(door.configured.base, named(door.configured.fetchImpl), door.configured.caFile);
   }
   if (typeof candidate !== "string") {
     return json(
@@ -580,13 +585,13 @@ export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Prom
       /* AND THE GREETING IS FETCHED OVER THE PINNED CONNECTION, not an ordinary one. Proving
          the key and then asking the question over a connection that did not check it would
          be answering about whatever holds the address now. */
-      const pinned = door.fetchImpl ?? createHostFetch({
+      const pinned = named(door.fetchImpl ?? createHostFetch({
         origin, pin, dataDir: door.dataDir, ...(door.log ? { log: door.log } : {}),
-      });
+      }));
       const said = await refuseUnlessDesktopHost(await probeCloudDoor(origin, pinned), origin);
       return refuseSpentLink(said, tokenHash, pinned);
     }
-    const plain = door.fetchImpl ?? fetch;
+    const plain = named(door.fetchImpl ?? fetch);
     const said = await refuseUnlessDesktopHost(await probeCloudDoor(origin, plain), origin);
     return refuseSpentLink(said, tokenHash, plain);
   }
@@ -602,7 +607,7 @@ export async function answerCloudProbe(req: Request, door: CloudProbeDoor): Prom
      server is dialled exactly as before. */
   return probeCloudDoor(
     origin,
-    door.fetchImpl ?? probeTransport(door, door.log),
+    named(door.fetchImpl ?? probeTransport(door, door.log)),
     operatorCaFiles(door).file,
   );
 }

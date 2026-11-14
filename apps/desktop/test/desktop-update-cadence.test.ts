@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import ts from "typescript";
 
 import {
+  announceUpdate,
   currentUpdateOffer,
   currentVersion,
   holdFilesForRestart,
@@ -968,6 +969,30 @@ describe("the cadence, running", () => {
     now = report();
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
     expect(currentUpdateOffer()).toBeNull();
+    stop();
+  });
+
+  it("A SERVER'S ANSWER STANDS WHEN THE REPORT HAS NO LINE: it is not the report's to withdraw; a line the report has replaces it", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    let now = report();
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at });
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+
+    for (const kind of ["tooOld", "serverUpdating"] as const) {
+      announceUpdate({ kind, key: `answer:${kind}`, ...(kind === "tooOld" ? { verb: "update" as const, act: () => {} } : {}) });
+      // Reports with nothing to say, polled and pushed: the answer is still standing.
+      await vi.advanceTimersByTimeAsync(POLL_EVERY_MS * 2);
+      s.tell(report());
+      expect(currentUpdateOffer()?.kind, `${kind} was withdrawn by a report with no line`).toBe(kind);
+    }
+
+    // A release that is ready is the fix: it takes the line.
+    announceUpdate({ kind: "tooOld", key: "answer:tooOld", verb: "update", act: () => {} });
+    now = report({ state: "ready", offered: NEXT, canInstall: true, lastResult: "offered" });
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    expect(currentUpdateOffer()?.kind).toBe("ready");
     stop();
   });
 

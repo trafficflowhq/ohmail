@@ -75,11 +75,23 @@ export function UpdateLine() {
         ? t("lineDownloading", { version })
         : offer.kind === "failed"
           ? t(offer.failed === "install" ? "lineInstallFailed" : "lineCheckFailed")
-          : t("lineReady", { version });
+          : offer.kind === "tooOld"
+            ? t("lineTooOld")
+            : offer.kind === "serverUpdating"
+              ? t("lineServerUpdating")
+              : t("lineReady", { version });
   const verb =
-    offer.kind === "reload" ? t("lineReloadAction") : offer.kind === "failed" ? t("lineRetry") : t("lineRestart");
+    offer.kind === "reload"
+      ? t("lineReloadAction")
+      : offer.kind === "tooOld"
+        ? t(offer.verb === "update" ? "lineUpdateAction" : "lineReloadAction")
+        : offer.kind === "failed"
+          ? t("lineRetry")
+          : t("lineRestart");
   const mark =
-    offer.kind === "downloading" || offer.kind === "failed" ? "upd-mark hollow" : held ? "upd-mark wait" : "upd-mark";
+    offer.kind === "downloading" || offer.kind === "failed" || offer.kind === "serverUpdating"
+      ? "upd-mark hollow"
+      : held ? "upd-mark wait" : "upd-mark";
 
   /* An open editor's unsaved words are written first; its files hold the restart instead. */
   const press = async (act: () => void): Promise<void> => {

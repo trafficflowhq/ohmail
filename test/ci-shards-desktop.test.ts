@@ -25,6 +25,7 @@ describe("the desktop job's files in this tree", () => {
       "apps/desktop/test/desktop-shell.test.ts",
       "apps/desktop/test/host-client-arm.test.ts",
       "apps/desktop/test/host-client-no-engine-door.test.ts",
+      "apps/desktop/test/journeys-host.test.ts",
       "apps/desktop/test/one-react.test.tsx",
     ]);
     expect(readMap(ROOT).shards.flat().filter((f) => files.includes(f))).toEqual([]);

@@ -90,6 +90,8 @@ export interface CloudSidecarConfig {
   attachmentStagingDir?: string;
   /** The hosted API base — the managed service's public default origin. */
   cloudUrl: string;
+  /** The release this engine is a build of (`BAKED_ENGINE_VERSION`), named to the server in `x-ohmail-client`. */
+  engineRelease?: string;
   /**
    * THE ONE SERVER A BROWSER HAND-OFF MAY BE PERFORMED AGAINST. Absent ⇒ {@link MANAGED_CLOUD_BASE}.
    *
@@ -828,6 +830,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         "with no query, fragment or embedded credentials.",
     );
   }
+  /** The release this engine names itself with, spread into every door that dials a server (`client-name.ts`). */
+  const engineNamed: { clientRelease?: string } = config.engineRelease ? { clientRelease: config.engineRelease } : {};
 
   // ── THE BOOT CLOCK — the same bracket `engine.ts` puts round its own constructor ─────────
   //
@@ -1083,6 +1087,23 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
      */
     let accountErasedLatch = readMirrorErased(config.dataDir);
 
+    /**
+     * ONE `GET /hello` PER LAUNCH, at the first pull the server answers. A server counts the builds
+     * in use by that request (it names this engine and its release, as every request does), and
+     * nothing else a signed-in engine does at a start asks there. The answer is not read. A request
+     * that never arrived is asked again at the next served pull; one the server answered, however
+     * it answered, is not, and a later session of the same launch says nothing more.
+     */
+    let greeted = false;
+    const greetOnce = (auth: CloudAuth): void => {
+      if (greeted) return;
+      greeted = true;
+      void auth.authedFetch("/hello").then(
+        (res) => { void res.body?.cancel().catch(() => undefined); },
+        () => { greeted = false; },
+      );
+    };
+
     const activate = (tokens: CloudTokens): Authed => {
       // Signed in: a browser request still on /health would be resumed over the session.
       holdApproval(null);
@@ -1096,6 +1117,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       forgetRefusal();
       const auth = createCloudAuth({
         baseUrl: cloudBase,
+        ...engineNamed,
         tokens,
         ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
         ...(keyProvider ? { keyProvider } : {}),
@@ -1159,7 +1181,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         ...(config.pageLimit !== undefined ? { pageLimit: config.pageLimit } : {}),
         ...(config.pollIntervalMs !== undefined ? { pollIntervalMs: config.pollIntervalMs } : {}),
         ...(config.walledPollMs !== undefined ? { walledPollMs: config.walledPollMs } : {}),
-        onServed: () => { wake?.rearm(); },
+        onServed: () => { wake?.rearm(); greetOnce(auth); },
         wakeLive: () => wake?.live() ?? false,
       });
 
@@ -1541,6 +1563,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           dataDir: config.dataDir,
           ...(config.operatorCaFile ? { operatorCaFile: config.operatorCaFile } : {}),
           ...(injectedFetch ? { fetchImpl: injectedFetch } : {}),
+          ...engineNamed,
           ...(log ? { log } : {}),
           configured: {
             base: cloudBase,
@@ -1616,6 +1639,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           const started = await requestDesktopApproval(
             {
               baseUrl: cloudBase,
+              ...engineNamed,
               label: hostname(),
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
@@ -1732,6 +1756,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             const polled = await pollDesktopApproval(
               {
                 baseUrl: cloudBase,
+                ...engineNamed,
                 verifier: approval.verifier,
                 ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
                 ...(log ? { log } : {}),
@@ -1759,6 +1784,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           } else tokens = await cloudSignIn(
             {
               baseUrl: cloudBase,
+              ...engineNamed,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
               // FROM THE BINDING ABOVE, NEVER FROM `body`. The verifier is an OPTION and not a
@@ -1813,6 +1839,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           hostedAddress = await cloudIdentity(
             {
               baseUrl: cloudBase,
+              ...engineNamed,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),
             },
@@ -2014,6 +2041,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           redeemed = await redeemPairingToken(
             {
               baseUrl: cloudBase,
+              ...engineNamed,
               deviceKind: declaredDeviceKind,
               ...(config.fetchImpl ? { fetchImpl: config.fetchImpl } : {}),
               ...(log ? { log } : {}),

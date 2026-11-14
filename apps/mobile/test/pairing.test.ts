@@ -29,6 +29,7 @@ import {
   connectProfileById,
   mobileDeviceKind,
   negotiate,
+  pairingFetch,
   nextStep,
   parsePairLink,
   pairWithServer,
@@ -53,7 +54,7 @@ function memoryKV(): SecureKV {
   };
 }
 
-function testEnv(deviceKind?: MobileDeviceKind): { env: PairingEnv; world: ReturnType<typeof sqlWorld> } {
+function testEnv(deviceKind?: MobileDeviceKind, clientRelease?: string): { env: PairingEnv; world: ReturnType<typeof sqlWorld> } {
   const world = sqlWorld();
   const deps: MobileEngineDeps = {
     openExecutor: world.open,
@@ -65,6 +66,7 @@ function testEnv(deviceKind?: MobileDeviceKind): { env: PairingEnv; world: Retur
       profiles: new ServerProfileStore(memoryKV()),
       engineDeps: deps,
       ...(deviceKind ? { deviceKind } : {}),
+      ...(clientRelease ? { clientRelease } : {}),
     },
     world,
   };
@@ -214,6 +216,49 @@ describe("negotiate — the /hello probe", () => {
 });
 
 /* ── THE PERSON IN THE MIDDLE: a scan is not a decision ─────────────────────────────────────── */
+
+describe("the phone names itself to a server on every request: its kind and the app's release", () => {
+  it("the hello, the probe, the redeem and the session's own reads each carry it, once", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "desktop-host", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.mintPairToken("tok-named");
+      const { env } = testEnv(undefined, "1.2.3");
+      const probed = await probePairing(env, { origin });
+      expect(probed.kind).toBe("offers");
+      if (probed.kind !== "offers") return;
+      const paired = await pairWithServer(env, { admission: probed.admission, token: "tok-named" });
+      expect(paired.kind).toBe("paired");
+      if (paired.kind !== "paired") return;
+      await paired.session.fetch(`${origin}/mailboxes`);
+      paired.session.store.close();
+      const paths = fake.seen.map((r) => r.url.split("?")[0]);
+      for (const wanted of ["/hello", "/pair/redeem", "/auth/session", "/mailboxes"]) {
+        expect(paths, `${wanted} was never asked`).toContain(wanted);
+      }
+      for (const r of fake.seen) expect(r.named, r.url).toBe("phone/1.2.3");
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a build that states no release says `dev`; the standalone hello probe names it too", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      const { env } = testEnv();
+      const probed = await probePairing(env, { origin });
+      expect(probed.kind).toBe("offers");
+      expect(fake.seen.length).toBeGreaterThan(0);
+      for (const r of fake.seen) expect(r.named, r.url).toBe("phone/dev");
+      await negotiate(pairingFetch(env), origin);
+      expect(fake.seen.at(-1)!.named).toBe("phone/dev");
+    } finally {
+      fake.server.close();
+    }
+  });
+});
 
 describe("the confirmation before a pairing code is spent", () => {
   /**

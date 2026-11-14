@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
+import { readFileSync } from "node:fs";
 import { users } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { setupProdDatabase } from "@trafficflow/db/admin";
@@ -206,9 +207,12 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const body = await res.json();
+    // The release this checkout is (the images bake the same number), never the `0.0.0` default.
+    const release = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version;
     expect(body).toMatchObject({
       product: "ohmail",
       flavor: "selfhost",
+      apiVersion: release,
       needsSetup: true,
       auth: { password: true, totp: true, webauthn: true, publicSignup: false },
       features: { sse: true, staging: false, ai: false, pairing: true },

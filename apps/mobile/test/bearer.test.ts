@@ -130,8 +130,31 @@ describe("adoption and the stamp", () => {
     const bearer = manager({ fetch: scripted([]).fetch });
     expect(bearer.paired()).toBe(true);
     // No access yet, so no Authorization — the first 401 buys one. The erased-answer declaration
-    // rides every ask (`erased-account-forgets-the-pairing.test.ts`).
-    expect(bearer.headers()).toEqual({ "x-ohmail-accepts": "account_erased" });
+    // rides every ask (`erased-account-forgets-the-pairing.test.ts`), and so does the phone's name.
+    expect(bearer.headers()).toEqual({ "x-ohmail-accepts": "account_erased", "x-ohmail-client": "phone/dev" });
+  });
+
+  it("names the phone and its release on every ask of its own origin — the stamp, the renewal and both sign-outs — never off it", async () => {
+    const { vault } = memoryVault();
+    const wire = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => json(200, { tokens: { accessToken: "access-2", refreshToken: "refresh-2" } }),
+      () => json(200, { items: [] }),
+      () => json(200, { ok: true }),
+      () => json(404, {}),
+      () => json(200, {}),
+      () => json(200, {}),
+    ]);
+    const bearer = new BearerManagerRN({
+      origin: ORIGIN, accessToken: null, refreshToken: "refresh-1", vault, fetchImpl: wire.fetch, clientRelease: "1.2.3",
+    });
+    await bearer.fetch(`${ORIGIN}/mailboxes`, { headers: { "X-Ohmail-Client": "web/9.9.9" } });
+    await bearer.fetch("https://storage.example/grant-url", { method: "PUT" });
+    await bearer.signOut();
+    for (const s of wire.seen.filter((x) => x.url.startsWith(ORIGIN))) expect(s.headers["x-ohmail-client"], s.url).toBe("phone/1.2.3");
+    expect(wire.seen.map((s) => s.url)).toContain(`${ORIGIN}/auth/refresh`);
+    const off = wire.seen.find((s) => s.url.startsWith("https://storage.example"))!;
+    expect(off.headers["x-ohmail-client"], "the name left for a storage host").toBeUndefined();
   });
 });
 

@@ -51,6 +51,15 @@ describe("the real logger emits the fields call sites pass", () => {
     }
   });
 
+  it("emits the client's kind and release and the composition's flavor, and drops none of them", () => {
+    const out = capture((log) => {
+      log.child({ requestId: "11111111-1111-4111-8111-111111111111" })
+        .info("hello_served", { flavor: "selfhost", clientKind: "phone", clientRelease: "1.0.12" });
+    });
+    expect(out.includes("droppedFields"), `the census refused a field the call site passed: ${out}`).toBe(false);
+    expect(JSON.parse(out)).toMatchObject({ event: "hello_served", clientKind: "phone", clientRelease: "1.0.12", flavor: "selfhost" });
+  });
+
   /**
    * The SEND path's phase durations. The fourth time this census has refused a live line's
    * instrumentation and the second where the suite could not see it — `send-ceiling.test.ts`

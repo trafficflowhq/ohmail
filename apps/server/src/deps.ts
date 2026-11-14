@@ -41,7 +41,7 @@ import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "@trafficflow/db/cloud";
 import {
-  allowCookieAuthForRequest, SELF_HOST_SEND_MAX_TOTAL_BYTES,
+  allowCookieAuthForRequest, buildReleaseOf, SELF_HOST_SEND_MAX_TOTAL_BYTES,
   type ServerConfig, type SmtpConfig, type StorageConfig,
 } from "./config.js";
 import { ensureSetupTokenInvariant } from "./setup-token.js";
@@ -657,6 +657,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     // member the wiring arms from, so the negotiation cannot disagree with what the routes do.
     hello: {
       flavor: "selfhost",
+      // The release this image or checkout is: not the commit `/health` names.
+      ...releaseOnly(buildReleaseOf()),
       needsSetup: needsSetupFor(rt.db, rt.onSetupTokenMinted),
       auth: {
         password: true,
@@ -737,4 +739,9 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
     appOrigin: cfg.origin,
     oauth: rt.oauth,
   };
+}
+
+/** `apiVersion` only where a release is stated: `/hello` answers `0.0.0` for the rest, never a guess. */
+function releaseOnly(release: string | null): { apiVersion?: string } {
+  return release === null ? {} : { apiVersion: release };
 }

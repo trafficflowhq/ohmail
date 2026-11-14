@@ -22,6 +22,30 @@ export const UNJUDGED_WRITE_CODES: ReadonlySet<UnjudgedWriteCode> = new Set<Unju
   "not_signed_in",
 ]);
 
+/** The answers that are about the app and its server, never about the write: too old, being updated. */
+export type UpdateAnswerCode = "client_too_old" | "server_updating";
+
+/**
+ * THE CLOSED SET of codes a server answers when this app is too old for it, or while it is being
+ * updated. A write answered with one waits and is asked again under its key; it spends none of the
+ * give-up ceiling. A set of its own: nobody judged the write, but a server did answer. No server
+ * of this release sends either; the readers are here so that a later one can.
+ *
+ * THE BOUND THE SENDING SERVER MUST KEEP, which nothing here can enforce: `retryingRead` waits what
+ * a `503`'s `Retry-After` names (up to an hour) before each of its retries, so a `server_updating`
+ * that names minutes holds every read that long before the one sentence can show. It names 30 s at
+ * most (`test/retrying-read.test.ts` states the arithmetic). `client_too_old` names none.
+ */
+export const UPDATE_ANSWER_CODES: ReadonlySet<UpdateAnswerCode> = new Set<UpdateAnswerCode>([
+  "client_too_old",
+  "server_updating",
+]);
+
+/** Is this the code of an answer that never retires a write, whatever else the answer says? */
+export function keepsWrite(code: string | null | undefined): boolean {
+  return UNJUDGED_WRITE_CODES.has(code as UnjudgedWriteCode) || UPDATE_ANSWER_CODES.has(code as UpdateAnswerCode);
+}
+
 /**
  * Classify a non-2xx answer. With our envelope the server's own words rule. Without one — a
  * platform page in front of the API, an HTML 401, a text 413 — the STATUS decides: a 401 is an
@@ -38,8 +62,9 @@ export function classifyRefusal(
 ): { code: string | null; retryable: boolean } {
   const serverDefault = status >= 500 || status === 429;
   if (envelope !== undefined && typeof envelope.code === "string") {
-    // An unjudged write is retryable whatever the envelope says: the envelope cannot override this.
-    if (kind === "write" && UNJUDGED_WRITE_CODES.has(envelope.code as UnjudgedWriteCode)) {
+    // An unjudged write, or one that met an update answer, is retryable whatever the envelope
+    // says: the envelope cannot override this.
+    if (kind === "write" && keepsWrite(envelope.code)) {
       return { code: envelope.code, retryable: true };
     }
     return { code: envelope.code, retryable: envelope.retryable ?? serverDefault };

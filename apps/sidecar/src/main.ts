@@ -3,7 +3,9 @@ import { type Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { blankRepairModeFrom } from "@trafficflow/core/mail";
 import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
-import { createSidecar, QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig } from "./engine.js";
+import {
+  BAKED_ENGINE_VERSION, createSidecar, QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig,
+} from "./engine.js";
 import { armFirstPageGate } from "./first-page-gate.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
 import {
@@ -741,6 +743,7 @@ export async function runCloudSidecar(): Promise<void> {
     // Same single-voiced window as the local door's — see `bootPhaseEmitter`.
     cloud = await createCloudSidecar({
       ...cloudConfigFromEnv(), log, onPhase: bootPhaseEmitter(stdout),
+      ...(BAKED_ENGINE_VERSION ? { engineRelease: BAKED_ENGINE_VERSION } : {}),
       onStoreFatal: exitOnStoreFatal,
       // The mirror starts after `ready`, so the host exists by the time a mailbox can be named.
       onServedMailbox: (mailboxId) => host?.mailbox(mailboxId) ?? Promise.resolve(),

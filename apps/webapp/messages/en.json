@@ -4493,6 +4493,9 @@
     "lineReloadAfterSendTitle": "Reload after your letter is sent",
     "lineReloadAfterFilesTitle": "Reload after your draft's files are sent or removed",
     "lineLater": "Later",
+    "lineTooOld": "This ohmail is too old for its server.",
+    "lineServerUpdating": "ohmail is being updated and will be back shortly.",
+    "lineUpdateAction": "Update",
     "lineVersion": "ohmail {version}"
   },
   "desktopScreener": {

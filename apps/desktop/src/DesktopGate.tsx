@@ -46,6 +46,7 @@ import {
   type UnlockRefusal,
 } from "./bridge-fetch.js";
 import { forgetWindowSentFolders } from "./window-outbox-store.js";
+import { listenForUpdateAnswers } from "./update-answer-door.js";
 import {
   cloudNoticeDue, copyRemovedBy, sessionOf, sessionReaders, signInCauseOf, waitForSessionMove, type CloudSessionWire,
 } from "./cloud-session.js";
@@ -634,6 +635,15 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     }
     return onAccessRefused((facts) => setAccessRefused((held) => held ?? facts));
   }, [accountDoor]);
+
+  /**
+   * A SERVER SAID THIS APP IS TOO OLD FOR IT, OR THAT IT IS BEING UPDATED — told once to the one
+   * update line, with the verb that asks the updater now (the shell's own check or restart; this
+   * window names no feed and installs nothing). FOR THE WINDOW'S WHOLE LIFE, not behind a live
+   * session: a sign-in and a pairing meet the answer before there is one, and a door's refusal
+   * shows the same verb (`HostedDoorProblem`). A standalone engine says neither, so there it hears nothing.
+   */
+  useEffect(() => listenForUpdateAnswers(), []);
 
   /** Not live: renewing, unreachable or unable to save. The probe then asks every few seconds. */
   const hostedDegraded = hostedAuthKnown && hostedAuth.session !== null && hostedAuth.session.state !== "live";

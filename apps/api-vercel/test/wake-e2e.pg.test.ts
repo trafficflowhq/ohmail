@@ -57,7 +57,7 @@ const writer = brandDialect(drizzle(writerSql), "pg");
 const eventsHeldMs: number[] = [];
 
 const ENV_KEYS = [
-  "DATABASE_URL_POOLED", "DATABASE_URL_SESSION", "TF_SSE", KEY_RING_V1, "TF_SSE_LIFETIME_MS",
+  "DATABASE_URL_POOLED", "DATABASE_URL_SESSION", "TF_SSE", KEY_RING_V1, "TF_SSE_LIFETIME_MS", "OHMAIL_RELEASE",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 
@@ -329,8 +329,14 @@ describe.skipIf(!PG_UP)("the wake channel, end to end against real Postgres", ()
     const { token, accountId } = await seedRealSession();
     const deps = buildDeps(new Request(`${managed.baseUrl}/events`), loadHostConfig(process.env));
     expect(deps.changeWake, "a LISTEN hub on a host that holds no stream").toBeNull();
-    const hello = await (await fetch(`${managed.baseUrl}/hello`)).json() as { features: { sse: boolean } };
+    const hello = await (await fetch(`${managed.baseUrl}/hello`)).json() as { features: { sse: boolean }; apiVersion: string };
     expect(hello.features.sse).toBe(false);
+    // The release is the build's (`next.config.mjs` inlines it); a run with none states `0.0.0`, never a guess.
+    expect(hello.apiVersion).toBe("0.0.0");
+    process.env.OHMAIL_RELEASE = "9.8.7";
+    const built = await (await fetch(`${managed.baseUrl}/hello`)).json() as { apiVersion: string };
+    expect(built.apiVersion).toBe("9.8.7");
+    delete process.env.OHMAIL_RELEASE;
     const direct = await fetch(`${managed.baseUrl}/events`, { headers: { authorization: `Bearer ${token}` } });
     expect(direct.status).toBe(204);
     expect(await direct.text()).toBe("");

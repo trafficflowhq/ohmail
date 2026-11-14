@@ -511,6 +511,22 @@ export const SELF_HOST_GUIDE =
  * path to a plan, so a store build may offer it (App Review 5.1.1(v), Play's deletion rule).
  */
 export const PRIVACY_URL = "https://ohmail.app/privacy";
+
+/**
+ * THE HOSTED SERVICE'S WEB APP, where a person with a Cloud account reads their mail in a browser. The
+ * phone pairs with the service's API host (`net/pairing.ts`'s `MANAGED_ORIGIN`), which serves no page,
+ * so a verb that opens "the browser" for a Cloud pairing opens this (`net/update-verbs.ts`).
+ */
+export const WEB_APP_URL = "https://ohmail.app";
+
+/**
+ * WHERE AN UPDATE OF THIS APP COMES FROM, written down here for the reason above: the page a build from the
+ * release page is replaced from, and the two stores' pages, which `net/update-verbs.ts` completes with the
+ * package name or the listing's numeric id. The system opens them on a press, never this app.
+ */
+export const DOWNLOAD_PAGE = "https://github.com/trafficflowhq/ohmail/releases/latest";
+export const PLAY_STORE_PAGE = "https://play.google.com/store/apps/details?id=";
+export const APP_STORE_PAGE = "https://apps.apple.com/app/id";
 export const IMPRINT_URL = "https://ohmail.app/imprint";
 export const SUPPORT_URL = "https://ohmail.app/support";
 export const DELETE_ACCOUNT_URL = "https://ohmail.app/delete-account";

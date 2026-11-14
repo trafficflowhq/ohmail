@@ -126,6 +126,8 @@ export interface SeenRequest {
   url: string;
   auth: string | undefined;
   body: string;
+  /** `x-ohmail-client`, exactly as it arrived. */
+  named?: string | string[] | undefined;
 }
 
 export interface PairServerOptions {
@@ -174,6 +176,7 @@ export function pairServer(opts: PairServerOptions = {}) {
   const liveAccess = new Set<string>();
   let mintCounter = 0;
   const seen: SeenRequest[] = [];
+  let updateAnswer: { status: number; code: string } | null = null;
   let refreshPresentations = 0;
   /** The hosted account was erased: a declared ask hears `410 account_erased`, an undeclared one 401. */
   let erased = false;
@@ -204,7 +207,7 @@ export function pairServer(opts: PairServerOptions = {}) {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       const body = Buffer.concat(chunks).toString("utf8");
-      seen.push({ method: req.method ?? "GET", url: req.url ?? "/", auth: req.headers.authorization, body });
+      seen.push({ method: req.method ?? "GET", url: req.url ?? "/", auth: req.headers.authorization, body, named: req.headers["x-ohmail-client"] });
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const json = (status: number, payload: unknown) => {
         res.writeHead(status, { "content-type": "application/json" });
@@ -215,6 +218,14 @@ export function pairServer(opts: PairServerOptions = {}) {
         return auth.startsWith("Bearer ") && liveAccess.has(auth.slice("Bearer ".length));
       };
       const unauthorized = () => json(401, { error: { code: "unauthorized", message: "no live session" } });
+      // A server that says this app is too old, or that it is being updated: every route past the ceremony.
+      if (updateAnswer !== null && !/^\/(?:hello|pair|auth)/.test(url.pathname)) {
+        res.writeHead(updateAnswer.status, {
+          "content-type": "application/json", ...(updateAnswer.status === 503 ? { "retry-after": "30" } : {}),
+        });
+        res.end(JSON.stringify({ error: { code: updateAnswer.code, message: updateAnswer.code, retryable: true } }));
+        return;
+      }
 
       if (url.pathname === "/hello") {
         json(200, {
@@ -423,6 +434,8 @@ export function pairServer(opts: PairServerOptions = {}) {
       liveAccess.clear();
     },
     seen,
+    /** From now on every route past the ceremony answers this (`null` = ordinary answers again). */
+    answerWith: (answer: { status: number; code: string } | null) => { updateAnswer = answer; },
     refreshPresentations: () => refreshPresentations,
     currentSeq: () => seq,
   };

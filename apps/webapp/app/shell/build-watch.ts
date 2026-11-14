@@ -15,6 +15,8 @@
 import {
   announceUpdate,
   askDue,
+  currentUpdateOffer,
+  isUpdateAnswerKind,
   offerKey,
   readAskMemory,
   rememberAsk,
@@ -110,6 +112,9 @@ export function startBuildWatch(options: BuildWatchOptions): () => void {
        * value: the browser's sentence names no build, because a digest is not a thing to show somebody.
        */
       const offer: UpdateOffer = { kind: "reload", version: served, act: reload };
+      // A server's own answer is the more exact sentence for the same remedy: this watch never replaces it.
+      const standing = currentUpdateOffer();
+      if (standing !== null && isUpdateAnswerKind(standing.kind)) return;
       const memory = readAskMemory();
       const key = offerKey(offer);
       if (!askDue(memory, key, now())) return;

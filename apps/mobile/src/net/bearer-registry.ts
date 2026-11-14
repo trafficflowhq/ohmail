@@ -20,6 +20,8 @@ export interface SlotRow {
   accountId: string | null;
   vault: RefreshVault;
   fetchImpl?: FetchLike;
+  /** The app's release, named to the server on every ask (`PairingEnv.clientRelease`). */
+  clientRelease?: string;
 }
 
 /** A pair a redeem just minted: a new family for the slot, owing no attempt. */
@@ -30,6 +32,7 @@ export interface SlotRedeem {
   accountId: string;
   vault: RefreshVault;
   fetchImpl?: FetchLike;
+  clientRelease?: string;
 }
 
 export class BearerRegistry {
