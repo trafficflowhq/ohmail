@@ -9,7 +9,16 @@ import * as kit from "@ohmail/ui";
 import * as geometry from "@ohmail/app-logic/geometry";
 import { SCROLL_KEYS } from "@ohmail/app-logic/keys";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
-import { DECISION_QUIET, type DecisionDestination, type DecisionScope } from "@ohmail/app-logic/screener/decision";
+import {
+  DECISION_KEY,
+  DECISION_ORDER,
+  DECISION_QUIET,
+  PILE_KEY,
+  PILE_VERB_KEY,
+  type DecisionDestination,
+  type DecisionScope,
+} from "@ohmail/app-logic/screener/decision";
+import * as decisionCopy from "../app/shell/decision-copy";
 import type { ConsentStateWire as ConsentReadOfTheRow } from "@ohmail/app-logic/consent/consent-wire";
 import type { ConsentStateWire as ConsentReadOfTheClient } from "../app/api-client";
 import { autoLoadsImages as readerAutoLoads } from "@ohmail/app-logic/reader";
@@ -77,6 +86,13 @@ describe("the types behaviour declares beside the kit's", () => {
 
   it("the destinations that take no read verb are the ones the kit's bar keeps quiet", () => {
     expect([...DECISION_QUIET].sort()).toEqual([...kit.DECISION_QUIET].sort());
+  });
+
+  it("each decision's key, in the order the kit's bar lists them, and the pile names the shell's table reads", () => {
+    expect(DECISION_KEY).toEqual(kit.DECISION_KEY);
+    expect(DECISION_ORDER).toEqual(Object.keys(kit.DECISION_KEY));
+    expect(PILE_KEY).toEqual(decisionCopy.PILE_KEY);
+    expect(PILE_VERB_KEY).toEqual(decisionCopy.PILE_VERB_KEY);
   });
 
   it("the press seam's report is the kit's toast, option for option", () => {

@@ -489,6 +489,12 @@
       "ohmail-source": "./src/write/editor/marks.ts",
       "node": "./dist/write/editor/marks.js",
       "default": "./src/write/editor/marks.ts"
+    },
+    "./screener": {
+      "types": "./src/screener/index.ts",
+      "ohmail-source": "./src/screener/index.ts",
+      "node": "./dist/screener/index.js",
+      "default": "./src/screener/index.ts"
     }
   },
   "dependencies": {
