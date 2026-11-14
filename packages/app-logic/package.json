@@ -712,6 +712,18 @@
       "node": "./dist/ohbox/ohbox-list.js",
       "default": "./src/ohbox/ohbox-list.ts"
     },
+    "./phone": {
+      "types": "./src/phone/index.ts",
+      "ohmail-source": "./src/phone/index.ts",
+      "node": "./dist/phone/index.js",
+      "default": "./src/phone/index.ts"
+    },
+    "./phone/said": {
+      "types": "./src/phone/said.ts",
+      "ohmail-source": "./src/phone/said.ts",
+      "node": "./dist/phone/said.js",
+      "default": "./src/phone/said.ts"
+    },
     "./press": {
       "types": "./src/press/index.ts",
       "ohmail-source": "./src/press/index.ts",
