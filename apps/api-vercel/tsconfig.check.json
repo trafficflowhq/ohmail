@@ -16,6 +16,7 @@
     { "path": "../../packages/db-mail" },
     { "path": "../../packages/db" },
     { "path": "../../packages/services" },
-    { "path": "../../packages/api" }
+    { "path": "../../packages/api" },
+    { "path": "../server" }
   ]
 }

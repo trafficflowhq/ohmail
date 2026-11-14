@@ -1,6 +1,6 @@
 import { runApiAlertPass } from "@trafficflow/api";
 import type { Logger } from "@trafficflow/core";
-import { buildDeps, type ServerRuntime } from "./deps.js";
+import { depsFor, runtimeOf, type Runtime, type ServerRuntime } from "./deps.js";
 
 /**
  * THE API ALERT ARM'S CLOCK on this host. The managed host's routes are called by schedulers
@@ -68,13 +68,12 @@ export function startAlertClock(opts: {
  * `alert_state` and pages nobody, and this line plus `/health`'s `alertSinks` are where that shows.
  * The pass runs on per-tick deps, the send clock's pattern, so it reads the composition the routes do.
  */
-export function alertClockFor(
-  rt: ServerRuntime,
+export function ownAlertClock(
+  runtime: Runtime,
   timing: { everyMs?: number; firstDelayMs?: number } = {},
 ): AlertClock | null {
-  const { cfg, logger } = rt;
-  // This server reaches no entitlements program, so no billing plane is read: said once at boot.
-  logger.info("plane_ops_watch", { state: "off", reason: "this server reaches no billing plane" });
+  const { cfg, logger } = runtime;
+  const rt = runtime;
   if (!cfg.alerts) {
     logger.info("alert_clock_unarmed", { configVar: "TF_ALERT_SECRET" });
     return null;
@@ -94,7 +93,7 @@ export function alertClockFor(
   const log = logger.child({ route: "alert_clock" });
   return startAlertClock({
     run: async () => {
-      const alerts = buildDeps(new Request(cfg.origin), rt).alerts;
+      const alerts = depsFor(new Request(cfg.origin.appOrigin ?? "http://localhost"), runtime).alerts;
       if (!alerts?.db) throw new Error("the alert pass has no handle on this host");
       await runApiAlertPass(alerts, log, () => new Date(), alerts.db);
     },
@@ -102,4 +101,14 @@ export function alertClockFor(
     firstDelayMs: timing.firstDelayMs ?? ALERT_PASS_FIRST_DELAY_MS,
     log: logger,
   });
+}
+
+/** {@link ownAlertClock} over a hand-built {@link ServerRuntime}, with the line that says no billing plane is read. */
+export function alertClockFor(
+  rt: ServerRuntime,
+  timing: { everyMs?: number; firstDelayMs?: number } = {},
+): AlertClock | null {
+  // This server reaches no entitlements program, so no billing plane is read: said once at boot.
+  rt.logger.info("plane_ops_watch", { state: "off", reason: "this server reaches no billing plane" });
+  return ownAlertClock(runtimeOf(rt), timing);
 }

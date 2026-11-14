@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -173,10 +173,14 @@ describe("the PRIVATE key reaches the ORGANIZER ONLY", () => {
 
     // Every place the name must NOT be. `apps/server` and `apps/api-vercel` are the two
     // request-handling composition roots; `packages/api` is the route table they mount.
+    // The roots are read whole: the API program reads its settings in more files than the three
+    // this named (`settings.ts`, `settings/managed.ts`), and a new one is covered the day it is added.
+    const roots = ["../apps/server/src", "../apps/api-vercel/src"].flatMap((dir) =>
+      readdirSync(fileURLToPath(new URL(dir, import.meta.url)), { recursive: true, encoding: "utf8" })
+        .filter((f) => f.endsWith(".ts")).map((f) => `${dir}/${f.replace(/\\/g, "/")}`));
+    expect(roots, "the settings' own file was not read").toContain("../apps/server/src/settings.ts");
     for (const path of [
-      "../apps/server/src/config.ts",
-      "../apps/server/src/deps.ts",
-      "../apps/api-vercel/src/deps.ts",
+      ...roots,
       "../packages/api/src/deps.ts",
       "../packages/api/src/routes/push.ts",
     ]) {

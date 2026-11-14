@@ -1,31 +1,33 @@
-import { readFileSync } from "node:fs";
 import {
-  KEK_RETIRED_ENV, keyProviderFromEnv, kekEnvIdentity, msDeviceEnv,
+  KEK_RETIRED_ENV, keyProviderFromEnv, kekEnvIdentity, kekRetiredThroughFromEnv, msDeviceEnv,
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
-import { aiProviderEnv, type AiProviderEnv } from "@trafficflow/core/ai-provider-env";
-import { transactionPoolerReason, providerFamily } from "@trafficflow/db";
-import { pgTransportReason } from "@trafficflow/db/cloud";
-import { msOAuthEnv, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
+import type { AiProviderEnv } from "@trafficflow/core/ai-provider-env";
+import type { MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, normalizeRecipient, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
 import { parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, type TlsTerminatorRefusal } from "./http.js";
+import { loadSettings, type Settings, type SettingsDoorInput } from "./settings.js";
 
 /**
- * Deployment configuration for the STANDALONE SELF-HOST SERVER — one long-running process an
- * operator runs on their own box, against their own Postgres, behind their own proxy.
+ * THE SETTING BLOCKS OF A SELF-HOSTED SERVER — one long-running process an operator runs on their
+ * own box, against their own Postgres, behind their own proxy — and the blocks every host reads
+ * the same way (the pager's, object storage, build identity, the proxies). `settings.ts` calls each
+ * once; the names an operator has in a `.env` are read here, under those names.
  *
- * Nothing is read from `process.env` at module scope: {@link loadServerConfig} is a pure function
- * of an environment object, resolved exactly ONCE at boot by `index.ts`. Unlike the serverless
- * host — which must stay up to let `/health` name a config fault — this process may simply REFUSE
- * TO START on a misshapen value: a crash-looping container with the reason on stderr is the
- * operator-visible failure here, and it happens before the migrator touches anything. The one
- * deliberate exception is the KEK (captured, poisoned provider, `/health` 503s naming it), because
- * a broken key ring must not hide the health endpoint that reports it. `TF_KEK_RETIRED` is not that
- * exception: it is a setting this server does not support yet, not a broken ring, so it refuses.
+ * Nothing is read from `process.env` at module scope: every reader is a pure function of an
+ * environment object. A long-running process may simply REFUSE TO START on a misshapen value: a
+ * crash-looping container with the reason on stderr is the operator-visible failure, and it happens
+ * before the migrator touches anything. The one deliberate exception is the KEK (captured, poisoned
+ * provider, `/health` 503s naming it), because a broken key ring must not hide the health endpoint
+ * that reports it. `TF_KEK_RETIRED` is not that exception: it is a setting a self-hosted server does
+ * not support yet, not a broken ring, so it refuses.
  *
  * EVERY refusal names the VARIABLE and NEVER echoes its value. No exceptions: an origin can embed
  * credentials, a connection string always does, and the pattern gets copied.
+ *
+ * {@link ServerConfig} and {@link loadServerConfig} are the settings under the flat names this
+ * server's modules and tests have always read.
  */
 
 /**
@@ -51,35 +53,8 @@ export function cookieHostsFor(origin: string): string[] {
   return [host, ...LOOPBACK_COOKIE_HOSTS.filter((h) => h !== host)];
 }
 
-/**
- * Whether this host accepts cookie authentication, per REQUEST HOST — the managed host's exact
- * rule, restated over the operator's one-host list: EVERY asserted host (request URL, `Host`,
- * every `X-Forwarded-Host` value) must be on the allow-list, and there must be at least one.
- * A forged or foreign `X-Forwarded-Host` is therefore strictly SUBTRACTIVE — it can turn cookies
- * off and never on — and an unknown host degrades to bearer-only rather than 421: an
- * unrecognised surface cannot honour an ambient browser credential, and a native client keeps
- * working.
- */
-export function allowCookieAuthForRequest(req: Request, cookieHosts: string[]): boolean {
-  let fromUrl = "";
-  try {
-    fromUrl = new URL(req.url).host;
-  } catch {
-    /* not absolute — the header sources still apply */
-  }
-  const asserted = [...new Set(
-    [
-      fromUrl,
-      req.headers.get("host") ?? "",
-      ...(req.headers.get("x-forwarded-host") ?? "").split(","),
-    ]
-      .map((h) => h.trim().toLowerCase().replace(/:\d+$/, ""))
-      .filter((h) => h.length > 0),
-  )];
-  if (asserted.length === 0) return false;       // no host assertion at all ⇒ fail closed
-  const allowed = new Set(cookieHosts.map((h) => h.trim().toLowerCase()));
-  return asserted.every((h) => allowed.has(h));
-}
+/** The cookie decision per request: one rule for every door (`cookie-auth.ts`). */
+export { allowCookieAuthForRequest } from "./cookie-auth.js";
 
 /**
  * SSE on this host is ON, unconditionally — a long-running server pays nothing per open stream
@@ -124,9 +99,8 @@ export const SERVER_REQUEST_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_PORT = 8080;
 
-/** The SMTP block — parsed by {@link loadSmtpConfig}, wired as `SmtpMailer` behind the auth
- *  ceremony's `MailService` in `deps.ts` (`customerMailerFor`). Absent ⇒ mailer null, and the
- *  composition works: invites verify through the consumed token, not through mail. */
+/** The SMTP block (`SMTP_URL` + `MAIL_FROM`, read with the mail setting in `settings.ts`). Absent ⇒
+ *  mailer null, and the composition works: invites verify through the consumed token, not through mail. */
 export interface SmtpConfig {
   /** `smtp://user:pass@host:port` or `smtps://…` — nodemailer's URL form. Never logged. */
   url: string;
@@ -170,6 +144,8 @@ export type StorageConfig =
   };
 
 export interface ServerConfig {
+  /** What every member below is read from (`settings.ts`); the one wiring reads this. */
+  settings: Settings;
   /** The ONE absolute browser origin this install serves (`OHMAIL_ORIGIN`), canonicalized. */
   origin: string;
   /** WebAuthn relying-party id — the origin's own hostname, derived, never configured apart. */
@@ -257,7 +233,7 @@ export function poisonedKeyProvider(reason: string): KeyProvider {
   };
 }
 
-const trimmed = (env: NodeJS.ProcessEnv, key: string): string => (env[key] ?? "").trim();
+export const trimmed = (env: NodeJS.ProcessEnv, key: string): string => (env[key] ?? "").trim();
 
 /**
  * Why `TF_KEK_RETIRED` refuses the boot here. Cloud's hosts check at boot and on `/health` that no stored
@@ -275,54 +251,18 @@ export const KEK_RETIRED_REFUSED =
  * `TF_BUILD_VERSION`, then `dev`. The file wins so a compose-override variable can no longer
  * silently outrank the identity baked into the image; the variable remains a fallback for a
  * bundle run outside the recipes, and is REPORTED as such (see {@link buildIdentityError}).
+ * `file` is the door's reader of that file (`index.ts`): it needs `import.meta`, which the
+ * function door's bundler cannot carry, so it is handed in and never defined here.
  */
-const buildVersionFile = (): string => {
-  try {
-    // From the bundled `bin/ohmail-server.mjs` this is the image's `/app/BUILD_VERSION`; from
-    // `src/config.ts` under tsx it is `apps/server/BUILD_VERSION` — absent in a checkout, so a
-    // source run falls through to the variable and then to `dev`, the honest answer there.
-    return readFileSync(new URL("../BUILD_VERSION", import.meta.url), "utf8").trim();
-  } catch {
-    // No file means "not a recipe build" — the next source answers.
-    return "";
-  }
-};
-
 export const buildIdentityOf = (
   env: NodeJS.ProcessEnv,
-  file: () => string = buildVersionFile,
+  file: () => string,
 ): { version: string; source: BuildIdentitySource } => {
   const fromFile = file().trim();
   if (fromFile) return { version: fromFile, source: "file" };
   const variable = trimmed(env, "TF_BUILD_VERSION");
   if (variable) return { version: variable, source: "variable" };
   return { version: "dev", source: "none" };
-};
-
-declare const __OHMAIL_RELEASE__: string | undefined;
-
-/** The checkout's own manifest version, where the server runs unbundled (`src` or `dist`, three levels down). */
-const workspaceVersion = (): string => {
-  try {
-    const v = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version;
-    return typeof v === "string" ? v.trim() : "";
-  } catch {
-    return "";
-  }
-};
-
-/**
- * WHICH RELEASE THIS SERVER IS A BUILD OF, the worker's rule (`apps/worker/src/build-version.ts`, whose
- * source this repeats because the two hosts share no module): the workspace version the host bundler
- * bakes in (`scripts/bundle-host.mjs`), else the checkout's manifest, else `null`. NOT the build label
- * above: the published images carry a commit there, which says nothing about the release `GET /hello`
- * states. The one place this host answers it.
- */
-export const buildReleaseOf = (manifest: () => string = workspaceVersion): string | null => {
-  const baked = typeof __OHMAIL_RELEASE__ === "string" ? __OHMAIL_RELEASE__.trim() : "";
-  if (baked !== "") return baked;
-  const read = manifest().trim();
-  return read === "" ? null : read;
 };
 
 /**
@@ -339,7 +279,7 @@ export const buildIdentityError = (source: BuildIdentitySource): string | null =
       "this process was never built from"
     : null;
 
-function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
+export function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
   const v = trimmed(env, key);
   if (v === "") throw new Error(`missing required env var ${key}`);
   return v;
@@ -355,7 +295,7 @@ function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
  * and the sidecar construct through. Its messages can embed the offending value, so every throw
  * from it is re-thrown here as a FIXED sentence naming only the variable and the rule.
  */
-function loadOrigin(env: NodeJS.ProcessEnv): { origin: string; rpID: string; authConfig: AuthConfig } {
+export function loadOrigin(env: NodeJS.ProcessEnv): { origin: string; rpID: string; authConfig: AuthConfig } {
   const raw = requireEnv(env, "OHMAIL_ORIGIN");
   let url: URL;
   try {
@@ -397,7 +337,7 @@ function loadOrigin(env: NodeJS.ProcessEnv): { origin: string; rpID: string; aut
  * not parse refuses the boot, naming the entry's position and never its text. A host name never
  * does, because the proxy it names may start after this server.
  */
-function loadTrustedProxies(env: NodeJS.ProcessEnv): string[] {
+export function loadTrustedProxies(env: NodeJS.ProcessEnv): string[] {
   const entries = splitTrustedProxyList(trimmed(env, "TF_TRUSTED_PROXIES"));
   entries.forEach((entry, i) => {
     const parsed = parseTrustedProxyEntry(entry);
@@ -447,7 +387,7 @@ const TLS_TERMINATOR_FIX: Record<TlsTerminatorRefusal, string> = {
  * start on a list the proxy would read differently ({@link parseTlsTerminatorList}), and on no value
  * at all, which the proxy refuses too: there is no default trust. On the TLS door the value is ignored.
  */
-function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
+export function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
   if ((env.OHMAIL_EXTERNAL_TLS ?? "") === "") return { door: "tls" };
   // UNTRIMMED: the proxy's entrypoint and Caddy read the value exactly as compose hands it over.
   const raw = env.OHMAIL_TLS_TERMINATOR ?? "";
@@ -465,26 +405,6 @@ function loadTlsTerminator(env: NodeJS.ProcessEnv): ExternalDoor {
   return { door: "external", raw, entries: parsed.entries };
 }
 
-/** Both, or neither. Half an SMTP block is a mailer that looks configured and sends nothing. */
-function loadSmtpConfig(env: NodeJS.ProcessEnv): SmtpConfig | null {
-  const url = trimmed(env, "SMTP_URL");
-  const from = trimmed(env, "MAIL_FROM");
-  if (url === "" && from === "") return null;
-  if (url === "" || from === "") {
-    throw new Error("SMTP is PARTIALLY configured: set both of SMTP_URL, MAIL_FROM or neither");
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("SMTP_URL must be a URL of the form smtp[s]://user:pass@host:port");
-  }
-  if (parsed.protocol !== "smtp:" && parsed.protocol !== "smtps:") {
-    throw new Error("SMTP_URL must use the smtp: or smtps: scheme");
-  }
-  return { url, from, replyTo: trimmed(env, "MAIL_REPLY_TO") || null };
-}
-
 /**
  * The API alert arm, or null. The managed host's grammar for the secret: a short one arms NOTHING
  * (an endpoint whose authentication is four characters is worse than no endpoint), and absence
@@ -493,13 +413,13 @@ function loadSmtpConfig(env: NodeJS.ProcessEnv): SmtpConfig | null {
  * one plain address, it refuses the boot: a mail arm that silently is not there, or refuses every
  * page, is a pager that looks configured and reaches nobody.
  */
-function loadAlertsEnv(env: NodeJS.ProcessEnv, smtp: SmtpConfig | null): AlertsEnv | null {
+export function loadAlertsEnv(env: NodeJS.ProcessEnv, hasMailer: boolean): AlertsEnv | null {
   const secret = trimmed(env, "TF_ALERT_SECRET");
   if (secret.length < 24) return null;
   const email = trimmed(env, "TF_ALERT_EMAIL") || null;
-  if (email !== null && !smtp) {
+  if (email !== null && !hasMailer) {
     throw new Error(
-      "TF_ALERT_EMAIL is set but this server has no mailer: set SMTP_URL and MAIL_FROM, or unset TF_ALERT_EMAIL",
+      "TF_ALERT_EMAIL is set but this server has no mailer: set SMTP_URL (or RESEND_API_KEY) and MAIL_FROM, or unset TF_ALERT_EMAIL",
     );
   }
   if (email !== null && normalizeRecipient(email) === null) {
@@ -530,6 +450,19 @@ const S3_STORAGE_VARS = ["S3_ENDPOINT", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SEC
  */
 const RESERVED_BUCKET_NAMES = new Set(["api", "auth", "events", "health", "hello", "pair", "internal"]);
 
+/** The `supabase` kind's block, once all three variables are known to be set. */
+function supabaseStorage(env: NodeJS.ProcessEnv): StorageConfig {
+  // A project ORIGIN, not a path: the client appends the storage paths.
+  const url = trimmed(env, "SUPABASE_URL").replace(/\/+$/, "");
+  if (!/^https:\/\/[^/?#]+$/.test(url)) throw new Error("SUPABASE_URL must be a bare https origin");
+  return {
+    kind: "supabase",
+    url,
+    serviceKey: trimmed(env, "SUPABASE_SERVICE_ROLE_KEY"),
+    bucket: trimmed(env, "TF_ATTACHMENT_STAGING_BUCKET"),
+  };
+}
+
 /**
  * The storage block behind the env-KIND factory (Ruling 3): `TF_STORAGE_KIND` selects
  * `supabase` | `s3`, an UNKNOWN kind refuses at boot, and the selected kind's variables are
@@ -542,19 +475,28 @@ const RESERVED_BUCKET_NAMES = new Set(["api", "auth", "events", "health", "hello
  * — an upload grant is LOCAL key derivation, so a malformed public endpoint would otherwise
  * surface one step late, as every browser upload failing.
  */
-function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfig | null {
+export function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfig | null {
   const kind = trimmed(env, "TF_STORAGE_KIND");
   const anySet = (vars: readonly string[]): string[] => vars.filter((v) => trimmed(env, v) !== "");
   if (kind === "") {
     // `S3_PUBLIC_ENDPOINT` is optional under the s3 kind but still a storage variable: set with
     // no kind it means the operator configured storage and the factory would ignore it.
-    const stray = [...anySet(SUPABASE_STORAGE_VARS), ...anySet(S3_STORAGE_VARS), ...anySet(["S3_PUBLIC_ENDPOINT"])];
+    const stray = [...anySet(S3_STORAGE_VARS), ...anySet(["S3_PUBLIC_ENDPOINT"])];
     if (stray.length > 0) {
       throw new Error(
-        `storage variables are set but TF_STORAGE_KIND is not (set it to "supabase" or "s3"): ${stray.join(", ")}`,
+        `storage variables are set but TF_STORAGE_KIND is not (set it to "s3"): ${stray.join(", ")}`,
       );
     }
-    return null;
+    // The three Supabase variables with no kind are the older spelling of `supabase`, which the
+    // organizer reads the same way: all three is that kind, none is no storage, some refuses.
+    const legacy = anySet(SUPABASE_STORAGE_VARS);
+    if (legacy.length === 0) return null;
+    if (legacy.length < SUPABASE_STORAGE_VARS.length) {
+      throw new Error(
+        `object storage is PARTIALLY configured: set all of ${SUPABASE_STORAGE_VARS.join(", ")} or none — set: ${legacy.join(", ")}`,
+      );
+    }
+    return supabaseStorage(env);
   }
   const requireAll = (vars: readonly string[]): void => {
     const missing = vars.filter((v) => trimmed(env, v) === "");
@@ -564,14 +506,7 @@ function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfi
   };
   if (kind === "supabase") {
     requireAll(SUPABASE_STORAGE_VARS);
-    const url = trimmed(env, "SUPABASE_URL").replace(/\/+$/, "");
-    if (!/^https:\/\/[^/?#]+$/.test(url)) throw new Error("SUPABASE_URL must be a bare https origin");
-    return {
-      kind: "supabase",
-      url,
-      serviceKey: trimmed(env, "SUPABASE_SERVICE_ROLE_KEY"),
-      bucket: trimmed(env, "TF_ATTACHMENT_STAGING_BUCKET"),
-    };
+    return supabaseStorage(env);
   }
   if (kind === "s3") {
     requireAll(S3_STORAGE_VARS);
@@ -632,128 +567,120 @@ function loadStorageConfig(env: NodeJS.ProcessEnv, origin: string): StorageConfi
 }
 
 /**
- * Build the whole configuration, or THROW with a message that names variables and no values.
- * A broken KEK is captured rather than thrown (see {@link poisonedKeyProvider}); everything
- * else refuses the boot, before any connection is opened.
+ * The key ring, captured and never thrown: `/health` names a broken one. `retirement` is whether a
+ * retired mark is read (and checked on `/health`) or refuses the start.
  */
-export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
-  const { origin, rpID, authConfig } = loadOrigin(env);
-
-  const databaseUrl = requireEnv(env, "DATABASE_URL");
-  // The one shape a self-host DATABASE_URL can be wrong in that nothing downstream would report
-  // coherently: a transaction-mode pooler cannot hold the migrator's advisory lock semantics OR
-  // the change-wake LISTEN. The reason strings are static and never quote the URL.
-  const poolerReason = transactionPoolerReason(databaseUrl);
-  if (poolerReason) throw new Error(`DATABASE_URL is unusable on this host: ${poolerReason}`);
-  const transportReason = pgTransportReason(databaseUrl);
-  if (transportReason) throw new Error(`DATABASE_URL is unusable on this host: ${transportReason}`);
-
-  const portRaw = trimmed(env, "PORT");
-  const port = portRaw === "" ? DEFAULT_PORT : Number(portRaw);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("PORT must be an integer between 1 and 65535");
-  }
-
-  // Thrown, not captured: nothing migrates, mints or listens, so every sealed secret opens again once the keys are back.
-  if (trimmed(env, KEK_RETIRED_ENV) !== "") throw new Error(KEK_RETIRED_REFUSED);
-
-  let keyProvider: KeyProvider;
-  let kek: KekEnvIdentity | null;
-  let kekError: string | null = null;
+export function loadKeyRing(env: NodeJS.ProcessEnv, retirement: "refused" | "read"): Settings["keyRing"] {
+  // A self-hosted server retires no key version yet: thrown, so nothing starts on a partial ring.
+  if (retirement === "refused" && trimmed(env, KEK_RETIRED_ENV) !== "") throw new Error(KEK_RETIRED_REFUSED);
   try {
-    keyProvider = keyProviderFromEnv(env);
+    const provider = keyProviderFromEnv(env);
     const identity = kekEnvIdentity(env);
     if (!identity) throw new Error("TF_KEK_V1 is required on this host (it encrypts mailbox credentials at rest)");
-    kek = identity;
+    return { provider, identity, error: null, retiredThrough: retirement === "read" ? kekRetiredThroughFromEnv(env) : 0 };
   } catch (err) {
-    kekError = err instanceof Error ? err.message : String(err);
-    keyProvider = poisonedKeyProvider(kekError);
-    kek = null;
+    const error = err instanceof Error ? err.message : String(err);
+    return { provider: poisonedKeyProvider(error), identity: null, error, retiredThrough: 0 };
   }
+}
 
-  // The worker's rule for the same variable (`optInt`): a non-negative integer, never echoed.
-  const aiTimeoutRaw = trimmed(env, "TF_AI_TIMEOUT_MS");
-  const aiTimeoutMs = aiTimeoutRaw === "" ? null : Number(aiTimeoutRaw);
-  if (aiTimeoutMs !== null && (!Number.isInteger(aiTimeoutMs) || aiTimeoutMs < 0)) {
-    throw new Error("TF_AI_TIMEOUT_MS must be a non-negative integer of milliseconds");
-  }
+/**
+ * The deployment's own label: `TF_ENV`, else what the door's host says, else `production`. It is
+ * the first word of every alert and decides whether the managed invite bootstrap is refused.
+ * Never an organizer identity (`resolveCloudInstallId` derives that).
+ */
+export function environmentOf(env: NodeJS.ProcessEnv, doorLabel: string | null): string {
+  return trimmed(env, "TF_ENV") || (doorLabel ?? "").trim() || "production";
+}
 
-  // Resolved once, at boot, like everything else here — /health publishes all three.
-  const build = buildIdentityOf(env);
-  // Read before the alert arm, whose mail channel needs it.
-  const smtp = loadSmtpConfig(env);
-
+/**
+ * The two private-network switches of a self-hosted server. Absent means ENFORCE on both.
+ *
+ * `TF_PROBE_ALLOW_PRIVATE=1` (the exact string) lets the add-time IMAP/SMTP probe dial a mail
+ * server on the LAN; without it private, loopback and link-local targets and non-mail ports are
+ * refused before the socket opens. `TF_PUSH_ALLOW_PRIVATE=1` lets a wake be POSTed to a
+ * distributor on the LAN (an `ntfy` beside the server). Two variables on purpose: "may an
+ * interactive probe dial my LAN mail server, once, behind a step-up session" and "may a background
+ * process POST to my LAN, unattended, for as long as a registration lives" are different
+ * questions, and one variable would have decided both.
+ */
+export function loadAllowances(env: NodeJS.ProcessEnv): { probeAllowPrivate: boolean; pushAllowPrivate: boolean } {
   return {
-    origin,
-    rpID,
-    authConfig,
-    cookieHosts: cookieHostsFor(origin),
-    databaseUrl,
-    port,
-    keyProvider,
-    kek,
-    kekError,
-    version: build.version,
-    buildSource: build.source,
-    buildError: buildIdentityError(build.source),
-    sse: SELF_HOST_SSE,
-    smtp,
-    storage: loadStorageConfig(env, origin),
-    // The worker's own reader, so the two processes take one spelling of one choice. A key that
-    // is not shaped like its vendor's, or a model server it may not reach, refuses the boot here,
-    // naming the variables (the mistyped key would otherwise present as a healthy host whose
-    // every draft says "try again later"). Only ANTHROPIC_API_KEY is the Anthropic branch as before.
-    ai: aiProviderEnv(env),
-    aiTimeoutMs,
-    // See loadAlertsEnv: the secret arms the routes and the in-process pass, or nothing.
-    alerts: loadAlertsEnv(env, smtp),
-    // The SAME resolver the worker and the managed host call, so the three cannot accept
-    // different variable sets (MS_OAUTH_* canonical, MICROSOFT_* aliases).
-    msOAuth: msOAuthEnv(env),
-    // The PUBLIC client for the device-code door, through the one reader the organizer also calls
-    // (`msDeviceEnv`) — the same rule as above, applied to the second registration: these two
-    // processes must agree on the spelling or an install arms the API's door and not the refresh
-    // that keeps it alive. ONE name, no aliases: the variable is new, so no deployment's
-    // environment already spells it another way.
-    msDevice: msDeviceEnv(env),
-    /**
-     * The add-time IMAP/SMTP probe's SSRF gate. ENFORCING by default — this is a multi-user
-     * server and the probe dials a host a signed-in family member typed, so private/loopback/
-     * link-local targets and non-mail ports are refused before the socket opens, exactly as on
-     * the managed host. `TF_PROBE_ALLOW_PRIVATE=1` (the exact string) relaxes it to ALLOW-ANY
-     * for the install whose mail server legitimately lives on the LAN — an explicit operator
-     * decision, because the absent value must select the strict branch.
-     */
     probeAllowPrivate: trimmed(env, "TF_PROBE_ALLOW_PRIVATE") === "1",
-    /**
-     * The UnifiedPush wake endpoint's SSRF gate — `TF_PROBE_ALLOW_PRIVATE`'s sibling, and a
-     * SEPARATE variable rather than a reuse of it, deliberately. The two answer different
-     * questions: "may an interactive probe dial my LAN mail server, once, behind a step-up
-     * session" and "may a background process POST to my LAN, unattended, for as long as a
-     * registration lives". An operator who said yes to the first has not said yes to the second,
-     * and one variable would have decided both.
-     *
-     * ENFORCING by default (https-only, public addresses only). `TF_PUSH_ALLOW_PRIVATE=1` — the
-     * exact string — relaxes it for the install whose distributor is genuinely on the LAN (an
-     * `ntfy` beside the server), which is the shape self-hosting is for. Absent selects strict,
-     * because a security default nobody chose is not a default.
-     */
     pushAllowPrivate: trimmed(env, "TF_PUSH_ALLOW_PRIVATE") === "1",
-    trustedProxies: loadTrustedProxies(env),
-    externalDoor: loadTlsTerminator(env),
-    /**
-     * This install's VAPID **public** key, served by `GET /push/vapid-key` so a phone can register
-     * its distributor with it. Empty means no keypair — an honest `null` on that route, not an
-     * error.
-     *
-     * `TF_VAPID_PRIVATE_KEY` is deliberately NOT read here. The API never signs a wake; the
-     * organizer does. Reading the private key in this process would put a signing key in the
-     * request-handling surface for no purpose, and "the api holds only the public half" is a
-     * property worth being structural rather than remembered — the compose file is asserted to
-     * pass only the public one to this service.
-     */
-    vapidPublicKey: trimmed(env, "TF_VAPID_PUBLIC_KEY") || null,
-    environment: trimmed(env, "TF_ENV") || "production",
+  };
+}
+
+/**
+ * This install's VAPID **public** key, served by `GET /push/vapid-key`, or null. Never a secret.
+ * `TF_VAPID_PRIVATE_KEY` is deliberately NOT read by the API: the organizer signs a wake, a
+ * request handler never does.
+ */
+export function loadVapidPublicKey(env: NodeJS.ProcessEnv): string | null {
+  return trimmed(env, "TF_VAPID_PUBLIC_KEY") || null;
+}
+
+/**
+ * The PUBLIC client for the device-code door, through the one reader the organizer also calls:
+ * the two processes must agree on the spelling, or an install arms the API's door and not the
+ * refresh that keeps it alive.
+ */
+export function loadMsDevice(env: NodeJS.ProcessEnv): MicrosoftDeviceClient | null {
+  return msDeviceEnv(env);
+}
+
+/** `"ohmail <no-reply@x>"` → `no-reply@x` — the bare address inside an RFC5322 display form. */
+export const bareAddress = (from: string): string => {
+  const m = /<([^<>\s]+@[^<>\s]+)>/.exec(from);
+  return (m ? m[1]! : from).trim();
+};
+
+/** A process door with no build under it. */
+const NO_BUILD: SettingsDoorInput = {
+  door: "process", buildVersionFile: () => "", platformBuildId: null, release: null, environmentFallback: null,
+  sseHolds: true, sseLifetimeMaxMs: null,
+};
+
+/**
+ * {@link ServerConfig} for a self-hosted environment: the settings (`settings.ts`) under the flat
+ * names this server's own modules and tests read. Nothing is read from the environment here.
+ * `door` is what the process door hands in (`build-release.ts`); a caller that has none (a test
+ * in a checkout, which is no build) reads the label from the variable or `dev` and states no release.
+ */
+export function loadServerConfig(env: NodeJS.ProcessEnv, door: SettingsDoorInput = NO_BUILD): ServerConfig {
+  return serverConfigOf(loadSettings(env, door));
+}
+
+export function serverConfigOf(settings: Settings): ServerConfig {
+  const mail = settings.customerMail;
+  return {
+    settings,
+    origin: settings.origin.appOrigin ?? "",
+    rpID: settings.origin.rpID,
+    authConfig: settings.origin.authConfig,
+    cookieHosts: settings.origin.cookieHosts,
+    databaseUrl: settings.database.url,
+    port: settings.network.port,
+    keyProvider: settings.keyRing.provider,
+    kek: settings.keyRing.identity,
+    kekError: settings.keyRing.error,
+    version: settings.build.version,
+    buildSource: settings.build.source,
+    buildError: settings.build.error,
+    sse: settings.sse,
+    smtp: mail?.transport.kind === "smtp" ? { url: mail.transport.url, from: mail.from, replyTo: mail.replyTo } : null,
+    storage: settings.storage,
+    ai: settings.ai?.kind === "operator" ? settings.ai.env : null,
+    aiTimeoutMs: settings.ai?.kind === "operator" ? settings.ai.timeoutMs : null,
+    alerts: settings.alerts,
+    msOAuth: settings.msOAuth,
+    msDevice: settings.msDevice,
+    probeAllowPrivate: settings.network.probeAllowPrivate,
+    vapidPublicKey: settings.push.vapidPublicKey,
+    pushAllowPrivate: settings.network.pushAllowPrivate,
+    trustedProxies: settings.network.trustedProxies,
+    externalDoor: settings.network.externalDoor,
+    environment: settings.environment,
     bodyMaxBytes: BODY_MAX_BYTES,
     headersTimeoutMs: SERVER_HEADERS_TIMEOUT_MS,
     requestTimeoutMs: SERVER_REQUEST_TIMEOUT_MS,

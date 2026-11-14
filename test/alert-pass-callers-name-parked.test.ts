@@ -86,8 +86,8 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
   it("the console never dials the plane: it names no ops reader, and the managed host hands it none", () => {
     const board = withoutComments(readFileSync(join(ROOT, "packages/services/src/admin-service.ts"), "utf8"));
     expect(board).not.toMatch(/\bplaneOps\b/);
-    const host = withoutComments(readFileSync(join(ROOT, "apps/api-vercel/src/deps.ts"), "utf8"));
-    const start = host.indexOf("admin: cfg.admin");
+    const host = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
+    const start = host.indexOf("admin: staff?.admin");
     const block = host.slice(start, host.indexOf("adminDb:", start));
     expect(block, "the admin block was found").toContain("parkedAccounts");
     expect(block).not.toMatch(/\bplaneOps\b/);
@@ -115,7 +115,7 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
       return [{ file: relative(ROOT, file), block: src.slice(start, end + 1) }];
     });
     expect(hosts.map((h) => h.file).sort(), "the managed host and the self-hosted server")
-      .toEqual(["apps/api-vercel/src/deps.ts", "apps/server/src/deps.ts"]);
+      .toEqual(["apps/server/src/deps.ts"]);
     const missing = hosts.filter((h) => !namesParked(h.block)).map((h) => h.file);
     expect(missing, "the route forwards cfg.parkedAccounts; nothing else supplies it").toEqual([]);
     const noCap = hosts.filter((h) => !/\baccountsAtCap\b\s*:/.test(h.block)).map((h) => h.file);
@@ -125,7 +125,7 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
   });
 
   it("the managed host hands its console the SAME parked reader its alert route reads", () => {
-    const src = withoutComments(readFileSync(join(ROOT, "apps/api-vercel/src/deps.ts"), "utf8"));
+    const src = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
     const block = (from: string): string => {
       const start = src.indexOf(from);
       let depth = 0;
@@ -135,16 +135,16 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
       }
       return "";
     };
-    const one = "parkedAccounts: alertReadersFor(cfg).parkedAccounts";
+    const one = "parkedAccounts: rt.alertReaders.parkedAccounts";
     expect(block("alerts: cfg.alerts"), "the alert route reads the host's one bag").toContain(one);
-    expect(block("admin: cfg.admin"), "the console reads the same instance, never a second construction").toContain(one);
-    expect(block("admin: cfg.admin"), "and no at-cap reader: a console request is not a pass").not.toMatch(/accountsAtCap/);
+    expect(block("admin: staff?.admin"), "the console reads the same instance, never a second construction").toContain(one);
+    expect(block("admin: staff?.admin"), "and no at-cap reader: a console request is not a pass").not.toMatch(/accountsAtCap/);
   });
 
   it("the managed host's bag bounds both plane reads (the roster's reader stays unbounded elsewhere)", () => {
-    const src = withoutComments(readFileSync(join(ROOT, "apps/api-vercel/src/deps.ts"), "utf8"));
-    const bag = src.slice(src.indexOf("function alertReadersFor("), src.indexOf("function alertSinksFor("));
-    expect(bag, "the bag was found").toContain("readersCache");
+    const src = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
+    const bag = src.slice(src.indexOf("function alertReadersFor("), src.indexOf("function pagerArms("));
+    expect(bag, "the bag was found").toContain("plane_ops_watch");
     expect(bag, "the parked reader takes the alert bound").toMatch(/parkedAccountsOf\(port\(\), ALERT_PARKED_READ_BOUND\)/);
     expect(bag, "the at-cap reader keeps its default bound: no second argument").toMatch(/accountsAtCapOf\(port\(\)\)/);
   });
