@@ -1,0 +1,9 @@
+{
+  "accountDevices": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "thisOne": "This browser"
+  }
+}

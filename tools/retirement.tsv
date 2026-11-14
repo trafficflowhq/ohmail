@@ -742,7 +742,7 @@ apps/webapp/test/pile-nav.test.ts	source-text	reads source as text (tsx)	layer 2
 apps/webapp/test/pill-snapshot.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/pill-verb-fold.test.tsx	source-text	reads source as text (css, mjs, ts)	layer 2	removals	
 apps/webapp/test/plain-text-line-breaks.test.tsx	source-text	reads source as text (css)	layer 2	removals	
-apps/webapp/test/press-reader-census.test.ts	source-text	reads source as text (ts)	layer 2	reader	
+apps/webapp/test/press-reader-census.test.ts	source-text	reads source as text (ts)	layer 2	places	
 apps/webapp/test/profile-import.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/proxy.e2e.test.ts	source-text	reads source as text (mjs, ts)	layer 2	removals	
 apps/webapp/test/quoted-history-a11y.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
@@ -754,9 +754,9 @@ apps/webapp/test/rail-row-template.test.ts	source-text	reads source as text (css
 apps/webapp/test/rail-sync-readable.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/rail-tags-persist.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
 apps/webapp/test/read-switch-measure-geometry.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
-apps/webapp/test/reader-modal-width.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
-apps/webapp/test/reader-programmatic-scroll-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	reader	
-apps/webapp/test/reader-stand-down.test.ts	source-text	reads source as text (ts)	layer 2	reader	
+apps/webapp/test/reader-modal-width.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	places	
+apps/webapp/test/reader-programmatic-scroll-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	places	
+apps/webapp/test/reader-stand-down.test.ts	source-text	reads source as text (ts)	layer 2	places	
 apps/webapp/test/reads-pill-float.test.ts	source-text	reads source as text (css, mjs)	layer 2	removals	
 apps/webapp/test/reads-recipients.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/recipient-field.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
@@ -781,7 +781,7 @@ apps/webapp/test/row-actions-backdrop-band.test.tsx	source-text	reads source as 
 apps/webapp/test/row-menu-fit.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
 apps/webapp/test/row-participants-wiring.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
 apps/webapp/test/row-stamp-wiring.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
-apps/webapp/test/row-thread-count.test.ts	source-text	reads source as text (tsx)	layer 2	reader	
+apps/webapp/test/row-thread-count.test.ts	source-text	reads source as text (tsx)	layer 2	places	
 apps/webapp/test/scheme-control.test.tsx	data	the scheme control in the old rail's dock	none	frame	gone:apps/webapp/app/shell/AppShell.tsx#<RailNav
 apps/webapp/test/screen-press-verdict-actions.test.ts	source-text	reads source as text (ts): the shell's verbs; and the message catalogue	layer 2	screener	
 apps/webapp/test/screener-decision-durable.test.tsx	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	removals	
@@ -859,9 +859,9 @@ apps/webapp/test/sync-bar-offline.test.tsx	behaviour	offline outranks a stale or
 apps/webapp/test/sync-notice-one-copy.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
 apps/webapp/test/sync-owner-gate.test.ts	source-text	reads source as text (ts)	layer 2	doors	
 apps/webapp/test/tags-admin.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
-apps/webapp/test/thread-column-shadow.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
-apps/webapp/test/thread-marks-geometry.test.tsx	source-text	reads source as text (css, mjs, tsx)	layer 2	reader	
-apps/webapp/test/thread-read-browser.test.ts	source-text	reads source as text (css, js, mjs, tsx)	layer 2	reader	
+apps/webapp/test/thread-column-shadow.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	places	
+apps/webapp/test/thread-marks-geometry.test.tsx	source-text	reads source as text (css, mjs, tsx)	layer 2	places	
+apps/webapp/test/thread-read-browser.test.ts	source-text	reads source as text (css, js, mjs, tsx)	layer 2	places	
 apps/webapp/test/token-reads-defined.test.ts	source-text	reads source as text (css)	layer 2	removals	
 apps/webapp/test/touch-key-hints.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
 apps/webapp/test/trash-window-readonly.test.ts	source-text	reads source as text (ts)	layer 2	removals	
@@ -1053,6 +1053,9 @@ packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/sup
 packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
 packages/app/test/month/range-fit-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts and the views' own sheets: laid out in Chromium	layer 2	cal-views	
 packages/app/test/states/ohbox-window-in-a-browser.test.ts	artifact	builds the Ohbox's states page (the feature bundled, the tokens' sheets) and reads its list window in a real browser	none	ohbox	
+packages/app/test/states/reader-german-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every reading state's window, and draws each in German and English in a real browser	none	reader	
+packages/app/test/states/reader-read-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the read rule and the wide window in a real browser	none	reader	
+packages/app/test/states/reader-requests-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and records what it asks for in a real browser	none	reader	
 packages/app/test/states/touch-in-a-browser.test.ts	artifact	builds the touch layer's page (the feature bundled, the tokens' sheets) and reads its list under a finger in a real browser	none	phone-touch	
 packages/app/test/week/time-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	cal-views	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	

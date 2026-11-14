@@ -62,8 +62,8 @@ export interface DesktopSupplies {
   > & MayBeNone<"firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
-  /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. */
-  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages" | "calendar">>;
+  /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. The reader is no entry. */
+  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages" | "reader" | "calendar">>;
   readonly notifications: DeviceNotifications;
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
@@ -161,6 +161,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       invites: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      reader: NONE,
       calendar: has.frame.calendar,
     },
     device: {

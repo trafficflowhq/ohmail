@@ -70,6 +70,7 @@ const entries = (from: object, ...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (from as Record<string, unknown>)[feature] : NONE])),
     places: FRAME.places,
     stages: FRAME.stages,
+    reader: NONE,
     calendar: FRAME.calendar,
   });
 /** What the computer is, and what no door hands on yet: a device's verbs and a host's signals. */

@@ -2052,11 +2052,70 @@
   "reader": {
     "gone": "This message was moved or deleted elsewhere.",
     "goneTrash": "Look in Trash",
+    "goneShort": "Moved or deleted elsewhere",
     "hint": "to return",
     "back": "Back",
     "pane": "Open message",
     "closeColumn": "Close",
-    "hintReturn": "to return"
+    "hintReturn": "to return",
+    "blank": {
+      "none": "Nothing open"
+    },
+    "verb": {
+      "reply": "Reply",
+      "replyAll": "Reply all",
+      "markUnread": "Mark unread",
+      "markRead": "Mark read",
+      "more": "More",
+      "aside": "Park",
+      "later": "Later",
+      "done": "Done",
+      "resurface": "Resurface",
+      "delete": "Delete",
+      "move": "Move",
+      "tag": "Tag",
+      "draftReply": "Draft reply"
+    },
+    "resurface": {
+      "now": "Now",
+      "tomorrow": "Tomorrow",
+      "nextWeek": "Next week",
+      "time": "Time",
+      "pick": "Pick a date",
+      "cancel": "Cancel",
+      "back": "Back",
+      "prevMonth": "Previous month",
+      "nextMonth": "Next month",
+      "month": "{month, date, ::MMMMyyyy}",
+      "weekday": "{day, date, ::EEEEE}",
+      "skip": "{horizon} lands at {booked}: the clocks skip {asked} that night."
+    },
+    "toast": {
+      "queued": "Queued in Answer Later",
+      "aside": "Parked",
+      "unqueued": "Out of Answer Later",
+      "unparked": "Out of Parked",
+      "resurfaces": "Resurfaces {when}",
+      "resurfaceNow": "Back at the top"
+    },
+    "squares": "{count} messages, {unread, plural, =0 {all read} other {# unread}}",
+    "protected": "This message holds a verification code. It is not shown here.",
+    "from": "From",
+    "sent": "Sent",
+    "views": "How this letter is shown",
+    "detail": {
+      "to": "To",
+      "cc": "Cc",
+      "in": "In",
+      "where": "{place} · {mailbox}"
+    },
+    "panel": "Actions",
+    "head": {
+      "to": "to",
+      "you": "you",
+      "yesterday": "yesterday {time}",
+      "menu": "Message"
+    }
   },
   "body": {
     "loading": "Loading the full message…",
@@ -2076,6 +2135,25 @@
     "liveBusy": "Too many letters loaded this hour. Try again later.",
     "liveUnreachable": "ohmail couldn't reach your mail server. Try again.",
     "liveFailed": "Couldn't load this letter. Try again.",
+    "keptLoading": "Loading from your mail server…",
+    "keptLoaded": "Loaded from your mail server for this view and not stored on Cloud.",
+    "kept": {
+      "emptiedTitle": "Text on your mail server",
+      "emptiedLine": "Your storage is full, so Cloud does not keep this letter's text.",
+      "emptiedFine": "It loads for this view only and is not stored.",
+      "storage": "Storage",
+      "junkTitle": "Text in your Junk folder",
+      "junkLine": "You marked this as spam, so it was filed to Junk on your mail server and its text is not stored here.",
+      "junkFine": "Its headers, this preview and the words search finds it by are kept while it is there.",
+      "expungedTitle": "Gone from your mail server",
+      "expungedLine": "Every copy was deleted there or moved by another mail app, so its text, its preview and its search words are gone here too.",
+      "expungedFine": "Until you remove the mailbox or delete your account, ohmail keeps who sent it and to whom, its subject and date, what it answered, the names of its files, how it was filed and the trackers found in it.",
+      "tooLargeTitle": "Larger than 64 MB",
+      "tooLargeLine": "ohmail downloads up to 64 MB, so this message's text and files are not shown here. Open it at your mail provider.",
+      "removedLine": "Your storage was full and ohmail no longer reads this mailbox, so this letter's text does not come back here.",
+      "failed": "The full message didn't load, so this is its preview.",
+      "tryAgain": "Try again"
+    },
     "withheldJunk": "Its text is not stored here — your spam verdict filed this message to the Junk folder on your own mail server. It lives on there, and while it does, its headers, this preview and the words search finds it by are kept.",
     "withheldJunkLoading": "Loading this message from your mail server…",
     "withheldExpunged": "Its text is no longer stored here — every copy of this message is gone from the folders ohmail reads on your mail server: deleted there, or moved elsewhere by another mail app. Its preview and the words search found it by went with its text. Until you remove the mailbox or delete your account, ohmail keeps who sent it and to whom, its subject and date, the letters it answered, the names of its files, how it was filed and the trackers found in it.",
@@ -4921,6 +4999,73 @@
     "later": "Later",
     "caughtUp": "ohmail is catching up on mail that arrived since {date}.",
     "dismiss": "Got it"
+  },
+  "accountDevices": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "thisOne": "This browser"
+  },
+  "accountSubscription": {
+    "notOpened": "Not opened",
+    "notRead": "Not read",
+    "plansUnavailable": "The plans and their prices could not be read just now.",
+    "retry": "Try again",
+    "trial": "Trial",
+    "trialEnded": "Trial ended",
+    "overdue": "Payment overdue",
+    "active": "Active",
+    "canceled": "Cancelled",
+    "unpaid": "Unpaid",
+    "suspended": "Suspended",
+    "closed": "Closed",
+    "paymentFailed": "Payment failed",
+    "paymentFailedUndated": "Your last payment failed.",
+    "noPlan": "No plan yet",
+    "mailboxesUpTo": "Up to {count, number}",
+    "openStorage": "Open",
+    "billing": "Billing",
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "planFacts": "{mailboxes, plural, one {# mailbox} other {# mailboxes}} · {credits, number} credits · {storage}",
+    "subscribe": "Subscribe",
+    "subscribeTo": "Subscribe to {plan, select, solo {Solo} plus {Plus} pro {Pro} other {{plan}}}",
+    "fixPayment": "Fix payment"
+  },
+  "accountStorage": {
+    "notOpened": "Not opened"
+  },
+  "accountInvites": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "notCopied": "Not copied",
+    "cancelled": "Cancelled",
+    "none": "No invites"
+  },
+  "accountSecurity": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "cancelled": "Cancelled",
+    "codesUnused": "Some unused",
+    "codesNoneUnused": "None unused",
+    "on": "On",
+    "notSetUp": "Not set up",
+    "generate": "Generate",
+    "replace": "Replace",
+    "setUp": "Set up",
+    "remove": "Remove",
+    "byHand": "Type this key into your authenticator app.",
+    "byHandLabel": "Key"
+  },
+  "accountOwn": {
+    "signedIn": "Signed in",
+    "thisBrowser": "This browser",
+    "changeLabel": "Password",
+    "cancel": "Cancel",
+    "notRead": "Not read",
+    "stillHere": "Still here",
+    "notConfirmed": "Not confirmed"
   },
   "accessLock": {
     "title": "This account is not active.",

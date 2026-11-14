@@ -7,7 +7,7 @@ export type {
   Appearance, DeviceBuild, DeviceNotifications, HostAddress, HostDevice, Pointer, Posture, PushSyncOutcome, WindowFacts,
 } from "./device.js";
 export { FEATURE_NAMES } from "./features.js";
-export type { FeatureEntry, FeatureName, HostFeatures } from "./features.js";
+export type { FeatureEntry, FeatureName, HostFeatures, ReaderEntry } from "./features.js";
 export { panesOf } from "./panes.js";
 export type { ListedPanes } from "./panes.js";
 export type { HostReads } from "./reads.js";

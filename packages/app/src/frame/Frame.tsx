@@ -18,7 +18,7 @@ import {
 import { Overlay } from "@ohmail/ui/base";
 import { EngineContext } from "@ohmail/app-logic/engine";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
-import { NONE, type LinkedDraft } from "../host/index.js";
+import { NONE, type LinkedDraft, type None, type ReaderEntry } from "../host/index.js";
 import { Columns } from "./Columns.js";
 import { FrameContext, NO_CONNECTION, type ConnectionFeed, type FrameInner } from "./commands.js";
 import { useConnectionNotice } from "./connection.js";
@@ -43,6 +43,7 @@ import { createNoticeStore, type NoticeStore } from "./notice-store.js";
 import { NoticeHost } from "./NoticeHost.js";
 import { DockRail, SideRail } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
+import { RoomGate } from "./room.js";
 import { useReportSlot } from "./report-slot.js";
 import { attributesOf } from "./root-attributes.js";
 import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
@@ -169,6 +170,7 @@ function panesOf(
   entry: PlaceEntry | null,
   pane: PaneProps,
   reading: boolean,
+  reader: ReaderEntry | None,
 ): { list: ReactNode; reading: ReactNode; wide: ReactNode | null } {
   if (!entry) return { list: null, reading: null, wide: null };
   const panes = entry.panes;
@@ -177,11 +179,21 @@ function panesOf(
   const Reading = panes.Reading;
   return {
     list: <panes.List key={entry.body} {...pane} keysHere={pane.route.open === null} />,
-    /* The reader's column mounts here once the reader's door lands (task `reader`). */
-    reading:
-      reading && Reading !== "reader" ? <Reading {...pane} keysHere={pane.route.open !== null} /> : null,
+    /* A place that names the reader gets the shell's reading column; with none handed, the column stays empty. */
+    reading: !reading ? null : Reading !== "reader" ? (
+      <Reading {...pane} keysHere={pane.route.open !== null} />
+    ) : reader === NONE ? null : (
+      <reader.Reading {...pane} keysHere={pane.route.open !== null} />
+    ),
     wide: null,
   };
+}
+
+/** The room's press seam runs only where the reader is drawn: never beside the old shell's own. */
+function drawsTheReader(entry: PlaceEntry | null, reader: ReaderEntry | None): boolean {
+  return (
+    reader !== NONE && entry !== null && entry.panes.kind === "columns" && entry.panes.Reading === "reader"
+  );
 }
 
 /**
@@ -244,7 +256,9 @@ function FrameBody({ host }: { host: FrameHost }) {
       : host.features.stages[route.stage.id];
   const staged = stageEntry !== NONE;
   const pane: PaneProps = { route, plan, keysHere: !staged };
-  const { list, reading, wide } = panesOf(entry, pane, plan.columns === 2 || route.open !== null);
+  const readingShown = plan.columns === 2 || route.open !== null;
+  const { list, reading, wide } = panesOf(entry, pane, readingShown, host.features.reader);
+  const room = drawsTheReader(entry, host.features.reader);
   /* The rail reads its feed itself: a new feed (a fold opened in it) draws the rail again, never the panes. */
   const rails = { feed: inner.rail, places, route, commands };
   /* On a phone's width a letter stands open over the list or the wide pane: no dock stands at the foot then. */
@@ -280,20 +294,22 @@ function FrameBody({ host }: { host: FrameHost }) {
           inert={held || staged || sheet || undefined}
         >
           {plan.rail === "dock" ? <div className="fr-noticebar">{slotNotice}</div> : null}
-          <Columns
-            plan={plan}
-            rail={sideRail}
-            list={[inColumn(plan.device !== "phone"), list]}
-            listKeys={!staged && route.open === null}
-            reading={reading}
-            wide={wide !== null ? [inColumn(false), wide] : null}
-            labels={{
-              list: t("landmark.list"),
-              reading: t("landmark.reading"),
-              railWidth: t("columns.railWidth"),
-              listWidth: t("columns.listWidth"),
-            }}
-          />
+          <RoomGate on={room}>
+            <Columns
+              plan={plan}
+              rail={sideRail}
+              list={[inColumn(plan.device !== "phone"), list]}
+              listKeys={!staged && route.open === null}
+              reading={reading}
+              wide={wide !== null ? [inColumn(false), wide] : null}
+              labels={{
+                list: t("landmark.list"),
+                reading: t("landmark.reading"),
+                railWidth: t("columns.railWidth"),
+                listWidth: t("columns.listWidth"),
+              }}
+            />
+          </RoomGate>
           {plan.rail === "dock" && !letterUp ? <FootDock bars={inner.bars} {...rails} /> : null}
           <div className="fr-report">
             <ReportHost slot={slot} />

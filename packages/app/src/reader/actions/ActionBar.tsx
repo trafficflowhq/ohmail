@@ -1,0 +1,245 @@
+/**
+ * THE ACTION PANEL of the open letter, at the foot of the column, and its More menu. Its buttons carry the names a
+ * person and the journeys find them by. The stop of the read rule: what runs under it is not on screen.
+ */
+import { useRef, useState, type RefObject } from "react";
+import { Menu, MenuItem } from "@ohmail/ui/base";
+import { ActionPanel, MovePicker, type PanelVerb } from "@ohmail/ui/mail";
+import { useMirror } from "@ohmail/app-logic/reader";
+import { useListVisit } from "@ohmail/app-logic/reading";
+import type { EngineMessage, TagDTO as TagEntity } from "@ohmail/client-engine";
+import { useText } from "../../text/index.js";
+import { ResurfaceMenu } from "./ResurfaceMenu.js";
+import { useVerbs, type Verbs } from "./use-verbs.js";
+
+type Open = "more" | "resurface" | "tag" | "move" | null;
+
+/** The room the panel stands in: the upright foldable and the phone keep some verbs behind More. */
+export type PanelRoom = "desktop" | "fold" | "foldl" | "phone";
+
+/**
+ * A verb of the panel, and whether it stands behind More from the start in this room. Its press takes the element
+ * pressed (the kit's K3): a menu it opens comes out of that control. Pressed from inside More, it takes More's button.
+ */
+type Placed = PanelVerb & { behind?: boolean };
+
+/**
+ * The panel's verbs in the design's order and the ranks they fold by: Reply, Forward and the read slot never fold;
+ * of the others the highest folds first (Tag, Resurface, Park, Later, Reply all). Once nothing is left to fold, the
+ * read slot gives up its word first, then Forward, then Reply; on a foldable the read slot gives it up before
+ * anything folds. On a phone and on the upright foldable Reply all and Tag stand behind More, and on a phone the
+ * read slot too. Tag stands only where the account has tags.
+ */
+function panelVerbs(
+  t: ReturnType<typeof useText>,
+  tm: ReturnType<typeof useText>,
+  verbs: Verbs,
+  tagged: boolean,
+  toggle: (which: Exclude<Open, null>) => (at: HTMLElement) => void,
+  room: PanelRoom,
+): Placed[] {
+  const { act, readSlot } = verbs;
+  const compact = room === "phone" || room === "fold";
+  const file = (id: "later" | "aside", icon: "later" | "parked", rank: number): Placed => ({
+    id,
+    label: t(`verb.${id}`),
+    icon,
+    segment: "file",
+    rank,
+    onPress: () => act(id),
+  });
+  return [
+    {
+      id: "reply",
+      label: t("verb.reply"),
+      icon: "reply",
+      kind: "ink",
+      rank: 0,
+      wordOrder: 3,
+      keyHint: "r",
+      onPress: () => act("reply"),
+    },
+    ...(verbs.replyAll
+      ? [
+          {
+            id: "reply_all",
+            label: tm("menuReplyAll"),
+            icon: "replyall" as const,
+            rank: 1,
+            behind: compact,
+            onPress: () => act("reply_all"),
+          },
+        ]
+      : []),
+    {
+      id: "forward",
+      label: tm("menuForward"),
+      icon: "forward",
+      rank: 0,
+      wordOrder: 2,
+      onPress: () => act("forward"),
+    },
+    file("later", "later", 2),
+    file("aside", "parked", 3),
+    {
+      id: "resurface",
+      label: t("verb.resurface"),
+      icon: "resurface",
+      segment: "file",
+      rank: 4,
+      onPress: toggle("resurface"),
+    },
+    ...(tagged
+      ? [
+          {
+            id: "tag",
+            label: t("verb.tag"),
+            icon: "tags" as const,
+            segment: "file",
+            rank: 5,
+            behind: compact,
+            onPress: toggle("tag"),
+          },
+        ]
+      : []),
+    {
+      id: "read",
+      label: t(`verb.${readSlot}`),
+      icon: readSlot === "markRead" ? "read" : "unread",
+      apart: true,
+      rank: 0,
+      wordOrder: 1,
+      wordFirst: room === "fold" || room === "foldl",
+      behind: room === "phone",
+      keyHint: "u",
+      widest: t("verb.markUnread"),
+      hotIcon: readSlot === "markRead",
+      onPress: () => act("unread"),
+    },
+  ];
+}
+
+export function ActionBar({ verbs, room = "desktop" }: { verbs: Verbs; room?: PanelRoom }) {
+  const t = useText("reader");
+  const tm = useText("message");
+  const tp = useText("place");
+  const [menu, setMenu] = useState<Open>(null);
+  /* What did not fit the panel: offered first behind More, in the panel's order. */
+  const [folded, setFolded] = useState<readonly string[]>([]);
+  const more = menu === "more";
+  /* The control a menu comes out of: the verb's button last pressed, or More's for a verb pressed inside More. */
+  const pressed = useRef<HTMLElement | null>(null);
+  const toggle = (which: Exclude<Open, null>) => (at: HTMLElement) => {
+    pressed.current = at;
+    setMenu((m) => (m === which ? null : which));
+  };
+  const close = () => setMenu(null);
+  /* The panel's wrapper: the read rule's stop (`data-read-stop`). */
+  const stop = useRef<HTMLDivElement | null>(null);
+  const { act } = verbs;
+  const { mirror } = useMirror();
+  const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
+  const all = panelVerbs(t, tm, verbs, tags.length > 0, toggle, room);
+  const items = all.filter((v) => !v.behind);
+  /* Behind More, in the panel's order: what stands there in this room and what folded; Move before the read slot. */
+  const behind = all.filter((v) => v.behind || folded.includes(v.id));
+  const beforeRead = behind.filter((v) => v.id !== "read");
+  const read = behind.filter((v) => v.id === "read");
+  return (
+    <div className="rd-stop" data-read-stop="" ref={stop}>
+      <ActionPanel
+        label={t("panel")}
+        items={items}
+        folded={folded}
+        onFold={setFolded}
+        more={{ label: t("verb.more"), behind: true, expanded: more || undefined, onPress: toggle("more") }}
+      />
+      <ResurfaceMenu open={menu === "resurface"} onClose={close} anchor={pressed} act={act} />
+      <Menu open={menu === "tag"} onClose={close} anchor={pressed} label={t("verb.tag")} up right>
+        {tags.map((tag) => {
+          const on = verbs.tagged.includes(tag.id);
+          return (
+            <MenuItem key={tag.id} checked={on} onPress={() => verbs.tag?.(tag.id, !on)}>
+              {tag.name}
+            </MenuItem>
+          );
+        })}
+      </Menu>
+      <MovePicker
+        open={menu === "move"}
+        onClose={close}
+        anchor={pressed}
+        label={t("verb.move")}
+        title={t("verb.move")}
+        places={verbs.moves.map((id) => ({ id, label: tp(id) }))}
+        folders={[]}
+        onMove={(id) => {
+          close();
+          act(`move:${id as (typeof verbs.moves)[number]}`);
+        }}
+      />
+      <Menu open={more} onClose={close} anchor={pressed} label={t("verb.more")} up right>
+        {beforeRead.map((v) => (
+          <BehindMore key={v.id} verb={v} close={close} more={pressed} />
+        ))}
+        {verbs.moves.length > 0 ? (
+          <MenuItem icon="move" onPress={() => setMenu("move")}>
+            {t("verb.move")}
+          </MenuItem>
+        ) : null}
+        {read.map((v) => (
+          <BehindMore key={v.id} verb={v} close={close} more={pressed} />
+        ))}
+        <MenuItem
+          icon="trash"
+          onPress={() => {
+            close();
+            act("delete");
+          }}
+        >
+          {t("verb.delete")}
+        </MenuItem>
+      </Menu>
+    </div>
+  );
+}
+
+/**
+ * A verb behind More. Resurface and Tag open their own menus in More's place, out of More's button: the press hands
+ * the element More was pressed on.
+ */
+function BehindMore({
+  verb,
+  close,
+  more,
+}: {
+  verb: Placed;
+  close: () => void;
+  more: RefObject<HTMLElement | null>;
+}) {
+  return (
+    <MenuItem
+      icon={verb.icon}
+      onPress={() => {
+        const at = more.current;
+        if (verb.id !== "resurface" && verb.id !== "tag") close();
+        if (at !== null) verb.onPress?.(at);
+      }}
+    >
+      {verb.label}
+    </MenuItem>
+  );
+}
+
+/**
+ * The panel for one letter where a list draws it in place: the list's visit where it handed one, else the reader's
+ * runners through the room's seam. With neither (no visit, and a place whose room is off) nothing is drawn.
+ */
+export function LetterActions({ messageId }: { messageId: string }) {
+  const { mirror } = useMirror();
+  const message = mirror?.get<EngineMessage>("message", messageId) ?? null;
+  const visit = useListVisit(messageId);
+  const verbs = useVerbs(message, visit, null);
+  if (message === null || verbs.idle) return null;
+  return <ActionBar verbs={verbs} />;
+}

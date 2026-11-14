@@ -1,0 +1,17 @@
+{
+  "accountSecurity": {
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "cancelled": "Abgebrochen",
+    "codesUnused": "Einige unbenutzt",
+    "codesNoneUnused": "Keine unbenutzt",
+    "on": "An",
+    "notSetUp": "Nicht eingerichtet",
+    "generate": "Erzeugen",
+    "replace": "Ersetzen",
+    "setUp": "Einrichten",
+    "remove": "Entfernen",
+    "byHand": "Tipp diesen Schlüssel in deine Authenticator-App ein.",
+    "byHandLabel": "Schlüssel"
+  }
+}

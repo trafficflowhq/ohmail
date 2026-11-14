@@ -49,6 +49,12 @@
   "settings-about": ["settingsAbout"],
   "mailboxes": ["providerPicker", "mailboxes", "onboarding", "profileImport", "mailboxFilings"],
   "account": ["invites", "devices", "account", "passwordChange", "security", "accountLifecycle"],
+  "account-devices": ["accountDevices"],
+  "account-subscription": ["accountSubscription"],
+  "account-storage": ["accountStorage"],
+  "account-invites": ["accountInvites"],
+  "account-security": ["accountSecurity"],
+  "account-account": ["accountOwn"],
   "doors": [
     "gate",
     "session",

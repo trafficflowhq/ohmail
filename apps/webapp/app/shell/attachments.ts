@@ -34,6 +34,14 @@ import {
 import { probeSessionNow, subscribeSessionRevival } from "@ohmail/app-logic/session/session-truth";
 
 /**
+ * The strip's view as this door hands it. Its items are the engine's own, so each says whether it is the body's own
+ * picture: the reader's file port (`ReaderFiles`) asks for that, and the old strip's prop type leaves it optional.
+ */
+export type DoorAttachmentsView =
+  | Exclude<AttachmentsView, { state: "ready" }>
+  | { state: "ready"; items: (AttachmentItem & { inline: boolean })[] };
+
+/**
  * What `MessagePane` needs to render one message's strip.
  *
  * Functions of `messageId` rather than resolved values, for the reason every other member of
@@ -51,7 +59,7 @@ export interface AttachmentsChrome {
    * EVERY part — the body may paint an inline picture, and it stays listed and downloadable
    * beside the real files (marked, and ordered after them — see the `ready` arm below).
    */
-  itemsOf(messageId: string, opts?: { includeInlineParts?: boolean }): AttachmentsView;
+  itemsOf(messageId: string, opts?: { includeInlineParts?: boolean }): DoorAttachmentsView;
   /**
    * Fetch (if needed) and SAVE one attachment — the DOWNLOAD path, and the primary one. It
    * backs every tile press in the strip and the overlay's own Download button. The preview
@@ -679,7 +687,7 @@ export function useMessageAttachments(
    * was written to avoid.
    */
   const itemsOf = useCallback(
-    (id: string, opts: { includeInlineParts?: boolean } = {}): AttachmentsView => {
+    (id: string, opts: { includeInlineParts?: boolean } = {}): DoorAttachmentsView => {
       const held = engine.attachmentsOf(id, opts);
       switch (held.state) {
         case "unavailable":
