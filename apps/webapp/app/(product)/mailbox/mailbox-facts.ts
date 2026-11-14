@@ -130,6 +130,9 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // present. A server that predates the field must produce a fact object with no `filing` key
     // at all, so the arm falls back to the count alone.
     ...("filing" in m ? { filing: m.filing } : {}),
+    // Whether new mail is being fetched, by the same spread: absent is an older server and stays
+    // absent, `null` is a server that does not say.
+    ...("fetching" in m ? { fetching: m.fetching } : {}),
     // How much mail the SERVER says is in there (mail 0083) — the first pull's denominator.
     // FORWARDED UNTOUCHED, on the same rule as the line above and with the sharpest version of
     // its consequence: a `?? 0` here would turn "no folder of this mailbox has been counted

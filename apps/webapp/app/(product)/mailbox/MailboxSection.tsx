@@ -68,7 +68,7 @@ import {
   noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
 import { splitHostPort } from "../host-port";
-import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
+import { AGO_COPY, agoStamp, dayStamp, waterlineStamp } from "../../shell/format";
 import {
   claimLeftBehind, filerKey, isSyncBlockReason, readerHolderLapsed, readerStandDown, showInboundQuiet,
   standDownKey, webFiler, type WebFiler,
@@ -77,6 +77,7 @@ import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
 import { displayAddress } from "../../shell/idn";
+import { activeFormatLocale } from "../../shell/locale";
 /* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */
 import { SELF_HOST_BUILD } from "../../hello";
@@ -2089,6 +2090,15 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
           why a disabled row with no live sibling still gets one of its own. */}
       {(behind ? [] : groupByAddress(connected)).map(({ shown: m, superseded }) => {
         const stamp = m.lastSyncAt ? agoStamp(m.lastSyncAt, now) : null;
+        /* THE SERVICE IS NOT FETCHING THIS MAILBOX'S NEW MAIL — the server's own word on the row
+           (`fetching`; null and absent say nothing). The row then leads its state with that and
+           carries one note; a mailbox with trouble of its own keeps its own word, so this stands
+           only where the row would otherwise read as healthy. */
+        const notChecked = m.fetching?.behind === true && !m.erasure && m.status === "connected"
+          && !m.syncBlockedSince;
+        const lateSince = notChecked && m.fetching?.since
+          ? waterlineStamp(m.fetching.since, new Date(now), activeFormatLocale()) : "";
+        const lateSaid = { hasSince: lateSince === "" ? "no" : "yes", since: lateSince };
         /* WHY THIS MAILBOX IS DISABLED, when the ORGANIZER LEASE decided it and not a person
            (mail 0027). Null for every ordinary disconnect, which is the distinction the whole
            branch turns on: a mailbox the user removed has no explanation to offer and must not
@@ -2319,6 +2329,11 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                   </Button>
                 </>
               ) : null}
+              {/* WHO IS NOT CHECKING IT, and that nothing is lost: the strip's sentence, for this
+                  mailbox. Calm and without a press, because there is nothing here to do. */}
+              {notChecked ? (
+                <span className="mbx-sub">{t(filerKey("notChecked", filer), lateSaid)}</span>
+              ) : null}
               {/* THE MESSAGES THIS MAILBOX SET ASIDE, in the sentence the desktop and phone say. */}
               {(m.setAside ?? 0) > 0 ? (
                 <span className="mbx-sub">{t("desktopSetAside", { n: m.setAside! })}</span>
@@ -2398,6 +2413,14 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                 <span className="mbx-wait">
                   <Spinner className="mbx-spin" />
                   {t("syncQueued")}
+                </span>
+              ) : notChecked ? (
+                /* NOT CHECKED, AND SINCE WHEN — in place of "Synced …", which was true of the day
+                   before for 26 hours. `mbx-sub`, never `mbx-bad`, and no spinner: nothing on this
+                   mailbox is broken and nothing is running. Above the progress arms, each of
+                   which claims mail is moving. */
+                <span className="mbx-sub" title={m.fetching?.since ? agoStamp(m.fetching.since, now).abs : undefined}>
+                  {t("notChecked", lateSaid)}
                 </span>
               ) : importingSole ? (
                 /* THE MIRROR IS GROWING — and with exactly one live mailbox the attribution is

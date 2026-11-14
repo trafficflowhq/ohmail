@@ -5,10 +5,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
 import { runMigrations } from "../src/admin.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
-import { schema, alertState, alertPassRuns } from "../src/schema.js";
+import { schema, alertState, alertPassRuns, workerHeartbeats } from "../src/schema.js";
 import {
-  runAlertPass, writeHeartbeat, alertDriverStatuses, listOpenAlerts, type Alert, type AlertSink,
+  runAlertPass, writeHeartbeat, refreshHeartbeat, claimHeartbeat, clearHeartbeat, alertDriverStatuses, listOpenAlerts,
+  type Alert, type AlertSink,
 } from "../src/alerts.js";
+import { readOrganizerStanding } from "../src/organizer-cycle.js";
 
 /**
  * THE EXTERNAL DEAD-MAN'S SWITCH — the pass driven by something that is not the worker.
@@ -149,6 +151,133 @@ describe.skipIf(!AVAILABLE)("the external dead-man's switch, on real Postgres", 
     // execution order.
     expect((await listOpenAlerts(db)).map((a) => a.alertKey), "and this key is not open")
       .not.toContain(KEY);
+  });
+
+  /**
+   * WHAT A SIGNED-IN APP IS TOLD, FROM THE SAME ROW AND THE SAME TWO CLOCKS AS THE PAGER. On 12
+   * November 2026 the worker was gone for 26 hours; this alert fired and every app still read
+   * "Connected · Synced". True in both directions: behind when the pulse or the passes stop, and back
+   * only once a pass has finished again.
+   */
+  it("the apps' signal: behind when the pulse or the passes stop, since the last finished pass, and back when one finishes", async () => {
+    const HOUR = 60 * MIN;
+    const iso = (d: Date): string => d.toISOString();
+    const pulse = { shardIndex: SHARD, shards: 1, mailboxes: 2, expected: 2, accounts: 1, quarantined: 0, degraded: false, aiCircuitOpenSince: null };
+    // The read is the newest across shards: nothing else may stand beside this shard's row.
+    await db.delete(workerHeartbeats);
+    expect(await readOrganizerStanding(db, NOW)).toEqual({ lastCycleAt: null, behind: true, since: null });
+
+    // A leader's first start: no pass yet, measured from its start, so it is given its first passes.
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: null, startedAt: ago(MIN) }, NOW);
+    expect(await readOrganizerStanding(db, NOW)).toEqual({ lastCycleAt: null, behind: false, since: null });
+    // …then a pass finishes, and passes keep finishing.
+    const lastPass = plus(MIN);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass, startedAt: ago(MIN) }, lastPass);
+    expect(await readOrganizerStanding(db, plus(2 * MIN))).toEqual({ lastCycleAt: iso(lastPass), behind: false, since: iso(lastPass) });
+
+    // The pulse stops (the worker is gone, or waits for its database): two minutes of grace, then behind.
+    expect((await readOrganizerStanding(db, plus(3 * MIN))).behind).toBe(false);
+    expect(await readOrganizerStanding(db, plus(3 * MIN + 1))).toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // A long pass in flight is not a stall: the pulse is fresh and the last pass finished 16 minutes
+    // ago (a pass gives every mailbox a turn, and a backlog makes it long while new mail still lands).
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(17 * MIN));
+    expect(await readOrganizerStanding(db, plus(17 * MIN))).toEqual({ lastCycleAt: iso(lastPass), behind: false, since: iso(lastPass) });
+    // Alive and doing no work: the pulse is fresh and no pass has finished for half an hour, the
+    // age at which the pager calls a mailbox lagging.
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(31 * MIN));
+    expect((await readOrganizerStanding(db, plus(31 * MIN))).behind).toBe(false);
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(31 * MIN + 1));
+    expect(await readOrganizerStanding(db, plus(31 * MIN + 1))).toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // The worker returns 26 hours later. Its first pulses know no pass of their own; the row keeps the
+    // last one that finished, so "nothing fetched since" stays true while it catches up.
+    const back = plus(26 * HOUR);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: null, startedAt: back }, back);
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: null }, new Date(back.getTime() + 10_000));
+    expect(await readOrganizerStanding(db, new Date(back.getTime() + 10_000)))
+      .toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // …and back: its first finished pass.
+    const firstPass = new Date(back.getTime() + MIN);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: firstPass, startedAt: back }, firstPass);
+    expect(await readOrganizerStanding(db, firstPass)).toEqual({ lastCycleAt: iso(firstPass), behind: false, since: iso(firstPass) });
+  });
+
+  /**
+   * WHO MAY WRITE THE SHARD'S ROW. The row is what the write fence reads, so it has to follow the lock:
+   * it is claimed once, by the session that holds the shard's lock, and from then on only renewed by
+   * the instance it names. A renewal that could claim let a leader whose lock was long gone take the
+   * row back from its lawful successor.
+   */
+  const pulseOf = (instanceId: string) => ({
+    shardIndex: SHARD, instanceId, shards: 1, mailboxes: 2, expected: 2, accounts: 1, quarantined: 0,
+    degraded: false, aiCircuitOpenSince: null, lastCycleAt: null, startedAt: ago(MIN),
+  });
+  const shardRow = async (): Promise<typeof workerHeartbeats.$inferSelect | undefined> =>
+    (await db.select().from(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD)))[0];
+
+  it("a renewal moves only the row that names its own instance, and says whether it did", async () => {
+    await db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD));
+    await writeHeartbeat(db, pulseOf("wkr-first"), NOW);
+    expect(await refreshHeartbeat(db, pulseOf("wkr-first"), plus(1_000))).toBe(true);
+
+    // A successor claims the shard. The first one's renewal finds another holder: it writes
+    // nothing and says so, which is how that instance learns it no longer leads.
+    await writeHeartbeat(db, pulseOf("wkr-next"), plus(2_000));
+    expect(await refreshHeartbeat(db, { ...pulseOf("wkr-first"), mailboxes: 9 }, plus(3_000))).toBe(false);
+    expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: true, mailboxes: 2, beatAt: plus(2_000) });
+    expect(await refreshHeartbeat(db, pulseOf("wkr-next"), plus(4_000))).toBe(true);
+
+    // …and a row its own instance has surrendered is not renewed either.
+    await clearHeartbeat(db, { shardIndex: SHARD, instanceId: "wkr-next" }, plus(5_000));
+    expect(await refreshHeartbeat(db, pulseOf("wkr-next"), plus(6_000))).toBe(false);
+    expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: false });
+  });
+
+  it("a claim lands only for the session that holds the shard's lock", async () => {
+    await db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD));
+    const key = 7_700_000_000_077n;                    // a lock key no worker uses
+    const MARK = 770_000_077;                          // …and the first key of a session's mark, likewise
+    const holder = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    const other = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    try {
+      const [held] = await holder<{ locked: boolean; marked: boolean; pid: number }[]>`
+        SELECT pg_try_advisory_lock(${key.toString()}::bigint) AS locked, pg_try_advisory_lock(${MARK}, 1) AS marked,
+          pg_backend_pid() AS pid`;
+      const [bystander] = await other<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      expect(held).toMatchObject({ locked: true, marked: true });
+      const mine = { pid: Number(held!.pid), key, mark: [MARK, 1] } as const;
+
+      // A session that does not hold the lock claims nothing, whatever its process believes.
+      expect(await claimHeartbeat(db, pulseOf("wkr-other"), { ...mine, pid: Number(bystander!.pid) }, NOW)).toBe(false);
+      expect(await shardRow()).toBeUndefined();
+      // The holder's claim lands…
+      expect(await claimHeartbeat(db, pulseOf("wkr-holder"), mine, NOW)).toBe(true);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-holder", leader: true });
+
+      // A session pooler hands a backend on to its next client, pid unchanged. That client takes the
+      // lock on it under a mark of its own: a claim of the first session is not this one's to make.
+      await holder`SELECT pg_advisory_unlock_all()`;
+      await holder`SELECT pg_try_advisory_lock(${key.toString()}::bigint), pg_try_advisory_lock(${MARK}, 2)`;
+      expect(await claimHeartbeat(db, pulseOf("wkr-handed-on"), mine, plus(500))).toBe(false);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-holder", beatAt: NOW });
+
+      // Its session ends and a successor claims. A late claim by the old holder is refused and
+      // changes nothing: the lock it names is no longer its own.
+      await holder.end({ timeout: 5 });
+      for (let i = 0; i < 100; i++) {
+        const [left] = await other<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND pid = ${Number(held!.pid)}`;
+        if (left!.n === 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await writeHeartbeat(db, pulseOf("wkr-next"), plus(1_000));
+      expect(await claimHeartbeat(db, pulseOf("wkr-holder"), mine, plus(2_000))).toBe(false);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: true, beatAt: plus(1_000) });
+    } finally {
+      await holder.end({ timeout: 5 });
+      await other.end({ timeout: 5 });
+    }
   });
 
   it("TWO DRIVERS, ONE PAGE — a pass cannot notify while another is still delivering", async () => {

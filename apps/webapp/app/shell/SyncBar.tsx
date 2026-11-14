@@ -245,8 +245,9 @@ function useStripSpeech(hostOffline: boolean, setupHref?: string): Speech | null
   /* THE ONE ARM THAT YIELDS. Placed before `speech()` rather than inside it so the suppression is
      visible at the top of the render — a seventh `speech()` arm returning a null title would have
      to be handled by both shapes below and would read as a state rather than as a withheld
-     sentence. See the `hostOffline` prop. */
-  if (hostOffline && state.key === "stale") return null;
+     sentence. See the `hostOffline` prop. `behind` yields with it: what a computer that is not
+     answering last said about its fetching is no news, and the host's own line says the rest. */
+  if (hostOffline && (state.key === "stale" || state.key === "behind")) return null;
   // WHICH DOOR this install came in by. `apiConfigured()` is false exactly on the build with no
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
@@ -305,9 +306,12 @@ type Translate = (key: string, values?: Record<string, string | number>) => stri
 /**
  * The claims a dead network falsifies: an activity ("catching up") or a retry that cannot run.
  * `stopped` and the blocked family stay — their sentences are about the server or the mailbox,
- * true whatever this device's network is doing.
+ * true whatever this device's network is doing. `behind` is the server's word as last read: with
+ * no network it cannot be read again, and being offline is the nearer fact.
  */
-const OFFLINE_OUTRANKS: ReadonlySet<MailState["key"]> = new Set(["stale", "catchingUp", "failing"]);
+const OFFLINE_OUTRANKS: ReadonlySet<MailState["key"]> = new Set(["stale", "catchingUp", "failing", "behind"]);
+
+const DAY_MS = 86_400_000;
 
 interface Speech {
   /** The modifier the tone classes hang off — `""` is the plain accent ground. */
@@ -406,6 +410,28 @@ function speech(
       // strip says the one true calm thing meanwhile; if the refusal is re-made it becomes
       // `stopped`, and if a drain succeeds it withdraws to quiet.
       return { tone: "busy", role: "status", warn: false, busy: true, title: t("catchingUp"), detail: null, link: null };
+
+    case "behind": {
+      // NEW MAIL IS LATE. The server answers and says it is not fetching: the apps looked healthy
+      // for 26 hours of exactly that. Calm and standing still, with no warning mark, no link and
+      // no way to dismiss it: nothing here is the person's to do, reading and sending go on, and
+      // it leaves when the server says fetching runs again. Who is not checking is named, since
+      // only on a managed host is that ohmail Cloud (`managed-service.ts`); "on us" is said of
+      // our own service alone, so a server somebody else runs has no day line.
+      const at = state.asOf === null ? NaN : Date.parse(state.asOf);
+      const since = Number.isNaN(at) ? "" : waterlineStamp(state.asOf!, new Date(), activeFormatLocale());
+      const hasSince = since === "" ? "no" : "yes";
+      // Whole days, rounded down: "a day late" from 24 hours on.
+      const days = Number.isNaN(at) ? 0 : Math.max(0, Math.floor((Date.now() - at) / DAY_MS));
+      const title = days >= 1 ? t("behindTitleDays", { days }) : t("behindTitle");
+      const line = !managed ? t("behindLineServer", { hasSince, since })
+        : days >= 1 ? t("behindLineCloudDay", { since })
+          : t("behindLineCloud", { hasSince, since });
+      return {
+        tone: "", role: "status", warn: false, busy: false,
+        title, detail: line, say: `${title} ${line}`, link: null,
+      };
+    }
 
     case "blocked":
       return {

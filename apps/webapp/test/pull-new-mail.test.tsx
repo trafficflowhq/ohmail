@@ -42,6 +42,9 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
  *    rode the press-time drain's pre-commit page);
  *  · a failed drain judged as ok → "failed drain" red.
  * Each was watched, then the implementation was restored.
+ * The late answer (a server that says it is not fetching):
+ *  · the `behind` branch removed → "answers at once" red (busy held, the probe asked, "Still
+ *    checking" at the cap); `managed` ignored → the self-hosted case red (it said Cloud).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -112,6 +115,8 @@ function facts(lastSyncAt: string | null): MailboxFacts[] {
 }
 
 let posts: string[];
+/** The ring's word on fetching: `undefined` leaves the key off, as an older server does. */
+let ringFetching: { behind: boolean; since: string | null } | null | undefined;
 /** What the probe answers next (a queue; the LAST entry repeats). */
 let probeAnswers: Array<MailboxFacts[]>;
 let probeAsks: number;
@@ -134,6 +139,7 @@ function wire(url: string, init?: RequestInit): Response {
       requested: 1,
       requestedAt: BASELINE,
       mailboxes: [{ id: "mb-1", requestedAt: BASELINE }],
+      ...(ringFetching === undefined ? {} : { fetching: ringFetching }),
     });
   }
   if (url.startsWith("/api/sync?")) {
@@ -162,6 +168,7 @@ const roots: Root[] = [];
 
 beforeEach(() => {
   posts = [];
+  ringFetching = undefined;
   probeAnswers = [facts(STAMP_BEFORE)];
   probeAsks = 0;
   deliverArrival = false;
@@ -194,13 +201,14 @@ afterEach(async () => {
 });
 
 /** The live construction, exactly as `engine-config.ts` shapes it: gate-wrapped HttpAdapter. */
-async function mount(): Promise<{ container: HTMLElement; engine: OhmailEngine }> {
+async function mount(managed?: boolean): Promise<{ container: HTMLElement; engine: OhmailEngine }> {
   const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
   const engine = new OhmailEngine({
     adapter: createSyncGate(null).guard(new HttpAdapter({ baseUrl: "/api" })),
   });
   const { EngineProvider } = await import("../app/shell/engine");
   const { PullNewMail, usePullNewMail } = await import("../app/shell/PullNewMail");
+  const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
 
   function Harness(): React.ReactElement {
     const binding = usePullNewMail(probe);
@@ -220,7 +228,15 @@ async function mount(): Promise<{ container: HTMLElement; engine: OhmailEngine }
         locale: "en",
         messages,
         timeZone: "UTC",
-        children: h(ToastHost, { children: h(EngineProvider, { demo: false, engine, children: h(Harness) }) }),
+        children: h(ToastHost, {
+          children: h(EngineProvider, {
+            demo: false, engine,
+            // Absent is what a host that says nothing gets; the self-hosted and desktop hosts say false.
+            children: managed === undefined
+              ? h(Harness)
+              : h(ManagedServiceContext.Provider, { value: managed, children: h(Harness) }),
+          }),
+        }),
       }),
     );
   });
@@ -388,5 +404,74 @@ describe("the press, end to end", () => {
     expect(engine.read().get("message", "fresh-1"), "the arrival never landed — the case under test did not occur").toBeTruthy();
     expect(document.body.textContent).not.toContain("nothing new");
     expect(document.body.textContent).not.toContain("Still checking");
+  });
+});
+
+/**
+ * THE SERVER SAYS IT IS NOT FETCHING. The press ran its watch to the cap and ended on "Still
+ * checking. New mail arrives on its own." for 26 hours in which nothing was checking. The ring's
+ * answer now says so, and the press says it at once.
+ */
+describe("the press, when the server says new mail is not being fetched", () => {
+  const LATE = { behind: true, since: "2026-08-28T17:40:00.000Z" };
+
+  /* The press says what the ring's answer says. The server answers a pull by the rule of its rows
+     (any mailbox it is on duty to fetch, also one it reads for another organizer), so the row here
+     says what the ring says; the press reads the ring alone and has no role test of its own. */
+  it.each([
+    ["a mailbox this server organizes", "organizer"],
+    ["a mailbox it reads for another organizer", "reader"],
+  ] as const)("answers at once with the truth for %s: no watch, no waiting line, the latch free", async (_what, organizerRole) => {
+    ringFetching = LATE;
+    probeAnswers = [facts(STAMP_BEFORE).map((m) => ({ ...m, organizerRole, fetching: LATE }))];
+    const { container } = await mount();
+    await press(container);
+    await advance(0);
+    expect(railButton(container).getAttribute("aria-busy"), "the press kept spinning").toBe("false");
+    expect(container.querySelector(".tb-btn")?.getAttribute("aria-busy")).toBe("false");
+    expect(document.body.textContent).toContain(messages.sync.pullBehind);
+    // Nothing is watched and nothing waits: the cap passes with no probe read and no second sentence.
+    await advance(31_000);
+    expect(probeAsks, "the watch ran anyway").toBe(0);
+    expect(document.body.textContent).not.toContain(messages.sync.pullSlow);
+    expect(document.body.textContent).not.toContain(messages.sync.pullQuiet);
+    // The request is stamped and the next press rings again.
+    await press(container);
+    expect(posts).toHaveLength(2);
+  });
+
+  it("says so with no time on record too", async () => {
+    ringFetching = { behind: true, since: null };
+    const { container } = await mount();
+    await press(container);
+    await advance(0);
+    expect(document.body.textContent).toContain(messages.sync.pullBehind);
+    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("on a server somebody runs themselves it names that server, never ohmail Cloud", async () => {
+    ringFetching = LATE;
+    const { container } = await mount(false);
+    await press(container);
+    await advance(0);
+    expect(document.body.textContent).toContain(messages.sync.pullBehindServer);
+    expect(document.body.textContent, "a self-hosted server was called Cloud").not.toMatch(/Cloud/);
+    expect(messages.sync.pullBehind).toMatch(/ohmail Cloud/);
+  });
+
+  it.each([
+    ["not behind", { behind: false, since: "2026-08-29T11:59:00.000Z" }],
+    ["null: this server does not say", null],
+  ] as const)("CONTROL: %s keeps today's watch and its sentences", async (_what, fetching) => {
+    ringFetching = fetching;
+    probeAnswers = [facts(STAMP_BEFORE), facts(STAMP_AFTER)];
+    const { container } = await mount();
+    await press(container);
+    await advance(2_000);
+    expect(railButton(container).getAttribute("aria-busy"), "the watch was skipped").toBe("true");
+    await advance(2_000);
+    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+    expect(document.body.textContent).toContain(messages.sync.pullQuiet);
+    expect(document.body.textContent).not.toContain(messages.sync.pullBehind);
   });
 });

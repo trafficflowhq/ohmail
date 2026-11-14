@@ -254,6 +254,7 @@ export interface MailboxDTO {
         asOf: string;
         lastCycleAt: string | null;
     };
+    fetching?: { behind: boolean; since: string | null } | null;
     disabledReason?: string | null;
     createdAt?: string;
     initialImportCompletedAt?: string | null;

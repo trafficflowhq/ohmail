@@ -92,7 +92,8 @@ describe("worker observability wiring", () => {
       return rows[0] ?? null;
     });
     expect(beat, "a running leader must be visible in worker_heartbeats").not.toBeNull();
-    expect(beat!.instanceId).toBe("wkr-obs-1");
+    // The instance, and eight hex that are this takeover's own: the row is renewed and the fence passed by this name.
+    expect(beat!.instanceId).toMatch(/^wkr-obs-1:[0-9a-f]{8}$/);
     expect(beat!.leader).toBe(true);
     expect(beat!.shards).toBe(1);
     // Freshly written, so an external observer computes an age of ~0 rather than "never".
