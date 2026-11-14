@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageBody, sanitizerAvailable } from "../app/letter-body/MessageBody.js";
+import { MessageBody, sanitizerAvailable } from "../../../packages/letter-body/src/MessageBody.js";
 import { OWNER_BILLING_HTML, OWNER_BILLING_TEXT, OWNER_TRACKING_PIXEL } from "./fixtures/owner-billing-email";
 
 /**
@@ -37,6 +37,7 @@ describe("the server render, where there is no sanitizer", () => {
     //   'url8792.mail.wolkenmail.example/wf/open'
     const out = renderToStaticMarkup(
       React.createElement(MessageBody, {
+        owner: null,
         text: OWNER_BILLING_TEXT,
         html: OWNER_BILLING_HTML,
       }),
@@ -65,7 +66,7 @@ describe("the server render, where there is no sanitizer", () => {
 
   it("does not throw for a message with no html at all", () => {
     const out = renderToStaticMarkup(
-      React.createElement(MessageBody, { text: "First.\n\nSecond.", html: null }),
+      React.createElement(MessageBody, { owner: null, text: "First.\n\nSecond.", html: null }),
     );
     expect(out).toContain('class="msg-p msg-plain"');
     expect(out).not.toContain("Showing the plain-text version");

@@ -1,6 +1,7 @@
-import type { CSSProperties } from "react";
 import { EndDot } from "../Primitives/EndDot.js";
 import "./opening.css";
+import { RowsShape } from "./RowsShape.js";
+import { Bar } from "./shape-bar.js";
 
 export interface OpeningProps {
   /** `window`: the menu, the list and the reading column as shape. `phone`: the list as shape. */
@@ -9,23 +10,8 @@ export interface OpeningProps {
   status?: { label: string; count?: string; note?: string };
 }
 
-/* The shapes: how wide each bar is, in parts of a hundred. A menu's groups, and a list's rows (who, subject, first line). */
+/* The shapes: how wide each bar is, in parts of a hundred. A menu's groups. */
 const MENU = [[58, 46, 52], [44], [56, 38, 50], [48, 40, 44, 52]] as const;
-const ROWS = [
-  [34, 62, 84],
-  [27, 74, 68],
-  [41, 58, 76],
-  [30, 70, 88],
-  [37, 66, 62],
-  [25, 54, 80],
-  [39, 71, 71],
-  [32, 60, 78],
-  [28, 68, 66],
-] as const;
-const wide = (part: number): CSSProperties => ({ "--oh-opening-part": `${part}%` }) as CSSProperties;
-const Bar = ({ part, as }: { part?: number; as?: string }) => (
-  <i className="oh-opening-bar" data-as={as} style={part === undefined ? undefined : wide(part)} />
-);
 
 /** While the app opens: its own measures as bars, and never a word of mail. No spinner. */
 export function Opening({ kind, status }: OpeningProps) {
@@ -38,21 +24,7 @@ export function Opening({ kind, status }: OpeningProps) {
       {status.note ? <small className="oh-opening-note">{status.note}</small> : null}
     </div>
   ) : null;
-  const rows = (
-    <div className="oh-opening-rows" aria-hidden="true">
-      {ROWS.map(([who, subject, first]) => (
-        <span key={`${who}-${subject}`} className="oh-opening-row">
-          <i className="oh-opening-face" />
-          <span className="oh-opening-first">
-            <Bar part={who} as="who" />
-            <Bar as="time" />
-          </span>
-          <Bar part={subject} />
-          <Bar part={first} as="more" />
-        </span>
-      ))}
-    </div>
-  );
+  const rows = <RowsShape />;
   if (kind === "phone")
     return (
       <div className="oh-opening" data-kind="phone">

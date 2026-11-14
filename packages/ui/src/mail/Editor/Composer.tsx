@@ -1,4 +1,11 @@
-import { useState, type DragEvent, type ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
 import { Button } from "../../base/index.js";
 import "./composer.css";
 import { ComposerMarks, type ComposerMarksProps } from "./ComposerMarks.js";
@@ -18,11 +25,28 @@ export interface ComposerProps {
   tabs?: ReactNode;
   /** The text itself: the app's editor. */
   children: ReactNode;
+  /**
+   * The words that stand where the text's first line will stand. The app hands them while nothing is written; the
+   * editor says its own placeholder to a screen reader, so these are drawn and not said.
+   */
+  placeholder?: string;
   /** The mailbox's signature under the text: written over where it stands, and the way to take it off. */
   signature?: {
     label: string;
     text: string;
     onChange?: (text: string) => void;
+    /** The letter is held by an earlier send: the signature is words alone, as while it goes. */
+    locked?: boolean;
+    /**
+     * The signature as the letter will carry it, its formatting drawn: it stands in the field's place and takes no
+     * keys, so nothing of it is lost by typing. The app draws it; the kit reads no markup.
+     */
+    formatted?: ReactNode;
+    /**
+     * Beside a formatted signature: the one way to the plain field. `word` says what the press does; `label` names
+     * it whole where the word does not say what the press costs. The app answers by handing no `formatted`.
+     */
+    asText?: { word: string; label?: string; onPress?: () => void };
     remove?: { label: string; onPress?: () => void };
   };
   /** The files that came with a forward, under their heading: Files. */
@@ -107,7 +131,14 @@ export function Composer(props: ComposerProps) {
       <div className="oh-composer-editor">
         {marks ? <ComposerMarks {...marks} /> : null}
         {tabs}
-        <div className="oh-composer-text">{children}</div>
+        <div className="oh-composer-text">
+          {props.placeholder ? (
+            <span className="oh-composer-placeholder" aria-hidden="true">
+              {props.placeholder}
+            </span>
+          ) : null}
+          {children}
+        </div>
         {signature ? <ComposerSignature signature={signature} going={props.going} /> : null}
         {forwarded || files ? (
           <div className="oh-composer-files">
@@ -160,7 +191,12 @@ export function Composer(props: ComposerProps) {
   );
 }
 
-/** The signature under the text: words a person can change in place, and the way to take it off. While the letter goes it is words alone. */
+/**
+ * The signature under the text: words a person can change in place, and the way to take it off. Its words are
+ * handed over while they are typed, so a send from inside the field carries what is on the screen. While the
+ * letter goes it is words alone. A formatted signature is drawn as it will be sent and is no field: the way to
+ * its words is a press of its own.
+ */
 function ComposerSignature({
   signature,
   going,
@@ -168,33 +204,65 @@ function ComposerSignature({
   signature: NonNullable<ComposerProps["signature"]>;
   going?: boolean;
 }) {
+  const fixed = going || signature.locked;
+  const { formatted, asText, remove } = signature;
+  const off = remove ? (
+    <Button kind="quiet" size="s" icon="x" label={remove.label} onPress={remove.onPress} />
+  ) : null;
+  if (formatted !== undefined) {
+    return (
+      <div className="oh-composer-signature" data-formatted="">
+        <div className="oh-composer-signed" role="group" aria-label={signature.label}>
+          {formatted}
+        </div>
+        <span className="oh-composer-signacts">
+          {asText && !fixed ? (
+            <Button kind="quiet" size="s" label={asText.label} onPress={asText.onPress}>
+              {asText.word}
+            </Button>
+          ) : null}
+          {off}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="oh-composer-signature">
-      {going ? (
+      {fixed ? (
         <span className="oh-composer-signed">{signature.text}</span>
       ) : (
-        <span
-          className="oh-composer-signed"
-          role="textbox"
-          aria-multiline="true"
-          aria-label={signature.label}
-          contentEditable="plaintext-only"
-          suppressContentEditableWarning
-          spellCheck={false}
-          onBlur={(event) => signature.onChange?.(event.currentTarget.textContent ?? "")}
-        >
-          {signature.text}
-        </span>
+        <SignatureField signature={signature} />
       )}
-      {signature.remove ? (
-        <Button
-          kind="quiet"
-          size="s"
-          icon="x"
-          label={signature.remove.label}
-          onPress={signature.remove.onPress}
-        />
-      ) : null}
+      {off}
     </div>
+  );
+}
+
+function SignatureField({ signature }: { signature: NonNullable<ComposerProps["signature"]> }) {
+  const field = useRef<HTMLSpanElement | null>(null);
+  /* The field's words are its own while it is typed in. It is drawn once with the words it starts with, and
+     written again only where it holds other words than it is handed: the caret stays where the person types. */
+  const [first] = useState(signature.text);
+  useLayoutEffect(() => {
+    const el = field.current;
+    if (el && el.textContent !== signature.text) el.textContent = signature.text;
+  }, [signature.text]);
+  const report = (event: SyntheticEvent<HTMLSpanElement>) =>
+    signature.onChange?.(event.currentTarget.textContent ?? "");
+  return (
+    <span
+      ref={field}
+      className="oh-composer-signed"
+      role="textbox"
+      aria-multiline="true"
+      aria-label={signature.label}
+      contentEditable="plaintext-only"
+      suppressContentEditableWarning
+      spellCheck={false}
+      onInput={report}
+      onBlur={report}
+    >
+      {first}
+    </span>
   );
 }

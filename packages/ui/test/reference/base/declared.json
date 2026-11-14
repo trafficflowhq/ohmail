@@ -214,6 +214,12 @@
     "alike": [{ "role": "button", "unstated": ["collapsed"] }]
   },
   {
+    "key": "SuggestionList/inline@paper-light-desktop",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "One mark of 25 pixels that touch, at the pin of the last row (under two ten-thousandths of the picture). The list's names, boxes and drawn values are the reference's; the same row is equal in the phone's two looks and the same pin is equal in every other state that draws it. The rows of this state are 49.25 high, so its third row stands a third of a pixel down, and the pin's small circle is drawn by that fraction."
+  },
+  {
     "key": "Slot",
     "reason": "The reference's slot is a plain button; the kit's opens its menu and says whether it is open (aria-expanded). The new reader reads that state.",
     "since": "2026-11-15",

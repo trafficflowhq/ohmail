@@ -245,9 +245,11 @@ describe("CalDAV's writer", () => {
       ].join("\r\n"),
     );
     const a = { id: b.member("a.ics"), version: '"studio-a.ics-1"', text: null, occurrence: null };
+    // Removed by its own DELETE: what waits behind it may take its answer; removed already, found so: nothing is re-based onto it.
     expect(await b.writer.remove(b.connection, b.cal, a, never)).toEqual({
       ok: true,
       items: [{ kind: "gone", id: a.id }],
+      written: true,
     });
     expect(await b.writer.remove(b.connection, b.cal, a, never)).toEqual({
       ok: true,
@@ -412,5 +414,92 @@ describe("CalDAV's writer", () => {
     );
     const read = readCalendar(b.writes()[0]!.body, DEFAULT_LIMITS);
     expect(read.ok && read.calendar.events[0]!.rules.map((r) => r.text)).toEqual(["FREQ=WEEKLY;COUNT=6"]);
+  });
+
+  it("keeps the organizer's own line as it is in the series a series' days become, found by the ORGANIZER's own value in each spelling, and asks the others again", async () => {
+    const giulia = "ATTENDEE;CN=Giulia;PARTSTAT=ACCEPTED:mailto:giulia@example.test";
+    const seriesOf = (organizer: string, own: string): string =>
+      [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//x//EN",
+        "BEGIN:VEVENT",
+        "UID:critique@x.test",
+        "DTSTAMP:20261101T000000Z",
+        "DTSTART;TZID=Europe/Zurich:20261116T090000",
+        "DTEND;TZID=Europe/Zurich:20261116T100000",
+        // The series as a press's first part leaves it: ended before 30 November, the day its days are made a series of their own from.
+        "RRULE:FREQ=WEEKLY;UNTIL=20261130T075959Z",
+        "SUMMARY:Glaze critique",
+        organizer,
+        own,
+        giulia,
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n");
+    const spellings: Record<string, { organizer: string; own: string; made: string }> = {
+      "a principal's path, its address in a parameter": {
+        organizer: "ORGANIZER;CN=Mila;EMAIL=mila@x.test:/principals/mila/",
+        own: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR;EMAIL=mila@x.test:/principals/mila/",
+        made: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR;EMAIL=mila@x.test:/principals/mila/",
+      },
+      "a urn": {
+        organizer: "ORGANIZER;CN=Mila:urn:uuid:00000000-0000-4000-8000-00000000a11a",
+        own: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR:urn:uuid:00000000-0000-4000-8000-00000000a11a",
+        made: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR:urn:uuid:00000000-0000-4000-8000-00000000a11a",
+      },
+      "a mail address in capitals, its own line in small letters": {
+        organizer: "ORGANIZER;CN=Mila:MAILTO:Mila@X.Test",
+        own: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR:mailto:mila@x.test",
+        made: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR:mailto:mila@x.test",
+      },
+      // Another value than the organizer's: an invitee of the series like any other, asked again.
+      "a mail address, the line of the same name a principal's path": {
+        organizer: "ORGANIZER;CN=Mila:mailto:mila@x.test",
+        own: "ATTENDEE;CN=Mila;PARTSTAT=ACCEPTED;ROLE=CHAIR;EMAIL=mila@x.test:/principals/mila/",
+        made: "ATTENDEE;CN=Mila;PARTSTAT=NEEDS-ACTION;ROLE=CHAIR;EMAIL=mila@x.test;RSVP=TRUE:/principals/mila/",
+      },
+    };
+    const seen: Record<string, { own: string | undefined; giulia: string | undefined }> = {};
+    for (const [name, s] of Object.entries(spellings)) {
+      const b = await bench({ autoSchedule: true });
+      const text = seriesOf(s.organizer, s.own);
+      b.dav.put("studio", "c.ics", text, '"c-1"');
+      const day = zoned(wall(2026, 11, 30, 9), "Europe/Zurich");
+      const made = await b.writer.continueSeries(
+        b.connection,
+        b.cal,
+        {
+          key: { hex: KEY },
+          from: { id: b.member("c.ics"), version: '"c-1"', text, occurrence: day },
+          start: day,
+          end: zoned(wall(2026, 11, 30, 10), "Europe/Zurich"),
+          rule: parseRRule("FREQ=WEEKLY;COUNT=4")!,
+          change: {},
+        },
+        never,
+      );
+      expect(word(made)).toBe("ok");
+      const lines = b
+        .writes()[0]!
+        .body.replace(/\r\n[ \t]/g, "")
+        .split("\r\n");
+      seen[name] = {
+        own: lines.find((l) => l.startsWith("ATTENDEE;CN=Mila")),
+        giulia: lines.find((l) => l.startsWith("ATTENDEE;CN=Giulia")),
+      };
+    }
+    expect(seen).toEqual(
+      Object.fromEntries(
+        Object.entries(spellings).map(([name, s]) => [
+          name,
+          {
+            own: s.made,
+            giulia: "ATTENDEE;CN=Giulia;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:giulia@example.test",
+          },
+        ]),
+      ),
+    );
   });
 });

@@ -1,0 +1,128 @@
+{
+  "component": "GroupHeading",
+  "state": "aside",
+  "look": "paper-light-desktop",
+  "place": "block",
+  "target": [256, 216, 420, 44],
+  "clip": [256, 216, 420, 44],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "-0.352px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" },
+    { "boxDecorationBreak": "clone", "borderRadius": "5.2px" },
+    {
+      "borderRight": "1px solid rgb(18, 16, 14)",
+      "borderBottom": "1px solid rgb(18, 16, 14)",
+      "opacity": "0.6",
+      "turn": "45deg"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "heading",
+      "name": "Results 8 Best match",
+      "box": [0, 0, 420, 44],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "800",
+        "lineHeight": "16px",
+        "letterSpacing": "-0.352px",
+        "borderRadius": "0px",
+        "paddingTop": "14px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "20px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "level": 2,
+      "text": [
+        { "said": "Results", "type": 0 },
+        { "said": "8", "type": 1 }
+      ],
+      "surfaces": [{ "box": [77.3, 20.6, 5.4, 5.4], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Best match",
+      "box": [309.9, 14.8, 86.1, 14.3],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "oklch(0.174657 0.00525147 none / 0.08)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "700",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "5.2px",
+        "paddingTop": "0.26px",
+        "paddingRight": "3.9px",
+        "paddingBottom": "1.04px",
+        "paddingLeft": "4.68px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Best match", "type": 2 }],
+      "surfaces": [
+        { "box": [309.9, 14.8, 86.1, 14.3], "paint": 1 },
+        { "box": [384, 17.1, 7.3, 7.3], "paint": 2 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

@@ -12,10 +12,10 @@ import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, cssRect } f
 import { MessageFiles } from "./MessageFiles";
 import { InvitationNote } from "./InvitationNote";
 import { MessageEvents } from "./MessageEvents";
-import { MessageBody } from "../letter-body";
+import { MessageBody } from "../letter-body/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
-import type { BlockNotice } from "../letter-body";
+import type { BlockNotice } from "@ohmail/letter-body";
 import { PLACE_LABEL, dayAt, dayValue, firstDayAt, hueOf, resurfaceClock, resurfaceHorizons, tagsOfMessage, withheldCopyKey, type ResurfaceHorizon } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";

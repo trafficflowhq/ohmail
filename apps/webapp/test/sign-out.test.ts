@@ -136,7 +136,7 @@ describe("signOut", () => {
     // A second call site that skipped the wipe would silently re-open the hole, and it
     // would look completely reasonable in review.
     const offenders: string[] = [];
-    for (const file of [...walk(APP), ...walk(`${process.cwd()}/packages/app-logic/src`)]) {
+    for (const file of [...walk(APP), ...walk(`${process.cwd()}/packages/app-logic/src`), ...walk(`${process.cwd()}/packages/letter-body/src`)]) {
       if (file.endsWith("/sign-out.ts") || file.endsWith("/api-client.ts")) continue;
       const text = readFileSync(file, "utf8");
       if (/\bauth\.logout\s*\(/.test(text)) offenders.push(file.slice(process.cwd().length + 1));

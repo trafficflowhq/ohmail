@@ -30,6 +30,7 @@ const MAY_IMPORT: Record<string, "type" | "value"> = {
   "packages/ui/src/motion/motion.ts": "type",
   "packages/ui/src/base/index.ts": "value",
   "packages/ui/src/base/tokens.ts": "value",
+  "packages/letter-body/src/link-ask.ts": "value",
 };
 
 const OLD_SHEET = /^@ohmail\/tokens\/(tokens|faces|ohmarchy)\.css$|^packages\/tokens\/src\/(tokens|faces|ohmarchy)\.css$/;
@@ -285,6 +286,35 @@ describe("a door on the web", () => {
     const files = planted({ [STAGE]: tree.get(STAGE)!.replace('import "../../frame/seam.generated.css";', "") });
     expect(tree.get(STAGE)).not.toBe(files.get(STAGE));
     expect(unseamed(files)).toEqual(stands);
+  });
+});
+
+/** Every file `from` reaches through its imports, however far, types left out. */
+function reachedFrom(files: Files, from: string): Set<string> {
+  const seen = new Set<string>([from]);
+  const queue = [from];
+  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+    for (const { specifier, typeOnly } of importsOf(files.get(file) ?? "")) {
+      if (typeOnly) continue;
+      const to = target(files, file, specifier);
+      if (!seen.has(to)) queue.push((seen.add(to), to));
+    }
+  }
+  return seen;
+}
+
+describe("the reader's letter, on a page of the new design", () => {
+  const ENTRY = "packages/app/src/reader/body/index.ts";
+  const oldSheets = (files: Files) => [...reachedFrom(files, ENTRY)].filter((to) => OLD_SHEET.test(to) || to === "packages/ui/src/base.css");
+
+  it("its body's entry reaches no stylesheet of the old kit's ground", () => {
+    expect(reachedFrom(tree, ENTRY)).toContain("packages/letter-body/src/MessageBody.tsx");
+    expect(oldSheets(tree)).toEqual([]);
+  });
+
+  it("the old kit's main entry, imported by the body, is found", () => {
+    const files = planted({ "packages/letter-body/src/BlockNotice.tsx": `${tree.get("packages/letter-body/src/BlockNotice.tsx")}\nimport { Button } from "@ohmail/ui";\n` });
+    expect(oldSheets(files)).toContain("packages/ui/src/base.css");
   });
 });
 

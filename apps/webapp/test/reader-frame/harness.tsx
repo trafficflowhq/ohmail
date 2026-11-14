@@ -7,7 +7,7 @@
  */
 import { useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { MessageBody } from "../../app/letter-body/MessageBody";
+import { MessageBody } from "../../../../packages/letter-body/src/MessageBody";
 import { useRemoteImages } from "../../app/shell/remote-images";
 import "../../../../packages/ui/src/base.css";
 import "../../../../packages/ui/src/composites/message.css";
@@ -93,6 +93,7 @@ function Harness() {
       <div className="rf-head" style={{ height: Number(params.get("head") ?? "120") }} />
       <div className="msg-body">
         <MessageBody
+          owner={null}
           messageId={ID}
           text=""
           html={html}

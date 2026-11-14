@@ -540,13 +540,16 @@ describe("the lock screen is laid out like the rest of the app", () => {
        here rather than implied. */
     const root = `${process.cwd()}/apps/webapp/app`;
     const files: string[] = [];
-    (function walk(dir: string): void {
+    const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, entry.name);
         if (entry.isDirectory()) { if (entry.name !== "node_modules") walk(p); }
         else if (p.endsWith(".tsx") || p.endsWith(".ts")) files.push(p);
       }
-    })(root);
+    };
+    walk(root);
+    // The letter's body, moved out of the web app: read with it, named from the repository's root.
+    walk(`${process.cwd()}/packages/letter-body/src`);
     expect(files.length, "the walk found no files").toBeGreaterThan(200);
     const carriers = new Map<string, string[]>();
     for (const file of files) {
@@ -554,7 +557,7 @@ describe("the lock screen is laid out like the rest of the app", () => {
         .matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{"([^"]*)"\})/g)]
         .flatMap((m) => (m[1] ?? m[2] ?? m[3] ?? "").split(/[\s${}?:()|&]+/))
         .filter((token) => /^[a-z0-9:-]+$/i.test(token) && isUtility(token));
-      if (found.length > 0) carriers.set(file.slice(root.length + 1), [...new Set(found)]);
+      if (found.length > 0) carriers.set(file.startsWith(root) ? file.slice(root.length + 1) : file.slice(process.cwd().length + 1), [...new Set(found)]);
     }
     expect([...carriers.entries()].map(([f, t]) => `${f}: ${t.join(" ")}`)).toEqual([]);
   });

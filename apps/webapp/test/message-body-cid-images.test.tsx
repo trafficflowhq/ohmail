@@ -39,22 +39,22 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/letter-body/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 async function clean(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}) {
   const { sanitizeMailHtml } = await mod();
   return sanitizeMailHtml(html, opts);
 }
 
-async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDivElement> {
+async function render(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host;
 }
 

@@ -11,9 +11,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { COPY, MessageBody } from "../app/letter-body/MessageBody";
-import type { BlockNotice } from "../app/letter-body/BlockNotice";
-import { DEFERRED_SRC_ATTR } from "../app/letter-body/proxied-images";
+import { COPY, MessageBody } from "../../../packages/letter-body/src/MessageBody";
+import type { BlockNotice } from "../../../packages/letter-body/src/BlockNotice";
+import { DEFERRED_SRC_ATTR } from "../../../packages/letter-body/src/proxied-images";
 import { useRemoteImages } from "../app/shell/remote-images";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -64,6 +64,7 @@ interface Opts { mode: "auto" | "manual"; loadPixels?: boolean; withNotice?: boo
 function Harness({ messageId, html, mode, loadPixels = false, withNotice = false }: Opts & { messageId: string; html: string }) {
   const chrome = useRemoteImages({ onFailed: () => {}, mode, loadPixels });
   return h(MessageBody, {
+    owner: null,
     text: "plain",
     html,
     remoteLoaded: (chrome?.auto ?? false) || (chrome?.consented(messageId) ?? false),

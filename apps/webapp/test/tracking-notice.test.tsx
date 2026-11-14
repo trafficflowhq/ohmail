@@ -33,8 +33,8 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { COPY, MessageBody } from "../app/letter-body/MessageBody";
-import { CAPTION_KEY, NOTICE_CAPTION, type NoticeKind } from "../app/letter-body/BlockNotice";
+import { COPY, MessageBody } from "../../../packages/letter-body/src/MessageBody";
+import { CAPTION_KEY, NOTICE_CAPTION, type NoticeKind } from "../../../packages/letter-body/src/BlockNotice";
 import { StreamCardMemo } from "../app/shell/StreamCardMemo";
 import type { RemoteImagesChrome } from "../app/shell/remote-images";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
@@ -336,7 +336,7 @@ describe("the seams", () => {
     const root = createRoot(host);
     roots.push(root);
     await act(async () => {
-      root.render(h(MessageBody, { messageId: "bare", text: "hello", html: PIXEL_ONLY }));
+      root.render(h(MessageBody, { owner: null, messageId: "bare", text: "hello", html: PIXEL_ONLY }));
     });
     await settle();
     const bar = host.querySelector(".mb-bar");

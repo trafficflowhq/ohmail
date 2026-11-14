@@ -19,6 +19,7 @@ export { layoutPlan } from "./layout-plan.js";
 export { attributesOf, ROOT_ATTRIBUTES } from "./root-attributes.js";
 export { ADDRESS, fragmentOf, routeOf } from "./route.js";
 export { Scoped } from "./scope.js";
+export { useOwnAddresses, usePress, usePressWhereOn, useRoomHolds, type RoomHolds } from "./room.js";
 export { useSignal } from "./feeds.js";
 export {
   CALENDAR_HOME,

@@ -173,9 +173,17 @@ const ALIASES: Record<string, string> = {
   "@ohmail/cal-core/recur/span": r("packages/cal-core/src/recur/span.ts"),
   // The calendar's write door reads a repeat's grammar, a zone and a stored time through these.
   "@ohmail/cal-core/recur/rrule": r("packages/cal-core/src/recur/rrule.ts"),
+  // And, for a press on a day and the days after it, a series' days and a moment's clock time in its zone.
+  "@ohmail/cal-core/ical/event": r("packages/cal-core/src/ical/event.ts"),
+  "@ohmail/cal-core/recur/series": r("packages/cal-core/src/recur/series.ts"),
+  "@ohmail/cal-core/time/arith": r("packages/cal-core/src/time/arith.ts"),
   "@ohmail/cal-core/stored/event-range": r("packages/cal-core/src/stored/event-range.ts"),
   "@ohmail/cal-core/stored/time": r("packages/cal-core/src/stored/time.ts"),
   "@ohmail/cal-core/time/zones": r("packages/cal-core/src/time/zones.ts"),
+  // The write door asks a series' shape of the repeats proven where its calendar is, and reckons a series' end and the
+  // series its days from one on become, as the drain does, through these two doors of the calendar's providers.
+  "@ohmail/cal-providers/repeat-shapes": r("packages/cal-providers/src/repeat-shapes.ts"),
+  "@ohmail/cal-providers/series": r("packages/cal-providers/src/series.ts"),
   /* The dialect seam, reached from `engine.ts` — which names the store this install actually
      opened, so `/health` can say `sqlite` or `pglite` instead of null. A new workspace edge is an
      unresolved edge until it is listed here, and this census failed naming it, which is the
@@ -282,6 +290,10 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
     // why it has to be inside the graph this census walks rather than beside it.
     expect(result.visited.has(resolve(HERE, "../src/cloud-signin.ts")), "the sign-in surface is not in the Cloud-engine graph").toBe(true);
     expect(result.visited.has(ALIASES["@trafficflow/services/mail"]!)).toBe(true);
+    // The calendar's write door reaches the providers through their two pure doors alone (ruling (i)): the walk goes into both, so
+    // a forbidden import planted in either is seen, and neither can drop out of the graph unnoticed.
+    expect(result.visited.has(ALIASES["@ohmail/cal-providers/repeat-shapes"]!), "the providers' proof door is not in the Cloud-engine graph").toBe(true);
+    expect(result.visited.has(ALIASES["@ohmail/cal-providers/series"]!), "the providers' series door is not in the Cloud-engine graph").toBe(true);
     expect(result.visited.size).toBeGreaterThan(20);
   });
 

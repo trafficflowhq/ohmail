@@ -64,7 +64,7 @@ import { afterPaint, whenQuiet } from "@ohmail/app-logic/lists/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { HELD_ANCHOR_PAD_PX, HELD_OPENING, heldAnchorTop, heldAnchored, useHeldWindow } from "@ohmail/app-logic/lists/held-window";
-import { linkHref, useRenderedLinks } from "../letter-body/rendered-links";
+import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
@@ -87,8 +87,8 @@ import {
 } from "../shell/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { MessageBody } from "../letter-body";
-import { BlockNoticeGloss, type BlockNotice } from "../letter-body";
+import { MessageBody } from "../letter-body/MessageBody";
+import { BlockNoticeGloss, type BlockNotice } from "@ohmail/letter-body";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { degradeSentence, withDegrade, type ScreeningDegrade } from "../shell/screening-degrade";
 

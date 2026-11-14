@@ -1,0 +1,11 @@
+{
+  "calmail": {
+    "today": "Today",
+    "now": "now",
+    "allDay": "all day",
+    "busy": "Busy",
+    "toAnswer": "To answer",
+    "more": "+{count}",
+    "coming": "Coming up with {name}"
+  }
+}

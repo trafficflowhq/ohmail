@@ -5,6 +5,7 @@
  * is the one the root element was drawn in, never a global.
  */
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useGlass } from "./glass.js";
 import { ROOT_ATTRIBUTES, type RootAttribute } from "./root-attributes.js";
 
 export function FrameRoot({
@@ -17,6 +18,7 @@ export function FrameRoot({
   children: ReactNode;
 }) {
   const drawn = useRef<HTMLDivElement>(null);
+  useGlass(drawn);
   useLayoutEffect(() => {
     const root = drawn.current!.ownerDocument.documentElement;
     if (root.hasAttribute("data-face")) return;

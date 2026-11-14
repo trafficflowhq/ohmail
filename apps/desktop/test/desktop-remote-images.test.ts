@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../webapp/app/letter-body/MessageBody";
-import { DEFERRED_SRC_ATTR } from "../../webapp/app/letter-body/proxied-images";
+import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
+import { DEFERRED_SRC_ATTR } from "../../../packages/letter-body/src/proxied-images";
 import { autoLoadsImages, imageProxyUrl, useRemoteImages } from "../../webapp/app/shell/remote-images";
 import { localImageWire, localLoadRemote } from "../src/local-images.js";
 
@@ -279,6 +279,7 @@ function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string
   const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
   const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);
   return h(MessageBody, {
+    owner: null,
     messageId: HELD.id, text: "plain", html,
     remoteLoaded: autoLoadsImages(chrome, HELD) || (chrome?.consented(HELD.id) ?? false),
     imageProxy: chrome ? chrome.proxyFor(HELD.id) : null,

@@ -237,6 +237,18 @@ export class CalDavTestClient {
     return { status: r.status, objects: this.#objects(r.text, collection), text: r.text };
   }
 
+  /**
+   * The server's own expansion of every event in a window (RFC 4791 9.6.5, `expand` in a calendar-query
+   * with a time range): each member's days as the server works them out, one component a day. `start`
+   * and `end` are UTC times in the format's own spelling (`20261120T000000Z`).
+   */
+  async expand(collection: string, start: string, end: string): Promise<{ status: number; objects: DavObject[]; text: string }> {
+    const range = `start="${xml(start)}" end="${xml(end)}"`;
+    const body = `<c:calendar-query ${NS}><d:prop><d:getetag/><c:calendar-data><c:expand ${range}/></c:calendar-data></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range ${range}/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>`;
+    const r = await this.request("REPORT", collection, { depth: "1", body });
+    return { status: r.status, objects: this.#objects(r.text, collection), text: r.text };
+  }
+
   /** The members that hold that UID, found by reading every event's text: the way every server takes. */
   async byUid(collection: string, uid: string): Promise<{ status: number; objects: DavObject[] }> {
     const q = await this.query(collection, { data: true });

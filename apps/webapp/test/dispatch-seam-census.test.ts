@@ -31,6 +31,10 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const APP = join(HERE, "..", "app");
 /** The behaviour moved out of the shell, the press path with it: read with it, keyed `app-logic/…`. */
 const LOGIC = join(HERE, "..", "..", "..", "packages", "app-logic", "src");
+/** The letter's body, moved out of the web app: read with it, keyed `letter-body/…`. */
+const BODY = join(HERE, "..", "..", "..", "packages", "letter-body", "src");
+/* The views of the new tree: a feature presses through the frame's one seam, never the engine. */
+const VIEWS = join(HERE, "..", "..", "..", "packages", "app", "src");
 const NEEDLE = "void engine.mutate(";
 
 /**
@@ -131,7 +135,7 @@ describe("the shell's dispatch seam", () => {
 
   it("pins the remainder, one reason each, and refuses a new bare dispatch", () => {
     const counted = new Map<string, number>();
-    for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"]] as const) for (const file of tsFiles(root)) {
+    for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"], [BODY, "letter-body/"], [VIEWS, "app/"]] as const) for (const file of tsFiles(root)) {
       const hits = bareIn(readFileSync(file, "utf8"));
       if (hits.length > 0) counted.set(prefix + relative(root, file).split("\\").join("/"), hits.length);
     }
@@ -147,5 +151,25 @@ describe("the shell's dispatch seam", () => {
     expect(REMAINDER.reduce((n, [, count]) => n + count, 0),
       "the pinned rows no longer sum to the census's own total — a split moved a count and some "
       + "of it went missing, or a row was raised without another falling").toBe(REMAINDER_TOTAL);
+  });
+
+  /**
+   * ONE SEAM PER FRAME (RULING-MEETING-LINE, one seam): the seam's hook is called by the old shell and by the frame's room,
+   * which never stand together (`frame/one-seam.test.tsx` walks it), and by no other file. A third caller would be a
+   * second Undo door and a second replay of the stored delete intents. The hook's own declaration is not a call.
+   */
+  it("calls `useShellDispatch(` in the old shell and the frame's room, and nowhere else", () => {
+    const REPO = join(HERE, "..", "..", "..");
+    const roots = [APP, LOGIC, BODY, VIEWS, join(REPO, "apps", "desktop", "src"), join(REPO, "apps", "paired-page", "src")];
+    const callers = new Set<string>();
+    for (const root of roots) for (const file of tsFiles(root)) {
+      const blanked = scan.withoutCommentsAndLiterals(readFileSync(file, "utf8"));
+      for (const hit of blanked.matchAll(/\buseShellDispatch\s*\(/g)) {
+        if (/\bfunction\s+$/.test(blanked.slice(Math.max(0, hit.index - 20), hit.index))) continue;
+        callers.add(relative(REPO, file).split("\\").join("/"));
+      }
+    }
+    expect([...callers].sort(), "a press seam called outside the old shell and the frame's room")
+      .toEqual(["apps/webapp/app/shell/AppShell.tsx", "packages/app/src/frame/room.tsx"]);
   });
 });

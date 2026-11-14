@@ -249,6 +249,7 @@ describe("the composer's hold follows the outbox", () => {
     };
     walk(root);
     walk(join(__dirname, "../../../packages/app-logic/src"));
+    walk(join(__dirname, "../../../packages/letter-body/src"));
     expect(callers, "a discard that bypasses discardUnsavedChange").toEqual(["../../../packages/app-logic/src/writing/mail-send.ts"]);
   });
 });

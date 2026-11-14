@@ -1,0 +1,19 @@
+{
+  "frommail": {
+    "title": "Aus Mails",
+    "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "noZone": "Termine aus Mails können nicht aufgelistet werden: Dieses Gerät kennt seine Zeitzone nicht.",
+    "empty": "Nichts in deinen Mails gefunden",
+    "add": "Hinzufügen",
+    "addAll": "{count, number} hinzufügen",
+    "addedMany": "{count, plural, one {# Termin hinzugefügt} other {# Termine hinzugefügt}}",
+    "show": "Im Kalender zeigen",
+    "onCalendar": "In deinem Kalender",
+    "waiting": "{count, plural, =0 {Nichts hinzuzufügen} one {# hinzuzufügen} other {# hinzuzufügen}}",
+    "words": "In der Mail",
+    "goesTo": "Kommt in",
+    "close": "Schließen",
+    "allDay": "ganztägig",
+    "span": "{from}–{to}"
+  }
+}

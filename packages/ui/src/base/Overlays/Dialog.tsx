@@ -1,4 +1,5 @@
 import { useId, type KeyboardEvent, type ReactNode } from "react";
+import { RefusalLine } from "../Feedback/RefusalLine.js";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import { Sentence } from "../Primitives/Sentence.js";
@@ -26,6 +27,11 @@ export interface DialogProps {
   keysOn?: "confirm" | "cancel";
   /** The answer that does it: the dialog's first button, where the keys land unless `keysOn` says otherwise. Left out: a dialog that only tells. */
   confirm?: { label: string; onPress: () => void; disabled?: boolean; keyHint?: string };
+  /**
+   * A second answer, where the question has two that do something: a second button between the answer and the way
+   * out ("Keep them", "Forget them", Cancel).
+   */
+  second?: { label: string; onPress: () => void; disabled?: boolean };
   /** The way out. It closes the dialog. */
   cancel: { label: string; keyHint?: string };
   /** Show the answers' keys whatever the face says. */
@@ -34,6 +40,11 @@ export interface DialogProps {
   children?: ReactNode;
   /** The body is a list: of what waits. */
   list?: boolean;
+  /**
+   * What a press inside it came to, in one line over the answers: no item of the list and outside what scrolls, so
+   * it stands in sight under the longest list. `refused`: it names why the press did not act, behind the warning sign.
+   */
+  said?: { line: string; refused?: boolean };
   /** Other ways to the same answer, under the answers: small quiet buttons, one under the other ("Use a passkey instead"). */
   under?: ReactNode;
 }
@@ -56,10 +67,12 @@ export function Dialog(props: DialogProps) {
     kind,
     keysOn,
     confirm,
+    second,
     cancel,
     keysShown,
     children,
     list,
+    said,
     under,
   } = props;
   const name = useId();
@@ -89,6 +102,17 @@ export function Dialog(props: DialogProps) {
           {children}
         </div>
       ) : null}
+      {said ? (
+        <div className="oh-dialog-said">
+          {said.refused ? (
+            <RefusalLine start>{said.line}</RefusalLine>
+          ) : (
+            <p className="oh-text" role="status">
+              {said.line}
+            </p>
+          )}
+        </div>
+      ) : null}
       <div className="oh-dialog-acts">
         {confirm ? (
           <Button
@@ -98,6 +122,11 @@ export function Dialog(props: DialogProps) {
             keyShown={keysShown}
           >
             {confirm.label}
+          </Button>
+        ) : null}
+        {second ? (
+          <Button kind="two" onPress={second.onPress} disabled={second.disabled}>
+            {second.label}
           </Button>
         ) : null}
         <Button kind="quiet" onPress={onClose} keyHint={cancel.keyHint} keyShown={keysShown}>

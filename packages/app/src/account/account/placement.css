@@ -1,0 +1,20 @@
+/* The password form's own placement: its three blanks one under the other at a reading measure, what it says under
+   them, and its answers side by side. It draws no look. Own classes: `account-`. */
+.account-form {
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s2) 0;
+}
+
+.account-fields {
+  display: grid;
+  gap: var(--s4);
+  max-width: 26em;
+}
+
+.account-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}

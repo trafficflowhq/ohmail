@@ -136,6 +136,7 @@ describe("Microsoft's writer, at the double", () => {
     expect(await writer.remove(signedIn(), studio, target, never)).toEqual({
       ok: true,
       items: [{ kind: "gone", id: item.id }],
+      written: true,
     });
     expect(await writer.remove(signedIn(), studio, target, never)).toEqual({
       ok: true,
@@ -180,6 +181,37 @@ describe("Microsoft's writer, at the double", () => {
         ),
       ).toBe(expected);
     }
+    expect(sent).toEqual([]);
+  });
+
+  it("writes no day of a series yet, and never a day's write onto its series: nothing is asked", async () => {
+    const day = {
+      id: "evt-any",
+      version: 'W/"1"',
+      text: null,
+      occurrence: zoned(wall(2026, 11, 26, 9), "Europe/Zurich"),
+    };
+    const answers = [
+      await writer.change(signedIn(), studio, day, { summary: "Only that day" }, never),
+      await writer.remove(signedIn(), studio, day, never),
+      await writer.answer(signedIn(), studio, day, { as: "mila@example.test", reply: "ACCEPTED" }, never),
+      // Nor a series' end, nor its days from one on as a series of their own.
+      await writer.endSeries(signedIn(), studio, day, { then: null, mayBeDone: false }, never),
+      await writer.continueSeries(
+        signedIn(),
+        studio,
+        {
+          key: { hex: "0".repeat(32) },
+          from: day,
+          start: day.occurrence,
+          end: day.occurrence,
+          rule: parseRRule("FREQ=WEEKLY")!,
+          change: {},
+        },
+        never,
+      ),
+    ];
+    expect(answers.map(word)).toEqual(Array(5).fill("repeat_unsupported"));
     expect(sent).toEqual([]);
   });
 });

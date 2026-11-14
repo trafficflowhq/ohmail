@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { MessageBody } from "../app/letter-body/MessageBody";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 
 /**
  * THE FRAME'S DOCUMENT IS THE SIZE OF THE LETTER, NOT OF ITS PICTURES. Twelve embedded pictures
@@ -45,7 +45,7 @@ async function srcdocOf(html: string, cidImages: ReadonlyMap<string, string>): P
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { text: "Twelve pictures.", html, cidImages })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, text: "Twelve pictures.", html, cidImages })); });
   return host.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
 }
 

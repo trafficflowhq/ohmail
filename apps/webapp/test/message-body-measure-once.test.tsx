@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
-import { MessageBody } from "../app/letter-body/MessageBody";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 
 /**
  * A FRAME IS MEASURED ONCE PER LOAD, AND AGAIN ONLY FOR A REAL CHANGE (`MessageBody.measure`).
@@ -94,7 +94,7 @@ afterEach(async () => {
 
 describe("the frame is probed once per load", () => {
   it("the load probes once; the observer's first report and an unchanged one probe nothing", async () => {
-    await act(async () => { root!.render(h(MessageBody, { text: "copy", html: HTML })); });
+    await act(async () => { root!.render(h(MessageBody, { owner: null, text: "copy", html: HTML })); });
     await settle();
     expect(probes(), "the load did not probe the frame, or probed it twice").toBe(1);
     expect(frameObservers(), "control: the observer was armed after the load").toBe(1);
@@ -106,7 +106,7 @@ describe("the frame is probed once per load", () => {
   });
 
   it("a width that moved probes again", async () => {
-    await act(async () => { root!.render(h(MessageBody, { text: "copy", html: HTML })); });
+    await act(async () => { root!.render(h(MessageBody, { owner: null, text: "copy", html: HTML })); });
     await settle();
     expect(probes()).toBe(1);
     const frame = host!.querySelector("iframe")!;
@@ -116,7 +116,7 @@ describe("the frame is probed once per load", () => {
   });
 
   it("a frame shown again under Activity probes nothing", async () => {
-    const at = (mode: "visible" | "hidden") => h(Activity, { mode, children: h(MessageBody, { text: "copy", html: HTML }) });
+    const at = (mode: "visible" | "hidden") => h(Activity, { mode, children: h(MessageBody, { owner: null, text: "copy", html: HTML }) });
     await act(async () => { root!.render(at("visible")); });
     await settle();
     expect(probes()).toBe(1);
@@ -146,7 +146,7 @@ describe("the frame's document is touched only once it has loaded", () => {
     host!.addEventListener("load", () => { if (beforeLoad < 0) beforeLoad = reads; }, true);
     try {
       await act(async () => {
-        root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h(MessageBody, { text: "copy", html: HTML }) }));
+        root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h(MessageBody, { owner: null, text: "copy", html: HTML }) }));
       });
       await settle();
       expect(beforeLoad, "control: the frame loaded").toBeGreaterThanOrEqual(0);

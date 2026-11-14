@@ -19,7 +19,7 @@ const ROOT = resolve(__dirname, "../../..");
 const ENGINE = ["packages/client-engine/src/engine.ts", "packages/client-engine/src/engine"];
 const engineText = (): string => [join(ROOT, ENGINE[0]!), ...readdirSync(join(ROOT, ENGINE[1]!)).sort().map((n) => join(ROOT, ENGINE[1]!, n))]
   .map((f) => readFileSync(f, "utf8")).join("\n");
-const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src"];
+const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src"];
 /** The adapter wrapper that FORWARDS the capability; forwarding is not a read. */
 const FORWARDER = "packages/app-logic/src/session/sync-scheduler.ts";
 

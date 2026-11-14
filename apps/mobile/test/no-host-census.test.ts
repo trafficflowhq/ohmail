@@ -147,8 +147,9 @@ function specifiersOf(source: string): string[] {
  * table means this census resolves exactly what the run resolves, and a package added tomorrow is
  * covered with nobody remembering to add it here.
  *
- * The one entry not of this shape is a `RegExp` find (`next-intl`), which no phone module reaches;
- * it falls through to `"external"` like any npm package, which is the correct answer for it.
+ * A `RegExp` find that maps into a source folder (`@ohmail/app-logic/<section>`) is read by
+ * `patternTable` below. Any other `RegExp` find (`next-intl`), which no phone module reaches, falls
+ * through to `"external"` like any npm package, which is the correct answer for it.
  */
 function aliasTable(): Record<string, string> {
   const cfg = readFileSync(r("vitest.config.ts"), "utf8");
@@ -161,6 +162,15 @@ function aliasTable(): Record<string, string> {
 const ALIASES = aliasTable();
 /** Longest first: the bare `…/core` entry must not swallow `…/core/adapters/imap`. */
 const ALIAS_KEYS = Object.keys(ALIASES).sort((a, b) => b.length - a.length);
+
+/** The same table's `RegExp` finds into a source folder: `{ find: /…/, replacement: `${r("./dir")}/$1…` }`. */
+function patternTable(): { find: RegExp; dir: string; tail: string }[] {
+  const cfg = readFileSync(r("vitest.config.ts"), "utf8");
+  return [...cfg.matchAll(/\{\s*find:\s*\/(.+?)\/,\s*replacement:\s*`\$\{r\("\.\/([^"]+)"\)\}([^`]*)`\s*\}/g)].map(
+    (m) => ({ find: new RegExp(m[1]!), dir: r(m[2]!), tail: m[3]! }),
+  );
+}
+const PATTERNS = patternTable();
 
 /** Every `.ts`/`.tsx` under `dir`, recursively. */
 function walk(dir: string, acc: string[] = []): string[] {
@@ -315,6 +325,13 @@ function resolveSpec(
   }
   for (const key of ALIAS_KEYS) {
     if (spec === key || spec.startsWith(`${key}/`)) return ALIASES[key]!;
+  }
+  for (const { find, dir, tail } of PATTERNS) {
+    const m = find.exec(spec);
+    if (m === null) continue;
+    const file = dir + tail.replace(/\$(\d)/g, (_, k: string) => m[Number(k)] ?? "");
+    if (!existsSync(file)) unresolved.add(`${rel(fromFile)} → ${spec}`);
+    return existsSync(file) ? file : null;
   }
   if (spec.startsWith(`${SCOPE}/`) || spec.startsWith("@ohmail/")) {
     unresolved.add(`${rel(fromFile)} → ${spec}`);

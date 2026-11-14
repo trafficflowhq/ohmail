@@ -7,11 +7,13 @@ import { readBorders, readPlanted, type Borders } from "../../../test/support/bo
  */
 const BORDERS: Borders = {
   folder: "packages/app",
-  mayImport: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/app-logic"],
+  mayImport: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/app-logic", "@ohmail/letter-body"],
   /* No page of this package is a Next page: a link is the kit's plain anchor, which the browser follows as a
      document load (a way out of a door may cross into the website's zone), never the framework's link. */
   neverLibraries: ["next"],
 };
+/** The same package with nothing of the product outside its bundle: what a part reaches of every other package shows. */
+const WHOLE: Borders = { folder: "packages/app", mayImport: ["@ohmail/ui", "@ohmail/tokens"] };
 
 describe("app's borders, read off its bundle", () => {
   it("bundles its own files and reaches nothing its row does not name", async () => {
@@ -43,6 +45,29 @@ describe("app's borders, read off its bundle", () => {
     expect(await reach('export * from "./frame/index.js";\nexport { VIEWS } from "../../../apps/webapp/app/shell/routing";\n'))
       .toContain("apps/webapp/app/shell/routing.ts");
     expect(await reach('export * from "./frame/index.js";\nexport { panesOf } from "./host/panes.js";\n')).toEqual([]);
+  });
+});
+
+describe("the reader's two entries", () => {
+  it("the frame reaches no file of the reader", async () => {
+    const { inputs } = await readPlanted(BORDERS, 'export * from "./frame/index.js";\n');
+    expect(inputs.filter((input) => input.startsWith("packages/app/src/reader/"))).toEqual([]);
+  });
+
+  it("the reader's door never loads the letter's renderer; its body entry does", async () => {
+    const door = (await readPlanted(WHOLE, 'export * from "./reader/index.js";\n')).inputs;
+    expect(door).toContain("packages/app/src/reader/Reader.tsx");
+    expect(door.filter((input) => input.startsWith("packages/letter-body/"))).toEqual([]);
+    expect(door.some((input) => input.includes("node_modules/dompurify/"))).toBe(false);
+    const body = (await readPlanted(WHOLE, 'export * from "./reader/body/index.js";\n')).inputs;
+    expect(body).toContain("packages/letter-body/src/MessageBody.tsx");
+  });
+
+  it("the reader reads no list's own model: nothing of the Ohbox's behaviour or its folder", async () => {
+    const reach = async (planted: string) =>
+      (await readPlanted(WHOLE, planted)).inputs.filter((input) => input.startsWith("packages/app-logic/src/ohbox/") || input.startsWith("packages/app/src/ohbox/"));
+    expect(await reach('export * from "./reader/index.js";\n')).toEqual([]);
+    expect(await reach('export * from "./reader/index.js";\nexport * from "@ohmail/app-logic/ohbox";\n')).not.toEqual([]);
   });
 });
 

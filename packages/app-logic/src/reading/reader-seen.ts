@@ -60,8 +60,27 @@ export const threadReadTime = {
   },
 };
 
+/**
+ * WHERE THE RULE READS A COLUMN: each panel's sender line and text block, and the controls that end the view (and
+ * that a press on is no reading). `stopsRoot`: the stops are looked for from the scroller's closest such element,
+ * for a column whose action panel floats beside its scroller. Absent, today's reader's classes.
+ */
+export interface ThreadDomNames {
+  readonly from: string;
+  readonly body: string;
+  readonly stops: string;
+  readonly stopsRoot?: string;
+  /** What stays over the scroller's top while it scrolls (a column's head), where a column has one. */
+  readonly head?: string;
+}
+
+/** Today's reader's classes. */
+export const THREAD_DOM: ThreadDomNames = { from: ".msg-from", body: ".msg-body, .pm-body", stops: ".msg-actions, .reply-dock" };
+
 export interface ThreadReadDomOptions {
   scroller: HTMLElement;
+  /** Where the panels' parts and the view's stops are; absent, {@link THREAD_DOM}. */
+  names?: ThreadDomNames;
   record: ThreadRead;
   /** Ids that turned read in one look — one write per look. */
   onRead: (ids: string[]) => void;
@@ -146,16 +165,16 @@ export function lineHeightOf(el: Element): number {
 }
 
 /** The panels inside a scroller, in document order, as the rule reads them. */
-export function panelsOf(scroller: HTMLElement): ThreadPanel[] {
+export function panelsOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_DOM): ThreadPanel[] {
   return [...scroller.querySelectorAll<HTMLElement>("[data-conv-id]")].map((el) => {
-    const from = el.querySelector(".msg-from");
+    const from = el.querySelector(names.from);
     const first = from && cssRect(from).height > 0 ? box(from) : null;
     const mark = el.querySelector("[data-own-end]");
     const frame = el.querySelector("iframe.mb-frame");
     // A frame draws its end marker only once measured (until then its foot is the 150px default);
     // a body still standing in for its frame says so.
     const unmeasured = (!mark && frame !== null) || el.querySelector("[data-body-pending]") !== null;
-    const block = el.querySelector(".msg-body, .pm-body");
+    const block = el.querySelector(names.body);
     let lead: LineBox | null = null;
     let end: LineBox | null = null;
     if (block) {
@@ -182,10 +201,11 @@ export function panelsOf(scroller: HTMLElement): ThreadPanel[] {
 }
 
 /** The scroller's visible box, its bottom above the sticky action bar or the reply dock. */
-export function viewOf(scroller: HTMLElement): ThreadView {
+export function viewOf(scroller: HTMLElement, names: ThreadDomNames = THREAD_DOM): ThreadView {
   const top = cssRect(scroller).top;
   let bottom = top + scroller.clientHeight;
-  for (const el of scroller.querySelectorAll(".msg-actions, .reply-dock")) {
+  const root = names.stopsRoot === undefined ? scroller : scroller.closest(names.stopsRoot);
+  for (const el of root?.querySelectorAll(names.stops) ?? []) {
     const r = cssRect(el);
     if (r.height > 0 && r.top > top && r.top < bottom) bottom = r.top;
   }
@@ -241,14 +261,15 @@ const editable = (t: EventTarget | null): boolean =>
 const NOTHING: ReadonlySet<string> = new Set();
 
 /** A verb, not reading: the bar, the reply dock, a menu, any button or field. */
-const PRESS_CONTROL =
-  ".msg-actions, .reply-dock, [role='menu'], button, [role='button'], [role='menuitem'], input, textarea, select, [contenteditable]";
+const pressControl = (names: ThreadDomNames): string =>
+  `${names.stops}, [role='menu'], button, [role='button'], [role='menuitem'], input, textarea, select, [contenteditable]`;
+const PRESS_CONTROL = pressControl(THREAD_DOM);
 
 /** Does a press here enter the visit: on a message's own panel (not a control in it), or on the scroller's own box (its scrollbar)? */
-export function pressEnters(scroller: HTMLElement, target: EventTarget | null): boolean {
+export function pressEnters(scroller: HTMLElement, target: EventTarget | null, names: ThreadDomNames = THREAD_DOM): boolean {
   if (target === scroller) return true;
   if (!(target instanceof Element) || !scroller.contains(target)) return false;
-  const control = target.closest(PRESS_CONTROL);
+  const control = target.closest(names === THREAD_DOM ? PRESS_CONTROL : pressControl(names));
   if (control !== null && scroller.contains(control)) return false;
   const panel = target.closest("[data-conv-id]");
   return panel !== null && scroller.contains(panel);
@@ -256,6 +277,8 @@ export function pressEnters(scroller: HTMLElement, target: EventTarget | null): 
 
 export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   const { scroller, record } = o;
+  const names = o.names ?? THREAD_DOM;
+  const controls = names === THREAD_DOM ? PRESS_CONTROL : pressControl(names);
   const doc = scroller.ownerDocument;
   const win = doc.defaultView ?? window;
   const now = o.now ?? (() => threadReadTime.now());
@@ -277,7 +300,7 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   const shapeOf = (panels: readonly ThreadPanel[]): string =>
     [scroller.scrollHeight, scroller.clientHeight, scroller.clientWidth, ...panels.map((p) => p.height)].join(",");
   /** The layout the previous look saw (the mount's, first); a look that finds it moved counts nothing. */
-  let shape: string | null = shapeOf(panelsOf(scroller));
+  let shape: string | null = shapeOf(panelsOf(scroller, names));
   /** A dwell under way is looked at again when it is done. */
   const schedule = (): void => {
     dwell?.();
@@ -290,14 +313,14 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     pending = null;
     if (!live) return;
     const t = now();
-    const view = attended(t) ? viewOf(scroller) : null;
+    const view = attended(t) ? viewOf(scroller, names) : null;
     if (view === null || view.bottom - view.top <= 0) {
       // Nobody can be seeing this (or nothing is laid out): every dwell starts over.
       record.observe([], null, NOTHING, t);
       schedule();
       return;
     }
-    const panels = panelsOf(scroller);
+    const panels = panelsOf(scroller, names);
     const laid = shapeOf(panels);
     if (laid !== shape) {
       shape = laid;
@@ -337,7 +360,7 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     if (!restable()) return;
     rest = wait(o.restMs!, () => {
       rest = null;
-      const v = viewOf(scroller);
+      const v = viewOf(scroller, names);
       if (!restable() || v.bottom - v.top <= 0) return;
       resting = false;
       (o.onRest ?? o.onEnter)();
@@ -412,13 +435,13 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     poke();
   };
 
-  const onPress = (e: Event): void => { if (pressEnters(scroller, e.target)) enter(); };
-  const onTouch = (e: Event): void => { if (pressEnters(scroller, e.target)) onHand(); };
+  const onPress = (e: Event): void => { if (pressEnters(scroller, e.target, names)) enter(); };
+  const onTouch = (e: Event): void => { if (pressEnters(scroller, e.target, names)) onHand(); };
   /* A press on a control in the reader, or anywhere outside it (the list, a drag, the rail), ends the rest. */
   const onAnyPress = (e: Event): void => {
     const t = e.target;
     const inside = t instanceof Node && scroller.contains(t);
-    if (!inside || (t instanceof Element && t.closest(PRESS_CONTROL) !== null)) endRest();
+    if (!inside || (t instanceof Element && t.closest(controls) !== null)) endRest();
   };
   /* A drag enters through the scroll it makes, so a tap's jitter on the bar enters nothing. */
   const onDrag = (): void => { lastEvidence = now(); };
@@ -593,12 +616,14 @@ export function useReaderVisit({ shown, markSeen }: {
  * (↵, a click on the row).
  */
 export function useThreadRead({
-  scroller, wiring, active, onHumanScroll,
+  scroller, wiring, active, onHumanScroll, names,
 }: {
   scroller?: RefObject<HTMLElement | null>;
   wiring?: ThreadReadWiring;
   active: boolean;
   onHumanScroll?: () => void;
+  /** Where the column's parts are; absent, today's reader's classes. Held for the adapter's life: a constant. */
+  names?: ThreadDomNames;
 }): void {
   const latest = useRef(wiring);
   latest.current = wiring;
@@ -613,6 +638,7 @@ export function useThreadRead({
     const c = createThreadReadDom({
       scroller: el,
       record,
+      ...(names ? { names } : {}),
       onRead: (ids) => latest.current?.onRead(ids),
       onEnter: () => latest.current?.onEnter(),
       onHumanScroll: () => human.current?.(),
@@ -626,7 +652,7 @@ export function useThreadRead({
       if (core.current === c) core.current = null;
       c.dispose();
     };
-  }, [scroller, record, active, restMs]);
+  }, [scroller, record, active, restMs, names]);
   const entered = record?.entered ?? false;
   useEffect(() => {
     if (entered) core.current?.poke();

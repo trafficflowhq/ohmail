@@ -1,0 +1,180 @@
+import { useEffect, useRef, useState } from "react";
+import { Button, Dialog, Tag } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { useText } from "../../text/index.js";
+import {
+  isDirty,
+  isRichEmpty,
+  signatureWrite,
+  type RichValue,
+  type SignaturesMailbox,
+  type SignaturesModel,
+} from "./model.js";
+import { SIGNATURES_NAMESPACE } from "./namespace.js";
+
+export interface SignaturesPaneProps {
+  readonly model: SignaturesModel;
+  /** States page only, never handed by a shell: a draft to open on that a person reaches by typing. */
+  readonly typed?: { readonly mailbox: string; readonly text: string };
+}
+
+/**
+ * Signatures: one editor per live mailbox over the signature the server confirmed, its preview, Save and Discard.
+ * One save at a time; a draft that is not saved holds the way out of the pane until it is kept or discarded.
+ */
+export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
+  const t = useText("settings");
+  const [drafts, setDrafts] = useState<Readonly<Record<string, RichValue>>>(() =>
+    typed ? { [typed.mailbox]: { text: typed.text, html: "" } } : {},
+  );
+  const [pending, setPending] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ id: string; line: string } | null>(null);
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const { mailboxes } = model;
+  // The hold is taken when a draft appears and released when none is left, whatever the shell hands in between.
+  const hold = useRef(model.holdLeave);
+  hold.current = model.holdLeave;
+  const holding = pending === null && mailboxes.some((mb) => isDirty(drafts[mb.id], mb.stored));
+  useEffect(() => {
+    if (!holding) {
+      setLeaving(null);
+      return;
+    }
+    return hold.current((leave) => setLeaving(() => leave));
+  }, [holding]);
+
+  const drop = (id: string) =>
+    setDrafts((now) => {
+      const { [id]: _gone, ...rest } = now;
+      return rest;
+    });
+  const save = (id: string, value: RichValue, takeoverAsked: boolean) => {
+    if (pending !== null) return;
+    setPending(id);
+    setFailed(null);
+    model
+      .write(id, ...signatureWrite(value))
+      .then(() => {
+        if (alive.current) drop(id);
+      })
+      .catch((error: unknown) => {
+        if (alive.current)
+          setFailed({ id, line: model.refusal(error, takeoverAsked) ?? t("signatures.failed") });
+      })
+      .finally(() => {
+        if (alive.current) setPending(null);
+      });
+  };
+
+  return (
+    <>
+      <SettingsSheet>
+        <SettingNote>{t("signatures.intro")}</SettingNote>
+        <SettingNote>{t("signatures.note")}</SettingNote>
+      </SettingsSheet>
+      {mailboxes.map((mb) => (
+        <MailboxSignature
+          key={mb.id}
+          mb={mb}
+          model={model}
+          draft={drafts[mb.id]}
+          pending={pending}
+          failed={failed?.id === mb.id ? failed.line : null}
+          onDraft={(value) => setDrafts((now) => ({ ...now, [mb.id]: value }))}
+          drop={() => drop(mb.id)}
+          save={(value) => save(mb.id, value, mb.takeoverAsked)}
+        />
+      ))}
+      <Dialog
+        open={leaving !== null}
+        onClose={() => setLeaving(null)}
+        title={t("signatures.leaveAsk")}
+        hot
+        confirm={{
+          label: t("signatures.revert"),
+          onPress: () => {
+            const leave = leaving;
+            setDrafts({});
+            setLeaving(null);
+            leave?.();
+          },
+        }}
+        cancel={{ label: t("signatures.leaveKeep") }}
+      />
+    </>
+  );
+}
+
+/** One mailbox's sheet: its editor over the stored signature, the preview, and Save and Discard. */
+function MailboxSignature(props: {
+  mb: SignaturesMailbox;
+  model: SignaturesModel;
+  draft: RichValue | undefined;
+  pending: string | null;
+  failed: string | null;
+  onDraft: (value: RichValue) => void;
+  drop: () => void;
+  save: (value: RichValue) => void;
+}) {
+  const { mb, model, draft, pending, failed, onDraft, drop, save } = props;
+  const t = useText("settings");
+  const own = useText(SIGNATURES_NAMESPACE);
+  const shown = draft ?? mb.stored;
+  const dirty = isDirty(draft, mb.stored);
+  const empty = mb.stored.text.trim().length === 0;
+  const status = mb.reading
+    ? t("signatures.mailboxRead")
+    : empty
+      ? t("signatures.mailboxOff")
+      : t("signatures.mailboxOn");
+  return (
+    <SettingsSheet
+      title={mb.address}
+      person={{ name: mb.address, address: mb.address }}
+      aside={mb.reading ? <Tag>{own("read")}</Tag> : empty ? <Tag>{own("none")}</Tag> : undefined}
+      wants={failed !== null ? { word: t("notSaved"), line: failed } : undefined}
+    >
+      {model.editor({
+        label: `${t("signatures.title")}: ${mb.address}`,
+        value: shown,
+        placeholder: t("signatures.placeholder"),
+        editable: !mb.reading && pending === null,
+        preview: false,
+        onChange: onDraft,
+      })}
+      {isRichEmpty(shown)
+        ? null
+        : model.editor({
+            label: t("signatures.preview"),
+            value: shown,
+            placeholder: "",
+            editable: false,
+            preview: true,
+            onChange: () => undefined,
+          })}
+      {model.changeNote(mb.id)}
+      <SettingLine label={t("signatures.title")} value={status}>
+        {mb.reading ? null : (
+          <>
+            {dirty && pending === null ? (
+              <Button kind="quiet" size="s" onPress={drop}>
+                {t("signatures.revert")}
+              </Button>
+            ) : null}
+            <Button kind="two" size="s" disabled={!dirty || pending !== null} onPress={() => save(shown)}>
+              {pending === mb.id ? t("signatures.saving") : t("signatures.save")}
+            </Button>
+          </>
+        )}
+      </SettingLine>
+    </SettingsSheet>
+  );
+}

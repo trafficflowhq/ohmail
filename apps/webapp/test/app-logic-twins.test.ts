@@ -12,6 +12,12 @@ import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
 import { DECISION_QUIET, type DecisionDestination, type DecisionScope } from "@ohmail/app-logic/screener/decision";
 import type { ConsentStateWire as ConsentReadOfTheRow } from "@ohmail/app-logic/consent/consent-wire";
 import type { ConsentStateWire as ConsentReadOfTheClient } from "../app/api-client";
+import { autoLoadsImages as readerAutoLoads } from "@ohmail/app-logic/reader";
+import { HELD_FOLDERS } from "@trafficflow/core/destinations";
+import { autoLoadsImages as shellAutoLoads } from "../app/shell/remote-images";
+import * as horizons from "@ohmail/app-logic/reader";
+import * as shellFormat from "../app/shell/format";
+import { setActiveFormatZone } from "../app/shell/locale";
 
 const html = (): HTMLElement => document.documentElement;
 afterEach(() => html().removeAttribute("style"));
@@ -98,5 +104,58 @@ describe("the consent read as the consent row declares it", () => {
       screeningScope: true,
     };
     expect(Object.keys(heldEqual)).toHaveLength(20);
+  });
+});
+
+/**
+ * AND THE PICTURES' ONE DEFAULT-READ TERM: the reader decides a letter's pictures with `autoLoadsImages` of
+ * `@ohmail/app-logic/reader`, today's reader with the web shell's. Each answers the same for every letter until the
+ * shell's becomes a re-export of the reader's.
+ */
+describe("whether a letter loads its pictures on open, twice", () => {
+  const held = HELD_FOLDERS[0]!;
+  const checks = [undefined, null, { reason: "impersonation" }, { reason: "unverified" }, { reason: "other" }];
+  const folders = [undefined, "INBOX", held];
+  for (const auto of [true, false]) {
+    for (const senderCheck of checks) {
+      for (const folder of folders) {
+        for (const physicalFolder of folders) {
+          const m = { senderCheck, folder, physicalFolder };
+          it(`auto ${auto}, check ${JSON.stringify(senderCheck)}, shown in ${folder}, filed in ${physicalFolder}`, () => {
+            expect(readerAutoLoads({ auto }, m)).toBe(shellAutoLoads({ auto }, m));
+          });
+        }
+      }
+    }
+  }
+  it("no seam loads nothing", () => {
+    expect(readerAutoLoads(undefined, {})).toBe(shellAutoLoads(undefined, {}));
+  });
+});
+
+describe("the resurface horizons, twice", () => {
+  afterEach(() => setActiveFormatZone(null));
+  /* Ordinary days, a Sunday, a Monday, the small hours, the two nights a year a clock skips or repeats, the turn of a year. */
+  const instants = [
+    "2026-11-10T08:00:00Z", "2026-11-15T10:00:00Z", "2026-11-16T06:30:00Z", "2026-11-11T01:30:00Z",
+    "2026-03-28T12:00:00Z", "2026-10-24T12:00:00Z", "2026-12-31T22:45:00Z", "2026-03-07T23:30:00Z",
+  ];
+  const zones = ["Europe/Zurich", "America/New_York", "Asia/Kolkata", "Pacific/Auckland", "UTC"];
+  const clocks = [null, "02:30", "09:00", "23:59", "7:5", "08:15"];
+  it("the reader's answer what the shell's answer, in every zone, at every clock", () => {
+    for (const zone of zones) {
+      setActiveFormatZone(zone);
+      for (const at of instants) {
+        const base = new Date(at);
+        for (const clock of clocks) {
+          expect(horizons.resurfaceHorizonsIn(base, clock, zone)).toEqual(shellFormat.resurfaceHorizons(base, clock));
+          expect(horizons.firstDayAtIn(base, clock, zone)).toEqual(shellFormat.firstDayAt(base, clock));
+          expect(horizons.dayAtIn("2026-03-29", clock, zone)).toEqual(shellFormat.dayAt("2026-03-29", clock));
+          expect(horizons.dayAtIn(at, clock, zone)).toEqual(shellFormat.dayAt(at, clock));
+        }
+        expect(horizons.dayValueIn(at, zone)).toBe(shellFormat.dayValue(at));
+      }
+    }
+    expect(horizons.DEFAULT_RESURFACE_TIME).toBe(shellFormat.DEFAULT_RESURFACE_TIME);
   });
 });

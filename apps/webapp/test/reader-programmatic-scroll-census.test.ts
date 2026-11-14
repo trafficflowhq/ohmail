@@ -11,14 +11,14 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
  * would mark the panels it passed read. Comments and strings are blanked first (one pass,
  * `source-scan.mjs`); a planted raw write and a planted bare focus are the positive controls.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/components, apps/webapp/app/letter-body, packages/ui/src/primitives, packages/app-logic/src/keys */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/ui/src/primitives, packages/app-logic/src/keys */
 const ROOT = join(__dirname, "..", "app");
 /** The reader tree: every file whose code runs inside the reading column or the sheet. */
 const FILES = [
   "shell/MessagePane.tsx",
   "shell/InlineReply.tsx",
   "shell/sent-reveal.ts",
-  "letter-body/MessageBody.tsx",
+  "../../../packages/letter-body/src/MessageBody.tsx",
   "shell/MessageCard.tsx",
   "shell/Conversation.tsx",
   "shell/ThreadMarks.tsx",

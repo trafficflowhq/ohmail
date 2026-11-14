@@ -28,14 +28,14 @@ async function unmount(): Promise<void> {
 }
 afterEach(unmount);
 
-async function renderBody(cls: string, props: { text: string; html: string | null; subject?: string }): Promise<HTMLDivElement> {
+async function renderBody(cls: string, props: { text: string; html: string | null; subject?: string; onControls?: (c: readonly Control[]) => void }): Promise<HTMLDivElement> {
   await unmount();
-  const { MessageBody } = await import("../app/letter-body/MessageBody.js");
+  const { MessageBody } = await import("../../../packages/letter-body/src/MessageBody.js");
   host = document.createElement("div");
   host.className = cls;
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { messageId: "m1", ...props })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, messageId: "m1", ...props })); });
   return host;
 }
 
@@ -154,6 +154,23 @@ for (const cls of ["pm-body", "msg-body"]) {
   });
 }
 
+type Control = import("../../../packages/letter-body/src/MessageBody.js").BodyControl;
+
+describe("a host that draws the body's controls is handed a framed letter's history", () => {
+  it("the body draws no toggle, and the handed one opens the history in the frame", async () => {
+    const fx = FIXTURES.find((f) => f.id === "01")!;
+    let last: readonly Control[] = [];
+    const el = await renderBody("msg-body", { text: "", html: fx.html, onControls: (c) => { last = c; } });
+    const history = () => last.find((c) => c.id === "history");
+    expect(history()).toMatchObject({ expanded: false, at: "trailing" });
+    expect(toggleIn(el), "the body drew the toggle the host takes").toBeNull();
+    expect(document.getElementById(history()!.controls!), "the control names no sheet").not.toBeNull();
+    await act(async () => { history()!.onPress(); });
+    expect(history()).toMatchObject({ expanded: true });
+    expect(srcdocText(el)).toContain(qhNorm(fx.expect.html!.historyStartText!));
+  });
+});
+
 describe("'Show original' shows the sender's whole document", () => {
   it("a folded prose letter flips to its frame unfolded, with no toggle", async () => {
     const fx = FIXTURES.find((f) => f.id === "01")!;
@@ -189,7 +206,7 @@ describe("the text part rendered instead of the html follows the html's own read
   for (const cls of ["pm-body", "msg-body"]) {
     it(`.${cls}: 73 past the walk's budget stays whole on its text part`, async () => {
       const long = hops(40, 1, "Ein älterer Absatz über die Begehung und den Technikraum. ".repeat(40));
-      const { sanitizeMailHtml } = await import("../app/letter-body/MessageBody.js");
+      const { sanitizeMailHtml } = await import("../../../packages/letter-body/src/MessageBody.js");
       const s = sanitizeMailHtml(long.html, { history: true });
       expect([s.prose, s.rich, s.fold]).toEqual([true, null, null]);
       const el = await renderBody(cls, long);
@@ -236,7 +253,7 @@ describe("an html part the reader does not render keeps its reading", () => {
     + "Sent: Monday, October 19, 2026 9:00 AM<br>To: A Customer &lt;c@example.org&gt;<br>Subject: Your ticket is solved</p>"
     + "<p>A reply card like this one is what our builder draws.</p></div>";
   it("a canvas declared in the head's sheet: no history found, so its text folds only '>' runs", async () => {
-    const { unrenderedHtmlVerdict } = await import("../app/letter-body/MessageBody.js");
+    const { unrenderedHtmlVerdict } = await import("../../../packages/letter-body/src/MessageBody.js");
     expect(unrenderedHtmlVerdict(`<html><head><style>.wrap{max-width:600px}</style></head><body>${card}</body></html>`)).toBe("unread");
     expect(unrenderedHtmlVerdict(`<html><body>${card}</body></html>`)).toBe("trailing");
   });

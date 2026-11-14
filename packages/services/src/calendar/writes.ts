@@ -13,16 +13,18 @@
  * store's copy has moved on since, the act is recorded REFUSED (`version_stale`), so the conflict
  * reaches every device the way any write does, and nothing is sent.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites, mailboxes } from "@trafficflow/db/mail";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db/mail";
 import { fenceErased, fencedAccountOf, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  CALENDAR_WRITE_LIMITS, CalendarConnectionGone, asCalendarWriteFault, holdCalendarConnection, isSeriesRow, isWriteKey, parseCalendarAct,
-  parseWritePayload, writePayloadOf, type CalendarWritePayload,
+  CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, changedDaysOf, holdCalendarConnection, isWriteKey, ownOrganizerAddresses,
+  parseCalendarAct, parseWritePayload, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWritePayload, type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
 import { intlZones } from "@ohmail/cal-core/time/zones";
+import { PROVEN_REPEATS, proofPlaceOf, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
+import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, storedObjectFacts } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
   CalendarWriteReceipt,
@@ -32,7 +34,7 @@ import { ServiceError } from "../errors.js";
 import { derivedRange } from "./event-range.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
 import { requireCalendarOn } from "./settings-service.js";
-import { eventTimeOf, momentOrUtc } from "./time.js";
+import { eventTimeOf, momentOrUtc, storedTimeOf } from "./time.js";
 
 const L = CALENDAR_WRITE_LIMITS;
 const ZONES = intlZones();
@@ -113,7 +115,7 @@ function checkedFields<F extends Partial<CalendarEventFields>>(f: F, whole: bool
   return out as F;
 }
 
-/** The act as it is recorded: the door's own parser, then the calendar's rules; "this and following" waits for its own commit. */
+/** The act as it is recorded: the door's own parser, then the calendar's rules. What a series takes is `writeActRefusal`'s, asked once the row is read. */
 export function checkedAct(body: unknown): CalendarEventAct {
   const act = parseCalendarAct(body);
   if (act === null) throw invalid("the act is no calendar act this server takes");
@@ -122,11 +124,9 @@ export function checkedAct(body: unknown): CalendarEventAct {
     case "calendar_event_create":
       return { ...act, event: checkedFields(act.event, true) };
     case "calendar_event_update":
-      if (act.scope.kind !== "record") throw invalid("a change to one day of a series is not taken yet");
       return { ...act, change: checkedFields(act.change, false) };
     case "calendar_event_delete":
     case "calendar_event_answer":
-      if (act.scope.kind !== "record") throw invalid("a removal or an answer for one day of a series is not taken yet");
       return act;
     case "calendar_event_move":
       return act;
@@ -167,6 +167,10 @@ interface HeldCalendar {
   readonly connectionId: string;
   readonly provider: string;
   readonly access: string;
+  /** The connection's stored address (CalDAV): where its series are proven. */
+  readonly serverUrl: string | null;
+  /** Whom the connection signs in as: one of the account's own addresses where it is an address. */
+  readonly principal: string | null;
 }
 
 /**
@@ -185,10 +189,10 @@ async function holdCalendar(tx: Tx, accountId: string, calendarId: string): Prom
     throw err;
   }
   if (status !== "active" && status !== "failing") throw stopped();
-  const [conn] = await tx.select({ provider: calConnections.provider }).from(calConnections)
-    .where(and(eq(calConnections.id, cal.connectionId), eq(calConnections.accountId, accountId))).limit(1);
+  const [conn] = await tx.select({ provider: calConnections.provider, serverUrl: calConnections.serverUrl, principal: calConnections.principal })
+    .from(calConnections).where(and(eq(calConnections.id, cal.connectionId), eq(calConnections.accountId, accountId))).limit(1);
   if (conn === undefined) throw notFound();
-  return { ...cal, provider: conn.provider };
+  return { ...cal, provider: conn.provider, serverUrl: conn.serverUrl, principal: conn.principal };
 }
 
 /** A calendar a person may write: owner or writer, and not a subscription. */
@@ -196,15 +200,22 @@ function assertWritable(cal: HeldCalendar): void {
   if (cal.provider === "ics" || (cal.access !== "owner" && cal.access !== "writer")) throw readOnly("this calendar takes no writes");
 }
 
-/** The account's own addresses, as the reading takes them: its mailboxes', and the connection's principal where that is one. */
-async function ownAddresses(tx: Tx, accountId: string, connectionId: string): Promise<Set<string>> {
-  const rows = await tx.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
-  const out = new Set(rows.map((r) => r.address.trim().toLowerCase()).filter((a) => a.includes("@")));
-  const [conn] = await tx.select({ principal: calConnections.principal }).from(calConnections)
-    .where(and(eq(calConnections.id, connectionId), eq(calConnections.accountId, accountId))).limit(1);
-  const p = conn?.principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-  if (p.includes("@") && !p.includes("/")) out.add(p);
-  return out;
+/** What the door holds a series against, as the drain does: the repeats proven where the calendar's connection is, and today. */
+interface DoorShapes {
+  readonly place: ProofPlace | null;
+  readonly now: number;
+  readonly proven: ProvenRepeats;
+}
+
+const shapesOf = (cal: HeldCalendar, o: { readonly now: number; readonly proven: ProvenRepeats }): DoorShapes =>
+  ({ place: proofPlaceOf(cal.provider as "google" | "caldav" | "microsoft" | "ics", cal.serverUrl), now: o.now, proven: o.proven });
+
+/** A series that is no shape proven where the calendar's connection is: refused here as the drain refuses it (`repeat_unsupported`). */
+function assertProven(d: DoorShapes, rule: import("@ohmail/cal-core").RRule | null, start: import("@ohmail/cal-core").EventTime | null): void {
+  if (rule === null) return;
+  if (start === null || !seriesProven(d.place, rule, start, ZONES, d.now, d.proven)) {
+    throw invalid("the repeat is not one this calendar's server was proven to keep");
+  }
 }
 
 async function openCount(tx: Tx, accountId: string, eventId: string | null): Promise<number> {
@@ -322,7 +333,14 @@ function storeCode(err: unknown): string | null {
  */
 export async function enqueueCalendarWrite(
   db: LedgerTx, input: { readonly key: string; readonly act: CalendarEventAct },
+  o: {
+    /** Now, in epoch milliseconds: a series is held against the clock times its zone skips from today on. */
+    readonly now?: number;
+    /** The repeats proven at each place (the providers' own table where not said), as the drain takes them. */
+    readonly proven?: ProvenRepeats;
+  } = {},
 ): Promise<EnqueuedCalendarWrite> {
+  const shapes = { now: o.now ?? Date.now(), proven: o.proven ?? PROVEN_REPEATS };
   const accountId = fencedAccountOf(db);
   if (accountId === undefined) throw new Error("a calendar write is recorded inside its account's fenced transaction");
   if (!isWriteKey(input.key)) throw new ServiceError("idempotency_key_required", 400, "a calendar write carries a key of its own");
@@ -332,8 +350,8 @@ export async function enqueueCalendarWrite(
   if (known !== null) return { receipt: known, eventIds: [], changes: [], wake: null };
   try {
     return act.kind === "calendar_event_create"
-      ? await recordCreate(tx, accountId, input.key, act)
-      : await recordOnEvent(tx, accountId, input.key, act);
+      ? await recordCreate(tx, accountId, input.key, act, shapes)
+      : await recordOnEvent(tx, accountId, input.key, act, shapes);
   } catch (err) {
     const code = storeCode(err);
     if (code === PARENT_GONE) throw notFound();
@@ -344,9 +362,12 @@ export async function enqueueCalendarWrite(
 
 async function recordCreate(
   tx: Tx, accountId: string, key: string, act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>,
+  o: { readonly now: number; readonly proven: ProvenRepeats },
 ): Promise<EnqueuedCalendarWrite> {
   const cal = await holdCalendar(tx, accountId, act.calendarId);
   assertWritable(cal);
+  // A new series in a shape proven where the calendar is, from a start its rule names: the drain sends no other.
+  assertProven(shapesOf(cal, o), act.event.repeat === null ? null : parseRRule(act.event.repeat), eventTimeOf(storedTime(act.event.start)));
   await assertRoom(tx, accountId, null);
   const made = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: act.eventId, op: "create", payload: writePayloadOf(act, null, null),
@@ -362,43 +383,102 @@ async function recordCreate(
   };
 }
 
+/** The changed days a series' row has beside it in its calendar: the rows of its UID that each replace one of its days. */
+async function changedRows(tx: Tx, accountId: string, calendarId: string, uid: string): Promise<number> {
+  const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(calEvents).where(and(
+    eq(calEvents.accountId, accountId), eq(calEvents.calendarId, calendarId), eq(calEvents.uid, uid), sql`${calEvents.recurrenceId} <> ''`,
+  ));
+  return Number(row?.n ?? 0);
+}
+
 const OP: Record<Exclude<CalendarEventAct["kind"], "calendar_event_create">, "update" | "delete" | "move" | "answer"> = {
   calendar_event_update: "update", calendar_event_delete: "delete", calendar_event_move: "move", calendar_event_answer: "answer",
 };
 
 async function recordOnEvent(
   tx: Tx, accountId: string, key: string, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>,
+  o: { readonly now: number; readonly proven: ProvenRepeats },
 ): Promise<EnqueuedCalendarWrite> {
   const [seen] = await tx.select({ calendarId: calEvents.calendarId }).from(calEvents)
     .where(and(eq(calEvents.id, act.eventId), eq(calEvents.accountId, accountId))).limit(1);
   if (seen === undefined) throw notFound();
   const cal = await holdCalendar(tx, accountId, seen.calendarId);
   assertWritable(cal);
-  const [event] = await dialect(tx).forUpdate(tx.select({
+  const [held] = await dialect(tx).forUpdate(tx.select({
     id: calEvents.id, versionTag: calEvents.versionTag, updatedAt: calEvents.updatedAt,
-    organizer: calEvents.organizer, myAnswer: calEvents.myAnswer, providerId: calEvents.providerId,
-    repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates,
+    organizer: calEvents.organizer, myAnswer: calEvents.myAnswer, providerId: calEvents.providerId, uid: calEvents.uid,
+    repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
+    startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone, startsAt: calEvents.startsAt,
+    endKind: calEvents.endKind, endLocal: calEvents.endLocal, endZone: calEvents.endZone,
+    title: calEvents.title, notes: calEvents.notes, place: calEvents.place, callLink: calEvents.callLink, busy: calEvents.busy, private: calEvents.private,
+    original: calEvents.original,
   }).from(calEvents).where(and(
     eq(calEvents.id, act.eventId), eq(calEvents.accountId, accountId), eq(calEvents.calendarId, cal.id),
   )).limit(1), { mode: "update" });
-  if (event === undefined) throw notFound();
+  if (held === undefined) throw notFound();
+  // What the store keeps no field of is read off the stored text, as the drain reads it.
+  const event = { ...held, ...storedObjectFacts(held.original, held.organizer) };
 
-  // An invitation: the account answers it, and changes nothing else of someone else's event.
-  const invited = event.myAnswer !== null
-    && (event.organizer === null || !(await ownAddresses(tx, accountId, cal.connectionId)).has(event.organizer.toLowerCase()));
-  if (act.kind === "calendar_event_answer" ? !invited : invited) {
-    throw readOnly(act.kind === "calendar_event_answer" ? "the account is not invited to this event" : "this event is someone else's invitation");
+  // Someone else's event takes the account's answer and nothing else; a series is written as a whole or by the days it names.
+  // The drain asks the same rule of what it sends, so what it would not send is not recorded.
+  const own = await ownOrganizerAddresses(tx, accountId, cal.principal);
+  const why = writeActRefusal(event, act, changedDaysOf(event, writeRowOf(event) === "series" ? await changedRows(tx, accountId, cal.id, event.uid) : 0), own);
+  if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
+  // A whole series' new start moves its end (UNTIL) with it, as the drain writes it: where it cannot be moved, nothing is recorded.
+  const moved = act.kind === "calendar_event_update" && act.scope.kind === "record" && writeRowOf(event) === "series" ? endMovedOf(event, act.change) : undefined;
+  if (moved === null) throw invalid("a series that ends on a day keeps its last day: its end cannot be moved with this start");
+  // A series is written only in a shape proven where the calendar is, as the drain asks it: the series as it stands, as a change of
+  // it leaves it, and as its end before a day leaves it; and a day it names is one of its own.
+  const d = shapesOf(cal, o);
+  const first = timeOfStored(event.startKind, event.startLocal, event.startZone);
+  const rule = writeRowOf(event) === "series" && event.repeatRule !== null ? parseRRule(event.repeatRule) : null;
+  if (writeRowOf(event) === "series") {
+    if (rule === null) throw invalid("the repeat is not one this calendar's server was proven to keep");
+    assertProven(d, rule, first);
   }
-  // A series, or one day of one, waits for series to be written, whatever the act and its scope.
-  if (isSeriesRow(event)) throw invalid("a repeating event, or one day of it, is not written yet");
+  if (act.kind === "calendar_event_update" && act.scope.kind === "record") {
+    const c = act.change;
+    const after = c.repeat !== undefined ? (c.repeat === null ? null : parseRRule(c.repeat)) : moved !== undefined ? parseRRule(moved) : rule;
+    assertProven(d, after, c.start === undefined ? first : eventTimeOf(storedTime(c.start)));
+  }
+  const firstEnd = timeOfStored(event.endKind, event.endLocal, event.endZone);
+  if ("scope" in act && act.scope.kind !== "record" && rule !== null && first !== null && firstEnd !== null) {
+    // A day of it at a clock time that is not its own (the night the clocks go forward over that time) is named by no write, one day
+    // or the days from it on, whatever today is: where it would be written is a guess. The drain refuses the same.
+    if (offItsClock({ first, firstEnd, rule }, act.scope.at, ZONES)) {
+      throw invalid("a day at a clock time that does not exist that night (the clocks go forward over it) is not written");
+    }
+    // A day it names is one of its own: one its rule names, not one it excludes. (A day's cancel of a day it does not have is done
+    // as it stands, as the drain finds it done.)
+    if (act.kind !== "calendar_event_delete" || act.scope.kind === "following") {
+      if (isDayOf({ first, firstEnd, rule }, excludedOf(event), act.scope.at, ZONES) === false) throw invalid("the series has no such day");
+    }
+    if (act.scope.kind === "following") {
+      const at = /^\d{1,16}$/.test(act.scope.at) ? Number(act.scope.at) : Number.NaN;
+      assertProven(d, Number.isSafeInteger(at) ? endedRule(rule, first, at, ZONES) : null, first);
+    }
+  }
   if (act.kind === "calendar_event_move") {
     if (cal.provider !== "google") throw invalid("a move between calendars of this provider is not taken yet");
     const to = await holdCalendar(tx, accountId, act.toCalendarId);
     if (to.connectionId !== cal.connectionId || to.id === cal.id) throw invalid("an event moves to another calendar of the same connection");
     assertWritable(to);
   }
+  // While a press on a day and the days after it is half carried out on this series (its first part is not done, and the series'
+  // record ends exactly where it ends it), no other write may end, remove or re-shape the series: that press's own end could no
+  // longer be found its own, and its days would be nowhere for good. It is tried again, or let go, first (the fourth recheck's
+  // finding of a later press on an earlier day; the fifth's, of the whole series removed: that ends it too).
+  const reshapes = ("scope" in act && act.scope.kind === "following")
+    || (act.kind === "calendar_event_update" && act.scope.kind === "record" && (act.change.repeat !== undefined || act.change.start !== undefined))
+    || (act.kind === "calendar_event_delete" && act.scope.kind === "record");
+  if (reshapes && rule !== null && first !== null && await halfCarriedOut(tx, accountId, event, rule, first)) {
+    throw new ServiceError("calendar_write_left", 409, "a change of the days from a day on is half done on this series: it is tried again or let go first");
+  }
   await assertRoom(tx, accountId, event.id);
   const { after, refusal } = await standing(tx, accountId, event, act);
+  if ((act.kind === "calendar_event_update" || act.kind === "calendar_event_delete") && act.scope.kind === "following") {
+    return recordFollowing(tx, accountId, key, act, event, cal, { after, refusal }, d);
+  }
   const payload: CalendarWritePayload = writePayloadOf(act, after, null);
   const made = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: event.id, op: OP[act.kind], payload, baseVersionTag: event.versionTag,
@@ -410,6 +490,199 @@ async function recordOnEvent(
     eventIds: [event.id],
     changes: [{ kind: "calendar_event", id: event.id, op: "update" }],
     wake: refusal === null ? cal.connectionId : null,
+  };
+}
+
+/**
+ * Is a press on a day and the days after it half carried out on this series: its first part not done (owed with an attempt
+ * counted, or shown refused and not for its copy), and the series' record, on another version than the press was made on, ending
+ * exactly where that press ends it?
+ */
+async function halfCarriedOut(
+  tx: Tx, accountId: string, event: { readonly id: string; readonly versionTag: string | null },
+  rule: import("@ohmail/cal-core").RRule, first: import("@ohmail/cal-core").EventTime,
+): Promise<boolean> {
+  if (rule.until === null) return false;
+  const rows = await tx.select({ state: calWrites.state, refusal: calWrites.refusal, attempts: calWrites.attempts, payload: calWrites.payload, base: calWrites.baseVersionTag })
+    .from(calWrites).where(and(eq(calWrites.accountId, accountId), eq(calWrites.eventId, event.id), or(eq(calWrites.state, "pending"), eq(calWrites.state, "refused"))));
+  for (const r of rows) {
+    if (r.attempts <= 0 || r.base === event.versionTag) continue;
+    const p = parseWritePayload(r.payload);
+    if (p === null || p.part?.n !== 1 || p.act.kind !== "calendar_event_update" || p.act.scope.kind !== "following") continue;
+    if (r.state === "refused" && await refusedForItsCopy(tx, accountId, r)) continue;
+    const at = /^\d{1,16}$/.test(p.act.scope.at) ? Number(p.act.scope.at) : Number.NaN;
+    const ended = Number.isSafeInteger(at) ? endedRule(rule, first, at, ZONES) : null;
+    if (ended !== null && formatRRule(ended) === formatRRule(rule)) return true;
+  }
+  return false;
+}
+
+/** The series' row as a press on a day and the days after it reads it. */
+interface FollowingRow {
+  readonly id: string;
+  readonly versionTag: string | null;
+  readonly repeatRule: string | null;
+  readonly excludedDates: unknown;
+  /** The days the series cancels by a component of their own, read off its stored text. */
+  readonly cancelled: readonly import("@ohmail/cal-core").EventTime[];
+  readonly startKind: string;
+  readonly startLocal: string;
+  readonly startZone: string | null;
+  readonly startsAt: Date;
+  readonly endKind: string | null;
+  readonly endLocal: string | null;
+  readonly endZone: string | null;
+  readonly title: string;
+  readonly notes: string | null;
+  readonly place: string | null;
+  readonly callLink: string | null;
+  readonly busy: boolean;
+  readonly private: boolean;
+}
+
+const stored = (kind: string, value: string, zone: string | null): CalendarTime =>
+  (zone === null ? { kind: kind as CalendarTime["kind"], value } : { kind: kind as CalendarTime["kind"], value, zone });
+
+/** A stored time as the calendar core reads it. */
+const timeOfStored = (kind: string | null, value: string | null, zone: string | null) =>
+  (kind === null || value === null ? null : eventTimeOf(stored(kind, value, zone)));
+
+/**
+ * Every day a stored series excludes, as the writer reads them off its text: the days its EXDATE
+ * lines name (the store's field), and the days it cancels by a component of their own (read off
+ * the stored text, `storedObjectFacts`).
+ */
+const excludedOf = (
+  row: { readonly excludedDates: unknown; readonly cancelled: readonly import("@ohmail/cal-core").EventTime[] },
+): import("@ohmail/cal-core").EventTime[] => [
+  ...(Array.isArray(row.excludedDates) ? row.excludedDates as import("@ohmail/cal-core").StoredTime[] : []).flatMap((t) => eventTimeOf(t) ?? []),
+  ...row.cancelled,
+];
+
+/**
+ * The rule a whole series' change writes where it names a new start and no repeat: the series' own,
+ * its end (UNTIL) moved with the start so that its last day stays its last (`movedRule`, the drain's
+ * own reckoning); `undefined` where the change moves no start; `null` where the end cannot be moved.
+ */
+function endMovedOf(
+  row: Pick<FollowingRow, "repeatRule" | "startKind" | "startLocal" | "startZone" | "endKind" | "endLocal" | "endZone">,
+  change: Partial<CalendarEventFields>,
+): string | undefined | null {
+  if (change.start === undefined || change.repeat !== undefined || row.repeatRule === null) return undefined;
+  const first = timeOfStored(row.startKind, row.startLocal, row.startZone);
+  const firstEnd = timeOfStored(row.endKind, row.endLocal, row.endZone);
+  const rule = parseRRule(row.repeatRule);
+  const to = eventTimeOf(storedTime(change.start));
+  if (first === null || firstEnd === null || rule === null || to === null) return null;
+  const moved = movedRule(rule, first, firstEnd, first, to, ZONES);
+  return moved === null ? null : moved === rule ? undefined : formatRRule(moved);
+}
+
+/**
+ * The series a day and the days after it become: the series' own fields as the store holds them,
+ * from that day (`at`, the moment it was first at) on, with the person's change over them; its
+ * start, end and repeat as the drain reckons them (`continuedSeries`: a count goes on with what is
+ * left of it, an end on a day moves with a new time). `null` where the days cannot be carried so: a
+ * series that is neither whole days nor a clock time in a zone, a count with nothing left, or an end
+ * that cannot be moved (a new start on another day than the one pressed, with no repeat named).
+ */
+function followingFields(row: FollowingRow, at: number, change: Partial<CalendarEventFields>, alarms: readonly number[]): CalendarEventFields | null {
+  const first = timeOfStored(row.startKind, row.startLocal, row.startZone);
+  const firstEnd = timeOfStored(row.endKind, row.endLocal, row.endZone);
+  const rule = row.repeatRule === null ? null : parseRRule(row.repeatRule);
+  if (first === null || firstEnd === null || rule === null) return null;
+  const named = {
+    ...(change.start === undefined ? {} : { start: eventTimeOf(storedTime(change.start)) ?? undefined }),
+    ...(change.end === undefined ? {} : { end: eventTimeOf(storedTime(change.end)) ?? undefined }),
+    ...(change.repeat === undefined || change.repeat === null ? {} : { rule: parseRRule(change.repeat) ?? undefined }),
+  };
+  const next = continuedSeries({ first, firstEnd, rule }, at, named, ZONES);
+  if (next === null) return null;
+  // The days the series excludes from that day on go with those days, moved as the writer moves them; where they cannot go (a start
+  // on another day, or whole days going on at a clock time or on another day), the writer would make no series of them, and nothing
+  // of the press is recorded (the writer refuses the same, from the same reckoning, before it sends anything).
+  const cut = clockOf(first, at, ZONES);
+  if (cut === null || carriedExclusions(cut, excludedOf(row), next.start, ZONES) === null) {
+    throw invalid("the days the series excludes from that day on go with them only on that day: a new start on another day, or whole days going on at a clock time, is not taken");
+  }
+  return {
+    title: change.title ?? row.title,
+    start: storedTimeOf(next.start) as CalendarTime,
+    end: storedTimeOf(next.end) as CalendarTime,
+    notes: change.notes !== undefined ? change.notes : row.notes,
+    place: change.place !== undefined ? change.place : row.place,
+    callLink: change.callLink !== undefined ? change.callLink : row.callLink,
+    busy: change.busy ?? row.busy,
+    private: change.private ?? row.private,
+    repeat: formatRRule(next.rule),
+    invitees: [],
+    alarms: change.alarms ?? [...alarms],
+  };
+}
+
+/**
+ * A press on a day of a series and the days after it: two rows under one press. The first (`K`)
+ * ends the series before that day; the second (`K:2`, after the first) makes the series those days
+ * become, under the device's `newEventId`, whose row stands in the store as the person wants it
+ * until the provider names it. A removal of those days is the first alone. Refused at the door, the
+ * press is the first row alone, refused, and nothing is made.
+ */
+async function recordFollowing(
+  tx: Tx, accountId: string, key: string, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" | "calendar_event_move" | "calendar_event_answer" }>,
+  event: FollowingRow & { readonly uid: string; readonly organizer: string | null }, cal: HeldCalendar, standing: { readonly after: string | null; readonly refusal: CalendarWriteFault | null },
+  d: DoorShapes,
+): Promise<EnqueuedCalendarWrite> {
+  if (act.scope.kind !== "following") throw invalid("a day and the days after it are named by a following scope");
+  const at = /^\d{1,16}$/.test(act.scope.at) ? Number(act.scope.at) : Number.NaN;
+  if (!Number.isSafeInteger(at) || at <= event.startsAt.getTime()) throw invalid("a day and the days after it are named by a moment after the series' first day");
+  // The new series keeps the series' invitees as they are invited (each hears of it from the provider, as of the series' end);
+  // its organizer's own line is no invitee of it: the writer keeps it as it is.
+  const people = (await tx.select({ address: calAttendees.address, name: calAttendees.name, role: calAttendees.role }).from(calAttendees)
+    .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id))))
+    .filter((p) => event.organizer === null || p.address.toLowerCase() !== event.organizer.toLowerCase());
+  // The writer carries each invitee's line as the series has it, its role among it; the new series' wanted record shows a chair
+  // as required and one there for information as optional.
+  const invitees = people.map((p) => ({ address: p.address, name: p.name, role: p.role === "optional" || p.role === "info" ? "optional" as const : "required" as const }));
+  const twoParts = act.kind === "calendar_event_update";
+  let made: {
+    readonly act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>; readonly fields: CalendarEventFields; readonly named: readonly ContinuedField[];
+  } | null = null;
+  if (twoParts) {
+    if (act.scope.kind !== "following" || key.length > L.keyChars - 2) throw new ServiceError("idempotency_key_required", 400, "a press of two parts carries a key of at most 62 characters");
+    const alarms = await tx.select({ m: calAlarms.minutesBefore }).from(calAlarms).where(and(eq(calAlarms.accountId, accountId), eq(calAlarms.eventId, event.id)));
+    const carried = followingFields(event, at, act.change, [...new Set(alarms.map((a) => a.m))].sort((x, y) => x - y));
+    const fields = carried === null ? null : { ...carried, invitees };
+    const create = fields === null ? null : parseCalendarAct({ kind: "calendar_event_create", eventId: act.scope.newEventId, calendarId: cal.id, event: fields });
+    if (fields === null || create === null || create.kind !== "calendar_event_create") throw invalid("the days from that day on cannot be carried as a series of their own");
+    // The new series in a shape proven where the calendar is, from its own start: the drain asks it before the series' end goes.
+    assertProven(d, fields.repeat === null ? null : parseRRule(fields.repeat), eventTimeOf(storedTime(fields.start)));
+    // The new series is made from the series' own component: of the act's fields, only the ones the person named are written anew.
+    const named = CONTINUED_FIELDS.filter((f) => act.change[f] !== undefined);
+    made = { act: checkedAct(create) as Extract<CalendarEventAct, { kind: "calendar_event_create" }>, fields, named };
+    if (await openCount(tx, accountId, null) + 2 > L.openPerAccount) throw new ServiceError("calendar_writes_full", 409, "too many calendar writes are waiting");
+  }
+  const { after, refusal } = standing;
+  const first = await insertRow(tx, {
+    accountId, calendarId: cal.id, eventId: event.id, op: OP[act.kind], payload: writePayloadOf(act, after, twoParts ? { of: key, n: 1 } : null),
+    baseVersionTag: event.versionTag, idempotencyKey: key, state: refusal === null ? "pending" : "refused", refusal,
+  });
+  if (first === null) return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
+  const receipt: CalendarWriteReceipt = { id: first.id, key, state: refusal === null ? "pending" : "refused", reason: refusal };
+  if (made === null || refusal !== null) {
+    return { receipt, eventIds: [event.id], changes: [{ kind: "calendar_event", id: event.id, op: "update" }], wake: refusal === null ? cal.connectionId : null };
+  }
+  const second = await insertRow(tx, {
+    accountId, calendarId: cal.id, eventId: made.act.eventId, op: "create",
+    payload: writePayloadOf(made.act, first.id, { of: key, n: 2, from: { eventId: event.id, at: act.scope.at, named: made.named } }),
+    baseVersionTag: null, idempotencyKey: `${key}:2`, state: "pending",
+  });
+  if (second === null) throw invalid("the second part of this press is recorded already");
+  await insertWanted(tx, accountId, cal.id, made.act.eventId, second.id, made.act.event);
+  return {
+    receipt,
+    eventIds: [event.id, made.act.eventId],
+    changes: [{ kind: "calendar_event", id: event.id, op: "update" }, { kind: "calendar_event", id: made.act.eventId, op: "create" }],
+    wake: cal.connectionId,
   };
 }
 
@@ -428,11 +701,12 @@ async function echo(ctx: ServiceContext, write: CalendarWriteReceipt | null, eve
  */
 export async function recordCalendarWrite(
   ctx: ServiceContext, key: string, body: unknown,
+  o: { readonly proven?: ProvenRepeats } = {},
 ): Promise<{ answer: CalendarWriteAnswer; seq: bigint | null }> {
   const act = checkedAct(body);
   await requireCalendarOn(ctx);
   const done = await withAccountTx(ctx, async (tx) => {
-    const q = await enqueueCalendarWrite(tx, { key, act });
+    const q = await enqueueCalendarWrite(tx, { key, act }, { now: ctx.now().getTime(), ...(o.proven === undefined ? {} : { proven: o.proven }) });
     const seqs = q.changes.length > 0 ? await recordCalendarChanges(tx, ctx.accountId, q.changes) : [];
     return { q, seq: seqs.at(-1) ?? null };
   });
@@ -492,11 +766,13 @@ async function refusedForItsCopy(tx: Tx, accountId: string, row: Pick<WriteRowHe
   return false;
 }
 
-/** The open writes that wait for `head`, directly or through another: they were made on what it would write. */
+/**
+ * The open writes that wait for `head`, directly or through another: they were made on what it would
+ * write. Of any event: the second part of a press on a day and the days after it is the new series'.
+ */
 async function followersOf(tx: Tx, accountId: string, head: WriteRowHeld): Promise<string[]> {
-  if (head.eventId === null) return [];
   const open = await tx.select({ id: calWrites.id, payload: calWrites.payload }).from(calWrites).where(and(
-    eq(calWrites.accountId, accountId), eq(calWrites.eventId, head.eventId), inArray(calWrites.state, ["pending", "refused"]),
+    eq(calWrites.accountId, accountId), inArray(calWrites.state, ["pending", "refused"]),
   ));
   const chain = new Set([head.id]);
   for (let grew = true; grew;) {
@@ -514,13 +790,33 @@ async function followersOf(tx: Tx, accountId: string, head: WriteRowHeld): Promi
 }
 
 /**
+ * The refusals after which an attempt of a write may have landed at the provider unheard: the words that wait for time (the
+ * worker's word plan: a provider throttling, down, or never heard back), and `expired` (too old, after an attempt of that kind).
+ */
+const UNHEARD: readonly CalendarWriteFault[] = ["throttled", "unavailable", "timeout", "connection_failed", "host_unresolved", "unknown", "expired"];
+const MAY_HAVE_LANDED: ReadonlySet<string> = new Set(UNHEARD);
+
+/** Does this write wait for one (`after`) that is not done: owed or refused? */
+async function waitsOnUndone(tx: Tx, accountId: string, row: Pick<WriteRowHeld, "payload">): Promise<boolean> {
+  const after = parseWritePayload(row.payload)?.after ?? null;
+  if (after === null) return false;
+  const [prev] = await tx.select({ state: calWrites.state }).from(calWrites).where(and(eq(calWrites.id, after), eq(calWrites.accountId, accountId))).limit(1);
+  return prev !== undefined && prev.state !== "applied";
+}
+
+/**
  * `POST /calendar/writes/:id/retry`: a refused write is owed again, with the writes that were
  * refused only because they waited for it. A write still owed answers as it stands. A change
  * refused for the copy it was made on is not retried ("keep mine" is a new act, made on the copy
  * the store holds now), and neither is a write that waited for one. A write refused only because
  * the one it waited for was is not retried alone while that one stays refused: its version is the
  * one the store held when it was recorded, which its device may never have held. It goes again
- * with that one's retry.
+ * with that one's retry. A series' end claimed before goes again as a later attempt (one attempt
+ * counted) only where an attempt of it may have landed unheard: where it was refused with a word that
+ * waits for time, or `expired`, or more than one attempt of it was claimed. Owed so, it is not let go
+ * until the drain answers it. Refused with any other word on its only attempt (the provider answered
+ * it, or nothing of it was sent), it goes again from its first attempt, and takes no end it finds at
+ * the provider for its own.
  */
 export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): Promise<{ answer: CalendarWriteAnswer; seq: bigint | null }> {
   await requireCalendarOn(ctx);
@@ -528,34 +824,43 @@ export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): 
     const t = bridgeTx(tx);
     const row = await heldWrite(t, ctx.accountId, writeId);
     if (row.state === "applied") throw new ServiceError("calendar_write_left", 409, "the write is done");
-    if (row.state !== "refused") return { receipt: receiptOf(row.key, row), eventId: row.eventId, seq: null, wake: null };
+    if (row.state !== "refused") return { receipt: receiptOf(row.key, row), eventIds: row.eventId === null ? [] : [row.eventId], seq: null, wake: null };
     if (await refusedForItsCopy(t, ctx.accountId, row)) {
       throw new ServiceError("calendar_write_left", 409, "a change made on an older copy is made again as a new act");
     }
-    const waitedFor = row.refusal === "earlier_refused" ? parseWritePayload(row.payload)?.after ?? null : null;
-    if (waitedFor !== null) {
-      const [head] = await t.select({ state: calWrites.state }).from(calWrites)
-        .where(and(eq(calWrites.id, waitedFor), eq(calWrites.accountId, ctx.accountId))).limit(1);
-      if (head?.state === "refused") throw new ServiceError("calendar_write_left", 409, "a write that waited for a refused one goes again with it");
-    }
+    // A write that waits for another goes again only once that one is done: retry the one it waits for (which takes it along).
+    if (await waitsOnUndone(t, ctx.accountId, row)) throw new ServiceError("calendar_write_left", 409, "the write it waits for is not done");
     const followers = await followersOf(t, ctx.accountId, row);
     const again = { state: "pending", refusal: null, attempts: 0, nextAttemptAt: null, updatedAt: sql`now()` } as const;
-    await t.update(calWrites).set(again).where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, ctx.accountId)));
+    // A series' end that was claimed before may have landed, its answer never heard: it goes again as a later attempt, so that
+    // the drain may find that end its own (the second recheck's first finding); but only where an attempt of it may have landed
+    // unheard: its refusal is a word that waits for time, or `expired`, or more than one attempt of it was claimed (a row reaches
+    // a second attempt only after one that ended so, or was cut: the fourth recheck's first finding). Refused with any other word on its only
+    // attempt, the provider answered it and nothing of it landed: counted as one, the retry would take an end someone else made
+    // since for its own, and make their days a second time (the third recheck's fourth finding). Its followers were never claimed
+    // (a write is claimed only once the one it waits for is done), and go again from their first.
+    const act = parseWritePayload(row.payload)?.act;
+    const claimedEnd = row.attempts > 0 && act !== undefined && "scope" in act && act.scope.kind === "following"
+      && (row.attempts > 1 || (row.refusal !== null && MAY_HAVE_LANDED.has(row.refusal)));
+    await t.update(calWrites).set({ ...again, attempts: claimedEnd ? 1 : 0 }).where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, ctx.accountId)));
+    // Each event whose mark changes is told: the write's own, and its followers' (the second half of a press is the new series').
+    const touched = new Set(row.eventId === null ? [] : [row.eventId]);
     if (followers.length > 0) {
-      await t.update(calWrites).set(again).where(and(
+      const back = await t.update(calWrites).set(again).where(and(
         eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, followers), eq(calWrites.refusal, "earlier_refused"),
-      ));
+      )).returning({ eventId: calWrites.eventId });
+      for (const r of back) if (r.eventId !== null) touched.add(r.eventId);
     }
     const [cal] = await t.select({ connectionId: calCalendars.connectionId }).from(calCalendars)
       .where(and(eq(calCalendars.id, row.calendarId), eq(calCalendars.accountId, ctx.accountId))).limit(1);
-    const seqs = row.eventId === null ? [] : await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar_event", id: row.eventId, op: "update" }]);
+    const seqs = touched.size === 0 ? [] : await recordCalendarChanges(tx, ctx.accountId, [...touched].map((id) => ({ kind: "calendar_event" as const, id, op: "update" as const })));
     return {
-      receipt: { id: row.id, key: row.key, state: "pending" as const, reason: null }, eventId: row.eventId, seq: seqs.at(-1) ?? null,
+      receipt: { id: row.id, key: row.key, state: "pending" as const, reason: null }, eventIds: [...touched], seq: seqs.at(-1) ?? null,
       wake: cal?.connectionId ?? null,
     };
   });
   if (done.wake !== null) await wakeCalendarConnection(ctx, done.wake);
-  return { answer: await echo(ctx, done.receipt, done.eventId === null ? [] : [done.eventId]), seq: done.seq };
+  return { answer: await echo(ctx, done.receipt, done.eventIds), seq: done.seq };
 }
 
 /**
@@ -570,21 +875,29 @@ export async function dismissCalendarWrite(ctx: ServiceContext, writeId: string)
     if (!(row.state === "refused" || (row.state === "pending" && row.attempts === 0))) {
       throw new ServiceError("calendar_write_left", 409, "the write is under way or done");
     }
-    const going = [row.id, ...await followersOf(t, ctx.accountId, row)];
+    // The second part of a press goes alone only once the first is done (the half-done state); before, the first is let go, with it.
+    if (parseWritePayload(row.payload)?.part?.n === 2 && await waitsOnUndone(t, ctx.accountId, row)) {
+      throw new ServiceError("calendar_write_left", 409, "the press's first part is not done: it is let go, with this one");
+    }
+    const followers = await followersOf(t, ctx.accountId, row);
+    const going = [row.id, ...followers];
     const changes: CalendarChange[] = [];
     let gone = false;
-    if (row.op === "create" && row.eventId !== null) {
+    // A new event a write let go stood in for, never at the provider (the write's own, or the second part's of a press
+    // on a day and the days after it): it goes with every write of it.
+    const made = await t.select({ id: calWrites.id, eventId: calWrites.eventId }).from(calWrites)
+      .where(and(eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, going), eq(calWrites.op, "create")));
+    for (const m of made) {
+      if (m.eventId === null) continue;
       const [event] = await t.select({ providerId: calEvents.providerId }).from(calEvents)
-        .where(and(eq(calEvents.id, row.eventId), eq(calEvents.accountId, ctx.accountId))).limit(1);
-      if (event !== undefined && event.providerId === `pending:${row.id}`) {
-        // Never at the provider: every write of the event goes with it.
-        await t.delete(calWrites).where(and(eq(calWrites.accountId, ctx.accountId), eq(calWrites.eventId, row.eventId), inArray(calWrites.state, ["pending", "refused"])));
-        await t.delete(calAttendees).where(and(eq(calAttendees.accountId, ctx.accountId), eq(calAttendees.eventId, row.eventId)));
-        await t.delete(calAlarms).where(and(eq(calAlarms.accountId, ctx.accountId), eq(calAlarms.eventId, row.eventId)));
-        await t.delete(calEvents).where(and(eq(calEvents.id, row.eventId), eq(calEvents.accountId, ctx.accountId)));
-        changes.push({ kind: "calendar_event", id: row.eventId, op: "delete" });
-        gone = true;
-      }
+        .where(and(eq(calEvents.id, m.eventId), eq(calEvents.accountId, ctx.accountId))).limit(1);
+      if (event === undefined || event.providerId !== `pending:${m.id}`) continue;
+      await t.delete(calWrites).where(and(eq(calWrites.accountId, ctx.accountId), eq(calWrites.eventId, m.eventId), inArray(calWrites.state, ["pending", "refused"])));
+      await t.delete(calAttendees).where(and(eq(calAttendees.accountId, ctx.accountId), eq(calAttendees.eventId, m.eventId)));
+      await t.delete(calAlarms).where(and(eq(calAlarms.accountId, ctx.accountId), eq(calAlarms.eventId, m.eventId)));
+      await t.delete(calEvents).where(and(eq(calEvents.id, m.eventId), eq(calEvents.accountId, ctx.accountId)));
+      changes.push({ kind: "calendar_event", id: m.eventId, op: "delete" });
+      if (m.id === row.id) gone = true;
     }
     if (!gone) {
       await t.delete(calWrites).where(and(eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, going)));

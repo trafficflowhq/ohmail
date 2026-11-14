@@ -8,7 +8,7 @@
  */
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { Button, useOptionalToast } from "@ohmail/ui";
-import { MAIL_BODY_COPY as COPY } from "../../webapp/app/letter-body";
+import { MAIL_BODY_COPY as COPY } from "@ohmail/letter-body";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { linkAskOpen, type LinkAsk as HeldPress } from "./native.js";
 

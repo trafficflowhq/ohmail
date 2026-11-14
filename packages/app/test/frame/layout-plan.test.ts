@@ -107,6 +107,28 @@ describe("one layout from the size class", () => {
   });
 });
 
+describe("a book", () => {
+  const book = (width: number, height = 800): WindowFacts => ({
+    ...at(width, "coarse", height),
+    posture: "book",
+  });
+
+  it("is two columns beside a rail of icons, upright under 840 and on its side from 840", () => {
+    expect(layoutPlan(book(750))).toMatchObject({ device: "fold", pose: null, rail: "icons", columns: 2 });
+    expect(layoutPlan(book(841, 673))).toMatchObject({
+      device: "fold",
+      pose: "land",
+      rail: "icons",
+      columns: 2,
+    });
+  });
+
+  it("stays two columns under 700 half open, where the same width flat is a phone: nothing lies on the crease", () => {
+    expect(layoutPlan(at(673, "coarse"))).toMatchObject({ device: "phone", columns: 1 });
+    expect(layoutPlan(book(673))).toMatchObject({ device: "fold", rail: "icons", columns: 2 });
+  });
+});
+
 describe("the root's attributes", () => {
   const look = { face: "paper", scheme: "light" } as const;
 

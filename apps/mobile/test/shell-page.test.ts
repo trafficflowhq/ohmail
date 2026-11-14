@@ -122,6 +122,7 @@ describe("the phone shell's answers, per setting", () => {
     ].map((f) => [f, NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    reader: NONE,
     calendar: has.frame.calendar,
   };
   const DEVICE = {

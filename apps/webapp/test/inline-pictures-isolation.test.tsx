@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { buildMailDocument, buildRichNodes, MessageBody, sanitizeMailHtml } from "../app/letter-body/MessageBody";
-import { BodyText, type BodyNode } from "../app/letter-body/BodyText";
+import { buildMailDocument, buildRichNodes, MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
+import { BodyText, type BodyNode } from "../../../packages/letter-body/src/BodyText";
 
 /**
  * EMBEDDED PICTURES BY OBJECT URL, MESSAGE BY MESSAGE. On a browser door a `cid:` part is drawn
@@ -132,13 +132,13 @@ describe("a message draws its own pictures and never another message's", () => {
 
   it("rendered, prose and framed: B shows its own picture, A's URL appears nowhere", async () => {
     const { a, b, mapB } = await twoMessages();
-    const prose = await mount(h(MessageBody, { text: "Hello from B.", html: naming(a), cidImages: mapB }));
+    const prose = await mount(h(MessageBody, { owner: null, text: "Hello from B.", html: naming(a), cidImages: mapB }));
     expect(prose.querySelector("iframe"), "the fixture must render as prose").toBeNull();
     expect([...prose.querySelectorAll("img.msg-img")].map((i) => i.getAttribute("src"))).toEqual([b]);
     expect(prose.innerHTML).not.toContain(a);
 
     const canvas = `<table width="600"><tr><td>${naming(a)}</td></tr></table>`;
-    const framed = await mount(h(MessageBody, { text: "Hello from B.", html: canvas, cidImages: mapB }));
+    const framed = await mount(h(MessageBody, { owner: null, text: "Hello from B.", html: canvas, cidImages: mapB }));
     const srcdoc = framed.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
     expect(srcdoc, "the fixture must render framed").toContain("<html");
     expect(srcdoc).toContain(`src="${b}"`);

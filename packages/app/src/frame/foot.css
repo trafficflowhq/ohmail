@@ -1,0 +1,35 @@
+/*
+ * The glass's foot and fold. Every rule stands under a mark only a phone's host has written (`glass.ts`), so no other
+ * host moves; and each carries the root's mark because this sheet loads before `placement.css`, whose rules it
+ * outweighs on the same nodes. A fixed control keeps the larger of its own margin and the system's inset, never the sum.
+ */
+
+/* The dock at a phone's foot. */
+:root[data-foot="glass"] .fr-dockbox {
+  bottom: max(var(--s4), var(--sys-b, 0px));
+}
+
+/* The report rises with the dock, and over the letter's panel with it. */
+:root[data-foot="glass"] .fr-frame[data-rail="dock"] .fr-report {
+  bottom: calc(max(var(--s4), var(--sys-b, 0px)) + var(--h-xl) + var(--s3));
+}
+
+:root[data-foot="glass"] .fr-frame[data-rail="dock"][data-letter] .fr-report {
+  bottom: calc(max(var(--s4), var(--sys-b, 0px)) + var(--h-m) + var(--s3) + var(--s4));
+}
+
+/* In two columns the report keeps its own margin or the inset, the larger. */
+:root[data-foot="glass"] .fr-frame:not([data-rail="dock"]) .fr-report {
+  bottom: max(calc(var(--edge) + var(--s3)), var(--sys-b, 0px));
+}
+
+/* A book: the list ends at the fold, less half the larger of the gap and the band the hinge keeps clear. */
+:root[data-fold][data-device] .fr-root {
+  --fr-listw: max(
+    var(--fold-floor),
+    round(
+      var(--fold-at) - max(var(--gap), var(--fold-band)) / 2 - var(--edge) - var(--fr-rail) - var(--gap),
+      1px
+    )
+  );
+}

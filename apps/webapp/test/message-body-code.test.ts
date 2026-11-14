@@ -44,7 +44,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SHEET_PATH = "apps/webapp/app/letter-body/message-body.css";
+const SHEET_PATH = "packages/letter-body/src/message-body.css";
 const SHEET = readFileSync(resolve(process.cwd(), SHEET_PATH), "utf8");
 
 /* ── reading the sheet as SOURCE, for the declarations jsdom cannot testify about ──────────
@@ -84,11 +84,11 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/letter-body/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 /** Render a message with the real sheet in the document, so computed style means something. */
-async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDivElement> {
+async function render(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();
   sheet = document.createElement("style");
@@ -98,7 +98,7 @@ async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDiv
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host;
 }
 

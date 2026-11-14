@@ -1,0 +1,15 @@
+{
+  "settingsGeneral": {
+    "appearance": "Appearance",
+    "messages": "Messages",
+    "lookChoice": "Choose a look",
+    "followsOmarchy": "follows Omarchy",
+    "picture": {
+      "title": "Ohbox",
+      "first": "Giulia Ferrari",
+      "firstTime": "09:12",
+      "second": "Petra Wyss",
+      "secondTime": "08:47"
+    }
+  }
+}

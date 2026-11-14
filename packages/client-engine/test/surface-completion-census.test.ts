@@ -28,6 +28,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 const ROOTS = [
   new URL("../../../apps/webapp/app/", import.meta.url),
   new URL("../../app-logic/src/", import.meta.url),
+  new URL("../../letter-body/src/", import.meta.url),
   new URL("../../../apps/mobile/src/", import.meta.url),
 ];
 
@@ -62,7 +63,8 @@ function sources(): Array<{ rel: string; src: string }> {
   };
   for (const root of ROOTS) {
     const dir = fileURLToPath(root);
-    const rel = root.href.includes("webapp") ? "apps/webapp/app" : root.href.includes("app-logic") ? "packages/app-logic/src" : "apps/mobile/src";
+    const rel = root.href.includes("webapp") ? "apps/webapp/app" : root.href.includes("app-logic") ? "packages/app-logic/src"
+      : root.href.includes("letter-body") ? "packages/letter-body/src" : "apps/mobile/src";
     walk(dir.replace(/\/$/, ""), rel);
   }
   return out;

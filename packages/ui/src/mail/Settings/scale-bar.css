@@ -1,0 +1,104 @@
+/* How much of something is used, to scale: one track, its parts one after the other (the first in the ink, a second
+   kind in the second ink, what is still to come hatched), a limit as a line across it with its label over it, and
+   the scale's captions under it. */
+@layer oh {
+  .oh-scalebar {
+    /* Measures of this part that no token carries yet. */
+    --oh-scalebar-line: 2px;
+    --oh-scalebar-half: -1px;
+    --oh-scalebar-out: -4px;
+    --oh-scalebar-lift: 6px;
+    --oh-scalebar-hatch: repeating-linear-gradient(135deg, var(--ink2) 0 2px, transparent 2px 6px);
+    --oh-scalebar-hatch-w: 18px;
+    --oh-scalebar-hatch-h: 8px;
+    --oh-scalebar-step-gap: 6px;
+  }
+
+  .oh-scalebar-bar {
+    position: relative;
+    height: var(--s3);
+    margin: var(--s5) 0 var(--s1);
+    border-radius: var(--r-pill);
+    background: var(--off);
+  }
+
+  .oh-scalebar-part {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--oh-scalebar-from);
+    width: var(--oh-scalebar-share);
+    background: var(--ink);
+  }
+
+  .oh-scalebar-part:first-child {
+    border-radius: var(--r-pill) 0 0 var(--r-pill);
+  }
+
+  .oh-scalebar-part[data-kind="second"] {
+    background: var(--ink2);
+  }
+
+  .oh-scalebar-part[data-kind="rest"],
+  .oh-scalebar-hatch {
+    background: var(--oh-scalebar-hatch);
+  }
+
+  .oh-scalebar-mark {
+    position: absolute;
+    top: var(--oh-scalebar-out);
+    bottom: var(--oh-scalebar-out);
+    left: var(--oh-scalebar-from);
+    width: var(--oh-scalebar-line);
+    margin-left: var(--oh-scalebar-half);
+    background: var(--ink);
+  }
+
+  .oh-scalebar-label {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    padding-bottom: var(--oh-scalebar-lift);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    transform: translateX(-50%);
+  }
+
+  .oh-scalebar-mark[data-side="end"] > .oh-scalebar-label {
+    right: 0;
+    left: auto;
+    transform: none;
+  }
+
+  .oh-scalebar-mark[data-side="start"] > .oh-scalebar-label {
+    left: 0;
+    transform: none;
+  }
+
+  .oh-scalebar-scale {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s1) var(--s3);
+    padding-bottom: var(--s3);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-scalebar-step {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-scalebar-step-gap);
+  }
+
+  .oh-scalebar-hatch {
+    flex: none;
+    width: var(--oh-scalebar-hatch-w);
+    height: var(--oh-scalebar-hatch-h);
+    border-radius: var(--r-sq);
+  }
+}

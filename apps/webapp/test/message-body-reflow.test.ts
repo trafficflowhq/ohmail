@@ -34,8 +34,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type Mod = typeof import("../app/letter-body/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -63,7 +63,7 @@ async function mountedSrcdoc(html: string, text = "plain part"): Promise<string>
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { text, html })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, text, html })); });
   return host.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
 }
 
