@@ -398,9 +398,9 @@ describe("Discard of a draft whose send waits cancels that send first", () => {
   }, 60_000);
 
   it("a reply queued offline with no row of its own is not listed in Drafts as an interrupted send", async () => {
-    const s = await shell.mountShell("#/ohbox", [shell.message("m1")]);
-    await shell.waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await shell.press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+    const s = await shell.mountShell("#/history", [shell.message("m1")]);
+    await shell.waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await shell.press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
     await shell.act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
     await shell.waitFor(() => shell.replySurface(s.el) != null, "the reply editor");
     s.offline.on = true;

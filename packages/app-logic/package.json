@@ -46,6 +46,12 @@
       "node": "./dist/consent/index.js",
       "default": "./src/consent/index.ts"
     },
+    "./consent/consent-row": {
+      "types": "./src/consent/consent-row.ts",
+      "ohmail-source": "./src/consent/consent-row.ts",
+      "node": "./dist/consent/consent-row.js",
+      "default": "./src/consent/consent-row.ts"
+    },
     "./consent/consent-state": {
       "types": "./src/consent/consent-state.ts",
       "ohmail-source": "./src/consent/consent-state.ts",
@@ -57,6 +63,12 @@
       "ohmail-source": "./src/consent/consent-wire.ts",
       "node": "./dist/consent/consent-wire.js",
       "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/partition": {
+      "types": "./src/consent/partition.ts",
+      "ohmail-source": "./src/consent/partition.ts",
+      "node": "./dist/consent/partition.js",
+      "default": "./src/consent/partition.ts"
     },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
@@ -1042,6 +1054,12 @@
       "node": "./dist/session/confirm-schedule.js",
       "default": "./src/session/confirm-schedule.ts"
     },
+    "./session/day-clock": {
+      "types": "./src/session/day-clock.ts",
+      "ohmail-source": "./src/session/day-clock.ts",
+      "node": "./dist/session/day-clock.js",
+      "default": "./src/session/day-clock.ts"
+    },
     "./session/document-hidden": {
       "types": "./src/session/document-hidden.ts",
       "ohmail-source": "./src/session/document-hidden.ts",
@@ -1174,6 +1192,12 @@
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
     },
+    "./text/format": {
+      "types": "./src/text/format.ts",
+      "ohmail-source": "./src/text/format.ts",
+      "node": "./dist/text/format.js",
+      "default": "./src/text/format.ts"
+    },
     "./text/idn": {
       "types": "./src/text/idn.ts",
       "ohmail-source": "./src/text/idn.ts",
@@ -1192,6 +1216,12 @@
       "node": "./dist/text/locale.js",
       "default": "./src/text/locale.ts"
     },
+    "./text/row-copy": {
+      "types": "./src/text/row-copy.ts",
+      "ohmail-source": "./src/text/row-copy.ts",
+      "node": "./dist/text/row-copy.js",
+      "default": "./src/text/row-copy.ts"
+    },
     "./text/translator": {
       "types": "./src/text/translator.ts",
       "ohmail-source": "./src/text/translator.ts",
@@ -1209,6 +1239,18 @@
       "ohmail-source": "./src/touch/row-swipe.ts",
       "node": "./dist/touch/row-swipe.js",
       "default": "./src/touch/row-swipe.ts"
+    },
+    "./write/files": {
+      "types": "./src/write/files.ts",
+      "ohmail-source": "./src/write/files.ts",
+      "node": "./dist/write/files.js",
+      "default": "./src/write/files.ts"
+    },
+    "./write/later": {
+      "types": "./src/write/later.ts",
+      "ohmail-source": "./src/write/later.ts",
+      "node": "./dist/write/later.js",
+      "default": "./src/write/later.ts"
     },
     "./writing": {
       "types": "./src/writing/index.ts",

@@ -13,6 +13,7 @@ import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { fillOver, type Messages } from "@ohmail/app/text/fill";
 import { LOCALES, isAppLocale, normalizeLocale, type AppLocale } from "@ohmail/app-logic/text/locale";
 import { liveCopyOver } from "@ohmail/app-logic/text/live-copy";
+import { setFormatWords } from "@ohmail/app-logic/text";
 import { setBodyWords } from "@ohmail/letter-body/words";
 
 /* The closed set and its two readers are behaviour's (`@ohmail/app-logic/text/locale`); every importer of this file
@@ -142,6 +143,7 @@ export function setActiveCatalog(locale: AppLocale, messages: Catalog | null): v
   activeCatalog = messages;
   translators = new Map();
   setBodyWords({ locale, translatorOf: activeTranslator });
+  setFormatWords(FORMAT_WORDS);
 }
 
 /** The locale the register is holding — what `format.ts` passes to `Intl`. */
@@ -199,6 +201,7 @@ export function activeFormatZone(): string {
  */
 export function setActiveFormatZone(zone: string | null): void {
   activeZone = zone;
+  setFormatWords(FORMAT_WORDS);
 }
 
 /**
@@ -239,6 +242,12 @@ export function activeTranslator(namespace: string): NamespaceTranslator | null 
   translators.set(namespace, t);
   return t;
 }
+
+/**
+ * What the rows' words (`@ohmail/app-logic/text`, `format.ts`) are formatted with: this register's own three readers,
+ * handed whenever the catalogue or the zone is set, so those words read exactly what this module holds.
+ */
+const FORMAT_WORDS = { locale: activeFormatLocale, zone: activeFormatZone, translatorOf: activeTranslator };
 
 /**
  * Turn a table of English sentences into a live view of one catalogue namespace. The three reading-pane components

@@ -17,14 +17,17 @@ import type { Manifest, Registry } from "../../../../test/compare/registry.d.mts
 import { launch, shoot, TOLERANCE } from "../../../../test/compare/render.mjs";
 import type { Scene, SceneNode, Variant } from "../../../../test/compare/scene.d.mts";
 import { cutScene } from "../../../ui/test/compare/cut.mjs";
-import { openAskPage, openReaderPage } from "../states/reader-pages.js";
+import { openAskPage, openOhboxReaderPage, openReaderPage } from "../states/reader-pages.js";
+import { comparedByParts, declaredTask, ohboxReaderKeys } from "./ohbox-reader-keys.js";
 
 /**
- * THE READER'S PARTS of the screens `reading` and `linkask`, each against the same part of the reference's picture
- * and data file (`node test/compare/fetch.mjs --from <the shards>`, then
+ * THE READER'S PARTS of the screens `reading` and `linkask`, and of the screen `ohbox` where its keys are the
+ * reader's (`ohbox-reader-keys.ts`: the rule over the manifest), each against the same part of the reference's
+ * picture and data file (`node test/compare/fetch.mjs --from <the shards>`, then
  * `npx vitest run --config vitest.compare.config.ts packages/app/test/compare/reader-parts.compare.ts`). The shards
- * are named to the fetch by `test/compare/subjects/reading.ts` and `linkask.ts`, the tool's rule; a shard not in
- * build/reference is red here, never a skip, as in the kit's comparison.
+ * are named to the fetch by `test/compare/subjects/reading.ts`, `linkask.ts` and `ohbox.ts`, the tool's rule; a shard
+ * not in build/reference is red here, never a skip, as in the kit's comparison. The screen `ohbox` is drawn on the
+ * Ohbox's states page, the reader beside the Ohbox's list, over the reference's nine conversations.
  *
  * The reference of `reading` stands the reader beside the design's catalogue list and the frame's rail; the rail is
  * the frame's (held by `frame-parts`), the list is no screen of the app, and each letter's text is a designed page
@@ -55,7 +58,7 @@ const ROOT = process.cwd();
 const COMPARE = resolve(ROOT, "test/compare");
 const REFERENCE = resolve(ROOT, "build/reference");
 const OUT = resolve(ROOT, "build/compare/reader-parts");
-const SHARDS = ["reading", "linkask"] as const;
+const SHARDS = ["reading", "linkask", "ohbox"] as const;
 type Shard = (typeof SHARDS)[number];
 
 type Box = [number, number, number, number];
@@ -88,8 +91,11 @@ const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest(
 const registry = json<Registry>(join(COMPARE, "registry.json"));
 const manifest = json<Manifest>(join(COMPARE, "manifest.json"));
 const declared = json<DeclaredRow[]>(resolve(ROOT, "packages/app/test/compare/reader-declared.json"));
+/* The reader's own screens whole; of the Ohbox's, the keys the rule names. */
+const OHBOX_KEYS = new Set(ohboxReaderKeys(manifest));
 const KEYS: readonly { key: string; shard: Shard }[] = registry.states
   .filter((s) => (SHARDS as readonly string[]).includes(s.screen))
+  .filter((s) => s.screen !== "ohbox" || OHBOX_KEYS.has(s.key))
   .map((s) => ({ key: s.key, shard: s.screen as Shard }));
 const ALL_KEYS = new Set(KEYS.map((k) => k.key));
 
@@ -344,7 +350,44 @@ function keep(key: string, part: string, drew: { png: Buffer; scene: Scene }, v:
   if (v.picture.diff) writeFileSync(`${at}.diff.png`, v.picture.diff);
 }
 
-describe("the reader's parts of the screens reading and linkask, against the reference's", () => {
+/*
+ * THE OHBOX SCREEN'S READER KEYS (CHECK-JOIN-2 RULINGS (i)): the rule over the manifest names them, and each is
+ * registered here: compared by the reader's parts where (i) 4 says so, else declared `notDrawn: "state"` with the task
+ * its class names by (i) 5. Read from the files alone: no reference and no browser.
+ */
+describe("the reader's keys of the screen ohbox", () => {
+  const rule = ohboxReaderKeys(manifest);
+  const stateRow = (key: string) => rowsOf(key).find((d) => d.notDrawn === "state");
+
+  it("registers every key the rule selects", () => {
+    console.log(
+      `OHBOX READER KEYS ${rule.length}: by parts ${rule.filter(comparedByParts).length}, to declare ${rule.filter((k) => !comparedByParts(k)).length}`,
+    );
+    expect(
+      rule.filter((key) => !ALL_KEYS.has(key)),
+      "keys of the rule the comparison does not register",
+    ).toEqual([]);
+  });
+
+  it("compares (i) 4's keys by parts, and declares each other one not drawn with its class's task", () => {
+    const off = rule.flatMap((key) => {
+      const row = stateRow(key);
+      if (comparedByParts(key)) return row ? [`${key}: compared by parts, yet declared not drawn`] : [];
+      const task = declaredTask(key);
+      if (task === null) return [`${key}: no class of (i) 5 names it`];
+      if (!row) return [`${key}: not declared (${task.class}, ${task.task}'s)`];
+      return row.removedBy.startsWith(task.task) ? [] : [`${key}: ${task.class} is ${task.task}'s`];
+    });
+    expect(off).toEqual([]);
+  });
+
+  it("registers no key of the screen ohbox outside the rule", () => {
+    const ruled = new Set(rule);
+    expect(KEYS.filter((k) => k.shard === "ohbox" && !ruled.has(k.key)).map((k) => k.key)).toEqual([]);
+  });
+});
+
+describe("the reader's parts of the screens reading, linkask and ohbox, against the reference's", () => {
   /* As the kit's comparison: a part held against nothing is no comparison, so a missing shard is red, never a skip. */
   const reference = referenceIn(REFERENCE, [...SHARDS], true);
   if (reference.fail) {
@@ -392,7 +435,11 @@ describe("the reader's parts of the screens reading and linkask, against the ref
   it.for([...KEYS])("$key", async ({ key, shard }) => {
     const ref = referenceOf(key, shard);
     const drew = await shoot(browser!, ref.variant, (page) =>
-      shard === "linkask" ? openAskPage(page, key) : openReaderPage(page, key),
+      shard === "linkask"
+        ? openAskPage(page, key)
+        : shard === "ohbox"
+          ? openOhboxReaderPage(page, key)
+          : openReaderPage(page, key),
     );
     drawnPictures.set(key, sha256(decode(drew.png).data));
     const sides = declaredOn(key, ref.scene, drew.scene);

@@ -23,6 +23,7 @@ import {
   ListPane,
   ListRows,
   MessageRow,
+  TAG_HUES,
   Waterline,
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
@@ -193,7 +194,7 @@ export function ReadsView({
 }) {
   const t = useTranslations("reads");
   const { row: senderCheckRow } = useSenderCheckWords();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   /**
    * THE HEADER'S OWN SENTENCE — one key, `stream.newSince`, shared with Receipts and with the
    * rail's tooltip (`rail.readsTitle`, pinned to the same words). The count is the WATERLINE, so
@@ -311,7 +312,7 @@ export function ReadsView({
     now,
     onAction,
   });
-  const sentLabelOf = useSentLabel();
+  const sentLabelOf = useSentLabel(useTranslations("ohbox"));
   /** Are the cards drawn yet — see "the rows paint before the stream" below. */
   const [streamArmed, setStreamArmed] = useState(false);
   const stream = useStreamWindow({
@@ -708,7 +709,7 @@ export function ReadsView({
       seen={!presentsUnread(m)}
       dotless
       selected={current === m.id}
-      tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+      tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag, TAG_HUES) }))}
       /* WHICH ADDRESS OF YOURS THIS ARRIVED AT, above one mailbox — the delivery mailbox
          (`m.mailboxId`), never a To/Cc read, which is silent on a Bcc and on list mail. */
       mailbox={mailbox}

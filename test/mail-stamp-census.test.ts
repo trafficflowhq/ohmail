@@ -98,7 +98,7 @@ describe("every door renders the shared mail stamp", () => {
   });
 
   it("THE BROWSER AND DESKTOP SHELL delegates its row stamp to the rule", () => {
-    const src = stripComments(read("apps/webapp/app/shell/format.ts"));
+    const src = stripComments(read("packages/app-logic/src/text/format.ts"));
     expect(src).toContain(RULE_EXPORT);
     // Not merely imported: `displayTime` is the app-side name every view calls, and it must be a
     // delegation rather than a reimplementation that happens to sit next to the import.
@@ -171,7 +171,7 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "The third is `monthStamp`: the month text is kept from, in the emptied-text notice. The "
       + "last two are `longDayStamp` and its fallback: the day a trial's storage floor ends.",
   },
-  "apps/webapp/app/shell/format.ts": {
+  "packages/app-logic/src/text/format.ts": {
     calls: 2,
     why: "`agoStamp`'s absolute tooltip (when a MAILBOX last synced) and `dayStamp` (the day a "
       + "standing fact became true, deliberately with no clock on it). Neither is a message's date.",

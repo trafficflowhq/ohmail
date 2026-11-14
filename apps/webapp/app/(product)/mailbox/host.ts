@@ -139,7 +139,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       stageCard: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
-      reader: NONE,
+      reader: has.frame.reader,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

@@ -1,6 +1,8 @@
 /**
- * WHAT EVERY SHELL HANDS THE FRAME, the same on all three browsers: today's places, no stage of its own, the address
- * bar and the window as the browser has them, the look the old theme stands under, and the entry's way back.
+ * WHAT EVERY SHELL HANDS THE FRAME, the same on all three browsers: the places (the seated ones their own, the rest
+ * today's), the reading column a seated place's letter stands in, the old shell's composition to stand above them, no
+ * stage of its own, the address bar and the window as the browser has them, the look the old theme stands under, and
+ * the entry's way back.
  * Made once per mount: the address and the window read `window`, so never at module scope.
  */
 import { useLayoutEffect, useMemo, useState } from "react";
@@ -8,6 +10,8 @@ import { createFeed, NONE, type FrameSupplies, type HostSession } from "@ohmail/
 import type { FrameStages } from "@ohmail/app/frame";
 import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 import { useOptionalTheme } from "@ohmail/ui";
+import { TodaysAbove } from "./AppShell";
+import { todaysReader } from "./reader-parts";
 import { todaysPlaces } from "./todays-places";
 
 /** Today's first run is the adapter's own, held with `commands.hold`: no stage is registered yet. */
@@ -27,5 +31,8 @@ export function useTodaysSupplies(recover: HostSession["recover"]): FrameSupplie
   }));
   useLayoutEffect(() => made.appearance.set({ face, scheme }), [made, face, scheme]);
   /* No calendar is seated yet: its entry is handed in by the seating step. */
-  return useMemo(() => ({ ...made, stages: NO_STAGE, calendar: NONE, recover }), [made, recover]);
+  return useMemo(
+    () => ({ ...made, stages: NO_STAGE, reader: todaysReader, above: TodaysAbove, calendar: NONE, recover }),
+    [made, recover],
+  );
 }

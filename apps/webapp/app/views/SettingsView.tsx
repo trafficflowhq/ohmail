@@ -176,7 +176,7 @@ function TagRow({
   t: ReturnType<typeof useTranslations<"settings">>;
 }) {
   const [mode, setMode] = useState<RowMode>({ kind: "rest" });
-  const hue = hueOf(tag);
+  const hue = hueOf(tag, TAG_HUES);
 
   if (mode.kind === "rename") {
     const next = mode.draft.trim();
@@ -190,7 +190,7 @@ function TagRow({
     };
     return (
       <div className="set-row set-tag-edit">
-        <TagDot hue={hueOf(tag)} />
+        <TagDot hue={hueOf(tag, TAG_HUES)} />
         <TextField
           className="set-tag-input"
           autoFocus

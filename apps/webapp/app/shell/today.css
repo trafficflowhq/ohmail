@@ -53,3 +53,10 @@
     margin: 8px 12px 0;
   }
 }
+
+/* WHAT THE OLD SHELL STANDS ABOVE THE PANES DRAWS NO BOX. Its overlays (the palette, the sheets, quick look, the first
+   run) stand in one holder beside the frame; the holder carries today's tokens for them and nothing of the layout.
+   Goes with today's views. */
+.today-above {
+  display: contents;
+}

@@ -1,0 +1,45 @@
+protected | geschützt
+held | «0» Nachrichten / «1» Nachrichten / «2» Nachrichten / «1234» Nachrichten
+thread | «0» Nachrichten in diesem Gespräch / «1» Nachricht in diesem Gespräch / «2» Nachrichten in diesem Gespräch / «1.234» Nachrichten in diesem Gespräch
+marks | «1» Nachrichten, älteste zuerst: alle gelesen / «2» Nachrichten, älteste zuerst: «1» ungelesen / «5» Nachrichten, älteste zuerst: «5» ungelesen / «1234» Nachrichten, älteste zuerst: «1» ungelesen
+spoken | Ungelesen / Gelesen / Mit Anhang
+giulia | -
+petra | -
+techcheck | -
+glazecall | -
+cinderlock | -
+ben | -
+anna | -
+reto | -
+flurina | -
+tim | -
+carla | -
+nadja | -
+jonas | -
+f1 | -
+f2 | -
+f3 | -
+f4 | -
+f5 | -
+f6 | -
+f7 | -
+f8 | -
+f9 | -
+f10 | -
+f11 | -
+f12 | -
+f13 | -
+f14 | -
+f15 | -
+brandung | -
+kino | -
+erdton | -
+roestsonntag | -
+speichenhof | -
+alpenbahn | -
+pigment | -
+x-sent | Ich → Nora Lindt +1 | N hue 25
+x-sent-one | Ich → ben@lichtgrat.example | B hue 250
+x-undated | -
+x-junk | -
+x-far | -

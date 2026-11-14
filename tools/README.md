@@ -60,6 +60,16 @@ only shrink.
 `new-tree.txt` lists the folders written for the next major version. Code that came over from 1.0 is not
 reformatted or relinted here; its turn comes after the released line has ended.
 
+## The old shell's side of the frame
+
+`shell-adapters.json` names the files of the web's old shell that stand between it and the frame (its folder,
+`apps/webapp/app/shell`): the adapters that feed a seated place from the old shell's composition, and the old shell's
+own frame files, each with what it is and the step that ends it. `ohmail/old-shell-adapters` refuses, in that folder,
+a file whose name says that side (`Todays<Name>`, `todays-<name>`) and is not named, and a context whose name says a
+feed (`Todays<Name>`, `<Name>Fed`) where the list does not name it for that file. A place seated after the first one
+reads the mail ground and is named once in the mail entry's list, so no such file and no such context is written any
+more. The list only shrinks: against the base branch the check refuses a file or a context that was added.
+
 ## The baseline
 
 `baseline.tsv` holds the violations the tree had when a rule arrived: one row per file and rule, with the count

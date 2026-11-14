@@ -18,8 +18,13 @@ const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEff
 
 /** A message row (today's, or the Ohbox's own list's), and any list item a verb can take away. */
 const ITEM = '.row[data-id], .oh-row[data-id], [role="listitem"]';
-/** A list's own stop, where the keyboard stands when no row holds it: today's scroller, the Ohbox's. */
-const LIST_STOP = ".view .scroller, .view .ob-scroll";
+/**
+ * A list's own stop, where the keyboard stands when no row holds it: today's scroller, the Ohbox's, in a view of
+ * today's or in a seated place's list (the frame's list section).
+ */
+const LIST_STOP = ".view .scroller, .view .ob-scroll, section.fr-list .ob-scroll";
+/** What a place draws: a view of today's, or a seated place's list. The page's last fallback asks it before the body. */
+const PLACE = ".view, section.fr-list";
 /** Where a focused control sat when it was a layer over the page. */
 const LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"]';
 /** The surfaces that own the page while they stand: nothing behind one may take focus. */
@@ -53,6 +58,16 @@ let seq = 0;
 let lastPress: Place | null = null;
 let lastFocus: Place | null = null;
 let returning = 0;
+/** The shell's half is mounted: somebody watches the document for a list that comes back. */
+let watching = 0;
+/**
+ * A RETURN THAT WAITS FOR ITS LIST. The opener stood in a row, or no place is drawn at all, and neither that row,
+ * the cursor's row nor a list's own stop is in the document yet: a place drawn a commit after the surface closed.
+ * The page's first control is not taken meanwhile (there the next Enter would write a new letter); the watcher
+ * lands the return once one of the three is inserted, and after {@link LIST_WAIT_MS} the page's fallback answers.
+ */
+let waiting: { place: Place; timer: ReturnType<typeof setTimeout> } | null = null;
+const LIST_WAIT_MS = 1000;
 
 function showing(el: HTMLElement): boolean {
   if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
@@ -106,8 +121,9 @@ function rowById(id: string | null): HTMLElement | null {
   return null;
 }
 
+/** The row the list's cursor is on: in a view of today's, or in a seated place's list. */
 function cursorRow(): HTMLElement | null {
-  return queryVisible<HTMLElement>(".view .row.sel, .view .oh-row[data-open]");
+  return queryVisible<HTMLElement>(".view .row.sel, .view .oh-row[data-open], section.fr-list .oh-row[data-open]");
 }
 
 function holderOf(el: HTMLElement | null): Surface | null {
@@ -145,21 +161,41 @@ function standingModal(): HTMLElement | null {
   return all[all.length - 1] ?? null;
 }
 
+/** The opener's chain: the place, then the opener of each surface it stood in. */
+function chainOf(p: Place): Place[] {
+  const chain: Place[] = [];
+  for (let q: Place | null = p; q && !chain.includes(q); q = q.parent) chain.push(q);
+  return chain;
+}
+
+/** The list a return in a row goes back to is in the document: that row, the cursor's row, or a list's own stop. */
+function listStands(p: Place): boolean {
+  return chainOf(p).some((q) => rowById(q.id) !== null) || cursorRow() !== null || queryVisible(LIST_STOP) !== null;
+}
+
+function stopWaiting(): Place | null {
+  if (waiting === null) return null;
+  clearTimeout(waiting.timer);
+  const { place } = waiting;
+  waiting = null;
+  return place;
+}
+
 /**
  * Land focus for a place. A return tries the opener first — a row stands for the list's cursor,
  * so a cursor that moved while the surface was open wins — then whose opener it had, then the
- * rows either side, the cursor's row, the list, and the view. A standing modal takes focus
- * itself before anything behind it can.
+ * rows either side, the cursor's row, the list, and the view or the seated place's list. A standing
+ * modal takes focus itself before anything behind it can. `wait`: a return from a row whose list is
+ * not in the document yet stays pending instead of taking the page's first control.
  */
-function land(p: Place, returnTo: boolean): boolean {
+function land(p: Place, returnTo: boolean, wait = false): boolean {
   // A document whose root has unmounted has no body: there is nowhere left to put focus.
   if (document.body === null) return false;
   const modal = standingModal();
   const take = (el: HTMLElement | null | undefined): boolean =>
     el != null && el.isConnected && (modal === null || modal.contains(el))
     && (tryFocus(el) || tryFocus(tabbables(el)[0]));
-  const chain: Place[] = [];
-  for (let q: Place | null = p; q && !chain.includes(q); q = q.parent) chain.push(q);
+  const chain = chainOf(p);
   if (returnTo) {
     for (const q of chain) {
       const cursor = cursorRow();
@@ -182,7 +218,19 @@ function land(p: Place, returnTo: boolean): boolean {
     if (take(q.next) || take(rowById(q.nextId)) || take(q.prev) || take(rowById(q.prevId))) return true;
   }
   if (take(cursorRow()) || take(queryVisible<HTMLElement>(LIST_STOP))) return true;
-  if (returnTo && take(tabbables(queryVisible<HTMLElement>(".view") ?? document.body)[0])) return true;
+  if (returnTo && wait && modal === null && watching > 0 && !listStands(p)
+    && (chain.some((q) => q.row !== null) || queryVisible(PLACE) === null)) {
+    stopWaiting();
+    waiting = {
+      place: p,
+      timer: setTimeout(() => {
+        const late = stopWaiting();
+        if (late !== null && focusIsLost()) land(late, true);
+      }, LIST_WAIT_MS),
+    };
+    return false;
+  }
+  if (returnTo && take(tabbables(queryVisible<HTMLElement>(PLACE) ?? document.body)[0])) return true;
   return modal !== null && enterInto(modal);
 }
 
@@ -255,7 +303,7 @@ export function useFocusFollows(ref: RefObject<HTMLElement | null>, opts: FocusF
         returning -= 1;
         // A surface opened in the same breath (a sheet replaced by the one it opened) takes focus.
         if (open.some((s) => s.seq > closedAt) || !focusIsLost()) return;
-        land(surface.opener, true);
+        land(surface.opener, true, true);
       });
     };
   }, [active, enter, closes, trap, ref]);
@@ -293,7 +341,13 @@ export function FocusFollows(): null {
     };
     let restoreTimer: ReturnType<typeof setTimeout> | null = null;
     const observer = new MutationObserver(() => {
+      /* A return that waited for its list: somebody put the keyboard elsewhere, or the list is here now. */
+      if (waiting !== null && !focusIsLost()) stopWaiting();
       if (returning > 0 || !focusIsLost()) return;
+      if (waiting !== null && listStands(waiting.place)) {
+        const back = stopWaiting();
+        if (back !== null && land(back, true)) return;
+      }
       const lost = lastFocus;
       if (lost?.el != null && !lost.el.isConnected) {
         lastFocus = null;
@@ -313,6 +367,7 @@ export function FocusFollows(): null {
       }, 0);
     });
     observer.observe(document.body, { childList: true, subtree: true });
+    watching += 1;
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onPress, true);
     document.addEventListener("mousedown", onPress, true);
@@ -320,6 +375,8 @@ export function FocusFollows(): null {
     document.addEventListener("focusout", onFocusOut);
     return () => {
       observer.disconnect();
+      watching -= 1;
+      stopWaiting();
       if (restoreTimer !== null) clearTimeout(restoreTimer);
       document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onPress, true);

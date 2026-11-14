@@ -183,7 +183,7 @@ async function render(store: MemoryMirrorStore): Promise<HTMLDivElement> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(MessageBody, { text: body.text, html: body.html, remoteLoaded: body.loadedRemoteContent }));
+    root!.render(h(MessageBody, { owner: null, text: body.text, html: body.html, remoteLoaded: body.loadedRemoteContent }));
   });
   // `MessageBody` builds the frame on the render AFTER mount, deliberately — see its
   // `mounted` state, which exists so the first client render matches the server's.

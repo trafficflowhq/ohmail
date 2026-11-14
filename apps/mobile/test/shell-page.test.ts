@@ -97,8 +97,8 @@ describe("the phone shell's answers, per setting", () => {
     signOut: named("signOut"),
     notifications: named<DeviceNotifications>("notifications"),
     frame: {
-      places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-      appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+      places: named("places"), stages: named("stages"), above: named("above"), address: named("address"),
+      window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
     },
     signals: {
       linkIn: named("linkIn"), posture: named("posture"), insets: named("insets"), keyboard: named("keyboard"),
@@ -123,6 +123,7 @@ describe("the phone shell's answers, per setting", () => {
     places: has.frame.places,
     stages: has.frame.stages,
     reader: NONE,
+    above: has.frame.above,
     calendar: has.frame.calendar,
   };
   const DEVICE = {

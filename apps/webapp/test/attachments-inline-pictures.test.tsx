@@ -54,7 +54,7 @@ function Harness({ engine, messageId, text, html }: {
   return h(
     React.Fragment,
     null,
-    h(MessageBody, { messageId, text, html }),
+    h(MessageBody, { owner: null, messageId, text, html }),
     attachments
       ? h(AttachmentStrip, {
           items: attachments.itemsOf(messageId, { includeInlineParts: true }),

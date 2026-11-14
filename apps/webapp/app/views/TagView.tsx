@@ -19,7 +19,7 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
-import { Button, Kbd, ListPane, ListRows, MessageRow, TagDot, TextField } from "@ohmail/ui";
+import { Button, Kbd, ListPane, ListRows, MessageRow, TAG_HUES, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
@@ -114,7 +114,7 @@ export function TagView({
 }) {
   const t = useTranslations("tag");
   const { row: senderCheckRow } = useSenderCheckWords();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   /* The list keys' shared vocabulary and the reading column's region name — the Ohbox's own
      labels and `reader.pane`, so four surfaces never phrase the same gesture apart. */
   const to = useTranslations("ohbox");
@@ -273,7 +273,7 @@ export function TagView({
                 {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                 hasAttachment={m.hasAttachments}
                 protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-                tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+                tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
                 place={placeLabel(m.folder)}
                 onClick={() => openRow(m)}
               />
@@ -367,7 +367,7 @@ function TagManage({
     };
     return (
       <div className="tag-manage">
-        <TagDot hue={hueOf(tag)} />
+        <TagDot hue={hueOf(tag, TAG_HUES)} />
         <TextField
           className="tag-manage-input"
           autoFocus

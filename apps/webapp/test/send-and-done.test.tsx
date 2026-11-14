@@ -7,6 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
+import { openLetter, reportPress } from "./ohbox/_finders.js";
 
 /**
  * SEND + DONE — THE SECOND SEND ACTION, driven through the WHOLE shell.
@@ -91,6 +92,9 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  /* The address a key writes is announced by the browser as a task (`hashchange`), and this file's clock is fake:
+     run what is due now, so the seated place, which follows the address, hears it. No time passes. */
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 };
 
 /* The editor arrives through a dynamic import (the shell loads it off the first paint), so a
@@ -101,13 +105,24 @@ const drain = async (): Promise<void> => {
 };
 
 const editors = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
+  [...[openLetter(host!), openLetterDe(host!)].filter((x): x is HTMLElement => x !== null), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
     .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
 
 async function type(text: string): Promise<void> {
   const editor = editors()[0]!;
   await act(async () => { typeInto(editor, text); });
 }
+
+/**
+ * The pill's Undo: today's capsule's, or at a seated place the frame's report's press (declared), whose
+ * text carries its key beside the word.
+ */
+const undoPress = (): HTMLButtonElement | undefined =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo")
+  ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress()! : undefined);
+/* ASKED OF THE HELPER: the open letter's region in the German catalogue's names (the helper's are the English). */
+const openLetterDe = (root: ParentNode): HTMLElement | null =>
+  root.querySelector<HTMLElement>(`section[aria-label="${de.frame.landmark.reading}"] [role="region"][aria-label="${de.reader.pane}"]`);
 
 /** The second action, found by the class the shell gives it — never by its words. */
 const doneButton = (): HTMLButtonElement | null =>
@@ -204,8 +219,7 @@ describe("the press sends, then files, and says so once", () => {
        nothing to assert on (a per-step sampler was tried and read green under the mutation).
        That rule is measured where it is observable: the hook case below, which records every
        sentence the lane raises, and the phone suite, which records every toast. */
-    const undo = [...host!.querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent?.trim() === "Undo");
+    const undo = undoPress();
     expect(undo, "the pill carried no way back").toBeTruthy();
   });
 
@@ -259,8 +273,7 @@ describe("the press sends, then files, and says so once", () => {
     await settle();
     expect(doneButton()).toBeNull();
 
-    const undo = [...host!.querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent?.trim() === "Undo")!;
+    const undo = undoPress()!;
     await act(async () => { undo.click(); });
     await settle();
 

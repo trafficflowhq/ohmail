@@ -63,7 +63,7 @@ async function mountedSrcdoc(html: string, text = "plain part"): Promise<string>
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { text, html })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, text, html })); });
   return host.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
 }
 

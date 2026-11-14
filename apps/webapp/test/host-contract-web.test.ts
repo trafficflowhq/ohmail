@@ -23,8 +23,8 @@ const has: WebSupplies = {
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
   notifications: named("notifications"),
   frame: {
-    places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-    appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+    places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), address: named("address"),
+    window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
   },
 };
 const engine = named<HostContract["engine"]>("engine");
@@ -53,7 +53,8 @@ const entries = (...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
-    reader: NONE,
+    reader: has.frame.reader,
+    above: has.frame.above,
     calendar: has.frame.calendar,
   });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */

@@ -71,8 +71,21 @@ export function useVisit(
   suspended: Suspended["suspended"],
 ): Visit {
   const { selectedId, onSelect, onEnterReader, enterId = null, onEntered } = input;
+  /**
+   * A LANDING'S MARK GOES WHEN THE SELECTION MOVES ON, AND NOT BEFORE IT ARRIVED. Where the selection is an address
+   * (a list seated in the frame), the letter a key landed on is named a commit after the key marked it: the mark
+   * stands while the selection is still the letter it was made from, and goes once it is any other letter than the
+   * landing's. Dropped in that first commit, no landing by a key was ever rested on, and its letter was never read.
+   */
+  const madeFrom = useRef<{ landing: string; from: string | null } | null>(null);
   useEffect(() => {
-    if (landedOn !== null && selectedId !== null && selectedId !== landedOn) setLandedOn(null);
+    if (landedOn === null) {
+      madeFrom.current = null;
+      return;
+    }
+    if (madeFrom.current?.landing !== landedOn) madeFrom.current = { landing: landedOn, from: selectedId };
+    if (selectedId === landedOn) madeFrom.current.from = landedOn;
+    else if (selectedId !== null && selectedId !== madeFrom.current.from) setLandedOn(null);
   }, [selectedId, landedOn, setLandedOn]);
 
   /**

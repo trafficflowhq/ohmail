@@ -126,11 +126,21 @@ export interface SuggestWire {
   aiAvailable?: () => Promise<boolean | null>;
 }
 
+/** `POST /drafts/from-text`: the person's words, and the letter they answer or the mailbox they are written in. */
+export interface DraftFromTextBody {
+  text: string;
+  inReplyToMessageId?: string;
+  mailboxId?: string;
+  subject?: string;
+}
+
 /** A reply drafted by a model. The shell's `DraftReplyWire`. */
 export interface DraftReplyWire {
   configured: () => boolean;
   create: (messageId: string, idempotencyKey: string) => Promise<{ draftId: string }>;
   read: (draftId: string) => Promise<DraftReplyRead>;
+  /** A draft made of the person's own words, one key per press. `none`: no door for it here; the control does not offer it. */
+  fromText: ((body: DraftFromTextBody, idempotencyKey: string) => Promise<{ draftId: string }>) | None;
   noModel?: "noModelHere" | "noModelHost";
 }
 

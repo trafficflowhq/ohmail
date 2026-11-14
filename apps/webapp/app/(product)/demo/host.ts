@@ -48,7 +48,8 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<(typeof FEATURE_NAMES)[number], typeof NONE>),
       places: frame.places,
       stages: frame.stages,
-      reader: NONE,
+      reader: frame.reader,
+      above: frame.above,
       calendar: frame.calendar,
     },
     device: {
