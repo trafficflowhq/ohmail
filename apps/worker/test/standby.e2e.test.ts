@@ -345,6 +345,36 @@ describe("worker standby + health", () => {
     expect(fatals).toHaveLength(0);
   }, 60_000);
 
+  it("and so is one that goes away whole at that moment, the lock's own session included", async () => {
+    // What a database going away is: the pool's first dial and the lock's session end together. The
+    // start's read fails as the database's; giving the lock back on a session that is gone used to
+    // dial again, and that dial's bare socket error replaced it and ended the process.
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    await seedFakeMailbox(db);
+    const fleet = new FakeAdapterFleet();
+    const door = DbDoor.to(DB);
+    door.cutAllAt = 2;                                // dial 1 is the lock's, dial 2 the pool's first
+    await door.up();
+    closers.push(async () => { door.down(); });
+
+    const fatals: unknown[] = [];
+    const sup = await runWorkerSupervised({
+      ...cfgFor(), databaseUrl: door.via(DB), adapterFactory: fleet.factory,
+      dbWaitBaseMs: 100, dbWaitCapMs: 300, pollIntervalMs: 200,
+    }, { onFatal: (err) => fatals.push(err) });
+    closers.unshift(() => sup.stop());
+
+    expect(sup.state()).toBe("waiting");
+    expect((await health(sup.healthPort)).body).toMatchObject({ healthy: false, unhealthyReason: "waiting_for_database" });
+    expect(fatals).toHaveLength(0);
+
+    await door.up();
+    await ledWithin(sup, 15_000);
+    expect(fatals).toHaveLength(0);
+  }, 60_000);
+
   /**
    * A session that completes its handshake and is then neither answered nor closed: the driver bounds
    * the handshake alone, so the attempt never settled and nothing tried again. First contact has a

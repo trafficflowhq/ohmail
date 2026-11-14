@@ -18,9 +18,31 @@ import { isDriverWriteRace } from "../src/driver-write-race.js";
  * reaches the database. Nothing passes either way from then on and the door never closes it, not even
  * when the driver ends its side. `muted` counts those still open.
  *
+ * `freeze(dial)` takes ONE ESTABLISHED session, by its dial number, and holds it: nothing passes
+ * either way and neither side's close reaches the other, so the database can end its half (a
+ * `pg_terminate_backend`) and the driver is never told. What is written meanwhile is kept, and
+ * `thaw(dial)` lets it through late. `frozen` counts the sessions held. `cutAllAt` is the dial at
+ * which the whole database goes away: the door stops listening and ends every session, that one
+ * included.
+ *
+ * `holdAt` holds a session from a STATEMENT on. It is asked about everything a client writes, with the
+ * text as written (a statement's first run on a session carries its text) and the session's dial; on a
+ * yes the session is frozen with that write kept back, and `thaw` delivers it. `held` lists the dials
+ * held that way. Read when a session is dialled.
+ *
  * Sessions are ENDED, not destroyed: postgres.js defers writes and a socket destroyed with one still
  * buffered makes it throw from a timer (`src/driver-write-race.ts`).
  */
+interface Session {
+  dial: number; client: net.Socket; upstream: net.Socket;
+  mute: boolean; frozen: boolean;
+  /** Ended by the door itself (`down`), which a freeze does not hold back. */
+  cut: boolean;
+  /** Read by `holdAt`, so the door forwards its client's writes itself; `kept` is the one it held back. */
+  watched: boolean; kept: Buffer | null;
+  end: () => void;
+}
+
 export class DbDoor {
   port = 0;
   /** Dials this door has accepted. */
@@ -28,8 +50,12 @@ export class DbDoor {
   closeAfter: number | null = null;
   mute: (dial: number) => boolean = () => false;
   muted = 0;
+  frozen = 0;
+  cutAllAt: number | null = null;
+  holdAt: ((text: string, dial: number) => boolean) | null = null;
+  readonly held: number[] = [];
   private server: net.Server | null = null;
-  private readonly sessions: Array<{ client: net.Socket; upstream: net.Socket; mute: boolean }> = [];
+  private readonly sessions: Session[] = [];
   private stalled = false;
 
   constructor(private readonly target: { host: string; port: number }) {}
@@ -57,20 +83,25 @@ export class DbDoor {
 
   async up(): Promise<void> {
     this.stalled = false;
-    for (const s of this.sessions) if (!s.mute) { s.client.resume(); s.upstream.resume(); }
+    for (const s of this.sessions) if (!s.mute && !s.frozen) { s.client.resume(); s.upstream.resume(); }
     if (this.server) return;
     const server = net.createServer((client) => {
       this.dials++;
       const upstream = net.createConnection(this.target);
-      const session = { client, upstream, mute: false };
-      this.sessions.push(session);
       const end = (): void => {
+        // A frozen session outlives either side's close; only the door's own `down()` ends it.
+        if (session.frozen && !session.cut) return;
         const at = this.sessions.indexOf(session);
         if (at >= 0) this.sessions.splice(at, 1);
         if (session.mute) { session.mute = false; this.muted--; }
+        if (session.frozen) { session.frozen = false; this.frozen--; }
         client.destroy();
         upstream.destroy();
       };
+      const session: Session = {
+        dial: this.dials, client, upstream, mute: false, frozen: false, cut: false, watched: this.holdAt !== null, kept: null, end,
+      };
+      this.sessions.push(session);
       for (const s of [client, upstream]) { s.on("error", end); s.on("close", end); }
       upstream.pipe(client);
       if (this.mute(this.dials)) {
@@ -88,11 +119,19 @@ export class DbDoor {
           }
           upstream.write(buf);
         });
+      } else if (session.watched) {
+        client.on("data", (buf: Buffer) => {
+          if (!this.holdAt?.(buf.toString("latin1"), session.dial)) { upstream.write(buf); return; }
+          session.kept = buf;
+          this.held.push(session.dial);
+          this.freeze(session.dial);
+        });
       } else {
         client.pipe(upstream);
       }
       if (this.stalled) { client.pause(); upstream.pause(); }
       if (this.closeAfter !== null && this.dials >= this.closeAfter) { server.close(); this.server = null; }
+      if (this.cutAllAt !== null && this.dials >= this.cutAllAt) { this.cutAllAt = null; this.down(); }
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -107,6 +146,7 @@ export class DbDoor {
     this.server?.close();
     this.server = null;
     for (const s of this.sessions.slice(opts.keepFirst ? 1 : 0)) {
+      s.cut = true;
       for (const sock of [s.client, s.upstream]) {
         sock.end();
         setTimeout(() => { sock.destroy(); }, 50).unref();
@@ -117,6 +157,36 @@ export class DbDoor {
   stall(): void {
     this.stalled = true;
     for (const s of this.sessions) { s.client.pause(); s.upstream.pause(); }
+  }
+
+  /** Hold the open session of that dial. Throws when there is none: a freeze of nothing proves nothing. */
+  freeze(dial: number): void {
+    const s = this.session(dial);
+    if (s.frozen) return;
+    s.frozen = true;
+    this.frozen++;
+    s.client.unpipe(s.upstream);
+    s.upstream.unpipe(s.client);
+    s.client.pause();
+    s.upstream.pause();
+  }
+
+  /** Let a frozen session run on, with what was written to it meanwhile. One whose far side has gone is ended. */
+  thaw(dial: number): void {
+    const s = this.session(dial);
+    if (!s.frozen) return;
+    s.frozen = false;
+    this.frozen--;
+    if (s.client.destroyed || s.upstream.destroyed) { s.end(); return; }
+    if (s.kept) { s.upstream.write(s.kept); s.kept = null; }
+    if (s.watched) s.client.resume(); else s.client.pipe(s.upstream);
+    s.upstream.pipe(s.client);
+  }
+
+  private session(dial: number): Session {
+    const s = this.sessions.find((x) => x.dial === dial && !x.mute);
+    if (!s) throw new Error(`the door has no open session of dial ${dial}`);
+    return s;
   }
 }
 

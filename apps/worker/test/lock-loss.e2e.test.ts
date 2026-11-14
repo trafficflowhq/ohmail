@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
-import { mailboxes, mailboxCredentials } from "@trafficflow/db";
-import { makeDb } from "@trafficflow/db/cloud";
+import { like } from "drizzle-orm";
+import { mailboxes, mailboxCredentials, messages, type Tx } from "@trafficflow/db";
+import { makeDb, makeOwnedDb, workerHeartbeats, claimHeartbeat, refreshHeartbeat } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger } from "@trafficflow/core";
-import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
+import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor, type LeaderLock } from "../src/leader-lock.js";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { DbDoor, surviveDriverWriteRace } from "./_dbdoor.js";
 
 type Db = ReturnType<typeof makeDb>;
 
@@ -112,6 +114,36 @@ describe("leader-lock loss (split-brain guard)", () => {
     expect(settled).toBe(false);           // a clean handover must not look like a failure
   }, 20000);
 
+  it("release() on a session that no longer answers returns inside its bound, without a throw and without `lost`", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const door = DbDoor.to(DB);
+    await door.up();
+    closers.push(async () => { door.down(); });
+    const lock = await acquireLeaderLock(door.via(DB), LEADER_LOCK_KEY);
+    expect(lock).not.toBeNull();
+    let settled = false;
+    void lock!.lost.then(() => { settled = true; });
+
+    // Nothing passes and nothing closes: the unlock is written and never answered. It used to be
+    // waited on for good, and a stop or a surrender waited with it.
+    door.freeze(1);
+    const outcome = await Promise.race([
+      lock!.release().then(() => "returned", (err: unknown) => `threw ${String((err as Error).name)}`),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still waiting after 9 s"), 9_000)),
+    ]);
+    expect(outcome).toBe("returned");
+
+    // Ending this side frees nothing at the server, which has not been told: the lock is the old
+    // session's until the server lets it go, and then anyone's.
+    expect(await acquireLeaderLock(DB, LEADER_LOCK_KEY)).toBeNull();
+    await terminate(await lockHolders(LEADER_LOCK_KEY));
+    let next: Awaited<ReturnType<typeof acquireLeaderLock>> = null;
+    await waitFor(async () => (next = await acquireLeaderLock(DB, LEADER_LOCK_KEY)) !== null, 8000, "the lock to be free");
+    closers.push(() => next!.release());
+    expect(settled).toBe(false);           // a release is never a loss, answered or not
+  }, 30000);
+
   /** The supervisor's own log lines, by event name, in order. */
   function recorder(): { logger: ReturnType<typeof createLogger>; events: string[] } {
     const events: string[] = [];
@@ -197,5 +229,461 @@ describe("leader-lock loss (split-brain guard)", () => {
     await waitFor(() => spare.state() === "leader", 8000, "the spare to take over");
     await waitFor(async () => (await health(spare.healthPort)).body.mailboxes === 1, 8000, "the spare to serve");
     expect(fatals).toHaveLength(0);
+  }, 60000);
+
+  // ── A LOCK SESSION THAT GOES MUTE ────────────────────────────────────────────────────────────
+  //
+  // Everything above ends the lock's session where the driver can see it. Here it stays open and
+  // nothing answers (a path that drops packets): the server may end its half and free the lock, and
+  // the leader is never told. Each instance dials through a door of its own; a start's first dial is
+  // its lock session (nothing is retired, so no gate read comes before it).
+
+  interface Line { event: string; errorCode: string | null }
+  interface Instance {
+    sup: Awaited<ReturnType<typeof runWorkerSupervised>>;
+    started: Promise<void>;
+    door: DbDoor; fleet: FakeAdapterFleet; lines: Line[]; fatals: unknown[];
+    /** Turns this instance had started when it logged `leader_lock_lost`. */
+    turnsWhenLost: number | null;
+  }
+  const HEARTBEAT_MS = 300;
+  /** What a leader may go without a proof of its lock: three heartbeats, and one more for the tick that reads it. */
+  const UNPROVEN_MS = 4 * HEARTBEAT_MS;
+
+  /** Starts an instance without waiting for its start: `sup` is there once `started` has resolved. */
+  async function launch(name: string, mailboxId: string, extra: Partial<WorkerConfig> = {}, door = DbDoor.to(DB)): Promise<Instance> {
+    await door.up();
+    const fleet = new FakeAdapterFleet();
+    fleet.behave(mailboxId, { syncDelayMs: 40 });
+    const turns = (): number => fleet.indicesOf(mailboxId, "sync_start").length;
+    const self: Instance = {
+      sup: null as unknown as Instance["sup"], started: Promise.resolve(), door, fleet, lines: [], fatals: [], turnsWhenLost: null,
+    };
+    const logger = createLogger({
+      service: "worker",
+      sink: (raw) => {
+        const line = JSON.parse(raw) as { event?: unknown; errorCode?: unknown };
+        const event = String(line.event);
+        if (event === "leader_lock_lost") self.turnsWhenLost = turns();
+        self.lines.push({ event, errorCode: typeof line.errorCode === "string" ? line.errorCode : null });
+      },
+    });
+    self.started = runWorkerSupervised(
+      cfgFor(fleet, {
+        databaseUrl: door.via(DB), instanceId: `wkr-${name}`, logger, lockHeartbeatMs: HEARTBEAT_MS,
+        dbWaitBaseMs: 100, dbWaitCapMs: 300, ...extra,
+      }),
+      { onFatal: (err) => self.fatals.push(err) }).then((sup) => { self.sup = sup; });
+    // First out: a stop drains statements, and those on a session the door still holds never answer.
+    closers.unshift(async () => {
+      door.down();
+      await Promise.race([self.started.catch(() => undefined), new Promise((r) => setTimeout(r, 8000))]);
+      await (self.sup as Instance["sup"] | null)?.stop();
+    });
+    return self;
+  }
+  async function instance(name: string, mailboxId: string, extra: Partial<WorkerConfig> = {}): Promise<Instance> {
+    const self = await launch(name, mailboxId, extra);
+    await self.started;
+    return self;
+  }
+  const eventsOf = (i: Instance): string[] => i.lines.map((l) => l.event);
+  const lossCodes = (i: Instance): Array<string | null> =>
+    i.lines.filter((l) => l.event === "leader_lock_lost").map((l) => l.errorCode);
+  /** True once `cond` holds; false when it has not by `ms`. For a fact that is asserted afterwards. */
+  async function seen(cond: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
+    try { await waitFor(cond, ms, "a sight"); return true; } catch { return false; }
+  }
+  /** Who the shard's heartbeat row names, or null when there is none. */
+  async function rowNames(db: Db): Promise<string | null> {
+    const rows = await db.select({ instanceId: workerHeartbeats.instanceId }).from(workerHeartbeats);
+    return rows[0]?.instanceId ?? null;
+  }
+  const stateOf = (i: Instance): string => (i.sup as Instance["sup"] | null)?.state() ?? "starting";
+  /**
+   * A letter waiting at one instance's provider. The fake numbers a letter by its place in the list and
+   * the cursor is the database's, so A's letter comes second, behind one in a folder of its own: in the
+   * place of B's it would read as fetched already and prove nothing.
+   */
+  function letterFor(who: "a" | "b"): { id: string; deliver: Array<{ from: string; subject: string; messageId: string; folder?: string }> } {
+    const id = `${randomUUID()}@from-${who}.example`;
+    const letter = { from: "x@lichtgrat.example", subject: `to ${who}`, messageId: id };
+    const ahead = { ...letter, messageId: `${randomUUID()}@ahead.example`, folder: "Elsewhere" };
+    return { id, deliver: who === "a" ? [ahead, letter] : [letter] };
+  }
+  const written = async (db: Db, id: string): Promise<number> =>
+    (await db.select({ id: messages.id }).from(messages).where(like(messages.messageIdHeader, `%${id}%`))).length;
+  /** From its call until `stop()`: the most sessions seen holding the lock, how long both said leader, whom the row named. */
+  function watch(db: Db, key: bigint, a: Instance, b: Instance): {
+    stop: () => Promise<void>; saw: { mostHolders: number; bothLeaderMs: number; named: string[] };
+  } {
+    const saw = { mostHolders: 0, bothLeaderMs: 0, named: [] as string[] };
+    let on = true;
+    const loop = (async () => {
+      let last = Date.now();
+      while (on) {
+        saw.mostHolders = Math.max(saw.mostHolders, (await lockHolders(key)).length);
+        const name = await rowNames(db);
+        if (name !== null && saw.named[saw.named.length - 1] !== name) saw.named.push(name);
+        const now = Date.now();
+        if (stateOf(a) === "leader" && stateOf(b) === "leader") saw.bothLeaderMs += now - last;
+        last = now;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    })();
+    const stop = async (): Promise<void> => { on = false; await loop; };
+    closers.unshift(stop);
+    return { stop, saw };
+  }
+
+  it("a leader whose lock session went mute stops when a successor leads: it takes nothing back and writes no mail", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
+
+    const a = await instance("a", mailboxId);
+    expect(a.sup.state()).toBe("leader");
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+    const b = await instance("b", mailboxId);
+    expect(b.sup.state()).toBe("standby");
+
+    // The whole case: A's lock session is held by the door, and the server ends its half. The lock is
+    // free and A's own connections (its pool) work on.
+    a.door.freeze(1);
+    expect(a.door.frozen).toBe(1);
+    const holders = await lockHolders(key);
+    expect(holders).toHaveLength(1);
+    await terminate(holders);
+
+    // From here on, sampled until the end: who holds the lock, who says leader, whom the row names.
+    const watching = watch(db, key, a, b);
+
+    await waitFor(() => b.sup.state() === "leader", 10000, "B, the lawful successor, to lead");
+    // A is given the time it needs either to learn or to beat again: its turns end in a beat, and that
+    // beat used to take the row back from B. Then one letter for each of them: whoever writes it shows
+    // whom the fence lets write.
+    const turnsOfA = (): number => a.fleet.indicesOf(mailboxId, "sync_start").length;
+    const turnsWhenBLed = turnsOfA();
+    await seen(() => a.sup.state() !== "leader" || turnsOfA() >= turnsWhenBLed + 3, 8000);
+    const letterA = letterFor("a");
+    const letterB = letterFor("b");
+    a.fleet.behave(mailboxId, { deliver: letterA.deliver });
+    b.fleet.behave(mailboxId, { deliver: letterB.deliver });
+
+    // (a) A stops calling itself leader, and starts no turn once it knows.
+    const aLeft = await seen(() => a.sup.state() !== "leader", UNPROVEN_MS + 6000);
+    // (b) the letter is written once, by the one that holds the lock.
+    const bWrote = await seen(async () => (await written(db, letterB.id)) === 1, 10000);
+    // (e) A closes what it held, without the unlock's answer, and stands by behind B.
+    const aStoodBy = await seen(() => a.sup.state() === "standby", 15000);
+    const turnsAtEnd = turnsOfA();
+    await watching.stop();
+    const { named, mostHolders, bothLeaderMs } = watching.saw;
+
+    expect.soft(aLeft, "(a) A still calls itself leader").toBe(true);
+    expect.soft(a.turnsWhenLost, "(a) A never learned that its lock is gone").not.toBeNull();
+    expect.soft(turnsAtEnd, "(a) A started a turn after it knew").toBe(a.turnsWhenLost);
+    // Not by the driver seeing a close: the door held the session, so A learned from the row or from its own clock.
+    expect.soft(lossCodes(a).every((c) => c === "LOCK_SUPERSEDED" || c === "LOCK_UNPROVEN" || c === "LOCK_FENCED"),
+      `(a) A's loss was ${JSON.stringify(lossCodes(a))}`).toBe(true);
+    expect.soft(bWrote, "(b) B, which holds the lock, did not write its letter").toBe(true);
+    expect.soft(await written(db, letterA.id), "(b) A, which holds no lock, wrote a letter").toBe(0);
+    // (c) from B's claim on the row never names A again.
+    const firstB = named.findIndex((n) => n.startsWith("wkr-b"));
+    expect.soft(firstB, "(c) the row never named B").toBeGreaterThanOrEqual(0);
+    expect.soft(named.slice(firstB).filter((n) => n.startsWith("wkr-a")), "(c) A took the row back").toEqual([]);
+    // (d) the lawful leader is never refused and never deposed.
+    expect.soft(eventsOf(b).filter((e) => e === "sync_cycle_fenced" || e === "leader_lock_lost"), "(d) B was refused").toEqual([]);
+    // (e) no exit on either side, and A's close ended by itself.
+    expect.soft(aStoodBy, "(e) A did not come to stand by behind B").toBe(true);
+    expect.soft(eventsOf(a).filter((e) => e === "surrender_timed_out" || e === "lock_release_failed"), "(e) A's close").toEqual([]);
+    expect.soft([...a.fatals, ...b.fatals], "(e) a fatal").toHaveLength(0);
+    // (f) one holder of the lock at most on every read, and two `leader` answers only until A's next renewal.
+    expect.soft(mostHolders, "(f) two sessions held the lock").toBeLessThanOrEqual(1);
+    expect.soft(bothLeaderMs, "(f) both said leader for that long").toBeLessThan(UNPROVEN_MS + 3000);
+    expect(b.sup.state()).toBe("leader");
+  }, 90000);
+
+  it("with nobody contending, a leader that cannot prove its lock stops inside its bound and leads again on a new session", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
+    const a = await instance("a", mailboxId);
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+    const firstName = await rowNames(db);
+
+    a.door.freeze(1);
+    expect(a.door.frozen).toBe(1);
+    await terminate(await lockHolders(key));
+    await waitFor(async () => (await lockHolders(key)).length === 0, 5000, "the server to free the lock");
+
+    // No successor ever claims, so nothing but its own clock can tell it. It used to answer `leader`
+    // for good here, with no session holding the lock anywhere.
+    const left = await seen(() => a.sup.state() !== "leader", UNPROVEN_MS + 6000);
+    expect(left, "it still calls itself leader, and nothing holds the lock").toBe(true);
+    expect(lossCodes(a)).toEqual(["LOCK_UNPROVEN"]);
+
+    // The old session is ended without the unlock's answer, the lock taken on a new one, in this process.
+    await waitFor(() => eventsOf(a).filter((e) => e === "leader_acquired").length === 2 && a.sup.state() === "leader",
+      20000, "A to lead again");
+    const order = eventsOf(a).filter((e) => ["leader_acquired", "leader_lock_lost", "leadership_surrendered", "surrender_timed_out"].includes(e));
+    expect(order).toEqual(["leader_acquired", "leader_lock_lost", "leadership_surrendered", "leader_acquired"]);
+    expect(a.fatals).toHaveLength(0);
+    expect(await lockHolders(key)).toHaveLength(1);
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve again");
+    // A second leadership is a second claim, under a name of its own.
+    const secondName = await rowNames(db);
+    expect(secondName).toMatch(/^wkr-a:/);
+    expect(secondName).not.toBe(firstName);
+  }, 90000);
+
+  it("a mute session the server still runs is ended by its own process's next attempt, which then leads", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
+    const a = await instance("a", mailboxId);
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+    const [first] = await lockHolders(key);
+
+    // Held by the door and NOT ended at the server: the old session keeps the lock there, for as long
+    // as the server takes to notice a peer that is gone (hours, by default). Nobody else can lead on it.
+    a.door.freeze(1);
+    await waitFor(() => a.sup.state() !== "leader", UNPROVEN_MS + 6000, "A to stop leading");
+    expect(lossCodes(a)).toEqual(["LOCK_UNPROVEN"]);
+
+    await waitFor(() => eventsOf(a).filter((e) => e === "leader_acquired").length === 2 && a.sup.state() === "leader",
+      25000, "A to lead again");
+    expect(eventsOf(a)).toContain("lock_ghost_evicted");
+    const holders = await lockHolders(key);
+    expect(holders).toHaveLength(1);
+    expect(holders[0]).not.toBe(first);
+    expect(a.fatals).toHaveLength(0);
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve again");
+  }, 90000);
+
+  // ── A CLAIM THAT IS HELD ON ITS WAY ──────────────────────────────────────────────────────────
+  //
+  // A takeover's claim of the heartbeat row is two statements on a pool session, and the lock lives on
+  // another. Here the pool session goes silent with the claim half sent, the lock's session is ended at
+  // the server and a successor takes the shard; the rest of the claim arrives late. It used to land:
+  // written on an answer that was no longer true, over the successor's claim.
+
+  it("a takeover's claim that arrives after a successor's takes nothing: the row stays the successor's and only the lock holder writes mail", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
+
+    // A wins the lock and starts its claim, which the door holds at its write. A long heartbeat: A is
+    // to learn from the claim's answer, not from its own bound.
+    const doorA = DbDoor.to(DB);
+    doorA.holdAt = (text) => doorA.held.length === 0 && text.includes('insert into "worker_heartbeats"');
+    const a = await launch("a", mailboxId, { lockHeartbeatMs: 20_000 }, doorA);
+    await waitFor(() => doorA.held.length === 1, 20000, "A's claim to be on its way");
+    const holders = await lockHolders(key);
+    expect(holders).toHaveLength(1);
+    doorA.freeze(1);
+    await terminate(holders);
+
+    // B takes the shard, claims it and writes a letter. It renews seconds apart, as a shipped one does.
+    const b = await instance("b", mailboxId, { lockHeartbeatMs: 5000, pollIntervalMs: 5000 });
+    await waitFor(() => b.sup.state() === "leader", 10000, "B, the lawful successor, to lead");
+    const watching = watch(db, key, a, b);
+    const letterB = letterFor("b");
+    b.fleet.behave(mailboxId, { deliver: letterB.deliver });
+    await waitFor(async () => (await written(db, letterB.id)) === 1, 20000, "B to write its letter");
+
+    // A's letter waits at its provider, and the rest of its claim is let through.
+    const letterA = letterFor("a");
+    a.fleet.behave(mailboxId, { deliver: letterA.deliver });
+    doorA.thaw(doorA.held[0]!);
+
+    // A is told no, gives up what it holds and stands by behind B.
+    const aStoodBy = await seen(() => stateOf(a) === "standby", 20000);
+    await new Promise((r) => setTimeout(r, 1500));               // and nothing comes after the fact either
+    await watching.stop();
+
+    // One claim, B's: the row never names A, and B never has to claim again.
+    expect.soft(watching.saw.named.map((n) => n.replace(/:[0-9a-f]{8}$/, ""))).toEqual(["wkr-b"]);
+    expect.soft(await written(db, letterA.id), "A, which holds no lock, wrote its letter").toBe(0);
+    expect.soft(await written(db, letterB.id)).toBe(1);
+    expect.soft(eventsOf(b).filter((e) => e === "sync_cycle_fenced" || e === "leader_lock_lost"), "B, which holds the lock, was refused").toEqual([]);
+    expect.soft(eventsOf(a).filter((e) => e === "leader_acquired"), "A led without the lock").toEqual([]);
+    expect.soft(lossCodes(a)).toEqual(["LOCK_UNCLAIMED"]);
+    expect.soft(aStoodBy, "A did not come to stand by behind B").toBe(true);
+    expect.soft(watching.saw.mostHolders).toBeLessThanOrEqual(1);
+    expect.soft([...a.fatals, ...b.fatals]).toHaveLength(0);
+    expect(b.sup.state()).toBe("leader");
+  }, 90000);
+
+  const pulseOf = (instanceId: string): Parameters<typeof claimHeartbeat>[1] => ({
+    shardIndex: 0, instanceId, shards: 1, mailboxes: 0, expected: 0, accounts: 0, quarantined: 0,
+    degraded: false, aiCircuitOpenSince: null, lastCycleAt: null, startedAt: new Date(),
+  });
+  const sessionOf = (lock: LeaderLock): Parameters<typeof claimHeartbeat>[2] =>
+    ({ pid: lock.backendPid, key: leaderLockKeyFor(0), mark: lock.mark });
+  /** The shard's lock, once whoever held it has let go at the server. */
+  async function lockOnceFree(): Promise<LeaderLock> {
+    for (const start = Date.now(); Date.now() - start < 8000;) {
+      const lock = await acquireLeaderLock(DB, leaderLockKeyFor(0));
+      if (lock) { closers.push(() => lock.release()); return lock; }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    throw new Error("the lock was not free after 8 s");
+  }
+
+  // The claim alone, held at each of its two statements. The row never names the old one either way.
+  for (const [where, statement] of [["its write", 'insert into "worker_heartbeats"'], ["its question", "from pg_locks"]] as const) {
+    it(`a claim held at ${where} while its lock goes to a successor is refused when it arrives`, async () => {
+      const restore = surviveDriverWriteRace();
+      closers.push(async () => { restore(); });
+      const db = makeDb(DB);
+      const door = DbDoor.to(DB);
+      door.holdAt = (text) => door.held.length === 0 && text.includes(statement);
+      await door.up();
+      closers.push(async () => { door.down(); });
+      const pool = makeOwnedDb(door.via(DB));                    // the worker's own kind of pool
+      closers.push(() => pool.close());
+
+      const first = await lockOnceFree();
+      const late = claimHeartbeat(pool.db as unknown as Tx, pulseOf("wkr-first"), sessionOf(first));
+      void late.catch(() => undefined);                          // a case that fails early leaves it to the door's end
+      await waitFor(() => door.held.length === 1, 8000, "the claim to be held");
+
+      await terminate([first.backendPid]);
+      const next = await lockOnceFree();
+      let landed = false;
+      const successor = claimHeartbeat(db as unknown as Tx, pulseOf("wkr-next"), sessionOf(next)).then((v) => { landed = true; return v; });
+      if (where === "its write") {
+        // Nothing of the old claim is at the server yet: the successor's lands at once.
+        await waitFor(() => landed, 8000, "the successor's claim to land");
+        expect(await rowNames(db)).toBe("wkr-next");
+      } else {
+        // The old claim's write is there, uncommitted, and holds the row: the successor's waits for its end.
+        await new Promise((r) => setTimeout(r, 300));
+        expect(landed, "the successor's claim did not wait behind the old one's").toBe(false);
+        expect(await rowNames(db)).toBeNull();
+      }
+      door.thaw(door.held[0]!);
+
+      expect(await late).toBe(false);
+      expect(await successor).toBe(true);
+      expect(await rowNames(db)).toBe("wkr-next");
+      expect(await refreshHeartbeat(db as unknown as Tx, pulseOf("wkr-next"))).toBe(true);
+    }, 30000);
+  }
+
+  const beatAt = async (db: Db): Promise<number> =>
+    (await db.select({ beatAt: workerHeartbeats.beatAt }).from(workerHeartbeats))[0]?.beatAt.getTime() ?? 0;
+
+  it("a pulse that comes before the claim deposes nobody", async () => {
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    // The shard's row is held by an open transaction, so the takeover's claim has to wait while the
+    // lock's timer ticks on: a renewal in that gap finds no row of its own.
+    const admin = postgres(DB, { max: 1 });
+    closers.push(() => admin.end({ timeout: 5 }));
+    let letGo: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { letGo = resolve; });
+    let holding: () => void = () => undefined;
+    const isHolding = new Promise<void>((resolve) => { holding = resolve; });
+    const held = admin.begin(async (tx) => {
+      await tx`INSERT INTO worker_heartbeats (shard_index, instance_id, leader) VALUES (0, 'nobody', false)`;
+      holding();
+      await gate;
+      throw new Error("rolled back on purpose");
+    }).catch(() => undefined);
+    await isHolding;
+
+    const starting = instance("a", mailboxId, { lockHeartbeatMs: 200 });
+    await new Promise((r) => setTimeout(r, 1000));           // five heartbeats with the claim still waiting
+    letGo();
+    await held;
+    const a = await starting;
+
+    expect(a.sup.state()).toBe("leader");
+    expect(eventsOf(a)).not.toContain("leader_lock_lost");
+    expect(await rowNames(db)).toMatch(/^wkr-a:/);
+  }, 60000);
+
+  /** For the cases where a lock must NOT be lost: a heartbeat with room in it, so a loaded host decides nothing. */
+  const CALM_MS = 1000;
+
+  it("a lock session that answers late, inside the bound, deposes nobody and the pulse goes on", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const a = await instance("a", mailboxId, { lockHeartbeatMs: CALM_MS });
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+    // One long turn, so that no rotation ends meanwhile: the timer's pulse alone moves the row.
+    const turns = a.fleet.indicesOf(mailboxId, "sync_start").length;
+    a.fleet.behave(mailboxId, { syncDelayMs: 8000 });
+    await waitFor(() => a.fleet.indicesOf(mailboxId, "sync_start").length > turns, 8000, "a long turn");
+
+    a.door.freeze(1);
+    await new Promise((r) => setTimeout(r, 2.2 * CALM_MS));      // two heartbeats ask and get no answer: inside three
+    const before = await beatAt(db);
+    a.door.thaw(1);
+
+    await waitFor(async () => (await beatAt(db)) > before, 8000, "the pulse to go on");
+    await new Promise((r) => setTimeout(r, 2 * CALM_MS));        // and nothing comes after the fact either
+    expect(eventsOf(a)).not.toContain("leader_lock_lost");
+    expect(a.sup.state()).toBe("leader");
+  }, 60000);
+
+  it("one check of the lock that the database rejects deposes nobody: it is asked again", async () => {
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const a = await instance("a", mailboxId, { lockHeartbeatMs: CALM_MS });
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+    const [pid] = await lockHolders(leaderLockKeyFor(0));
+
+    // The check reads `pg_locks`. Under an exclusive lock on that view it waits at the server, and a
+    // cancel then rejects it (57014) on a session that is otherwise sound.
+    const admin = postgres(DB, { max: 2 });
+    closers.push(() => admin.end({ timeout: 5 }));
+    await admin.begin(async (tx) => {
+      await tx`LOCK TABLE pg_catalog.pg_locks IN ACCESS EXCLUSIVE MODE`;
+      await waitFor(async () =>
+        (await admin`SELECT 1 FROM pg_stat_activity WHERE pid = ${pid!} AND wait_event_type = 'Lock'`).length === 1,
+      8000, "the check to wait");
+      await admin`SELECT pg_cancel_backend(${pid!})`;
+    });
+    await waitFor(() => eventsOf(a).includes("lock_verify_failed"), 5000, "the rejected check to be logged");
+
+    const before = await beatAt(db);
+    await waitFor(async () => (await beatAt(db)) > before, 8000, "the pulse to go on");
+    await new Promise((r) => setTimeout(r, 2 * CALM_MS));
+    expect(eventsOf(a).filter((e) => e === "lock_verify_failed")).toHaveLength(1);
+    expect(eventsOf(a)).not.toContain("leader_lock_lost");
+    expect(a.sup.state()).toBe("leader");
+  }, 60000);
+
+  it("a database that stops answering the pool, with the lock's session alive, is not a lost lock", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const db = makeDb(DB);
+    const mailboxId = await seedMailbox(db);
+    const a = await instance("a", mailboxId, { lockHeartbeatMs: CALM_MS });
+    await waitFor(async () => (await health(a.sup.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+
+    // Every session but the lock's goes mute, and every later dial at its first statement: the
+    // renewals never answer. The lock is proven on its own session, so the verdict stays the cycle's.
+    a.door.mute = (dial) => dial >= 2;
+    for (let dial = 2; dial <= a.door.dials; dial++) { try { a.door.freeze(dial); } catch { /* that one has closed */ } }
+    expect(a.door.frozen).toBeGreaterThan(0);
+
+    await new Promise((r) => setTimeout(r, 5 * CALM_MS));        // past the heartbeats that would depose it
+    expect(eventsOf(a)).not.toContain("leader_lock_lost");
+    expect(a.sup.state()).toBe("leader");
+    expect((await health(a.sup.healthPort)).body).toMatchObject({ leader: true });
   }, 60000);
 });

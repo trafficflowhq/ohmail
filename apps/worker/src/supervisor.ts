@@ -136,6 +136,12 @@ export async function runWorkerSupervised(
   /** Did the CURRENT attempt get the lock? Distinguishes "this instance is broken" from "the DB blinked". */
   let lockWon = false;
   /**
+   * The lock of this instance's last takeover. A session it had to end without the unlock's answer may
+   * still hold the lock at the server (`LeaderLock.ghost`); the next attempt ends that session first,
+   * or this instance would stand by behind itself for as long as the server takes to notice.
+   */
+  let lastLock: LeaderLock | null = null;
+  /**
    * The verdict's clocks, set HERE rather than derived at probe time on purpose: a value computed only
    * when someone asks would restart on every probe and could never exceed a bound. Each is set on
    * entry into its state: `waitingSince` when the database stops answering (a surrendering leader
@@ -478,7 +484,14 @@ export async function runWorkerSupervised(
         gateCleared = true;
       }
       lock = await asDatabaseFault("first_contact", () => contact(
-        (signal) => acquireLeaderLock(config.databaseUrl, lockKey, { signal }),
+        (signal) => acquireLeaderLock(config.databaseUrl, lockKey, {
+          signal, evict: lastLock?.ghost() ?? null,
+          onEvicted: () => {
+            log.warn("lock_ghost_evicted", {
+              reason: "the session of this instance's last lock was still open at the server; it was ended there",
+            });
+          },
+        }),
         // Never lead on a lock that arrived after its deadline: the attempt has moved on.
         (held) => { void held?.release().catch(() => undefined); },
       ));
@@ -504,6 +517,7 @@ export async function runWorkerSupervised(
     // Past this point a failure is THIS instance's (bad KEK, broken DB schema): fatal, so
     // the platform replaces it.
     lockWon = true;
+    lastLock = lock;
     // The lock is ours and the worker is starting: published as a takeover, as it always was.
     if (state !== "standby") { state = "standby"; standbySince = Date.now(); }
     let started: RunningWorker;

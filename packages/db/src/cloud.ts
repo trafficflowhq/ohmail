@@ -110,7 +110,7 @@ export {
 
 export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
-  writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
+  writeHeartbeat, claimHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
   listStuckSends, listOpenAlerts, listLatestResolvedAlerts,
   selectOpenAlerts, selectLatestResolvedAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
@@ -129,7 +129,7 @@ export {
   type PagerVerdict, type SinkStreakReading, type ApiCronReading,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
   type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
-  type HeartbeatInput, type HeartbeatRefresh, type PostJson, type AtCapAccount,
+  type HeartbeatInput, type HeartbeatRefresh, type HeartbeatLock, type PostJson, type AtCapAccount,
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
