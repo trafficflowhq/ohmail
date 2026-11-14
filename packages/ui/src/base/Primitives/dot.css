@@ -43,12 +43,11 @@
     inset: var(--oh-dot-reach);
   }
 
-  /* Ringing: it knocks, and a ring leaves it once. */
+  /* Ringing: it knocks, and a ring leaves it once (the base sheet's ring). */
   .oh-dot[data-ringing] {
     --oh-dot-ringout: 0 0 0 3px var(--hot);
-    --oh-dot-far: -14px;
     position: relative;
-    animation: oh-dot-knock var(--d-ring) var(--e-knock);
+    animation: oh-knock var(--d-ring) var(--e-knock);
   }
   .oh-dot[data-ringing]::before {
     content: "";
@@ -56,32 +55,8 @@
     inset: 0;
     border-radius: inherit;
     box-shadow: var(--oh-dot-ringout);
-    animation: oh-dot-ringout var(--d-ring) var(--e-out) both;
+    animation: oh-ringout var(--d-ring) var(--e-out) both;
     pointer-events: none;
-  }
-  @keyframes oh-dot-knock {
-    0% {
-      transform: scale(1);
-    }
-    18% {
-      transform: scale(0.92);
-    }
-    45% {
-      transform: scale(1.06);
-    }
-    100% {
-      transform: scale(1);
-    }
-  }
-  @keyframes oh-dot-ringout {
-    0% {
-      inset: 0;
-      opacity: 0.9;
-    }
-    100% {
-      inset: var(--oh-dot-far);
-      opacity: 0;
-    }
   }
   :root[data-rm="1"] .oh-dot[data-ringing],
   :root[data-rm="1"] .oh-dot[data-ringing]::before {

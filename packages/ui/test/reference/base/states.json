@@ -323,6 +323,7 @@
         "ohmarchy-dark-desktop"
       ]
     },
+    { "component": "Menu", "state": "groups", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
     {
       "component": "Menu",
       "state": "context",

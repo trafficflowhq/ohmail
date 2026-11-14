@@ -1,10 +1,10 @@
 {
   "shard": {
     "id": "kit-base",
-    "file": "kit-base-ef39f74114ff.9.tar.gz",
-    "revision": 9,
-    "sha256": "853791a3d3fd7f4d1088065af02191518d118348bc88c9f92e6acbee9c52ebdd",
-    "bytes": 8987088,
+    "file": "kit-base-ef39f74114ff.10.tar.gz",
+    "revision": 10,
+    "sha256": "feddec422affc8a04c838bc667b54dd7a4de2ab4de58410a48e8c74536779f66",
+    "bytes": 9029128,
     "urls": []
   },
   "rows": [
@@ -4262,6 +4262,34 @@
       "scene": { "sha256": "234da9665a46ca6b8be7828946838487783fdeaa0e9e7005b884757a0c3340ff" },
       "stateHash": "cfdda6acd6c1d352",
       "source": "b94c58759d08d88e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Menu/groups@ohmarchy-light-desktop",
+      "file": "b673dd6018ab3501",
+      "png": {
+        "sha256": "70b79e886c61e8ba1ebd502d9be099053dd45f508021b2f4fcc760467e43a7d3",
+        "w": 323,
+        "h": 341,
+        "scale": 1
+      },
+      "scene": { "sha256": "d4f835c99410001975456be08efdebe4a95d878d327a0d547d0590966655e7da" },
+      "stateHash": "3d2602ebcf1290fa",
+      "source": "ddb9beac516b1430",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Menu/groups@paper-light-desktop",
+      "file": "b0b812dc86153122",
+      "png": {
+        "sha256": "1370a37c5b385432c6fe9e90c30bb8c2e344146f8cf8086285ab08350cc7dc7b",
+        "w": 317,
+        "h": 416,
+        "scale": 1
+      },
+      "scene": { "sha256": "95b7a1e829ae4db25cdf655c798cfc388d9d909f95e4d93f63d5167a06fe8653" },
+      "stateHash": "3d2602ebcf1290fa",
+      "source": "ddb9beac516b1430",
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {

@@ -43,7 +43,9 @@ export type SheetProps = PaperProps | ReadingProps;
 /**
  * The box a reading column's sheets scroll in, found under `root` (the column itself, or anything around it):
  * for a part that does not draw the column and still walks into the open letter or reads how far it is scrolled.
- * Whoever draws the column takes the same box by `scroller`.
+ * Whoever draws the column takes the same box by `scroller`. `root` holds ONE reading column: under a root that
+ * holds two (a stream's column and a letter's beside it) this answers the first in the page's order, so hand the
+ * section of the column that is meant.
  */
 export function readingScroller(root: ParentNode | null | undefined): HTMLElement | null {
   return root?.querySelector<HTMLElement>("[data-reading-scroll]") ?? null;

@@ -27,6 +27,8 @@
     --oh-layer-jump: 5;
     --oh-layer-over: 40;
     --oh-layer-top: 60;
+    /* How far a ring leaves what rang. */
+    --oh-ringout-far: -14px;
   }
 
   :root[data-touch="1"] {
@@ -127,5 +129,36 @@
 
   .oh-nowrap {
     white-space: nowrap;
+  }
+
+  /* A ring: what rings knocks, and a ring leaves it once. Written here once; a part that rings plays both by name. */
+  @keyframes oh-knock {
+    0% {
+      transform: scale(1);
+    }
+
+    18% {
+      transform: scale(0.92);
+    }
+
+    45% {
+      transform: scale(1.06);
+    }
+
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes oh-ringout {
+    0% {
+      inset: 0;
+      opacity: 0.9;
+    }
+
+    100% {
+      inset: var(--oh-ringout-far);
+      opacity: 0;
+    }
   }
 }

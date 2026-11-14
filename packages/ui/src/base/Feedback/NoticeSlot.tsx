@@ -38,45 +38,49 @@ export function slotOrder(notices: readonly SlotNotice[], front?: string): SlotN
 
 /**
  * Everything that is true at once, in one slot: the first in full, the rest behind one line that
- * lists them. Mail is never pushed down by more than one notice and that line.
+ * lists them. Mail is never pushed down by more than one notice and that line. The first stands at one
+ * place whether others stand behind it or not, so a notice already said is never drawn, and said, again.
  */
 export function NoticeSlot({ place, notices, front, onFront, more, open, onOpen }: NoticeSlotProps) {
   const line = useRef<HTMLButtonElement | null>(null);
   const [first, ...rest] = slotOrder(notices, front);
   if (!first) return null;
-  if (!rest.length) return <Notice {...first} place={place} />;
   return (
-    <div className="oh-noticeslot">
-      <Notice {...first} place={place} />
-      <button
-        ref={line}
-        type="button"
-        className="oh-control oh-button oh-noticeslot-more"
-        data-kind="quiet"
-        data-size="s"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={more.name}
-        onClick={() => onOpen(!open)}
-      >
-        <Dot kind={rest.some((n) => n.hot) ? "hot" : "ink"} />
-        <span>{more.label}</span>
-        <Icon name="down" size={16} />
-      </button>
-      <Menu open={open} onClose={() => onOpen(false)} anchor={line} label={more.name}>
-        {rest.map((n) => (
-          <MenuItem
-            key={n.id}
-            dot={n.hot ? "hot" : "ink"}
-            onPress={() => {
-              onFront(n.id);
-              onOpen(false);
-            }}
+    <div className="oh-noticeslot" data-alone={rest.length ? undefined : ""}>
+      <Notice key={first.id} {...first} place={place} />
+      {rest.length ? (
+        <>
+          <button
+            ref={line}
+            type="button"
+            className="oh-control oh-button oh-noticeslot-more"
+            data-kind="quiet"
+            data-size="s"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label={more.name}
+            onClick={() => onOpen(!open)}
           >
-            {n.title}
-          </MenuItem>
-        ))}
-      </Menu>
+            <Dot kind={rest.some((n) => n.hot) ? "hot" : "ink"} />
+            <span>{more.label}</span>
+            <Icon name="down" size={16} />
+          </button>
+          <Menu open={open} onClose={() => onOpen(false)} anchor={line} label={more.name}>
+            {rest.map((n) => (
+              <MenuItem
+                key={n.id}
+                dot={n.hot ? "hot" : "ink"}
+                onPress={() => {
+                  onFront(n.id);
+                  onOpen(false);
+                }}
+              >
+                {n.title}
+              </MenuItem>
+            ))}
+          </Menu>
+        </>
+      ) : null}
     </div>
   );
 }

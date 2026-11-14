@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import { animate } from "../../motion/motion.js";
+import { useSaidOnArrival } from "../said-on-arrival.js";
 import { Button } from "../Primitives/Button.js";
 import { EndDot } from "../Primitives/EndDot.js";
 import "./report.css";
@@ -13,6 +14,14 @@ interface ReportCommon {
    */
   leaving?: boolean;
   onGone?: () => void;
+  /**
+   * It is being taken away with the keys on it, whatever takes it: its way back was pressed by them, its fade
+   * ran out under them, a newer report took its place, a withdrawn way back took it, or what holds it is itself
+   * leaving (the frame at sign-out). For this one call the keys are still on it, so what holds the report puts
+   * them where the person goes on (a list's row), and looks first that the list is still there; left out, they
+   * fall to the page with it.
+   */
+  onKeysGone?: () => void;
 }
 
 /** A report that it is done, with the one way back; or the answer to a press that was queued or refused. */
@@ -38,12 +47,21 @@ const FADE: Keyframe[] = [{ opacity: 1 }, { opacity: 0 }];
 
 /** It is done, and this is the one place to take it back. */
 export function Report(props: ReportProps) {
-  const { children, leaving, onGone } = props;
+  const { children, leaving, onGone, onKeysGone } = props;
   const el = useRef<HTMLDivElement | null>(null);
   const gone = useRef(onGone);
+  const keysGone = useRef(onKeysGone);
   useLayoutEffect(() => {
     gone.current = onGone;
+    keysGone.current = onKeysGone;
   });
+  /* Taken away: while it still stands in the page, it says whether the keys go with it. */
+  useLayoutEffect(() => {
+    const node = el.current;
+    return () => {
+      if (node?.contains(node.ownerDocument.activeElement)) keysGone.current?.();
+    };
+  }, []);
   useLayoutEffect(() => {
     const node = el.current;
     if (!node) return;
@@ -51,6 +69,8 @@ export function Report(props: ReportProps) {
     else animate(node, "in", { ease: "--e-arrive" });
   }, [leaving]);
   const press = props.kind === "why" ? props.act : props.undo;
+  /* Said when it appears: its words are given to a screen reader once the region stands; its way back at once. */
+  const held = useSaidOnArrival(true) ? true : undefined;
   return (
     <div
       ref={el}
@@ -60,14 +80,14 @@ export function Report(props: ReportProps) {
       data-leaving={leaving ? "" : undefined}
     >
       {props.kind === "why" ? (
-        <p className="oh-text oh-report-why">
+        <p className="oh-text oh-report-why" aria-hidden={held}>
           <b className="oh-report-verdict">
             <EndDot kind="ink">{children}</EndDot>
           </b>{" "}
           {props.why}
         </p>
       ) : (
-        <span className="oh-report-said">
+        <span className="oh-report-said" aria-hidden={held}>
           <EndDot kind="ink">{children}</EndDot>
         </span>
       )}

@@ -1,4 +1,5 @@
 import { Button, EndDot } from "../../base/index.js";
+import { useSaidOnArrival } from "../../base/said-on-arrival.js";
 import "./text-not-kept.css";
 import { WarnRow, type WarnRowProps } from "./WarnRow.js";
 
@@ -43,33 +44,68 @@ export type TextNotKeptProps =
       live?: boolean;
     };
 
-/** A letter whose text is not kept here: what is shown instead, where the text is, and the way to it. */
+/**
+ * A letter whose text is not kept here: what is shown instead, where the text is, and the way to it. Each region
+ * is a part of its own, so a change of kind draws a new region, and its words are said as it appears.
+ */
 export function TextNotKept(props: TextNotKeptProps) {
   if (props.kind === "refused") return <WarnRow way={props.way}>{props.warn}</WarnRow>;
   if (props.kind === "fine")
-    return (
-      <p className="oh-text oh-notkept-fine" role={props.live ? "status" : undefined}>
-        {props.line}
-      </p>
+    return props.live ? (
+      <LiveFine line={props.line} />
+    ) : (
+      <p className="oh-text oh-notkept-fine">{props.line}</p>
     );
-  if (props.kind === "loaded")
-    return (
-      <p className="oh-text oh-notkept-source" role="status">
-        <span>{props.line}</span>
-        {props.more ? (
-          <Button kind="quiet" size="s" onPress={props.more.onPress}>
-            {props.more.label}
-          </Button>
-        ) : null}
-      </p>
-    );
-  const { preview, label, line, warn, act, more, fine } = props;
+  if (props.kind === "loaded") return <LoadedLine {...props} />;
+  return <KeptNotice {...props} />;
+}
+
+/** The fine line that says what is happening now: a region, said when it appears. */
+function LiveFine({ line }: { line: string }) {
+  const held = useSaidOnArrival(true) ? true : undefined;
+  return (
+    <p className="oh-text oh-notkept-fine" role="status">
+      <span aria-hidden={held}>{line}</span>
+    </p>
+  );
+}
+
+/** Where the text shown came from: a region, said when it appears. */
+function LoadedLine({ line, more }: Extract<TextNotKeptProps, { kind: "loaded" }>) {
+  const held = useSaidOnArrival(true) ? true : undefined;
+  return (
+    <p className="oh-text oh-notkept-source" role="status">
+      <span aria-hidden={held}>{line}</span>
+      {more ? (
+        <Button kind="quiet" size="s" onPress={more.onPress}>
+          {more.label}
+        </Button>
+      ) : null}
+    </p>
+  );
+}
+
+/** Where the text is and the way to it, under the letter's preview: a region, said when it appears. */
+function KeptNotice({
+  preview,
+  label,
+  line,
+  warn,
+  act,
+  more,
+  fine,
+}: Extract<TextNotKeptProps, { kind: "kept" }>) {
+  const held = useSaidOnArrival(true) ? true : undefined;
   const notice = (
     <div className="oh-notkept" role="status" aria-busy={act?.busy || undefined}>
-      <p className="oh-text oh-display oh-notkept-label">
+      <p className="oh-text oh-display oh-notkept-label" aria-hidden={held}>
         <EndDot kind="ink">{label}</EndDot>
       </p>
-      {line ? <p className="oh-text oh-notkept-line">{line}</p> : null}
+      {line ? (
+        <p className="oh-text oh-notkept-line" aria-hidden={held}>
+          {line}
+        </p>
+      ) : null}
       {warn ? <WarnRow>{warn}</WarnRow> : null}
       {act || more ? (
         <div className="oh-notkept-acts">
@@ -85,7 +121,11 @@ export function TextNotKept(props: TextNotKeptProps) {
           ) : null}
         </div>
       ) : null}
-      {fine ? <p className="oh-text oh-notkept-fine">{fine}</p> : null}
+      {fine ? (
+        <p className="oh-text oh-notkept-fine" aria-hidden={held}>
+          {fine}
+        </p>
+      ) : null}
     </div>
   );
   if (!preview) return notice;

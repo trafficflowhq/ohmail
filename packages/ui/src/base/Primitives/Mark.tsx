@@ -1,5 +1,4 @@
-import { useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Dot } from "./Dot.js";
 import "./mark.css";
 
@@ -20,13 +19,16 @@ export interface MarkProps {
 /** The product's mark: its letters and its full stop, as large as the face sets a mark. What holds it places it. */
 export function Mark({ children, hot, bell, ringing }: MarkProps) {
   const own = useRef<HTMLParagraphElement>(null);
-  /* Whether a press rang it; until the first press it rings as it is told. */
+  /* Whether a press rang it; until the first press it rings as it is told. `false`: a press let the ring go. */
   const [rung, setRung] = useState<boolean | null>(null);
-  const ring = () => {
-    /* The ring that was playing is let go and seen gone, so that this press is played from its start. */
-    flushSync(() => setRung(false));
+  /* The ring that was playing is let go and seen gone before anything is painted, so that a press is played from its start. */
+  useLayoutEffect(() => {
+    if (rung !== false) return;
     void own.current?.offsetWidth;
     setRung(true);
+  }, [rung]);
+  const ring = () => {
+    setRung(false);
     bell?.onRing?.();
   };
   return (

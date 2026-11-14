@@ -1,4 +1,5 @@
 import { EndDot } from "../Primitives/EndDot.js";
+import { useSaidOnArrival } from "../said-on-arrival.js";
 import "./opening.css";
 import { RowsShape } from "./RowsShape.js";
 import { Bar } from "./shape-bar.js";
@@ -15,13 +16,23 @@ const MENU = [[58, 46, 52], [44], [56, 38, 50], [48, 40, 44, 52]] as const;
 
 /** While the app opens: its own measures as bars, and never a word of mail. No spinner. */
 export function Opening({ kind, status }: OpeningProps) {
+  /* The line appears once the wait has lasted: said by a change inside a region that stands. */
+  const held = useSaidOnArrival(Boolean(status)) ? true : undefined;
   const line = status ? (
     <div className="oh-opening-line" role="status" aria-live="polite">
-      <b className="oh-opening-say">
+      <b className="oh-opening-say" aria-hidden={held}>
         <EndDot kind="hot">{status.label}</EndDot>
       </b>
-      {status.count ? <span className="oh-opening-count">{status.count}</span> : null}
-      {status.note ? <small className="oh-opening-note">{status.note}</small> : null}
+      {status.count ? (
+        <span className="oh-opening-count" aria-hidden={held}>
+          {status.count}
+        </span>
+      ) : null}
+      {status.note ? (
+        <small className="oh-opening-note" aria-hidden={held}>
+          {status.note}
+        </small>
+      ) : null}
     </div>
   ) : null;
   const rows = <RowsShape />;

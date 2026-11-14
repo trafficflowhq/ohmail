@@ -6,6 +6,7 @@ import {
   FolderShelf,
   Rail,
   RailEntry,
+  RailField,
   RailFoot,
   Sheet,
   Switcher,
@@ -187,6 +188,23 @@ export const shell: KitSubject[] = [
     <RailEntry kind="place" icon="pull" busy>
       Pull new mail
     </RailEntry>,
+  ),
+
+  /* The line "New tag" was pressed: the field stands in its place, the keys in it and the pointer still on it. */
+  inRail(
+    "RailField/rest",
+    ".oh-railfield",
+    "var(--rail)",
+    () => (
+      <RailField
+        label="New tag"
+        placeholder="Name a new tag…"
+        hue={60}
+        onCommit={() => {}}
+        onCancel={() => {}}
+      />
+    ),
+    { act: force(".oh-railfield", "hover") },
   ),
 
   {

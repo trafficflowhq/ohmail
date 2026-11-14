@@ -9,9 +9,10 @@ export interface ViewSwitchProps<V extends string> {
   label: string;
   /**
    * The views, each with the key that takes it where the app has one: the kit draws the hint for the eye (a
-   * segment is named by its word alone), the app listens.
+   * segment is named by its word alone), the app listens. `shortcut` is that key in `aria-keyshortcuts`' own
+   * spelling ("2"): said to a screen reader on the segment, never drawn.
    */
-  views: readonly { value: V; label: string; keyHint?: string }[];
+  views: readonly { value: V; label: string; keyHint?: string; shortcut?: string }[];
   /** The view you are in; `null` in a place that is no view. */
   value: V | null;
   onChange?: (view: V) => void;
@@ -69,6 +70,7 @@ export function ViewSwitch<V extends string>({
             type="button"
             className="oh-control oh-seg-item"
             aria-pressed={view.value === value}
+            aria-keyshortcuts={view.shortcut}
             onClick={() => onChange?.(view.value)}
           >
             {view.label}
