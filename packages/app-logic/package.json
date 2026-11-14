@@ -892,6 +892,42 @@
       "node": "./dist/reader/index.js",
       "default": "./src/reader/index.ts"
     },
+    "./reader/attachments": {
+      "types": "./src/reader/attachments.ts",
+      "ohmail-source": "./src/reader/attachments.ts",
+      "node": "./dist/reader/attachments.js",
+      "default": "./src/reader/attachments.ts"
+    },
+    "./reader/doors": {
+      "types": "./src/reader/doors.ts",
+      "ohmail-source": "./src/reader/doors.ts",
+      "node": "./dist/reader/doors.js",
+      "default": "./src/reader/doors.ts"
+    },
+    "./reader/file-retry": {
+      "types": "./src/reader/file-retry.ts",
+      "ohmail-source": "./src/reader/file-retry.ts",
+      "node": "./dist/reader/file-retry.js",
+      "default": "./src/reader/file-retry.ts"
+    },
+    "./reader/files-model": {
+      "types": "./src/reader/files-model.ts",
+      "ohmail-source": "./src/reader/files-model.ts",
+      "node": "./dist/reader/files-model.js",
+      "default": "./src/reader/files-model.ts"
+    },
+    "./reader/letter-seams": {
+      "types": "./src/reader/letter-seams.ts",
+      "ohmail-source": "./src/reader/letter-seams.ts",
+      "node": "./dist/reader/letter-seams.js",
+      "default": "./src/reader/letter-seams.ts"
+    },
+    "./reader/remote-images": {
+      "types": "./src/reader/remote-images.ts",
+      "ohmail-source": "./src/reader/remote-images.ts",
+      "node": "./dist/reader/remote-images.js",
+      "default": "./src/reader/remote-images.ts"
+    },
     "./reading": {
       "types": "./src/reading/index.ts",
       "ohmail-source": "./src/reading/index.ts",

@@ -186,7 +186,7 @@ let closed: boolean;
 let navCalls: string[];
 
 function Harness({ engine, initialId }: { engine: OhmailEngine; initialId: string }) {
-  const chrome = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const chrome = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   const [activeId, setActiveId] = useState(initialId);
   // `includeInlineParts: true` — the overlay must be able to find the id it was opened on, and an
   // inline image is a real clickable tile in the strip. This mirrors `AppShell`'s overlay mount.
@@ -253,7 +253,7 @@ class Boundary extends React.Component<{ children: React.ReactNode }, { err: unk
 }
 
 function ClosingHarness({ engine, initialId }: { engine: OhmailEngine; initialId: string }) {
-  const chrome = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const chrome = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   const [openId, setOpenId] = useState<string | null>(initialId);
   const view = chrome?.itemsOf("m1", { includeInlineParts: true });
   const items = view?.state === "ready" ? view.items : [];

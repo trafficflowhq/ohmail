@@ -16,8 +16,14 @@
  * between the two, the consent wire is asked once, the engine is told one cutline, and a place reads the very row
  * and the very record the one call and the one derivation answered. A place that called for the row itself would be
  * seen: the wire is asked a second time.
+ *
+ * AND THE TWO DOORS OF A LETTER, read by a place as `useDoors()`: one file door and one picture door for the frame's
+ * life, the very same two at every place; no letter loads a picture by itself before the account's own answer has
+ * come; over a host that names no picture wire no picture door stands; an address the file door minted for a
+ * letter is revoked once nobody holds that letter; and a place that holds a letter draws its list and its file as
+ * they land, while the door keeps the letter for it.
  */
-import { createElement as h, useMemo } from "react";
+import { createElement as h, useEffect, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
@@ -27,9 +33,10 @@ import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { useConsentRow } from "@ohmail/app-logic/consent/consent-row";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { letterPictures, useDoors, type Doors } from "@ohmail/app-logic/reader";
 import { usePresentedMirror } from "@ohmail/app-logic/reading";
 import { PLACE_IDS, useFrame, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
-import { NONE } from "@ohmail/app/host";
+import { NONE, type ImageWire, type None } from "@ohmail/app/host";
 import { MailGround } from "@ohmail/app/mail";
 import { TextProvider } from "@ohmail/app/text";
 import en from "../../messages/en.json";
@@ -137,8 +144,8 @@ vi.mock("../../app/shell/shell-compose", async (load) => {
   };
 });
 
-vi.mock("../../app/shell/attachments", async (load) => {
-  const real = await load<typeof import("../../app/shell/attachments")>();
+vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
   const { useEffect } = await import("react");
   return {
     ...real,
@@ -156,8 +163,8 @@ vi.mock("../../app/shell/attachments", async (load) => {
   };
 });
 
-vi.mock("../../app/shell/remote-images", async (load) => {
-  const real = await load<typeof import("../../app/shell/remote-images")>();
+vi.mock("@ohmail/app-logic/reader/remote-images", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/reader/remote-images")>();
   const { useEffect } = await import("react");
   return {
     ...real,
@@ -407,28 +414,37 @@ let parts: Awaited<ReturnType<typeof loaded>> | null = null;
  * composition above them: the old shell makes every call and fills the ground's contexts.
  */
 type Caller = "ground" | "shell";
-function Stood({ caller, engine, places, consent }: { caller: Caller; engine: OhmailEngine; places: Places; consent: ConsentTransport }) {
+function Stood({ caller, engine, places, consent, images }: {
+  caller: Caller; engine: OhmailEngine; places: Places; consent: ConsentTransport; images?: ImageWire | None;
+}) {
   const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
   const frame = useTodaysSupplies(NONE);
   const host = useMemo(() => {
-    const inputs = { demo: false, engine, consentTransport: consent, mailboxFacts: ownFacts };
+    /* The picture wire only where a case hands one (or says none): every other case mounts as it always did. */
+    const inputs = {
+      demo: false, engine, consentTransport: consent, mailboxFacts: ownFacts, ...(images === undefined ? {} : { imageWire: images }),
+    };
     if (caller === "shell") {
       return hostFromTodaysInputs(inputs, engine, { ...frame, places: { ...frame.places, ...places } as FramePlaces }, NONE);
     }
     const only = { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ...places } as unknown as FramePlaces;
     const made = hostFromTodaysInputs(inputs, engine, { ...frame, places: only }, NONE);
     return { ...made, features: { ...made.features, places: only, above: MailGround } };
-  }, [caller, engine, frame, places, consent]);
+  }, [caller, engine, frame, places, consent, images]);
   return h(TodaysFrame, { host, todays: NO_TODAYS });
 }
-async function stand(caller: Caller, engine: OhmailEngine, places: Places): Promise<void> {
+async function stand(
+  caller: Caller, engine: OhmailEngine, places: Places,
+  hands: { consent?: ConsentTransport; images?: ImageWire | None } = {},
+): Promise<void> {
   parts ??= await loaded();
   const { ThemeProvider, ToastHost, EngineProvider } = parts;
   window.location.hash = FIRST;
   const tree = h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", now: NOW } as never,
     h(TextProvider, { locale: "en", messages: en as never, timeZone: "UTC" } as never,
       h(ThemeProvider as never, null, h(ToastHost as never, null,
-        h(EngineProvider, { demo: false, engine } as never, h(Stood, { caller, engine, places, consent: answering() }))))));
+        h(EngineProvider, { demo: false, engine } as never,
+          h(Stood, { caller, engine, places, consent: hands.consent ?? answering(), images: hands.images }))))));
   const container = document.createElement("div");
   document.body.appendChild(container);
   stood = createRoot(container);
@@ -501,5 +517,215 @@ describe.each([
        place's pane twice at its mount, so its second caller asks twice). */
     expect(seen.live.consentRow, "the rows that stand in one frame").toBe(2);
     expect(seen.asks, "the asks one frame made of its consent wire").toBeGreaterThan(1);
+  }, 60_000);
+});
+
+/** What a place reads of the two doors, kept per render, as a seat reads them. */
+const doorsRead: Array<{ at: string; doors: Doors }> = [];
+const doorsAt = (name: string): Doors => [...doorsRead].reverse().find((r) => r.at === name)!.doors;
+function readingTheDoorsAt(name: string, holding?: string) {
+  return function ReadsTheDoors() {
+    const doors = useDoors();
+    doorsRead.push({ at: name, doors });
+    /* As the reader's files do: the letter's list is held while this place draws it, and let go when it leaves. */
+    const hold = holding === undefined ? undefined : doors.files?.hold;
+    useEffect(() => hold?.(holding!), [hold]);
+    return h("section", { "aria-label": name });
+  };
+}
+const doorPlaces = (holding?: string): Places => ({
+  news: { id: "news", body: "reads-the-doors-1", rail: null, panes: { kind: "wide", Wide: readingTheDoorsAt("the first place", holding) } },
+  receipts: { id: "receipts", body: "reads-the-doors-2", rail: null, panes: { kind: "wide", Wide: readingTheDoorsAt("the second place") } },
+});
+
+/** A host's picture wire that counts what it is asked. */
+const PIPE = { fetch: vi.fn(async () => null), record: vi.fn(async () => undefined) };
+/** The account's answer on pictures, held until the case lets it go. */
+function heldAnswer(): { consent: ConsentTransport; answer: () => void } {
+  let answer!: () => void;
+  const held = new Promise<unknown>((r) => {
+    answer = () => r({ seedConfirmedAt: "2026-09-01T00:00:00.000Z", dormancyDays: 45, blockRemoteImagesAt: null });
+  });
+  return { consent: { foldersStorable: false, state: () => held } as unknown as ConsentTransport, answer };
+}
+const loadsByItself = (doors: Doors): boolean =>
+  letterPictures({ id: "m1" }, false, doors.pictures ?? "none", "none", true, true).remoteLoaded;
+
+/** One file on the letter, as an engine that opens files lists and fetches it. */
+const FILE = { id: "a1", filename: "report.pdf", contentType: "application/pdf", sizeBytes: 4, inline: false, messageId: "m1" };
+function opensFiles(engine: OhmailEngine): OhmailEngine {
+  Object.assign((engine as unknown as { adapter: object }).adapter, {
+    listAttachments: async () => [FILE],
+    fetchAttachment: async () => new Blob(["file"], { type: "application/pdf" }),
+  });
+  return engine;
+}
+
+/** A place that does what the reader's files do: hold the letter while it draws it, and draw its list as it stands. */
+function DrawsTheFiles() {
+  const doors = useDoors();
+  doorsRead.push({ at: "the files", doors });
+  const hold = doors.files?.hold;
+  useEffect(() => hold?.("m1"), [hold]);
+  const list = doors.files?.itemsOf("m1", { includeInlineParts: true });
+  const said =
+    list === undefined
+      ? "no file door"
+      : list.state === "ready"
+        ? `drawn: ${list.items.map((i) => `${i.filename} ${i.state}`).join(", ")}`
+        : `drawn: ${list.state}`;
+  return h("section", { "aria-label": "the files" }, said);
+}
+const drawsPlaces: Places = {
+  news: { id: "news", body: "draws-the-files", rail: null, panes: { kind: "wide", Wide: DrawsTheFiles } },
+  receipts: { id: "receipts", body: "reads-the-doors-2", rail: null, panes: { kind: "wide", Wide: readingTheDoorsAt("the second place") } },
+};
+const drawn = (): string => screen.queryByRole("region", { name: "the files" })?.textContent ?? "(no region)";
+
+describe.each([
+  ["a host that hands the mail ground", "ground"],
+  ["the old shell, filling the ground's contexts", "shell"],
+] as const)("the two doors of a letter over %s", (_, caller) => {
+  const minted: string[] = [];
+  const revoked: string[] = [];
+  const browsers = { mint: URL.createObjectURL, revoke: URL.revokeObjectURL };
+  beforeEach(() => {
+    setup();
+    doorsRead.length = 0;
+    PIPE.fetch.mockClear();
+    PIPE.record.mockClear();
+    minted.length = 0;
+    revoked.length = 0;
+    URL.createObjectURL = () => `blob:the-file-door/${minted.push("")}`;
+    URL.revokeObjectURL = (address: string) => void revoked.push(address);
+  });
+  afterEach(async () => {
+    if (stood) await act(async () => { stood!.unmount(); });
+    stood = null;
+    URL.createObjectURL = browsers.mint;
+    URL.revokeObjectURL = browsers.revoke;
+    await teardown();
+  });
+
+  it("one file door and one picture door stand for the frame's life, and every place reads the very same two", async () => {
+    const engine = opensFiles(engineOver(await storeWith([msg("m1")])));
+    await stand(caller, engine, doorPlaces(), { images: PIPE });
+    await waitFor(() => at("the first place") && seen.asks > 0, "the first place, the account's answer asked for");
+    await rounds(8);
+    const stands = () => ({ fileDoor: seen.live.fileDoor, pictureDoor: seen.live.pictureDoor });
+    expect(stands(), "as the frame mounted").toEqual({ fileDoor: 1, pictureDoor: 1 });
+    const first = doorsAt("the first place");
+    expect(first.files, "no file door over an engine that opens files").toBeDefined();
+    expect(first.pictures, "no picture door over a host that named a wire").toBeDefined();
+
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    await rounds(8);
+    const second = doorsAt("the second place");
+    expect(second.files, "another place reads another file door").toBe(first.files);
+    expect(second.pictures, "another place reads another picture door").toBe(first.pictures);
+
+    await visit(FIRST);
+    await waitFor(() => at("the first place"), "the first place again");
+    await rounds(8);
+    expect(stands(), "after the walk").toEqual({ fileDoor: 1, pictureDoor: 1 });
+    expect({ fileDoor: seen.mounts.fileDoor, pictureDoor: seen.mounts.pictureDoor }, "mounted over the walk").toEqual({ fileDoor: 1, pictureDoor: 1 });
+  }, 60_000);
+
+  it("no letter loads a picture by itself before the account's own answer has come, and the wire is asked nothing", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    const { consent, answer } = heldAnswer();
+    await stand(caller, engine, doorPlaces(), { images: PIPE, consent });
+    await waitFor(() => at("the first place"), "the first place");
+    await rounds(8);
+    const before = doorsAt("the first place");
+    expect(before.pictures, "the picture door over a host that named a wire").toBeDefined();
+    expect(loadsByItself(before), "a letter loaded its pictures before the account had answered").toBe(false);
+    expect(PIPE.fetch, "a picture was fetched before the account had answered").not.toHaveBeenCalled();
+    expect(PIPE.record, "a press was recorded that nobody made").not.toHaveBeenCalled();
+
+    await act(async () => { answer(); });
+    await waitFor(() => loadsByItself(doorsAt("the first place")), "pictures load by the account's own answer");
+    expect(PIPE.record, "a press was recorded that nobody made").not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("over a host that names no picture wire no picture door stands, whatever the account answers", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    const { consent, answer } = heldAnswer();
+    await stand(caller, engine, doorPlaces(), { images: NONE, consent });
+    await waitFor(() => at("the first place"), "the first place");
+    await act(async () => { answer(); });
+    await rounds(8);
+    expect(doorsAt("the first place").pictures, "a picture door stood over a host that named no wire").toBeUndefined();
+    expect(loadsByItself(doorsAt("the first place"))).toBe(false);
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    expect(doorsAt("the second place").pictures).toBeUndefined();
+  }, 60_000);
+
+  it("an address the file door minted for a letter is revoked once nobody holds that letter", async () => {
+    const engine = opensFiles(engineOver(await storeWith([msg("m1")])));
+    await stand(caller, engine, doorPlaces("m1"));
+    await waitFor(() => at("the first place"), "the first place");
+    const files = () => doorsAt("the first place").files!;
+    const file = () => {
+      const list = files().itemsOf("m1");
+      return list.state === "ready" ? list.items[0] : undefined;
+    };
+    await waitFor(() => file()?.state === "idle", "the held letter's list");
+    await act(async () => { files().ensure("m1", "a1"); });
+    await waitFor(() => file()?.state === "ready", "the file's bytes, held by the door");
+    const address = file()!.objectUrl;
+    expect(address, "the door minted no address for the bytes it holds").toBe("blob:the-file-door/1");
+    expect(revoked, "revoked while the letter is still held").toEqual([]);
+
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    await waitFor(() => revoked.includes(address!), "the address is revoked once the letter is let go");
+  }, 60_000);
+
+  it("a place that holds a letter draws its list once the list lands, and its file once the bytes land", async () => {
+    const engine = opensFiles(engineOver(await storeWith([msg("m1")])));
+    await stand(caller, engine, drawsPlaces);
+    await waitFor(() => at("the files"), "the place that draws the files");
+    const files = () => doorsAt("the files").files!;
+    const engineSays = () => {
+      const list = files().itemsOf("m1", { includeInlineParts: true });
+      return list.state === "ready" ? `drawn: ${list.items.map((i) => `${i.filename} ${i.state}`).join(", ")}` : `drawn: ${list.state}`;
+    };
+    await waitFor(() => engineSays() === "drawn: report.pdf idle", "the engine holds the letter's list");
+    await rounds(8);
+    const afterList = { engine: engineSays(), page: drawn() };
+    await act(async () => { files().ensure("m1", "a1"); });
+    await waitFor(() => engineSays() === "drawn: report.pdf ready", "the engine holds the file's bytes");
+    await rounds(8);
+    const afterBytes = { engine: engineSays(), page: drawn() };
+    expect({ afterList, afterBytes }, "what the page draws beside what the door holds").toEqual({
+      afterList: { engine: "drawn: report.pdf idle", page: "drawn: report.pdf idle" },
+      afterBytes: { engine: "drawn: report.pdf ready", page: "drawn: report.pdf ready" },
+    });
+  }, 60_000);
+
+  it("while a place draws a letter's list and its file, the door keeps the letter: nothing is let go and asked for again", async () => {
+    const engine = opensFiles(engineOver(await storeWith([msg("m1")])));
+    const letGo: string[] = [];
+    const release = engine.releaseAttachments.bind(engine);
+    engine.releaseAttachments = (messageId, opts) => {
+      letGo.push(messageId);
+      release(messageId, opts);
+    };
+    await stand(caller, engine, drawsPlaces);
+    await waitFor(() => at("the files"), "the place that draws the files");
+    const files = () => doorsAt("the files").files!;
+    const file = () => {
+      const list = files().itemsOf("m1");
+      return list.state === "ready" ? list.items[0]?.state : list.state;
+    };
+    await waitFor(() => file() === "idle", "the held letter's list");
+    letGo.length = 0;
+    await act(async () => { files().ensure("m1", "a1"); });
+    await waitFor(() => file() === "ready", "the file's bytes, held by the door");
+    await rounds(8);
+    expect({ letGo, revoked }, "the letter was let go while a place still drew it").toEqual({ letGo: [], revoked: [] });
   }, 60_000);
 });

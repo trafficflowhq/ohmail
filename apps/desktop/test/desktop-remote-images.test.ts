@@ -270,11 +270,14 @@ function tauriProxyFor(id: string): (url: string) => string {
   return tauriProxies.get(id)!;
 }
 
+/** The desktop's two wires as its host hands them: one pipe. */
+const DESKTOP_PIPE = { fetch: localImageWire, record: localLoadRemote };
+
 /** `MessagePane`'s lines for one held letter, over the desktop's wires. */
 function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string[]; notices: (string | null)[]; html: string }) {
   const real = useRemoteImages({
     onFailed: (sentence) => { failed.push(sentence); }, mode: "auto", loadPixels: false,
-    fetchImage: localImageWire, recordRemote: localLoadRemote,
+    wire: DESKTOP_PIPE,
   });
   const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
   const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);

@@ -249,7 +249,7 @@ async function mountSurface(shape: InviteShape, surface: "card" | "screener"): P
       from: "Ada Organizer", subject: message.subject, body: shape.text,
     } as never);
   function WithSeam() {
-    const attachments = useMessageAttachments(engine, null, { conversationOf: () => [], onDownloadAllFailed: () => {} });
+    const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: () => [], onDownloadAllFailed: () => {} });
     return h(MessageChromeProvider as never, {
       value: {
         ownAddresses: ["mila@example.test"], absoluteTime: false, onToggleAbsoluteTime: () => {},

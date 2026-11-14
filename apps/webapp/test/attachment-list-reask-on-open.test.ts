@@ -56,7 +56,7 @@ function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
 
 /** `AppShell`'s own wiring: one hook, the OPEN message's id, `null` when nothing is open. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string | null }) {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments && messageId
     ? h(AttachmentStrip, {
         items: attachments.itemsOf(messageId),

@@ -843,6 +843,14 @@ packages/app-logic/src/press/shell-dispatch.ts	prettier	1	lift-a
 packages/app-logic/src/press/subject-rule.ts	max-lines	1	lift-a
 packages/app-logic/src/press/subject-rule.ts	prettier	1	lift-a
 packages/app-logic/src/press/undo-door.ts	prettier	1	lift-a
+packages/app-logic/src/reader/attachments.ts	max-lines	1	ruling:composition-lift
+packages/app-logic/src/reader/attachments.ts	max-lines-per-function	1	ruling:composition-lift
+packages/app-logic/src/reader/attachments.ts	no-restricted-globals	4	ruling:composition-lift
+packages/app-logic/src/reader/attachments.ts	prettier	1	ruling:composition-lift
+packages/app-logic/src/reader/attachments.ts	react-hooks/exhaustive-deps	2	ruling:composition-lift
+packages/app-logic/src/reader/remote-images.ts	max-lines-per-function	1	ruling:composition-lift
+packages/app-logic/src/reader/remote-images.ts	no-restricted-globals	1	ruling:composition-lift
+packages/app-logic/src/reader/remote-images.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/reading/conversation-on-screen.ts	prettier	1	lift-a
 packages/app-logic/src/reading/live-body.ts	prettier	1	lift-a
 packages/app-logic/src/reading/ohbox-visit.ts	no-restricted-globals	5	lift-a

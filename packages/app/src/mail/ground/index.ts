@@ -3,5 +3,6 @@
  * `MailGround` itself. A place never imports this door.
  */
 export { ConsentMount } from "./ConsentMount.js";
+export { DoorsMount } from "./DoorsMount.js";
 export { MailStateHost, MailStateMount } from "./MailStateMount.js";
 export { PresentedMount } from "./PresentedMount.js";

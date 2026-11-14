@@ -119,6 +119,8 @@ export function fakeMail(
     receivedMessages: () => 0,
     freshness: () => COPY_AGE_UNKNOWN,
     sentFolderAsks: () => 0,
+    /* It opens no file: the ground's file door stands over it as no door. */
+    attachmentsAvailable: () => false,
     setCutline: (cutline: unknown) => {
       told.cutlines.push(cutline);
     },

@@ -12,25 +12,44 @@
  * refuses, nothing of it is mounted and no wire is asked; one account's remembered answer is never read under
  * another; over a host with no consent wire pictures stay on the per-letter press; and a reader outside its provider
  * throws its own sentence, never an empty answer.
+ *
+ * And the two doors of a letter, mounted by the ground: over a host that names no picture wire no picture door
+ * stands; over one that does, no letter loads a picture by itself before the consent row's live answer; over an
+ * engine that opens no file no file door stands. The pixel switch the ground hands the picture door is the row's own,
+ * and a picture's address is minted only while the window may read for its engine's account. A press of Show images
+ * made under one scope is never read under another.
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Component, Profiler, useEffect, type ReactNode } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Component, Profiler, useEffect, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { useMailState } from "@ohmail/app-logic/mail-state";
+import { letterPictures, useDoors } from "@ohmail/app-logic/reader";
 import { armDeleteIntent } from "@ohmail/app-logic/press/delete-intents";
 import type { ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { usePresented, usePresentedMirror } from "@ohmail/app-logic/reading";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
-import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
+import {
+  createSyncGate,
+  registerSyncGate,
+  type SyncGate,
+  type SyncIdentity,
+} from "@ohmail/app-logic/session/sync-scheduler";
 import type { FramePlaces, PlaceEntry } from "../../src/frame/contract.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { usePress, useRoomHolds } from "../../src/frame/room.js";
-import { NONE, type ConsentWire, type HostReads, type None, type ReaderEntry } from "../../src/host/index.js";
-import { ConsentMount, MailStateMount, PresentedMount } from "../../src/mail/ground/index.js";
+import {
+  NONE,
+  type ConsentWire,
+  type HostReads,
+  type ImageWire,
+  type None,
+  type ReaderEntry,
+} from "../../src/host/index.js";
+import { ConsentMount, DoorsMount, MailStateMount, PresentedMount } from "../../src/mail/ground/index.js";
 import { MailGround } from "../../src/mail/index.js";
 import { TextProvider } from "../../src/text/index.js";
 import { KeymapProvider } from "../../src/keys/index.js";
@@ -520,5 +539,272 @@ describe("a reader of the mail ground outside its provider fails closed", () => 
       expect(screen.queryByText("drawn over half a ground")).toBeNull();
       view.unmount();
     }
+  });
+});
+
+describe("the two doors of a letter, mounted by the ground", () => {
+  /** What a place reads of the doors, as a seat does, said of one letter in the reader's own terms. */
+  function ReadsTheDoors() {
+    const doors = useDoors();
+    const { known } = useConsent();
+    const pictures =
+      doors.pictures === undefined
+        ? "no picture door"
+        : letterPictures({ id: "m1" }, false, doors.pictures, "none", true, true).remoteLoaded
+          ? "pictures by themselves"
+          : "pictures on the press";
+    return (
+      <ul>
+        <li>{pictures}</li>
+        <li>{doors.files === undefined ? "no file door" : "a file door"}</li>
+        <li>{known ? "the row is known" : "the row rests"}</li>
+      </ul>
+    );
+  }
+  const overTheDoors = (
+    consent: ConsentWire | None,
+    images: ImageWire | None,
+    above: Over["above"] = MailGround,
+  ) => {
+    const { host } = fakeHost({
+      engine: fakeMail([letter("m1")]).engine,
+      service: "self",
+      scope: SCOPE,
+      places: {
+        ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: ReadsTheDoors } },
+      },
+      reader: READER,
+      above,
+      wires: { consent, images },
+      address: fakeAddress("#/ohbox"),
+    });
+    return (
+      <Thrown>
+        <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+          <Frame host={host} />
+        </TextProvider>
+      </Thrown>
+    );
+  };
+  /** The account says its pictures load by themselves. */
+  const saysAuto = async () => ({ seedConfirmedAt: null, dormancyDays: 45, blockRemoteImagesAt: null });
+  const pipe = () => ({ fetch: vi.fn(async () => null), record: vi.fn(async () => undefined) });
+
+  it("over a host that names no picture wire no picture door stands, whatever the account answers", async () => {
+    const { wire } = consentWire(saysAuto);
+    render(overTheDoors(wire, NONE));
+    expect(screen.getByText("no picture door")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("the row is known")).toBeTruthy());
+    expect(screen.getByText("no picture door")).toBeTruthy();
+    expect(screen.getByText("no file door"), "the fake engine opens no file").toBeTruthy();
+  });
+
+  it("over a wire, no letter loads a picture by itself before the row's live answer, and the wire is asked nothing", async () => {
+    const images = pipe();
+    const { wire } = consentWire(saysAuto);
+    render(overTheDoors(wire, images));
+    expect(screen.getByText("pictures on the press")).toBeTruthy();
+    expect(screen.getByText("the row rests")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("pictures by themselves")).toBeTruthy());
+    expect(images.fetch, "the ground fetched a picture nobody drew").not.toHaveBeenCalled();
+    expect(images.record, "the ground recorded a press nobody made").not.toHaveBeenCalled();
+  });
+
+  it("over a wire and no consent wire, every picture waits for its press", async () => {
+    render(overTheDoors(NONE, pipe()));
+    await settled();
+    expect(screen.getByText("pictures on the press")).toBeTruthy();
+  });
+
+  it("with no ground above the doors' reader throws its own sentence, and the doors' mount alone the consent row's", () => {
+    const none = quietly(() => render(overTheDoors(NONE, NONE, NONE)));
+    expect(screen.getByText("thrown: useDoors: no doors stand above (DoorsContext)")).toBeTruthy();
+    none.unmount();
+    quietly(() => render(overTheDoors(NONE, NONE, DoorsMount)));
+    expect(screen.getByText("thrown: useConsent: no consent row stands above (ConsentContext)")).toBeTruthy();
+  });
+
+  /** What a seat would hand a letter's body for m1, said as words, and a press of Show images. */
+  function ReadsThePictures() {
+    const doors = useDoors();
+    const { known } = useConsent();
+    const pictures = doors.pictures;
+    const inputs =
+      pictures === undefined ? null : letterPictures({ id: "m1" }, false, pictures, "none", true, true);
+    const [minted, setMinted] = useState<string | null>(null);
+    return (
+      <ul>
+        <li>
+          {pictures === undefined ? "no picture door" : `pressed ${pictures.consented("m1") ? "yes" : "no"}`}
+        </li>
+        <li>
+          {inputs === null
+            ? "no inputs"
+            : `loaded ${inputs.remoteLoaded ? "yes" : "no"}, pixels ${inputs.loadTrackingPixels ? "load" : "blocked"}`}
+        </li>
+        <li>{known ? "the row is known" : "the row rests"}</li>
+        <li>{minted === null ? "nothing minted yet" : `minted: [${minted}]`}</li>
+        <li>
+          <button type="button" onClick={() => pictures?.consent("m1")}>
+            Show images of m1
+          </button>
+        </li>
+        <li>
+          <button
+            type="button"
+            onClick={() =>
+              setMinted(
+                pictures === undefined ? "no door" : pictures.proxyFor("m1")("https://images.example/x.png"),
+              )
+            }
+          >
+            Mint an address for m1
+          </button>
+        </li>
+      </ul>
+    );
+  }
+  const overThePictures = (
+    mail: FakeMail,
+    scope: string,
+    consent: ConsentWire | None,
+    images: ImageWire | None,
+  ) => {
+    const { host } = fakeHost({
+      engine: mail.engine,
+      service: "self",
+      scope,
+      places: {
+        ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: ReadsThePictures } },
+      },
+      reader: READER,
+      above: MailGround,
+      wires: { consent, images },
+      address: fakeAddress("#/ohbox"),
+    });
+    return (
+      <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+        <Frame host={host} />
+      </TextProvider>
+    );
+  };
+
+  describe("the ground's pixel switch is the row's own", () => {
+    it("an account that loads pictures and blocks pixels: nothing before its answer, pictures and no pixel after it", async () => {
+      const mail = fakeMail([letter("m1")]);
+      const { wire } = consentWire(async () => ({
+        seedConfirmedAt: null,
+        dormancyDays: 45,
+        blockRemoteImagesAt: null,
+        loadTrackingPixelsAt: null,
+      }));
+      render(overThePictures(mail, SCOPE, wire, pipe()));
+      expect(screen.getByText("loaded no, pixels blocked"), "before the answer").toBeTruthy();
+      await waitFor(() => expect(screen.getByText("the row is known")).toBeTruthy());
+      expect(
+        screen.getByText("loaded yes, pixels blocked"),
+        "a pixel rode the pictures against the account's answer",
+      ).toBeTruthy();
+    });
+
+    it("an account that loads pixels too: they ride the pictures only after its own answer", async () => {
+      const mail = fakeMail([letter("m1")]);
+      const { wire } = consentWire(async () => ({
+        seedConfirmedAt: null,
+        dormancyDays: 45,
+        blockRemoteImagesAt: null,
+        loadTrackingPixelsAt: "2026-01-01T00:00:00.000Z",
+      }));
+      render(overThePictures(mail, SCOPE, wire, pipe()));
+      expect(screen.getByText("loaded no, pixels blocked"), "before the answer").toBeTruthy();
+      await waitFor(() => expect(screen.getByText("the row is known")).toBeTruthy());
+      expect(screen.getByText("loaded yes, pixels load")).toBeTruthy();
+    });
+
+    it("over no consent wire: no picture and no pixel by itself", async () => {
+      const mail = fakeMail([letter("m1")]);
+      render(overThePictures(mail, SCOPE, NONE, pipe()));
+      await settled();
+      expect(screen.getByText("loaded no, pixels blocked")).toBeTruthy();
+    });
+  });
+
+  describe("the ground's picture door and the account boundary", () => {
+    it("a picture's address is minted only while this window may read for the account its engine was opened for", async () => {
+      const mail = fakeMail([letter("m1")]);
+      const said: { identity: SyncIdentity } = { identity: "holds" };
+      registerSyncGate(mail.engine, {
+        owner: SCOPE,
+        guard: (adapter: unknown) => adapter,
+        identity: () => said.identity,
+        confirm() {},
+        onOpen() {},
+        onNeedsConfirm() {},
+        claim() {},
+      } as unknown as SyncGate);
+      const origin = {
+        address: (m: string, u: string) =>
+          `${window.location.origin}/api/img?mid=${m}&u=${encodeURIComponent(u)}`,
+        record: vi.fn(async () => undefined),
+      };
+      render(overThePictures(mail, SCOPE, NONE, origin));
+      fireEvent.click(screen.getByRole("button", { name: "Mint an address for m1" }));
+      expect(
+        screen.getByText(/^minted: \[http.*\/api\/img\?mid=m1/),
+        "no address while the window may read",
+      ).toBeTruthy();
+      said.identity = "contradicted";
+      await settled();
+      fireEvent.click(screen.getByRole("button", { name: "Mint an address for m1" }));
+      expect(
+        screen.getByText("minted: []"),
+        "an address was minted while another account holds the window",
+      ).toBeTruthy();
+    });
+  });
+
+  describe("the ground's picture door and the scope", () => {
+    it("a press of Show images made under scope A is not read under scope B, and B's press is B's alone", async () => {
+      const mail = fakeMail([letter("m1")]);
+      const images = pipe();
+      const { rerender } = render(overThePictures(mail, "acct-a", NONE, images));
+      expect(screen.getByText("pressed no")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Show images of m1" }));
+      await waitFor(() => expect(screen.getByText("pressed yes")).toBeTruthy());
+      expect(screen.getByText("loaded yes, pixels blocked")).toBeTruthy();
+      expect(images.record.mock.calls, "the press under A").toEqual([["m1"]]);
+
+      rerender(overThePictures(mail, "acct-b", NONE, images));
+      await settled();
+      expect(screen.getByText("pressed no"), "B read the press A made").toBeTruthy();
+      expect(screen.getByText("loaded no, pixels blocked"), "B's letter loaded by A's press").toBeTruthy();
+      expect(images.fetch, "a picture was fetched under B").not.toHaveBeenCalled();
+      expect(images.record.mock.calls, "a press was recorded under B that nobody made there").toEqual([
+        ["m1"],
+      ]);
+    });
+
+    it("two frames of two scopes in one page: a press in A is A's alone", async () => {
+      const a = pipe();
+      const b = pipe();
+      render(
+        <>
+          <section aria-label="frame a">
+            {overThePictures(fakeMail([letter("m1")]), "acct-a", NONE, a)}
+          </section>
+          <section aria-label="frame b">
+            {overThePictures(fakeMail([letter("m1")]), "acct-b", NONE, b)}
+          </section>
+        </>,
+      );
+      const inA = within(screen.getByRole("region", { name: "frame a" }));
+      const inB = within(screen.getByRole("region", { name: "frame b" }));
+      fireEvent.click(inA.getByRole("button", { name: "Show images of m1" }));
+      await waitFor(() => expect(inA.getByText("pressed yes")).toBeTruthy());
+      await settled();
+      expect(inB.getByText("pressed no"), "frame B read the press made in frame A").toBeTruthy();
+      expect(inB.getByText("loaded no, pixels blocked")).toBeTruthy();
+      expect({ a: a.record.mock.calls, b: b.record.mock.calls }).toEqual({ a: [["m1"]], b: [] });
+    });
   });
 });

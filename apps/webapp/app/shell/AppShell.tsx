@@ -88,6 +88,7 @@ import { MessageGone, MessagePane, type BulkAction, type MessageAction } from ".
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
+import { desktopFileShell } from "./open-attachment";
 import { askAnew, conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 import { useRemoteImages, type ImageDoor } from "./remote-images";
 import { NONE } from "@ohmail/app/host";
@@ -1229,6 +1230,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     onUnshown: (id) => setPreviewFor((p) => (p?.messageId === id ? null : p)),
     onSaveRefused: (why, count) =>
       toast(why === "no-downloads-folder" ? t("ohbox.toastSaveNoDownloads") : t("ohbox.toastSaveRefused", { count })),
+    // The host's shell that saves by id: the desktop's where its window armed it, none in a browser.
+    shell: desktopFileShell(),
   });
 
   /*
@@ -1256,12 +1259,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     mayRead: mayReadOlderBody,
     onFailed: (message) => toast(message),
     mode: consent.blockRemoteImages ? "manual" : "auto",
-    /* THE PIPE-DOOR'S FETCHER. Supplied only by a shell whose engine has no origin a `src` can
-       name (the desktop); absent here means the hosted mechanism, unchanged. It is what turns
-       `apiConfigured()` from the question "can this client show a picture" into one of two
-       ways of answering it. Its press goes down the same pipe: that door's Cloud client refuses. */
-    fetchImage: imageWire?.fetch,
-    recordRemote: imageWire?.record,
+    /* THE HOST'S PICTURE WIRE, or none. A shell whose engine has no origin a `src` can name (the
+       desktop) hands a pipe; a browser hands its own origin's proxy; a host that named none gets no
+       picture door at all. The door itself can reach no server. */
+    wire: imageWire ?? NONE,
     // The pixel switch rides the same hook for the same reason `mode` does: the Settings row and
     // the open message read one `useConsentState`, so flipping it re-sanitizes what is on screen.
     // `blockTrackingPixels` rests TRUE, so every unknown arrives as "do not load".
@@ -2659,7 +2660,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           composition's own consent row, partition and presented mirror (the one today's lists read, and the reader
           draws from); the reader's parts' feed; and the Ohbox's feed: today's inputs at the mount of the Ohbox, as
           this composition computes them. No hook is called a second time for a place. */}
-      <TodaysGround consent={consent} partition={mailPartition} presented={presented}>
+      <TodaysGround consent={consent} partition={mailPartition} presented={presented} files={attachments} pictures={remoteImages}>
       <TodaysReaderFed.Provider value={readerFed}>
       <TodaysOhboxFed.Provider
         value={{
