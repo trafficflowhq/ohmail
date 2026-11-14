@@ -1,14 +1,15 @@
 // @services: none — plants trees and git repositories, and reads this one's files
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  DIRECT_BASES, MAX_SHARDS, TARGET_S, WHOLE_SHARE, areaOf, composeOutputs, decideScope, deferredLog, directBase, directSet,
-  eventWhole, namedPaths, packFiles, parseNameStatus, planProblems, readerHits, readersOf, select, setupClosure, sourceEntries,
-  stripComments, summaryText, versionOnly, vitestGraph, type Ctx, type GraphOptions, type Plan,
+  DIRECT_BASES, MAX_SHARDS, TARGET_S, WHOLE_SHARE, admittedLock, admittedManifest, admittedTsconfig, admittedVitestAlias, areaOf,
+  composeOutputs, decideScope, deferredLog, directBase, directSet, eventWhole, namedPaths, packFiles, parseNameStatus, pathTriggers,
+  planProblems, readerHits, readersOf, relatedInputs, select, setupClosure, sourceEntries, stripComments, summaryText, versionOnly,
+  vitestGraph, type Ctx, type GraphOptions, type Plan, type Tree,
 } from "../.github/scripts/ci-select.mjs";
 import { testFiles } from "./support/ci-shards.mjs";
 import { relativeImports } from "./support/service-needs.mjs";
@@ -18,8 +19,9 @@ import { relativeImports } from "./support/service-needs.mjs";
  * test files its diff can reach; the nightly, dispatch, a batch branch, a fork, a bot and a harness change
  * run the whole suite, and so does any fault of the selector. Each rule is held on a planted tree or
  * repository, and the reader rules on this tree's own censuses. A pull request into next runs the direct
- * set and names what it leaves to the whole run on next; test/fixtures/ci-select-history holds the changed
- * paths of the last landed pull requests, which both bases plan here.
+ * set and names what it leaves to the whole run on next, a harness change that only adds a package's lines
+ * among it; test/fixtures/ci-select-history holds the changed paths of the last pull requests (README.md
+ * there), which both bases plan here.
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SELECT = join(ROOT, ".github/scripts/ci-select.mjs");
@@ -47,6 +49,35 @@ const pr = (over: Record<string, unknown> = {}, top: Partial<Ctx> = {}): Ctx => 
   ...top,
 });
 const M = (p: string) => ({ s: "M", p });
+
+/** A planted pull request: a base commit, a head commit (its files written over the base's, `gone` removed),
+ *  and the merge GitHub checks out. */
+const plantPr = (base: Record<string, string>, head: Record<string, string>, gone: string[] = []) => {
+  const dir = plantTree(base);
+  const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" }).trim();
+  g("init", "-q", "-b", "main");
+  g("add", "-A");
+  g("commit", "-q", "-m", "base");
+  g("checkout", "-q", "-b", "pr/x");
+  for (const [rel, text] of Object.entries(head)) {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), text);
+  }
+  for (const rel of gone) rmSync(join(dir, rel));
+  g("add", "-A");
+  g("commit", "-q", "-m", "head");
+  const headSha = g("rev-parse", "HEAD");
+  g("checkout", "-q", "main");
+  g("merge", "-q", "--no-ff", "-m", "merge", "pr/x");
+  return { dir, headSha };
+};
+/** The event of a planted pull request into `base`. */
+const merged = (sha: string, base = "main") => pr({ number: 811, base: { ref: base }, head: { ref: "pr/x", repo: { full_name: "trafficflowhq/ohmail" }, sha } });
+/** One side of a pull request as a map of its files; `dirs` are the apps and packages that side holds beside them. */
+const tree = (files: Record<string, string>, dirs: string[] = []): Tree => ({
+  read: (p) => files[p] ?? null,
+  exists: (p) => dirs.includes(p) || Object.keys(files).some((f) => f.startsWith(`${p}/`)),
+});
 
 describe("the scope: who runs the whole suite", () => {
   it("selects for a maintainer's pr/ branch, and runs every other run whole with its reason", () => {
@@ -170,25 +201,6 @@ describe("the scope: the paths that make a pull request whole", () => {
     expect(whole("test/dovecot/dovecot.conf")).toMatchObject({ scope: "selected", sqliteWhole: false, dovecotAll: true });
   });
 
-  /** A planted pull request: a base commit, a head commit, and the merge GitHub checks out. */
-  const plantPr = (base: Record<string, string>, head: Record<string, string>) => {
-    const dir = plantTree(base);
-    const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" }).trim();
-    g("init", "-q", "-b", "main");
-    g("add", "-A");
-    g("commit", "-q", "-m", "base");
-    g("checkout", "-q", "-b", "pr/x");
-    for (const [rel, text] of Object.entries(head)) {
-      mkdirSync(dirname(join(dir, rel)), { recursive: true });
-      writeFileSync(join(dir, rel), text);
-    }
-    g("add", "-A");
-    g("commit", "-q", "-m", "head");
-    const headSha = g("rev-parse", "HEAD");
-    g("checkout", "-q", "main");
-    g("merge", "-q", "--no-ff", "-m", "merge", "pr/x");
-    return { dir, headSha };
-  };
   const manifest = (version: string, deps: Record<string, string>) => `${JSON.stringify({ name: "p", version, dependencies: deps }, null, 2)}\n`;
   const lock = (version: string, dep: string) => `${JSON.stringify({
     name: "p", version, lockfileVersion: 3, packages: {
@@ -200,7 +212,7 @@ describe("the scope: the paths that make a pull request whole", () => {
   it("selects for a version-only manifest and lockfile change, and runs a dependency change whole", () => {
     const base = { "package.json": manifest("1.0.0", { dep: "1.0.0" }), "package-lock.json": lock("1.0.0", "1.0.0"), "packages/w/package.json": manifest("1.0.0", {}) };
     const bump = plantPr(base, { "package.json": manifest("1.1.0", { dep: "1.0.0" }), "package-lock.json": lock("1.1.0", "1.0.0"), "packages/w/package.json": manifest("1.1.0", {}) });
-    const ctx = (sha: string) => pr({ head: { ref: "pr/x", repo: { full_name: "trafficflowhq/ohmail" }, sha } });
+    const ctx = (sha: string) => merged(sha);
     const s = decideScope({ root: bump.dir, ctx: ctx(bump.headSha) });
     expect(s.scope, s.why).toBe("selected");
     expect(s.changes!.map((c) => c.p).sort()).toEqual(["package-lock.json", "package.json", "packages/w/package.json"]);
@@ -682,10 +694,285 @@ describe("the direct set: a pull request into next", () => {
   }, 120_000);
 });
 
-describe("the last landed pull requests, as each base plans them", () => {
+describe("the harness: a pull request into next that only adds a package's lines", () => {
+  type Files = Record<string, string>;
+  type World = { base: Files; head: Files; changes: { s: string; p: string }[]; dirs: string[] };
+  const j = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
+  const [L, R, V, T, B] = ["package-lock.json", "package.json", "vitest.config.ts", "tsconfig.json", "test/tsconfig.test-dirs-base.json"];
+  const [NP, NT, QP, QT, SP] = ["packages/n/package.json", "packages/n/tsconfig.json", "packages/q/package.json", "packages/q/tsconfig.json", "packages/s/package.json"];
+  const config = (aliases: string[], test: string[] = []) => [
+    'import { fileURLToPath } from "node:url";', "const r = (p) => fileURLToPath(new URL(p, import.meta.url));",
+    "export default {", "  resolve: {", "    alias: [", ...aliases.map((a) => `      ${a}`), "    ],", "  },",
+    "  test: {", ...test.map((t) => `    ${t}`), '    include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"],', "  },", "};", "",
+  ].join("\n");
+  const held = ["// A leaf above its package.", '{ find: "@m/p/leaf", replacement: r("./packages/p/src/leaf.ts") },', '{ find: "@m/p", replacement: r("./packages/p/src/index.ts") },'];
+  const added = [
+    "// The new package: a folder's door, the bare name, a leaf.",
+    '{ find: /^@m\\/n\\/([a-z-]+)$/, replacement: `${r("./packages/n/src")}/$1/index.ts` },',
+    '{ find: /^@m\\/n$/, replacement: r("./packages/n/src/index.ts") }, // anchored: a subpath resolves by the package\'s own exports',
+    '{ find: "@m/n/leaf", replacement: r("./packages/n/src/leaf.ts") },',
+  ];
+  const lock = (workspaces: string[], packages: Record<string, unknown>) => j({
+    name: "root", version: "1.0.0", lockfileVersion: 3, requires: true,
+    packages: { "": { name: "root", version: "1.0.0", workspaces, devDependencies: { dep: "1.0.0" } }, ...packages },
+  });
+  const link = (name: string) => ({ [`node_modules/@m/${name}`]: { resolved: `packages/${name}`, link: true } });
+  const dep = { "node_modules/dep": { version: "1.0.0", resolved: "https://registry.example.invalid/dep-1.0.0.tgz", dev: true } };
+  const qTsconfig = (note: string, paths: string, refs: string) => `{\n  /* ${note} */\n  "extends": "../../tsconfig.base.json",\n  "compilerOptions": { "outDir": "dist", "paths": { ${paths} } },\n  "include": ["src"],\n  "references": [${refs}]\n}\n`;
+  /** p, q (which depends on p) and s; the pull request adds n, and q's and s's lines for it. */
+  const world = (): World => ({
+    dirs: ["packages/p", "packages/q", "packages/s"],
+    base: {
+      [L]: lock(["packages/p", "packages/q", "packages/s"], {
+        "packages/p": { name: "@m/p", version: "0.0.0" }, "packages/q": { name: "@m/q", version: "0.0.0", dependencies: { "@m/p": "*" } },
+        "packages/s": { name: "@m/s", version: "0.0.0" }, ...link("p"), ...link("q"), ...link("s"), ...dep,
+      }),
+      [R]: j({ name: "root", version: "1.0.0", workspaces: ["packages/p", "packages/q", "packages/s"], devDependencies: { dep: "1.0.0" } }),
+      [QP]: j({ name: "@m/q", version: "0.0.0", exports: { ".": "./src/index.ts" }, dependencies: { "@m/p": "*" } }),
+      [QT]: qTsconfig("q reads p", '"@m/p": ["../p/src/index.ts"]', '{ "path": "../p" }'),
+      [SP]: j({ name: "@m/s", version: "0.0.0" }),
+      [B]: j({ "//": "the alias table, mirrored", extends: "../tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"] } } }),
+      [T]: j({ files: [], references: [{ path: "./packages/p" }, { path: "./packages/q" }] }),
+      [V]: config(held),
+    },
+    head: {
+      [L]: lock(["packages/p", "packages/q", "packages/s", "packages/n"], {
+        "packages/n": { name: "@m/n", version: "0.0.0" }, "packages/p": { name: "@m/p", version: "0.0.0" },
+        "packages/q": { name: "@m/q", version: "0.0.0", dependencies: { "@m/n": "*", "@m/p": "*" } },
+        "packages/s": { name: "@m/s", version: "0.0.0" }, ...link("n"), ...link("p"), ...link("q"), ...link("s"), ...dep,
+      }),
+      [R]: j({ name: "root", version: "1.0.0", workspaces: ["packages/p", "packages/q", "packages/s", "packages/n"], devDependencies: { dep: "1.0.0" } }),
+      [NP]: j({ name: "@m/n", version: "0.0.0", exports: { ".": "./src/index.ts" } }),
+      "packages/n/src/index.ts": "export const n = 1;\n",
+      "packages/n/test/n.test.ts": 'import { n } from "@m/n";\nexport const got = n;\n',
+      [NT]: j({ extends: "../../tsconfig.base.json", include: ["src"] }),
+      [QP]: j({ name: "@m/q", version: "0.0.0", exports: { ".": "./src/index.ts", "./extra": "./src/extra.ts" }, dependencies: { "@m/n": "*", "@m/p": "*" } }),
+      [QT]: qTsconfig("q reads p and n", '"@m/n": ["../n/src/index.ts"], "@m/p": ["../p/src/index.ts"]', '{ "path": "../n" }, { "path": "../p" }'),
+      [SP]: j({ name: "@m/s", version: "0.0.0", exports: { "./door": "./src/door.ts" } }),
+      [B]: j({ "//": "the alias table, mirrored", extends: "../tsconfig.base.json", compilerOptions: { noEmit: true, paths: { "@m/p": ["../packages/p/src/index.ts"], "@m/n": ["../packages/n/src/index.ts"] } } }),
+      [T]: j({ files: [], references: [{ path: "./packages/p" }, { path: "./packages/n" }, { path: "./packages/q" }] }),
+      [V]: config([...added, ...held]),
+    },
+    changes: [M(L), M(R), { s: "A", p: NP }, { s: "A", p: "packages/n/src/index.ts" }, { s: "A", p: "packages/n/test/n.test.ts" }, { s: "A", p: NT }, M(QP), M(QT), M(SP), M(B), M(T), M(V)],
+  });
+  const names = new Map([["@m/n", "packages/n"]]);
+  const areas = new Set(["packages/n"]);
+  const intoNext = pr({ base: { ref: "next" } });
+  const bare = plantTree({ "a.txt": "a\n" });
+  /** What each harness path of that pull request added, in the diff's order. */
+  const shapes: Array<[string, string, string]> = [
+    [L, "a dependency change", "a workspace packages/n and its link; a dependency on @m/n in packages/q"],
+    [R, "a dependency change", "a workspace packages/n"],
+    [NP, "a dependency change", "new with packages/n"],
+    [NT, "a tsconfig", "new with packages/n"],
+    [QP, "a dependency change", "depends on @m/n; exports ./extra"],
+    [QT, "a tsconfig", "a reference to ../n; paths for @m/n"],
+    [SP, "a dependency change", "exports ./door"],
+    [B, "a tsconfig", "paths for @m/n"],
+    [T, "a tsconfig", "a reference to ./packages/n"],
+    [V, "the vitest config", "an alias for @m/n"],
+  ];
+  const harness = shapes.map(([p, what, shape]) => ({ p, what, shape }));
+
+  it("admits an alias line, a tsconfig entry, a manifest entry and a lockfile workspace that only add a package", () => {
+    const w = world();
+    expect(admittedVitestAlias(w.base[V]!, w.head[V]!, { newNames: names })).toBe("an alias for @m/n");
+    // The lines the last three new packages added to this tree's own table.
+    const real: Array<[string, string, string]> = [
+      ['{ find: "@ohmail/wire", replacement: r("./packages/wire/src/index.ts") },', "@ohmail/wire", "packages/wire"],
+      ['{ find: /^@ohmail\\/cal-core$/, replacement: r("./packages/cal-core/src/index.ts") }, // anchored: a subpath resolves by the package\'s own exports', "@ohmail/cal-core", "packages/cal-core"],
+      ['{ find: /^@ohmail\\/app-logic\\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },', "@ohmail/app-logic", "packages/app-logic"],
+      ['{ find: /^@ohmail\\/app-logic\\/([a-z-]+\\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },', "@ohmail/app-logic", "packages/app-logic"],
+      ['{ find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },', "@ohmail/app", "packages/app"],
+    ];
+    for (const [line, name, area] of real) {
+      expect(admittedVitestAlias(config(held), config([held[0]!, line, held[1]!, held[2]!]), { newNames: new Map([[name, area]]) }), line).toBe(`an alias for ${name}`);
+      // The same line for a name that is not new adds no package.
+      expect(admittedVitestAlias(config(held), config([line, ...held]), { newNames: names }), line).toBeNull();
+    }
+    // A comment alone, and an inserted line equal to its neighbour (the walk reads it one line late, as the same text).
+    expect(admittedVitestAlias(config(held), config([held[0]!, ...held]), { newNames: new Map() })).toBe("comments in the alias table");
+    expect(admittedVitestAlias(config(held), config(held), { newNames: names })).toBeNull();
+
+    expect(admittedTsconfig(QT, w.base[QT]!, w.head[QT]!, { newAreas: areas })).toBe("a reference to ../n; paths for @m/n");
+    expect(admittedTsconfig(NT, null, w.head[NT]!, { newAreas: areas })).toBe("new with packages/n");
+    expect(admittedTsconfig(QT, w.base[QT]!, w.base[QT]!.replace("q reads p", "q reads p, still"), { newAreas: areas })).toBe("comments or layout only");
+    expect(admittedTsconfig("tsconfig.base.json", w.base[T]!, w.head[T]!, { newAreas: areas })).toBeNull();
+    expect(admittedTsconfig("packages/q/tsconfig.x.json", null, w.head[NT]!, { newAreas: areas })).toBeNull();
+
+    const sets = { newAreas: areas, newNames: names, links: new Set(["@m/n", "@m/p", "@m/q", "@m/s"]), depended: new Set(["@m/p"]) };
+    expect(admittedManifest(R, w.base[R]!, w.head[R]!, sets)).toBe("a workspace packages/n");
+    expect(admittedManifest(NP, null, w.head[NP]!, sets)).toBe("new with packages/n");
+    expect(admittedManifest(QP, w.base[QP]!, w.head[QP]!, sets)).toBe("depends on @m/n; exports ./extra");
+    expect(admittedManifest(SP, w.base[SP]!, w.head[SP]!, sets)).toBe("exports ./door");
+    expect(admittedManifest(SP, w.base[SP]!, w.head[SP]!, { ...sets, depended: new Set(["@m/s"]) })).toBeNull();
+    expect(admittedLock(w.base[L]!, w.head[L]!, sets)).toBe("a workspace packages/n and its link; a dependency on @m/n in packages/q");
+  });
+
+  it("selects such a pull request into next and names each harness path with what it added; into main it is whole as before", () => {
+    const w = world();
+    const trees = { base: tree(w.base, w.dirs), head: tree(w.head) };
+    const next = decideScope({ root: bare, ctx: intoNext, changes: w.changes, ...trees });
+    expect(next).toMatchObject({ scope: "selected", why: "12 changed path(s); 10 harness path(s) deferred to the whole run on next", harness });
+    expect(pathTriggers(bare, w.changes, { direct: true, ...trees })).toEqual({ whole: [], sqliteWhole: false, dovecotAll: false, deferred: harness });
+    // main reads neither side, and answers in today's keys and words.
+    const unread: Tree = { read: () => { throw new Error("main read a side of the pull request"); }, exists: () => { throw new Error("main asked for a directory"); } };
+    const main = decideScope({ root: bare, ctx: pr(), changes: w.changes, base: unread, head: unread });
+    expect(main).toEqual({ scope: "whole", why: `${L}: a dependency change (and 9 more)` });
+    expect(Object.keys(pathTriggers(bare, w.changes))).toEqual(["whole", "sqliteWhole", "dovecotAll"]);
+    expect(pathTriggers(bare, w.changes).whole).toEqual(shapes.map(([p, what]) => `${p}: ${what}`));
+    // main merged across into next is planned as into main; without the base's side nothing is admitted.
+    const across = pr({ base: { ref: "next" }, head: { ref: "pr/merge-main-20261114", repo: { full_name: "trafficflowhq/ohmail" } } });
+    expect(decideScope({ root: bare, ctx: across, changes: w.changes, ...trees })).toEqual(main);
+    expect(decideScope({ root: bare, ctx: intoNext, changes: w.changes })).toEqual(main);
+    // A version bump is no harness change on either base.
+    const bump = { ...w.base, [R]: w.base[R]!.replace('"version": "1.0.0"', '"version": "1.1.0"') };
+    expect(decideScope({ root: bare, ctx: intoNext, changes: [M(R)], base: tree(w.base), head: tree(bump) })).toMatchObject({ scope: "selected", why: "1 changed path(s)" });
+  });
+
+  it("stays whole, on both bases and for the same reason, when a harness change is anything else", () => {
+    const text = (p: string, f: (t: string) => string) => (w: World) => {
+      const was = w.head[p]!;
+      w.head[p] = f(was);
+      expect(w.head[p], p).not.toBe(was);
+    };
+    const data = (p: string, f: (v: any) => void) => text(p, (t) => { const v = JSON.parse(t); f(v); return j(v); });
+    const refused: Array<[string, (w: World) => void]> = [
+      ["an alias removed", text(V, (t) => t.replace(`      ${held[1]}\n`, ""))],
+      ["an alias changed", text(V, (t) => t.replace("./packages/p/src/leaf.ts", "./packages/p/src/other.ts"))],
+      ["a regex find wider than the name", text(V, (t) => t.replace("/^@m\\/n$/", "/^@m\\/n/"))],
+      ["a regex find with no anchor", text(V, (t) => t.replace("/^@m\\/n$/", "/@m\\/n$/"))],
+      ["a regex find with a second arm", text(V, (t) => t.replace("/^@m\\/n$/", "/^@m\\/n$|^@m\\/p$/"))],
+      ["an alias that leaves its package", text(V, (t) => t.replace('r("./packages/n/src/leaf.ts")', 'r("./packages/p/src/leaf.ts")'))],
+      ["a find that is a prefix of one the table holds", (w) => {
+        for (const side of [w.base, w.head]) side[V] = side[V]!.replace("    ],", '      { find: "@m/n-old", replacement: r("./packages/p/src/old.ts") },\n    ],');
+        text(V, (t) => t.replace("/^@m\\/n$/", '"@m/n"'))(w);
+      }],
+      ["an include edit", text(V, (t) => t.replace('"test/**/*.test.ts"]', '"test/**/*.test.ts", "extra/**/*.test.ts"]'))],
+      ["an exclude that drops a package's tests", text(V, (t) => t.replace("  test: {\n", '  test: {\n    exclude: ["packages/p/test/**"],\n'))],
+      ["a project under another name", text(V, (t) => t.replace("  test: {\n", '  test: {\n    name: "other",\n'))],
+      ["a comment that closes a comment", text(V, (t) => t.replace("// The new package", "// */ The new package"))],
+      ["a comment above the table", text(V, (t) => t.replace("    alias: [\n", "    // The new package.\n    alias: [\n"))],
+      ["an alias line below the table", text(V, (t) => t.replace("    ],\n", `    ],\n    ${added[3]}\n`))],
+      ["a compiler option", text(QT, (t) => t.replace('"outDir": "dist"', '"outDir": "dist", "jsx": "preserve"'))],
+      ["a reference removed", text(QT, (t) => t.replace(', { "path": "../p" }', ""))],
+      ["paths where there were none", data(T, (v) => { v.compilerOptions = { paths: { "@m/n": ["./packages/n/src/index.ts"] } }; })],
+      ["paths that leave the packages", data(B, (v) => { v.compilerOptions.paths["@m/n"] = ["../scripts/n.ts"]; })],
+      ["a new tsconfig.json the root does not reference", (w) => { w.head[T] = w.base[T]!; w.changes = w.changes.filter((c) => c.p !== T); }],
+      ["a new tsconfig that builds into another package", data(NT, (v) => { v.compilerOptions = { outDir: "../p/dist" }; })],
+      ["a new tsconfig that includes another package", data(NT, (v) => { v.include = ["src", "../p/src"]; })],
+      ["a moved version in the lockfile", data(L, (v) => { v.packages["node_modules/dep"].version = "1.0.1"; })],
+      ["a first install", data(L, (v) => { v.packages["node_modules/left-pad"] = { version: "1.3.0" }; })],
+      ["a dependency on what is no workspace", data(QP, (v) => { v.dependencies["left-pad"] = "1.3.0"; })],
+      ["a root dependency", data(R, (v) => { v.devDependencies.other = "1.0.0"; })],
+      ["exports made where another package depended on it", (w) => {
+        w.base["packages/p/package.json"] = j({ name: "@m/p", version: "0.0.0" });
+        w.head["packages/p/package.json"] = j({ name: "@m/p", version: "0.0.0", exports: { ".": "./src/index.ts" } });
+        w.changes.push(M("packages/p/package.json"));
+      }],
+      ["a new package under an installed one's name", data(NP, (v) => { v.name = "dep"; })],
+      ["a package folder the base already holds", (w) => { w.dirs.push("packages/n"); }],
+    ];
+    const admitted: string[] = [];
+    for (const [what, change] of refused) {
+      const w = world();
+      change(w);
+      const main = decideScope({ root: bare, ctx: pr(), changes: w.changes });
+      expect(main.scope, what).toBe("whole");
+      expect(main.why, what).toMatch(/^package-lock\.json: a dependency change \(and \d+ more\)$/);
+      const next = decideScope({ root: bare, ctx: intoNext, changes: w.changes, base: tree(w.base, w.dirs), head: tree(w.head) });
+      if (JSON.stringify(next) !== JSON.stringify(main)) admitted.push(what);
+    }
+    expect(admitted).toEqual([]);
+    // A base that cannot be read admits nothing, whatever the head holds.
+    const w = world();
+    const unreadable = decideScope({ root: bare, ctx: intoNext, changes: w.changes, base: { read: () => null }, head: tree(w.head) });
+    expect(unreadable).toEqual({ scope: "whole", why: `${L}: a dependency change (and 9 more)` });
+    // Whole for another reason, the admitted paths are still named among the reasons.
+    const moved = [...w.changes, { s: "D", p: "packages/q/src/gone.ts" }];
+    expect(decideScope({ root: bare, ctx: intoNext, changes: moved, base: tree(w.base, w.dirs), head: tree(w.head) }).why).toBe(`${L}: a dependency change (and 10 more)`);
+  });
+
+  /** The same pull request as files a run can load: n's own test, a root census of the manifest, a far test that imports it. */
+  const runnable = (w: World, test: string[] = []) => {
+    const far = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`packages/t/test/far${i}.test.ts`, "export {};\n"]));
+    const shared: Files = {
+      "tsconfig.base.json": j({ compilerOptions: { target: "ES2022", module: "NodeNext" } }),
+      "vitest.sqlite.config.ts": 'export default { test: { include: ["packages/n/test/n.test.ts", "packages/p/test/p.test.ts"] } };\n',
+      "packages/p/src/index.ts": "export const p = 1;\n",
+      "packages/p/tsconfig.json": j({ extends: "../../tsconfig.base.json", include: ["src"] }),
+      "packages/p/test/p.test.ts": 'import { p } from "@m/p";\nexport const got = p;\n',
+      "packages/t/test/pkg.test.ts": 'import pkg from "../../../package.json";\nexport const v = pkg.version;\n',
+      "test/census.test.ts": 'import { readFileSync } from "node:fs";\nexport const text = readFileSync(new URL("../package.json", import.meta.url), "utf8");\n',
+      "test/plain.test.ts": "export {};\n", ...far,
+    };
+    return { base: { ...shared, ...w.base, [V]: config(held, test) }, head: { ...shared, ...w.head, [V]: config([...added, ...held], test) } };
+  };
+  const handed = (plan: Plan) => plan.shards.flatMap((s) => s.files.split("\n"));
+  const costs = { measuredAt: "planted", suite: {}, sqlite: {} };
+
+  it("refuses a plan under a config that no longer collects a test file", async () => {
+    const w = world();
+    // The control: the alias lines alone, on vitest's own collection.
+    const ok = runnable(w);
+    const plan = await select({ root: plantTree(ok.head), ctx: intoNext, changes: w.changes, base: tree(ok.base, w.dirs), costs }) as Plan;
+    expect(plan.scope, plan.why).toBe("selected");
+    expect(plan.harness).toEqual(harness);
+    expect(plan.summary!.harness).toEqual(shapes.map(([p]) => p));
+    // The far test imports the root manifest: it waits for the whole run, the root lists claim no border.
+    expect(handed(plan)).toEqual(["packages/n/test/n.test.ts", "test/census.test.ts"]);
+    expect(plan.deferred).toEqual([{ file: "packages/t/test/pkg.test.ts", rule: "graph" }, { file: "test/plain.test.ts", rule: "root" }]);
+    // Both sides drop p's tests, so the diff is still alias lines alone: the collected set decides.
+    const shrunk = runnable(w, ['exclude: ["packages/p/test/**"],']);
+    const refused = await select({ root: plantTree(shrunk.head), ctx: intoNext, changes: w.changes, base: tree(shrunk.base, w.dirs), costs });
+    expect(refused).toEqual({ scope: "whole", why: "the plan is refused: packages/p/test/p.test.ts is not collected under vitest.config.ts" });
+  }, 120_000);
+
+  it("plans a new package on a real merge commit through the CLI: its own tests run, the lists are named and deferred", () => {
+    const w = world();
+    const { base, head } = runnable(w);
+    const { dir, headSha } = plantPr(base, head);
+    const cli = (verb: string, to: string, ...more: string[]) => spawnSync(process.execPath, [SELECT, verb, "--root", dir, "--event", JSON.stringify(merged(headSha, to)), ...more], { encoding: "utf8" });
+    expect(cli("scope", "main").stdout).toBe(`scope=whole\nwhy=${L}: a dependency change (and 9 more)\n`);
+    expect(cli("scope", "next").stdout).toBe("scope=selected\nwhy=12 changed path(s); 10 harness path(s) deferred to the whole run on next\n");
+    const out = join(scratch, "harness-plan.json");
+    const run = cli("select", "next", "--out", out);
+    expect(run.status, run.stderr).toBe(0);
+    const plan = JSON.parse(readFileSync(out, "utf8")) as Plan;
+    expect(handed(plan)).toEqual(["packages/n/test/n.test.ts", "test/census.test.ts"]);
+    expect(plan.sqlite).toEqual([{ shard: 0, files: "packages/n/test/n.test.ts" }]);
+    expect(plan.harness).toEqual(harness);
+    const said = [
+      `FAST next harness: 10 path(s) deferred to the whole run on next: ${shapes.map(([p, , shape]) => `${p} (${shape})`).join(", ")}`,
+      "::group::harness deferred to the whole run on next (10)", ...shapes.map(([p, what, shape]) => `${what}\t${p}\t${shape}`), "::endgroup::", "",
+    ].join("\n");
+    expect(run.stdout.startsWith("SELECT selected: 12 changed path(s); 10 harness path(s) deferred to the whole run on next; 1 suite job(s), 0 alone, 1 sqlite\nFAST next: pr #811 head ")).toBe(true);
+    expect(run.stdout.endsWith(said)).toBe(true);
+    expect(deferredLog(plan, merged(headSha, "next")).endsWith(said)).toBe(true);
+    const summary = summaryText(composeOutputs({ indexes: [0, 1], sqliteIndexes: [0], alone: [], scope: "selected", selectOutcome: "success", plan }));
+    expect(summary).toContain(`- harness deferred to the whole run on next: ${shapes.map(([p]) => p).join(", ")}`);
+    // The same merge with a first install in its lockfile is whole into next as into main.
+    const installed = { ...head, [L]: head[L]!.replace('"node_modules/dep": {', '"node_modules/left-pad": { "version": "1.3.0" },\n    "node_modules/dep": {') };
+    expect(installed[L]).not.toBe(head[L]);
+    const second = plantPr(base, installed);
+    const scope = (to: string) => spawnSync(process.execPath, [SELECT, "scope", "--root", second.dir, "--event", JSON.stringify(merged(second.headSha, to))], { encoding: "utf8" }).stdout;
+    expect(scope("next")).toBe(scope("main"));
+    expect(scope("next")).toBe(`scope=whole\nwhy=${L}: a dependency change (and 9 more)\n`);
+  }, 120_000);
+});
+
+describe("the last pull requests, as each base plans them", () => {
   const at = join(ROOT, "test/fixtures/ci-select-history");
   const history = readdirSync(at).filter((f) => f.endsWith(".tsv")).sort();
+  /** Both sides of a fixture's harness paths, where it carries them (README.md there). */
+  const sides = (name: string): { base?: Tree; head?: Tree } => {
+    const file = join(at, name.replace(/\.tsv$/, ".trees.json"));
+    if (!existsSync(file)) return {};
+    const t = JSON.parse(readFileSync(file, "utf8")) as { base: { dirs: string[]; files: Record<string, string> }; head: { files: Record<string, string> } };
+    return { base: tree(t.base.files, t.base.dirs), head: tree(t.head.files) };
+  };
   const files = testFiles(ROOT);
+  const known = new Set(files);
   const sqliteAll = files.filter((_, i) => i % 9 === 0);
   /** A planted graph: every third test of the workspaces the change is in, and every thirteenth file of the tree. */
   const hit = (related: string[]) => {
@@ -693,52 +980,156 @@ describe("the last landed pull requests, as each base plans them", () => {
     return files.filter((f, i) => (areas.has(areaOf(f)) && i % 3 === 0) || i % 13 === 0);
   };
   const graph = async (_root: string, related: string[], { config }: GraphOptions) =>
-    (config === "vitest.sqlite.config.ts" ? { related: hit(related).filter((f) => sqliteAll.includes(f)), all: sqliteAll } : { related: hit(related), all: [] });
+    (config === "vitest.sqlite.config.ts" ? { related: hit(related).filter((f) => sqliteAll.includes(f)), all: sqliteAll } : { related: hit(related), all: files });
   const handed = (plan: Plan) => [...plan.shards.flatMap((s) => s.files.split("\n")), ...plan.alone].sort();
   const sqliteHanded = (plan: Plan) => (plan.sqlite ?? []).flatMap((s) => s.files.split("\n")).sort();
   const plans = new Map<string, { changes: { s: string; p: string }[]; main: Plan; next: Plan }>();
+  /** The pull requests whose harness paths only add a package's lines: selected into next, whole into main. */
+  const added = ["811.tsv", "812.tsv"];
 
   beforeAll(async () => {
+    const unread: Tree = { read: () => { throw new Error("main read a side of the pull request"); }, exists: () => { throw new Error("main asked for a directory"); } };
     for (const name of history) {
       const changes = parseNameStatus(readFileSync(join(at, name), "utf8"));
-      const plan = (base: string) => select({ root: ROOT, ctx: pr({ base: { ref: base } }), changes, graph }) as Promise<Plan>;
-      plans.set(name, { changes, main: await plan("main"), next: await plan("next") });
+      const main = await select({ root: ROOT, ctx: pr(), changes, graph, base: unread, head: unread }) as Plan;
+      const next = await select({ root: ROOT, ctx: pr({ base: { ref: "next" } }), changes, graph, ...sides(name) }) as Plan;
+      plans.set(name, { changes, main, next });
     }
   }, 600_000);
 
   it("plans a base of main as before: no new key, nothing deferred, every related file handed on", async () => {
     const { desktopFiles } = await import("./support/ci-shards.mjs");
     const desktop = new Set(desktopFiles(ROOT, files));
-    expect(history).toHaveLength(15);
+    expect(history).toHaveLength(21);
     for (const [name, { changes, main }] of plans) {
       if (main.scope === "whole") { expect(Object.keys(main), name).toEqual(["scope", "why"]); continue; }
+      expect(added, name).not.toContain(name);
       expect(Object.keys(main), name).toEqual(["scope", "why", "shards", "alone", "sqlite", "summary"]);
       expect(Object.keys(main.summary!), name).toEqual(["changed", "rules", "main", "alone", "sqlite", "share", "costsMeasuredAt"]);
+      expect(main.why, name).toBe(`${changes.length} changed path(s)`);
       const got = new Set(handed(main));
       const present = changes.map((c) => c.p);
       expect(hit(present).filter((f) => !got.has(f) && !desktop.has(f)), name).toEqual([]);
     }
   });
 
-  it("loses nothing for a base of next: the direct set and the deferred list are main's selection, file for file", () => {
-    const known = new Set(files);
+  it("loses nothing for a base of next: the direct set and the deferred list are the selection, file for file", async () => {
+    const { desktopFiles } = await import("./support/ci-shards.mjs");
+    const desktop = new Set(desktopFiles(ROOT, files));
+    /** What the rules select, built here from the same parts: the changed tests, the graph, root test/, the readers. */
+    const readers = new Map<string, ReturnType<typeof readersOf>>();
+    const selection = (changes: { s: string; p: string }[]) => {
+      const present = changes.filter((c) => c.s !== "D").map((c) => c.p);
+      const deleted = changes.filter((c) => c.s === "D").map((c) => c.p);
+      const key = deleted.join("\n");
+      if (!readers.has(key)) readers.set(key, readersOf(ROOT, files, { code: stripComments, relativeImports, deleted }));
+      const all = new Set([...present, ...hit(relatedInputs(ROOT, present)), ...files.filter((f) => f.startsWith("test/")), ...readerHits(ROOT, changes, readers.get(key)!).keys()]);
+      return [...all].filter((f) => known.has(f)).sort();
+    };
+    // The desktop job runs its files on every run; the second store's list is the selection's part of that project.
+    const reach = (changes: { s: string; p: string }[]) => selection(changes).filter((f) => !desktop.has(f));
+    const sqliteReach = (changes: { s: string; p: string }[]) => selection(changes).filter((f) => sqliteAll.includes(f));
     const compared: string[] = [];
-    for (const [name, { main, next }] of plans) {
-      // Whatever makes main's run whole (the harness, the selector, a migration) makes next's whole too.
-      if (main.scope === "whole") { expect(next, name).toEqual(main); continue; }
-      expect(next.scope, name).toBe("selected");
+    for (const [name, { changes, main, next }] of plans) {
+      // 818 changes two manifests and no other harness path: beside an overridden diff main's version check reads
+      // this checkout's own last commit, so its answer here is not the fixture's (the planted merge below has it).
+      if (name === "818.tsv") continue;
+      const selected = main.scope === "selected";
+      // Whatever makes main's run whole (the selector, a migration, a deleted module) makes next's whole too, in the same words.
+      if (!selected && !added.includes(name)) { expect(next, name).toEqual(main); continue; }
+      expect(next.scope, `${name}: ${next.why}`).toBe("selected");
       expect(next.mode, name).toBe("direct");
       const deferred = next.deferred!.map((d) => d.file);
-      expect([...handed(next), ...deferred].sort(), name).toEqual(handed(main));
+      const union = [...handed(next), ...deferred].sort();
+      expect(union, name).toEqual(reach(changes));
+      expect(new Set(union).size, name).toBe(union.length);
+      if (selected) expect(union, name).toEqual(handed(main));
       expect(deferred.filter((f) => !known.has(f)), name).toEqual([]);
       expect(next.deferred!.filter((d) => d.rule !== "graph" && d.rule !== "root"), name).toEqual([]);
-      expect([...sqliteHanded(next), ...next.sqliteDeferred!].sort(), name).toEqual(sqliteHanded(main));
+      const sqliteUnion = [...sqliteHanded(next), ...next.sqliteDeferred!].sort();
+      expect(sqliteUnion, name).toEqual(sqliteReach(changes));
+      if (selected) expect(sqliteUnion, name).toEqual(sqliteHanded(main));
       expect(next.summary!.deferred, name).toBe(deferred.length);
       expect(deferred.length, name).toBeGreaterThan(0);
+      // A harness path is named on the plan exactly when the diff holds one that main runs whole for.
+      expect(next.harness === undefined, name).toBe(selected);
+      if (!selected) {
+        expect(main.why, name).toMatch(/: a (?:dependency change|tsconfig)(?: \(and \d+ more\))?$/);
+        expect(next.why, name).toBe(`${changes.length} changed path(s); ${next.harness!.length} harness path(s) deferred to the whole run on next`);
+        expect(next.summary!.harness, name).toEqual(next.harness!.map((h) => h.p));
+      }
       compared.push(name);
     }
-    expect(compared).toHaveLength(12);
+    expect(compared).toHaveLength(14);
+    const named = (name: string) => plans.get(name)!.next.harness!.map((h) => `${h.p}: ${h.shape}`);
+    expect(named("811.tsv")).toEqual([
+      "package-lock.json: a workspace packages/cal-core and its link", "package.json: a workspace packages/cal-core",
+      "packages/cal-core/package.json: new with packages/cal-core", "packages/cal-core/tsconfig.json: new with packages/cal-core",
+      "packages/cal-core/tsconfig.test-dirs.json: new with packages/cal-core", "test/tsconfig.test-dirs-base.json: paths for @ohmail/cal-core",
+      "tsconfig.json: a reference to ./packages/cal-core", "vitest.config.ts: an alias for @ohmail/cal-core",
+    ]);
+    expect(named("812.tsv")).toEqual([
+      "apps/api-vercel/package.json: depends on @ohmail/server", "apps/api-vercel/tsconfig.check.json: a reference to ../server",
+      "apps/server/package.json: exports ./program, ./settings, ./clocks", "package-lock.json: a dependency on @ohmail/server in apps/api-vercel",
+    ]);
+    // A first install and a moved version (818) stay whole, the lockfile and the root manifest named.
+    expect(plans.get("818.tsv")!.next).toEqual({ scope: "whole", why: "package-lock.json: a dependency change (and 1 more)" });
   });
+});
+
+describe("main's plan for each of them, on the merge commit itself", () => {
+  const at = join(ROOT, "test/fixtures/ci-select-history");
+  const history = readdirSync(at).filter((f) => f.endsWith(".tsv")).sort();
+  /**
+   * A fixture as a repository: its paths added, modified and deleted between a base commit and a head commit,
+   * the fixture's own text where it carries a side (the harness paths), a stub elsewhere, and the merge.
+   */
+  const plant = (name: string) => {
+    const changes = parseNameStatus(readFileSync(join(at, name), "utf8"));
+    const file = join(at, name.replace(/\.tsv$/, ".trees.json"));
+    const t = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) as { base: { dirs: string[]; files: Record<string, string> }; head: { files: Record<string, string> } } : null;
+    const stub = (p: string, side: string) => (p.endsWith(".json") ? `{ "side": "${side}" }\n` : `// ${side}\nexport {};\n`);
+    const base: Record<string, string> = Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`packages/zz-far/test/far${i}.test.ts`, "export {};\n"]));
+    const head: Record<string, string> = {};
+    for (const d of t?.base.dirs ?? []) base[`${d}/.held`] = "";
+    for (const { s, p } of changes) {
+      if (s !== "A") base[p] = t?.base.files[p] ?? stub(p, "base");
+      if (s !== "D") head[p] = t?.head.files[p] ?? stub(p, "head");
+    }
+    return { changes, ...plantPr(base, head, changes.filter((c) => c.s === "D").map((c) => c.p)) };
+  };
+  /** A planted graph over the planted tree: the tests of the workspaces the change is in, and every fifth file. */
+  const graph = async (root: string, related: string[], { config }: GraphOptions) => {
+    const files = testFiles(root);
+    const areas = new Set(related.map(areaOf).filter(Boolean));
+    return config === "vitest.sqlite.config.ts" ? { related: [], all: [] } : { related: files.filter((f, i) => areas.has(areaOf(f)) || i % 5 === 0), all: files };
+  };
+  const planted = new Map<string, ReturnType<typeof plant>>();
+  beforeAll(() => { for (const name of history) planted.set(name, plant(name)); }, 300_000);
+
+  it("is the plan the selector wrote before next deferred any harness path, to the byte", async () => {
+    // <pr>.main.json is that plan; CI_SELECT_RECORD_MAIN=1 writes it from the selector under test (README.md there).
+    for (const [name, { dir, headSha }] of planted) {
+      const golden = join(at, name.replace(/\.tsv$/, ".main.json"));
+      const plan = `${JSON.stringify(await select({ root: dir, ctx: merged(headSha), graph }))}\n`;
+      if (process.env.CI_SELECT_RECORD_MAIN === "1") writeFileSync(golden, plan);
+      expect(plan, name).toBe(readFileSync(golden, "utf8"));
+    }
+  }, 300_000);
+
+  it("reads the same merge into next from git: selected where the harness paths only add, whole in main's words otherwise", async () => {
+    const whole: string[] = [];
+    for (const [name, { dir, headSha, changes }] of planted) {
+      const main = decideScope({ root: dir, ctx: merged(headSha) });
+      const next = decideScope({ root: dir, ctx: merged(headSha, "next") });
+      if (main.scope === "selected") { expect(next, name).toEqual(main); continue; }
+      if (next.scope === "whole") { expect(next, name).toEqual(main); whole.push(name); continue; }
+      expect(next.why, name).toBe(`${changes.length} changed path(s); ${next.harness!.length} harness path(s) deferred to the whole run on next`);
+      // Each reason main gives is a harness path next names.
+      expect(next.harness!.map((h) => `${h.p}: ${h.what}`), name).toEqual(pathTriggers(dir, changes).whole);
+    }
+    expect(whole).toEqual(["789.tsv", "805.tsv", "808.tsv", "817.tsv", "818.tsv", "819.tsv", "823.tsv"]);
+  }, 300_000);
 });
 
 describe("the packing", () => {
