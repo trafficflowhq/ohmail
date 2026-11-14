@@ -58,6 +58,84 @@
       "node": "./dist/frame/route.js",
       "default": "./src/frame/route.ts"
     },
+    "./settings": {
+      "types": "./src/settings/index.ts",
+      "ohmail-source": "./src/settings/index.ts",
+      "node": "./dist/settings/index.js",
+      "default": "./src/settings/index.ts"
+    },
+    "./settings/contract": {
+      "types": "./src/settings/contract.ts",
+      "ohmail-source": "./src/settings/contract.ts",
+      "node": "./dist/settings/contract.js",
+      "default": "./src/settings/contract.ts"
+    },
+    "./settings/general": {
+      "types": "./src/settings/general/index.ts",
+      "ohmail-source": "./src/settings/general/index.ts",
+      "node": "./dist/settings/general/index.js",
+      "default": "./src/settings/general/index.ts"
+    },
+    "./settings/notifications": {
+      "types": "./src/settings/notifications/index.ts",
+      "ohmail-source": "./src/settings/notifications/index.ts",
+      "node": "./dist/settings/notifications/index.js",
+      "default": "./src/settings/notifications/index.ts"
+    },
+    "./settings/screener": {
+      "types": "./src/settings/screener/index.ts",
+      "ohmail-source": "./src/settings/screener/index.ts",
+      "node": "./dist/settings/screener/index.js",
+      "default": "./src/settings/screener/index.ts"
+    },
+    "./settings/ai": {
+      "types": "./src/settings/ai/index.ts",
+      "ohmail-source": "./src/settings/ai/index.ts",
+      "node": "./dist/settings/ai/index.js",
+      "default": "./src/settings/ai/index.ts"
+    },
+    "./settings/away": {
+      "types": "./src/settings/away/index.ts",
+      "ohmail-source": "./src/settings/away/index.ts",
+      "node": "./dist/settings/away/index.js",
+      "default": "./src/settings/away/index.ts"
+    },
+    "./settings/rules": {
+      "types": "./src/settings/rules/index.ts",
+      "ohmail-source": "./src/settings/rules/index.ts",
+      "node": "./dist/settings/rules/index.js",
+      "default": "./src/settings/rules/index.ts"
+    },
+    "./settings/tags": {
+      "types": "./src/settings/tags/index.ts",
+      "ohmail-source": "./src/settings/tags/index.ts",
+      "node": "./dist/settings/tags/index.js",
+      "default": "./src/settings/tags/index.ts"
+    },
+    "./settings/folders": {
+      "types": "./src/settings/folders/index.ts",
+      "ohmail-source": "./src/settings/folders/index.ts",
+      "node": "./dist/settings/folders/index.js",
+      "default": "./src/settings/folders/index.ts"
+    },
+    "./settings/signatures": {
+      "types": "./src/settings/signatures/index.ts",
+      "ohmail-source": "./src/settings/signatures/index.ts",
+      "node": "./dist/settings/signatures/index.js",
+      "default": "./src/settings/signatures/index.ts"
+    },
+    "./settings/about": {
+      "types": "./src/settings/about/index.ts",
+      "ohmail-source": "./src/settings/about/index.ts",
+      "node": "./dist/settings/about/index.js",
+      "default": "./src/settings/about/index.ts"
+    },
+    "./settings/help": {
+      "types": "./src/settings/help/index.ts",
+      "ohmail-source": "./src/settings/help/index.ts",
+      "node": "./dist/settings/help/index.js",
+      "default": "./src/settings/help/index.ts"
+    },
     "./host/browser": {
       "types": "./src/host/browser/index.ts",
       "ohmail-source": "./src/host/browser/index.ts",

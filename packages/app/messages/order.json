@@ -111,5 +111,15 @@
   "agenda",
   "calsearch",
   "calendar",
-  "event"
+  "event",
+  "settingsMenu",
+  "settingsGeneral",
+  "settingsNotifications",
+  "settingsScreener",
+  "settingsAi",
+  "settingsAway",
+  "settingsRules",
+  "settingsTags",
+  "settingsSignatures",
+  "settingsAbout"
 ]

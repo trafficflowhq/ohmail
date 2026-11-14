@@ -1616,6 +1616,7 @@
     "groupAccount": "Account",
     "groupAbout": "Über",
     "back": "Zurück zu Einstellungen",
+    "notSaved": "Nicht gespeichert",
     "general": "Allgemein",
     "notifications": "Benachrichtigungen",
     "mailboxes": "Postfächer",
@@ -5303,5 +5304,53 @@
       "retry": "Wird erneut gesendet",
       "dismiss": "Änderung verworfen"
     }
+  },
+  "settingsMenu": {
+    "desktop": "Desktop"
+  },
+  "settingsGeneral": {
+    "appearance": "Darstellung",
+    "messages": "Nachrichten",
+    "lookChoice": "Aussehen wählen",
+    "followsOmarchy": "richtet sich nach Omarchy",
+    "picture": {
+      "title": "Ohbox",
+      "first": "Giulia Ferrari",
+      "firstTime": "09:12",
+      "second": "Petra Wyss",
+      "secondTime": "08:47"
+    }
+  },
+  "settingsNotifications": {
+    "about": "Benachrichtigen bei",
+    "blocked": "Blockiert"
+  },
+  "settingsScreener": {
+    "notApplied": "Nicht übernommen"
+  },
+  "settingsAi": {
+    "notRead": "Nicht gelesen",
+    "notChanged": "Nicht geändert",
+    "on": "An",
+    "off": "Aus"
+  },
+  "settingsAway": {
+    "notRead": "Nicht gelesen"
+  },
+  "settingsRules": {
+    "notChanged": "Nicht geändert"
+  },
+  "settingsTags": {
+    "colours": "Farben"
+  },
+  "settingsSignatures": {
+    "none": "Keine Signatur",
+    "read": "Anderswo festgelegt"
+  },
+  "settingsAbout": {
+    "notRead": "Nicht gelesen",
+    "privacy": "Datenschutz",
+    "subprocessors": "Auftragsverarbeiter",
+    "imprint": "Impressum"
   }
 }

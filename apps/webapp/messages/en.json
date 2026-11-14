@@ -1616,6 +1616,7 @@
     "groupAccount": "Account",
     "groupAbout": "About",
     "back": "Back to Settings",
+    "notSaved": "Not saved",
     "general": "General",
     "notifications": "Notifications",
     "mailboxes": "Mailboxes",
@@ -5303,5 +5304,53 @@
       "retry": "Sending again",
       "dismiss": "Change let go"
     }
+  },
+  "settingsMenu": {
+    "desktop": "Desktop"
+  },
+  "settingsGeneral": {
+    "appearance": "Appearance",
+    "messages": "Messages",
+    "lookChoice": "Choose a look",
+    "followsOmarchy": "follows Omarchy",
+    "picture": {
+      "title": "Ohbox",
+      "first": "Giulia Ferrari",
+      "firstTime": "09:12",
+      "second": "Petra Wyss",
+      "secondTime": "08:47"
+    }
+  },
+  "settingsNotifications": {
+    "about": "Notify about",
+    "blocked": "Blocked"
+  },
+  "settingsScreener": {
+    "notApplied": "Not applied"
+  },
+  "settingsAi": {
+    "notRead": "Not read",
+    "notChanged": "Not changed",
+    "on": "On",
+    "off": "Off"
+  },
+  "settingsAway": {
+    "notRead": "Not read"
+  },
+  "settingsRules": {
+    "notChanged": "Not changed"
+  },
+  "settingsTags": {
+    "colours": "Colours"
+  },
+  "settingsSignatures": {
+    "none": "No signature",
+    "read": "Set elsewhere"
+  },
+  "settingsAbout": {
+    "notRead": "Not read",
+    "privacy": "Privacy",
+    "subprocessors": "Subprocessors",
+    "imprint": "Imprint"
   }
 }
