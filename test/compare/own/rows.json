@@ -1,0 +1,7 @@
+[
+  { "key": "own:geometry@700", "file": "geometry-700", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 700, "height": 800, "scale": 1 } },
+  { "key": "own:geometry@821", "file": "geometry-821", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 821, "height": 800, "scale": 1 } },
+  { "key": "own:geometry@1023", "file": "geometry-1023", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 1023, "height": 800, "scale": 1 } },
+  { "key": "own:specimen@light", "file": "specimen-light", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 960, "height": 320, "scale": 1 } },
+  { "key": "own:specimen@dark", "file": "specimen-dark", "variant": { "device": "desktop", "face": "paper", "scheme": "dark", "width": 960, "height": 320, "scale": 2 } }
+]
