@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutComments, withoutCommentsAndLiterals } from "../scripts/lib/source-scan.mjs";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * Every production alert pass names the roster's parked set. The worker's pass once omitted it
@@ -55,7 +56,7 @@ const namesParked = (args: string): boolean => /\bparkedAccounts\b\s*[:,}]/.test
 
 describe("every runAlertPass caller hands the pass the roster's parked set", () => {
   const calls = productionSources().flatMap((file) =>
-    callArguments(readFileSync(file, "utf8"), "runAlertPass")
+    callArguments(readSource(file), "runAlertPass")
       .map((args) => ({ file: relative(ROOT, file), args })));
 
   it("finds the two production drivers — a census that finds none measured nothing", () => {
@@ -84,9 +85,9 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
   });
 
   it("the console never dials the plane: it names no ops reader, and the managed host hands it none", () => {
-    const board = withoutComments(readFileSync(join(ROOT, "packages/services/src/admin-service.ts"), "utf8"));
+    const board = withoutComments(readSource(join(ROOT, "packages/services/src/admin-service.ts")));
     expect(board).not.toMatch(/\bplaneOps\b/);
-    const host = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
+    const host = withoutComments(readSource(join(ROOT, "apps/server/src/deps.ts")));
     const start = host.indexOf("admin: staff?.admin");
     const block = host.slice(start, host.indexOf("adminDb:", start));
     expect(block, "the admin block was found").toContain("parkedAccounts");
@@ -103,7 +104,7 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
 
   it("every host that arms the API's alert route composes the reader it forwards", () => {
     const hosts = productionSources().flatMap((file) => {
-      const src = withoutComments(readFileSync(file, "utf8"));
+      const src = withoutComments(readSource(file));
       const start = src.indexOf("alerts: cfg.alerts");
       if (start < 0) return [];
       let depth = 0;
@@ -125,7 +126,7 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
   });
 
   it("the managed host hands its console the SAME parked reader its alert route reads", () => {
-    const src = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
+    const src = withoutComments(readSource(join(ROOT, "apps/server/src/deps.ts")));
     const block = (from: string): string => {
       const start = src.indexOf(from);
       let depth = 0;
@@ -142,7 +143,7 @@ describe("every runAlertPass caller hands the pass the roster's parked set", () 
   });
 
   it("the managed host's bag bounds both plane reads (the roster's reader stays unbounded elsewhere)", () => {
-    const src = withoutComments(readFileSync(join(ROOT, "apps/server/src/deps.ts"), "utf8"));
+    const src = withoutComments(readSource(join(ROOT, "apps/server/src/deps.ts")));
     const bag = src.slice(src.indexOf("function alertReadersFor("), src.indexOf("function pagerArms("));
     expect(bag, "the bag was found").toContain("plane_ops_watch");
     expect(bag, "the parked reader takes the alert bound").toMatch(/parkedAccountsOf\(port\(\), ALERT_PARKED_READ_BOUND\)/);

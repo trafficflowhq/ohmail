@@ -6,10 +6,10 @@ import { silentLogger, type Logger } from "@trafficflow/core";
  * ENFORCED SYNC — the worker half of `mailboxes.sync_requested_at` (mail 0049). The API stamps it the
  * instant it finalizes a write the user is watching; this pass is the doorbell's other end — a short scan,
  * far more often than the 60 s poll, that kicks an out-of-band cycle for any stamped mailbox this process
- * serves and clears the stamp. EIGHT write sites ring it, each finalizing a write somebody is watching:
+ * serves and clears the stamp. Its writers each finalize a write somebody is watching:
  * the send's finalize, the junk rescue, the junk sweep press, the folder-op service, the mailbox
- * service's resync and its create (the unserved arm asks for a roster), and the two lease presses, "Organize here" and "Hand the mailbox back" (a served row with either pending asks a roster first). Ordinary FILING does not — those writers commit desired state and stop, so filed mail waits ~105 s for its turn, a real gap left open deliberately. NOT a leader-locked backstop — it runs
- * only inside a live worker, and writes only its own attached mailboxes (producer: the ~3 s timer in `index.ts`). The
+ * service's resync, its pull and its create (the unserved arm asks for a roster), the two lease presses, "Organize here" and "Hand the mailbox back" (a served row with either pending asks a roster first), the account's reopening, and a FILING decision, which rings after its own commit (`packages/db/src/filing-doorbell.ts`). NOT a leader-locked backstop — it runs
+ * only inside a live worker, and writes only its own attached mailboxes (producer: {@link startSyncKickBell} below, on the change log's signal and on a floor timer). The
  * clear is COMPARE-AND-CLEAR (`WHERE sync_requested_at = <observed>`) so a second stamp mid-flight is
  * preserved; and compared as TEXT (`::text` / `= <that>::timestamptz`) because `timestamptz` microseconds never survive a JS millisecond `Date` — measured 2026-08-26, an SQL `now()` stamp kicked every 3 s for 10+ min. Pure/hermetic, proven on real Postgres. */
 export interface SyncKickDeps {
@@ -141,4 +141,109 @@ async function askRosterForUnserved(
   }
   for (const id of [...askedFor.keys()]) if (!seen.has(id)) askedFor.delete(id);
   return asked;
+}
+
+/**
+ * The least time between two scans a SIGNAL starts. The worker's own ingest signals on every chunk it
+ * records, so a long import rings without pause; with this gap that costs one scan a second while it
+ * lasts (two statements each, the scan the floor already runs every {@link SyncKickBellDeps.floorMs}).
+ */
+export const SYNC_KICK_SIGNAL_GAP_MS = 1_000;
+
+export interface SyncKickBellDeps {
+  /** One scan ({@link syncKickPass}); `by` is what started it. */
+  pass: (by: "signal" | "floor") => Promise<unknown>;
+  /** The floor: a scan this often whatever was heard, so a lost signal costs at most this wait. */
+  floorMs: number;
+  /** See {@link SYNC_KICK_SIGNAL_GAP_MS}. */
+  gapMs: number;
+  /** The change log's signal for every account. Absent: the floor alone. */
+  source?: { subscribeAll(onWake: (accountId: string, seq: bigint) => void): () => void };
+  /**
+   * Whether this process serves a mailbox of the account. A signal for any other account is dropped
+   * here, in memory: it starts no scan, so nothing an account writes costs a worker that does not
+   * serve it. Absent: every signal rings.
+   */
+  owns?: (accountId: string) => boolean;
+  isStopped: () => boolean;
+  log?: Logger;
+}
+
+export interface SyncKickBell {
+  /** A signal for this account: a scan now, or one owed scan once the gap or the running scan allows. */
+  ring(accountId: string): void;
+  stop(): void;
+}
+
+/**
+ * THE DOORBELL. The scan of {@link syncKickPass} on two triggers: the change log's signal, and a
+ * floor timer. One scan at a time, whoever starts it: a floor tick that finds one running is skipped
+ * (the stamp is there at the next), and signals heard meanwhile, however many, owe ONE more scan. A
+ * scan that starts after a signal has read what the signal announced, so it pays that debt. A signal
+ * only starts the scan: which mailboxes are kicked and which stamps are cleared is the scan's own
+ * read of the mailboxes this process serves, and never the signal's account.
+ */
+export function startSyncKickBell(deps: SyncKickBellDeps): SyncKickBell {
+  const log = deps.log ?? silentLogger;
+  let ended = false;
+  let inFlight = false;
+  /** A signal was heard that no scan started since has answered. */
+  let owed = false;
+  let owedTimer: ReturnType<typeof setTimeout> | null = null;
+  /** When the last scan a signal started began; the gap is counted from it. */
+  let lastSignalScanAt = Number.NEGATIVE_INFINITY;
+  const off = (): boolean => ended || deps.isStopped();
+
+  const scan = (by: "signal" | "floor"): void => {
+    if (off() || inFlight) return;
+    inFlight = true;
+    owed = false;
+    if (owedTimer !== null) { clearTimeout(owedTimer); owedTimer = null; }
+    if (by === "signal") lastSignalScanAt = Date.now();
+    void (async () => {
+      try {
+        await deps.pass(by);
+      } catch (err) {
+        log.warn("sync_kick_failed", { err });
+      } finally {
+        inFlight = false;
+        if (owed) serveOwed();
+      }
+    })();
+  };
+
+  /** The owed scan: now when the gap has passed, else once it has. */
+  const serveOwed = (): void => {
+    if (off() || inFlight || owedTimer !== null) return;
+    const wait = lastSignalScanAt + deps.gapMs - Date.now();
+    if (wait <= 0) { scan("signal"); return; }
+    owedTimer = setTimeout(() => { owedTimer = null; if (owed) scan("signal"); }, wait);
+  };
+
+  const ring = (accountId: string): void => {
+    if (off()) return;
+    if (deps.owns !== undefined && !deps.owns(accountId)) return;
+    owed = true;
+    serveOwed();
+  };
+
+  const floor = setInterval(() => { scan("floor"); }, deps.floorMs);
+  let unsubscribe: (() => void) | null = null;
+  try {
+    // The payload's sequence number is dropped here: the bell needs to know that something changed, not what.
+    unsubscribe = deps.source?.subscribeAll((accountId) => { ring(accountId); }) ?? null;
+  } catch (err) {
+    log.warn("sync_kick_signal_unavailable", { err, reason: "the change log's signal could not be subscribed; the floor scan serves alone" });
+  }
+
+  return {
+    ring,
+    stop(): void {
+      ended = true;
+      clearInterval(floor);
+      if (owedTimer !== null) { clearTimeout(owedTimer); owedTimer = null; }
+      unsubscribe?.();
+      unsubscribe = null;
+    },
+  };
 }

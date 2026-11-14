@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { FixturesAdapter, OhmailEngine, SERVER_VIEW_OF, type EngineMessage } from "@ohmail/client-engine";
+import { OhmailEngine, SERVER_VIEW_OF, type EngineMessage } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";
 import { createSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 

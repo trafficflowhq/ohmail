@@ -1,0 +1,20 @@
+{
+  "id": "stylelint:selector-max-type",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a bare element selector in the kit",
+      "file": "packages/ui/src/planted/bare.css",
+      "line": 1,
+      "refused": "Expected \"button\" to have no more than 0 type selectors (selector-max-type)"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean stylesheet of the kit",
+      "file": "packages/ui/src/planted/clean.css"
+    }
+  ]
+}

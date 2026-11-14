@@ -1,4 +1,4 @@
-import { ohbox, reads, receipts, waiting } from "@ohmail/fixtures";
+import { ohbox, reads, receipts, waiting } from "@ohmail/testing";
 import { eq } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services";

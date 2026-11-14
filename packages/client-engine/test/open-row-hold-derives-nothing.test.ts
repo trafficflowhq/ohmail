@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_NOW, FixturesAdapter, OhmailEngine, ohboxView } from "@ohmail/client-engine";
+import { OhmailEngine, ohboxView } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * OPENING A ROW RE-DERIVES NOTHING. `holdOpenRow` holds only a row already in "New for you", so the

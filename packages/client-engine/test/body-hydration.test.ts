@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
@@ -12,6 +11,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * SLICE THE HYDRATION SEAM.

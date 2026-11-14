@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * ═══ THE ENGAGEMENT CENSUS — EVERY SITE THAT READS AN OWN-ADDRESS REPLY AS "THEY ENGAGED" ═══
@@ -47,7 +48,7 @@ function sourceFiles(): string[] {
 }
 
 const rel = (p: string) => p.slice(ROOT.length + 1);
-const FILES = sourceFiles().map((p) => ({ path: rel(p), text: readFileSync(p, "utf8") }));
+const FILES = sourceFiles().map((p) => ({ path: rel(p), text: readSource(p) }));
 
 /** THE PREDICATE'S OWN HOME — excluded from the caller census, it is the definition. */
 const HOME = "packages/db/src/auto-reply-by-us.ts";

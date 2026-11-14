@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import type { Fixtures, MessageFixture } from "@ohmail/fixtures";
+import type { Fixtures, MessageFixture } from "@ohmail/testing";
 import messages from "../messages/en.json";
 
 /**
@@ -27,8 +27,8 @@ const NEWEST_FIRST = ["Sender C", "Sender B", "Sender A", "Sender D", "Sender E"
 
 const world = vi.hoisted(() => ({ pile: "replyLater" as "replyLater" | "setAside", ids: [] as string[] }));
 
-vi.mock("@ohmail/fixtures", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@ohmail/fixtures")>();
+vi.mock("@ohmail/testing", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/testing")>();
   return {
     ...real,
     getFixtures: (): Fixtures => {

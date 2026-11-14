@@ -1,4 +1,4 @@
-import { FixturesAdapter, DEMO_NOW } from "../../src/adapters/fixtures-adapter.js";
+import { FixturesAdapter, DEMO_NOW } from "@ohmail/testing/adapter";
 import type { EngineAdapter } from "../../src/adapters/adapter.js";
 import { OhmailEngine } from "../../src/engine.js";
 import { MutationRejectedError, type SyncChange } from "../../src/types.js";

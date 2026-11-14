@@ -12,6 +12,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { MailboxRemovedError, refusalIsRemoval, runSyncCycle } from "../src/sync.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE TARGETED RETRY IS FENCED, AND A REMOVAL HAS TWO CLASSES. Neither claim could be made before
@@ -263,7 +264,7 @@ describe("a removal has ONE question and TWO classes", () => {
   it("no arm outside the declarations names one class by hand", () => {
     const offenders: string[] = [];
     for (const file of ["index.ts", "reconcile-cron.ts", "request-drain.ts", "restart.ts"]) {
-      const src = withoutComments(readFileSync(join(SRC, file), "utf8"));
+      const src = withoutComments(readSource(join(SRC, file)));
       for (const m of src.match(/instanceof\s+Mailbox(?:Removed|Erased)Error/g) ?? []) {
         offenders.push(`${file}: ${m}`);
       }

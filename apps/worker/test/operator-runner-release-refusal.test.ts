@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * ═══ EVERY OPERATOR RUNNER THAT WRITES ASKS THE SAME QUESTION FIRST ════════════════════════
@@ -73,7 +74,7 @@ describe("the operator runners share one release refusal", () => {
   it("the refusal sentence is written in exactly one file under apps/worker/src", () => {
     const holders = readdirSync(SRC)
       .filter((f) => f.endsWith(".ts"))
-      .filter((f) => withoutComments(readFileSync(join(SRC, f), "utf8"))
+      .filter((f) => withoutComments(readSource(join(SRC, f)))
         .includes("has been asked to stop being organized here"));
     expect(holders, `written in: ${holders.join(", ") || "(nowhere)"}`).toHaveLength(1);
   });

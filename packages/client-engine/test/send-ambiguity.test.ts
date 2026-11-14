@@ -29,7 +29,6 @@ import {
   HttpAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
-  FixturesAdapter,
   OhmailEngine,
   OUTBOX_ABANDONED_TYPE,
   OUTBOX_BACKOFF_CAP_MS,
@@ -37,6 +36,7 @@ import {
   OUTBOX_UNREACHABLE_CEILING_MS,
   type EngineMutation,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** A response whose body is not JSON, at a status that says the server ACTED. */
 const unreadable = (status: number): Response =>

@@ -1,0 +1,20 @@
+{
+  "id": "no-restricted-imports",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "the web framework in shared behaviour",
+      "file": "packages/app-logic/src/planted/framework.ts",
+      "line": 1,
+      "refused": "'next/link' import is restricted from being used by a pattern. Shared code imports no web framework."
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

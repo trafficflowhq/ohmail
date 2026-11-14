@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   flattenResponse,
   type EngineMessage,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * Convergence — the client-side port of the semantics the backend proves in

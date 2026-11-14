@@ -17,6 +17,7 @@
     "@ohmail/app": "*",
     "@ohmail/app-logic": "*",
     "@ohmail/client-engine": "*",
+    "@ohmail/testing": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
     "@ohmail/wire": "*",

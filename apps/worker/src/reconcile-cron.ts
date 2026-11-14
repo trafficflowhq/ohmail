@@ -18,7 +18,7 @@ import {
   accountInShard, clearOrganizerStandDown, loadMailboxById, makeSyncWriteFence,
   markMailboxStoodDown, stampMailboxSyncNow, type LeaderFence,
 } from "./mailboxes.js";
-import { LeaderFencedError, refusalIsRemoval, runSyncCycle, type SyncDeps } from "./sync.js";
+import { LeaderFencedError, refusalIsRemoval, runSyncCycle, UNLABELLED_BUILD, type SyncDeps } from "./sync.js";
 import { isSharedDatabaseFault } from "./dead-letter.js";
 import { applyMetaRequests } from "./request-drain.js";
 import { OrganizerProfileSync } from "./profile.js";
@@ -434,6 +434,9 @@ export async function runReconcileCron(
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
       fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),
+      // The build this process is, as its configuration resolved it: the worker's own label, so a
+      // write-off the worker recorded under this build is not read again by its backstop.
+      buildVersion: config.buildVersion ?? UNLABELLED_BUILD,
       // `OHMAIL_BLANK_REPAIR`, as this process's config read it — the worker's one mode, so `off`
       // and `dry` hold while the backstop sweeps in the worker's place (unset is apply).
       ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),

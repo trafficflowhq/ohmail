@@ -126,7 +126,7 @@ describe("GET /search?sort=", () => {
  *
  * `SEARCH_SORTS` is declared twice in this repository, and it has to be. The server's copy is in
  * `packages/services/src/search-service.ts`; the client's is `SERVER_SEARCH_SORTS` in
- * `packages/client-engine/src/engine.ts`, which is the STANDALONE GPL desktop payload and may not
+ * `packages/client-engine/src/engine/server-wire.ts`, which is the STANDALONE GPL desktop payload and may not
  * import a hosted service — the same reason `owner-cookie.ts` repeats a cookie name rather than
  * importing the API's constant.
  *
@@ -140,7 +140,7 @@ describe("GET /search?sort=", () => {
  * happens to resolve.
  */
 const ENGINE_SRC = fileURLToPath(
-  new URL("../../client-engine/src/engine.ts", import.meta.url),
+  new URL("../../client-engine/src/engine/server-wire.ts", import.meta.url),
 );
 
 describe("the client's sort vocabulary matches the server's", () => {
@@ -149,7 +149,7 @@ describe("the client's sort vocabulary matches the server's", () => {
     // silently. `readFileSync` has no such behaviour — it either returns the bytes or throws.
     const src = readFileSync(ENGINE_SRC, "utf8");
     const decl = /export const SERVER_SEARCH_SORTS = \[([^\]]*)\] as const;/.exec(src);
-    expect(decl, "SERVER_SEARCH_SORTS declaration not found in engine.ts").not.toBeNull();
+    expect(decl, "SERVER_SEARCH_SORTS declaration not found in engine/server-wire.ts").not.toBeNull();
 
     const clientSide = decl![1]!
       .split(",")

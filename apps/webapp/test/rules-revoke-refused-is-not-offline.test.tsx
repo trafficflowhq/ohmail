@@ -5,9 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
-  FixturesAdapter, MemoryMirrorStore, MutationRejectedError, OhmailEngine,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine,
   type EngineAdapter, type QueuedRuleWrite, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
 import { queuedSentence, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";

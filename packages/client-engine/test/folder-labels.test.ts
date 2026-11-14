@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { guardFrom, PUBLIC_GUARD, type GuardLists } from "@ohmail/fixtures";
+import { guardFrom, PUBLIC_GUARD, type GuardLists } from "@ohmail/testing";
 import { FOLDER_OF_VIEW, VIEW_OF_FOLDER, folderLeaf, type Folder } from "@ohmail/client-engine";
 import { maskEntries, privateGuardText, privateModeIt } from "../../../test/support/guard-list.js";
 

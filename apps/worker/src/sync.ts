@@ -31,11 +31,6 @@ import {
   type MessageFailureCode,
 } from "./dead-letter.js";
 import { KnownSetCache, watchKnownSet } from "./known-set.js";
-// `./build-version.js` and NOT `./config.js`, which re-exports the same symbol: `config.ts` imports
-// the bare `@trafficflow/core` barrel, and `apps/sidecar` imports THIS file as
-// `@trafficflow/worker/sync`. Naming config here would put the classifier and the drafter into the
-// shipped desktop engine's import closure from three modules away.
-import { buildVersionOf } from "./build-version.js";
 import {
   completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
@@ -121,6 +116,9 @@ export interface SyncWriteFence {
    */
   transaction<T>(fn: (repo: DrizzleRepo) => Promise<T>): Promise<FenceVerdict<T>>;
 }
+
+/** The label of a build that names none: what a cycle writes when its host passes no {@link SyncDeps.buildVersion}. */
+export const UNLABELLED_BUILD = "dev";
 
 export interface SyncDeps {
   repo: WorkerRepo;
@@ -269,12 +267,11 @@ export interface SyncDeps {
   /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
-   * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
-   * `/health` publishes. NOT a required field and NOT plumbed from the composition root,
-   * deliberately: a version that only arrived when a caller remembered to pass it would leave the
-   * retry silently disarmed for `reconcile-cron.ts`, for `apps/sidecar`, and for every test — and
-   * "the absent config selects the dangerous branch" is the trap this repository keeps paying for.
-   * Present only as a test seam, so a suite can simulate a deploy without touching `process.env`.
+   * Named by the host that composes the cycle, which is the one place that knows: the worker and
+   * its backstop pass the label their configuration resolved (the one `/health` publishes), the
+   * engines their own. This module reads no environment and no file for it. Absent ⇒ {@link
+   * UNLABELLED_BUILD}, the label of a build that has none: such a host never re-reads a write-off
+   * for a new build, only by the clock.
    */
   buildVersion?: string;
   /**
@@ -1131,7 +1128,7 @@ async function syncCycleWithin(
    */
   const readerMode = deps.role === "reader";
   const deadLetters = deps.deadLetters ?? new DeadLetterLedger();
-  const version = deps.buildVersion ?? buildVersionOf(process.env);
+  const version = deps.buildVersion ?? UNLABELLED_BUILD;
   deadLetters.beginCycle();
   // ── THE DURABLE LEDGER IS READ BEFORE THE CURSOR IS BUILT, AND IT MAY THROW ────────────────
   //

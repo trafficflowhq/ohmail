@@ -22,10 +22,10 @@ import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui
 import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";
-import { FixturesAdapter } from "../../packages/client-engine/src/adapters/fixtures-adapter";
+import { FixturesAdapter } from "../../packages/testing/src/adapters/fixtures-adapter";
 import type { MessageBodyWire } from "../../packages/client-engine/src/index";
-import { getFixtures } from "../../packages/fixtures/src/index";
-import type { Address, Fixtures, Folder, MessageFixture } from "../../packages/fixtures/src/types";
+import { getFixtures } from "../../packages/testing/src/index";
+import type { Address, Fixtures, Folder, MessageFixture } from "../../packages/testing/src/types";
 
 const params = new URLSearchParams(window.location.search);
 const N = Math.max(60, Number(params.get("n") ?? "5000"));

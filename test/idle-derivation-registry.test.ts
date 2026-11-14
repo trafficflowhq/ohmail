@@ -57,14 +57,14 @@ const REGISTRY: readonly Site[] = [
   {
     site: 3,
     what: "an empty drain still ranked the mirror (the windowed prune)",
-    file: "packages/client-engine/src/engine.ts",
+    file: "packages/client-engine/src/engine/windowed.ts",
     signal: "stampExcept over every type but bodies, and the cutline generation",
     needle: "=== this.prunedAtStamp",
   },
   {
     site: 3,
     what: "an empty drain still rebuilt the eager window (the body pass)",
-    file: "packages/client-engine/src/engine.ts",
+    file: "packages/client-engine/src/engine/hydration.ts",
     signal: "the store version — any record write, a landed body included",
     needle: "rankedAt === this.eagerRankedAt",
   },

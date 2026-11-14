@@ -1049,7 +1049,7 @@ describe("the Rust side", () => {
     // The window's eviction bound sits under the shell's backstop, so the shell never evicts a
     // URL the window still shows.
     const kept = Number(/const PREVIEWS_KEPT: usize = (\d+);/.exec(code)?.[1]);
-    const windowKept = Number(/export const STAGED_PREVIEWS_KEPT = (\d+);/.exec(fs.readFileSync(path.resolve(APP, "../../packages/client-engine/src/engine.ts"), "utf8"))?.[1]);
+    const windowKept = Number(/export const STAGED_PREVIEWS_KEPT = (\d+);/.exec(fs.readFileSync(path.resolve(APP, "../../packages/client-engine/src/engine/attachment-items.ts"), "utf8"))?.[1]);
     expect(windowKept).toBeGreaterThan(0);
     expect(kept).toBeGreaterThan(windowKept);
     expect(code).toMatch(/const PREVIEW_BYTES_KEPT: u64 = 512 \* 1024 \* 1024;/);
@@ -3215,8 +3215,9 @@ describe("the UI bundle's build config", () => {
      * A STUB THAT STANDS AT A MODULE'S PATH MUST EXPORT THAT MODULE'S NAMES — the lesson two
      * retired sync-client stub tests carried, kept alive on the stub that remains.
      *
-     * The client-engine barrel re-exports named symbols from `./adapters/fixtures-adapter.js`,
-     * and in both desktop artifacts that path resolves to `src/no-fixtures-adapter.ts`. A name
+     * The sample adapter's entry (`@ohmail/testing/adapter`) re-exports named symbols from
+     * `./adapters/fixtures-adapter.js`, and in both desktop artifacts that path resolves to
+     * `src/no-fixtures-adapter.ts`. A name
      * the barrel takes and the stub lacks is a `vite build` failure in this directory alone —
      * `tsc` reads no Vite aliases and resolves the real file, so the typecheck stays green while
      * the bundle cannot be built. That exact shape shipped a red public CI once, on the retired
@@ -3229,7 +3230,7 @@ describe("the UI bundle's build config", () => {
      * here: this file is PUBLISHED and that module is not.
      */
     const barrel = fs.readFileSync(
-      path.resolve(APP, "../../packages/client-engine/src/index.ts"),
+      path.resolve(APP, "../../packages/testing/src/adapter.ts"),
       "utf8",
     );
     const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/fixtures-adapter\.js";/.exec(barrel);

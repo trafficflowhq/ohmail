@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -7,6 +6,7 @@ import { UNMETERED, accounts, type EntitlementsPort, type Tx } from "@trafficflo
 import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeStorageCapResolver } from "../src/storage-cap.js";
+import { readSource } from "./_start-function.js";
 
 const db = await makeTestDb();
 const tx = db as unknown as Tx;
@@ -168,7 +168,7 @@ describe("makeStorageCapResolver", () => {
 
 describe("the hosted composition utters the resolver — the wiring pin", () => {
   it("index.ts threads storageCapFor at attach AND refreshes it in the cycle spread", () => {
-    const src = readFileSync(join(HERE, "..", "src", "index.ts"), "utf8");
+    const src = readSource(join(HERE, "..", "src", "index.ts"));
     // Comments are prose, not wiring: the CODE census below must not be satisfiable — or
     // refusable — by a docblock, so they are stripped before the name checks.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
@@ -185,7 +185,7 @@ describe("the hosted composition utters the resolver — the wiring pin", () => 
   });
 
   it("the reconcile-cron backstop is metered through the same resolver", () => {
-    const src = readFileSync(join(HERE, "..", "src", "reconcile-cron.ts"), "utf8");
+    const src = readSource(join(HERE, "..", "src", "reconcile-cron.ts"));
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
     expect(code).toContain("makeStorageCapResolver(");
     expect(code).not.toContain("UNMETERED_STORAGE_CAP");

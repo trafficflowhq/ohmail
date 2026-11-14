@@ -60,7 +60,8 @@
       "@tiptap/pm/view": ["./node_modules/@tiptap/pm/view"],
       "@ohmail/tokens/omarchy-rule": ["../../packages/tokens/omarchy/rule.ts"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
-      "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
+      "@ohmail/testing/adapter": ["../../packages/testing/src/adapter.ts"],
+      "@ohmail/testing": ["../../packages/testing/src/index.ts"],
       /* The durable-write door as a LEAF, and it must be listed BEFORE nothing in particular
          here (TypeScript matches the longest pattern) but it MUST be listed: the published
          mirror has no node_modules beside `packages/app-logic/src/storage/durable.ts`, which re-exports

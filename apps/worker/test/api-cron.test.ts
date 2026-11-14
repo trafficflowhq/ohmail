@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ALERT_THRESHOLDS } from "@trafficflow/db/cloud";
@@ -7,7 +9,8 @@ import {
   UNSUB_DRAIN_CEILING_MS, UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
 } from "@trafficflow/core/mail";
 import {
-  API_CRON_CONTINUATIONS_PER_FIRE, API_CRON_JITTER_MS, API_CRON_TARGETS, startApiCron,
+  API_CLOCKS_LEADER_KEY, API_CRON_CONTINUATIONS_PER_FIRE, API_CRON_JITTER_MS, API_CRON_TARGETS,
+  API_LEADS_READ_TIMEOUT_MS, startApiCron,
   type ApiCronDeps, type ApiCronTarget,
 } from "../src/api-cron.js";
 
@@ -71,6 +74,7 @@ const settle = async (): Promise<void> => {
 const TARGET: ApiCronTarget = {
   target: "sessions_reap",
   route: "/internal/sessions/reap",
+  apiDrives: false,
   everyMs: 24 * 60 * 60 * 1000,
   firstDelayMs: 4 * 60 * 1000,
   timeoutMs: 60 * 1000,
@@ -446,6 +450,7 @@ describe("the health row carries what a pass says is still owed", () => {
   const DRAIN: ApiCronTarget = {
     target: "unsubscribe_drain",
     route: "/internal/unsubscribe/drain",
+    apiDrives: false,
     everyMs: 60 * 60 * 1000,
     firstDelayMs: 9 * 60 * 1000,
     timeoutMs: 60 * 1000,
@@ -618,5 +623,184 @@ describe("the lifecycle sweep's continuation and its erasures", () => {
     await fire();
     expect(urls).toHaveLength(1);
     cron.stop();
+  });
+});
+
+/**
+ * ONE CLOCK PER PASS. An API program that runs its own clocks drives four of these rows itself.
+ * While one leads, this schedule leaves those four alone and pokes the other six; whenever none
+ * leads, or that cannot be told, it pokes all ten. So no pass has two clocks and none has none.
+ */
+describe("a row the API program drives on its own clock", () => {
+  type Lead = boolean | null | "throws" | "absent";
+  const START = Date.parse("2026-11-14T00:00:00.000Z");
+  const REAP = API_CRON_TARGETS.find((t) => t.target === "sessions_reap")!;
+
+  function drive(targets: readonly ApiCronTarget[], first: Lead) {
+    const timers = makeTimers();
+    const state = { lead: first, status: 200, clock: START, asked: 0 };
+    const urls: string[] = [];
+    const lines: Array<{ level: string; event: string }> = [];
+    const at = (level: string) => (event: string) => { lines.push({ level, event }); };
+    const log = { level: "info", child: () => log, debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
+    const cron = startApiCron({
+      baseUrl: "https://api.example.test", secret: "worker-api-cron-secret-fixture-token",
+      targets, random: () => 0, log: log as unknown as ApiCronDeps["log"], now: () => new Date(state.clock),
+      fetchImpl: (async (url: RequestInfo | URL) => { urls.push(new URL(String(url)).pathname); return okResponse(state.status); }) as typeof fetch,
+      ...(first === "absent" ? {} : {
+        apiLeads: async () => {
+          state.asked += 1;
+          if (state.lead === "throws") throw new Error("the database is away");
+          return state.lead as boolean | null;
+        },
+      }),
+      ...timers.deps,
+    });
+    const said = (event: string): number => lines.filter((l) => l.event === event).length;
+    /** The newest armed timer of the one row under test fires, and everything it starts settles. */
+    const fire = async (): Promise<void> => { timers.latest().fn(); await settle(); await settle(); };
+    return { timers, state, urls, cron, said, fire };
+  }
+
+  it("the four it drives are these, by name, and the lock it leads under is this key", () => {
+    expect(API_CRON_TARGETS.filter((t) => t.apiDrives).map((t) => t.target))
+      .toEqual(["sessions_reap", "unsubscribe_drain", "security_notices", "storage_mails"]);
+    expect(API_CRON_TARGETS.map((t) => typeof t.apiDrives)).toEqual(API_CRON_TARGETS.map(() => "boolean"));
+    expect(API_CLOCKS_LEADER_KEY).toBe(4207278001n);
+  });
+
+  it.each<[string, Lead]>([
+    ["leads", true], ["does not lead", false], ["cannot be told", null], ["cannot be read", "throws"], ["is never asked", "absent"],
+  ])("every row has exactly one clock when the API program %s", async (_name, lead) => {
+    const { timers, urls, cron } = drive(API_CRON_TARGETS, lead);
+    for (const t of timers.scheduled.slice(0, API_CRON_TARGETS.length)) t.fn();
+    await settle(); await settle();
+    const left = lead === true ? API_CRON_TARGETS.filter((t) => t.apiDrives) : [];
+    const poked = API_CRON_TARGETS.filter((t) => !left.includes(t));
+    expect(left.length + poked.length).toBe(10);
+    expect(left).toHaveLength(lead === true ? 4 : 0);
+    expect([...urls].sort()).toEqual(poked.map((t) => t.route).sort());
+    expect(cron.health().map((h) => h.target), "the report is the rows this schedule drives").toEqual(poked.map((t) => t.target));
+    cron.stop();
+  });
+
+  it("a row left to the API makes no request, says so once, and is asked again at its cadence", async () => {
+    const { timers, state, urls, cron, said, fire } = drive([REAP], true);
+    await fire();
+    await fire();
+    expect([urls, state.asked, said("api_cron_left_to_api"), said("api_cron_ok")]).toEqual([[], 2, 1, 0]);
+    expect(cron.health()).toEqual([]);
+    expect(timers.latest().ms, "the next reading waits a whole cadence").toBe(REAP.everyMs);
+    cron.stop();
+  });
+
+  it("the lock let go, the next fire pokes again and the row starts over as a schedule does", async () => {
+    const { state, urls, cron, said, fire } = drive([REAP], false);
+    await fire();                                     // poked: a 2xx from before the API drove the row
+    state.lead = true; state.clock += REAP.everyMs;
+    await fire();
+    expect(cron.health()).toEqual([]);
+    expect(cron.since().getTime()).toBe(START);
+
+    state.lead = false; state.clock += REAP.everyMs; state.status = 503;
+    await fire();                                     // taken back, and the API answers badly
+    expect([urls.length, said("api_cron_resumed")]).toEqual([2, 1]);
+    const [row] = cron.health();
+    expect(row).toMatchObject({ target: "sessions_reap", outcome: "http_error", attempts: 1, consecutiveFailures: 1, lastOkAt: null });
+    expect(cron.since().getTime(), "a 2xx from before the hand-over would read as a pass long stopped").toBe(START + 2 * REAP.everyMs);
+
+    state.status = 200; state.clock += REAP.everyMs;
+    await fire();
+    expect(cron.health()[0]).toMatchObject({ outcome: "ok", attempts: 2, consecutiveFailures: 0, lastOkAt: new Date(state.clock).toISOString() });
+    expect([said("api_cron_left_to_api"), said("api_cron_resumed")]).toEqual([1, 1]);
+    cron.stop();
+  });
+
+  it("a row never left keeps its memory, and the schedule its start", async () => {
+    const { state, cron, said, fire } = drive([REAP], false);
+    await fire();
+    state.clock += REAP.everyMs;
+    await fire();
+    expect(cron.health()[0]).toMatchObject({ outcome: "ok", attempts: 2 });
+    expect([cron.since().getTime(), said("api_cron_resumed"), said("api_cron_left_to_api")]).toEqual([START, 0, 0]);
+    cron.stop();
+  });
+
+  it("a reading that fails pokes, and is said once for as long as it fails", async () => {
+    const { state, urls, cron, said, fire } = drive([REAP], "throws");
+    await fire();
+    state.lead = null;
+    await fire();
+    expect([urls.length, said("api_cron_lead_unread")]).toEqual([2, 1]);
+    state.lead = false;
+    await fire();
+    state.lead = "throws";
+    await fire();
+    expect([urls.length, said("api_cron_lead_unread")]).toEqual([4, 2]);
+    cron.stop();
+  });
+
+  it("a reading that never answers is cut, and the row is poked", async () => {
+    const timers = makeTimers();
+    const urls: string[] = [];
+    const cron = startApiCron({
+      baseUrl: "https://api.example.test", secret: "worker-api-cron-secret-fixture-token", targets: [REAP], random: () => 0,
+      fetchImpl: (async (url: RequestInfo | URL) => { urls.push(String(url)); return okResponse(); }) as typeof fetch,
+      apiLeads: () => new Promise<boolean>(() => { /* a database that never answers */ }),
+      ...timers.deps,
+    });
+    timers.scheduled[0]!.fn();
+    await settle();
+    expect(urls).toEqual([]);
+    const cut = timers.scheduled.filter((t) => !t.cleared && t.ms === API_LEADS_READ_TIMEOUT_MS);
+    expect(cut).toHaveLength(1);
+    cut[0]!.fn();
+    await settle(); await settle();
+    expect(urls).toHaveLength(1);
+    expect(cron.health()[0]!.outcome).toBe("ok");
+    cron.stop();
+  });
+
+  it("a redirect is not followed: the secret goes only where the table names", async () => {
+    const paths: string[] = [];
+    const server = createServer((req, res) => {
+      paths.push(`${req.url ?? ""} ${req.headers.authorization === undefined ? "bare" : "with the secret"}`);
+      res.writeHead(302, { location: "/internal/account-lifecycle/erase?account=00000000-0000-4000-8000-000000000001" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });
+    try {
+      const timers = makeTimers();
+      const cron = startApiCron({
+        baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, secret: "worker-api-cron-secret-fixture-token",
+        targets: [REAP], random: () => 0, ...timers.deps,
+      });
+      timers.scheduled[0]!.fn();
+      for (let i = 0; i < 200 && cron.health()[0]!.outcome === null; i++) await new Promise((r) => { setTimeout(r, 10); });
+      expect(paths).toEqual(["/internal/sessions/reap with the secret"]);
+      expect(cron.health()[0]).toMatchObject({ outcome: "http_error", consecutiveFailures: 1, lastOkAt: null });
+      cron.stop();
+    } finally {
+      await new Promise<void>((resolve) => { server.close(() => { resolve(); }); server.closeAllConnections(); });
+    }
+  });
+
+  it("stopped while the reading is out, it makes no request", async () => {
+    const timers = makeTimers();
+    const urls: string[] = [];
+    let answer: (leads: boolean) => void = () => { /* replaced below */ };
+    const cron = startApiCron({
+      baseUrl: "https://api.example.test", secret: "worker-api-cron-secret-fixture-token", targets: [REAP], random: () => 0,
+      fetchImpl: (async (url: RequestInfo | URL) => { urls.push(String(url)); return okResponse(); }) as typeof fetch,
+      apiLeads: () => new Promise<boolean>((resolve) => { answer = resolve; }),
+      ...timers.deps,
+    });
+    timers.scheduled[0]!.fn();
+    await settle();
+    cron.stop();
+    answer(false);
+    await settle(); await settle();
+    expect(urls).toEqual([]);
+    expect(timers.scheduled.filter((t) => !t.cleared && t.ms === REAP.everyMs), "a stopped schedule re-armed").toEqual([]);
   });
 });

@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE WORKER'S METERED USAGE COMPOSITION, read by a parse of the three composition roots: the
@@ -111,7 +111,7 @@ function stopOrder(src: string): string[] {
   return out.sort((a, b) => a.pos - b.pos).map((c) => c.name);
 }
 
-const read = (f: string): string => readFileSync(resolve(SRC, f), "utf8");
+const read = (f: string): string => readSource(resolve(SRC, f));
 const real: Sources = { index: read(FILES.index), workflow: read(FILES.workflow), proposal: read(FILES.proposal) };
 
 /** Replace exactly one occurrence, or throw: a planted mutation that matched nothing measures nothing. */

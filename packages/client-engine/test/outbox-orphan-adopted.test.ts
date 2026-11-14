@@ -13,8 +13,6 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   CursorExpiredError,
-  DEMO_NOW,
-  FixturesAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
   OhmailEngine,
@@ -24,6 +22,7 @@ import {
   type EngineLocks,
   type EngineMutation,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 const RETRYABLE = () => new MutationRejectedError("network failure: connection reset", { code: "network", retryable: true });
 const tick = (): Promise<void> => new Promise((r) => { setTimeout(r, 0); });

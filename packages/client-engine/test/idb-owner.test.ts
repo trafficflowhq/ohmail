@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  FixturesAdapter,
   IndexedDbMirrorStore,
   LEGACY_MIRROR_DB,
   MIRROR_DB_PREFIX,
@@ -9,6 +8,7 @@ import {
   mirrorDbName,
   purgeLegacyMirror,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 // From the source, not the barrel: the registry key is internal to the mirror and has no
 // product consumer, so widening the package's public surface for one assertion would be the
 // wrong trade — and `index.ts` belongs to another slice right now.
@@ -241,6 +241,25 @@ describe("the mirror belongs to an account", () => {
     await a2.applyResponse(page);
     expect(a2.snapshot().size).toBeGreaterThan(0);
     a2.close();
+  });
+
+  it("the mail a re-bootstrap writes after its wipe is still the account's: another claimant reads none of it", async () => {
+    const factory = new IDBFactory();
+    const page = await seeded();
+    const s = new IndexedDbMirrorStore({ owner: "acct-A", factory });
+    await s.load();
+    await s.applyResponse(page);
+    await s.resetForBootstrap(); //   the 410 cursor-expired path
+    await s.applyResponse(page); //   …and the bootstrap that follows it, on the same open store
+    expect(s.snapshot().size).toBeGreaterThan(0);
+    s.close();
+
+    // The same bytes, another claimant: a database left unowned by the wipe would be claimed and read.
+    const b = new IndexedDbMirrorStore({ owner: "acct-B", dbName: mirrorDbName("acct-A"), factory });
+    await b.load();
+    expect(b.snapshot().size, "B read the mail A synced after its re-bootstrap").toBe(0);
+    expect(b.getCursor()).toBe("0");
+    b.close();
   });
 });
 
@@ -722,6 +741,50 @@ describe("the wipe reports what it could not delete", () => {
     // …and a lingering page still reads, as empty, rather than throwing (the property).
     await expect(other.load()).resolves.not.toThrow();
     expect(other.snapshot().size).toBe(0);
+    other.close();
+  });
+
+  it("the erased-account door takes ONE account's mirror: another account's stores keep writing", async () => {
+    const factory = new IDBFactory();
+    const page = await seeded();
+    const erased = new IndexedDbMirrorStore({ owner: "acct-ERASED", factory });
+    await erased.load();
+    await erased.applyResponse(page);
+    erased.close();
+    // Another account on this browser: one store live, one built and not opened yet.
+    const live = new IndexedDbMirrorStore({ owner: "acct-STAYS", factory });
+    await live.load();
+    await live.applyResponse(page);
+    const kept = live.snapshot().size;
+    const late = new IndexedDbMirrorStore({ owner: "acct-STAYS", factory });
+
+    const wipe = await clearAllMirrors("acct-ERASED", factory, { only: true });
+
+    expect(wipe, "one account's erasure answered for the whole browser").toEqual({ remaining: [], inventory: "complete" });
+    const left = (await factory.databases()).map((d) => d.name ?? "");
+    expect(left.filter((n) => n.startsWith(MIRROR_DB_PREFIX)), "the erasure took a mirror that was not its own")
+      .toEqual([mirrorDbName("acct-STAYS")]);
+    // No fence fell on the other account: its live store writes, and one that opens only now reads its mail.
+    await expect(live.applyResponse(page)).resolves.not.toThrow();
+    await late.load();
+    expect(late.snapshot().size, "the other account's first open after the erasure read an empty mirror").toBe(kept);
+    await expect(late.applyResponse(page)).resolves.not.toThrow();
+    live.close();
+    late.close();
+  });
+
+  it("…and the erased account's own store, left live in another tab, cannot write the mirror back", async () => {
+    const factory = new IDBFactory();
+    const page = await seeded();
+    const other = new IndexedDbMirrorStore({ owner: "acct-ERASED", factory });
+    await other.load();
+    await other.applyResponse(page);
+
+    expect((await clearAllMirrors("acct-ERASED", factory, { only: true })).remaining).toEqual([]);
+
+    await expect(other.applyResponse(page)).rejects.toThrow(/removed by a sign-out/);
+    const left = (await factory.databases()).map((d) => d.name ?? "");
+    expect(left.filter((n) => n.startsWith(MIRROR_DB_PREFIX)), "a live tab recreated the erased account's mirror").toEqual([]);
     other.close();
   });
 });

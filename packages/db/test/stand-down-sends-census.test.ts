@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   STAND_DOWN_SEND_SENTENCES, REMOVED_MAILBOX_SEND_SENTENCE,
 } from "../src/stand-down-sends.js";
+import { readSource } from "../../../apps/worker/test/_start-function.js";
 
 /**
  * EVERY STAND-DOWN CLOSES THE APPOINTMENTS IT ORPHANS — the structural half of
@@ -186,7 +187,7 @@ function filesContaining(
     for (const file of walk(root)) {
       const rel = relative(REPO, file);
       if (exclude.has(rel)) continue;
-      const src = readFileSync(file, "utf8");
+      const src = readSource(file);
       if (needles.some((n) => n.test(withoutComments(src)))) found.set(rel, src);
     }
   }
@@ -241,7 +242,7 @@ describe("a stand-down closes the appointments it orphans", () => {
         STAND_DOWN_SEND_SENTENCES["organized_elsewhere:local"]],
     ];
     for (const [rel, sentence] of quoting) {
-      const src = readFileSync(join(REPO, rel), "utf8");
+      const src = readSource(join(REPO, rel));
       // The test files wrap the sentence across source lines, so the comparison is over the
       // whitespace-collapsed text rather than the literal — a `+`-joined string in TypeScript is
       // one sentence to a reader and two lines to a scanner.

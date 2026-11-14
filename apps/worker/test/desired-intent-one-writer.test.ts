@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * ═══ ONE WRITER FOR THE FILING INTENT ══════════════════════════════════════════════════════
@@ -23,7 +24,7 @@ const SRC = join(HERE, "../src");
 
 const FILES = readdirSync(SRC)
   .filter((f) => f.endsWith(".ts"))
-  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readFileSync(join(SRC, f), "utf8")) }));
+  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readSource(join(SRC, f))) }));
 
 /** The upsert by its own derivation line — the thing that makes it THIS write and not another. */
 const DERIVATION = /reconcileStatus\s*=\s*destination\s*===\s*row\.observedFolder/g;

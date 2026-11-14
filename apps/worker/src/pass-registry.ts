@@ -467,9 +467,10 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   {
     name: "sync_kick",
     module: `${W}/sync-kick.ts`, entry: "syncKickPass",
-    triggers: ["interval"],
-    cadence: "every SYNC_KICK_EVERY_MS (3 s)",
-    budget: "an indexed scan of the served set's stamps, and one read of at most "
+    triggers: ["wake-driven", "interval"],
+    cadence: "on the change log's signal for an account this process serves, at most one scan per "
+      + "SYNC_KICK_SIGNAL_GAP_MS (1 s); and every SYNC_KICK_EVERY_MS (3 s) as the floor (`startSyncKickBell`)",
+    budget: "one scan at a time; an indexed scan of the served set's stamps, and one read of at most "
       + "SYNC_KICK_UNSERVED_MAX unserved stamps, newest first, that writes nothing",
     owns: "a client's POST /sync/pull doorbell reaches the dispatcher as a priority within seconds",
     fence: "leader lock; wakes attached runtimes, and asks the roster for a stamped mailbox none is",

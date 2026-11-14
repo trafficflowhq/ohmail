@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { bracketSpan, lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * EVERY CALLER HANDS THE ACT ITS OWN CONSENT, AND NOTHING ELSE. `screenerAutoActPass` files a
@@ -82,7 +83,7 @@ describe("the act's callers hand it the constructor's consent and nothing else",
     const refused: string[] = [];
     for (const root of roots()) {
       for (const file of walk(root)) {
-        const src = readFileSync(file, "utf8");
+        const src = readSource(file);
         if (!src.includes("screenerAutoActPass")) continue;
         const rel = relative(REPO, file);
         for (const c of callsIn(src)) {
@@ -97,7 +98,7 @@ describe("the act's callers hand it the constructor's consent and nothing else",
   });
 
   it("the pass asks the consent before any read, and never reads the no-AI switch", () => {
-    const code = withoutComments(readFileSync(join(REPO, PASS), "utf8"));
+    const code = withoutComments(readSource(join(REPO, PASS)));
     expect(code).not.toMatch(/screenerAutoApplyAt|screener_auto_apply_at/);
     const body = code.slice(code.indexOf("export async function screenerAutoActPass"));
     const probe = body.indexOf("if (!(await consent.stillGiven(db))) return EMPTY();");
@@ -106,7 +107,7 @@ describe("the act's callers hand it the constructor's consent and nothing else",
   });
 
   it("the constructor reads the act's own column and the account's AI switch, in one statement", () => {
-    const code = withoutComments(readFileSync(join(REPO, PASS), "utf8"));
+    const code = withoutComments(readSource(join(REPO, PASS)));
     const at = code.indexOf("export function screenerActConsentFrom");
     expect(at, "the constructor is gone").toBeGreaterThan(0);
     const ctor = code.slice(at, code.indexOf("\n}\n", at));

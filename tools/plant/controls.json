@@ -1,0 +1,659 @@
+[
+  {
+    "id": "support: packages/app/package.json",
+    "plant": "packages/app/package.json",
+    "source": [
+      "{ \"name\": \"@ohmail/app\", \"version\": \"0.0.0\", \"private\": true, \"type\": \"module\" }"
+    ]
+  },
+  {
+    "id": "support: packages/app-logic/package.json",
+    "plant": "packages/app-logic/package.json",
+    "source": [
+      "{",
+      "  \"name\": \"@ohmail/app-logic\",",
+      "  \"version\": \"0.0.0\",",
+      "  \"private\": true,",
+      "  \"type\": \"module\",",
+      "  \"dependencies\": { \"@ohmail/client-engine\": \"*\" }",
+      "}"
+    ]
+  },
+  {
+    "id": "support: packages/wire/package.json",
+    "plant": "packages/wire/package.json",
+    "source": [
+      "{ \"name\": \"@ohmail/wire\", \"version\": \"0.0.0\", \"private\": true, \"type\": \"module\" }"
+    ]
+  },
+  {
+    "id": "the kit imports the engine",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/src/planted/border.ts",
+    "expect": "refused",
+    "source": [
+      "import { createEngine } from \"@ohmail/client-engine\";",
+      "",
+      "export { createEngine };"
+    ]
+  },
+  {
+    "id": "the core imports the services by path",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/core/src/planted/by-path.ts",
+    "expect": "refused",
+    "source": [
+      "export { sendMessage } from \"../../../services/src/index.js\";"
+    ]
+  },
+  {
+    "id": "the web shell imports the worker by path",
+    "rule": "ohmail/package-borders",
+    "plant": "apps/webapp/app/planted/by-path.ts",
+    "expect": "refused",
+    "source": [
+      "import \"../../../worker/src/index.js\";"
+    ]
+  },
+  {
+    "id": "the fallback door imports the server",
+    "rule": "ohmail/package-borders",
+    "plant": "apps/api-vercel/src/planted/server.ts",
+    "expect": "passes",
+    "source": [
+      "import \"@ohmail/server\";"
+    ]
+  },
+  {
+    "id": "a feature imports a value of the engine",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/app/src/planted/value.ts",
+    "expect": "refused",
+    "source": [
+      "import { createEngine } from \"@ohmail/client-engine\";",
+      "",
+      "export { createEngine };"
+    ]
+  },
+  {
+    "id": "a feature imports a type of the engine",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/app/src/planted/type.ts",
+    "expect": "passes",
+    "source": [
+      "import type { Engine } from \"@ohmail/client-engine\";",
+      "",
+      "export type { Engine };"
+    ]
+  },
+  {
+    "id": "a kit test imports the test package",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/test/planted-testing.test.ts",
+    "expect": "passes",
+    "source": [
+      "import \"@ohmail/fixtures\";"
+    ]
+  },
+  {
+    "id": "a kit test imports the services",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/test/planted-services.test.ts",
+    "expect": "refused",
+    "source": [
+      "import \"@trafficflow/services\";"
+    ]
+  },
+  {
+    "id": "a dynamic import crosses a border",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/src/planted/dynamic.ts",
+    "expect": "refused",
+    "source": [
+      "export const load = () => import(\"@trafficflow/db\");"
+    ]
+  },
+  {
+    "id": "a re-export crosses a border",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/src/planted/reexport.ts",
+    "expect": "refused",
+    "source": [
+      "export * from \"@trafficflow/core\";"
+    ]
+  },
+  {
+    "id": "a require crosses a border",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/ui/src/planted/require.cjs",
+    "expect": "refused",
+    "source": [
+      "module.exports = require(\"@trafficflow/core\");"
+    ]
+  },
+  {
+    "id": "a folder without a row",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/planted-no-row/src/index.ts",
+    "expect": "refused",
+    "source": [
+      "export {};"
+    ]
+  },
+  {
+    "id": "an import the manifest does not declare",
+    "rule": "ohmail/declared-dependency",
+    "plant": "packages/db/src/planted/undeclared.ts",
+    "expect": "refused",
+    "source": [
+      "import \"imapflow\";"
+    ]
+  },
+  {
+    "id": "an import the manifest declares",
+    "rule": "ohmail/declared-dependency",
+    "plant": "packages/db/src/planted/declared.ts",
+    "expect": "passes",
+    "source": [
+      "import \"drizzle-orm\";"
+    ]
+  },
+  {
+    "id": "a platform's environment name in the core",
+    "rule": "ohmail/platform-name",
+    "plant": "packages/core/src/planted/platform.ts",
+    "expect": "refused",
+    "source": [
+      "export const where = process.env.VERCEL_ENV;"
+    ]
+  },
+  {
+    "id": "the same name in a door file",
+    "rule": "ohmail/platform-name",
+    "plant": "apps/api-vercel/src/planted/platform.ts",
+    "expect": "passes",
+    "source": [
+      "export const where = process.env.VERCEL_ENV;"
+    ]
+  },
+  {
+    "id": "a platform's name as a string",
+    "rule": "ohmail/platform-name",
+    "plant": "packages/core/src/planted/platform-literal.ts",
+    "expect": "refused",
+    "source": [
+      "export const key = \"RAILWAY_REPLICA_ID\";"
+    ]
+  },
+  {
+    "id": "a platform's own package",
+    "rule": "ohmail/platform-name",
+    "plant": "packages/core/src/planted/platform-package.ts",
+    "expect": "refused",
+    "source": [
+      "import \"@vercel/functions\";"
+    ]
+  },
+  {
+    "id": "the product's own names that carry a platform's word",
+    "rule": "ohmail/platform-name",
+    "plant": "packages/core/src/planted/own-name.ts",
+    "expect": "passes",
+    "source": [
+      "export const token = process.env.TF_SIGNAL_VERCEL_TOKEN;",
+      "export const VERCEL_REQUEST_LOGS_URL = \"https://example.invalid/logs\";"
+    ]
+  },
+  {
+    "id": "wire exports a value",
+    "rule": "ohmail/wire-exports-no-value",
+    "plant": "packages/wire/src/planted/value.ts",
+    "expect": "refused",
+    "source": [
+      "export const version = 1;"
+    ]
+  },
+  {
+    "id": "wire exports types",
+    "rule": "ohmail/wire-exports-no-value",
+    "plant": "packages/wire/src/planted/types.ts",
+    "expect": "passes",
+    "source": [
+      "export type Kind = \"mail\" | \"event\";",
+      "export interface Ask {",
+      "  kind: Kind;",
+      "}"
+    ]
+  },
+  {
+    "id": "a 401-line file of interface code",
+    "rule": "max-lines",
+    "plant": "packages/app/src/planted/long.ts",
+    "expect": "refused",
+    "source": [
+      {
+        "repeat": "export const line{n} = {n};",
+        "count": 401
+      }
+    ]
+  },
+  {
+    "id": "a 401-line file of the core",
+    "rule": "max-lines",
+    "plant": "packages/core/src/planted/long.ts",
+    "expect": "passes",
+    "source": [
+      {
+        "repeat": "export const line{n} = {n};",
+        "count": 401
+      }
+    ]
+  },
+  {
+    "id": "a 121-line function",
+    "rule": "max-lines-per-function",
+    "plant": "packages/app-logic/src/planted/long-function.ts",
+    "expect": "refused",
+    "source": [
+      "export function long(): number {",
+      "  let sum = 0;",
+      {
+        "repeat": "  sum += {n};",
+        "count": 118
+      },
+      "  return sum;",
+      "}"
+    ]
+  },
+  {
+    "id": "an effect that leaves out what it depends on",
+    "rule": "react-hooks/exhaustive-deps",
+    "plant": "packages/app-logic/src/planted/hook-deps.ts",
+    "expect": "refused",
+    "source": [
+      "import { useEffect } from \"react\";",
+      "",
+      "export function useLogged(title: string, log: (line: string) => void) {",
+      "  useEffect(() => {",
+      "    log(title);",
+      "  }, []);",
+      "}"
+    ]
+  },
+  {
+    "id": "a hook called under a condition",
+    "rule": "react-hooks/rules-of-hooks",
+    "plant": "packages/app-logic/src/planted/hook-order.ts",
+    "expect": "refused",
+    "source": [
+      "import { useState } from \"react\";",
+      "",
+      "export function useMaybe(on: boolean) {",
+      "  if (on) {",
+      "    return useState(0);",
+      "  }",
+      "  return null;",
+      "}"
+    ]
+  },
+  {
+    "id": "browser storage in shared behaviour",
+    "rule": "no-restricted-globals",
+    "plant": "packages/app-logic/src/planted/storage.ts",
+    "expect": "refused",
+    "source": [
+      "export const saved = localStorage.getItem(\"draft\");"
+    ]
+  },
+  {
+    "id": "the web framework in shared behaviour",
+    "rule": "no-restricted-imports",
+    "plant": "packages/app-logic/src/planted/framework.ts",
+    "expect": "refused",
+    "source": [
+      "import Link from \"next/link\";",
+      "",
+      "export { Link };"
+    ]
+  },
+  {
+    "id": "an error caught and dropped",
+    "rule": "no-empty",
+    "plant": "packages/app/src/planted/swallow.ts",
+    "expect": "refused",
+    "source": [
+      "export function quiet(run: () => void) {",
+      "  try {",
+      "    run();",
+      "  } catch {}",
+      "}"
+    ]
+  },
+  {
+    "id": "a switched-off type check",
+    "rule": "@typescript-eslint/ban-ts-comment",
+    "plant": "packages/app/src/planted/ts-comment.ts",
+    "expect": "refused",
+    "source": [
+      "// @ts-ignore",
+      "export const count: number = \"one\";"
+    ]
+  },
+  {
+    "id": "a lint rule switched off in a file",
+    "rule": "ohmail/no-inline-config",
+    "plant": "packages/app/src/planted/switch-off.ts",
+    "expect": "refused",
+    "source": [
+      "// eslint-disable-next-line no-empty",
+      "export const one = 1;"
+    ]
+  },
+  {
+    "id": "a switch-off comment that switches nothing off",
+    "rule": "eslint:unused-directive",
+    "plant": "packages/core/src/planted/unused-directive.ts",
+    "expect": "refused",
+    "source": [
+      "// eslint-disable-next-line no-empty",
+      "export const one = 1;"
+    ]
+  },
+  {
+    "id": "a border crossing under a switch-off comment for the next line",
+    "rule": "ohmail/package-borders",
+    "plant": "packages/core/src/planted/switched-off-next-line.ts",
+    "expect": "refused",
+    "source": [
+      "// eslint-disable-next-line ohmail/package-borders",
+      "export { sendMessage } from \"@trafficflow/services\";"
+    ]
+  },
+  {
+    "id": "a crossing and a platform's name under a switch-off comment for the whole file",
+    "rule": [
+      "ohmail/package-borders",
+      "ohmail/platform-name"
+    ],
+    "plant": "packages/core/src/planted/switched-off-file.ts",
+    "expect": "refused",
+    "source": [
+      "/* eslint-disable */",
+      "export { sendMessage } from \"@trafficflow/services\";",
+      "export const where = process.env.VERCEL_URL;"
+    ]
+  },
+  {
+    "id": "a comment that sets the border and platform rules off",
+    "rule": "ohmail/no-config-comment",
+    "plant": "packages/core/src/planted/rules-set-off.ts",
+    "expect": "refused",
+    "source": [
+      "/* eslint ohmail/platform-name: off, ohmail/package-borders: off */",
+      "export { sendMessage } from \"@trafficflow/services\";",
+      "export const where = process.env.VERCEL_URL;"
+    ]
+  },
+  {
+    "id": "a comment that sets the rule against such comments off",
+    "rule": "ohmail/no-config-comment",
+    "plant": "packages/core/src/planted/rule-against-comments-set-off.ts",
+    "expect": "refused",
+    "source": [
+      "/* eslint ohmail/no-config-comment: off */",
+      "export const one = 1;"
+    ]
+  },
+  {
+    "id": "the linter's name in prose and in a string",
+    "rule": [
+      "ohmail/no-config-comment",
+      "eslint:unused-directive"
+    ],
+    "plant": "packages/core/src/planted/linter-in-prose.ts",
+    "expect": "passes",
+    "source": [
+      "// eslint is a word in this line",
+      "/* the eslint configuration is one file */",
+      "export const said = \"/* eslint no-var: off */\";"
+    ]
+  },
+  {
+    "id": "a literal colour in the kit",
+    "rule": "stylelint:color-no-hex",
+    "plant": "packages/ui/src/planted/hex.css",
+    "expect": "refused",
+    "source": [
+      ".oh-planted {",
+      "  color: #fff;",
+      "}"
+    ]
+  },
+  {
+    "id": "a literal colour in the tokens",
+    "rule": "stylelint:color-no-hex",
+    "plant": "packages/tokens/src/planted/hex.css",
+    "expect": "passes",
+    "source": [
+      ":root {",
+      "  --planted: #fff;",
+      "}"
+    ]
+  },
+  {
+    "id": "a literal gap in the kit",
+    "rule": "stylelint:declaration-property-value-allowed-list",
+    "plant": "packages/ui/src/planted/gap.css",
+    "expect": "refused",
+    "source": [
+      ".oh-planted-gap {",
+      "  padding: 4px;",
+      "}"
+    ]
+  },
+  {
+    "id": "token values in the kit",
+    "rule": "stylelint:declaration-property-value-allowed-list",
+    "plant": "packages/ui/src/planted/tokens-only.css",
+    "expect": "passes",
+    "source": [
+      ".oh-planted-ok {",
+      "  color: var(--ink);",
+      "  padding: var(--g-2) var(--g-3);",
+      "  margin: 0 auto;",
+      "}"
+    ]
+  },
+  {
+    "id": "a named colour in the kit",
+    "rule": "stylelint:color-named",
+    "plant": "packages/ui/src/planted/named.css",
+    "expect": "refused",
+    "source": [
+      ".oh-planted-named {",
+      "  outline: 1px solid red;",
+      "}"
+    ]
+  },
+  {
+    "id": "a colour function in a shorthand",
+    "rule": "stylelint:function-disallowed-list",
+    "plant": "packages/ui/src/planted/function.css",
+    "expect": "refused",
+    "source": [
+      ".oh-planted-fn {",
+      "  border: 1px solid rgb(0 0 0);",
+      "}"
+    ]
+  },
+  {
+    "id": "a literal time in a shorthand",
+    "rule": "stylelint:declaration-property-unit-disallowed-list",
+    "plant": "packages/ui/src/planted/time.css",
+    "expect": "refused",
+    "source": [
+      ".oh-planted-time {",
+      "  transition: opacity 200ms;",
+      "}"
+    ]
+  },
+  {
+    "id": "a bare element selector in the kit",
+    "rule": "stylelint:selector-max-type",
+    "plant": "packages/ui/src/planted/bare.css",
+    "expect": "refused",
+    "source": [
+      "button {",
+      "  color: var(--ink);",
+      "}"
+    ]
+  },
+  {
+    "id": "a kit class without the prefix",
+    "rule": "stylelint:selector-class-pattern",
+    "plant": "packages/ui/src/planted/prefix.css",
+    "expect": "refused",
+    "source": [
+      ".row {",
+      "  color: var(--ink);",
+      "}"
+    ]
+  },
+  {
+    "id": "a style rule switched off in a stylesheet",
+    "rule": "stylelint:comment-word-disallowed-list",
+    "plant": "packages/ui/src/planted/switch-off.css",
+    "expect": "refused",
+    "source": [
+      "/* stylelint-disable color-no-hex */",
+      ".oh-planted-off {",
+      "  color: #fff;",
+      "}"
+    ]
+  },
+  {
+    "id": "a width written into a feature",
+    "rule": "stylelint:media-feature-name-disallowed-list",
+    "plant": "packages/app/src/planted/media.css",
+    "expect": "refused",
+    "source": [
+      "@media (min-width: 600px) {",
+      "  .place {",
+      "    gap: var(--g-2);",
+      "  }",
+      "}"
+    ]
+  },
+  {
+    "id": "a feature restyles a kit class",
+    "rule": "stylelint:selector-disallowed-list",
+    "plant": "packages/app/src/planted/restyle.css",
+    "expect": "refused",
+    "source": [
+      ".oh-button {",
+      "  gap: var(--g-2);",
+      "}"
+    ]
+  },
+  {
+    "id": "an unformatted file in a new package",
+    "rule": "prettier",
+    "plant": "packages/wire/src/planted/unformatted.ts",
+    "expect": "refused",
+    "source": [
+      "export type   Loose = {a:string}"
+    ]
+  },
+  {
+    "id": "an unformatted file in the old tree",
+    "rule": "prettier",
+    "plant": "packages/core/src/planted/unformatted.ts",
+    "expect": "passes",
+    "source": [
+      "export type   Loose = {a:string}"
+    ]
+  },
+  {
+    "id": "a project the type check does not reach",
+    "rule": "references",
+    "plant": "packages/planted-unreferenced/tsconfig.json",
+    "expect": "refused",
+    "source": [
+      "{ \"compilerOptions\": { \"noEmit\": true } }"
+    ]
+  },
+  {
+    "id": "a clean file of shared behaviour",
+    "rule": [
+      "ohmail/package-borders",
+      "ohmail/declared-dependency",
+      "ohmail/platform-name",
+      "max-lines",
+      "max-lines-per-function",
+      "react-hooks/exhaustive-deps",
+      "react-hooks/rules-of-hooks",
+      "no-restricted-globals",
+      "no-restricted-imports",
+      "no-empty",
+      "@typescript-eslint/ban-ts-comment",
+      "ohmail/no-inline-config",
+      "eslint:unused-directive",
+      "prettier"
+    ],
+    "plant": "packages/app-logic/src/planted/clean.ts",
+    "expect": "passes",
+    "source": [
+      "import type { Engine } from \"@ohmail/client-engine\";",
+      "",
+      "export function titleOf(engine: Engine | null, fallback: string): string {",
+      "  try {",
+      "    return engine ? String(engine) : fallback;",
+      "  } catch (error) {",
+      "    throw new Error(fallback, { cause: error });",
+      "  }",
+      "}"
+    ]
+  },
+  {
+    "id": "a clean stylesheet of the kit",
+    "rule": [
+      "stylelint:color-no-hex",
+      "stylelint:color-named",
+      "stylelint:function-disallowed-list",
+      "stylelint:declaration-property-unit-disallowed-list",
+      "stylelint:selector-max-type",
+      "stylelint:selector-class-pattern",
+      "stylelint:comment-word-disallowed-list",
+      "prettier"
+    ],
+    "plant": "packages/ui/src/planted/clean.css",
+    "expect": "passes",
+    "source": [
+      "/* A planted part. */",
+      ".oh-planted-clean {",
+      "  color: var(--ink);",
+      "  transition: opacity var(--dur-1) var(--ease-1);",
+      "}"
+    ]
+  },
+  {
+    "id": "a clean stylesheet of a feature",
+    "rule": [
+      "stylelint:media-feature-name-disallowed-list",
+      "stylelint:selector-disallowed-list"
+    ],
+    "plant": "packages/app/src/planted/clean.css",
+    "expect": "passes",
+    "source": [
+      ".place {",
+      "  gap: var(--g-2);",
+      "}"
+    ]
+  },
+  {
+    "id": "a project the build references",
+    "rule": "references",
+    "plant": "packages/core/tsconfig.json",
+    "expect": "passes"
+  }
+]
