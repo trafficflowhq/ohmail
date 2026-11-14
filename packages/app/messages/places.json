@@ -74,6 +74,7 @@
     "deleteAccount"
   ],
   "desktop": ["host", "aiProvider", "ohmarchy", "desktopScreener", "desktopDoor"],
+  "phone": ["phoneDoor", "servers", "phoneSettings", "phoneRefusal"],
   "calendar": ["calendar"],
   "event": ["event"],
   "week": ["week"],

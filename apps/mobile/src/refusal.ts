@@ -10,6 +10,7 @@
  */
 import { Copy, type Deck } from "./copy";
 import { isStoreFault } from "./state/servers";
+import type { ListedRefusalKey } from "./refusal-keys";
 
 /** Every deck member a refusal can name: a plain sentence, or one that takes arguments. */
 export type RefusalKey = {
@@ -38,9 +39,12 @@ export interface Refusal {
   args?: readonly RefusalArg[];
 }
 
-/** Build one. A function only so the call sites read as sentences rather than object literals. */
+/**
+ * Build one. A function only so the call sites read as sentences rather than object literals. The key is a member of
+ * `REFUSAL_KEYS` (`refusal-keys.ts`), the list the phone's catalogue answers: a key the list lacks does not compile.
+ */
 export const refuse = (
-  say: RefusalKey, ...args: readonly RefusalArg[]
+  say: ListedRefusalKey, ...args: readonly RefusalArg[]
 ): Refusal => (args.length === 0 ? { say } : { say, args });
 
 /**
