@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 const sourceDir = fileURLToPath(new URL("../source/", import.meta.url));
 const readJson = (dir, name) => JSON.parse(readFileSync(`${dir}${name}`, "utf8"));
 
-/** source/tokens.json and source/motion.json, from `dir` (the package's own by default). */
+/** source/tokens.json, source/motion.json and source/fonts.json, from `dir` (the package's own by default). */
 export function readSource(dir = sourceDir) {
-  return { tokens: readJson(dir, "tokens.json"), motion: readJson(dir, "motion.json") };
+  return { tokens: readJson(dir, "tokens.json"), motion: readJson(dir, "motion.json"), fonts: readJson(dir, "fonts.json") };
 }
 
 export class SourceError extends Error {}

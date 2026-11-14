@@ -14,11 +14,15 @@ name: ci
 # What runs. The nightly, dispatch (the second line's nightly is a dispatch on `next`: a schedule fires on the default
 # branch alone), a batch branch (pr/batch-*), a fork's or a bot's pull request, a pull request into any branch but
 # `main` and `next`, and a pull request that touches the harness (dependencies, patches, tsconfigs, vitest.config.ts, test/setup,
-# the shard maps, this file, migrations) run the whole suite. Any other maintainer's pull request runs the
+# the shard maps, this file, migrations; into `next` a change that only adds a package's lines to those lists does not count) run the whole suite. Any other maintainer's pull request runs the
 # test files its diff can reach: vitest's module graph, the files that read the changed paths, root
 # test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed into as few
 # jobs as their measured time needs. Every job keeps its services and checks; the plan's summary says
 # which run it is and why. A selected run is partial: main is proven whole by the batch and the nightly.
+#
+# A draft's push starts no job: plan and typecheck read `github.event.pull_request.draft != true`, and every other
+# job needs plan and is skipped with it, so a draft's run ends skipped and takes no runner. Marking the pull request
+# ready starts its run (ready_for_review below); dco.yml and guard.yml run on a draft as on any pull request.
 #
 # The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
 # jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard. On the maintainers'
@@ -36,7 +40,8 @@ name: ci
 
 on:
   pull_request:
-    # ready_for_review too: a lane PR opens as a draft, and marking it ready (land-pr.sh) starts its run.
+    # ready_for_review too: a lane PR opens as a draft, whose pushes start no job, and marking it ready (land-pr.sh)
+    # starts its run.
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   schedule:
@@ -55,6 +60,9 @@ env:
 jobs:
   plan:
     name: suite · plan
+    # This job and typecheck carry the one condition; every other job needs this one and is skipped with it.
+    # A boolean comparison: the field is null on a dispatch and a schedule, which run. Marking the PR ready starts them.
+    if: github.event.pull_request.draft != true
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     outputs:
@@ -639,6 +647,7 @@ jobs:
   # The required check's name is this job's name, "typecheck": it is read by the repository's ruleset.
   typecheck:
     name: typecheck
+    if: github.event.pull_request.draft != true
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:

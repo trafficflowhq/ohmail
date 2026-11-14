@@ -1,0 +1,288 @@
+{
+  "provider": "google",
+  "name": "events-list-marked",
+  "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/cal-1/events?privateExtendedProperty=ohmail-bench%3Dr2-cal-accounts-20261113&maxResults=250&showDeleted=false"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "kind": "calendar#events",
+      "summary": "google-account@bench.example",
+      "description": "",
+      "updated": "2026-11-13T12:00:00.000Z",
+      "timeZone": "Europe/Zurich",
+      "accessRole": "owner",
+      "defaultReminders": [
+        {
+          "method": "popup",
+          "minutes": 30
+        }
+      ],
+      "nextSyncToken": "sync-2",
+      "items": [
+        {
+          "kind": "calendar#event",
+          "id": "evt-1",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Glaze firing",
+          "description": "Cone 6. The blue set for the catalogue goes in first.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-19T09:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-19T11:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-1@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "glaze-firing",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-2",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Catalogue proofs",
+          "description": "Read the spring catalogue's proofs, page by page.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-20T14:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-20T15:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-2@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "catalogue-proofs",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-17T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-17T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurrence": [
+            "RRULE:FREQ=WEEKLY;COUNT=6;BYDAY=TU"
+          ],
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261201T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-12-02T19:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-12-02T20:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-12-01T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 1,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench": "r2-cal-accounts-20261113",
+              "ohmail-bench-key": "wheel-class-moved"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-4",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Market day",
+          "description": "The stall at the winter market, all day.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "date": "2026-11-21"
+          },
+          "end": {
+            "date": "2026-11-22"
+          },
+          "iCalUID": "evt-4@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "market-day",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": false,
+            "overrides": [
+              {
+                "method": "popup",
+                "minutes": 30
+              }
+            ]
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-5",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Stall planning call",
+          "description": "Who brings the shelves, who brings the till.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-23T10:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-23T10:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-5@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "stall-planning-call",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "hangoutLink": "https://meet.bench.example/room-1",
+          "conferenceData": {
+            "createRequest": {
+              "requestId": "request-1",
+              "conferenceSolutionKey": {
+                "type": "hangoutsMeet"
+              },
+              "status": {
+                "statusCode": "success"
+              }
+            },
+            "conferenceSolution": {
+              "key": {
+                "type": "hangoutsMeet"
+              },
+              "name": "Google Meet"
+            },
+            "conferenceId": "room-1",
+            "entryPoints": [
+              {
+                "entryPointType": "video",
+                "uri": "https://meet.bench.example/room-1"
+              }
+            ]
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        }
+      ]
+    }
+  }
+}

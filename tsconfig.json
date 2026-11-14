@@ -47,6 +47,7 @@
       "path": "./packages/ui"
     },
     { "path": "./packages/cal-core" },
+    { "path": "./packages/cal-providers" },
     {
       "path": "./packages/client-engine"
     },
