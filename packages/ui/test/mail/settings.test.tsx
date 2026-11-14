@@ -223,6 +223,34 @@ describe("SettingNote", () => {
   });
 });
 
+describe("SettingArea, while its sheet saves", () => {
+  it("is off: the field is unavailable, and on again when the save has answered", () => {
+    const { rerender } = render(
+      <SettingArea label="Message" value="Back on Monday." onChange={() => {}} off />,
+    );
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).disabled).toBe(true);
+    rerender(<SettingArea label="Message" value="Back on Monday." onChange={() => {}} />);
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+});
+
+describe("SettingsSheet, what it wants", () => {
+  it("is said when it appears: it lands in a polite live region that stood there before", () => {
+    const { rerender, container } = render(<SettingsSheet title="Away">lines</SettingsSheet>);
+    const said = container.querySelector("[aria-live='polite']");
+    expect(said).not.toBeNull();
+    expect(said?.textContent).toBe("");
+    rerender(
+      <SettingsSheet title="Away" wants={{ word: "Not saved", line: "The mail server did not answer." }}>
+        lines
+      </SettingsSheet>,
+    );
+    expect(container.querySelector("[aria-live='polite']")).toBe(said);
+    expect(said?.textContent).toContain("Not saved");
+    expect(said?.textContent).toContain("The mail server did not answer.");
+  });
+});
+
 describe("SettingArea", () => {
   it("is a field of several lines named by the label over it, which writes back what is typed", () => {
     const onChange = vi.fn();

@@ -12,12 +12,14 @@ export interface SlotProps {
   expanded?: boolean;
   /** It stands on a row of a list. */
   listed?: boolean;
+  /** It cannot be pressed now (what it would change is held): said so, drawn as an off line's control. */
+  disabled?: boolean;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
 }
 
 /** A word you can press: a place in a sentence, a window in the setup, a date. It opens a menu. */
-export function Slot({ children, kind, label, expanded, listed, onPress, ref }: SlotProps) {
+export function Slot({ children, kind, label, expanded, listed, disabled, onPress, ref }: SlotProps) {
   return (
     <button
       ref={ref}
@@ -29,6 +31,7 @@ export function Slot({ children, kind, label, expanded, listed, onPress, ref }: 
       title={label}
       aria-haspopup="menu"
       aria-expanded={expanded ?? false}
+      disabled={disabled}
       onClick={onPress}
     >
       {children}

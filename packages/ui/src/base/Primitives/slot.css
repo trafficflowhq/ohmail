@@ -52,6 +52,14 @@
     color: var(--ink2);
     font-weight: var(--w-mid);
   }
+  /* Off: as a control on a line that is off. It answers neither the pointer nor a press. */
+  .oh-slot:disabled,
+  .oh-slot:disabled:hover {
+    --oh-slot-off: 0.5;
+    background: var(--slot-soft);
+    opacity: var(--oh-slot-off);
+    transform: none;
+  }
 
   :root[data-touch="1"] .oh-slot {
     position: relative;

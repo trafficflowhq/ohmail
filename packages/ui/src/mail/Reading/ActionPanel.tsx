@@ -172,7 +172,13 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       onClick={(event) => verb.onPress?.(event.currentTarget)}
     >
       {verb.icon ? <Icon name={verb.icon} size={20} /> : null}
-      <span className="oh-actionpanel-label" data-wide={verb.widest ? "" : undefined}>
+      <span
+        className="oh-actionpanel-label"
+        data-wide={verb.widest ? "" : undefined}
+        /* A count that leads is said, whole, when it changes: how many are picked. */
+        aria-live={verb.counted ? "polite" : undefined}
+        aria-atomic={verb.counted ? true : undefined}
+      >
         {verb.counted ? <b className="oh-actionpanel-count">{verb.counted.count}</b> : null}
         {verb.counted ? (
           <span className="oh-actionpanel-word"> {verb.counted.word}</span>

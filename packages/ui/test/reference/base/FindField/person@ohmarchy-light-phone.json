@@ -1,0 +1,136 @@
+{
+  "component": "FindField",
+  "state": "person",
+  "look": "ohmarchy-light-phone",
+  "place": "block",
+  "target": [20, 60, 358, 44],
+  "clip": [20, 60, 358, 44],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.38 0.085 250)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(16, 15, 15) 0px 0px 0px 1px inset" },
+    {
+      "backgroundColor": "oklch(0.938301 0.0320379 250)",
+      "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset"
+    },
+    { "opacity": "0.7", "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 1 447c0f4542bb" },
+    { "placeholder": "rgb(56, 54, 53)" },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 dc98a7600ba1" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Remove Petra Wyss",
+      "box": [40, 6, 142, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "6px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "P", "type": 0 },
+        { "said": "Petra Wyss", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [40, 6, 142, 32], "paint": 0 },
+        { "box": [44, 12, 20, 20], "paint": 1 },
+        { "box": [160, 14, 16, 16], "paint": 2 }
+      ]
+    },
+    {
+      "role": "textbox",
+      "name": "Search",
+      "box": [190, 0, 156, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "In this mail", "type": 2, "shown": true }],
+      "surfaces": [{ "box": [190, 0, 156, 44], "paint": 3 }]
+    }
+  ],
+  "loose": {
+    "text": [],
+    "surfaces": [
+      { "box": [0, 0, 358, 44], "paint": 4 },
+      { "box": [12, 12, 20, 20], "paint": 5 }
+    ]
+  }
+}

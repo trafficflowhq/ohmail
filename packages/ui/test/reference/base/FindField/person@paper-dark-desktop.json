@@ -1,0 +1,145 @@
+{
+  "component": "FindField",
+  "state": "person",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [268, 76, 396, 48],
+  "clip": [268, 76, 396, 48],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.91 0.065 250)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "oklch(0.38 0.06 250)", "borderRadius": "999px" },
+    { "opacity": "0.7", "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 1 447c0f4542bb" },
+    { "placeholder": "rgb(184, 175, 163)" },
+    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "12px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 dc98a7600ba1" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Remove Petra Wyss",
+      "box": [44, 8, 141.7, 32],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "6px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "P", "type": 0 },
+        { "said": "Petra Wyss", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [48, 13, 22, 22], "paint": 0 },
+        { "box": [163.7, 16, 16, 16], "paint": 1 }
+      ]
+    },
+    {
+      "role": "textbox",
+      "name": "Search",
+      "box": [193.7, 0, 147.5, 48],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "In this mail", "type": 2, "shown": true }],
+      "surfaces": [{ "box": [193.7, 0, 147.5, 48], "paint": 2 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "10 ms", "type": 3 }],
+    "surfaces": [
+      { "box": [0, 0, 396, 48], "paint": 3 },
+      { "box": [16, 14, 20, 20], "paint": 4 }
+    ]
+  }
+}

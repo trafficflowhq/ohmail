@@ -232,6 +232,95 @@ describe("Row", () => {
   });
 });
 
+describe("Row, a sender that waits", () => {
+  it("says what there is to say about the sender as labels, in the order given, before the time", () => {
+    render(<Row {...base} labels={["Needs you", "2 held"]} />);
+    const text = row().textContent ?? "";
+    expect(text).toContain("Needs you");
+    expect(text.indexOf("Needs you")).toBeLessThan(text.indexOf("2 held"));
+    expect(text.indexOf("2 held")).toBeLessThan(text.indexOf("08:47"));
+  });
+
+  it("marks a sender that is not who the name says with a named sign and its word, in the address's place", () => {
+    render(<Row {...base} flag={{ label: "Lookalike", word: "Not Cinderlock" }} />);
+    expect(within(row()).getByRole("img", { name: "Lookalike" })).toBeTruthy();
+    expect(within(row()).getByText("Not Cinderlock")).toBeTruthy();
+    expect(within(row()).queryByText(petra.address)).toBeNull();
+  });
+
+  it("offers the suggested place beside the row: one press accepts it, another control chooses, neither opens the row", () => {
+    const [onOpen, onAccept, onChoose] = [vi.fn(), vi.fn(), vi.fn()];
+    render(
+      <Rows label="Screener">
+        <Row
+          {...base}
+          listing={{ name: "Petra Wyss: Your talk is on the programme", selected: false }}
+          onOpen={onOpen}
+          place={{
+            word: "News",
+            accept: { label: "News and unsubscribe", onPress: onAccept },
+            choose: { label: "Choose a place", onPress: onChoose },
+          }}
+        />
+      </Rows>,
+    );
+    const option = screen.getByRole("option", { name: "Petra Wyss: Your talk is on the programme" });
+    expect(within(option).queryByRole("button")).toBeNull();
+    const accept = screen.getByRole("button", { name: "News and unsubscribe" });
+    const choose = screen.getByRole("button", { name: "Choose a place" });
+    expect(accept.textContent).toBe("News");
+    fireEvent.click(accept);
+    expect(onAccept).toHaveBeenCalledTimes(1);
+    expect(choose.getAttribute("aria-haspopup")).toBe("menu");
+    expect(choose.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(choose);
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    expect(onChoose.mock.calls[0]?.[0]).toBe(choose);
+    fireEvent.keyDown(accept, { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+    /* The keys reach the option, then each control once, in that order. */
+    const stops = [...document.querySelectorAll<HTMLElement>("[tabindex='0'], button")];
+    expect(stops).toEqual([option, accept, choose]);
+  });
+
+  it("where nobody has a suggestion, the word itself chooses a place, and says its menu is open", () => {
+    const onChoose = vi.fn();
+    const { rerender } = render(
+      <Row {...base} place={{ word: "Choose", choose: { label: "Choose a place", onPress: onChoose } }} />,
+    );
+    const choose = screen.getByRole("button", { name: "Choose a place" });
+    expect(choose.textContent).toBe("Choose");
+    fireEvent.click(choose);
+    expect(onChoose).toHaveBeenCalledWith(choose);
+    rerender(
+      <Row
+        {...base}
+        place={{ word: "Choose", choose: { label: "Choose a place", expanded: true, onPress: onChoose } }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Choose a place" }).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("with neither press, the place is a plain label and no control", () => {
+    render(<Row {...base} place={{ word: "News" }} />);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getAllByText("News").length).toBeGreaterThan(0);
+  });
+
+  it("hands a right click on the place to the app as the row's menu, once", () => {
+    const onMenu = vi.fn();
+    render(<Row {...base} onMenu={onMenu} place={{ word: "News", accept: { label: "News" } }} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "News" }), { clientX: 40, clientY: 12 });
+    expect(onMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws no label, sign or word it was not given", () => {
+    render(<Row {...base} labels={[]} />);
+    expect(within(row()).queryByRole("img")).toBeNull();
+    expect(within(row()).getByText(petra.address)).toBeTruthy();
+  });
+});
+
 describe("Row, in a listbox", () => {
   const listing = { name: "Petra Wyss: Your talk is on the programme", spoken: "unread", selected: false };
 

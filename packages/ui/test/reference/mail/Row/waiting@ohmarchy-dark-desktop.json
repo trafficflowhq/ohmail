@@ -1,0 +1,230 @@
+{
+  "component": "Row",
+  "state": "waiting",
+  "look": "ohmarchy-dark-desktop",
+  "place": "block",
+  "target": [260, 108, 400, 84],
+  "clip": [260, 108, 400, 84],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.84 0.075 112)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13.5px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(122, 162, 247) 0px 0px 0px 2px inset" },
+    {
+      "backgroundColor": "oklch(0.281406 0.036579 256.924)",
+      "boxShadow": "rgb(83, 87, 108) 0px 0px 0px 1px inset"
+    },
+    { "backgroundColor": "rgb(122, 162, 247)", "boxShadow": "rgb(37, 42, 61) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(62, 64, 82) 0px 0px 0px 1px inset" },
+    {
+      "boxDecorationBreak": "clone",
+      "before.backgroundColor": "rgb(26, 27, 38)",
+      "borderRadius": "5.2px 0px 0px 5.2px"
+    },
+    { "boxDecorationBreak": "clone", "borderRadius": "0px 5.2px 5.2px 0px" },
+    { "clip": "rect(0px, 0px, 0px, 0px)" },
+    {
+      "borderRight": "1px solid rgb(26, 27, 38)",
+      "borderBottom": "1px solid rgb(26, 27, 38)",
+      "turn": "45deg"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "L Lena Kaufmann 2 held 08:40 One more thing If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind…",
+      "box": [0, 0, 400, 84],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(37, 42, 61)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "14px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "L", "type": 0 },
+        { "said": "Lena Kaufmann", "type": 1 },
+        { "said": "2 held", "type": 2 },
+        { "said": "08:40", "type": 3 },
+        { "said": "One more thing", "type": 4 },
+        {
+          "said": "If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind.",
+          "type": 5
+        }
+      ],
+      "surfaces": [
+        { "box": [0, 0, 400, 84], "paint": 0 },
+        { "box": [16, 13.2, 32, 32], "paint": 1 },
+        { "box": [12, 9.2, 8, 8], "paint": 2 },
+        { "box": [282.8, 11.2, 59.2, 22], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Ohbox",
+      "box": [305.5, 55, 62.4, 19],
+      "drawn": {
+        "color": "rgb(26, 27, 38)",
+        "backgroundColor": "rgb(122, 162, 247)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "16.9px",
+        "letterSpacing": "normal",
+        "borderRadius": "5.2px 0px 0px 5.2px",
+        "paddingTop": "1.04px",
+        "paddingRight": "5.2px",
+        "paddingBottom": "1.04px",
+        "paddingLeft": "5.2px",
+        "borderColor": "rgb(26, 27, 38)"
+      },
+      "text": [{ "said": "Ohbox", "type": 6 }],
+      "surfaces": [{ "box": [305.5, 55, 62.4, 19], "paint": 4, "parts": { "before": [7, 7] } }]
+    },
+    {
+      "role": "button",
+      "name": "Choose a place",
+      "box": [368.9, 55, 17.1, 19],
+      "drawn": {
+        "color": "rgb(26, 27, 38)",
+        "backgroundColor": "rgb(122, 162, 247)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "16.9px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px 5.2px 5.2px 0px",
+        "paddingTop": "0px",
+        "paddingRight": "5.98px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5.98px",
+        "borderColor": "rgb(26, 27, 38)"
+      },
+      "text": [{ "said": "Choose a place", "type": 6 }],
+      "surfaces": [
+        { "box": [368.9, 55, 17.1, 19], "paint": 5 },
+        { "box": [374.8, 63.9, 1, 1], "paint": 6 },
+        { "box": [373.8, 58.2, 7.3, 7.3], "paint": 7 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

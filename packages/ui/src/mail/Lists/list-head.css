@@ -123,8 +123,14 @@
     --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--flush);
   }
 
-  /* On a phone a second button and a segmented control in the head stand on the soft tone. */
-  :root[data-device="phone"] .oh-listhead-aside {
+  /* A second button in a list's head takes the sheet's soft tone. On a phone, where the list stands on the
+     ground, it and a segmented control stand on the soft tone, beside the name and under it. */
+  .oh-listhead {
+    --oh-soft: var(--soft-sheet);
+  }
+
+  :root[data-device="phone"] .oh-listhead-aside,
+  :root[data-device="phone"] .oh-listhead-below {
     --oh-soft: var(--soft);
   }
 

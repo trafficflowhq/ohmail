@@ -66,6 +66,25 @@
     box-shadow: var(--oh-ring-pick);
     color: var(--on-pick);
   }
+
+  /* A mark after the word (a menu's arrow, the way off): closer to the word than an icon before it, and quieter. */
+  .oh-button[data-mark] {
+    gap: var(--s1);
+  }
+
+  .oh-button-mark {
+    --oh-button-mark-pull: -3px;
+    --oh-button-mark-off: 0.65;
+    --oh-button-mark-on: 0.8;
+
+    flex: none;
+    margin-right: var(--oh-button-mark-pull);
+    opacity: var(--oh-button-mark-off);
+  }
+
+  .oh-button[aria-pressed="true"] > .oh-button-mark {
+    opacity: var(--oh-button-mark-on);
+  }
   .oh-button:disabled,
   .oh-button:disabled:hover {
     background: var(--off);

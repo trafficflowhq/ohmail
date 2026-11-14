@@ -104,6 +104,11 @@
     color: var(--on-off);
   }
 
+  /* A slot that is off inside a control of a line that is off is dimmed once, by the line. */
+  .oh-settingline[data-off] > .oh-settingline-value > * .oh-slot:disabled {
+    opacity: 1;
+  }
+
   .oh-settingline[data-off] > .oh-settingline-value > * {
     opacity: var(--oh-settingline-dim);
   }
@@ -126,6 +131,12 @@
     align-self: stretch;
     max-width: none;
     margin-left: 0;
+  }
+
+  /* A slot's room for a finger is higher than its word. Where the line's controls go one under the other, a
+     press inside the word that acts under it is that word's: it stands over the slot's room. */
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"] > .oh-settingline-value > .oh-button {
+    position: relative;
   }
 
   :root[data-touch="1"]

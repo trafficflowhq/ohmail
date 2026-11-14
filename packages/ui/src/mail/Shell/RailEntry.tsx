@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { KeyHint } from "../../base/index.js";
 import { v } from "../../base/tokens.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
@@ -15,6 +15,11 @@ export interface RailEntryProps {
   children: string;
   /** Its sign. A `fold` draws its chevron instead. */
   icon?: IconName;
+  /**
+   * A host's own sign, where the design's icons hold none for its place: a drawing of 20 by 20 on the icons'
+   * grid in the entry's ink (`currentColor`). It stands in the icon's place and is not said.
+   */
+  sign?: ReactNode;
   /** A tag's dot in place of an icon: the tag's hue on the ring, in degrees. */
   hue?: number;
   /** How many are unread or waiting there. Zero is no count at all. */
@@ -54,7 +59,7 @@ export interface RailEntryProps {
 
 /** One place: its sign, its name, its count. */
 export function RailEntry(props: RailEntryProps) {
-  const { kind, children, icon, hue, count, keyHint, digit, current, expanded, depth, onPress } = props;
+  const { kind, children, icon, sign, hue, count, keyHint, digit, current, expanded, depth, onPress } = props;
   const counted = useRef<HTMLSpanElement>(null);
   const before = useRef(count);
 
@@ -100,6 +105,10 @@ export function RailEntry(props: RailEntryProps) {
         </span>
       ) : hue !== undefined ? (
         <i className="oh-railentry-dot" />
+      ) : sign ? (
+        <span className="oh-railentry-sign" aria-hidden="true">
+          {sign}
+        </span>
       ) : icon ? (
         <span className="oh-railentry-sign">
           <Icon name={icon} size={kind === "sub" ? 16 : 20} />

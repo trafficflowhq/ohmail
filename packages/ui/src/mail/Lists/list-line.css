@@ -1,0 +1,74 @@
+/* What a list says about itself under its rows. It starts at the column's edge, as the list's last line does. */
+@layer oh {
+  .oh-listline {
+    --oh-listline-pad: var(--s3) var(--s5) var(--s3) var(--flush);
+    /* Its press stands in a list: a second button there takes the sheet's soft tone. */
+    --oh-soft: var(--soft-sheet);
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    padding: var(--oh-listline-pad);
+    color: var(--ink2);
+    line-height: var(--oh-lh);
+    text-wrap: pretty;
+  }
+
+  /* Under rows, a group's heading or an empty place it keeps a step more; as the list's last line, the list's foot. */
+  .oh-rows + .oh-listline,
+  .oh-groupheading + .oh-listline,
+  .oh-empty + .oh-listline {
+    --oh-listline-pad: var(--s4) var(--s5) var(--s3) var(--flush);
+  }
+
+  .oh-listline:last-child {
+    padding-bottom: var(--s6);
+  }
+
+  .oh-listline-say {
+    display: flex;
+    flex: 0 1 auto;
+    align-items: flex-start;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .oh-listline-words {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* The sign stands on the first line of the words, however many lines they take. */
+  .oh-listline-say > .oh-icon {
+    --oh-listline-sign: 0.12em;
+
+    flex: none;
+    margin-top: var(--oh-listline-sign);
+  }
+
+  .oh-listline[data-warn] {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-listline[data-fine] {
+    font-size: var(--t-meta);
+  }
+
+  .oh-listline > .oh-button {
+    flex: none;
+    max-width: 100%;
+  }
+
+  /* Under an empty place the line stands in the middle, as the place's words do. */
+  .oh-empty + .oh-listline {
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* Stand-in: the sheet gives ohmarchy this edge in a window, and the tokens do not carry it yet. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-listline {
+    --flush: 26px;
+  }
+}

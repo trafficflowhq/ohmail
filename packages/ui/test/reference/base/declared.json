@@ -308,5 +308,59 @@
     "question": "picture",
     "since": "2026-11-15",
     "reason": "The time field's clock is the browser's own drawing, and it now follows the dark scheme the design names (color-scheme, ruled 2026-11-15): drawn light on the dark field, where the reference, taken before the studio's sheet named the scheme, draws it dark. The rest of the picture is equal."
+  },
+  {
+    "key": "Button/mark",
+    "since": "2026-11-16",
+    "reason": "A button that opens a menu says whether the menu is open (aria-expanded), which the reference's plain button does not; the state stays, as ruled for every such control on 2026-11-15.",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Button/mark@paper-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@ohmarchy-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@paper-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@ohmarchy-light-phone",
+    "question": "boxes",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
+  },
+  {
+    "key": "Button/mark-set@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-16",
+    "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
   }
 ]

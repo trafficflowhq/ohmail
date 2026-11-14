@@ -37,6 +37,10 @@
     border-radius: var(--r-row);
     outline: none;
   }
+  /* Off: its words in the off line's ink. The sheet draws no such field; this leans on a line that is off. */
+  .oh-field-input:disabled {
+    color: var(--on-off);
+  }
   .oh-field-input::placeholder {
     color: var(--ink2);
     opacity: 1;

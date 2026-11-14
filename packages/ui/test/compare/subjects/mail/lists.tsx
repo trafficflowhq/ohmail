@@ -5,6 +5,7 @@ import {
   Doorbell,
   GroupHeading,
   ListHead,
+  ListLine,
   ListTail,
   MovePicker,
   ReadSquares,
@@ -59,6 +60,33 @@ export const listCorner = (look: Look): { left: number; top: number } => {
 const done = { label: "Done", icon: "check" } as const;
 const file = "Has an attachment";
 const row = (props: RowProps): ReactElement => <Row {...props} />;
+
+/** A sender who waits in the Screener: what is held is counted, and the place their mail would go is offered. */
+const waiting: RowProps = {
+  who: "Lena Kaufmann",
+  address: "lena@atelier-eichspan.example",
+  people: [W.person("Lena Kaufmann", "lena@atelier-eichspan.example")],
+  labels: ["2 held"],
+  when: "08:40",
+  subject: "One more thing",
+  preview:
+    "If next week does not work, the Friday after would. And bring a few bowls if you like, I already have a tray in mind.",
+  unread: true,
+  place: { word: "Ohbox", accept: { label: "Ohbox" }, choose: { label: "Choose a place" } },
+};
+/** A list's own line, under the rows it speaks of and last in its list, as the reference stands it. */
+const lineUnder = (key: string, line: ReactNode): KitSubject => ({
+  ...inList(
+    key,
+    <>
+      <Rows>{row(talk)}</Rows>
+      {line}
+    </>,
+    { target: ".oh-listline" },
+  ),
+  /* As wide as the reference's list on each device. */
+  width: undefined,
+});
 const rows = (
   key: string,
   props: RowProps | RowProps[],
@@ -322,6 +350,30 @@ export const lists: KitSubject[] = [
     place: "block",
     width: 420,
     render: () => <ListTail way={{ label: "History" }}>Older mail</ListTail>,
+  },
+  lineUnder("ListLine/busy", <ListLine busy>Looking further back…</ListLine>),
+  lineUnder(
+    "ListLine/warn",
+    <ListLine warn act={{ label: "Try again" }}>
+      Older mail could not be loaded.
+    </ListLine>,
+  ),
+  lineUnder(
+    "ListLine/act",
+    <ListLine act={{ label: "Load older mail", quiet: true }}>
+      4 older messages from your mail server.
+    </ListLine>,
+  ),
+  lineUnder("ListLine/plain", <ListLine>That is everything on your mail server.</ListLine>),
+  {
+    ...rows("Row/waiting", waiting, { target: ".oh-row-slot" }),
+    width: undefined,
+    /* Beside its letters the first sender is the open one; in one column nobody is open. */
+    render: (look) => (
+      <div data-list="">
+        <Sheet kind="list">{row({ ...waiting, open: look.device !== "phone" })}</Sheet>
+      </div>
+    ),
   },
   {
     key: "SelectionBar/three",

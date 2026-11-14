@@ -19,6 +19,7 @@ import { AgendaRow, EventCard } from "../../src/calendar/index.js";
 import {
   ColumnHandle,
   LookPicture,
+  MovePicker,
   ReadSquares,
   Recipients,
   Row,
@@ -62,6 +63,30 @@ function AtControl({ kind }: { kind?: "card" | "sheet" }) {
           {items}
         </Menu>
       )}
+    </div>
+  );
+}
+
+/** The Move menu opened from a control near the window's right edge and foot, asked to end at it and open upwards. */
+function MoveAtControl() {
+  const [open, setOpen] = useState(false);
+  const control = useRef<HTMLButtonElement | null>(null);
+  return (
+    <div style={{ position: "absolute", right: 40, bottom: 60 }}>
+      <Button ref={control} kind="two" opens="menu" expanded={open} onPress={() => setOpen(true)}>
+        More
+      </Button>
+      <MovePicker
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={control}
+        up
+        right
+        label="Move"
+        title="Move"
+        places={[{ id: "news", label: "News" }]}
+        folders={[{ id: "rosa", name: "Gartenlokal Rosa", path: "Kunden › Gastronomie" }]}
+      />
     </div>
   );
 }
@@ -308,6 +333,7 @@ const SCENES = {
   /* A catalogue's longer word beside the name (German says more than English). */
   tilesLong: () => <Tiles tag="übernimmt das Omarchy-Theme" />,
   control: AtControl,
+  move: MoveAtControl,
   card: () => <AtControl kind="card" />,
   footSheet: () => <AtControl kind="sheet" />,
   pointer: AtPointer,

@@ -10,6 +10,7 @@ import {
   EndDot,
   Faces,
   Field,
+  FindField,
   HintLine,
   InfoMark,
   JumpBack,
@@ -119,6 +120,29 @@ describe("Button", () => {
   });
 });
 
+describe("Button, with a mark after its word", () => {
+  it("keeps its name and its state: the mark is drawn, never said", () => {
+    const onPress = vi.fn();
+    const { rerender } = render(
+      <Button kind="two" size="s" mark="down" opens="menu" onPress={onPress}>
+        Place
+      </Button>,
+    );
+    const filter = screen.getByRole("button", { name: "Place" });
+    expect(filter.getAttribute("aria-haspopup")).toBe("menu");
+    expect(filter.querySelectorAll("svg")).toHaveLength(1);
+    expect(filter.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(filter);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    rerender(
+      <Button kind="two" size="s" mark="x" pressed onPress={onPress}>
+        News
+      </Button>,
+    );
+    expect(screen.getByRole("button", { name: "News" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
 describe("KeyHint", () => {
   it("prints the key it is handed", () => {
     const { container } = render(<KeyHint>Ctrl K</KeyHint>);
@@ -158,6 +182,21 @@ describe("Slot", () => {
     fireEvent.click(year);
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Window" }).getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+describe("Slot, off", () => {
+  it("says it is unavailable and takes no press", () => {
+    const onPress = vi.fn();
+    render(
+      <Slot disabled onPress={onPress}>
+        News
+      </Slot>,
+    );
+    const slot = screen.getByRole("button", { name: "News" }) as HTMLButtonElement;
+    expect(slot.disabled).toBe(true);
+    fireEvent.click(slot);
+    expect(onPress).not.toHaveBeenCalled();
   });
 });
 
@@ -232,6 +271,30 @@ describe("Field", () => {
     expect(onChange).toHaveBeenCalledWith("Mila");
   });
 
+  it("says a refusal that appears while the keys are in the field: it lands in a polite live region that stood there", () => {
+    const { rerender, container } = render(<Field label="Code" value="12" onChange={() => {}} />);
+    const live = container.querySelector("[aria-live='polite']");
+    expect(live).not.toBeNull();
+    const box = screen.getByLabelText("Code");
+    box.focus();
+    rerender(<Field label="Code" value="12" onChange={() => {}} refusal="That code is not right." />);
+    expect(container.querySelector("[aria-live='polite']")).toBe(live);
+    expect(live?.textContent).toContain("That code is not right.");
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("off, takes no keys and says it is unavailable, in one line and in several", () => {
+    const onChange = vi.fn();
+    render(
+      <>
+        <Field label="Name" value="Mila" onChange={onChange} disabled />
+        <Field label="Message" value="Back on Monday." lines={3} onChange={onChange} disabled />
+      </>,
+    );
+    expect((screen.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Message") as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
   it("says its refusal with the field, in place of the hint", () => {
     render(
       <Field
@@ -282,6 +345,69 @@ describe("Field", () => {
   it("takes several lines", () => {
     render(<Field label="Signature" value={"Mila\nStudio"} lines={3} onChange={() => {}} />);
     expect((screen.getByLabelText("Signature") as HTMLTextAreaElement).rows).toBe(3);
+  });
+});
+
+describe("FindField", () => {
+  it("is a textbox named by its label, in no form, and hands what is typed and the keys to the app", () => {
+    const [onChange, onKeyDown] = [vi.fn(), vi.fn()];
+    render(
+      <FindField
+        label="Search"
+        placeholder="Search mail"
+        value=""
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+      />,
+    );
+    const box = screen.getByRole("textbox", { name: "Search" }) as HTMLInputElement;
+    expect(box.form).toBeNull();
+    expect(box.getAttribute("name")).toBeNull();
+    expect(box.placeholder).toBe("Search mail");
+    fireEvent.change(box, { target: { value: "glaze" } });
+    expect(onChange).toHaveBeenCalledWith("glaze");
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands what the words are narrowed to before them, as one control that takes it off", () => {
+    const onRemove = vi.fn();
+    render(
+      <FindField
+        label="Search"
+        value=""
+        chip={{
+          label: "Petra Wyss",
+          person: { name: "Petra Wyss", address: "petra@makersfest.example" },
+          remove: "Remove Petra Wyss",
+          onRemove,
+        }}
+      />,
+    );
+    const chip = screen.getByRole("button", { name: "Remove Petra Wyss" });
+    expect(chip.textContent).toContain("Petra Wyss");
+    const box = screen.getByRole("textbox", { name: "Search" });
+    expect(chip.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(chip);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the way to empty it only while there are words, and says what the search took", () => {
+    const onPress = vi.fn();
+    const { rerender } = render(
+      <FindField label="Search" value="" took="0.12 s" clear={{ label: "Clear", onPress }} />,
+    );
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.getByText("0.12 s")).toBeTruthy();
+    rerender(<FindField label="Search" value="glaze" took="0.12 s" clear={{ label: "Clear", onPress }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes a press on its box as a press on the words: the keys go to the field", () => {
+    const { container } = render(<FindField label="Search" value="" onChange={() => {}} />);
+    fireEvent.click(container.firstElementChild!);
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Search" }));
   });
 });
 

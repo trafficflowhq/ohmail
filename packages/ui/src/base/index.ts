@@ -38,6 +38,8 @@ export { Blank } from "./Primitives/Blank.js";
 export type { BlankProps } from "./Primitives/Blank.js";
 export { Field } from "./Primitives/Field.js";
 export type { FieldProps } from "./Primitives/Field.js";
+export { FindField } from "./Primitives/FindField.js";
+export type { FindFieldProps } from "./Primitives/FindField.js";
 export { Switch } from "./Primitives/Switch.js";
 export type { SwitchProps } from "./Primitives/Switch.js";
 export { Seg } from "./Primitives/Seg.js";

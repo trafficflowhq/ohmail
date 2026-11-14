@@ -15,6 +15,7 @@ import {
   Dot,
   Empty,
   Field,
+  FindField,
   JumpBack,
   Page,
   Sentence,
@@ -26,9 +27,13 @@ import {
   ActionPanel,
   ColumnHandle,
   Dock,
+  GroupHeading,
+  ListLine,
+  ListTail,
   LookPicture,
   Message,
   MessageHead,
+  MovePicker,
   Row,
   Rows,
   RuleLine,
@@ -1818,4 +1823,485 @@ describe("a look's picture", () => {
       rules.filter((rule) => (rule.match(/\.[\w-]+/g) ?? []).some((name) => !name.startsWith(".oh-lookpic"))),
     ).toEqual([]);
   });
+});
+
+/** Paper and Ohmarchy, with a pointer and under a finger, at the default Text size and at the largest. */
+const ASK_LOOKS = (["paper", "ohmarchy"] as const).flatMap((face) =>
+  (["desktop", "phone"] as const).flatMap((device) =>
+    ([1, 1.5] as const).map((zoom) => [face, device, zoom] as const),
+  ),
+);
+
+describe("a list's own line", () => {
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: it starts where the list's last line starts, a refusal is bold in the ink with its sign on its first line, and longer German words wrap inside it with its press",
+    async (face, device, zoom) => {
+      const seen = await drawn(
+        <div style={{ width: 250 }}>
+          <ListTail way={{ label: "Verlauf" }}>Ältere Mail</ListTail>
+          <ListLine warn act={{ label: "Erneut versuchen" }}>
+            Weitere Absenderinnen und Absender konnten nicht geladen werden.
+          </ListLine>
+          <ListLine>Das ist alles auf deinem Mailserver.</ListLine>
+        </div>,
+        () => {
+          const tail = document.querySelector(".oh-listtail")!;
+          const [warn, plain] = [...document.querySelectorAll(".oh-listline")] as HTMLElement[];
+          const say = warn!.querySelector(".oh-listline-say")!;
+          const [sign, words] = [say.querySelector("svg")!, say.querySelector("span")!];
+          const act = warn!.querySelector("button")!.getBoundingClientRect();
+          const box = warn!.getBoundingClientRect();
+          const probe = document.createElement("i");
+          probe.style.color = "var(--ink)";
+          document.querySelector(".oh-root")!.append(probe);
+          const lineHigh = parseFloat(getComputedStyle(words).lineHeight) * (box.width / warn!.offsetWidth);
+          const wordsBox = words.getBoundingClientRect();
+          return {
+            starts: [
+              parseFloat(getComputedStyle(tail).paddingLeft),
+              parseFloat(getComputedStyle(warn!).paddingLeft),
+            ],
+            role: [warn!.getAttribute("role"), plain!.getAttribute("role")],
+            weight: [getComputedStyle(warn!).fontWeight, getComputedStyle(plain!).fontWeight],
+            ink: [
+              getComputedStyle(warn!).color,
+              getComputedStyle(probe).color,
+              getComputedStyle(plain!).color,
+            ],
+            signOnFirstLine: sign.getBoundingClientRect().bottom < wordsBox.top + lineHigh * 1.2,
+            lines: Math.round(wordsBox.height / lineHigh),
+            actInside:
+              act.left >= box.left - 0.5 && act.right <= box.right + 0.5 && act.bottom <= box.bottom + 0.5,
+            wordsInside: words.getBoundingClientRect().right <= box.right + 0.5,
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      expect(seen.starts[1]).toBe(seen.starts[0]);
+      expect(seen.role).toEqual(["status", null]);
+      expect(Number(seen.weight[0])).toBeGreaterThan(Number(seen.weight[1]));
+      expect(seen.ink[0]).toBe(seen.ink[1]);
+      expect(seen.ink[2]).not.toBe(seen.ink[1]);
+      expect(seen.signOnFirstLine).toBe(true);
+      expect(seen.lines).toBeGreaterThan(1);
+      expect(seen.actInside).toBe(true);
+      expect(seen.wordsInside).toBe(true);
+      expect(seen.sideways).toBeLessThanOrEqual(0);
+    },
+    60_000,
+  );
+});
+
+describe("a waiting sender's row", () => {
+  const sender: RowProps = {
+    who: "Cinderlock Security",
+    address: "alerts@cinderlock-mail.example",
+    people: [{ name: "Cinderlock Security", address: "alerts@cinderlock-mail.example" }],
+    subject: "Ihr Konto wurde vorübergehend eingeschränkt",
+    preview: "Bitte bestätigen Sie Ihre Angaben, damit wir den Zugang wieder freigeben können.",
+    when: "08:47",
+    unread: true,
+  };
+  const place = {
+    word: "Aussortieren",
+    accept: { label: "Aussortieren und abbestellen" },
+    choose: { label: "Einen Ort wählen" },
+  };
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: each label is whole or not there in every width, the address goes before a label and a label before the name is cut, and the place's controls lie over the room the row keeps, inside the row",
+    async (face, device, zoom) => {
+      const seen = await drawn(
+        <>
+          {[760, 460, 380, 300].map((width) => (
+            <div key={width} data-at={width} style={{ width }}>
+              <Rows>
+                <Row {...sender} labels={["Braucht dich", "2 zurückgehalten"]} place={place} />
+              </Rows>
+            </div>
+          ))}
+        </>,
+        () =>
+          [...document.querySelectorAll<HTMLElement>("[data-at]")].map((at) => {
+            const row = at.querySelector<HTMLElement>(".oh-row")!;
+            const first = row.querySelector(".oh-row-first")!.getBoundingClientRect();
+            const who = row.querySelector<HTMLElement>(".oh-row-who")!;
+            const address = row.querySelector<HTMLElement>(".oh-row-address")!;
+            const held = row.querySelector(".oh-row-labels")!.getBoundingClientRect();
+            const labels = [...row.querySelectorAll(".oh-row-labels > .oh-tag")].map((tag) => {
+              const r = tag.getBoundingClientRect();
+              /* What holds the labels cuts what leaves its box: a label is whole inside it, or under its foot. */
+              const seenWhole =
+                r.top < held.bottom - 1 && r.left >= held.left - 0.5 && r.right <= held.right + 0.5;
+              const gone = r.top >= held.bottom - 1;
+              return seenWhole ? "whole" : gone ? "gone" : "cut";
+            });
+            const room = row.querySelector(".oh-row-place[data-room]")!.getBoundingClientRect();
+            const real = at.querySelector(".oh-row-beside .oh-row-place")!.getBoundingClientRect();
+            const box = row.getBoundingClientRect();
+            return {
+              width: at.dataset.at,
+              labels,
+              nameCut: who.scrollWidth > who.clientWidth + 1,
+              addressShown: address.getBoundingClientRect().width > 1,
+              over: [
+                real.left - room.left,
+                real.top - room.top,
+                real.width - room.width,
+                real.height - room.height,
+              ],
+              inside:
+                real.left >= box.left && real.right <= box.right + 0.5 && real.bottom <= box.bottom + 0.5,
+            };
+          }),
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      for (const at of seen) {
+        expect(at.labels, `labels at ${at.width}`).not.toContain("cut");
+        /* The last label goes first. */
+        if (at.labels[0] === "gone") expect(at.labels[1], `order at ${at.width}`).toBe("gone");
+        /* The address gives way before a label; a label before the name. */
+        if (at.addressShown) expect(at.labels, `address at ${at.width}`).toEqual(["whole", "whole"]);
+        if (at.nameCut) expect(at.labels, `name at ${at.width}`).toEqual(["gone", "gone"]);
+        for (const off of at.over)
+          expect(Math.abs(off), `the place over its room at ${at.width}`).toBeLessThan(0.75);
+        expect(at.inside, `the place inside the row at ${at.width}`).toBe(true);
+      }
+      /* The widths are told apart: somewhere both labels stand, and somewhere one has gone. */
+      expect(seen.some((at) => at.labels.every((label) => label === "whole"))).toBe(true);
+      expect(seen.some((at) => at.labels.includes("gone"))).toBe(true);
+    },
+    60_000,
+  );
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s a sender taken for junk recedes to the second ink, and the row that is open never does",
+    async (face) => {
+      const seen = await drawn(
+        <Rows>
+          <Row {...sender} />
+          <Row {...sender} receded />
+          <Row {...sender} receded open />
+          <Row {...sender} open />
+        </Rows>,
+        () => {
+          const probe = document.createElement("i");
+          probe.style.color = "var(--ink2)";
+          document.querySelector(".oh-root")!.append(probe);
+          const ink = (row: Element) => getComputedStyle(row.querySelector(".oh-row-who")!).color;
+          return {
+            ink2: getComputedStyle(probe).color,
+            who: [...document.querySelectorAll(".oh-row")].map(ink),
+          };
+        },
+        { entry: "mail", face },
+      );
+      expect(seen.who[1]).toBe(seen.ink2);
+      expect(seen.who[0]).not.toBe(seen.ink2);
+      expect(seen.who[2]).toBe(seen.who[3]);
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", "phone", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1],
+    ["ohmarchy", "phone", 1.5],
+    ["paper", "fold", 1.5],
+    ["ohmarchy", "fold", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: under a finger a press inside the next row reaches that row, never the place above",
+    async (face, device, zoom) => {
+      const placed = (n: number) => ({
+        word: "News",
+        accept: { label: `Row ${n}: News and unsubscribe` },
+        choose: { label: `Row ${n}: choose a place` },
+      });
+      const seen = await drawn(
+        <Rows label="Waiting">
+          <Row {...sender} place={placed(1)} />
+          <Row {...sender} who="Second Sender" place={placed(2)} />
+          <Row {...sender} who="Third Sender" place={placed(3)} />
+        </Rows>,
+        () => {
+          const slots = [...document.querySelectorAll<HTMLElement>(".oh-row-slot")];
+          const probes: { row: number; under: number; hit: string }[] = [];
+          slots.slice(0, 2).forEach((slot, i) => {
+            const chip = slot.querySelector(".oh-row-beside .oh-row-place-word")!.getBoundingClientRect();
+            const next = slots[i + 1]!.querySelector(".oh-row")!.getBoundingClientRect();
+            /* At the middle of the chip above, a little under the next row's top: inside the next row. */
+            for (const under of [0.5, 2, 4, 8]) {
+              const hit = document.elementFromPoint(chip.left + chip.width / 2, next.top + under);
+              const press = hit?.closest("button")?.getAttribute("aria-label");
+              const own = hit?.closest(".oh-row-slot") === slots[i + 1];
+              probes.push({
+                row: i + 2,
+                under,
+                hit: press ?? (own ? "its own row" : String(hit?.className)),
+              });
+            }
+          });
+          return probes;
+        },
+        { entry: "mail", face, device, zoom },
+      );
+      expect(seen).toHaveLength(8);
+      for (const probe of seen) expect(probe.hit, JSON.stringify(probe)).toBe("its own row");
+    },
+    60_000,
+  );
+});
+
+describe("the line a place is searched from", () => {
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: one row tall, its sign in the room of a row's circle, the words inside the box with a chip, the time and the way to empty it, and no sideways scroll in German",
+    async (face, device, zoom) => {
+      const seen = await drawn(
+        <div style={{ width: 250, display: "grid", gap: 8 }}>
+          <FindField label="Suchen" placeholder="Nachrichten durchsuchen" value="" onChange={() => {}} />
+          <FindField
+            label="Suchen"
+            placeholder="In dieser Mail"
+            value="Rechnung Brennofen"
+            took="0,12 s"
+            clear={{ label: "Leeren" }}
+            chip={{
+              label: "Petra Wyss-Hürlimann",
+              person: { name: "Petra Wyss-Hürlimann", address: "petra@makersfest.example" },
+              remove: "Petra Wyss-Hürlimann entfernen",
+            }}
+            onChange={() => {}}
+          />
+        </div>,
+        () => {
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;width:var(--gutter);height:var(--h-l)";
+          document.querySelector(".oh-root")!.append(probe);
+          const unit = probe.getBoundingClientRect();
+          return [...document.querySelectorAll<HTMLElement>(".oh-findfield")].map((field) => {
+            const box = field.getBoundingClientRect();
+            const sign = field.querySelector("svg")!.getBoundingClientRect();
+            const input = field.querySelector("input")!.getBoundingClientRect();
+            const parts = [...field.children].map((child) => child.getBoundingClientRect());
+            const took = field.querySelector(".oh-findfield-took");
+            const tookWords = took?.firstElementChild?.getBoundingClientRect();
+            const tookBox = took?.getBoundingClientRect();
+            return {
+              tall: box.height - unit.height,
+              signMid: sign.left + sign.width / 2 - box.left - unit.width / 2,
+              words: input.left - box.left - unit.width,
+              inputWide: input.width,
+              inside: parts.every(
+                (r) => r.width === 0 || (r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+              ),
+              took: !took
+                ? null
+                : getComputedStyle(took).display === "none"
+                  ? "none"
+                  : tookWords!.top >= tookBox!.bottom - 1
+                    ? "gone"
+                    : tookWords!.right <= tookBox!.right + 0.5 && tookWords!.left >= tookBox!.left - 0.5
+                      ? "whole"
+                      : "cut",
+              sideways: document.documentElement.scrollWidth - innerWidth,
+            };
+          });
+        },
+        { face, device, zoom, lang: "de" },
+      );
+      const [rest, narrowed] = seen;
+      expect(Math.abs(rest!.tall)).toBeLessThan(0.75);
+      if (device === "desktop") {
+        /* With a pointer the sign stands in the middle of the circle's room, and the words start after it. */
+        expect(Math.abs(rest!.signMid)).toBeLessThan(0.75);
+        expect(Math.abs(rest!.words)).toBeLessThan(0.75);
+      }
+      for (const field of seen) {
+        expect(field.inside).toBe(true);
+        expect(field.inputWide).toBeGreaterThan(24);
+        expect(field.sideways).toBeLessThanOrEqual(0);
+      }
+      /* Under a finger, beside a chip, the time is not drawn; with a pointer it is whole or not there, never cut. */
+      if (device === "phone") expect(narrowed!.took).toBe("none");
+      else expect(["whole", "gone"]).toContain(narrowed!.took);
+    },
+    60_000,
+  );
+});
+
+describe("the parts a screen stands side by side, under a finger", () => {
+  const hit: RowProps = {
+    who: "Petra Wyss-Hürlimann",
+    address: "petra@makersfest.example",
+    people: [{ name: "Petra Wyss-Hürlimann", address: "petra@makersfest.example" }],
+    subject: "Rechnung für den Brennofen",
+    preview: "Im Anhang die Rechnung vom November.",
+    when: "08:47",
+  };
+  const rule = (who: string, place: string, held: boolean) => (
+    <RuleLine
+      who={who}
+      person={{ name: who, address: who, label: `Karte von ${who}`, onContact: () => {} }}
+      goes={
+        <>
+          geht nach{" "}
+          <Slot label={`${who} geht nach ${place}`} disabled={held}>
+            {place}
+          </Slot>
+        </>
+      }
+      origin="Entscheid im Screener · 14 Nachrichten"
+      act={
+        <Button kind="quiet" size="s" label={`${who} widerrufen`} disabled={held}>
+          Widerrufen
+        </Button>
+      }
+    />
+  );
+  /* Search's field over its filters over its hits; a place's headings between its rows; a sheet of settings.
+     All in a sheet's own steps from the window's edge, where a line's press may reach out to them. */
+  const standing = (
+    <div style={{ padding: "0 16px" }}>
+      <FindField
+        label="Suchen"
+        value="Rechnung"
+        took="0,12 s"
+        clear={{ label: "Leeren" }}
+        chip={{
+          label: "Petra Wyss-Hürlimann",
+          person: { name: "Petra Wyss-Hürlimann", address: "petra@makersfest.example" },
+          remove: "Petra Wyss-Hürlimann entfernen",
+        }}
+        onChange={() => {}}
+      />
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)" }}>
+        <Button kind="two" size="s" mark="down" opens="menu">
+          Ort
+        </Button>
+        <Button kind="two" size="s" mark="x" pressed>
+          Mit Anhang
+        </Button>
+        <Button kind="two" size="s" mark="down" opens="menu">
+          Zeitraum
+        </Button>
+        <Button kind="two" size="s" mark="down" opens="menu">
+          Postfach
+        </Button>
+      </div>
+      <Rows>
+        <Row {...hit} />
+      </Rows>
+      <GroupHeading tag="Nur lesen" expanded onPress={() => {}}>
+        Auf dem Server
+      </GroupHeading>
+      <Rows>
+        <Row {...hit} who="Zweite Absenderin" />
+      </Rows>
+      <GroupHeading count="3" expanded onPress={() => {}}>
+        Früher
+      </GroupHeading>
+      <Rows>
+        <Row {...hit} who="Dritte Absenderin" />
+      </Rows>
+      <SettingLine label="Abwesenheitsnotiz" toggle={{ on: true }} />
+      <SettingLine label="Endet am" narrow="under">
+        <Slot label="Enddatum wählen">Freitag, 21. November</Slot>
+        <Button kind="quiet" size="s">
+          Kein Enddatum
+        </Button>
+      </SettingLine>
+      <SettingLine label="Antwortet einer Person" narrow="under">
+        <Slot label="Wie oft geantwortet wird" disabled>
+          einmal in vier Tagen
+        </Slot>
+      </SettingLine>
+      <SettingLine label="Signatur anhängen" toggle={{ on: false }} />
+      {rule("giulia@terracotta-milano.example", "News", true)}
+      {rule("rechnung@brennofen-zentrale.example", "Ohbox", false)}
+      <SettingLine label="Lesebestätigung" toggle={{ on: false }} />
+    </div>
+  );
+  const moving = (
+    <MovePicker
+      open
+      onClose={() => {}}
+      label="Verschieben"
+      title="Verschieben nach"
+      places={[
+        { id: "ohbox", label: "Ohbox" },
+        { id: "news", label: "News" },
+      ]}
+      find={{ label: "Ordner suchen", placeholder: "Ordner suchen", value: "" }}
+      mailbox="petra@makersfest.example"
+      folders={[
+        { id: "a", name: "Gartenlokal Rosa", path: "Kunden › Gastronomie" },
+        { id: "b", name: "Brennofen", path: "Kunden › Werkstatt", disabled: true },
+        { id: "c", name: "Steuern 2026" },
+      ]}
+    />
+  );
+  /* Along every edge of everything a press can mean, a little inside its own drawn box: whose is the press? */
+  const walk = () => {
+    const PRESSED =
+      "button, a[href], input, textarea, [role='button'], [role='option'], [role^='menuitem'], [data-press]";
+    const said = (el: Element) =>
+      (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().slice(0, 48) || el.tagName;
+    const taken = new Set<string>();
+    let walked = 0;
+    let probes = 0;
+    const outside = new Set<string>();
+    for (const el of document.querySelectorAll<HTMLElement>(PRESSED)) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 9 || r.height < 9) continue;
+      walked++;
+      const at = (x: number, y: number, where: string) => {
+        probes++;
+        const under = document.elementFromPoint(x, y);
+        if (!under) outside.add(said(el));
+        const owner = under?.closest(PRESSED);
+        if (owner && owner !== el && !el.contains(owner) && !owner.contains(el))
+          taken.add(`${where} of "${said(el)}" answers as "${said(owner)}"`);
+      };
+      /* Between its round corners: what lies outside their curve is not the control's. */
+      const scale = r.width / el.offsetWidth || 1;
+      const round = parseFloat(getComputedStyle(el).borderTopLeftRadius) * scale || 0;
+      const corner = Math.max(4, Math.min(round, r.width / 2, r.height / 2));
+      /* A whole pixel in and more: a press is read at whole pixels, and half of one in is the next box's. */
+      for (const inside of [1, 2, 4]) {
+        for (let x = r.left + corner; x <= r.right - corner; x += 6) {
+          at(x, r.top + inside, `${inside} under the top`);
+          at(x, r.bottom - inside, `${inside} over the foot`);
+        }
+        for (let y = r.top + corner; y <= r.bottom - corner; y += 6) {
+          at(r.left + inside, y, `${inside} in from the left`);
+          at(r.right - inside, y, `${inside} in from the right`);
+        }
+      }
+    }
+    return { walked, probes, outside: [...outside], taken: [...taken] };
+  };
+
+  it.each([
+    ["paper", "phone", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1],
+    ["ohmarchy", "phone", 1.5],
+    ["paper", "fold", 1.5],
+    ["ohmarchy", "fold", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: a press inside a control's own box is that control's, never its neighbour's (a marked button, the find field's parts, a row, a heading that shuts, a slot on a line of settings and in a rule, the Move menu's lines)",
+    async (face, device, zoom) => {
+      /* A window high enough to hold every part: nothing is walked out of sight. */
+      const window: [number, number] = [DEVICES[device].window[0], 2400];
+      const stood = await drawn(standing, walk, { entry: "mail", face, device, zoom, lang: "de", window });
+      const menu = await drawn(moving, walk, { entry: "mail", face, device, zoom, lang: "de" });
+      expect(stood.walked).toBeGreaterThanOrEqual(24);
+      expect(menu.walked).toBe(6);
+      expect([...stood.outside, ...menu.outside]).toEqual([]);
+      expect([...stood.taken, ...menu.taken]).toEqual([]);
+    },
+    60_000,
+  );
 });

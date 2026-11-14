@@ -1,4 +1,4 @@
-import { Dot } from "../../base/index.js";
+import { Dot, Tag } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import "./group-heading.css";
 
@@ -13,11 +13,14 @@ export interface GroupHeadingProps {
   expanded?: boolean;
   /** The name opens a menu instead. */
   opensMenu?: boolean;
+  /** One word about the whole group, as a label at the heading's end: "Read-only". */
+  tag?: string;
   onPress?: () => void;
 }
 
 /** A group's name, its full stop and its count. */
-export function GroupHeading({ children, count, hot, expanded, opensMenu, onPress }: GroupHeadingProps) {
+export function GroupHeading(props: GroupHeadingProps) {
+  const { children, count, hot, expanded, opensMenu, tag, onPress } = props;
   const name = (
     <>
       <span>
@@ -29,7 +32,7 @@ export function GroupHeading({ children, count, hot, expanded, opensMenu, onPres
   );
   const pressed = expanded !== undefined || opensMenu;
   return (
-    <h2 className="oh-text oh-display oh-groupheading">
+    <h2 className="oh-text oh-display oh-groupheading" data-tag={tag ? "" : undefined}>
       {pressed ? (
         <button
           type="button"
@@ -44,6 +47,7 @@ export function GroupHeading({ children, count, hot, expanded, opensMenu, onPres
       ) : (
         name
       )}
+      {tag ? <Tag>{tag}</Tag> : null}
     </h2>
   );
 }

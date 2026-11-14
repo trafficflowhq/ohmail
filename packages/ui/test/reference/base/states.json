@@ -450,6 +450,66 @@
       "component": "Opening",
       "state": "phone",
       "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "FindField",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "FindField",
+      "state": "typed",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "FindField",
+      "state": "person",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "Button",
+      "state": "mark",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "Button",
+      "state": "mark-set",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
     }
   ]
 }
