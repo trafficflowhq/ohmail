@@ -22,30 +22,30 @@ import {
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { useDecisionBarCopy } from "./decision-copy";
-import { useModalGate } from "./modal-gate";
+import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { markDecisionAsked } from "./decision-reopen";
 import { useFocusFollows } from "./focus-follows";
 import { PROVIDERS, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel, type AuthHint, type ProviderPreset } from "./providers";
-import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "./local-server-host";
+import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "@ohmail/app-logic/doors/local-server-host";
 import { ProviderHelpLinks, ProviderNote } from "./ProviderPicker";
 import { DiscoveredHostsOffer, useAddressFirst } from "./address-first";
-import { noPortProbeKey } from "./no-port-sentence";
+import { noPortProbeKey } from "@ohmail/app-logic/doors/no-port-sentence";
 import { PlaintextConsent, plaintextClaims, sameServerHost } from "./PlaintextConsent";
 import { CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer } from "./CertificateTrust";
 import { refusalCopy, type RefusalCopyOptions } from "./server-refusal";
 import {
   deriveOnboardingStep, importOverOf, onboardingPath, sendingLine, sendingPlaintextOffered,
   type OnboardingFacts, type OnboardingStep,
-} from "./onboarding";
-import { AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver } from "./first-run-queue-settle";
+} from "@ohmail/app-logic/doors/onboarding";
+import { AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver } from "@ohmail/app-logic/doors/first-run-queue-settle";
 import type {
   FirstRunDecisionCount, FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
-} from "./first-run-host";
+} from "@ohmail/app-logic/doors/first-run-host";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep, type PullSample } from "./pull-rate";
 import {
   type HolderWho, holderAnswered, holderSentence, holderStopped, holderVerdict, readerHolder, takeoverState,
-} from "./reader-holder";
-import { useManagedService } from "./managed-service";
+} from "@ohmail/app-logic/reading/reader-holder";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import "./first-run.css";
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;

@@ -9,7 +9,7 @@ import {
   HOST_UNKNOWN_GRACE_MS,
   unknownSpeaks,
   type HostConnection,
-} from "../app/shell/host-connection";
+} from "@ohmail/app-logic/doors/host-connection";
 
 /**
  * ═══ A STANDING FACT MUST NOT WEAR A TRANSIENT'S CLOTHES ═══════════════════════════════════

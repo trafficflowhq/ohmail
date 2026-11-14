@@ -11,6 +11,7 @@ import {
   ensureSetupTokenInvariant, mintFirstRunSetupToken, printSetupToken,
   SETUP_TOKEN_LOCK_KEY, SETUP_TOKEN_LABEL,
 } from "../src/setup-token.js";
+import { API_CLOCK_LOCK_KEY } from "../src/clock-lock.js";
 
 /**
  * THE FIRST-BOOT MINT RACE, on real Postgres — the server slice's acceptance "two concurrent boots
@@ -137,5 +138,9 @@ describe.skipIf(!PG_UP)("the first-run setup token mint", () => {
     const LEADER_BAND_START = 4207270001n;
     expect(SETUP_TOKEN_LOCK_KEY - LEADER_BAND_START).toBeGreaterThan(1000n);
     expect(SETUP_TOKEN_LOCK_KEY > MIGRATION_LOCK_KEY).toBe(true);
+    // The API clocks' key sits between the leader band and the migrator's, clear of all three.
+    expect(API_CLOCK_LOCK_KEY - LEADER_BAND_START).toBeGreaterThan(1000n);
+    expect(MIGRATION_LOCK_KEY - API_CLOCK_LOCK_KEY).toBeGreaterThanOrEqual(1000n);
+    expect(SETUP_TOKEN_LOCK_KEY - API_CLOCK_LOCK_KEY).toBeGreaterThan(1000n);
   });
 });

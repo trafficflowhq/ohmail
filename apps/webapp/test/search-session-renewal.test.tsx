@@ -17,7 +17,7 @@ import { SearchView } from "../app/views/SearchView";
 import { KeymapProvider } from "../app/shell/keymap";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,
-} from "../app/shell/session-truth";
+} from "@ohmail/app-logic/session/session-truth";
 
 /**
  * SEARCH OVER A SESSION RENEWAL — History's twin. The store's search pages go out on the engine's

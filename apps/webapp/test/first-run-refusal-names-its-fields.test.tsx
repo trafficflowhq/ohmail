@@ -7,8 +7,8 @@ import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * THE FIRST-RUN TEST VERDICT NAMES ONLY THE FIELDS ON SCREEN. Behind a named provider the stage

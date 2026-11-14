@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError, account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { StorageChange } from "../../shell/StorageNotice";
 import type { StorageFacts } from "../../shell/storage-state";
 import { StepUpPrompt } from "./StepUpPrompt";

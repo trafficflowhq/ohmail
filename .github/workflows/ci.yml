@@ -21,8 +21,9 @@ name: ci
 # which run it is and why. A selected run is partial: main is proven whole by the batch and the nightly.
 #
 # The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
-# jobs run at once (max-parallel): three suite shards (six on the maintainers' own runners, read from the
-# pool the plan job ran on), one alone file, one SQLite shard.
+# jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard. On the maintainers'
+# own runners (read from the pool the plan job ran on) each job has a virtual machine and services of its
+# own and the supervisor starts at most six, so there every matrix runs six at a time.
 #
 # Where the jobs run. Every job here, and build.yml's two engine jobs, run on the maintainers' own self-hosted
 # runners when the repository variable OHMAIL_LINUX_RUNNER reads `zorin`, and then only for the nightly schedule, a
@@ -348,7 +349,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 1 }}
       matrix:
         file: ${{ fromJSON(needs.plan.outputs.alone) }}
     services:
@@ -424,7 +425,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: ${{ needs.plan.outputs.pool == 'self-hosted' && 6 || 1 }}
       # Whole: {shard} for each map shard. Selected: {shard, files}, the plan's own packing.
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.sqlite) }}
@@ -661,6 +662,11 @@ jobs:
       # packages cover the drivers its tests reach. No test directory is dropped here.
       - name: The web app and its tests
         run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json
+
+      # The desktop window's sources, which neither program above holds. Without its vite config:
+      # that needs a plugin only apps/desktop's own install carries.
+      - name: The desktop window
+        run: ./node_modules/.bin/tsc --noEmit -p apps/desktop/tsconfig.src.json
 
       # The phone app's program and its tests' program, the script apps/mobile is checked with.
       - name: The phone app and its tests

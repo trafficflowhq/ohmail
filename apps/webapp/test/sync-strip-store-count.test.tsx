@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "../app/shell/mail-state";
-import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
+import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**

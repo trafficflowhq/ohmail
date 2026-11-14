@@ -70,7 +70,7 @@ import {
   type ScreeningPress,
   type ScreeningScope,
   type SenderScreening,
-} from "./sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /** One line per place and reason, in the order the rows came: the newest first. */
 export function stayedLines(

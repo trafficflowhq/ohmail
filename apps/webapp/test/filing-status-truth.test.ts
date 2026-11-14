@@ -48,7 +48,7 @@ import {
   type FilingFacts,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

@@ -7,7 +7,7 @@
 
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import type { PileNoteOffer } from "./pile-note";
+import type { PileNoteOffer } from "@ohmail/app-logic/lists/pile-note";
 
 export function PileNote({ offer }: { offer: PileNoteOffer | null | undefined }) {
   const t = useTranslations("screener");

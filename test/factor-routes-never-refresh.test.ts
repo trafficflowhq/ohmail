@@ -264,7 +264,7 @@ function verdictsAsSession(runtime: readonly RuntimeRoute[], s: Scan): { refusal
 
 const RUNTIME: RuntimeRoute[] = [...apiRoutes, ...localRoutes, ...selfHostRoutes, ...desktopHostRoutes];
 const SOURCES = SCAN_ROOTS.flatMap((r) => walk(r, [".ts"]));
-const WEB = walk(WEB_ROOT, [".ts", ".tsx"]);
+const WEB = [...walk(WEB_ROOT, [".ts", ".tsx"]), ...walk("packages/app-logic/src", [".ts"])];
 const SCAN = scan(SOURCES);
 
 describe("every route that checks a factor or a single-use credential is never refreshed by the web", () => {

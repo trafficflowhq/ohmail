@@ -18,7 +18,7 @@ import {
   type SyncGate,
   type SyncIdentity,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * A STREAM IS LIVE WHEN IT DELIVERS, NOT WHEN IT OPENS. A compressing or buffering hop sends the

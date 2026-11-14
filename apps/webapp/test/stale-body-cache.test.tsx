@@ -14,7 +14,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../app/letter-body/MessageBody";
 import {
   OWNER_BILLING_HTML,
   OWNER_BILLING_TEXT,

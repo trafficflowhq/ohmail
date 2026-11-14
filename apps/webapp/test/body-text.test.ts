@@ -45,7 +45,7 @@ async function unmount(): Promise<void> {
 /** Render a body and hand back the container — the `.msg-body` div `MessagePane` wraps it in. */
 async function render(text: string): Promise<HTMLDivElement> {
   await unmount();
-  const { BodyText } = await import("../app/shell/BodyText.js");
+  const { BodyText } = await import("../app/letter-body/BodyText.js");
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);
@@ -512,7 +512,7 @@ describe("the trailing quoted history folds behind a toggle", () => {
     const el = await render(REPLY);
     await expandHistory(el);
     expect(el.textContent).toContain("Are we still on for Friday?");
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../app/letter-body/BodyText.js");
     const OTHER =
       "Fine by me.\n\nOn Tue, Bob wrote:\n> completely different history";
     await act(async () => {
@@ -533,7 +533,7 @@ describe("the links it draws are the links it reports", () => {
    * `link` case of `renderInline` → the rich rows go red; collect the history before it is open →
    * the fold row goes red.
    */
-  type Mod = typeof import("../app/shell/rendered-links.js");
+  type Mod = typeof import("../app/letter-body/rendered-links.js");
   let links: Mod;
   /** Every report, in order; `onScreen` folds them into what the shell would hold now. */
   const reports: Array<{ surface: string; hrefs: string[] }> = [];
@@ -551,7 +551,7 @@ describe("the links it draws are the links it reports", () => {
 
   beforeEach(async () => {
     reports.length = 0;
-    links = await import("../app/shell/rendered-links.js");
+    links = await import("../app/letter-body/rendered-links.js");
     links.setRenderedLinksSink((surface, hrefs) => reports.push({ surface, hrefs: [...hrefs] }));
   });
   afterEach(() => links.setRenderedLinksSink(null));
@@ -570,7 +570,7 @@ describe("the links it draws are the links it reports", () => {
   });
 
   it("the rich path reports the hrefs of its link runs", async () => {
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../app/letter-body/BodyText.js");
     const link = (href: string, text: string) => ({
       kind: "link" as const, href, host: new URL(href).host, elsewhere: false,
       children: [{ kind: "text" as const, text }],

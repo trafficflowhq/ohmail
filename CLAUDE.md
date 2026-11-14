@@ -71,7 +71,7 @@ and on one that touches the harness (dependencies, tsconfigs, `vitest.config.ts`
 migrations, a deleted module), in shards, each on the root install with its own Postgres, GreenMail and RustFS. Any other maintainer's
 pull request runs only the test files its diff can reach (`.github/scripts/ci-select.mjs`: vitest's module graph, the
 files that read a changed path or a module whose imports reach it, or scan its app or package or the whole tree, root `test/`), in as few jobs as their measured time needs; the plan job's summary says
-which run it is and why, and `main` is proven whole by the batch and the nightly. Its desktop job runs
+which run it is and why, and `main` is proven whole by the batch and the nightly. Into `next` such a pull request runs the direct part of that selection (what the graph reaches in the apps and packages the change touches and in root `test/`, and every file a reader rule selects); the plan job's log lists the rest by rule, and the whole suite runs it on `next` after the landing. Its desktop job runs
 `ci-shards.mjs --desktop`'s files on both installs, on every run. `build.yml`'s platform jobs, on macOS, Windows
 and Linux, typecheck the window, build the UI bundle and smoke it, run the Rust tests in both configurations,
 package the app and open what they built; its engine jobs bundle the engine on their own, on every pull request and
@@ -128,6 +128,8 @@ never adds to what breaks one.
   | `packages/db` | `db-mail`, `wire` |
   | `packages/core` | `db`, `wire` |
   | `packages/client-engine` | `core`, `fixtures`, `wire` |
+  | `packages/app-logic` | `client-engine`, `core` |
+  | `packages/app` | `ui`, `tokens`, `app-logic`; of `client-engine`, types only |
   | `packages/services` | `core`, `db`, `wire` |
   | `packages/api` | `services`, `core`, `db`, `wire` |
 

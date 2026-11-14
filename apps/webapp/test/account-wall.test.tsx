@@ -491,7 +491,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   const shell = await import("./fixtures/cloud-confirm-shell");
   /* A return from paying comes after the access door's join window: a fresh read inside it is the
      answer already in hand (focus and visibility fire together), so each case below waits it out. */
-  const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+  const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
   const { vi } = await import("vitest");
   const OWNER = shell.ACCOUNT;
   const CLOSED = {
@@ -656,7 +656,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   });
 
   it("THE REOPENING IS RECORDED: an open answer over a stored refusal, the return from paying (mail 0135)", async () => {
-    const { liftedAt } = await import("../app/shell/access-window");
+    const { liftedAt } = await import("@ohmail/app-logic/session/access-window");
     localStorage.setItem(`ohmail.access.${OWNER}`, "closed");
     access = () => jsonOf(OPEN);
     walled = false;
@@ -711,7 +711,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   });
 
   it("CONTROL: an open answer over a stored `open` is no reopening", async () => {
-    const { liftedAt } = await import("../app/shell/access-window");
+    const { liftedAt } = await import("@ohmail/app-logic/session/access-window");
     localStorage.setItem(`ohmail.access.${OWNER}`, "open");
     access = () => jsonOf(OPEN);
     walled = false;
@@ -721,7 +721,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
   });
 
   it("the wall's own lift is the reopening even when another tab already stored `open`", async () => {
-    const { liftedAt } = await import("../app/shell/access-window");
+    const { liftedAt } = await import("@ohmail/app-logic/session/access-window");
     await shell.mountCloudShell();
     await shell.tick(1_000);
     expect(document.body.textContent).toContain(wallTitle);

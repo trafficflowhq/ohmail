@@ -1,17 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
-  createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError,
+  createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError, isDbBusy, dbBusyResponse,
   API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname,
+  type ApiDeps, type Route,
 } from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
-import { buildDeps, type ServerRuntime } from "./deps.js";
+import type { Logger } from "@trafficflow/core";
+import { depsFor, runtimeOf, type ServerRuntime } from "./deps.js";
 import { BODY_MAX_BYTES } from "./config.js";
 
 /**
- * THE dispatch pipeline — `src/http.ts` hands a fetch Request in, this hands a Response back.
- *
- * It mirrors the managed host's `handler.ts` step for step, because every step there is a
- * correctness property and none is serverless-specific:
+ * THE dispatch pipeline of the one program — a door hands a fetch Request in, this hands a
+ * Response back. Every step is a correctness property and none belongs to one host:
  *
  *   1. mint a request id (a pre-pipeline failure must still be traceable),
  *   2. NORMALIZE the request URL — exactly once, before anything reads the path,
@@ -20,27 +20,30 @@ import { BODY_MAX_BYTES } from "./config.js";
  *   5. `Cache-Control: no-store` on anything that did not set its own, and the request id
  *      on every response.
  *
- * The one structural difference from the managed host: there is no per-request `hostState()`
- * resolution and no `misconfigured` branch — a long-running process refuses to BOOT on a bad
- * config (`config.ts`), so by the time a request exists the config is good (the KEK exception
- * reports through `/health`, which needs no branch here).
+ * Normalization precedes the deps on purpose: the cookie decision reads the Host and the
+ * idempotency hash reads the path, and both must see the same canonical request the router does.
  *
- * The path canonicalization is IMPORTED, not written here: both hosts call one routine
- * (`@trafficflow/api`'s `normalizePathname`), for the managed host's reason —
- * `withIdempotency` hashes `method \n pathname \n body`, so two spellings of one path
- * (`/api/sync` through the webapp split, `/sync` direct) must canonicalize identically or a
- * safe retry from the other surface answers 409 `idempotency_replay`. The deployment's proxy
- * therefore needs NO strip_prefix — this host strips one `/api` itself, byte-parallel with the
- * managed one.
+ * The path canonicalization is IMPORTED, not written here (`@trafficflow/api`'s
+ * `normalizePathname`): `withIdempotency` hashes `method \n pathname \n body`, so two spellings of
+ * one path (`/api/sync` through the web app's split, `/sync` direct) must canonicalize identically
+ * or a safe retry from the other surface answers 409 `idempotency_replay`. A proxy in front
+ * therefore needs NO strip_prefix — the pipeline strips one `/api` itself.
  */
 
-/* The canonicalizer is `@trafficflow/api`'s, re-exported so this host's own tests and the
- * pipeline below keep one name for it. It used to be a hand-written twin of the managed
- * host's, byte-parallel by review: two copies of the rule that decides a request hash can be
- * corrected in one and stay wrong in the other, which is the defect the relay's allowlist was
- * the third symptom of. One definition now, and the census in `packages/api/test` refuses a
- * second. */
+/* The canonicalizer is `@trafficflow/api`'s, re-exported so the doors and their tests keep one
+ * name for it; the census in `packages/api/test` refuses a second definition. */
 export { API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname };
+
+/** What a door's dispatch is made of: the route table, the door's numbers, and the per-request deps. */
+export interface Pipeline {
+  routes: Route[];
+  /** The ceiling of the one route that carries attachment bytes inline; every other route has its own. */
+  bodyMaxBytes: number;
+  /** End the connection after an answer that left request bytes unread — see {@link undrainedOn}. */
+  closeUndrained: boolean;
+  logger: Pick<Logger, "error" | "warn">;
+  buildDeps: (req: Request) => ApiDeps;
+}
 
 /**
  * Rebuild `req` on its canonical path. The body is BUFFERED here, for the managed host's two
@@ -62,21 +65,27 @@ export { API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname };
  * for a path this table does not serve, so nothing is read and `app.handle` answers the same
  * 404/405 it always did.
  */
-export async function normalizeRequest(req: Request): Promise<Request> {
-  const url = new URL(req.url);
-  url.pathname = normalizePathname(url.pathname);
+export function normalizeOn(routes: Route[], bodyMaxBytes: number): (req: Request) => Promise<Request> {
+  return async (req) => {
+    const url = new URL(req.url);
+    url.pathname = normalizePathname(url.pathname);
 
-  // HEAD is dispatched as GET below, and `bodyCeilingFor` answers 0 for both — so the ceiling is
-  // read on the method as it ARRIVED, which is the method whose body is on the socket.
-  const ceiling = bodyCeilingFor(selfHostRoutes, req.method, url.pathname, BODY_MAX_BYTES);
-  const body = await readBodyWithin(req, ceiling);
+    // HEAD is dispatched as GET below, and `bodyCeilingFor` answers 0 for both — so the ceiling is
+    // read on the method as it ARRIVED, which is the method whose body is on the socket.
+    const ceiling = bodyCeilingFor(routes, req.method, url.pathname, bodyMaxBytes);
+    const body = await readBodyWithin(req, ceiling);
 
-  return new Request(url, {
-    method: req.method,
-    headers: req.headers,
-    ...(body === undefined ? {} : { body }),
-  });
+    return new Request(url, {
+      method: req.method,
+      headers: req.headers,
+      signal: req.signal,   // a client's leave reaches the route (`/events` frees its stream slot)
+      ...(body === undefined ? {} : { body }),
+    });
+  };
 }
+
+/** {@link normalizeOn} for a self-hosted server behind the node adapter. */
+export const normalizeRequest = normalizeOn(selfHostRoutes, BODY_MAX_BYTES);
 
 /**
  * Does this request carry a body? Asked of the REQUEST OBJECT, never of its headers.
@@ -117,10 +126,12 @@ function carriesBody(req: Request): boolean {
  * connection per refused request, which is the correct party to charge — a request that named no
  * route, or one that broke the route's own ceiling.
  */
-export function undrained(req: Request, pathname: string): boolean {
-  if (!carriesBody(req)) return false;
-  return bodyCeilingFor(selfHostRoutes, req.method, pathname, BODY_MAX_BYTES) === 0;
+export function undrainedOn(routes: Route[], bodyMaxBytes: number): (req: Request, pathname: string) => boolean {
+  return (req, pathname) => carriesBody(req) && bodyCeilingFor(routes, req.method, pathname, bodyMaxBytes) === 0;
 }
+
+/** {@link undrainedOn} for a self-hosted server behind the node adapter. */
+export const undrained = undrainedOn(selfHostRoutes, BODY_MAX_BYTES);
 
 /** The same response, told to end the connection. See {@link undrained}. */
 function closing(res: Response): Response {
@@ -129,78 +140,125 @@ function closing(res: Response): Response {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
-const app = createApp(selfHostRoutes);
-
-export async function handleServerRequest(req: Request, rt: ServerRuntime): Promise<Response> {
-  const requestId = randomUUID();
-
-  let normalized: Request;
-  try {
-    normalized = await normalizeRequest(req);
-  } catch (err) {
-    // EVERY pre-router exit closes the connection when the request brought a body, not just the
-    // ceiling breach. `normalizeEscapes` throws BEFORE `readBodyWithin` runs at all, so a
-    // malformed path with a large body was answered 400 on a socket whose body had been piped
-    // into the counting transform and never drained — the same stall, reached anonymously by a
-    // different door. See {@link undrained}.
-    const hadBody = carriesBody(req);
-    const exit = (res: Response): Response => (hadBody ? closing(res) : res);
-    if (err instanceof MalformedPathError) {
-      return exit(json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId));
-    }
-    // The route's own body ceiling, refused at the door. The adapter's 413 is the same envelope
-    // and the same code — this is the narrower one, reached when the request DOES name a route
-    // and is simply too big for it.
-    if (err instanceof BodyOverCeilingError) {
-      // `Connection: close` for {@link undrained}'s reason: the refusal stopped mid-body, so the
-      // rest of it is still on the socket and this connection cannot be reused.
-      return exit(json(413, {
-        error: {
-          code: "payload_too_large",
-          message: `request body exceeds this route's limit of ${err.maxBytes} bytes`,
-        },
-      }, requestId));
-    }
-    return exit(internal(requestId, req, err, rt));
+/**
+ * The answer to a request the pipeline refuses before the router: a malformed path (400) or a
+ * body over its route's ceiling (413). Null for anything else, which is a fault.
+ */
+export function refusalBeforeRouter(err: unknown, requestId: string): Response | null {
+  if (err instanceof MalformedPathError) {
+    // Malformed percent-encoding is a CLIENT error; it must not reach `matchRoute`'s decode as a 500.
+    return json(400, { error: { code: "malformed_path", message: "malformed percent-encoding in path" } }, requestId);
   }
-
-  // HEAD dispatched as GET, body stripped on the way out — the router stays strict (a table
-  // that silently accepts an undeclared method is worse), the HOST does the RFC 9110 mapping.
-  // Without this, every monitor that probes `HEAD /health` reads 405 and calls the box down.
-  const isHead = normalized.method.toUpperCase() === "HEAD";
-  const forRouter = isHead
-    ? new Request(normalized.url, { method: "GET", headers: normalized.headers })
-    : normalized;
-
-  // ONE decision, made once and applied to every exit below — the 404/405 the router gives, and
-  // the 500 a broken composition gives. See {@link undrained}.
-  const skipped = undrained(req, new URL(normalized.url).pathname);
-  const exit = (r: Response): Response => (skipped ? closing(r) : r);
-
-  try {
-    const deps = buildDeps(forRouter, rt);
-    deps.requestId = requestId;
-    // The ANSWER is unchanged (`app.handle` matches the same table and gives the same 404/405 it
-    // always did); only the connection's fate differs.
-    const res = exit(noStore(await app.handle(forRouter, deps), requestId));
-    if (!isHead) return res;
-    await res.body?.cancel().catch(() => { /* nothing to release */ });
-    return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
-  } catch (err) {
-    return exit(internal(requestId, forRouter, err, rt));
+  // The route's own body ceiling, refused before the bytes are in the heap.
+  if (err instanceof BodyOverCeilingError) {
+    return json(413, {
+      error: {
+        code: "payload_too_large",
+        message: `request body exceeds this route's limit of ${err.maxBytes} bytes`,
+      },
+    }, requestId);
   }
+  return null;
+}
+
+/** The dispatch of one program: `Request` in, `Response` out, never a throw. */
+export function makeDispatch(p: Pipeline): (req: Request) => Promise<Response> {
+  const app = createApp(p.routes);
+  const normalize = normalizeOn(p.routes, p.bodyMaxBytes);
+  const leftUnread = undrainedOn(p.routes, p.bodyMaxBytes);
+  return async (req) => {
+    const requestId = randomUUID();
+
+    let normalized: Request;
+    try {
+      normalized = await normalize(req);
+    } catch (err) {
+      // EVERY pre-router exit closes the connection when the request brought a body, not just the
+      // ceiling breach: `normalizeEscapes` throws BEFORE the body is read at all, and the refusal
+      // of a ceiling stopped mid-body. See {@link undrainedOn}.
+      const hadBody = p.closeUndrained && carriesBody(req);
+      const exit = (res: Response): Response => (hadBody ? closing(res) : res);
+      return exit(refusalBeforeRouter(err, requestId) ?? internal(requestId, req, err, p.logger));
+    }
+
+    // HEAD dispatched as GET, body stripped on the way out — the router stays strict (a table
+    // that silently accepts an undeclared method is worse), the HOST does the RFC 9110 mapping.
+    // Without this, every monitor that probes `HEAD /health` reads 405 and calls the service down.
+    const isHead = normalized.method.toUpperCase() === "HEAD";
+    const forRouter = isHead
+      ? new Request(normalized.url, { method: "GET", headers: normalized.headers })
+      : normalized;
+
+    // ONE decision, made once and applied to every exit below — the 404/405 the router gives, and
+    // the 500 a broken composition gives.
+    const skipped = p.closeUndrained && leftUnread(req, new URL(normalized.url).pathname);
+    const exit = (r: Response): Response => (skipped ? closing(r) : r);
+    const headless = async (res: Response): Promise<Response> => {
+      if (!isHead) return res;
+      // HEAD: same status and headers, no body — and the produced body is discarded explicitly
+      // so a streaming route cannot leak its reader.
+      await res.body?.cancel().catch(() => { /* nothing to release */ });
+      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
+    };
+
+    try {
+      const deps = p.buildDeps(forRouter);
+      deps.requestId = requestId;
+      return await headless(exit(noStore(await app.handle(forRouter, deps), requestId)));
+    } catch (err) {
+      /**
+       * The busy-connection answer, as a backstop for pipelines with no envelope.
+       * `withErrorEnvelope` maps this to 503 `db_busy`, but it is installed in `FULL_PIPELINE`
+       * only: `RAW_PIPELINE` and `ANONYMOUS_PIPELINE` (`packages/api/src/app.ts`) carry no
+       * envelope, so a busy session lookup on `/events`, `/oauth/authorize` or an attachment
+       * byte route lands here — and `internal()` would call it a 500, reporting a route fault
+       * for connection contention. The same function the envelope uses, imported rather than
+       * reimplemented, so the two halves cannot drift.
+       */
+      if (isDbBusy(err)) {
+        p.logger.warn("request_db_busy", {
+          requestId, method: forRouter.method, path: safePath(forRouter.url), status: 503, code: "db_busy",
+        });
+        // THROUGH `noStore`, like every other answer: the one response a client is most likely to
+        // be handed repeatedly under load must not be cacheable, and must carry its request id.
+        return headless(exit(noStore(dbBusyResponse(forRouter, {}, err), requestId)));
+      }
+      return exit(internal(requestId, forRouter, err, p.logger));
+    }
+  };
+}
+
+const dispatches = new WeakMap<ServerRuntime, (req: Request) => Promise<Response>>();
+
+/**
+ * The pipeline of a self-hosted server over a hand-built {@link ServerRuntime}. The connection's
+ * fate is decided from the request alone, before the runtime is read: a composition too broken to
+ * build its deps answers 500 and still closes a connection it left bytes on.
+ */
+export function handleServerRequest(req: Request, rt: ServerRuntime): Promise<Response> {
+  let dispatch = dispatches.get(rt);
+  if (!dispatch) {
+    dispatch = makeDispatch({
+      routes: selfHostRoutes,
+      bodyMaxBytes: BODY_MAX_BYTES,
+      closeUndrained: true,
+      logger: rt.logger,
+      buildDeps: (forRouter) => depsFor(forRouter, runtimeOf(rt)),
+    });
+    dispatches.set(rt, dispatch);
+  }
+  return dispatch(req);
 }
 
 /**
- * The last line before a hung socket. `withErrorEnvelope` maps everything a handler throws, so
- * reaching here means the failure was OUTSIDE the pipeline. STRUCTURED AND SANITIZED, the
- * managed host's exact discipline: class name and `code` only — a driver error's message
- * routinely carries `host=…&user=…` and the failing query, and this line goes to the
- * operator's log collector.
+ * The last line before a hung socket or a platform's own error page. `withErrorEnvelope` maps
+ * everything a handler throws, so reaching here means the failure was OUTSIDE the pipeline.
+ * STRUCTURED AND SANITIZED: class name and `code` only — a driver error's message routinely
+ * carries `host=…&user=…` and the failing query, and this line goes to a log collector.
  */
-function internal(requestId: string, req: Request, err: unknown, rt: ServerRuntime): Response {
+function internal(requestId: string, req: Request, err: unknown, logger: Pick<Logger, "error">): Response {
   const e = err as { name?: unknown; code?: unknown; constructor?: { name?: string } } | null;
-  rt.logger.error("unhandled", {
+  logger.error("unhandled", {
     requestId,
     method: req.method,
     path: safePath(req.url),
@@ -219,7 +277,7 @@ function safePath(url: string): string {
   }
 }
 
-function json(status: number, body: unknown, requestId: string): Response {
+export function json(status: number, body: unknown, requestId: string): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {

@@ -7,8 +7,8 @@ import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import { FocusFollows } from "../app/shell/focus-follows";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ ↵ DOES WHAT THE ↵ BADGE SAYS, ON SETUP'S LAST STEP ════════════════════════════════════

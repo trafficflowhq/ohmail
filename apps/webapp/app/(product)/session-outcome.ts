@@ -23,7 +23,7 @@ import { ApiError, auth } from "../api-client";
 import { csrfToken } from "../csrf";
 import { lastRefreshOutcome, sessionMints } from "../session-refresh";
 import type { OwnerOutcome } from "../shell/engine";
-import { healOwner } from "../shell/owner-cookie";
+import { healOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /** No answer, with no advice about when to come back. */
 const UNKNOWN: OwnerOutcome = { kind: "unknown", retryAfterMs: null };

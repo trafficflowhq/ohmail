@@ -38,14 +38,14 @@ function sources(dir: string): string[] {
 describe("the shell's document queries skip hidden piles", () => {
   it("no raw document query names a row, a card, a split or a strip", () => {
     const raw: string[] = [];
-    for (const file of sources(APP)) {
+    for (const file of [...sources(APP), ...sources(join(APP, "..", "..", "..", "packages", "app-logic", "src"))]) {
       const src = readFileSync(file, "utf8");
       for (const m of src.matchAll(RAW_QUERY)) {
         const why = refusal(src, m[1]!);
         if (why) raw.push(`${relative(APP, file)}: ${m[0].trim()} (${why})`);
       }
     }
-    expect(raw, "query these through queryVisible (shell/visible-dom.ts)").toEqual([]);
+    expect(raw, "query these through queryVisible (app-logic's lists/visible-dom.ts)").toEqual([]);
   });
 
   it("the census bites: the queries it moved are still spelled the way it reads", () => {

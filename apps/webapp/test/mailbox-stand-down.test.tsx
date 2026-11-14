@@ -15,7 +15,7 @@ import {
   type MailState,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THREE STATEMENTS ABOUT ONE MAILBOX, ON ONE SCREEN, AND NO TWO OF THEM AGREED.

@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * The subscription pane — one control, and nothing else. Whoever operates this service holds the plan,

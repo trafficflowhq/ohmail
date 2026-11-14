@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MemoryMirrorStore, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE SCOPE CARD FITS THE SHEET. A long domain ("Everyone at <domain>") was one unbreakable word:

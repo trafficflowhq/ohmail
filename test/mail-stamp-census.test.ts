@@ -140,7 +140,7 @@ describe("every door renders the shared mail stamp", () => {
 /* ── HALF B: THE CENSUS ───────────────────────────────────────────────────────────────────── */
 
 /** The trees a mail stamp could hide in — every surface that renders a message. */
-const TREES = ["apps/webapp/app", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
+const TREES = ["apps/webapp/app", "packages/app-logic/src", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
 
 /**
  * EVERY date-formatting call in those trees, by file, with the kind it is.

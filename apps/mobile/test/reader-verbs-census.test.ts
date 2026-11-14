@@ -191,8 +191,8 @@ describe("the rail is the prototype's exact column", () => {
 });
 
 describe("the bar's row order is the webapp's own BAR_VERB_ORDER", () => {
-  it("derived from apps/webapp/app/shell/bar-density.ts, not a list kept here", () => {
-    const density = read("../../webapp/app/shell/bar-density.ts");
+  it("derived from packages/app-logic/src/lists/bar-density.ts, not a list kept here", () => {
+    const density = read("../../../packages/app-logic/src/lists/bar-density.ts");
     const block = density.match(/export const BAR_VERB_ORDER = \[([\s\S]*?)\] as const;/);
     expect(block, "bar-density.ts no longer declares BAR_VERB_ORDER").not.toBeNull();
     const NAME: Record<string, string> = { rall: "replyAll", fwd: "forward", screen: "screening" };

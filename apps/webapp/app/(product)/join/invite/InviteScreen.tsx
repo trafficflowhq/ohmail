@@ -35,7 +35,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf, pair } from "../../../api-client";
 import { checkAnswered, revokedWipeSettled } from "../../../revoked-door";
-import { readOwnerMarker } from "../../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { PendingSignOutSaid, usePendingSignOut } from "../../login/pending-sign-out";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash is read. */

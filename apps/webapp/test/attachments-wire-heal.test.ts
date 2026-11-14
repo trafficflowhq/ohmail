@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MutationRejectedError, OhmailEngine, PART_REASK_DELAYS_MS, REASK_MAX, type EngineAdapter, threadOf } from "@ohmail/client-engine";
 import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
 import { useMessageAttachments } from "../app/shell/attachments.js";
-import { POLL_MS, startSyncScheduler } from "../app/shell/sync-scheduler.js";
+import { POLL_MS, startSyncScheduler } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * the reader's half. After a short connection drop the open letter kept "Couldn't

@@ -45,10 +45,10 @@ import {
   isFolderDescendant,
   visibleFolderRows,
   type FolderTreeRow,
-} from "./folders";
-import { UI_KEYS, foldersOpenedKey, usePersistedFlag, usePersistedIdSet } from "./persisted-ui";
+} from "@ohmail/app-logic/lists/folders";
+import { UI_KEYS, foldersOpenedKey, usePersistedFlag, usePersistedIdSet } from "@ohmail/app-logic/storage/persisted-ui";
 import { useRowMenuFit } from "./row-menu-fit";
-import { storageOwner } from "./storage-owner";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${path}`;
 

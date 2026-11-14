@@ -6,7 +6,7 @@ import {
   createResumeLane,
   type LaneTicket,
   type ResumeLane,
-} from "../app/shell/resume-lane";
+} from "@ohmail/app-logic/session/resume-lane";
 
 /**
  * THE RESUME LANE ON ITS OWN: admission order and concurrency, on a fake clock. The real shell's

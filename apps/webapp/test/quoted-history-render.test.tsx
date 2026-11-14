@@ -30,7 +30,7 @@ afterEach(unmount);
 
 async function renderBody(cls: string, props: { text: string; html: string | null; subject?: string }): Promise<HTMLDivElement> {
   await unmount();
-  const { MessageBody } = await import("../app/components/MessageBody.js");
+  const { MessageBody } = await import("../app/letter-body/MessageBody.js");
   host = document.createElement("div");
   host.className = cls;
   document.body.appendChild(host);
@@ -189,7 +189,7 @@ describe("the text part rendered instead of the html follows the html's own read
   for (const cls of ["pm-body", "msg-body"]) {
     it(`.${cls}: 73 past the walk's budget stays whole on its text part`, async () => {
       const long = hops(40, 1, "Ein älterer Absatz über die Begehung und den Technikraum. ".repeat(40));
-      const { sanitizeMailHtml } = await import("../app/components/MessageBody.js");
+      const { sanitizeMailHtml } = await import("../app/letter-body/MessageBody.js");
       const s = sanitizeMailHtml(long.html, { history: true });
       expect([s.prose, s.rich, s.fold]).toEqual([true, null, null]);
       const el = await renderBody(cls, long);
@@ -236,7 +236,7 @@ describe("an html part the reader does not render keeps its reading", () => {
     + "Sent: Monday, October 19, 2026 9:00 AM<br>To: A Customer &lt;c@example.org&gt;<br>Subject: Your ticket is solved</p>"
     + "<p>A reply card like this one is what our builder draws.</p></div>";
   it("a canvas declared in the head's sheet: no history found, so its text folds only '>' runs", async () => {
-    const { unrenderedHtmlVerdict } = await import("../app/components/MessageBody.js");
+    const { unrenderedHtmlVerdict } = await import("../app/letter-body/MessageBody.js");
     expect(unrenderedHtmlVerdict(`<html><head><style>.wrap{max-width:600px}</style></head><body>${card}</body></html>`)).toBe("unread");
     expect(unrenderedHtmlVerdict(`<html><body>${card}</body></html>`)).toBe("trailing");
   });

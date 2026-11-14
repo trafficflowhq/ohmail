@@ -56,12 +56,12 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type BodyMod = typeof import("../app/components/MessageBody.js");
-type TextMod = typeof import("../app/shell/BodyText.js");
+type BodyMod = typeof import("../app/letter-body/MessageBody.js");
+type TextMod = typeof import("../app/letter-body/BodyText.js");
 
 /** The walker's own output for one html part — the real sanitize pass, not a hand-built tree. */
 async function richOf(html: string) {
-  const { sanitizeMailHtml } = (await import("../app/components/MessageBody.js")) as BodyMod;
+  const { sanitizeMailHtml } = (await import("../app/letter-body/MessageBody.js")) as BodyMod;
   const mail = sanitizeMailHtml(html, {});
   expect(mail.prose, "this fixture was classified as a design, so the walker never ran").toBe(true);
   expect(mail.rich, "the walker emitted nothing for a letter").not.toBeNull();
@@ -71,7 +71,7 @@ async function richOf(html: string) {
 /** `BodyText` rendered over a body — the rich path when `rich` is passed, the text path when not. */
 async function renderBody(text: string, rich?: unknown): Promise<HTMLDivElement> {
   await unmount();
-  const { BodyText } = (await import("../app/shell/BodyText.js")) as TextMod;
+  const { BodyText } = (await import("../app/letter-body/BodyText.js")) as TextMod;
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);

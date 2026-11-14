@@ -38,7 +38,7 @@ const bare = (p: string): string =>
   readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
 const MESSAGE_CSS = bare("packages/ui/src/composites/message.css");
-const BODY_CSS = bare("apps/webapp/app/components/message-body.css");
+const BODY_CSS = bare("apps/webapp/app/letter-body/message-body.css");
 const TOKENS_CSS = readFileSync(
   resolve(process.cwd(), "packages/tokens/src/tokens.css"),
   "utf8",

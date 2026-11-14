@@ -38,14 +38,14 @@ const SHEETS = [
   "packages/ui/src/composites/settings.css",
   "packages/ui/src/composites/search.css",
   "apps/webapp/app/app.css",
-  "apps/webapp/app/components/message-body.css",
+  "apps/webapp/app/letter-body/message-body.css",
 ].map(css).join("\n");
 
 type Face = "paper" | "ohmarchy";
 /** The same sheets with the app's after the package's — the load order is not one the app pins. */
 const SHEETS_APP_FIRST = [
   "packages/tokens/src/tokens.css", "packages/tokens/src/faces.css", "packages/tokens/src/ohmarchy.css", "packages/ui/src/base.css",
-  "apps/webapp/app/app.css", "apps/webapp/app/components/message-body.css",
+  "apps/webapp/app/app.css", "apps/webapp/app/letter-body/message-body.css",
   "packages/ui/src/primitives/button.css", "packages/ui/src/primitives/switch.css", "packages/ui/src/primitives/seg.css",
   "packages/ui/src/primitives/chip.css", "packages/ui/src/primitives/text-field.css", "packages/ui/src/composites/settings.css",
   "packages/ui/src/composites/search.css",

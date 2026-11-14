@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { buildId } from "../build-id";
 import { reportRenderError } from "../error-report";
-import { readOwner } from "../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { signOut } from "../sign-out";
 import { signOutTrouble } from "../sign-out-trouble";
 

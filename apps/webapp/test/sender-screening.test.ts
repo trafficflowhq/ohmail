@@ -25,7 +25,7 @@ import {
   senderScreening,
   worstStatus,
   type ScreeningPlan,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * CHANGING A SENDER'S SCREENING FROM ANYWHERE — what goes on the WIRE.

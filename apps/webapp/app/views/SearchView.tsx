@@ -28,20 +28,20 @@ import {
 } from "@ohmail/client-engine";
 import { showSimilar, substringOpen } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
-import { useSessionReask } from "../shell/session-reask";
+import { useSessionReask } from "@ohmail/app-logic/session/session-reask";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
 import { displayAddress } from "../shell/idn";
 import { addressHref } from "../shell/address-view";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneIs, useZoneNav } from "../shell/zone-nav";
 import { useFocusFollows } from "../shell/focus-follows";
-import { storageOwner } from "../shell/storage-owner";
-import { searchSortKey, usePersistedChoice } from "../shell/persisted-ui";
-import { useListWindow } from "../shell/list-window";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { searchSortKey, usePersistedChoice } from "@ohmail/app-logic/storage/persisted-ui";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 
 /** One address and nothing else — the query shape whose empty state may offer the address door. */
 const ADDRESS_QUERY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-import { endSearch } from "../shell/ui-vitals";
+import { endSearch } from "@ohmail/app-logic/session/ui-vitals";
 import "./search-keys.css";
 
 interface Filter {

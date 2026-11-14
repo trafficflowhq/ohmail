@@ -10,7 +10,7 @@ type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
 import { useSendRelease } from "./send-release";
 import { discardUnsavedChange } from "./mail-send";
-import { copyRefused, type MailboxFacts } from "./mail-state";
+import { copyRefused, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 const NO_QUEUED: readonly QueuedChange[] = [];
 

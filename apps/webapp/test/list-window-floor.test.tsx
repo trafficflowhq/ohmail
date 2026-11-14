@@ -11,7 +11,7 @@ import {
   MEASURED_FULL_RANGE_MAX_ROWS,
   useListWindow,
   WINDOW_TOP,
-} from "../app/shell/list-window";
+} from "@ohmail/app-logic/lists/list-window";
 
 /**
  * WHICH FLOOR A LIST GETS. A list whose items carry `data-index` is measured row by row, so it

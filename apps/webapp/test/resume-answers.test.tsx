@@ -69,7 +69,7 @@ let host: HTMLDivElement | null = null;
 
 beforeEach(async () => {
   // A coded 401 arms the death latch and its heal schedule; neither may leak into the next case.
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-09-23T08:00:00.000Z"));
   // Full jitter pinned at its top: every wait is the schedule's whole number, so a retry that
@@ -113,7 +113,7 @@ afterEach(async () => {
   (await import("../app/revoked-door.js")).resetRevokedDoorForTests();
   // An erasure heard in one case latches the tab: the next case starts on a live one.
   (await import("../app/erased-door.js")).resetErasedDoorForTests();
-  (await import("../app/shell/account-erased.js")).clearAccountErased();
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
@@ -670,7 +670,7 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
   async function plantKeysOf(owner: string): Promise<string[]> {
     const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
     const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
-    const { searchSortKey } = await import("../app/shell/persisted-ui.js");
+    const { searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
     const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
     const keys = [
       `${SEND_LOCKS_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,

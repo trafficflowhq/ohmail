@@ -27,6 +27,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 const ROOTS = [
   new URL("../../../apps/webapp/app/", import.meta.url),
+  new URL("../../app-logic/src/", import.meta.url),
   new URL("../../../apps/mobile/src/", import.meta.url),
 ];
 
@@ -39,7 +40,7 @@ const ROOTS = [
  * non-refusal arm settles both waits for reasons written at the function.
  */
 const PINNED: Record<string, string> = {
-  "apps/webapp/app/shell/delete-undo.ts":
+  "packages/app-logic/src/press/delete-undo.ts":
     "HeldOutcome is not a MutationResult — restoreDispatch maps the restore's answer onto \"confirmed\" or \"rolled_back\" and the suite's doubles spell \"applied\", so `status` is a `string` and there is no MutationStatus here for the verdict to read. Its dispatch counts the organizer's wait by name all the same, beside the refusals.",
 };
 
@@ -61,7 +62,7 @@ function sources(): Array<{ rel: string; src: string }> {
   };
   for (const root of ROOTS) {
     const dir = fileURLToPath(root);
-    const rel = root.href.includes("webapp") ? "apps/webapp/app" : "apps/mobile/src";
+    const rel = root.href.includes("webapp") ? "apps/webapp/app" : root.href.includes("app-logic") ? "packages/app-logic/src" : "apps/mobile/src";
     walk(dir.replace(/\/$/, ""), rel);
   }
   return out;
@@ -127,7 +128,7 @@ describe("the completion census — no surface says done from a folded status", 
     /* THE SHELL'S OWN SEAM MOVED. `dispatchPress` is `shell-dispatch.ts`'s now, so the claim is
        asked of the file that holds it — left on `AppShell.tsx` it would have read true off an
        unrelated `pressVerdict` in the draft verbs and vouched for a seam it no longer contains. */
-    expect(reaches("apps/webapp/app/shell/shell-dispatch.ts", "pressVerdict"), "the shell's dispatchPress").toBe(true);
+    expect(reaches("packages/app-logic/src/press/shell-dispatch.ts", "pressVerdict"), "the shell's dispatchPress").toBe(true);
     expect(reaches("apps/webapp/app/shell/screener-state.ts", "pressVerdict"), "the Screener's moveAll").toBe(true);
     expect(reaches("apps/webapp/app/views/RulesView.tsx", "pressVerdict"), "the rules pane's report").toBe(true);
   });

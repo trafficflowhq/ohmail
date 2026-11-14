@@ -23,7 +23,7 @@ afterEach(() => { Reflect.deleteProperty(document, "cookie"); });
 
 describe("the one reader", () => {
   it("prefers __Host-, falls back to the bare name, and answers null for neither", async () => {
-    const { cookieFromJar, cookieFromStore } = await import("../app/shell/cookie-jar.js");
+    const { cookieFromJar, cookieFromStore } = await import("@ohmail/app-logic/storage/cookie-jar");
     expect(cookieFromJar(`tf_session=old; __Host-tf_session=new`, "tf_session")).toBe("new");
     expect(cookieFromJar(`__Host-tf_session=new; tf_session=old`, "tf_session")).toBe("new");
     expect(cookieFromJar(`x=1; tf_session=old`, "tf_session")).toBe("old");
@@ -37,7 +37,7 @@ describe("the one reader", () => {
     stubCookie(`tf_csrf=bare; __Host-tf_csrf=hosted`);
     const { csrfToken } = await import("../app/csrf.js");
     expect(csrfToken()).toBe("hosted");
-    const { readOwner } = await import("../app/shell/owner-cookie.js");
+    const { readOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
     expect(readOwner(`tf_owner=${B}; __Host-tf_owner=${A}`)).toBe(A);
     expect(readOwner(`tf_owner=${B}`), "control: the bare marker still reads").toBe(B);
   });
@@ -54,7 +54,7 @@ describe("the one reader", () => {
 
 /* ── THE CENSUS: no web code reads a session cookie by hand ─────────────────────────────────── */
 
-const ROOTS = [path.join(HERE, "../app"), path.join(HERE, "../middleware.ts")];
+const ROOTS = [path.join(HERE, "../app"), path.join(HERE, "../middleware.ts"), path.join(HERE, "../../../packages/app-logic/src")];
 const NAME = String.raw`(?:"tf_(?:session|refresh|csrf|resume|owner)"|SESSION_COOKIE|RESUME_COOKIE|OWNER_COOKIE)`;
 const HAND_READ = new RegExp(String.raw`[!=]==\s*${NAME}|${NAME}\s*[!=]==|\bcookies(?:\(\))?\.(?:get|has)\(`, "g");
 

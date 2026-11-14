@@ -8,7 +8,7 @@ import { ToastHost } from "@ohmail/ui";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import en from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A CONFIRMATION IS A STEP-UP, NOT A SIGN-IN. Every "Confirm it is you" in Settings →

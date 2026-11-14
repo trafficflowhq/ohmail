@@ -45,7 +45,6 @@ import {
   type UnscreenedGroupDTO,
   type OhmailEngine,
   type PressTally,
-  type RoutingOpen,
   type RuleDTO,
   type ScreenDest,
   type ScreenerSegments,
@@ -58,38 +57,40 @@ import {
   unsubscribeClaim,
   unsubscribeLetterOf,
 } from "@ohmail/client-engine";
-import { scheduleFirstDerivation } from "./first-paint";
+import { scheduleFirstDerivation } from "@ohmail/app-logic/session/first-paint";
 import type { SuggestionOverlay } from "./screener-suggest";
 /* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
    mailbox pane renders its own state line from, and a second rule shaped like it here is how two
    surfaces come to describe one mailbox differently. */
-import { readerHolder, type ScreenerRole } from "./mail-state";
+import { readerHolder, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   isNothingOrganizes, organizerRefusalOf, organizerRefusalSentence, type OrganizerRefusal,
-} from "./organizer-refusal";
+} from "@ohmail/app-logic/press/organizer-refusal";
 import {
   armScreenerIntent,
   disarmScreenerIntent,
   takeScreenerIntents,
   type ScreenerIntent,
 } from "./screener-intents";
-import { createIntentWindows } from "./intent-windows";
+import { createIntentWindows } from "@ohmail/app-logic/press/intent-windows";
 import {
   dispatchScreeningChange,
   holdingRules,
   planScreeningChange,
   releaseRules,
   senderScreening,
-} from "./sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 import { pileNames } from "./decision-copy";
-import { screeningShown } from "./press-verdict";
-import { syncIdentityOf } from "./sync-scheduler";
+import { screeningShown } from "@ohmail/app-logic/press/press-verdict";
+import { syncIdentityOf } from "@ohmail/app-logic/session/sync-scheduler";
 import { PLACE_LABEL } from "./format";
 import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
 import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
-import type { UndoToastFn } from "./undo-door";
-import type { ReleasePressInput } from "./routing-undo";
+import type { UndoToastFn } from "@ohmail/app-logic/press/undo-door";
+import type { ScreenerReleaseWindow } from "@ohmail/app-logic/press/release-window";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
+import type { SpamRow } from "@ohmail/app-logic/screener/spam-row";
 import { givenUpRowIds } from "./screener-given-up";
 import { spamLettersMark, useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed";
 
@@ -109,35 +110,14 @@ function abandonedSubscriber(engine: OhmailEngine): (cb: () => void) => () => vo
 }
 const NO_ABANDONED: readonly AbandonedMutation[] = [];
 
-/**
- * THE SHELL'S ROUTING WINDOW, for the release presses — the one Move's rule change is held in
- * (`routing-undo.ts`), and the Undo offer every held window raises through the one door.
- */
-export interface ScreenerReleaseWindow {
-  hold: (press: ReleasePressInput) => RoutingOpen;
-  /** Take back the held press about this sender; `true` only while its window was open. */
-  cancel: (address: string) => boolean;
-  /** Start the held press's window again from now, when its offer reaches the screen. */
-  restart: (address: string) => boolean;
-  toastWithUndo: (
-    sentence: string,
-    inverses: readonly EngineMutation[],
-    held?: { cancel: () => boolean; undone: string },
-  ) => void;
-  /** The rules a press past the gate plans over (`pressRules`), the routing window's; unset, the local rows. */
-  planOver?: { current: ((reader: EntityReader) => readonly RuleDTO[]) | null };
-}
+export type { ScreenerReleaseWindow };
 import {
   DECISION_QUIET,
   type DecisionDestination,
   type DecisionScope,
 } from "@ohmail/ui";
 
-export interface SpamRow {
-  sender: ScreenerSenderDTO;
-  /** Locally pinned: a sender the user marked spam this session. */
-  pinned: boolean;
-}
+export type { SpamRow };
 
 export interface DecideOptions {
   read: boolean;
@@ -498,16 +478,8 @@ export interface PendingDecision {
 }
 
 const OUT_MS = 330;
-/**
- * How long "Undo" is true, and the two numbers that have to agree. The window is the GUARD'S, not the capsule's: `commit`
- * fires on its own timer from the press and `undo` restores only rows still pending, and neither reads the toast — a capsule
- * replaced by the next decision's leaves this decision's window as it was (`test/undo-window.test.ts`). So the window is ONE
- * number: `UNDO_MS` is the offer, the Undo slot's duration that no notice shortens, and the commit is derived from it.
- * `COMMIT_GRACE_MS` covers the capsule's fade, after which `ToastHost` takes its button out of the tree, so the capsule is
- * gone before the decision is sent. `undo()` stays independently guarded: a late press on a callback held elsewhere is told
- * the truth ("Too late to undo"), never "Undone — 0 waiting again."
- */
-export const UNDO_MS = 8000;
+/* How long "Undo" is true is `UNDO_MS` (app-logic's `press/undo-window.ts`, which says why the two numbers agree). */
+export { UNDO_MS };
 const COMMIT_GRACE_MS = 400;
 /**
  * Exported so the suite reads the REAL number. `test/screener-cloud.test.ts` carried

@@ -18,7 +18,7 @@ import {
   folderUnreadCounts,
   folderUnreadDeep,
   visibleFolderRows,
-} from "../app/shell/folders";
+} from "@ohmail/app-logic/lists/folders";
 import messages from "../messages/en.json";
 
 /**
@@ -468,7 +468,7 @@ describe("the reach-past never lies beside the mirror", () => {
     expect(src).toContain("folderTailVerdict(");
     expect(src).toContain("folderTailEpoch.current.epoch,");
     expect(src).toContain("{ t.epoch += 1; t.present = true; }");
-    const hook = stripComments(read("../app/shell/older-mail.ts"));
+    const hook = stripComments(read("../../../packages/app-logic/src/lists/older-mail.ts"));
     // The commit-scope effect is layout-phase in a browser and passive on a server — a bare
     // useLayoutEffect is a console.error under Next's pre-render (engine.tsx's pattern).
     expect(hook).toContain('typeof window === "undefined" ? useEffect : useLayoutEffect');
@@ -554,7 +554,7 @@ describe("flag-off parity and the number keys — the structural claims, at the 
     // The call takes the one options builder the lists and a press's read-back share, and the
     // builder carries the flag.
     expect(derivations).toMatch(/consentPartition\(reader, shellConsentOptions\(consent, now, ownAddresses, firstImportDoneAt\)\)/);
-    expect(stripComments(readFileSync(`${process.cwd()}/apps/webapp/app/shell/consent-options.ts`, "utf8")))
+    expect(stripComments(readFileSync(`${process.cwd()}/packages/app-logic/src/press/consent-options.ts`, "utf8")))
       .toMatch(/return \{[\s\S]{0,1200}foldersEnabled: consent\.foldersEnabled,/);
     expect(derivations).toMatch(/consent\.foldersEnabled,\n\s*\],/);
   });

@@ -37,7 +37,7 @@ describe("a host that can charge can remember what it owes", () => {
   });
 
   it("the API composes the store on exactly the entitlements condition", () => {
-    const src = read("apps/api-vercel/src/deps.ts");
+    const src = read("apps/server/src/deps.ts");
     expect(src).toMatch(/cfg\.entitlements[\s\S]{0,120}refundObligationsOn\(/);
   });
 

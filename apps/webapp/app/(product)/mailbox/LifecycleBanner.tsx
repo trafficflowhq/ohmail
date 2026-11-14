@@ -8,10 +8,10 @@ import {
 } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { dayStamp } from "../../shell/format";
-import { durableSessionSet } from "../../shell/durable";
-import { readOwner } from "../../shell/owner-cookie";
-import { storageOwner } from "../../shell/storage-owner";
-import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../shell/wall-lift";
+import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "@ohmail/app-logic/doors/wall-lift";
 import { leaveForManagePage } from "./SubscriptionSection";
 
 /**

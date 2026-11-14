@@ -257,7 +257,7 @@ describe("the sync gate is built closed, and opened in exactly two places", () =
     const src = code("../app/shell/engine-config.ts");
     expect(src, "the live engine's gate no longer knows which mirror it guards")
       .toMatch(/createSyncGate\(owner\s*\?\?\s*null\)/);
-    const sched = code("../app/shell/sync-scheduler.ts");
+    const sched = code("../../../packages/app-logic/src/session/sync-scheduler.ts");
     expect(sched, "createSyncGate grew a default — the closed-by-default property is gone")
       .not.toMatch(/createSyncGate\(\s*\w+\s*:\s*[^)]*=\s*/);
     // And no permissive escape hatch on the options: a `mayMerge` with a default is the same
@@ -289,7 +289,7 @@ describe("the schedule is not configurable", () => {
     const src = code(ENGINE);
     expect(src).not.toMatch(/schedule\??:/);
     expect(src, "the schedule is no longer read from the pinned module")
-      .toContain('from "./confirm-schedule"');
+      .toContain('from "@ohmail/app-logic/session/confirm-schedule"');
   });
 });
 

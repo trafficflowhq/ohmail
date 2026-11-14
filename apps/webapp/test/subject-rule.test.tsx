@@ -19,8 +19,8 @@ import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
-import { senderScreening, planScreeningChange } from "../app/shell/sender-screening";
-import { attributeMessages } from "../app/shell/sender-audit";
+import { senderScreening, planScreeningChange } from "@ohmail/app-logic/press/sender-screening";
+import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import { RulesView, filterRules, subjectTermOf } from "../app/views/RulesView";
 import {
   detectSubjectToken,
@@ -29,7 +29,7 @@ import {
   subjectCandidates,
   subjectRuleContext,
   subjectRuleToast,
-} from "../app/shell/subject-rule";
+} from "@ohmail/app-logic/press/subject-rule";
 
 /**
  * SPLITTING ONE SENDER BY SUBJECT — the detection, the plan, and the sheet a person meets.

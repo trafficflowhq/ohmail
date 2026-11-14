@@ -9,8 +9,8 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { armDeleteIntent, takeDeleteIntents } from "../app/shell/delete-intents";
-import { replayDeleteIntents, type ReplayEnv } from "../app/shell/delete-undo";
+import { armDeleteIntent, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
+import { replayDeleteIntents, type ReplayEnv } from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ A ROW THE WINDOW EVICTED IS NOT A ROW THAT WAS DELETED ═════════════════════════════════

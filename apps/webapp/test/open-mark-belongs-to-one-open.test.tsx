@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { resetUiVitalsForTest, takeUiVitals } from "../app/shell/ui-vitals";
+import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 
 /**
  * AN OPEN IS TIMED FROM ITS OWN PRESS, THROUGH THE WHOLE SHELL. The pane ends the mark in a

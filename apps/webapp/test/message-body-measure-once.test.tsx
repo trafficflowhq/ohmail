@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../app/letter-body/MessageBody";
 
 /**
  * A FRAME IS MEASURED ONCE PER LOAD, AND AGAIN ONLY FOR A REAL CHANGE (`MessageBody.measure`).

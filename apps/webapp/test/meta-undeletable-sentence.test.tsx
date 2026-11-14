@@ -7,7 +7,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A `_meta` THAT TAKES NO DELETE ASKS FOR A PERMISSION, NEVER A DELETION (mail 0143). The server

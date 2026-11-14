@@ -4,8 +4,8 @@ import { canonicalRedirect } from "./app/canonical-host";
 import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
-import { cookieFromStore } from "./app/shell/cookie-jar";
-import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "./app/shell/owner-cookie";
+import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, resolveSurface,
 } from "./app/session-gate";

@@ -52,7 +52,7 @@ function icu(template: string, values: Record<string, number>): string {
     return hit.text.replace(/#/g, String(n));
   });
 }
-const webappFolders = read("../../webapp/app/shell/folders.ts");
+const webappFolders = read("../../../packages/app-logic/src/lists/folders.ts");
 
 describe("the folders strings are the webapp catalogue's", () => {
   const pairs: Array<[unknown, string]> = [

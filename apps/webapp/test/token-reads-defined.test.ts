@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  * the ohmarchy face alone with a fallback at every read. KNOWN_UNDEFINED is a ratchet: it may only fall.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
-const DOMAIN = ["apps/webapp/app", "packages/ui/src", "packages/tokens/src"];
+const DOMAIN = ["apps/webapp/app", "packages/app-logic/src", "packages/ui/src", "packages/tokens/src"];
 const TOKENS = "packages/tokens/src/tokens.css";
 const FACE = "packages/tokens/src/ohmarchy.css";
 

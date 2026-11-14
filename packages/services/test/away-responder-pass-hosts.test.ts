@@ -137,7 +137,7 @@ const HOSTS: ReadonlyArray<{ file: string; why: string }> = [
     why: "the standalone desktop — the drain, with this machine's own SMTP dial",
   },
   {
-    file: "apps/server/src/index.ts",
+    file: "apps/server/src/clocks.ts",
     why: "self-host — the always-on send clock's tick",
   },
 ];
@@ -259,7 +259,7 @@ describe("the hosted door injects the eligibility gate; the unmetered doors do n
   });
 
   for (const [name, file] of [
-    ["the self-host clock", "apps/server/src/index.ts"],
+    ["the self-host clock", "apps/server/src/clocks.ts"],
     ["the standalone drain", "apps/sidecar/src/engine.ts"],
   ] as const) {
     it(`${name} injects nothing — no program, nobody parked, and a gate here would be decoration`, () => {

@@ -47,7 +47,7 @@ afterEach(async () => { await unmount(); });
 
 async function render(text: string): Promise<HTMLDivElement> {
   await unmount();
-  const { BodyText } = await import("../app/shell/BodyText.js");
+  const { BodyText } = await import("../app/letter-body/BodyText.js");
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);

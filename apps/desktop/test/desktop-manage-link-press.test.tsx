@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { ACCOUNT_ACCESS_PATH, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 import messages from "../../webapp/messages/en.json";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 

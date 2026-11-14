@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow, useTheme, useToast, type FaceName } from "@ohmail/ui";
-import { readOwner } from "./owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /** The account write — `useConsentState().setThemeFace`, or null where no wire can store one. */
 export type ApplyFaceAllDevices = (face: FaceName) => Promise<FaceName | null>;

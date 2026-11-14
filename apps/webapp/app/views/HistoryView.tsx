@@ -10,24 +10,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import {
   countWhen, listSurface, physicalFolderOf, saysEmpty,
   type EngineMessage, type OhmailEngine, type TagDTO,
 } from "@ohmail/client-engine";
 import { InfoNote, ListPane, ListRows, MessageRow, cssRect } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
-import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
-import { useListWindow } from "../shell/list-window";
-import { useColumnPick } from "../shell/column-pick";
-import { useStoreTimeline } from "../shell/store-timeline";
+import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
+import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
+import { useStoreTimeline } from "@ohmail/app-logic/session/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
 import { useKeyBindings } from "../shell/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
-import { useLoadingGrace } from "../shell/loading-grace";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { HistoryRail } from "./HistoryRail";
 import "./history-rail.css";
 

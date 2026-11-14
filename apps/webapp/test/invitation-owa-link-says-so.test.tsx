@@ -15,7 +15,7 @@ import { type EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
-import { setRenderedLinksSink } from "../app/shell/rendered-links";
+import { setRenderedLinksSink } from "../app/letter-body/rendered-links";
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;

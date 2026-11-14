@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { planScreeningChange, screeningToast, senderScreening } from "../app/shell/sender-screening";
+import { planScreeningChange, screeningToast, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

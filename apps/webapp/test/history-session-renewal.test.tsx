@@ -10,7 +10,7 @@ import { KeymapProvider } from "../app/shell/keymap";
 import { WithListGone } from "./_list-gone";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,
-} from "../app/shell/session-truth";
+} from "@ohmail/app-logic/session/session-truth";
 import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
 
 /**

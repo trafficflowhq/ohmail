@@ -6,11 +6,11 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { NextIntlClientProvider } from "next-intl";
 
-import { MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
+import { MessageBody, sanitizeMailHtml } from "../../webapp/app/letter-body/MessageBody";
 import {
   flushRenderedLinks, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
-} from "../../webapp/app/shell/rendered-links";
-import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "../../webapp/app/shell/open-external";
+} from "../../webapp/app/letter-body/rendered-links";
+import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
 import type { RichValue } from "../../webapp/app/shell/rich-text";
@@ -454,8 +454,8 @@ describe("the wiring, from source", () => {
     expect(reaching).toEqual([
       "apps/desktop/src/DesktopSubscription.tsx",
       "apps/desktop/src/main.tsx",
-      "apps/webapp/app/components/MessageBody.tsx",
-      "apps/webapp/app/shell/BodyText.tsx",
+      "apps/webapp/app/letter-body/BodyText.tsx",
+      "apps/webapp/app/letter-body/MessageBody.tsx",
       // The meeting-invitation note's one link: core's rebuilt Microsoft 365 options page.
       "apps/webapp/app/shell/InvitationNote.tsx",
       "apps/webapp/app/shell/RichEditor.tsx",

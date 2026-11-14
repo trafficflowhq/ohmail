@@ -82,7 +82,7 @@ async function advance(ms: number): Promise<void> {
 
 async function openTab() {
   vi.resetModules();
-  const truth = await import("../app/shell/session-truth");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   const client = await import("../app/api-client");
   const refresh = await import("../app/session-refresh");
   client.bindApiOwner("acct_A");
@@ -120,7 +120,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+  const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
   resetSessionTruthForTests();
   Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
   document.cookie = "tf_owner=; Path=/; Max-Age=0";

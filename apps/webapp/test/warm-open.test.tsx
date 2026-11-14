@@ -66,7 +66,7 @@ vi.mock("../app/api-client", async (importOriginal) => ({
 }));
 
 type EngineModule = typeof import("../app/shell/engine");
-type CookieModule = typeof import("../app/shell/owner-cookie");
+type CookieModule = typeof import("@ohmail/app-logic/storage/owner-cookie");
 type SignOutModule = typeof import("../app/sign-out");
 
 let Engine: EngineModule;
@@ -79,7 +79,7 @@ beforeAll(async () => {
   // build throws by design, and that throw is not what any of this is about.
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   Engine = await import("../app/shell/engine");
-  Cookie = await import("../app/shell/owner-cookie");
+  Cookie = await import("@ohmail/app-logic/storage/owner-cookie");
   SignOut = await import("../app/sign-out");
 });
 
@@ -446,7 +446,7 @@ describe("the shared-browser hazard: signing out takes the name and the mail tog
     expect(client.apiOwnerHolds("/auth/login"), "the front door was locked too").toBe(true);
     expect(client.apiOwnerHolds("/auth/logout"), "the logout could not be retried").toBe(true);
     expect(client.apiOwnerHolds("/auth/refresh/logout"), "the sign-out door could not be retried").toBe(true);
-    const { createSyncGate } = await import("../app/shell/sync-scheduler.js");
+    const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
     const gate = createSyncGate(ACCOUNT_A);
     gate.confirm(ACCOUNT_A);
     expect(gate.identity(), "a mirror stayed open through a session the sign-out could not revoke")
@@ -505,7 +505,7 @@ describe("the cookie itself", () => {
     // so the name is written twice. A rename on one side would not fail to compile; it would
     // silently turn every warm open back into a blocking one.
     const api = read("packages/api/src/cookies.ts");
-    const shell = read("apps/webapp/app/shell/owner-cookie.ts");
+    const shell = read("packages/app-logic/src/storage/owner-cookie.ts");
     const apiName = /export const OWNER_COOKIE = "([^"]+)"/.exec(api)?.[1];
     const shellName = /export const OWNER_COOKIE = "([^"]+)"/.exec(shell)?.[1];
     expect(apiName, "the API no longer exports OWNER_COOKIE — re-aim this").toBeTruthy();

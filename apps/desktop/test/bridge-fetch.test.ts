@@ -644,7 +644,7 @@ describe("the access notice after an open verdict", () => {
     });
     try {
       const { onAccessRefused, ACCOUNT_ACCESS_PATH } = await import("../src/bridge-fetch.js");
-      const { setStorageOwner } = await import("../../webapp/app/shell/storage-owner.js");
+      const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
       setStorageOwner("mbx_stale");
       const seen: unknown[] = [];
       const stop = onAccessRefused((f) => seen.push(f));
@@ -655,7 +655,7 @@ describe("the access notice after an open verdict", () => {
       await bridgeFetch(ACCOUNT_ACCESS_PATH);
       expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("open");
       // The window the drain loop reads is this one: the bridge's open answer feeds it.
-      const { liftedAt, refusalIsStale } = await import("../../webapp/app/shell/access-window.js");
+      const { liftedAt, refusalIsStale } = await import("@ohmail/app-logic/session/access-window");
       expect(refusalIsStale()).toBe(true);
       expect(liftedAt(), "an open answer with no refusal before it is not a reopening").toBeNull();
       await bridgeFetch("/mailboxes");

@@ -1,5 +1,5 @@
 import { ApiError } from "../api-client";
-import { noPortProbeKey, type NoPortProbeKey } from "./no-port-sentence";
+import { noPortProbeKey, type NoPortProbeKey } from "@ohmail/app-logic/doors/no-port-sentence";
 
 /*
  * THE PROBE REFUSAL, READ ONCE for every connect form: the Settings pane, the first-run stage

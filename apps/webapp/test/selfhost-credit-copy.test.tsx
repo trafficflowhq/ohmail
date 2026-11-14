@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { ManagedServiceContext } from "../app/shell/managed-service";
+import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { DraftReplyCard } from "../app/shell/InlineReply";
 import { AutoSuggestRow } from "../app/shell/AutoSuggestRow";
 import { SuggestControl } from "../app/views/ScreenerView";

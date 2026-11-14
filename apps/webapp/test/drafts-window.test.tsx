@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineDraft } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { DraftsView } from "../app/views/DraftsView";
-import { ESTIMATED_ROW_PX } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * DRAFTS MOUNTS ITS WINDOW, NOT EVERY DRAFT. The view mapped its scheduled sends and its drafts

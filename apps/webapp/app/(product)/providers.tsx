@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ThemeProvider, ToastHost, themeInitScript } from "@ohmail/ui";
-import { columnsBootScript } from "../shell/column-store";
+import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
 import { THEME_DOOR } from "../shell/face-mirror";
 import { textSizeBootScript } from "../shell/text-size";

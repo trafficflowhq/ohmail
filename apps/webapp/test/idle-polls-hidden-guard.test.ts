@@ -31,7 +31,7 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, ro
 const GUARD = "documentHidden()";
 
 /** Where the standing polls live. Every `setInterval` in these files is censused. */
-const POLL_FILES = ["app/shell/MailStateProvider.tsx", "app/shell/build-watch.ts"];
+const POLL_FILES = ["app/shell/MailStateProvider.tsx", "../../packages/app-logic/src/doors/build-watch.ts"];
 
 /**
  * The intervals that issue no request, by a token in their own callback. A beat that moves a
@@ -81,8 +81,8 @@ describe("every standing poll asks the one guard", () => {
   });
 
   it("ONE guard: the three callers import it and nobody spells it a second way", () => {
-    for (const file of [...POLL_FILES, "app/shell/build-watch.ts"]) {
-      expect(read(file)).toContain('from "./document-hidden"');
+    for (const file of POLL_FILES) {
+      expect(read(file)).toMatch(/from "(?:@ohmail\/app-logic|\.\.)\/session\/document-hidden(?:\.js)?"/);
     }
     /* The inline spelling the guard replaced may not come back beside it. `=== "visible"` is a
        different question — the build watch asks the moment a tab RETURNS, which is when a newer

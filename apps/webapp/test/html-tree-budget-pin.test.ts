@@ -12,7 +12,7 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MAX_FRAME_ELEMENTS, MAX_FRAME_TEXT_CHARS } from "../app/components/MessageBody";
+import { MAX_FRAME_ELEMENTS, MAX_FRAME_TEXT_CHARS } from "../app/letter-body/MessageBody";
 import { FRAME_BUDGET } from "../../mobile/src/mail/frame-budget";
 
 const REPO = join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "..", "..");

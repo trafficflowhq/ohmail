@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IMPORT_OPEN_MAX_MS } from "../packages/services/src/search-coverage.js";
-import { IMPORT_FLOOR_MAX_MS } from "../apps/webapp/app/shell/mail-state.js";
+import { IMPORT_FLOOR_MAX_MS } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ONE NUMBER FOR AN UNWRITTEN FIRST-IMPORT STAMP (SEARCH-SCOPE-READS-AN-UNSTAMPED-IMPORT-AS-OPEN).

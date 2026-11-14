@@ -26,7 +26,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "../components/image-quality";
-import { storageOwner } from "./storage-owner";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 export function ImageQualityRow() {
   const t = useTranslations("settings");

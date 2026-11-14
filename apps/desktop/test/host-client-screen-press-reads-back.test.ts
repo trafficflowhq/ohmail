@@ -4,8 +4,8 @@ import {
   HttpAdapter, OhmailEngine, encodeSeqCursor, type EngineMessage, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
 import { BearerManager } from "../src/host-client/bearer";
-import { screeningVerdict } from "../../webapp/app/shell/press-verdict";
-import { dispatchScreeningChange, planScreeningChange, senderScreening } from "../../webapp/app/shell/sender-screening";
+import { screeningVerdict } from "@ohmail/app-logic/press/press-verdict";
+import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE PAIRED DESKTOP'S SCREENING PRESS, THROUGH THE HOST-CLIENT DOOR. The

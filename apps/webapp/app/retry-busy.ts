@@ -8,7 +8,7 @@
  */
 
 import { ApiError } from "./api-client";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
 
 /** Our envelope's busy answer — the status, the code, and the fact that it came from us. */
 export function isBusy(err: unknown): err is ApiError {

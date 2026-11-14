@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { DRAIN_MARK_HOLD_MS, markDrain } from "../app/shell/drain-mark";
+import { DRAIN_MARK_HOLD_MS, markDrain } from "@ohmail/app-logic/session/drain-mark";
 import {
   deriveMailState,
   growthStep,
@@ -14,7 +14,7 @@ import {
   type MailboxFacts,
   type MailState,
   type MailStateInputs,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import { waterlineStamp } from "../app/shell/format";
 
 /**

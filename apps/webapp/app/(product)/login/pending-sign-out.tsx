@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import type { SignOutTrouble } from "../../sign-out-trouble";
 import { finishPendingSignOut, pendingSignOutSettled, type Finish } from "./finish-sign-out";
 

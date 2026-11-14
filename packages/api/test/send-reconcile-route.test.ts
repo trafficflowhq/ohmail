@@ -1,11 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
+import { drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
-import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE } from "@trafficflow/services";
+import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE, SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,25 +122,39 @@ describe("the abandonment seam reaches production, not just the spies", () => {
       .toContain("adapter.forceClose(");
   });
 
-  it("the reconciler's own deadlines are threaded into the adapter, not raced outside it", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(here, "..", "src", "routes", "internal.ts"), "utf8")
-      // BOTH production callers, not just this one. The self-hosted server runs the same pass and
-      // was missed when these deadlines were introduced, leaving it with no dial bound at all —
-      // and a census that looked only at the hosted route could not see it.
-      + readFileSync(join(here, "..", "..", "..", "apps", "server", "src", "index.ts"), "utf8");
-    // Racing a dial does not stop it — imapflow serialises commands — so the bound has to reach
-    // the connection itself. If this call stops passing them, a breach stops meaning "the mailbox
-    // did not answer" and the pass's give-up starts acting on our impatience instead.
-    // NOT `toContain`, which passes on a commented-out line — precisely the regression this is
-    // written against. The constant has to appear on a line that is code.
-    const live = src.split("\n")
-      .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*"))
-      .join("\n");
-    // Four callers: the reconciler and the late Sent-copy pass, on each of the two hosts.
-    expect(live.match(/timeouts:\s*SEND_RECONCILE_NET_TIMEOUTS/g) ?? [],
-      "every production caller of the pass must thread them",
-    ).toHaveLength(4);
+  /**
+   * Racing a dial does not stop it (imapflow serialises commands), so the bound has to be the
+   * connection's own: without it a breach stops meaning "the mailbox did not answer" and the
+   * give-up acts on our impatience. Four production callers, the reconciler and the late Sent-copy
+   * pass on the route and on a self-hosted server's own chain. This was a count of four call sites
+   * in two source files, untrue once the chain moved file; now each caller is driven and the
+   * adapter it builds is read. The route's two are here, the chain's two in
+   * `apps/server/test/clocks.test.ts`, where the program can be built.
+   */
+  it("the reconciler's own deadlines are threaded into the adapter, not raced outside it", async () => {
+    const { db, deps } = await armed();
+    const built: unknown[] = [];
+    vi.spyOn(ImapAdapter.prototype, "connect").mockImplementation(async function (this: object) {
+      built.push((this as unknown as { config: ImapConfig }).config.timeouts);
+      throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    });
+    /** One run of the route over a mailbox that has a stored sign-in: the deadlines of every dial it made. */
+    const dialled = async (path: string, mailboxId: string): Promise<unknown[]> => {
+      const enc = await deps.keyProvider.encrypt(randomUUID());
+      await db.insert(mailboxCredentials).values({
+        mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        meta: { host: "imap.rec.test", port: 993, secure: true, user: "u@rec.test" },
+      });
+      built.length = 0;
+      expect((await H(req("GET", path, { bearer: SECRET }), deps)).status).toBe(200);
+      return [...built];
+    };
+    expect({
+      reconciler: await dialled(SEND_RECONCILE_CRON_PATH, (await stranded(deps, db)).mailboxId),
+      sentCopies: await dialled(SENT_COPIES_CRON_PATH, (await owedCopy(deps, db)).mailboxId),
+    }, "every production caller of the pass must thread them").toEqual({
+      reconciler: [SEND_RECONCILE_NET_TIMEOUTS], sentCopies: [SEND_RECONCILE_NET_TIMEOUTS],
+    });
   });
 });
 

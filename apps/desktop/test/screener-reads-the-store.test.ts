@@ -12,7 +12,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import {
   NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
 } from "../../../packages/services/test/helpers/removed-mailbox-world.js";

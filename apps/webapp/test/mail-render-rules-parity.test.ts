@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-/* @reads: apps/webapp/app/components/MessageBody.tsx apps/webapp/app/shell/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts packages/core/src/html-text.ts
+/* @reads: apps/webapp/app/letter-body/MessageBody.tsx apps/webapp/app/letter-body/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts packages/core/src/html-text.ts
    Read by a path built at runtime or reached through a package barrel, so no landing pass
    selects this file when one of them moves — the shape `reads-list.mjs` exists for. */
 
@@ -43,7 +43,7 @@ import {
   MAX_HTML_CHARS,
   neutraliseCss as webNeutraliseCss,
   sanitizeMailHtml,
-} from "../app/components/MessageBody";
+} from "../app/letter-body/MessageBody";
 import {
   BEACON_PATH as SERVER_BEACON_PATH,
   detectTrackers,
@@ -52,7 +52,7 @@ import {
 } from "@trafficflow/core/mail";
 
 const SRC = readFileSync(
-  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/components/MessageBody.tsx"),
+  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/letter-body/MessageBody.tsx"),
   "utf8",
 );
 
@@ -63,7 +63,7 @@ const SRC = readFileSync(
  * the re-export is asserted beside it — two declarations would be the drift this file exists for.
  */
 const BODY_TEXT_SRC = readFileSync(
-  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/shell/BodyText.tsx"),
+  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/letter-body/BodyText.tsx"),
   "utf8",
 );
 
@@ -99,7 +99,7 @@ describe("the data is the same data", () => {
     expect(sourceRegex("INERT_CSS_URL")).toBe(INERT_CSS_URL.toString());
     expect(regexIn(BODY_TEXT_SRC, "INLINE_IMAGE_SRC", "BodyText.tsx")).toBe(INLINE_IMAGE_SRC.toString());
     // ONE literal in the webapp, re-exported — never a second declaration beside the import.
-    expect(SRC).toContain('export { INLINE_IMAGE_SRC } from "../shell/BodyText";');
+    expect(SRC).toContain('export { INLINE_IMAGE_SRC } from "./BodyText";');
     expect(SRC).not.toMatch(/const INLINE_IMAGE_SRC =\s*\//);
     expect(SRC).toContain(BLANK_GIF);
     expect(SRC.replace(/\s+/g, " ")).toContain(BEACON_PATH.source.replace(/\s+/g, " "));

@@ -12,7 +12,7 @@
 import { useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
-import type { OrganizerNotice as OrganizerNoticeFact, OrganizerNoticeKind } from "./mail-state";
+import type { OrganizerNotice as OrganizerNoticeFact, OrganizerNoticeKind } from "@ohmail/app-logic/mail-state/mail-state";
 import { goSettings } from "./routing";
 
 /**

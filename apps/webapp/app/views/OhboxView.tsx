@@ -10,14 +10,14 @@ import * as React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
-import { rowThread, rowThreadOf } from "../shell/row-thread";
+import { rowThread, rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import {
   arrivalMs, conversationKeyOf, countWhen, createThreadRead, foldOhboxRows, isOwnSent, isResurfaced, listSurface, ohboxUnreadIds,
   presentsUnread, saysEmpty,
 } from "@ohmail/client-engine";
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
-import { LANDING_REST_MS, createUnreadHold, useUnreadTurn, type ThreadReadWiring } from "../shell/reader-seen";
-import { createThreadWalkChannel } from "../shell/thread-walk-channel";
+import { LANDING_REST_MS, createUnreadHold, useUnreadTurn, type ThreadReadWiring } from "@ohmail/app-logic/reading/reader-seen";
+import { createThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
 import { ThreadStrip, useWalkedRow } from "../shell/ThreadStrip";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
@@ -35,31 +35,31 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
-import { ACTED_FRESH_MS, nextRowAfter, readAfterVerb, type ActedMarker } from "../shell/after-verb";
-import { storageOwner } from "../shell/storage-owner";
+import { ACTED_FRESH_MS, nextRowAfter, readAfterVerb, type ActedMarker } from "@ohmail/app-logic/press/after-verb";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { goFirstRun, goSettings } from "../shell/routing";
-import { sharedNotOrganizedWhy, type NotOrganizingYet } from "../shell/mail-state";
+import { sharedNotOrganizedWhy, type NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
 import { displayAddress } from "../shell/idn";
-import type { UndoLink } from "../shell/shell-dispatch";
+import type { UndoLink } from "@ohmail/app-logic/press/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
-import { revealInScroller, useListWindow } from "../shell/list-window";
+import { revealInScroller, useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { BootSkeleton } from "../shell/BootSkeleton";
-import { useLoadingGrace } from "../shell/loading-grace";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
-import type { OlderMail } from "../shell/older-mail";
+import type { OlderMail } from "@ohmail/app-logic/lists/older-mail";
 import {
   Key, MessageGone, MessagePane, MOVE_TARGETS,
   type BulkAction, type MessageAction, type MessageGoneProps, type MoveTarget,
 } from "../shell/MessagePane";
 import { MoreMenu, type MoreMenuItem } from "../shell/MoreMenu";
-import { isModalOpen } from "../shell/modal-gate";
-import { useBarDensity } from "../shell/bar-density";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
+import { useBarDensity } from "@ohmail/app-logic/lists/bar-density";
 import { DRAG_SLOP_PX, useDragToFile, type DragSource, type RailDropTarget } from "../shell/drag-file";
-import type { ScreeningDest } from "../shell/sender-screening";
+import type { ScreeningDest } from "@ohmail/app-logic/press/sender-screening";
 import "../shell/action-bar.css";
 
 /**

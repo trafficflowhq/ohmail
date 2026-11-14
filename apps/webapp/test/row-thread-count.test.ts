@@ -15,7 +15,7 @@ import {
   FOLDER_OF_VIEW, conversationSize, threadOf, threadSizeIndex,
   type EngineMessage, type EntityReader, type MessageStateDTO,
 } from "@ohmail/client-engine";
-import { rowThread, rowThreadOf } from "../app/shell/row-thread";
+import { rowThread, rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;

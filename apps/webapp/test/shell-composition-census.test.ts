@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
-import { SHELL_DIR, SHELL_FRAMES, shellFramePaths } from "./source-anchor.js";
+import { SHELL_DIR, SHELL_FRAMES, shellFramePath, shellFramePaths } from "./source-anchor.js";
 
 /**
  * ═══ THE COMPOSITION ROOT IS A COMPOSITION ROOT ═════════════════════════════════════════════
@@ -183,8 +183,8 @@ describe("the order list and the frame manifest are one claim", () => {
 
   it("every frame in the order list exports the hook the shell calls", () => {
     for (const { hook, frame } of ORDER) {
-      const path = resolve(ROOT, SHELL_DIR, frame);
-      expect(existsSync(path), `${SHELL_DIR}/${frame}`).toBe(true);
+      const path = resolve(ROOT, shellFramePath(frame));
+      expect(existsSync(path), shellFramePath(frame)).toBe(true);
       expect(readFileSync(path, "utf8")).toContain(`export function ${hook}(`);
     }
   });

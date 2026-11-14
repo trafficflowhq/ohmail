@@ -29,6 +29,8 @@ import { shellFrameOf, sliceOfDeclaration } from "./source-anchor";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const APP = join(HERE, "..", "app");
+/** The behaviour moved out of the shell, the press path with it: read with it, keyed `app-logic/…`. */
+const LOGIC = join(HERE, "..", "..", "..", "packages", "app-logic", "src");
 const NEEDLE = "void engine.mutate(";
 
 /**
@@ -129,9 +131,9 @@ describe("the shell's dispatch seam", () => {
 
   it("pins the remainder, one reason each, and refuses a new bare dispatch", () => {
     const counted = new Map<string, number>();
-    for (const file of tsFiles(APP)) {
+    for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"]] as const) for (const file of tsFiles(root)) {
       const hits = bareIn(readFileSync(file, "utf8"));
-      if (hits.length > 0) counted.set(relative(APP, file).split("\\").join("/"), hits.length);
+      if (hits.length > 0) counted.set(prefix + relative(root, file).split("\\").join("/"), hits.length);
     }
     const pinned = new Map(REMAINDER.map(([rel, n]) => [rel, n] as const));
     const unpinned = [...counted.keys()].filter((rel) => !pinned.has(rel));

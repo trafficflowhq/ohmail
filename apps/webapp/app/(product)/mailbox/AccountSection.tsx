@@ -40,7 +40,7 @@ import { SELF_HOST_BUILD } from "../../hello";
 import { forgetThisBrowser, signOut } from "../../sign-out";
 import { purgeSiteCache } from "../../session-refresh";
 import { signOutTrouble } from "../../sign-out-trouble";
-import { markAccountErased } from "../../shell/account-erased";
+import { markAccountErased } from "@ohmail/app-logic/session/account-erased";
 import {
   account,
   ApiError,

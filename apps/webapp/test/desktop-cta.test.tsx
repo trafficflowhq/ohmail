@@ -58,7 +58,7 @@ describe("the prompt component", () => {
   async function mount(): Promise<void> {
     await unmount();
     const { DesktopCta, DESKTOP_CTA_DISMISSED } = await import("../app/shell/AppShell.js");
-    const { usePersistedFlag } = await import("../app/shell/persisted-ui.js");
+    const { usePersistedFlag } = await import("@ohmail/app-logic/storage/persisted-ui");
     function Foot(): React.ReactElement | null {
       const [dismissed, setDismissed] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
       if (dismissed) return null;

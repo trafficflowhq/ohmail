@@ -9,21 +9,21 @@
  */
 
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "../../webapp/app/shell/boot-cache";
+import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY,
 } from "../../webapp/app/shell/compose";
-import { DELETE_INTENTS_PREFIX } from "../../webapp/app/shell/delete-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, sentCopyNotesKey,
 } from "../../webapp/app/shell/mail-send";
-import { isOwnerShaped } from "../../webapp/app/shell/owner-cookie";
-import { RETIRED_ID_SETS } from "../../webapp/app/shell/persisted-ui";
-import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
+import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
+import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
+import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
 import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
-import { namesOwner } from "../../webapp/app/shell/storage-owner";
-import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "./window-outbox-store.js";
 
 /**

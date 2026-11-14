@@ -1,14 +1,14 @@
 // @services: none — plants trees and git repositories, and reads this one's files
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  MAX_SHARDS, TARGET_S, WHOLE_SHARE, composeOutputs, decideScope, eventWhole, namedPaths, packFiles, parseNameStatus,
-  readerHits, readersOf, select, setupClosure, sourceEntries, stripComments, versionOnly, vitestGraph, type Ctx,
-  type GraphOptions, type Plan,
+  DIRECT_BASES, MAX_SHARDS, TARGET_S, WHOLE_SHARE, areaOf, composeOutputs, decideScope, deferredLog, directBase, directSet,
+  eventWhole, namedPaths, packFiles, parseNameStatus, planProblems, readerHits, readersOf, select, setupClosure, sourceEntries,
+  stripComments, summaryText, versionOnly, vitestGraph, type Ctx, type GraphOptions, type Plan,
 } from "../.github/scripts/ci-select.mjs";
 import { testFiles } from "./support/ci-shards.mjs";
 import { relativeImports } from "./support/service-needs.mjs";
@@ -17,7 +17,9 @@ import { relativeImports } from "./support/service-needs.mjs";
  * WHAT A PULL REQUEST'S RUN TESTS (.github/scripts/ci-select.mjs). A maintainer's pull request runs the
  * test files its diff can reach; the nightly, dispatch, a batch branch, a fork, a bot and a harness change
  * run the whole suite, and so does any fault of the selector. Each rule is held on a planted tree or
- * repository, and the reader rules on this tree's own censuses.
+ * repository, and the reader rules on this tree's own censuses. A pull request into next runs the direct
+ * set and names what it leaves to the whole run on next; test/fixtures/ci-select-history holds the changed
+ * paths of the last landed pull requests, which both bases plan here.
  */
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SELECT = join(ROOT, ".github/scripts/ci-select.mjs");
@@ -73,6 +75,28 @@ describe("the scope: who runs the whole suite", () => {
       expect(s.scope, what).toBe("whole");
       expect(s.why, what).toMatch(why);
     }
+  });
+
+  it("gives the direct set to a maintainer's pull request into next alone, and never to main merged across", () => {
+    const own = { full_name: "trafficflowhq/ohmail" };
+    expect(DIRECT_BASES).toEqual(["next"]);
+    expect(directBase(pr({ base: { ref: "next" } }))).toBe("next");
+    const across = pr({ base: { ref: "next" }, head: { ref: "pr/merge-main-20261114", repo: own } });
+    const reach: Array<[string, Ctx]> = [
+      ["into main", pr()],
+      ["main merged across into next", across],
+      ["a base that only starts like next", pr({ base: { ref: "next-2" } })],
+      ["a release base", pr({ base: { ref: "release" } })],
+      ["no base", pr({ base: undefined })],
+      ["a dispatch on next", pr({ base: { ref: "next" } }, { event_name: "workflow_dispatch" })],
+      ["a schedule", pr({ base: { ref: "next" } }, { event_name: "schedule" })],
+      ["a fork into next", pr({ base: { ref: "next" }, head: { ref: "pr/x", repo: { full_name: "someone/ohmail" } } })],
+      ["a bot into next", pr({ base: { ref: "next" } }, { actor: "dependabot[bot]" })],
+      ["a batch branch into next", pr({ base: { ref: "next" }, head: { ref: "pr/batch-g", repo: own } })],
+    ];
+    for (const [what, ctx] of reach) expect(directBase(ctx), what).toBeNull();
+    // Merged across, main's whole delta meets next's own code: it is selected as a pull request into main is.
+    expect(eventWhole(across)).toBeNull();
   });
 
   it("prints its decision as two output lines, from the event and a name-status file", () => {
@@ -321,6 +345,8 @@ describe("the readers: test files that read the tree by path", () => {
     "packages/pn/test/shapes/a.json": "{}\n",
     "packages/pn/test/corpus.test.ts": 'import { shape } from "./_shapes";\nexport const a = shape("a");\n',
     "packages/pa/assets/conf.json": "{}\n", "packages/pa/package.json": '{ "name": "pa", "version": "1.0.0" }\n',
+    // A census under root test/: a reader only when it is asked for.
+    "test/guide.test.ts": `${head}readFileSync(join(HERE, "../docs/guide.md"));\n`,
   };
   const dir = plantTree(tree);
   const files = Object.keys(tree).filter((f) => f.endsWith(".test.ts")).sort();
@@ -454,6 +480,13 @@ describe("the readers: test files that read the tree by path", () => {
     expect(plan.shards.flatMap((s) => s.files.split("\n"))).toEqual(["packages/q/test/doc.test.ts"]);
   });
 
+  it("reads root test/ only when asked, and every other reader the same either way", () => {
+    expect(readers.has("test/guide.test.ts")).toBe(false);
+    const all = readersOf(dir, files, { code: stripComments, relativeImports, includeRoot: true });
+    expect(all.get("test/guide.test.ts")!.paths).toEqual(["docs/guide.md"]);
+    expect([...all].filter(([t]) => !t.startsWith("test/"))).toEqual([...readers]);
+  });
+
   it("strips comments in one pass: a /* in a line comment or a string opens nothing", () => {
     const src = '// the `/api/*` table\nconst a = readFileSync("x/*y");\n/* real */ const b = "//kept";\nconst re = /\\/\\//g;\n';
     const out = stripComments(src);
@@ -545,6 +578,167 @@ describe("the readers of this tree", () => {
       expect(readerHits(ROOT, [M(p)], readers, g.reached).get(f), `${p} selects ${f}`).toBe("named");
     }
   }, 120_000);
+
+  it("keep that census for a pull request into next and defer another app's test that only imports the change", async () => {
+    const census = "packages/db/test/server-only-modules.test.ts";
+    const far = "apps/sidecar/test/act-admission-retire-drain.test.ts";
+    // This tree's own config and resolver, held to the two files and the census's entries: the whole graph takes minutes.
+    const entries = sourceEntries(new Map([[census, readers.get(census)!]]));
+    const graph = async (root: string, related: string[], o: GraphOptions) => (o.config === "vitest.config.ts"
+      ? vitestGraph(root, related, { ...o, entries: (o.entries ?? []).filter((e) => entries.includes(e)), overrides: { include: [census, far] } })
+      : { related: [], all: [] });
+    const plan = (base: string) => select({ root: ROOT, ctx: pr({ base: { ref: base } }), changes: [M("packages/db/src/junk-sweep.ts")], graph }) as Promise<Plan>;
+    const handed = (p: Plan) => [...p.shards.flatMap((s) => s.files.split("\n")), ...p.alone];
+    const main = await plan("main");
+    expect(handed(main)).toEqual(expect.arrayContaining([census, far]));
+    const next = await plan("next");
+    expect(next.mode).toBe("direct");
+    expect(handed(next)).toContain(census);
+    expect(handed(next)).not.toContain(far);
+    expect(next.deferred).toContainEqual({ file: far, rule: "graph" });
+  }, 120_000);
+});
+
+describe("the direct set: a pull request into next", () => {
+  const sha = "1".repeat(40);
+  const event = (base: string, ref = "pr/x") => pr({ number: 812, base: { ref: base }, head: { ref, sha, repo: { full_name: "trafficflowhq/ohmail" } } });
+  const reads = 'import { readFileSync } from "node:fs";\n';
+  const own = "packages/p/test/own.test.ts";
+  const across = "packages/q/test/across.test.ts";
+  const names = "packages/r/test/names.test.ts";
+
+  it("keeps what the change can break in its own workspaces and what names it, and defers the rest by its rule", () => {
+    const rule = new Map([
+      [own, "graph"], ["packages/p/test/edited.test.ts", "changed"], [across, "graph"], ["packages/q/test/sweeps.test.ts", "graph"],
+      ["packages/q/test/condstore.test.ts", "graph"], [names, "named"], ["test/reached.test.ts", "graph"],
+      ["test/census.test.ts", "root"], ["test/plain.test.ts", "root"],
+    ]);
+    const sets = {
+      picked: [...rule.keys()].sort(), rule, related: ["packages/p/src/x.ts", "packages/p/test/edited.test.ts"],
+      graphRelated: [own, across, "packages/q/test/sweeps.test.ts", "packages/q/test/condstore.test.ts", "test/reached.test.ts"],
+      hits: new Map([[names, "named"], ["packages/q/test/sweeps.test.ts", "sweep"]]),
+      rootHits: new Map([["test/census.test.ts", "named"]]),
+      dovecot: new Set(["packages/q/test/condstore.test.ts"]),
+    };
+    const left = [{ file: across, rule: "graph" }, { file: "test/plain.test.ts", rule: "root" }];
+    const got = directSet(sets);
+    expect(got.deferred).toEqual(left);
+    expect(got.direct).toEqual(sets.picked.filter((f) => !left.some((d) => d.file === f)));
+    // A changed module that no workspace owns keeps the graph's whole reach; a root test file or a document does not.
+    expect(directSet({ ...sets, related: [...sets.related, "scripts/lib/tool.mjs"] }).deferred).toEqual([left[1]]);
+    expect(directSet({ ...sets, related: [...sets.related, "test/other.test.ts", "docs/guide.md"] }).deferred).toEqual(left);
+    // A second workspace in the change brings its own tests back.
+    expect(directSet({ ...sets, related: [...sets.related, "packages/q/src/y.ts"] }).deferred).toEqual([left[1]]);
+  });
+
+  /** p's test imports p's module, q's test imports it across the workspaces, r's test and a root census name its path. */
+  const planted = () => plantTree({
+    "vitest.config.ts": 'export default { test: { include: ["packages/*/test/**/*.test.ts", "test/**/*.test.ts"] } };\n',
+    "vitest.sqlite.config.ts": `export default { test: { include: ${JSON.stringify([own, across, "packages/s/test/far0.test.ts"])} } };\n`,
+    "packages/p/src/x.ts": "export const x = 1;\n",
+    [own]: 'import { x } from "../src/x";\nexport const a = x;\n',
+    [across]: 'import { x } from "../../p/src/x";\nexport const b = x;\n',
+    [names]: `${reads}export const src = readFileSync(new URL("../../p/src/x.ts", import.meta.url), "utf8");\n`,
+    "test/census.test.ts": `${reads}export const src = readFileSync(new URL("../packages/p/src/x.ts", import.meta.url), "utf8");\n`,
+    "test/plain.test.ts": "export {};\n",
+    ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`packages/s/test/far${i}.test.ts`, "export {};\n"])),
+  });
+
+  it("plans the same change for each base through the CLI, on vitest's own graph, and says what it deferred", () => {
+    const dir = planted();
+    const files = join(scratch, "direct.tsv");
+    writeFileSync(files, "M\tpackages/p/src/x.ts\n");
+    const run = (base: string, ref?: string) => {
+      const out = join(scratch, `direct-${base}.json`);
+      const cli = spawnSync(process.execPath, [SELECT, "select", "--root", dir, "--event", JSON.stringify(event(base, ref)), "--files", files, "--out", out], { encoding: "utf8" });
+      expect(cli.status, cli.stderr).toBe(0);
+      return { stdout: cli.stdout, text: readFileSync(out, "utf8"), plan: JSON.parse(readFileSync(out, "utf8")) as Plan };
+    };
+    const said = "SELECT selected: 1 changed path(s); 1 suite job(s), 0 alone, 1 sqlite\n";
+    const main = run("main");
+    expect(main.stdout).toBe(said);
+    expect(Object.keys(main.plan)).toEqual(["scope", "why", "shards", "alone", "sqlite", "summary"]);
+    expect(main.plan.shards[0]!.files.split("\n")).toEqual([own, across, names, "test/census.test.ts", "test/plain.test.ts"]);
+    expect(main.plan.sqlite).toEqual([{ shard: 0, files: `${own}\n${across}` }]);
+    // main merged across into next is planned as a pull request into main is, to the byte.
+    expect(run("next", "pr/merge-main-20261114")).toEqual(main);
+
+    const next = run("next");
+    expect(next.plan.mode).toBe("direct");
+    expect(next.plan.shards[0]!.files.split("\n")).toEqual([own, names, "test/census.test.ts"]);
+    expect(next.plan.deferred).toEqual([{ file: across, rule: "graph" }, { file: "test/plain.test.ts", rule: "root" }]);
+    expect(next.plan.sqlite).toEqual([{ shard: 0, files: own }]);
+    expect(next.plan.sqliteDeferred).toEqual([across]);
+    expect(next.plan.summary).toMatchObject({ base: "next", main: 3, deferred: 2, deferredS: 10, rules: { graph: 1, root: 1, named: 1 } });
+    expect(next.stdout).toBe([
+      said.trimEnd(),
+      `FAST next: pr #812 head ${sha}: runs 3 file(s) in 1 suite job(s) + 0 alone, defers 2 file(s) (10 s measured) to the whole run on next`,
+      "::group::deferred to the whole run on next (2)", `graph\t${across}`, "root\ttest/plain.test.ts", "::endgroup::",
+      "FAST next sqlite: runs 1 file(s) in 1 job(s), defers 1 file(s) to the whole run on next",
+      "::group::deferred to the whole run on next, sqlite (1)", across, "::endgroup::", "",
+    ].join("\n"));
+    expect(deferredLog(next.plan, event("next"))).toBe(next.stdout.slice(said.length));
+    for (const quiet of [main.plan, { scope: "whole", why: "a schedule run is whole" } as Plan]) expect(deferredLog(quiet, event("next"))).toBe("");
+  }, 120_000);
+});
+
+describe("the last landed pull requests, as each base plans them", () => {
+  const at = join(ROOT, "test/fixtures/ci-select-history");
+  const history = readdirSync(at).filter((f) => f.endsWith(".tsv")).sort();
+  const files = testFiles(ROOT);
+  const sqliteAll = files.filter((_, i) => i % 9 === 0);
+  /** A planted graph: every third test of the workspaces the change is in, and every thirteenth file of the tree. */
+  const hit = (related: string[]) => {
+    const areas = new Set(related.map(areaOf).filter(Boolean));
+    return files.filter((f, i) => (areas.has(areaOf(f)) && i % 3 === 0) || i % 13 === 0);
+  };
+  const graph = async (_root: string, related: string[], { config }: GraphOptions) =>
+    (config === "vitest.sqlite.config.ts" ? { related: hit(related).filter((f) => sqliteAll.includes(f)), all: sqliteAll } : { related: hit(related), all: [] });
+  const handed = (plan: Plan) => [...plan.shards.flatMap((s) => s.files.split("\n")), ...plan.alone].sort();
+  const sqliteHanded = (plan: Plan) => (plan.sqlite ?? []).flatMap((s) => s.files.split("\n")).sort();
+  const plans = new Map<string, { changes: { s: string; p: string }[]; main: Plan; next: Plan }>();
+
+  beforeAll(async () => {
+    for (const name of history) {
+      const changes = parseNameStatus(readFileSync(join(at, name), "utf8"));
+      const plan = (base: string) => select({ root: ROOT, ctx: pr({ base: { ref: base } }), changes, graph }) as Promise<Plan>;
+      plans.set(name, { changes, main: await plan("main"), next: await plan("next") });
+    }
+  }, 600_000);
+
+  it("plans a base of main as before: no new key, nothing deferred, every related file handed on", async () => {
+    const { desktopFiles } = await import("./support/ci-shards.mjs");
+    const desktop = new Set(desktopFiles(ROOT, files));
+    expect(history).toHaveLength(15);
+    for (const [name, { changes, main }] of plans) {
+      if (main.scope === "whole") { expect(Object.keys(main), name).toEqual(["scope", "why"]); continue; }
+      expect(Object.keys(main), name).toEqual(["scope", "why", "shards", "alone", "sqlite", "summary"]);
+      expect(Object.keys(main.summary!), name).toEqual(["changed", "rules", "main", "alone", "sqlite", "share", "costsMeasuredAt"]);
+      const got = new Set(handed(main));
+      const present = changes.map((c) => c.p);
+      expect(hit(present).filter((f) => !got.has(f) && !desktop.has(f)), name).toEqual([]);
+    }
+  });
+
+  it("loses nothing for a base of next: the direct set and the deferred list are main's selection, file for file", () => {
+    const known = new Set(files);
+    const compared: string[] = [];
+    for (const [name, { main, next }] of plans) {
+      // Whatever makes main's run whole (the harness, the selector, a migration) makes next's whole too.
+      if (main.scope === "whole") { expect(next, name).toEqual(main); continue; }
+      expect(next.scope, name).toBe("selected");
+      expect(next.mode, name).toBe("direct");
+      const deferred = next.deferred!.map((d) => d.file);
+      expect([...handed(next), ...deferred].sort(), name).toEqual(handed(main));
+      expect(deferred.filter((f) => !known.has(f)), name).toEqual([]);
+      expect(next.deferred!.filter((d) => d.rule !== "graph" && d.rule !== "root"), name).toEqual([]);
+      expect([...sqliteHanded(next), ...next.sqliteDeferred!].sort(), name).toEqual(sqliteHanded(main));
+      expect(next.summary!.deferred, name).toBe(deferred.length);
+      expect(deferred.length, name).toBeGreaterThan(0);
+      compared.push(name);
+    }
+    expect(compared).toHaveLength(12);
+  });
 });
 
 describe("the packing", () => {
@@ -625,6 +819,27 @@ describe("the plan job's outputs", () => {
     ];
     for (const [what, p] of refused) expect(composeOutputs({ ...base, scope: "selected", selectOutcome: "success", plan: p }).scope, what).toBe("whole");
     expect(composeOutputs({ ...base, scope: "", selectOutcome: "" }).scope).toBe("whole");
+  });
+
+  it("hands a direct plan's jobs on in the same shape, and its summary says where the rest runs", () => {
+    const summary = { changed: 2, rules: { graph: 2 }, main: 2, alone: 0, sqlite: "whole" as const, share: 1.5, costsMeasuredAt: "planted" };
+    const reach = composeOutputs({ ...base, scope: "selected", selectOutcome: "success", plan: { ...plan, summary } });
+    expect(summaryText(reach)).toContain("partial run: the whole suite runs on the batch and nightly.");
+    const direct: Plan = {
+      ...plan, mode: "direct", deferred: [{ file: "packages/r/test/far.test.ts", rule: "graph" }], sqliteDeferred: [],
+      summary: { ...summary, base: "next", deferred: 1, deferredS: 40 },
+    };
+    const out = composeOutputs({ ...base, scope: "selected", selectOutcome: "success", plan: direct });
+    expect(Object.keys(out)).toEqual(Object.keys(reach));
+    expect(out).toMatchObject({ scope: "selected", shards: plan.shards, alone: [], sqlite: reach.sqlite });
+    const text = summaryText(out);
+    expect(text).toContain("fast run: 1 more file(s) (40 s measured) run in the whole suite on next after landing; the plan job's log lists them.");
+    expect(text).not.toContain("batch and nightly");
+    // A deferred file that is also handed on, or is no test file of the run, is a problem of the plan.
+    const sets = { files: ["packages/q/test/a.test.ts", "test/root.test.ts", "packages/r/test/far.test.ts"], alone: new Set<string>(), desktop: new Set<string>(), sqliteAll: [] };
+    expect(planProblems(direct, sets)).toEqual([]);
+    expect(planProblems({ ...direct, deferred: [{ file: "test/root.test.ts", rule: "root" }] }, sets)).toEqual(["test/root.test.ts is handed on and deferred"]);
+    expect(planProblems({ ...direct, sqliteDeferred: ["packages/q/test/gone.test.ts"] }, sets)).toEqual(["sqlite deferred: packages/q/test/gone.test.ts is not a test file of this run"]);
   });
 
   it("prints them as output lines through the CLI, whole when no plan file is there", () => {

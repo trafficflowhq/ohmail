@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import type { AttributedMessage } from "./sender-audit";
+import type { AttributedMessage } from "@ohmail/app-logic/press/sender-audit";
 import { placeLabel } from "./format";
 import { displayAddress, displayRuleMatch } from "./idn";
 // The panel is opened from the sheet but can outlive it on screen, so it imports the

@@ -45,7 +45,7 @@ import {
   syncIdentityOf,
   type SyncStatus,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 const ISO = "2026-09-05T10:00:00.000Z";
 const A = "acct_A";
@@ -86,7 +86,7 @@ const membersOf = (src: string, decl: string): string[] => {
 /** The engine's own protocol, plus the four `GatedAdapter` names the wrapper adds to it. */
 const DECLARED: readonly string[] = [
   ...membersOf(source("packages/client-engine/src/adapters/adapter.ts"), "export interface EngineAdapter"),
-  ...membersOf(source("apps/webapp/app/shell/sync-scheduler.ts"), "type GatedAdapter = EngineAdapter &"),
+  ...membersOf(source("packages/app-logic/src/session/sync-scheduler.ts"), "type GatedAdapter = EngineAdapter &"),
 ];
 
 /**
@@ -1128,7 +1128,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     reads = [];
 
     // Step 3-4: the sign-out's local half, on the path where the server did not confirm it.
-    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
     markSignedOutPending();
 
     expect(gate.identity(), "a refused sign-out left a confirmed mirror open").toBe("contradicted");

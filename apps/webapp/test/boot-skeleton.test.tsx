@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../messages/en.json";
 import { BOOT_SKELETON_GRACE_MS } from "../app/shell/BootSkeleton";
-import { RAIL_TRACK } from "../app/shell/column-store";
-import { LOADING_GRACE_MS } from "../app/shell/loading-grace";
+import { RAIL_TRACK } from "@ohmail/app-logic/lists/column-store";
+import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import {
   ISO,
   answerSyncWith,

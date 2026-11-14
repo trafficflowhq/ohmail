@@ -20,8 +20,8 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import type { ReactNode } from "react";
 import type {
   FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome,
-} from "../../shell/first-run-host";
-import type { OnboardingAi } from "../../shell/onboarding";
+} from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi } from "@ohmail/app-logic/doors/onboarding";
 import {
   ApiError, aiSettings, codeOf, consent as consentApi, mailboxes as mailboxApi, messageOf,
 } from "../../api-client";

@@ -9,7 +9,7 @@ import {
   type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE WEB SHEET'S DECIDE BESIDE AN OUTRANKING TWIN (SCREENER-DECIDE-PROMOTES-BESIDE-AN-OUTRANKING-TWIN).

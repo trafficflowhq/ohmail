@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 import messages from "../messages/en.json";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 // The first mount pays the shell's cold import.
 vi.setConfig({ testTimeout: 30_000 });

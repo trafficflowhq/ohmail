@@ -11,7 +11,7 @@ import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import messagesDe from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import type { ShellConsentFacts } from "../app/shell/consent-options.js";
+import type { ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
 
 /**
  * A FOLDER-WHOLE COUNT SAYS WHY (RULING-026). Where a mailbox's organizer has published no window
@@ -100,7 +100,7 @@ async function mount(door: Door, degrade: unknown = null, locale = "en", over?: 
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const { shellConsentOptions } = await import("../app/shell/consent-options.js");
+  const { shellConsentOptions } = await import("@ohmail/app-logic/press/consent-options");
   const engine = await engineWith(door, over?.store);
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -167,7 +167,7 @@ describe("the Screener head says why its count is the folder whole", () => {
 
 describe("the shell partitions with each mailbox's window, and never whose it is", () => {
   it("shellConsentOptions carries the map's windows alone; no map, no key", async () => {
-    const { shellConsentOptions } = await import("../app/shell/consent-options.js");
+    const { shellConsentOptions } = await import("@ohmail/app-logic/press/consent-options");
     const base = {
       known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null,
       screeningScope: "window" as const, foldersEnabled: false,
@@ -183,7 +183,7 @@ describe("the shell partitions with each mailbox's window, and never whose it is
 
 describe("a held letter is dated by its arrival, as the gate dated it", () => {
   it("an old Date received now waits, read or unread; one received before the window does not; a remount says the same", async () => {
-    const { writeBootCache, readBootCache } = await import("../app/shell/boot-cache.js");
+    const { writeBootCache, readBootCache } = await import("@ohmail/app-logic/session/boot-cache");
     const { CONSENT_BOOT_SCOPE } = await import("../app/shell/consent-state.js");
     const JUNE = "2026-06-02T09:00:00.000Z";
     const letter = (id: string, from: string, unread: boolean, sortAt: string): EngineMessage =>

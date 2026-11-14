@@ -7,7 +7,7 @@ import { ToastHost } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * BACK AND CANCEL END THE CEREMONY EVERYWHERE, NOT ONLY AT THE ACCOUNT ERASE.

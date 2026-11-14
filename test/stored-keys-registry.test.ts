@@ -46,7 +46,7 @@ const TREES = [
   "apps/mobile/src", "apps/mobile/app", "apps/mobile/app.json", "apps/mobile/plugins", "apps/mobile/modules",
   "apps/sidecar/src", "apps/server/src", "apps/worker/src", "apps/api-vercel/src",
   "packages/client-engine/src", "packages/ui/src", "packages/api/src", "packages/core/src",
-  "packages/services/src", "packages/db/src",
+  "packages/services/src", "packages/db/src", "packages/app-logic/src",
 ];
 const KINDS = /\.(?:ts|tsx|js|mjs|rs|json|kt|swift)$/;
 const SKIPPED = /(^|\/)(node_modules|generated|target|dist|build|\.next|test|__tests__)(\/|$)|_tests\.rs$|\.test\.tsx?$|\.d\.ts$|stored-keys\.ts$|(^|\/)testing[\w-]*\.ts$/;

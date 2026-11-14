@@ -46,8 +46,15 @@
     {
       "path": "./packages/ui"
     },
+    { "path": "./packages/cal-core" },
     {
       "path": "./packages/client-engine"
+    },
+    {
+      "path": "./packages/app-logic"
+    },
+    {
+      "path": "./packages/app"
     }
   ]
 }

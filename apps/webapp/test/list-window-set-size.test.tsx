@@ -31,7 +31,7 @@ import { ScreenerView } from "../app/views/ScreenerView";
 import { useScreenerState } from "../app/shell/screener-state";
 import { KeymapProvider } from "../app/shell/keymap";
 import { WithListGone } from "./_list-gone";
-import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 import { settleFirstPaint } from "./_first-paint.js";
 import { FIXTURE_NOW, storeFixture, storeRows } from "./_store-fixture";
 

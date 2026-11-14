@@ -93,8 +93,8 @@ async function signedIn(owner: string | null) {
   client.bindApiOwner(owner);
   return {
     client,
-    erased: await import("../app/shell/account-erased.js"),
-    truth: await import("../app/shell/session-truth.js"),
+    erased: await import("@ohmail/app-logic/session/account-erased"),
+    truth: await import("@ohmail/app-logic/session/session-truth"),
     door: await import("../app/erased-door.js"),
   };
 }
@@ -116,7 +116,7 @@ async function holdCopyOf(owner: string): Promise<{ keys: string[]; prefs: strin
     `${SEND_LOCKS_PREFIX}${owner}`, `${SENT_COPY_NOTES_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
   ];
   for (const k of keys) localStorage.setItem(k, "account data");
-  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui.js");
+  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
   const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
   const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
   // The impersonation mark is the Screener's (#777), by name until its builder is on main.
@@ -221,7 +221,7 @@ describe("the erased answer wipes this browser's copy of that account", () => {
     await holdCopyOf(X);
     rig.read = () => envelope(410, "account_erased", X);
     const { createEngine } = await import("../app/shell/engine-config.js");
-    const erased = await import("../app/shell/account-erased.js");
+    const erased = await import("@ohmail/app-logic/session/account-erased");
     const engine = createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }, null);
     await engine.syncOnce().catch(() => undefined);
     expect(erased.accountErasedOwner()).toBe(X);
@@ -236,7 +236,7 @@ describe("the erased answer wipes this browser's copy of that account", () => {
   it("the jar names nobody (the refusal cleared it): the named copy goes where the registry holds it", async () => {
     const { door, erased } = await signedIn(null);
     await holdCopyOf(X);
-    const shell = await import("../app/shell/account-erased.js");
+    const shell = await import("@ohmail/app-logic/session/account-erased");
     expect(shell.hearAccountErased(X, { marker: { kind: "absent" } })).toBe("erased");
     await settle(async () => (await mirrors()).length === 0, "the mirror gone");
     expect(door.erasedDecision(Y, { kind: "absent" }), "an account this browser never held").toBe("nothing-here");
@@ -287,8 +287,8 @@ describe("the latch never arms a refresh", () => {
   it("a death before the erasure has its heal schedule disarmed; one after it arms none", async () => {
     vi.useFakeTimers();
     try {
-      const truth = await import("../app/shell/session-truth.js");
-      const erased = await import("../app/shell/account-erased.js");
+      const truth = await import("@ohmail/app-logic/session/session-truth");
+      const erased = await import("@ohmail/app-logic/session/account-erased");
       const probe = vi.fn();
       truth.registerSessionProbe(probe);
       truth.markSessionDead();
@@ -297,8 +297,8 @@ describe("the latch never arms a refresh", () => {
       expect(probe, "the heal schedule asked for a session after the erasure").not.toHaveBeenCalled();
 
       vi.resetModules();
-      const truth2 = await import("../app/shell/session-truth.js");
-      const erased2 = await import("../app/shell/account-erased.js");
+      const truth2 = await import("@ohmail/app-logic/session/session-truth");
+      const erased2 = await import("@ohmail/app-logic/session/account-erased");
       const probe2 = vi.fn();
       truth2.registerSessionProbe(probe2);
       erased2.markAccountErased(X);

@@ -17,8 +17,8 @@ import {
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { KeymapProvider } from "../app/shell/keymap";
-import { searchSortKey } from "../app/shell/persisted-ui";
-import { ESTIMATED_ROW_PX } from "../app/shell/list-window";
+import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * SEARCH IS ONE LIST OVER THE STORE (ARCHIVE-024): the store's first page replaces the device's

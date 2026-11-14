@@ -1,0 +1,8 @@
+M	apps/mobile/app/(tabs)/screener.tsx
+M	apps/mobile/src/ui/ImpersonationNotice.tsx
+M	apps/mobile/src/ui/impersonation-notice.ts
+A	apps/mobile/test/impersonation-notice-live.test.tsx
+M	apps/webapp/app/shell/impersonation-filed.ts
+M	apps/webapp/app/shell/screener-state.ts
+M	apps/webapp/test/screener-impersonation-filed.test.tsx
+A	changelog.d/impersonation-line-live.md

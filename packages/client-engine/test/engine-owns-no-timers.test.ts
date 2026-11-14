@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 
-/* @reads: apps/webapp/app/shell/sync-scheduler.ts apps/mobile/src/net/drain.ts
+/* @reads: packages/app-logic/src/session/sync-scheduler.ts apps/mobile/src/net/drain.ts
    The two cadences that poll what waits, read by path so a landing selects this file when they move. */
 
 /**
@@ -15,7 +15,7 @@ import { lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../sc
  * when its race settles. Planted fixtures prove both directions.
  */
 const ENGINE = fileURLToPath(new URL("../src/engine.ts", import.meta.url));
-const CADENCES = ["../../../apps/webapp/app/shell/sync-scheduler.ts", "../../../apps/mobile/src/net/drain.ts"]
+const CADENCES = ["../../../packages/app-logic/src/session/sync-scheduler.ts", "../../../apps/mobile/src/net/drain.ts"]
   .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
 /** Admitted timers, by the text on their line: why each cannot outlive its own await. */
 const ADMITTED: Record<string, string> = {

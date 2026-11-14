@@ -8,10 +8,10 @@ import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { createDeleteUndo, UNDO_MS } from "../app/shell/delete-undo";
-import { readerMoveRefusal, rosterStateOf } from "../app/shell/mail-state";
+import { createDeleteUndo, UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
+import { readerMoveRefusal, rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
 import { chordMatches, groupedBindings, type KeyBinding } from "../app/shell/keymap";
-import { isModalOpen } from "../app/shell/modal-gate";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 /* The source censuses below anchor on the DECLARED NAME. The rule, and what a hook spelling
    costs, are written out in the helper; `anchor-census.test.ts` refuses the hook spelling
    across every test source under this directory. */

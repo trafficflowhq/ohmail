@@ -63,7 +63,7 @@
       "@ohmail/fixtures": ["../../packages/fixtures/src/index.ts"],
       /* The durable-write door as a LEAF, and it must be listed BEFORE nothing in particular
          here (TypeScript matches the longest pattern) but it MUST be listed: the published
-         mirror has no node_modules beside `apps/webapp/app/shell/durable.ts`, which re-exports
+         mirror has no node_modules beside `packages/app-logic/src/storage/durable.ts`, which re-exports
          this specifier, so this map and `vite.config.ts`'s alias table are its only resolvers.
          Three earlier slices each paid a release CI that died at `tsc --noEmit` on all three
          platforms for exactly this omission; `test/desktop-shell.test.ts` holds both
@@ -73,6 +73,11 @@
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
+      /* Behaviour without a screen, and the host contract. Same story as the leaves above: in the
+         published tree this map and `vite.config.ts`'s alias table are their only resolvers. A
+         folder's door resolves as the folder; a moved file by its own name. */
+      "@ohmail/app-logic/*": ["../../packages/app-logic/src/*"],
+      "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
       /* The wire's vocabulary: types only, imported by the client engine and erased at build. This
          install links no workspace package, so this line is what resolves it for `tsc --noEmit`. */
       "@ohmail/wire": ["../../packages/wire/src/index.ts"],

@@ -29,7 +29,7 @@ import { useOverlayFit } from "./overlay-clamp";
 import { useFocusFollows } from "./focus-follows";
 import { SheetClose } from "./SenderMenu";
 import "./sender-sheet.css";
-import { RETRO_DEFAULT_ON, type ScreeningDest } from "./sender-screening";
+import { RETRO_DEFAULT_ON, type ScreeningDest } from "@ohmail/app-logic/press/sender-screening";
 import {
   MAX_SUBJECT_TERM_CHARS,
   SUBJECT_RULE_DESTS,
@@ -38,7 +38,7 @@ import {
   subjectMatchCount,
   type SubjectRuleContext,
   type TermField,
-} from "./subject-rule";
+} from "@ohmail/app-logic/press/subject-rule";
 
 export interface SubjectRuleState {
   /** The message whose title was pressed. */

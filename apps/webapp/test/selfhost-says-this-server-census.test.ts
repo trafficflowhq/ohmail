@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
-import { FILER_HOST_KEYS, FILER_TABLE } from "../app/shell/mail-state";
+import { FILER_HOST_KEYS, FILER_TABLE } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SELF-HOSTED INSTALL NEVER CALLS ITSELF OHMAIL CLOUD IN SETTINGS → MAILBOXES. The web pane on a
@@ -246,7 +246,7 @@ describe.each(["web", "desktop"] as const)("the %s Mailboxes pane reads no Cloud
 
 describe("the ledger's premises", () => {
   it("the web pane's `blocked_` reason set carries no organized-elsewhere token", async () => {
-    const { SYNC_BLOCK_REASONS } = await import("../app/shell/mail-state");
+    const { SYNC_BLOCK_REASONS } = await import("@ohmail/app-logic/mail-state/mail-state");
     expect(SYNC_BLOCK_REASONS.length).toBeGreaterThan(0);
     for (const r of SYNC_BLOCK_REASONS) expect(namesCloud(EN.sync?.[`blocked_${r}`]), r).toBe(false);
   });

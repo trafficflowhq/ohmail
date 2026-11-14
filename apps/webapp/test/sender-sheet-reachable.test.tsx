@@ -17,7 +17,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { shellSliceOf } from "./source-anchor";
 import { queueDoor } from "./fixtures/queue-door.js";
 

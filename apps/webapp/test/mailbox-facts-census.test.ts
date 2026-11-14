@@ -1,4 +1,4 @@
-/* @reads: packages/wire/src/mailboxes.ts apps/webapp/app/api-client.ts apps/webapp/app/shell/mail-state.ts
+/* @reads: packages/wire/src/mailboxes.ts apps/webapp/app/api-client.ts packages/app-logic/src/mail-state/mail-state.ts
    packages/core/src/reader-refusal.ts */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ const read = (rel: string): ts.SourceFile => {
 };
 const SERVER_DTO = "packages/wire/src/mailboxes.ts";
 const CLIENT_DTO = "apps/webapp/app/api-client.ts";
-const MAIL_STATE = "apps/webapp/app/shell/mail-state.ts";
+const MAIL_STATE = "packages/app-logic/src/mail-state/mail-state.ts";
 /** The one module the shell's row types import a function's parameter from. */
 const MODULES: Readonly<Record<string, string>> = { "@trafficflow/core/reader-refusal": "packages/core/src/reader-refusal.ts" };
 

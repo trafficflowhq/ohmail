@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MutationRejectedError, OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
 import { AttachmentStrip, listRetryIsOffered } from "../app/components/AttachmentStrip.js";
 import { useMessageAttachments } from "../app/shell/attachments.js";
-import { resetSessionTruthForTests } from "../app/shell/session-truth.js";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
 
 /**
  * ═══ ONE RE-ASK PER OPEN, AND ONLY WHERE IT HELPS ══

@@ -25,16 +25,16 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { Button, Spinner, useOptionalToast } from "@ohmail/ui";
 
 import { AppShell } from "../../webapp/app/shell/AppShell";
-import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
+import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "../../webapp/app/shell/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { goCompose } from "../../webapp/app/shell/compose-door";
-import { setMailtoSink } from "../../webapp/app/shell/open-external";
+import { setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { agoStamp } from "../../webapp/app/shell/format";
 import {
   unknownSpeaks, type HostConnection,
-} from "../../webapp/app/shell/host-connection";
+} from "@ohmail/app-logic/doors/host-connection";
 import { BootStatus } from "./BootStatus.js";
 import {
   bridgeAvailable,
@@ -72,10 +72,10 @@ import { isPreview, linksOutToBilling } from "./distribution.js";
 import { PreviewMark } from "./PreviewMark.js";
 import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
-import { liveBodyVia } from "../../webapp/app/shell/live-body";
+import { liveBodyVia } from "@ohmail/app-logic/reading/live-body";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint, useDesktopUnnamedWall } from "./desktop-first-paint.js";
-import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
+import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
   accountDoorFor, awayDoorFor, consentDoorFor, firstRunDoorFor, flavorOf, gateFor, imagesFromComputer,

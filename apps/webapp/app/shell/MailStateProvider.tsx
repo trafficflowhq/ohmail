@@ -23,9 +23,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { documentHidden } from "./document-hidden";
+import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
 import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
-import { SYNC_FAILURE_STREAK, syncMayRead } from "./sync-scheduler";
+import { SYNC_FAILURE_STREAK, syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
 import {
   deriveMailState,
   firstRunProgress,
@@ -38,7 +38,7 @@ import {
   type MailState,
   type MailStateInputs,
   type MirrorGrowth,
-} from "./mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * `GET /mailboxes`, narrowed to {@link MailboxFacts}. Supplied by the Cloud client and by the

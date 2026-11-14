@@ -90,7 +90,7 @@ describe("one scroll owner per reading stream (the source census)", () => {
   const SHEETS = [
     "packages/ui/src/composites/stream.css",
     "apps/webapp/app/app.css",
-    "apps/webapp/app/components/message-body.css",
+    "apps/webapp/app/letter-body/message-body.css",
   ];
 
   /**
@@ -115,7 +115,7 @@ describe("one scroll owner per reading stream (the source census)", () => {
   });
 
   it("the wide-content wrappers are horizontal only, and contain their own overscroll", () => {
-    const css = read("apps/webapp/app/components/message-body.css");
+    const css = read("apps/webapp/app/letter-body/message-body.css");
     for (const cls of [".msg-pre-wrap", ".msg-table-wrap"]) {
       const rule = css.split("}").find((b) => b.includes(`${cls} {`));
       expect(rule, `${cls} has no rule`).toBeTruthy();
@@ -250,7 +250,7 @@ describe("one scroll owner per reading stream (the source census)", () => {
   });
 
   it("a scale-to-fit message document is taken out of the wheel's chain, and only that one", () => {
-    const src = read("apps/webapp/app/components/MessageBody.tsx");
+    const src = read("apps/webapp/app/letter-body/MessageBody.tsx");
     // The rule is dormant in every document and driven by one attribute, like the dark and scale
     // rules beside it.
     expect(src).toMatch(/:root\[data-ohmail-fitclip\]\{overflow:hidden\}/);

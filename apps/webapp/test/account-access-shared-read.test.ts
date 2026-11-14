@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
    the module is imported — the same line every api-client test in this directory carries. */
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 const { account, forgetAccess } = await import("../app/api-client");
-import { OWNER_COOKIE } from "../app/shell/owner-cookie";
+import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * ═══ ONE ACCESS READ PER SESSION, NOT ONE PER MOUNT ═══════════════════════════════════════
@@ -65,7 +65,7 @@ describe("the access verdict is read once for the session", () => {
   it("`fresh` re-asks — the gate reads that the entitlement is mutable from outside this tab", async () => {
     await account.access();
     // Past the door's join window: a fresh ask inside it is the answer in hand (api-client.ts).
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     const t = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(t + RETURN_DEBOUNCE_MS);
     await account.access({ fresh: true });

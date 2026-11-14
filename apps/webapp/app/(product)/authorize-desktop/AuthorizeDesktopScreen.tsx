@@ -16,7 +16,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   ApiError, apiConfigured, auth, type AuthorizeRequestDTO,
 } from "../../api-client";

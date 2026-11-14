@@ -14,13 +14,13 @@ import {
   armDeleteIntent,
   deleteIntentsKey,
   takeDeleteIntents,
-} from "../app/shell/delete-intents";
+} from "@ohmail/app-logic/press/delete-intents";
 import {
   UNDO_MS,
   createDeleteUndo,
   replayDeleteIntents,
   type ReplayEnv,
-} from "../app/shell/delete-undo";
+} from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ A DELETE REPORTED DONE SURVIVES THE RELOAD THAT INTERRUPTED IT ═════════════════════════

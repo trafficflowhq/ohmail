@@ -36,7 +36,7 @@ function calls(file: string): Array<{ line: number; args: number }> {
 }
 
 describe("withheldCopyKey is always handed the message's folder and its mailbox's status", () => {
-  const found = sources(APP).flatMap((f) => calls(f).map((c) => ({ file: path.relative(APP, f), ...c })));
+  const found = [...sources(APP), ...sources(path.resolve(APP, "../../../packages/app-logic/src"))].flatMap((f) => calls(f).map((c) => ({ file: path.relative(APP, f), ...c })));
 
   it("CONTROL: the census sees the reader surfaces it exists for", () => {
     const files = new Set(found.map((c) => c.file));

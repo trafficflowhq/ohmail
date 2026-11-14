@@ -93,11 +93,21 @@ export const SHELL_FRAMES: readonly string[] = [
   "shell-compose.ts", "shell-verbs.ts", "shell-keys.tsx",
 ];
 
+/** A frame that left the shell's folder for app-logic, by where it is now. It stays a frame: the shell composes it. */
+const FRAME_HOMES: Readonly<Record<string, string>> = {
+  "shell-dispatch.ts": "packages/app-logic/src/press/shell-dispatch.ts",
+};
+
+/** Where a frame of the manifest is, from the repository's root. */
+export function shellFramePath(name: string): string {
+  return FRAME_HOMES[name] ?? `${SHELL_DIR}/${name}`;
+}
+
 /** Absolute paths for the manifest, refusing a frame the tree does not have. */
 export function shellFramePaths(root: string): string[] {
   return SHELL_FRAMES.map((name) => {
-    const full = resolve(root, SHELL_DIR, name);
-    if (!existsSync(full)) throw new Error(`shell frame not found: ${SHELL_DIR}/${name}`);
+    const full = resolve(root, shellFramePath(name));
+    if (!existsSync(full)) throw new Error(`shell frame not found: ${shellFramePath(name)}`);
     return full;
   });
 }

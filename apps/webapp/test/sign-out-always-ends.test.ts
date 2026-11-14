@@ -88,7 +88,7 @@ describe("the pending marker lives until the next visit finishes the sign-out", 
   it("it is written with the refresh family's lifetime, not as a session cookie", async () => {
     // A session cookie was forgotten at a browser restart while the refresh token lived on, and
     // the next person to open ohmail.app was resumed into the session somebody had signed out of.
-    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
     let written = "";
     markSignedOutPending((c) => { written = c; });
     expect(written).toMatch(/^tf_owner=signed_out_pending; /);
@@ -272,7 +272,7 @@ describe("an answer that crosses the Sign out press never names the account agai
     try {
       const { resumeSession } = await import("../app/session-refresh.js");
       const { signOut } = await import("../app/sign-out.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
       const renewed = resumeSession();
       await until(isHeld(world, "/auth/refresh"));
       // The press waits 3 s for the lock the renewal holds, then asks the door without it.
@@ -304,7 +304,7 @@ describe("an answer that crosses the Sign out press never names the account agai
       const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
       const { bindRefusal } = await import("../app/(product)/approve/settle-owner.js");
       const { signOut } = await import("../app/sign-out.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
       const check = resolveOwnerOutcome();
       await until(isHeld(world, CHECK));
       const out = signOut(world.account);
@@ -325,7 +325,7 @@ describe("an answer that crosses the Sign out press never names the account agai
     const world = await heldBrowser();
     await silentTab();
     const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
     expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
   }, 30_000);
@@ -337,7 +337,7 @@ describe("an answer that crosses the Sign out press never names the account agai
       await silentTab();
       const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
       const { signOut } = await import("../app/sign-out.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
       const check = resolveOwnerOutcome();
       await until(isHeld(world, CHECK));
       expect((await signOut(world.account)).serverRefused).toBeNull();
@@ -367,7 +367,7 @@ describe("an answer that crosses the Sign out press never names the account agai
       const { setThisTabForTest } = await import("../app/signed-out-signal.js");
       const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
       const { signOut } = await import("../app/sign-out.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
       const check = resolveOwnerOutcome();
       await until(isHeld(world, CHECK));
       expect(renewals(world), "premise: the check renewed").toBe(1);
@@ -387,7 +387,7 @@ describe("an answer that crosses the Sign out press never names the account agai
     const world = await heldBrowser();
     await lapsedTab(world);
     const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome.js");
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     expect(await resolveOwnerOutcome()).toEqual({ kind: "owner", accountId: world.account });
     expect(renewals(world), "premise: the check renewed").toBe(1);
     expect(readOwnerMarker()).toEqual({ kind: "account", id: world.account });
@@ -400,7 +400,7 @@ describe("an answer Chrome holds for its cache walk never holds the sign-out or 
     const world = await heldBrowser();
     try {
       const { signOut } = await import("../app/sign-out.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
       const started = Date.now();
       const out = await signOut(world.account);
       const took = Date.now() - started;

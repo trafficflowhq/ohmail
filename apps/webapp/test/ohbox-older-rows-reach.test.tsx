@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { pinnedRows } from "./_resurfaced-rows.js";
-import { ohboxSurfaceMessages } from "../app/shell/ohbox-surface.js";
+import { ohboxSurfaceMessages } from "@ohmail/app-logic/reading/ohbox-surface";
 import type { EngineMessage } from "@ohmail/client-engine";
 
 /**

@@ -19,7 +19,7 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * a planted view proves the refusal.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "apps/mobile/src"];
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src"];
 const SKIP = new Set(["node_modules", "dist", ".next"]);
 
 /** Every file that reads the published copy, and the consent question it reads it for. */
@@ -27,8 +27,8 @@ const ADMITTED: Record<string, string> = {
   "packages/client-engine/src/consent-cutline.ts": "the definition, and the consent index judging a held mailbox's mail",
   "packages/client-engine/src/press-forecast.ts": "a press's forecast through the consent index",
   "packages/client-engine/src/rules-shown.ts": "a reader-only Rules page's list and the presses planned over it: the copy, local ids or, reader-only, a published rule by its key, applied presses laid over it",
-  "apps/webapp/app/shell/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
-  "apps/webapp/app/shell/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
+  "packages/app-logic/src/press/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
+  "packages/app-logic/src/press/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
   "apps/mobile/src/state/live.ts": "`pressOutcome`'s `profiles:`, the consent reading of a press",
   "apps/mobile/src/state/sender-stayed.ts": "why a sender stayed: the decided destination through the consent index",
   "apps/webapp/app/shell/AppShell.tsx": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
@@ -70,7 +70,7 @@ describe("the organizer's published copy is not a rules list", () => {
     const planted = "const rules = mailboxProfiles(reader).flatMap((p) => p.rules);";
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: planted }])).toEqual(["apps/webapp/app/views/Fixture.tsx:1 (a rules surface)"]);
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: 'reader.list<X>("mailbox_profile")' }])).toHaveLength(1);
-    expect(judge([{ rel: "apps/webapp/app/shell/sender-screening.ts", src: planted }])).toEqual([]);
+    expect(judge([{ rel: "packages/app-logic/src/press/sender-screening.ts", src: planted }])).toEqual([]);
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: "// mailboxProfiles(reader) is not read here" }])).toEqual([]);
   });
 

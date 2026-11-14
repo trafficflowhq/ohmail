@@ -85,7 +85,7 @@ async function advance(ms: number): Promise<void> {
 
 async function load() {
   vi.resetModules();
-  const truth = await import("../app/shell/session-truth");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   const client = await import("../app/api-client");
   await import("../app/session-refresh");
   client.bindApiOwner("acct_A");
@@ -125,7 +125,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+  const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
   resetSessionTruthForTests();
   Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
   Reflect.deleteProperty(document as unknown as Record<string, unknown>, "visibilityState");
@@ -211,7 +211,7 @@ describe("a request issued while this tab's renewal is in flight waits for it", 
     window.localStorage.setItem("ohmail.session.mintedAt", String(Date.now()));
     const { truth, client } = await load();
     // A warm API: a cold one lets its first read lead alone (`shell/resume-lane.ts`).
-    (await import("../app/shell/resume-lane")).webLane.noteAnswer();
+    (await import("@ohmail/app-logic/session/resume-lane")).webLane.noteAnswer();
     truth.markSessionAlive();
     const read = client.api("/consent");
     const snap = truth.sessionFetch("/api/sync/snapshot");

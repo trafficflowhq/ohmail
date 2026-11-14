@@ -18,8 +18,8 @@ import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
    mounted without the provider reads `null`, which answers "this install organizes" and leaves
    every sentence here exactly as it was. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
-import { useManagedService } from "../../webapp/app/shell/managed-service";
+import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { TravelledChangeNote, useTravelledChange } from "../../webapp/app/shell/travelled-change";
 
 import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";

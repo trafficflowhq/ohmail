@@ -23,7 +23,7 @@ import "../../../webapp/app/app.css";
 // too, so the Zero ladder must reach the hosted door's shell as well.
 import "../../../webapp/app/zero-layout.css";
 import { DesktopLocale } from "../DesktopLocale.js";
-import { stampColumns } from "../../../webapp/app/shell/column-store";
+import { stampColumns } from "@ohmail/app-logic/lists/column-store";
 import { applyTextSize, readTextSize } from "../../../webapp/app/shell/text-size";
 import { BearerManager } from "./bearer.js";
 import { HostGate } from "./HostGate.js";

@@ -8,9 +8,9 @@ import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import {
   AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver, useFirstRunQueueSettle,
-} from "../app/shell/first-run-queue-settle";
-import { importOverOf, type OnboardingAi, type OnboardingFacts, type OnboardingMailbox } from "../app/shell/onboarding";
-import type { FirstRunHost } from "../app/shell/first-run-host";
+} from "@ohmail/app-logic/doors/first-run-queue-settle";
+import { importOverOf, type OnboardingAi, type OnboardingFacts, type OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 
 /**
  * THE AGREE'S OWN SWEEP. On Cloud the worker imports a consent-less reader before the run's Agree,

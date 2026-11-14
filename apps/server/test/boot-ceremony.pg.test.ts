@@ -13,6 +13,7 @@ import {
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { createLogger } from "@trafficflow/core";
 import { totpNow, makeMailboxService, MailboxAllowanceError, ServiceError, type ServiceContext } from "@trafficflow/services";
+import { processDoor } from "../src/build-release.js";
 import { loadServerConfig } from "../src/config.js";
 import { buildServerServices, oauthProviderFor, type ServerRuntime } from "../src/deps.js";
 import { handleServerRequest } from "../src/handler.js";
@@ -144,7 +145,8 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
       [KEY_RING_V1]: KEK,
       TF_PROBE_ALLOW_PRIVATE: "1",
       TF_BUILD_VERSION: "ceremony-test",
-    } as NodeJS.ProcessEnv);
+      // The process door's own input, the one `index.ts` loads the settings with: the release is its build's.
+    } as NodeJS.ProcessEnv, processDoor(() => ""));
 
     // The library half: BOTH journals under the migration advisory lock, pg_trgm + trigram
     // indexes, then the five-property verification — a throw here is a failed boot, correctly,

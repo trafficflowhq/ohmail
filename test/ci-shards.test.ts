@@ -2,7 +2,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
@@ -28,6 +28,8 @@ const WORKFLOW = publicRel("github/workflows/ci.yml", ROOT);
 const workflowText = readFileSync(join(ROOT, WORKFLOW), "utf8");
 const composeText = readFileSync(join(ROOT, "docker-compose.yml"), "utf8");
 const dockerignoreText = readFileSync(join(ROOT, "apps/webapp/Dockerfile.dockerignore"), "utf8");
+/** The desktop window's program as the root install can compile it: the package's own, without the bundler's config. */
+const DESKTOP_WINDOW = "apps/desktop/tsconfig.src.json";
 /** Every directory name a checkout holds under apps/ and packages/ (git's tracked set: a fresh checkout's). */
 const TRACKED_DIRS = new Set(execFileSync("git", ["ls-files", "-z", "--", "apps", "packages"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 26 })
   .split("\0").filter(Boolean).flatMap((p) => p.split("/").slice(0, -1)));
@@ -81,6 +83,8 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   const typecheckRuns = (Object.values(wf.jobs).find((j) => j.name === "typecheck")?.steps ?? []).map((st) => st.run ?? "");
   if (!typecheckRuns.some((r) => /^npm run build$/m.test(r))) problems.push("TYPECHECK the typecheck job does not run npm run build");
   if (!typecheckRuns.some((r) => r.includes("tsc --noEmit -p apps/webapp/tsconfig.json"))) problems.push("TYPECHECK the typecheck job does not compile the web app's program");
+  /* The desktop window's sources are in neither of those two programs, and no other required check compiles them. */
+  if (!typecheckRuns.some((r) => r.includes(`tsc --noEmit -p ${DESKTOP_WINDOW}`))) problems.push("TYPECHECK the typecheck job does not compile the desktop window's sources");
   if (typecheckRuns.some((r) => drops(r).length)) problems.push("TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests");
   /* The desktop job runs the desktop's own files on the desktop's own install, and reads its report back. */
   const desktopRuns = (wf.jobs.desktop?.steps ?? []).map((st) => st.run ?? "");
@@ -214,6 +218,9 @@ describe("the suite workflow", () => {
     expect(workflowProblems(dropping, composeText)).toEqual(["TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests"]);
     const noWeb = workflowText.replace("        run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json", "        run: echo skipped");
     expect(workflowProblems(noWeb, composeText)).toEqual(["TYPECHECK the typecheck job does not compile the web app's program"]);
+    const noWindow = workflowText.replace(`        run: ./node_modules/.bin/tsc --noEmit -p ${DESKTOP_WINDOW}`, "        run: echo skipped");
+    expect(noWindow).not.toBe(workflowText);
+    expect(workflowProblems(noWindow, composeText)).toEqual(["TYPECHECK the typecheck job does not compile the desktop window's sources"]);
     const rootOnly = workflowText.replace('        run: cd apps/desktop && bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund', "        run: echo root tree only");
     expect(rootOnly).not.toBe(workflowText);
     expect(workflowProblems(rootOnly, composeText)).toEqual(["DESKTOP the desktop job runs vitest before it installs apps/desktop's own tree"]);
@@ -295,6 +302,23 @@ describe("the suite workflow", () => {
     const runs = wf.jobs.typecheck.steps.map((s) => s.run ?? "");
     expect(runs).toContain("npm run typecheck:mobile");
     expect(runs.indexOf("npm run build")).toBeLessThan(runs.indexOf("npm run typecheck:mobile"));
+  });
+
+  it("compiles in the typecheck job what the desktop's own typecheck compiles, but for the bundler's config", () => {
+    const ts = createRequire(import.meta.url)("typescript") as typeof import("typescript");
+    const program = (config: string) => {
+      const host = { ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d: { messageText: unknown }) => { throw new Error(String(d.messageText)); } };
+      const parsed = ts.getParsedCommandLineOfConfigFile(join(ROOT, config), {}, host)!;
+      expect(parsed.errors, config).toEqual([]);
+      return { roots: parsed.fileNames.map((f) => relative(ROOT, f).split("\\").join("/")).sort(), options: { ...parsed.options, configFilePath: "" } };
+    };
+    const whole = program("apps/desktop/tsconfig.json");
+    const window = program(DESKTOP_WINDOW);
+    // The root install lacks the config's plugin, and nothing else: every other root, and every option, is the package's.
+    expect(window.roots).toEqual(whole.roots.filter((f) => f !== "apps/desktop/vite.config.ts"));
+    expect(window.options).toEqual(whole.options);
+    // The two answers to the host contract that live in this program.
+    expect(window.roots).toEqual(expect.arrayContaining(["apps/desktop/src/host-contract.ts", "apps/desktop/src/host-client/host.ts"]));
   });
 
   it("plans the alone jobs from the marker and refuses a list the shard map's own walk disagrees with", () => {

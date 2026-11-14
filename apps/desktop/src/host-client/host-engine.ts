@@ -8,7 +8,7 @@
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 /* A type-only leaf (see `store-windows.ts`'s header): importing the constant costs this bundle
    nothing and cannot convey the engine door the host-client scan refuses. */
-import { DESKTOP_WINDOW } from "../../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import type { BearerManager } from "./bearer.js";
 import { HostOutboxStore } from "./outbox-store.js";
 

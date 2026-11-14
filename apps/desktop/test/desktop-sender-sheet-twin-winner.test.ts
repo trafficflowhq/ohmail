@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore, type EngineMessage, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { planScreeningChange, senderScreening } from "../../webapp/app/shell/sender-screening";
+import { planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE DESKTOP'S SENDER SHEET OVER A SENDER'S RULE TWINS (SENDER-SHEET-ALREADY-OVER-AN-OUTRANKING-TWIN).
@@ -48,7 +48,7 @@ async function sheet(rules: RuleDTO[]) {
 describe("the desktop window's sender sheet", () => {
   it("is the shared shell's sheet — the window mounts AppShell, which plans through the ladder", () => {
     expect(code("../src/DesktopGate.tsx")).toMatch(/^import \{ AppShell \} from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell";$/m);
-    expect(code("../../webapp/app/shell/AppShell.tsx")).toMatch(/^import \{[^}]*\bplanScreeningChange,[^}]*\} from "\.\/sender-screening";$/m);
+    expect(code("../../webapp/app/shell/AppShell.tsx")).toMatch(/^import \{[^}]*\bplanScreeningChange,[^}]*\} from "@ohmail\/app-logic\/press\/sender-screening";$/m);
   });
 
   it("pressing Ohbox over an allow twin and an outranking deny twin retargets the deny", async () => {

@@ -136,8 +136,8 @@ describe("composition", () => {
     expect(sent).toHaveBeenCalledTimes(1);
   });
 
-  it("both hosts build the last-resort mail arm with dbFreeMailAlertSink, never the database limiter", () => {
-    for (const file of ["../src/deps.ts", "../../api-vercel/src/deps.ts"]) {
+  it("the one wiring builds the last-resort mail arm with dbFreeMailAlertSink, never the database limiter", () => {
+    for (const file of ["../src/deps.ts"]) {
       const src = readFileSync(new URL(file, import.meta.url), "utf8");
       const lines = src.split("\n").filter((l) => /lastResort:/.test(l) && !/^\s*(\/\/|\*)/.test(l));
       const mail = lines.filter((l) => /Mail|mail/.test(l));

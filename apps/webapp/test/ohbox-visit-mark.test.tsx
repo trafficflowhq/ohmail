@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useOhboxVisitMark } from "../app/shell/ohbox-visit";
+import { useOhboxVisitMark } from "@ohmail/app-logic/reading/ohbox-visit";
 
 /**
  * THE OHBOX VISIT ENDS WHEN THE PERSON LEAVES IT — a switch to another pile, the tab going hidden,

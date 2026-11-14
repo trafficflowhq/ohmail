@@ -3,8 +3,8 @@
  * frame the reader mounts — or one control: the frame without `allow-same-origin`, or the frame's
  * policy without `blob:`. And the web's ask: a marked link and an honest one in the reader's
  * frame, armed (`link-ask.ts`) or not. Bundled by the test; nothing here is product code. */
-import { buildMailDocument, COPY, FRAME_SANDBOX, sanitizeMailHtml } from "../../app/components/MessageBody";
-import { armAsks, askPage } from "../../app/components/link-ask";
+import { buildMailDocument, COPY, FRAME_SANDBOX, sanitizeMailHtml } from "../../app/letter-body/MessageBody";
+import { armAsks, askPage } from "../../app/letter-body/link-ask";
 
 const LETTER = `<p>A picture.</p><p><img src="cid:pic@rig" width="32" height="32" alt="pic"></p>`;
 

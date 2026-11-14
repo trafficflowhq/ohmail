@@ -36,9 +36,9 @@ import {
   RAIL,
   STEP,
   type ColumnState,
-} from "./column-store";
+} from "@ohmail/app-logic/lists/column-store";
 import "./column-handles.css";
-import { queryVisible } from "./visible-dom";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /** Where each handle's column actually is, so a measurement never guesses. */
 const RAIL_SEL = ".deck > .rail";

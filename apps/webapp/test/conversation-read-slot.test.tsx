@@ -151,7 +151,7 @@ describe("the reader's read slot covers the conversation on screen", () => {
   }, 60_000);
 
   it("a render whose mirror has not moved walks the mirror for the read set no more", async () => {
-    const { readSetWalks } = await import("../app/shell/conversation-on-screen.js");
+    const { readSetWalks } = await import("@ohmail/app-logic/reading/conversation-on-screen");
     const host = await mountThread([msg("a1", 0), msg("x2", 60)]);
     await openAndRead(host);
     const before = readSetWalks();

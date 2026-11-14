@@ -17,8 +17,8 @@ import {
   type AfterVerbChoice,
   readAfterVerb,
   writeAfterVerb,
-} from "./after-verb";
-import { storageOwner } from "./storage-owner";
+} from "@ohmail/app-logic/press/after-verb";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 export function AfterVerbRow() {
   const t = useTranslations("settings");

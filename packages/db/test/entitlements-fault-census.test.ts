@@ -64,7 +64,7 @@ describe("every host entitlements client records its failed calls", () => {
 
   it("finds the five host compositions — a census that finds none measured nothing", () => {
     expect(read.map((r) => r.file).sort()).toEqual([
-      "apps/api-vercel/src/deps.ts",
+      "apps/server/src/deps.ts",
       "apps/worker/src/index.ts",
       "apps/worker/src/proposal-cron.ts",
       "apps/worker/src/reconcile-cron.ts",

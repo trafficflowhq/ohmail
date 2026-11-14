@@ -14,7 +14,7 @@ import {
   ACCOUNT, coded401, installConfirmEnv, messages, mountCloudShell, refresh204, scriptRefresh,
   scriptSession, sessionFull, teardownConfirmEnv, tick,
 } from "./fixtures/cloud-confirm-shell";
-import { resetSessionTruthForTests, sessionIsDead } from "../app/shell/session-truth";
+import { resetSessionTruthForTests, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 
 const json = (body: unknown, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });

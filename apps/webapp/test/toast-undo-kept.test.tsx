@@ -10,7 +10,7 @@ import {
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { COMMIT_MS, UNDO_MS } from "../app/shell/screener-state";
-import { createDeleteUndo } from "../app/shell/delete-undo";
+import { createDeleteUndo } from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * THE DECISION'S UNDO OUTLIVES THE SUGGESTION SUMMARY — the tester's re-read on a fake server.

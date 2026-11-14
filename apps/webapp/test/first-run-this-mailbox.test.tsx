@@ -8,9 +8,9 @@ import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import {
   accountOrganizer, firstRunCounts, screenerForMailbox,
-} from "../app/shell/first-run-subject";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+} from "@ohmail/app-logic/doors/first-run-subject";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ THE NUMBERS AND THE SENTENCE ARE ABOUT THIS MAILBOX ═══════════════════════════════════

@@ -8,7 +8,7 @@ import { MemoryMirrorStore, type EngineMessage, type Folder, type RuleDTO, type 
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE SPLIT SAYS WHY A ROW STAYED (the paying user's bare "News 1"). Once the rule's pass has

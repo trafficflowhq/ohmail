@@ -32,7 +32,7 @@ import { resolve, join } from "node:path";
 const ROOT = resolve(__dirname, "..", "..", "..");
 
 /** Every tree that renders a time of day. */
-const TREES = ["packages/client-engine/src", "apps/webapp/app", "apps/mobile/src"];
+const TREES = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src"];
 const ONE_PLACE = "packages/client-engine/src/zone.ts";
 
 function sources(dir: string): string[] {

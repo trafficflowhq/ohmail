@@ -8,7 +8,7 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 
-import { DESKTOP_WINDOW } from "../app/shell/store-windows";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import {
   IMPORT_END_IDLE_MS,
   deriveMailState,
@@ -20,7 +20,7 @@ import {
   type MailboxFacts,
   type MailStateInputs,
   type MirrorGrowth,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ THE FIRST SYNC'S PROGRESS IS NOT THE WINDOW'S SIZE ═══════════════════════════════════

@@ -1,6 +1,6 @@
 import { activeTranslator } from "./locale";
-import { probeCopyKey, refusalAuthHint } from "./local-server-host";
-import { noPortProbeKey } from "./no-port-sentence";
+import { probeCopyKey, refusalAuthHint } from "@ohmail/app-logic/doors/local-server-host";
+import { noPortProbeKey } from "@ohmail/app-logic/doors/no-port-sentence";
 import type { ServiceErrorCode } from "@ohmail/wire";
 
 /*

@@ -14,7 +14,7 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**

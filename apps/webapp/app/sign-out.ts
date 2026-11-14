@@ -1,6 +1,6 @@
 import { clearAllMirrors, mirrorDbName } from "@ohmail/client-engine";
 import { auth } from "./api-client";
-import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere, type LocalSweep } from "./shell/boot-cache";
+import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
@@ -13,23 +13,23 @@ import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, revokeWakeRegistration,
 } from "./shell/notification-settings";
 import { bindApiOwner, blockApiOwner } from "./api-client";
-import { forgetOwner, markSignedOutPending, readOwner } from "./shell/owner-cookie";
-import { namesOwner } from "./shell/storage-owner";
-import { RETIRED_ID_SETS } from "./shell/persisted-ui";
+import { forgetOwner, markSignedOutPending, readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
-import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { READING_ALONG_PREFIX } from "./shell/reading-along";
-import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "./shell/wall-lift";
+import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "@ohmail/app-logic/doors/wall-lift";
 import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
 import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetRenewalName,
   forgetSplashPresentation, purgeSiteCache,
 } from "./session-refresh";
-import { ERASED_KEY } from "./shell/account-erased";
+import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
 import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
 import { postSignedOut, thisTabName } from "./signed-out-signal";
-import { forgetMailDocs } from "./components/mail-doc-cache";
+import { forgetMailDocs } from "./letter-body/mail-doc-cache";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/refresh/logout` revokes the session

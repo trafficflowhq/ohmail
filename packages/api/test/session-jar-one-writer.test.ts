@@ -413,7 +413,8 @@ describe("every server reader takes both cookie spellings, and the server still 
 /* ── THE CENSUS: the refresh credential has one reader ─────────────────────────────────────── */
 
 const REPO = join(import.meta.dirname, "..", "..", "..");
-const SERVER_ROOTS = ["packages/api/src", "packages/services/src", "apps/api-vercel/src"];
+// `apps/server/src` holds the API program both doors serve; the function door's own files are thin.
+const SERVER_ROOTS = ["packages/api/src", "packages/services/src", "apps/api-vercel/src", "apps/server/src"];
 /** The NAME in code, any spelling a reader could use; its one type declaration is not a read. */
 const REFRESH_NAME = /["'`](?:__Host-)?tf_refresh["'`]|\.tf_refresh\b|__Host-tf_refresh/g;
 const NAME_DECLARATION = /export type CredentialCookie\b/;

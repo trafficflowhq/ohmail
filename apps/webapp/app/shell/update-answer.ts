@@ -11,7 +11,7 @@
  * update itself; and a 2xx from the same server lifts `serverUpdating`.
  */
 import { readUpdateAnswer, type UpdateAnswer } from "@ohmail/client-engine";
-import { announceUpdate, currentUpdateOffer, putAwayThisRun, type UpdateOffer } from "./app-update";
+import { announceUpdate, currentUpdateOffer, putAwayThisRun, type UpdateOffer } from "@ohmail/app-logic/doors/app-update";
 import { activeTranslator } from "./locale";
 
 /** How a host's remedy for "too old" reads on the line, and what pressing it does. */

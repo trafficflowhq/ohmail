@@ -1,5 +1,5 @@
 import type { AccessRefusedFacts, AccountAccess, AccountLifecycle } from "./api-client";
-import type { StoredVerdict } from "./shell/wall-lift";
+import type { StoredVerdict } from "@ohmail/app-logic/doors/wall-lift";
 
 /**
  * What an answer says, or `null` when it says nothing: an older API names no `access`, and

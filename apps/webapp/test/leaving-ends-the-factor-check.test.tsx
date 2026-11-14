@@ -93,7 +93,7 @@ afterEach(async () => {
   host = null;
   globalThis.fetch = originalFetch;
   // A control that erased latched this tab on the erased account; the next arm starts unlatched.
-  (await import("../app/shell/account-erased.js")).clearAccountErased();
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
   vi.restoreAllMocks();
 });
 
@@ -201,7 +201,7 @@ async function land(): Promise<void> {
 }
 
 async function erasedOwner(): Promise<string | null> {
-  return (await import("../app/shell/account-erased.js")).accountErasedOwner();
+  return (await import("@ohmail/app-logic/session/account-erased")).accountErasedOwner();
 }
 
 describe("the wall's Back while the factor is checked", () => {

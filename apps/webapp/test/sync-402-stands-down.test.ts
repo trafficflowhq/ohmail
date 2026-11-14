@@ -11,8 +11,8 @@ import {
 } from "@ohmail/client-engine";
 import {
   POLL_MS, SYNC_FAILURE_STREAK, reviveStandingDown, sameSyncStatus, startSyncScheduler, type SyncStatus,
-} from "../app/shell/sync-scheduler.js";
-import { deriveMailState, seedGrowth, stripSpeaks, type MailStateInputs } from "../app/shell/mail-state";
+} from "@ohmail/app-logic/session/sync-scheduler";
+import { deriveMailState, seedGrowth, stripSpeaks, type MailStateInputs } from "@ohmail/app-logic/mail-state/mail-state";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";

@@ -21,7 +21,7 @@ import {
   startSyncScheduler,
   WAKE_STREAM_CLOSED,
   type WakeStreamLike,
-} from "../../webapp/app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 
 /**
@@ -333,10 +333,13 @@ describe.skipIf(!PG_UP)("the wake channel, end to end against real Postgres", ()
     expect(hello.features.sse).toBe(false);
     // The release is the build's (`next.config.mjs` inlines it); a run with none states `0.0.0`, never a guess.
     expect(hello.apiVersion).toBe("0.0.0");
+    // A build's release is a cold instance's: the settings read it once, so another build is another instance.
     process.env.OHMAIL_RELEASE = "9.8.7";
+    resetHostState();
     const built = await (await fetch(`${managed.baseUrl}/hello`)).json() as { apiVersion: string };
     expect(built.apiVersion).toBe("9.8.7");
     delete process.env.OHMAIL_RELEASE;
+    resetHostState();
     const direct = await fetch(`${managed.baseUrl}/events`, { headers: { authorization: `Bearer ${token}` } });
     expect(direct.status).toBe(204);
     expect(await direct.text()).toBe("");
@@ -358,6 +361,24 @@ describe.skipIf(!PG_UP)("the wake channel, end to end against real Postgres", ()
     const held = eventsHeldMs.reduce((a, b) => a + b, 0);
     expect(eventsHeldMs.length, "no /events answer was seen").toBeGreaterThan(0);
     expect(held, `the host held /events for ${held}ms`).toBeLessThan(1_000);
+  }, 60_000);
+
+  it("the managed host with the flag unset serves no stream, to a signed-in caller either: 503 sse_disabled", async () => {
+    const { token } = await seedRealSession();
+    delete process.env.TF_SSE;
+    resetHostState();
+    resetServices();
+    try {
+      const res = await fetch(`${managed.baseUrl}/events`, { headers: { authorization: `Bearer ${token}` } });
+      expect(res.status).toBe(503);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe("sse_disabled");
+      const hello = await (await fetch(`${managed.baseUrl}/hello`)).json() as { features: { sse: boolean } };
+      expect(hello.features.sse).toBe(false);
+    } finally {
+      process.env.TF_SSE = "1";
+      resetHostState();
+      resetServices();
+    }
   }, 60_000);
 
   it("the self-hosted server: a committed change drains the scheduler within ~1s; killed SSE degrades to the 8s poll", async () => {

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { buildMailDocument, buildRichNodes, MessageBody, sanitizeMailHtml } from "../app/components/MessageBody";
-import { BodyText, type BodyNode } from "../app/shell/BodyText";
+import { buildMailDocument, buildRichNodes, MessageBody, sanitizeMailHtml } from "../app/letter-body/MessageBody";
+import { BodyText, type BodyNode } from "../app/letter-body/BodyText";
 
 /**
  * EMBEDDED PICTURES BY OBJECT URL, MESSAGE BY MESSAGE. On a browser door a `cid:` part is drawn

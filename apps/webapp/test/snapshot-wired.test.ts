@@ -7,7 +7,7 @@ import {
   type EngineMessage,
 } from "@ohmail/client-engine";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate, transportOf } from "../app/shell/sync-scheduler.js";
+import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * ═══ THE COLD START GOES THROUGH `GET /sync/snapshot` ON THE PATH THE PRODUCT BUILDS ═══════

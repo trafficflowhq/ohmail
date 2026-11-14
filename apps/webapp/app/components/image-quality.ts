@@ -31,7 +31,7 @@
  * dimensions come from the BITMAP, never from anything read ahead of the decode.
  */
 
-import { durableSet } from "../shell/durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
 
 /*
  * THE LEVEL TABLE LIVES IN `@ohmail/client-engine` (`image-quality.ts` there) — the phone composer

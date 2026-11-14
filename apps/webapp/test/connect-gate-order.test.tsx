@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import messages from "../messages/en.json";
 import type { AccountAccess, MailboxDTO } from "../app/api-client";
 import type { ConnectFacts } from "../app/(product)/mailbox/MailboxSection";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE SUBSCRIPTION GATE FIRED AT THE END OF THE CONNECT FLOW.

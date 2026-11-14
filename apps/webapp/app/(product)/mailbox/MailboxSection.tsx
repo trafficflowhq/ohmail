@@ -61,7 +61,7 @@ import {
   appPasswordPresetFor, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel,
   type AuthHint, type ProviderPreset,
 } from "../../shell/providers";
-import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
+import { probeCopyKey, refusalAuthHint, refusalTransport } from "@ohmail/app-logic/doors/local-server-host";
 import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
 import { DiscoveredHostsOffer, hostFieldOf, useAddressFirst } from "../../shell/address-first";
 import {
@@ -72,7 +72,7 @@ import { AGO_COPY, agoStamp, dayStamp } from "../../shell/format";
 import {
   claimLeftBehind, filerKey, isSyncBlockReason, readerHolderLapsed, readerStandDown, showInboundQuiet,
   standDownKey, webFiler, type WebFiler,
-} from "../../shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
@@ -82,9 +82,10 @@ import { displayAddress } from "../../shell/idn";
 import { SELF_HOST_BUILD } from "../../hello";
 import { StepUpPrompt } from "./StepUpPrompt";
 import { gatedRefusal } from "./gated-refusal";
-import { mailboxErrorKey, storeRefusalsFigure } from "../../shell/mailbox-error-key";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
+import { storeRefusalsFigure } from "../../shell/store-refusals-figure";
 import { PlaintextConsent, sameServerHost } from "../../shell/PlaintextConsent";
-import { sendingLine, sendingPlaintextOffered, type ProbeSending } from "../../shell/onboarding";
+import { sendingLine, sendingPlaintextOffered, type ProbeSending } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * `list` → the pane at rest. `form` → typing credentials for a NEW mailbox. `edit` → changing the
@@ -257,8 +258,8 @@ export function statusKey(m: Pick<MailboxDTO, "status" | "lastSyncAt">): string 
 /* IMPORTED as well as re-exported, and the difference is a caught defect rather than a style
  * choice: `export { x } from "..."` re-exports without binding `x` in THIS module's scope, so the
  * call below became `Cannot find name` — typecheck and 43 tests, immediately and loudly. */
-import { addressKey } from "../../shell/address-key";
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { addressKey } from "@ohmail/app-logic/mail-state/address-key";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
 export { addressKey };
 
 /**

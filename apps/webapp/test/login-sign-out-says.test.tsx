@@ -13,7 +13,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { CONFIRM_ATTEMPTS, CONFIRM_CAP_MS } from "../app/shell/confirm-schedule.js";
+import { CONFIRM_ATTEMPTS, CONFIRM_CAP_MS } from "@ohmail/app-logic/session/confirm-schedule";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

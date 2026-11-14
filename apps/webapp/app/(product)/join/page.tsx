@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { JoinScreen } from "./JoinScreen";
-import { cookieFromStore } from "../../shell/cookie-jar";
-import { OWNER_COOKIE, OWNER_SIGNED_OUT, isOwnerShaped } from "../../shell/owner-cookie";
+import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT, isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import type { SearchParamsLike } from "../../demo-mode";
 import { publicSignupEnabled } from "../../signup-mode";
 import { planHintOf } from "../../plan-hint";

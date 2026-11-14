@@ -170,7 +170,7 @@ describe("a press made as the access lapses", () => {
       expect(res.error?.message).toBe(messages.sync.keptSessionEnded);
       expect(presses()).toHaveLength(1);
     } finally {
-      const { resetSessionTruthForTests } = await import("../app/shell/session-truth.js");
+      const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
       resetSessionTruthForTests();
     }
   });
@@ -243,7 +243,7 @@ describe("a press made as the access lapses", () => {
 
   it("CONTROL: a signed storage upload is never renewed nor stamped — its URL is its authority", async () => {
     await liveEngine();
-    const { sessionFetch } = await import("../app/shell/session-truth.js");
+    const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
     lapsed = true;
     const upload = "https://storage.example/object/upload/sign/b/p?token=t";
     const res = await sessionFetch(upload, { method: "PUT", headers: { "content-type": "image/png" }, body: "x" });
@@ -286,12 +286,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 
 /** Mount the shell's one dispatch seam over the live engine and press Park through it. */
 async function pressPark(engine: OhmailEngine): Promise<void> {
-  const { useShellDispatch } = await import("../app/shell/shell-dispatch.js");
+  const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
+  const { placeLabel } = await import("../app/shell/format.js");
   let press: (() => void) | null = null;
   function Seam(): null {
     const t = useTranslations();
     const toast = useToast();
-    const d = useShellDispatch({ engine, reader: engine.read(), toast, t, demo: true, refreshFacts: () => {} });
+    const d = useShellDispatch({ engine, reader: engine.read(), toast, t, placeLabel, demo: true, refreshFacts: () => {} });
     press = () => { void d.mutateAndReport(PARK, t("ohbox.toastAside")); };
     return null;
   }
@@ -327,7 +328,7 @@ describe("what the press says", () => {
       await waitFor(() => said(messages.ohbox.toastAside), "a kept press was dropped in silence");
       expect(said(messages.ohbox.refusedPress), "a kept press was told as refused").toBe(false);
     } finally {
-      const { resetSessionTruthForTests } = await import("../app/shell/session-truth.js");
+      const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
       resetSessionTruthForTests();
     }
   });
@@ -349,7 +350,7 @@ describe("a /sync that meets the lapse", () => {
   afterEach(() => { for (const stop of started.splice(0)) stop(); });
 
   async function schedule(engine: OhmailEngine): Promise<{ refused: () => boolean; failures: () => number }> {
-    const { startSyncScheduler } = await import("../app/shell/sync-scheduler.js");
+    const { startSyncScheduler } = await import("@ohmail/app-logic/session/sync-scheduler");
     let refused = false;
     let failures = 0;
     started.push(startSyncScheduler(engine, {
@@ -382,7 +383,7 @@ describe("a /sync that meets the lapse", () => {
     const loop = await schedule(engine);
     renewal = "refused";
     lapsed = true;
-    const { resetSessionTruthForTests, sessionIsDead } = await import("../app/shell/session-truth.js");
+    const { resetSessionTruthForTests, sessionIsDead } = await import("@ohmail/app-logic/session/session-truth");
     await waitFor(() => sessionIsDead(), "a refused renewal never reached the signed-out state");
     await waitFor(() => loop.refused(), "a refused renewal was read as a fault by the drain");
     resetSessionTruthForTests();
@@ -447,7 +448,7 @@ describe("a plain api() call over a renewal fault", () => {
     const caught = await mailboxes.resync("m1").then(() => null, (e: unknown) => e);
     expect(caught).toBeInstanceOf(ApiError);
     expect((caught as InstanceType<typeof ApiError>).status).toBe(401);
-    const { resetSessionTruthForTests } = await import("../app/shell/session-truth.js");
+    const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
     resetSessionTruthForTests();
   });
 });

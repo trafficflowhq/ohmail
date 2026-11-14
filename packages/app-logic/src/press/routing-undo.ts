@@ -1,0 +1,472 @@
+"use client";
+
+/**
+ * Move, File and Junk, with an Undo in the toast. The press is TWO HALVES and one sentence: the
+ * mail moves now through the ordinary `move` (the engine builds that reversal), and the ROUTING —
+ * the rule written or retargeted — is a DELAYED COMMIT held by the engine's routing window. Undo
+ * puts the mail back and drops the intent in one press; nothing about the routing's wire changes,
+ * it is simply sent when the window closes. The window is `UNDO_MS`, imported, never a second
+ * number, and `presentAt` shows the named rows where they were filed while the wire waits.
+ */
+
+/**
+ * THE PLAN IS RE-READ HERE, AT THE COMMIT. `routing-intents.ts` states why the journal may not
+ * hold mutations; this is the other half of it — the same ladder the press used, asked again of
+ * the mirror as it is now. Its three answers are each said rather than swallowed: the seed
+ * message is gone, the rule is already standing (the ladder writes nothing), or the rule was
+ * written and the server had something to say about it.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FOLDER_OF_VIEW,
+  LANDING_HOLD_MS,
+  createLandingHold,
+  createRoutingWindow,
+  outrankCoveringDomains,
+  planScreenCommit,
+  routingIntentsKey,
+  routingSubject,
+  type EngineMessage,
+  type EngineMutation,
+  type EntityReader,
+  type Folder,
+  type JarIntent,
+  type MutationRejectedError,
+  type MutationStatus,
+  type ReleaseIntent,
+  type RuleDTO,
+  type RoutingIntent,
+  type RoutingOpen,
+  type ScreenDest,
+  type ScreenIntent,
+  type TabWindows,
+} from "@ohmail/client-engine";
+import { createIntentWindows, intentWindowsChannel } from "./intent-windows.js";
+import { localStorageDoor } from "../storage/durable.js";
+import { storageOwner } from "../storage/storage-owner.js";
+import { UNDO_MS } from "./undo-window.js";
+import {
+  planScreeningChange,
+  releaseCommit,
+  screeningToast,
+  senderScreening,
+  worstStatus,
+  type ScreeningPlan,
+  type ScreeningToastKey,
+} from "./sender-screening.js";
+
+import { browserOffline, queuedWaitOf } from "./queued-sentence.js";
+import { writtenRuleIds } from "./press-verdict.js";
+
+export { UNDO_MS };
+
+/**
+ * ENOUGH OF THE PRESS TO CORRECT ITS OWN SENTENCE, and no more. The press-time toast is the
+ * optimistic one (`screeningToast(plan, null)`) because the rule has not been sent yet; when the
+ * window closes and the server refuses or defers, the window owes the correction, and a
+ * correction takes the same placeholders the sentence took. Held in memory beside the open
+ * window and never journalled: a press replayed at the next launch has no toast to correct, and
+ * writing a reader's correspondents into `localStorage` to phrase one would be the wrong trade.
+ */
+export interface RoutingNote {
+  sender: string;
+  place: string;
+  count: number;
+}
+
+/** The sentences this module raises. Resolved by the caller, so the catalogue is read once. */
+export interface RoutingUndoCopy {
+  /**
+   * The seed message left the mirror before the window closed, so the ladder cannot be asked
+   * about it. Said rather than dropped: the reader was promised a rule.
+   */
+  gone: string;
+  /** A press that died of age while the app was closed — said, never swept in silence. */
+  expired: (count: number) => string;
+  /** The server's own answer, when it differs from what the press said. */
+  correction: (key: ScreeningToastKey, note: RoutingNote) => string;
+}
+
+/** A Screener release — Allow, Not spam, back to Waiting — whose mail already moved. */
+export interface ReleasePressInput {
+  id: string;
+  /** A message of the sender's the press was made on. */
+  seedId: string;
+  address: string;
+  /** The pile released from, as a folder: Screened out or Quarantine. */
+  from: Folder;
+  dest: ReleaseIntent["dest"];
+  /** The messages the press moved, shown at `dest` while the window runs. */
+  messageIds: readonly string[];
+  /** The rule change's answers, handed back to the press. */
+  after: (results: readonly RoutingSendResult[]) => void;
+}
+
+/** One routing press, as the shell hands it over. */
+export interface RoutingPressInput {
+  /** A press id — minted per press, and the id the coordinator names it by. */
+  id: string;
+  /** The message the plan was seeded from, and the address it was about. */
+  seedId: string;
+  address: string;
+  /** Where the press files, in the planner's vocabulary. */
+  dest: ScreenDest;
+  /**
+   * The messages this press NAMED, shown at `dest` while the window runs — the ids the caller
+   * pressed on, never the sender's whole backlog: the overlay is a promise about what the press
+   * did, and promising more than it did is the defect it exists to prevent.
+   */
+  messageIds: readonly string[];
+  /** The placeholders a correction would take. */
+  note: RoutingNote;
+}
+
+/** What a sender-sheet press's commit answered, handed to the press that made it. */
+export interface ScreenCommitOutcome {
+  /** The worst answer among the rule writes, `null` when there were none. */
+  worst: MutationStatus | null;
+  results: readonly RoutingSendResult[];
+  mutations: readonly EngineMutation[];
+  /** Rules the step showed that changed or went inside the window — left as they are. */
+  changed: readonly string[];
+}
+
+export type RoutingSendResult = {
+  status: MutationStatus; entityId?: string; queuedWith?: { name: string | null };
+  /** The refusal, where the server named one (`own_address` has its own sentence). */
+  error?: MutationRejectedError;
+  /** A queued try the server answered with a failure — see `queued-sentence.ts`. */
+  serverFailed?: true;
+};
+
+/** A sender-sheet press: the v2 intent's answers, and the press's own in-memory follow-up. */
+export interface ScreenPressInput extends RoutingPressInput {
+  makeRule: boolean;
+  applyRetro: boolean;
+  resolution: "remove" | "keep";
+  shown: { id: string; fp: string }[];
+  /** The mail half already dispatched; the commit's reading waits for every one to settle. */
+  moves: readonly Promise<unknown>[];
+  /** Said once the rules are answered and the moves settled. Absent for a replayed press. */
+  after?: (outcome: ScreenCommitOutcome) => void;
+}
+
+export interface RoutingUndo {
+  /** Hold one press. Answers whether an Undo may be offered over it. */
+  hold: (press: RoutingPressInput) => RoutingOpen;
+  /** Hold one sender-sheet press as a v2 intent in the screen jar. */
+  holdScreen: (press: ScreenPressInput) => RoutingOpen;
+  /** Hold one Screener release's rule change as a v4 intent in the release jar. */
+  holdRelease: (press: ReleasePressInput) => RoutingOpen;
+  /** The subject a press is about — what {@link RoutingUndo.undo} takes. */
+  subjectOf: (address: string) => string;
+  /** Take the press on this subject back: the intent is dropped, nothing was sent. */
+  undo: (subject: string) => boolean;
+  /** Start this subject's window again from now, when its offer reaches the screen. */
+  restart: (subject: string) => boolean;
+  /** Where held presses are showing their mail — composed into the presentation reader. */
+  places: ReadonlyMap<string, Folder>;
+  /** The rules a commit plans over (`pressRules`), set by the shell's verbs; unset, the local rows. */
+  planOver: { current: ((reader: EntityReader) => readonly RuleDTO[]) | null };
+}
+
+export interface RoutingUndoDeps {
+  /** The mirror, read at the COMMIT — never a reader captured when the press was made. */
+  read: () => EntityReader;
+  /** The surface's filing dispatch. One mutation, one answer. */
+  send: (m: EngineMutation) => Promise<RoutingSendResult>;
+  toast: (sentence: string) => void;
+  copy: RoutingUndoCopy;
+  /**
+   * THE CROSS-TAB COORDINATOR, and the hook BUILDS ITS OWN unless a test hands one in. Not a
+   * prop from the shell: a memoized value handed to a hook that keeps memoized closures is
+   * pinned by their frame for as long as they live, which is the mechanism the render-scope
+   * census exists to refuse. Absent here AND in the browser means one window per device, said.
+   */
+  windows?: TabWindows | undefined;
+  /** The journal's owner, read at BUILD time like every other owner-keyed store. */
+  owner?: string | null;
+  windowMs?: number;
+  now?: () => number;
+  /** `false` on a surface with no server to carry a rule to — the demo. */
+  enabled?: boolean;
+  /** The engine's change feed: a committed press's held rows are re-read on each change. */
+  subscribe?: (listener: () => void) => () => void;
+}
+
+const samePlaces = (a: ReadonlyMap<string, Folder>, b: ReadonlyMap<string, Folder>): boolean =>
+  a.size === b.size && [...a].every(([id, f]) => b.get(id) === f);
+
+const NO_PLACES: ReadonlyMap<string, Folder> = new Map();
+
+/**
+ * THE SHELL'S BINDING — the window behind a memo, the overlay as React state, and the two places
+ * a held press may not simply evaporate (`useDeleteUndo`'s shape, and for its reasons).
+ */
+export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
+  const [places, setPlaces] = useState<ReadonlyMap<string, Folder>>(NO_PLACES);
+  /* THE DEPS ARE READ THROUGH A REF, never closed over: `toast`, `copy` and `send` change
+     identity on most renders, and rebuilding the window would drop every armed timer — a press
+     silently un-filed by an unrelated re-render. */
+  const latest = useRef(deps);
+  latest.current = deps;
+  /** The press's own note, for the correction. Keyed by press id, dropped when it settles. */
+  const notes = useRef(new Map<string, RoutingNote>());
+  /**
+   * The plan the commit just built, handed from `plan` to `dispatch`. They run back to back
+   * inside one commit, so this is a hand-off and not state: re-planning in both would ask the
+   * mirror twice and could answer twice. `null` is the seed-is-gone answer, told apart from
+   * "the ladder had nothing to write".
+   */
+  const built = useRef(new Map<string, ScreeningPlan | null>());
+  /** A sender-sheet press's commit plan and its in-memory half, by press id. */
+  const screens = useRef(new Map<string, { changed: string[]; press?: ScreenPressInput }>());
+  /** A release's in-memory half, by press id: whom its answer is handed back to. */
+  const releases = useRef(new Map<string, ReleasePressInput["after"]>());
+  /**
+   * A SHEET PRESS'S LANDING, HELD PAST THE WINDOW: the rows its rule's walk will file stay at the
+   * place until they are filed, the walk reads done, the write is refused or undone, or the hold's
+   * TTL ends (`landing-hold.ts`). The window's own open set is shown beside it.
+   */
+  const landingHold = useMemo(() => createLandingHold(), []);
+  const openPlaces = useRef<ReadonlyMap<string, Folder>>(NO_PLACES);
+  const clock = (): number => (latest.current.now ?? Date.now)();
+  const planOver = useRef<((reader: EntityReader) => readonly RuleDTO[]) | null>(null);
+  /** A commit's rule writes, lifted over the list it planned over, as the engine lifts over its own rows. */
+  const liftedOver = (over: readonly RuleDTO[] | undefined, writes: readonly EngineMutation[]): EngineMutation[] =>
+    over ? writes.map((w) => outrankCoveringDomains(over, w)) : [...writes];
+  const recompute = useCallback((): void => {
+    const held = landingHold.size() === 0 ? null : landingHold.placesFor(latest.current.read(), clock()).places;
+    let next: ReadonlyMap<string, Folder> = openPlaces.current;
+    if (held && held.size > 0) {
+      const merged = new Map(held);
+      for (const [id, f] of openPlaces.current) merged.set(id, f);
+      next = merged;
+    }
+    setPlaces((prev) => (samePlaces(prev, next) ? prev : next.size === 0 ? NO_PLACES : next));
+  }, [landingHold]);
+
+  /**
+   * ONE COORDINATOR, ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch
+   * would otherwise commit a press this one is counting down and leave its Undo reporting
+   * success over a written rule. The channel is the Screener's SUFFIXED: a `BroadcastChannel`
+   * reaches every other channel object in the document, so two coordinators sharing a name would
+   * each answer the other's roll-call with rows it never heard of.
+   */
+  const coordinator = useMemo<TabWindows | undefined>(
+    () => latest.current.windows
+      ?? (typeof BroadcastChannel === "undefined"
+        ? undefined
+        : createIntentWindows({ channel: `${intentWindowsChannel()}.routing` })),
+    [],
+  );
+
+  const window_ = useMemo(() => createRoutingWindow<JarIntent>({
+    door: localStorageDoor("routing.intents"),
+    key: routingIntentsKey(latest.current.owner ?? storageOwner()),
+    windowMs: latest.current.windowMs ?? UNDO_MS,
+    ...(coordinator ? { windows: coordinator } : {}),
+    ...(latest.current.now ? { now: () => latest.current.now!() } : {}),
+
+    plan: (i) => {
+      /* A RELEASE RE-READS THE RULES HOLDING THE SENDER WHERE THEY WERE SHOWN. */
+      if (i.v === 4) return releaseCommit(latest.current.read(), i);
+      /* A SENDER-SHEET PRESS RE-PLANS THROUGH THE ONE COMMIT PLANNER, its answers riding the
+         intent: the ladder, and a shown rule removed only while it is as shown. */
+      const read = latest.current.read();
+      const over = planOver.current?.(read);
+      if (i.v === 2) {
+        const out = planScreenCommit(read, i, over);
+        screens.current.set(i.id, { ...screens.current.get(i.id), changed: out.changed });
+        return liftedOver(over, out.writes);
+      }
+      /* SENDER SCOPE AND NO RETRO — `planMoveToPlace`'s own arguments, because this IS that
+         press, asked again of the mirror as it now is. */
+      const sender = senderScreening(read, i.seedId, i.address, undefined, over);
+      if (!sender) { built.current.set(i.id, null); return []; }
+      const plan = planScreeningChange(sender, i.dest, "sender", true, false);
+      built.current.set(i.id, plan);
+      return liftedOver(over, plan.ruleMutations);
+    },
+
+    dispatch: async (mutations, i) => {
+      if (i.v === 4) {
+        const after = releases.current.get(i.id);
+        releases.current.delete(i.id);
+        const results = await Promise.all(mutations.map((m) => latest.current.send(m)));
+        /* A replayed press has nobody to hand its answer to, as a replayed Move has none. */
+        after?.(results);
+        return;
+      }
+      if (i.v === 2) {
+        const held = screens.current.get(i.id);
+        screens.current.delete(i.id);
+        notes.current.delete(i.id);
+        await Promise.allSettled(held?.press?.moves ?? []);
+        const results = await Promise.all(mutations.map((m) => latest.current.send(m)));
+        const outcome: ScreenCommitOutcome = {
+          worst: worstStatus(results), results, mutations, changed: held?.changed ?? [],
+        };
+        landingHold.settle(i.id, { worst: outcome.worst, ruleIds: writtenRuleIds(mutations, results) });
+        recompute();
+        if (held?.press?.after) { held.press.after(outcome); return; }
+        // A replayed press has nobody to read its answer back to; a refusal is still said.
+        if (outcome.worst === "rolled_back") latest.current.toast(latest.current.copy.gone);
+        return;
+      }
+      const plan = built.current.get(i.id);
+      const note = notes.current.get(i.id);
+      built.current.delete(i.id);
+      notes.current.delete(i.id);
+      if (plan === null) { latest.current.toast(latest.current.copy.gone); return; }
+      if (plan === undefined) return;
+      const results = await Promise.all(mutations.map((m) => latest.current.send(m)));
+      /**
+       * THE WINDOW SPEAKS ONLY FOR THE SERVER, and `confirmed` is not something to say. The press
+       * raised its sentence long ago; what it cannot have said is what the server did with the
+       * rule seconds later — refused it, queued it here, or recorded it for the organizing
+       * install — so those three, and only those, earn a second sentence.
+       */
+      /* Keyed on the STATUS and never on the sentence: the commit re-plans, and a re-plan's key
+         legitimately differs from the press's (the press moved mail this plan does not carry), so
+         comparing the two words raised a correction after every ordinary success. */
+      const worst = worstStatus(results);
+      if (worst === null || worst === "confirmed" || worst === "superseded") return;
+      const key = screeningToast(plan, worst, 0, queuedWaitOf(results, browserOffline()));
+      if (note) latest.current.toast(latest.current.copy.correction(key, note));
+    },
+
+    onPending: (openIntents) => {
+      const next = new Map<string, Folder>();
+      for (const i of openIntents) {
+        const folder = FOLDER_OF_VIEW[i.dest];
+        if (!folder) continue;
+        for (const id of i.messageIds) next.set(id, folder);
+      }
+      openPlaces.current = next;
+      recompute();
+    },
+  }), [coordinator]);
+
+  /* THE HELD ROWS ARE RE-READ ON EVERY ENGINE CHANGE, and once past the TTL: a row filed or moved
+     leaves, a walk read done returns the rest to where they are. Nothing to do while nothing is held. */
+  useEffect(() => {
+    // Read once, at mount: the engine is the shell's for its whole life.
+    const subscribe = latest.current.subscribe;
+    if (!subscribe) return undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reread = (): void => {
+      recompute();
+      if (timer === null && landingHold.size() > 0) {
+        timer = setTimeout(() => { timer = null; reread(); }, LANDING_HOLD_MS + 1000);
+      }
+    };
+    const off = subscribe(() => { if (landingHold.size() > 0) reread(); });
+    return () => { off(); if (timer !== null) clearTimeout(timer); };
+  }, [landingHold, recompute]);
+
+  /**
+   * LEAVING COMMITS, and the boot finishes what a killed tab started. `pagehide` rather than
+   * `beforeunload` for `useDeleteUndo`'s reason; whatever it does not get out is replayed here at
+   * the next launch — committed if its window elapsed, resumed with the time it had left if not,
+   * skipped if another tab owns it, and REPORTED if it died of age.
+   */
+  const replayed = useRef(false);
+  const enabled = deps.enabled ?? true;
+  useEffect(() => {
+    if (enabled && !replayed.current) {
+      replayed.current = true;
+      void window_.replay((latest.current.now ?? Date.now)()).then((seen) => {
+        if (seen.expired.length > 0) {
+          latest.current.toast(latest.current.copy.expired(seen.expired.length));
+        }
+      });
+    }
+    const commitAll = (): void => { window_.flush(); };
+    globalThis.window?.addEventListener("pagehide", commitAll);
+    return () => {
+      globalThis.window?.removeEventListener("pagehide", commitAll);
+      commitAll();
+    };
+  }, [window_, enabled]);
+
+  return {
+    places,
+    planOver,
+    subjectOf: useCallback((address: string) => routingSubject({ scope: "sender", address }), []),
+    holdScreen: useCallback((press: ScreenPressInput): RoutingOpen => {
+      const intent: ScreenIntent = {
+        v: 2,
+        verb: "screen",
+        id: press.id,
+        seedId: press.seedId,
+        address: press.address,
+        scope: "sender",
+        dest: press.dest,
+        messageIds: [...press.messageIds],
+        makeRule: press.makeRule,
+        applyRetro: press.applyRetro,
+        resolution: press.resolution,
+        shown: press.shown.slice(0, 20),
+        at: (latest.current.now ?? Date.now)(),
+      };
+      screens.current.set(press.id, { changed: [], press });
+      const place = FOLDER_OF_VIEW[press.dest];
+      const read = latest.current.read();
+      landingHold.hold({
+        pressId: press.id, subject: routingSubject(intent), place: place!, at: intent.at,
+        rows: place ? press.messageIds.flatMap((id) => {
+          const m = read.get<EngineMessage>("message", id);
+          return m ? [{ id, from: m.physicalFolder ?? m.folder }] : [];
+        }) : [],
+      });
+      const out = window_.open(intent);
+      return out;
+    }, [window_, landingHold]),
+    holdRelease: useCallback((press: ReleasePressInput): RoutingOpen => {
+      const intent: ReleaseIntent = {
+        v: 4,
+        verb: "release",
+        id: press.id,
+        seedId: press.seedId,
+        address: press.address,
+        scope: "sender",
+        from: press.from,
+        dest: press.dest,
+        messageIds: [...press.messageIds],
+        at: (latest.current.now ?? Date.now)(),
+      };
+      releases.current.set(press.id, press.after);
+      const out = window_.open(intent);
+      if (!out.held) releases.current.delete(press.id);
+      return out;
+    }, [window_]),
+    hold: useCallback((press: RoutingPressInput): RoutingOpen => {
+      const intent: RoutingIntent = {
+        v: 1,
+        id: press.id,
+        seedId: press.seedId,
+        address: press.address,
+        scope: "sender",
+        dest: press.dest,
+        messageIds: [...press.messageIds],
+        at: (latest.current.now ?? Date.now)(),
+      };
+      notes.current.set(press.id, press.note);
+      const out = window_.open(intent);
+      /* A press the jar refused has already been sent and its note consumed; clearing it here is
+         the belt for a dispatch that threw before it could — a map that only grows is a leak
+         with a reader's correspondent in it. */
+      if (!out.held) notes.current.delete(press.id);
+      return out;
+    }, [window_]),
+    undo: useCallback((subject: string) => {
+      landingHold.drop(subject);
+      const out = window_.undo(subject);
+      recompute();
+      return out;
+    }, [window_, landingHold, recompute]),
+    restart: useCallback((subject: string) => window_.restart(subject), [window_]),
+  };
+}

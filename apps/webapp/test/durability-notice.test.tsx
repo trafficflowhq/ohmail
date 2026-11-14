@@ -16,7 +16,7 @@ import {
   durableRemove,
   durableSet,
   resetDurabilityForTest,
-} from "../app/shell/durable";
+} from "@ohmail/app-logic/storage/durable";
 
 /**
  * THE BROWSER IS NOT KEEPING DECISIONS, AND THE PRODUCT SAYS SO ONCE.

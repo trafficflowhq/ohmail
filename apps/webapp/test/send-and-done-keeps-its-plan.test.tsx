@@ -367,7 +367,7 @@ describe("one door on the web", () => {
 
   it("the release is applied in send-release.tsx alone, and no carried plan is applied anywhere", () => {
     const calls: string[] = [];
-    for (const f of walk(`${ROOT}/apps/webapp/app`)) {
+    for (const f of [...walk(`${ROOT}/apps/webapp/app`), ...walk(`${ROOT}/packages/app-logic/src`)]) {
       const text = withoutComments(readFileSync(f, "utf8"));
       for (const m of text.matchAll(/\bapplySendAndDone\(|(?<![A-Za-z.])sendAndDone\(/g)) calls.push(`${f.slice(ROOT.length)}:${m.index}`);
     }

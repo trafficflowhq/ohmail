@@ -44,7 +44,7 @@ function sources(dir: string): string[] {
   return out.sort();
 }
 
-const files = sources(APP);
+const files = [...sources(APP), ...sources(new URL("../../../packages/app-logic/src/", import.meta.url).pathname)];
 const read = (p: string): string => readFileSync(p, "utf8");
 const name = (p: string): string => relative(APP, p);
 
@@ -85,7 +85,7 @@ const EXEMPT: Record<string, string> = {
    `shell-keys.tsx` at ARCH-022 L6, which is why the first row below names that file. */
 const PLACED_BY: Record<string, string> = {
   "shell/shell-keys.tsx": "shell/shell-open-state.ts",
-  "shell/delete-undo.ts":
+  "../../../packages/app-logic/src/press/delete-undo.ts":
     "its caller — a factory with no cursor of its own, mounted by the shell and by the verbs seam",
   "shell/message-verbs.ts":
     "itself — `useRowCursorPlacer` at `view` scope, for every split view that mounts it",

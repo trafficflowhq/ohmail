@@ -35,7 +35,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { SHELL_FRAMES, shellFramePaths, shellSliceOf } from "./source-anchor";
+import { SHELL_FRAMES, shellFramePath, shellFramePaths, shellSliceOf } from "./source-anchor";
 
 /**
  * The shell's source — EVERY frame of it, because the spine now lives in `shell-dispatch.ts`.
@@ -91,7 +91,7 @@ describe("every filing dispatch in the shell goes through one place", () => {
    * check — the vacuous shape the positive control below exists to refuse — so the verb list is
    * checked against BOTH sources and the injected dispatcher is pinned by name.
    */
-  const DOORS = [...SHELL_FRAMES.map((f) => `apps/webapp/app/shell/${f}`), "apps/webapp/app/shell/delete-undo.ts"];
+  const DOORS = [...SHELL_FRAMES.map(shellFramePath), "packages/app-logic/src/press/delete-undo.ts"];
 
   /**
    * WHERE A `move` IS MINTED, which is no longer this file. Both Move arms — one row and a
@@ -101,7 +101,7 @@ describe("every filing dispatch in the shell goes through one place", () => {
    * what it exists to find; the coverage control reads the planner too, so a verb that left this
    * file cannot make it vacuous. The dispatch's own half is asserted separately, below.
    */
-  const PLANNERS = ["apps/webapp/app/shell/sender-screening.ts"];
+  const PLANNERS = ["packages/app-logic/src/press/sender-screening.ts"];
 
   it("no filing mutation is dispatched without the refresh helper", () => {
     const offenders: string[] = [];

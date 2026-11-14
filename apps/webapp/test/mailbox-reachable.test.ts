@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { filerKey } from "../app/shell/mail-state";
+import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * TWO DEFECTS A REAL USER HIT ON ohmail.app, PINNED.

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OWNER_BILLING_HTML, OWNER_BILLING_TEXT, HOSTILE_HTML, HOSTILE_HOST } from "./fixtures/owner-billing-email";
-import { COPY } from "../app/components/MessageBody";
+import { COPY } from "../app/letter-body/MessageBody";
 
 /**
  * ── THE PROSE CLASS: A LETTER IS NOT A LAYOUT, AND DOES NOT NEED A FRAME ─────────────────
@@ -59,8 +59,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDivElement> {
   await unmount();
@@ -1108,7 +1108,7 @@ describe("a writer's coloured answers keep their colour", () => {
       const tones = new Set([...el.querySelectorAll(".msg-ink")].map((n) => n.getAttribute("data-tone")));
       expect(tones.size, "the ten colours fell into too few inks").toBeGreaterThanOrEqual(8);
       const markup = el.innerHTML;
-      const sheets = ["packages/tokens/src/tokens.css", "packages/ui/src/composites/message.css", "apps/webapp/app/components/message-body.css"]
+      const sheets = ["packages/tokens/src/tokens.css", "packages/ui/src/composites/message.css", "apps/webapp/app/letter-body/message-body.css"]
         .map((p) => readFileSync(resolve(process.cwd(), p), "utf8")).join("\n");
       const { createRequire } = await import("node:module");
       const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as typeof import("@playwright/test");

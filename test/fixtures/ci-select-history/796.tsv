@@ -1,0 +1,8 @@
+M	apps/worker/test/parked-account.test.ts
+A	changelog.d/entitlements-edge-429-retry.md
+M	packages/db/src/api-faults.ts
+M	packages/db/src/entitlements-client.ts
+M	packages/db/src/entitlements-port.ts
+M	packages/db/test/entitlements-client.test.ts
+M	packages/db/test/entitlements-fault-recorded.test.ts
+M	packages/db/test/entitlements-fault-row.test.ts

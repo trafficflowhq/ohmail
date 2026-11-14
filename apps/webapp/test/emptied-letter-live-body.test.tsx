@@ -14,7 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine, bodyOf, type EngineMessage } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { liveBodyVia } from "../app/shell/live-body";
+import { liveBodyVia } from "@ohmail/app-logic/reading/live-body";
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;

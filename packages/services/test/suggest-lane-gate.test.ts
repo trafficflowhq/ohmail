@@ -151,7 +151,7 @@ describe("the suggest lane gate", () => {
      * API host's own composition root, and `maxDuration` out of the route that serves this service.
      * A change to any of them reddens this instead of silently shrinking the margin.
      */
-    const deps = readFileSync(new URL("../../../apps/api-vercel/src/deps.ts", import.meta.url), "utf8");
+    const deps = readFileSync(new URL("../../../apps/server/src/deps.ts", import.meta.url), "utf8");
     const classify = /classifier[\s\S]{0,600}?timeoutMs:\s*([0-9_]+)[\s\S]{0,200}?maxRetries:\s*([0-9]+)/
       .exec(deps) ?? /timeoutMs:\s*([0-9_]+),\s*\n\s*maxRetries:\s*([0-9]+)/.exec(deps);
     expect(classify, "could not read the API host's classifier timeout/retries").not.toBeNull();

@@ -15,8 +15,8 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
-import { senderScreening, planScreeningChange } from "../app/shell/sender-screening";
-import { attributeMessages } from "../app/shell/sender-audit";
+import { senderScreening, planScreeningChange } from "@ohmail/app-logic/press/sender-screening";
+import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import { RulesView, bodyTermOf, filterRules } from "../app/views/RulesView";
 import {
   bodyMatchCount,
@@ -25,7 +25,7 @@ import {
   MAX_BODY_SCAN,
   planSubjectRule,
   subjectRuleContext,
-} from "../app/shell/subject-rule";
+} from "@ohmail/app-logic/press/subject-rule";
 
 /**
  * SPLITTING ONE SENDER BY WHAT THE MESSAGE SAYS — the content term (mail 0052), through the same

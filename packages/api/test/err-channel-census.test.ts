@@ -37,7 +37,8 @@ const ROOTS: readonly { dir: string; atLeast: number }[] = [
   // that silently stopped being walked reads 0 and refuses instead of passing empty.
   { dir: join(REPO, "packages", "api", "src"), atLeast: 30 },
   { dir: join(REPO, "apps", "worker", "src"), atLeast: 100 },
-  { dir: join(REPO, "apps", "api-vercel", "src"), atLeast: 2 },
+  // The API program's wiring, which took the function host's two sites with it.
+  { dir: join(REPO, "apps", "server", "src"), atLeast: 2 },
 ];
 
 /** Every stringifying form an `err:` value can take. Each was reachable here; none is hypothetical. */

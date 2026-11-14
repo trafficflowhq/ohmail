@@ -1,0 +1,159 @@
+{
+  "name": "@ohmail/cal-core",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./limits": {
+      "types": "./src/limits.ts",
+      "ohmail-source": "./src/limits.ts",
+      "node": "./dist/limits.js",
+      "default": "./src/limits.ts"
+    },
+    "./time/types": {
+      "types": "./src/time/types.ts",
+      "ohmail-source": "./src/time/types.ts",
+      "node": "./dist/time/types.js",
+      "default": "./src/time/types.ts"
+    },
+    "./time/arith": {
+      "types": "./src/time/arith.ts",
+      "ohmail-source": "./src/time/arith.ts",
+      "node": "./dist/time/arith.js",
+      "default": "./src/time/arith.ts"
+    },
+    "./time/windows-zones": {
+      "types": "./src/time/windows-zones.ts",
+      "ohmail-source": "./src/time/windows-zones.ts",
+      "node": "./dist/time/windows-zones.js",
+      "default": "./src/time/windows-zones.ts"
+    },
+    "./time/zones": {
+      "types": "./src/time/zones.ts",
+      "ohmail-source": "./src/time/zones.ts",
+      "node": "./dist/time/zones.js",
+      "default": "./src/time/zones.ts"
+    },
+    "./time/held": {
+      "types": "./src/time/held.ts",
+      "ohmail-source": "./src/time/held.ts",
+      "node": "./dist/time/held.js",
+      "default": "./src/time/held.ts"
+    },
+    "./time/duration": {
+      "types": "./src/time/duration.ts",
+      "ohmail-source": "./src/time/duration.ts",
+      "node": "./dist/time/duration.js",
+      "default": "./src/time/duration.ts"
+    },
+    "./recur/rrule": {
+      "types": "./src/recur/rrule.ts",
+      "ohmail-source": "./src/recur/rrule.ts",
+      "node": "./dist/recur/rrule.js",
+      "default": "./src/recur/rrule.ts"
+    },
+    "./recur/expand": {
+      "types": "./src/recur/expand.ts",
+      "ohmail-source": "./src/recur/expand.ts",
+      "node": "./dist/recur/expand.js",
+      "default": "./src/recur/expand.ts"
+    },
+    "./recur/key": {
+      "types": "./src/recur/key.ts",
+      "ohmail-source": "./src/recur/key.ts",
+      "node": "./dist/recur/key.js",
+      "default": "./src/recur/key.ts"
+    },
+    "./recur/span": {
+      "types": "./src/recur/span.ts",
+      "ohmail-source": "./src/recur/span.ts",
+      "node": "./dist/recur/span.js",
+      "default": "./src/recur/span.ts"
+    },
+    "./recur/series": {
+      "types": "./src/recur/series.ts",
+      "ohmail-source": "./src/recur/series.ts",
+      "node": "./dist/recur/series.js",
+      "default": "./src/recur/series.ts"
+    },
+    "./recur/pass": {
+      "types": "./src/recur/pass.ts",
+      "ohmail-source": "./src/recur/pass.ts",
+      "node": "./dist/recur/pass.js",
+      "default": "./src/recur/pass.ts"
+    },
+    "./recur/occurrence": {
+      "types": "./src/recur/occurrence.ts",
+      "ohmail-source": "./src/recur/occurrence.ts",
+      "node": "./dist/recur/occurrence.js",
+      "default": "./src/recur/occurrence.ts"
+    },
+    "./ical/lines": {
+      "types": "./src/ical/lines.ts",
+      "ohmail-source": "./src/ical/lines.ts",
+      "node": "./dist/ical/lines.js",
+      "default": "./src/ical/lines.ts"
+    },
+    "./ical/component": {
+      "types": "./src/ical/component.ts",
+      "ohmail-source": "./src/ical/component.ts",
+      "node": "./dist/ical/component.js",
+      "default": "./src/ical/component.ts"
+    },
+    "./ical/values": {
+      "types": "./src/ical/values.ts",
+      "ohmail-source": "./src/ical/values.ts",
+      "node": "./dist/ical/values.js",
+      "default": "./src/ical/values.ts"
+    },
+    "./ical/event": {
+      "types": "./src/ical/event.ts",
+      "ohmail-source": "./src/ical/event.ts",
+      "node": "./dist/ical/event.js",
+      "default": "./src/ical/event.ts"
+    },
+    "./ical/vtimezone": {
+      "types": "./src/ical/vtimezone.ts",
+      "ohmail-source": "./src/ical/vtimezone.ts",
+      "node": "./dist/ical/vtimezone.js",
+      "default": "./src/ical/vtimezone.ts"
+    },
+    "./ical/calendar": {
+      "types": "./src/ical/calendar.ts",
+      "ohmail-source": "./src/ical/calendar.ts",
+      "node": "./dist/ical/calendar.js",
+      "default": "./src/ical/calendar.ts"
+    },
+    "./itip/methods": {
+      "types": "./src/itip/methods.ts",
+      "ohmail-source": "./src/itip/methods.ts",
+      "node": "./dist/itip/methods.js",
+      "default": "./src/itip/methods.ts"
+    },
+    "./itip/order": {
+      "types": "./src/itip/order.ts",
+      "ohmail-source": "./src/itip/order.ts",
+      "node": "./dist/itip/order.js",
+      "default": "./src/itip/order.ts"
+    },
+    "./itip/match": {
+      "types": "./src/itip/match.ts",
+      "ohmail-source": "./src/itip/match.ts",
+      "node": "./dist/itip/match.js",
+      "default": "./src/itip/match.ts"
+    },
+    "./itip/reply": {
+      "types": "./src/itip/reply.ts",
+      "ohmail-source": "./src/itip/reply.ts",
+      "node": "./dist/itip/reply.js",
+      "default": "./src/itip/reply.ts"
+    }
+  },
+  "dependencies": {}
+}

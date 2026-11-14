@@ -37,7 +37,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { pendApiOwner } from "../../api-client";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";

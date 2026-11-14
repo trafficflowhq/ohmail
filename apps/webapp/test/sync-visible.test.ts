@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { REFUSAL_SUSTAIN_MS } from "../app/shell/sync-scheduler.js";
+import { REFUSAL_SUSTAIN_MS } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * A FAILING SYNC IS VISIBLE WITH ROWS PRESENT, IN EVERY VIEW.
