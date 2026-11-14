@@ -14,7 +14,7 @@ import { CREDENTIAL_REFUSED, SESSION_REFUSAL_CODES } from "../packages/client-en
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CLIENTS = ["apps/mobile/src/net/bearer.ts", "apps/desktop/src/host-client/bearer.ts"];
+const CLIENTS = ["apps/mobile/src/net/bearer.ts", "apps/paired-page/src/bearer.ts"];
 const SIDECAR = "apps/sidecar/src/cloud-auth.ts";
 const WEB = "apps/webapp/app/session-refresh.ts";
 

@@ -176,11 +176,11 @@ describe("no container takes the line breaks away", () => {
 });
 
 describe("one rule, declared once", () => {
-  /* Every stylesheet the product ships (the web app, the desktop's shell, the ui kit, the tokens).
+  /* Every stylesheet the product ships (the web app, the desktop's shell, the paired page, the ui kit, the tokens).
      Each design has one plain-text rule: `.msg-plain` for today's views, `.oh-history-quote` for the
      kit's quoted history (its own case: packages/ui/test/mail/letters.test.tsx). A third `pre-line`
      is a second copy of one of them, which some other container will lack. */
-  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "packages/ui/src", "packages/tokens/src"];
+  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src", "packages/ui/src", "packages/tokens/src"];
   const sheets = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
     if (name === "node_modules" || name === "dist") return [];

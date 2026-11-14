@@ -1,5 +1,5 @@
 /*
- * THE PAIRED BROWSER'S BEARER AS 0.27.3 TO 0.30.13 SHIPPED IT (`apps/desktop/src/host-client/bearer.ts`), frozen
+ * THE PAIRED BROWSER'S BEARER AS 0.27.3 TO 0.30.13 SHIPPED IT (`apps/paired-page/src/bearer.ts`), frozen
  * and never edited: nothing reloads an open tab, so a tab of that build shares the jar with this one
  * after an update. `apps/sidecar/test/host-mode.e2e.test.ts` drives the two side by side.
  */

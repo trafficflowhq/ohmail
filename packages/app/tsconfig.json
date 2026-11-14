@@ -2,8 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist", "rootDir": "src",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src"],
-  "references": [{ "path": "../client-engine" }]
+  "references": [{ "path": "../client-engine" }, { "path": "../app-logic" }, { "path": "../ui" }, { "path": "../tokens" }]
 }

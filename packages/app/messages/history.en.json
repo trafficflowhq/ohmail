@@ -1,0 +1,18 @@
+{
+  "history": {
+    "loading": "Loading your mail.",
+    "title": "History",
+    "metaCount": "{count, plural, one {1 message} other {# messages}}",
+    "explainer": "Every message you own, newest first — back to the first one.",
+    "explainerMore": "Nothing here has moved: each message is still where your mail server keeps it, and its row names that folder. The months and years on the right jump anywhere in it.",
+    "explainerMoreLabel": "What History holds, and where it lives",
+    "emptyTitle": "Nothing here yet.",
+    "emptyHint": "Your mail appears as it syncs.",
+    "storeUnavailable": "Your server did not answer — showing the recent mail this device holds.",
+    "storeRetry": "Try again",
+    "railLabel": "Jump to a month",
+    "railUndated": "No date",
+    "railCount": "{count, plural, one {1 message} other {# messages}}",
+    "placeChip": "History"
+  }
+}

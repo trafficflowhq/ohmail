@@ -13,7 +13,7 @@ import { presentRoots } from "./support/public-root.mjs";
  * rather than measured in somebody's tab.
  */
 
-const READER_ROOTS = presentRoots(["apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"]);
+const READER_ROOTS = presentRoots(["apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src", "apps/paired-page/src", "apps/admin/app"]);
 const SKIP = new Set(["node_modules", "dist", "build", ".next", "test", "__tests__"]);
 
 /** Every `.ts`/`.tsx` source under `root`, tests and build outputs excluded. */

@@ -143,7 +143,7 @@ const ROSTER: MailboxFacts[] = [{
 async function shell(
   onUnread: (n: number) => void, engine?: OhmailEngine,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   engine ??= engineOver(await storeWith());
   const container = document.createElement("div");
@@ -179,16 +179,17 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 describe("the badge rule", () => {
-  it("the app-icon sink and the rail's Ohbox count both read OHBOX UNREAD — the stated number", async () => {
-    const calls: number[] = [];
-    const container = await shell((n) => calls.push(n));
-    await waitFor(() => calls.length > 0, "the unread sink to be fed");
-    // Two unread of three listed: unread, not list length — the claim's first half.
-    expect(calls[calls.length - 1]).toBe(2);
-    const ohboxItem = [...container.querySelectorAll(".rail .ritem")]
-      .find((b) => (b.textContent ?? "").includes("Ohbox"));
-    expect(ohboxItem, "the rail's Ohbox item").toBeTruthy();
-    expect(ohboxItem!.querySelector(".cnt")?.textContent).toBe("2");
+
+  it("the sentence is on the notifications pane, stating the rule", async () => {
+    const container = await shell(() => {});
+    window.location.hash = "#/settings/notifications";
+    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+    await waitFor(
+      () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
+      "the badge-rule sentence to render",
+    );
+    expect(container.textContent).toContain("unread mail in your Ohbox");
+    expect(container.textContent).toContain("first-time senders waiting");
   });
 
   it("a letter brought back by Resurface > Now counts on the rail as in the header, after a reload too", async () => {
@@ -201,9 +202,9 @@ describe("the badge rule", () => {
       await engine.mutate({ kind: "triage_set", messageId: "m1", state: "resurfaced" });
     });
     const counts = () => {
-      const rail = [...container.querySelectorAll(".rail .ritem")].find((b) => (b.textContent ?? "").includes("Ohbox"));
+      const rail = [...container.querySelectorAll("[data-rail-id] button")].find((b) => (b.textContent ?? "").includes("Ohbox"));
       return {
-        rail: rail?.querySelector(".cnt")?.textContent,
+        rail: rail?.querySelector(".oh-railentry-count")?.textContent,
         header: container.querySelector(".vhead .meta")?.textContent,
         markAll: container.querySelector(".mark-all-read")?.getAttribute("aria-label"),
         sink: calls[calls.length - 1],
@@ -220,15 +221,15 @@ describe("the badge rule", () => {
     expect(counts()).toEqual(want);
   });
 
-  it("the sentence is on the notifications pane, stating the rule", async () => {
-    const container = await shell(() => {});
-    window.location.hash = "#/settings/notifications";
-    await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(
-      () => (container.textContent ?? "").includes("The numbers mean the same thing on every device"),
-      "the badge-rule sentence to render",
-    );
-    expect(container.textContent).toContain("unread mail in your Ohbox");
-    expect(container.textContent).toContain("first-time senders waiting");
+  it("the app-icon sink and the rail's Ohbox count both read OHBOX UNREAD — the stated number", async () => {
+    const calls: number[] = [];
+    const container = await shell((n) => calls.push(n));
+    await waitFor(() => calls.length > 0, "the unread sink to be fed");
+    // Two unread of three listed: unread, not list length — the claim's first half.
+    expect(calls[calls.length - 1]).toBe(2);
+    const ohboxItem = [...container.querySelectorAll("[data-rail-id] button")]
+      .find((b) => (b.textContent ?? "").includes("Ohbox"));
+    expect(ohboxItem, "the rail's Ohbox item").toBeTruthy();
+    expect(ohboxItem!.querySelector(".oh-railentry-count")?.textContent).toBe("2");
   });
 });

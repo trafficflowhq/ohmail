@@ -280,7 +280,7 @@ async function sampleUntil(
       return {
         path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
         loginCard: shown(".login-card"), gateMark: shown(".gate-card .wordmark"),
-        shell: document.querySelector(".app-root, .row[data-id]") !== null,
+        shell: document.querySelector("div.today, .row[data-id]") !== null,
       };
     }).catch(() => null);
     if (s !== null) {
@@ -345,7 +345,8 @@ interface TabEvent {
 function recordTab(): void {
   const w = window as unknown as { __soRec?: (r: Record<string, unknown>) => Promise<void> };
   const queue: Array<Record<string, unknown>> = [];
-  const shell = (): boolean => document.querySelector(".app-root, .row[data-id]") !== null;
+  /* `div.today`: the mail's own root. Every product document's <body> carries the class `today` too. */
+  const shell = (): boolean => document.querySelector("div.today, .row[data-id]") !== null;
   const send = (type: string, x: Record<string, unknown> = {}): void => {
     queue.push({ at: Date.now(), type, vis: document.visibilityState, shell: shell(), path: location.pathname, ...x });
     if (typeof w.__soRec === "function") for (const r of queue.splice(0)) void w.__soRec(r).catch(() => {});
@@ -1084,7 +1085,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
 
     /** Whether `page` shows the mailbox now; null between two documents. */
     const shellOn = (page: Page): Promise<boolean | null> =>
-      page.evaluate(() => document.querySelector(".app-root, .row[data-id]") !== null).catch(() => null);
+      page.evaluate(() => document.querySelector("div.today, .row[data-id]") !== null).catch(() => null);
 
     /**
      * B on the mailbox, drawn, in the browser's first tab; its session reads from now on. The account has
@@ -1099,7 +1100,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       const asked: number[] = [];
       b.on("request", (q) => { if (new URL(q.url()).pathname.endsWith("/auth/session")) asked.push(Date.now()); });
       await b.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
-      await b.locator(".app-root").waitFor({ state: "attached", timeout: 60_000 });
+      await b.locator("div.today").waitFor({ state: "attached", timeout: 60_000 });
       await b.waitForTimeout(3_000);
       expect(`${new URL(b.url()).pathname} ${await shellOn(b)}`, "B did not stay on its mailbox").toBe("/ true");
       return { b, asked };

@@ -89,8 +89,7 @@ describe("the reading card's pill floats", () => {
      */
     const src = stream();
     const rule = ruleFor(src, ".stream");
-    // Plus the first-sync pill's own height, 0 unless that pill is drawn (SyncBar's `--pill-h`).
-    expect(rule).toContain("--stream-tail:calc(48px + var(--pill-h, 0px))");
+    expect(rule).toContain("--stream-tail:48px");
     expect(rule, "the scroller is padding its bottom again — the pinned offset is now that much larger")
       .toMatch(/padding:2px 12px 0[;}]/);
     const spacer = ruleFor(src, ".stream::after");
@@ -126,9 +125,9 @@ describe("the reading card's pill floats", () => {
     const wide = mediaBlock(app(), "max-width: 699.98px");
     expect(wide, "app.css has no phone block").not.toBe("");
     const viewStream = /\.view \.stream \{[^}]*\}/.exec(wide)?.[0] ?? "";
-    // The first-sync pill's height (`--pill-h`, 0 unless the pill is drawn) and the sending pill's
-    // (`--send-pill-h`) join the spacer, so the last card rests clear of both; the safe area stays last.
-    expect(viewStream).toContain("--stream-tail: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px))");
+    // The sending pill's height (`--send-pill-h`) joins the spacer, so the last card rests clear of it;
+    // the safe area stays last.
+    expect(viewStream).toContain("--stream-tail: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px))");
     expect(viewStream, "the phone's stream is padding its bottom again, which moves the pinned bar up")
       .toMatch(/padding: 0 6px 0;/);
   });

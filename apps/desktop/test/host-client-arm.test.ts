@@ -65,7 +65,7 @@ describe("the served document", () => {
   });
 
   it("enters through the host-client entry, never the window's", () => {
-    expect(html).toContain("/src/host-client/main.tsx");
+    expect(html).toContain("../paired-page/src/main.tsx");
     expect(html).not.toContain('"/src/main.tsx"');
   });
 });
@@ -74,7 +74,7 @@ describe("the entry keeps the window's guard OUT and the window keeps it IN", ()
   it("no host-client source IMPORTS the offline guard or the Tauri bridge — its transport IS fetch", () => {
     // Imports, not mentions: the sources legitimately EXPLAIN their relationship to both modules
     // in comments, and a census that fails over a sentence teaches people to stop writing them.
-    const dir = path.join(APP, "src/host-client");
+    const dir = path.join(APP, "../paired-page/src");
     for (const file of fs.readdirSync(dir)) {
       const src = fs.readFileSync(path.join(dir, file), "utf8");
       expect(src, `${file} imports the offline guard`).not.toMatch(/from ["'][^"']*offline-guard/);
@@ -95,7 +95,7 @@ describe("the entry keeps the window's guard OUT and the window keeps it IN", ()
 
 describe("the send-surface twin", () => {
   it("the client's compose ceiling IS the door's declared surface — held as arithmetic across the two packages", () => {
-    const gate = read("src/host-client/HostGate.tsx");
+    const gate = read("../paired-page/src/HostGate.tsx");
     const clientCap = gate.match(/HOST_CLIENT_SEND_MAX_TOTAL_BYTES = ([0-9 *]+);/);
     expect(clientCap, "the client constant moved or lost its literal").not.toBeNull();
     const listener = fs.readFileSync(path.join(REPO, "apps/sidecar/src/host-listener.ts"), "utf8");

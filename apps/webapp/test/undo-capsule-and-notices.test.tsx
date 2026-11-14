@@ -27,7 +27,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-beforeAll(async () => { await import("../app/shell/AppShell.js"); }, 120_000);
+beforeAll(async () => { await import("./_todays-shell.js"); }, 120_000);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -126,7 +126,7 @@ describe("the capsule's Undo names its key (R22-06)", () => {
 
 async function shell(hash: string): Promise<void> {
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   await render(h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
     children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }),

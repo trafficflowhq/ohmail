@@ -7,6 +7,12 @@ import {
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { IMPORT_END_IDLE_MS } from "@ohmail/app-logic/mail-state/mail-state";
 import { FACTS_POLL_MS } from "../app/shell/MailStateProvider";
+import messages from "../messages/en.json";
+
+/** The rail's importing sentence, as the frame's notice says the same state. */
+const SYNCING = messages.frame.connection.firstSync.title;
+/** The awaiting state's line ("connected … ago"): First sync alone is said by the waiting and the counting state alike. */
+const AWAITING_LINE = /connected (moments ago|1 minute ago|\d+ minutes ago)/;
 
 /**
  * THE SYNC LINE AND SEARCH READ ONE FACT: the mailbox's first-import stamp. Unwritten,
@@ -51,7 +57,7 @@ describe("the sync line and search agree about the first import", () => {
     answerSyncWith(() => page(3, "INBOX"));
     const el = await mountShell([], { probe: facts });
     await tick(2_000);
-    expect(textOf(el), "the premise: the rail announces the import").toContain("Syncing your mail");
+    expect(textOf(el), "the premise: the rail announces the import").toContain(SYNCING);
 
     await goTo("search");
     await typeQuery(el, "zqxjvwk");
@@ -63,7 +69,7 @@ describe("the sync line and search agree about the first import", () => {
     stamped = true;
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain("Syncing your mail");
+    expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain(SYNCING);
     await typeQuery(el, "zqxjvwkx");
     expect(textOf(el)).toContain("Searched your whole mailbox — nothing matched");
     expect(textOf(el)).not.toContain("synced so far");
@@ -77,7 +83,8 @@ describe("the sync line and search agree about the first import", () => {
     await goTo("search");
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail let go of an import nobody stamped").toContain("Syncing your mail");
+    expect(textOf(el), "the rail let go of an import nobody stamped").toContain(SYNCING);
+    expect(textOf(el), "the import fell back to the awaiting state").not.toMatch(AWAITING_LINE);
     await typeQuery(el, "zqxjvwkx");
     expect(textOf(el)).toContain("Searched the mail synced so far — nothing matched");
   });

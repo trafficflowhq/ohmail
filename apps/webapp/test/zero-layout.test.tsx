@@ -123,7 +123,7 @@ async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
     window.localStorage.setItem("ohmail.layout", "zero");
     document.documentElement.dataset.layout = "zero";
   }
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
@@ -332,29 +332,28 @@ describe("the fix round — reconcile, exits, names", () => {
     expect(document.querySelector(".reader"), "classic behavior moved").toBeTruthy();
   });
 
+  /* Under 840 px the frame's rail is More's sheet: the summon opens it with focus inside, its toggle stays More (it opens
+     a modal dialog, which says itself), and Escape parks it again. */
   it("a keyboard summon lands focus IN the drawer, and the toggle says what it does", async () => {
     setup(800);
-    const container = await shell({ zero: true });
-    await key("h");
-    const deadline = Date.now() + 4000;
-    while (
-      Date.now() < deadline &&
-      !(container.querySelector(".rail.open")?.contains(document.activeElement) ?? false)
-    ) {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    try {
+      await shell({ zero: true });
+      const sheet = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="More"]');
+      await key("h");
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !(sheet()?.contains(document.activeElement) ?? false)) await tick();
+      expect(sheet(), "the drawer did not open").toBeTruthy();
+      expect(sheet()!.contains(document.activeElement), "focus stayed in the list after the summon").toBe(true);
+      expect(sheet()!.getAttribute("aria-modal")).toBe("true");
+      const toggle = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More");
+      expect(toggle, "the drawer's toggle is not named More").toBeTruthy();
+      await key("Escape");
       await tick();
+      expect(sheet()).toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     }
-    const drawer = container.querySelector(".rail.open");
-    expect(drawer, "the drawer did not open").toBeTruthy();
-    expect(
-      drawer!.contains(document.activeElement),
-      "focus stayed in the list after the summon",
-    ).toBe(true);
-    const toggle = container.querySelector<HTMLElement>(".rail-expand");
-    expect(toggle?.getAttribute("aria-label")).toBe("Close navigation");
-    await key("Escape");
-    await tick();
-    expect(container.querySelector(".rail.open")).toBeNull();
-    expect(toggle?.getAttribute("aria-label")).toBe("Open navigation");
   });
 
   it("the push tier's reader is non-modal to ARIA; the floating tier's stays modal", async () => {
@@ -419,93 +418,6 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
     ).toBe("true");
   });
 
-  it("closing the summoned drawer releases focus from the off-canvas rail", async () => {
-    setup(800);
-    const container = await shell({ zero: true });
-    await key("h");
-    const deadline = Date.now() + 4000;
-    while (
-      Date.now() < deadline &&
-      !(container.querySelector(".rail.open")?.contains(document.activeElement) ?? false)
-    ) {
-      await tick();
-    }
-    expect(container.querySelector(".rail.open")?.contains(document.activeElement)).toBe(true);
-    await key("Escape");
-    await tick();
-    expect(container.querySelector(".rail.open")).toBeNull();
-    expect(
-      container.querySelector(".rail")?.contains(document.activeElement),
-      "focus stayed inside invisible navigation",
-    ).toBe(false);
-  });
-
-  it("with the drawer raised over the push reader, the drawer owns the keys", async () => {
-    setup(600);
-    const container = await shell({ zero: true });
-    await openSheet(container);
-    // The pointer path: the ribbon's ≡ stays operable beside the re-housed reader.
-    const toggle = container.querySelector<HTMLElement>(".rail-expand");
-    await act(async () => {
-      toggle!.click();
-    });
-    await tick();
-    const drawer = container.querySelector(".rail.open");
-    expect(drawer, "≡ did not raise the drawer").toBeTruthy();
-    const row = drawer!.querySelector<HTMLElement>(".ritem");
-    await act(async () => {
-      row!.focus();
-    });
-    expect(currentZone(), "focus in an open drawer is the rail zone, sheet or no sheet").toBe(
-      "rail",
-    );
-    await key("h");
-    await tick();
-    expect(
-      document.querySelector(".reader"),
-      "`h` in the drawer must not close the reader behind it",
-    ).toBeTruthy();
-  });
-});
-
-describe("`h` at the rail boundary — summon under zero and under classic (§12)", () => {
-  it("zero at 800px: h summons the full drawer, esc re-docks it", async () => {
-    setup(800);
-    const container = await shell({ zero: true });
-    // The zone derives "list" with focus at rest on the body; `h` walks toward the rail,
-    // which at ribbon widths means drawer-in (zone-nav's summon seam).
-    await key("h");
-    await tick();
-    expect(
-      container.querySelector(".rail.open"),
-      "`h` did not summon the drawer at the ribbon tier",
-    ).toBeTruthy();
-    await key("Escape");
-    await tick();
-    expect(
-      container.querySelector(".rail.open"),
-      "Escape did not re-dock the drawer",
-    ).toBeNull();
-  });
-
-  /* Was "summons nothing — classic behavior does not move": a stability pin that held a dead key.
-     At classic drawer widths ← and `h` sat in the `?` sheet as "Focus the menu" and did nothing
-     (390px); they now summon the drawer ≡ opens, as under zero. */
-  it("classic at 800px and 390px: the same key summons the drawer, esc closes it", async () => {
-    for (const px of [800, 390]) {
-      setup(px);
-      const container = await shell();
-      await key("h");
-      await tick();
-      expect(container.querySelector(".rail.open"), `\`h\` summoned no drawer at classic ${px}px`).toBeTruthy();
-      await key("Escape");
-      await tick();
-      expect(container.querySelector(".rail.open"), `Escape did not close the drawer at ${px}px`).toBeNull();
-      for (const root of roots) await act(() => { root.unmount(); });
-      roots = [];
-      document.body.innerHTML = "";
-    }
-  });
 });
 
 describe("the fix round, round 3 — the reconcile asks at the current width", () => {
@@ -665,5 +577,94 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     await tick();
     expect(document.querySelector(".reader")).toBeNull();
     expect(container.querySelector(".read-col")).not.toBeNull();
+  });
+});
+
+/*
+ * THE DRAWER IN THE FRAME. Under 840 px the whole rail is More's sheet over the app, whatever the stored layout.
+ * Today's drawer cases with their probe re-read: the sheet is the drawer, the dock's More its toggle, a window's
+ * width is also its innerWidth (the frame's plan reads it), and a key is pressed where the keys are, as a browser does.
+ */
+describe("the drawer in the frame — summon, Escape, the keys", () => {
+  const atWidth = (px: number): void => { Object.defineProperty(window, "innerWidth", { configurable: true, value: px }); };
+  const sheet = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="More"]');
+  const press = async (k: string): Promise<void> => {
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    });
+  };
+  const summoned = async (): Promise<void> => {
+    await press("h");
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !(sheet()?.contains(document.activeElement) ?? false)) await tick();
+  };
+  afterEach(() => { atWidth(1024); });
+
+  it("closing the summoned drawer releases focus from the off-canvas rail", async () => {
+    setup(800);
+    atWidth(800);
+    await shell({ zero: true });
+    await summoned();
+    expect(sheet()?.contains(document.activeElement)).toBe(true);
+    await press("Escape");
+    await tick();
+    expect(sheet()).toBeNull();
+    expect(sheet()?.contains(document.activeElement) ?? false, "focus stayed inside invisible navigation").toBe(false);
+  });
+
+  /* Beside the upright dock, from 700 wide: under 700 a letter stands over the list as on a phone and no dock is drawn
+     over it (the frame's rule), so there is no More to press while a letter is open. */
+  it("with the drawer raised over an open reader, the drawer owns the keys", async () => {
+    setup(700);
+    atWidth(700);
+    await shell({ zero: true });
+    await press("j");
+    let deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !document.querySelector(".view .row.sel[data-id]")) await tick();
+    await press("Enter");
+    deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !document.querySelector(".reader")) await tick();
+    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
+    // The pointer path: the dock's More stays operable beside the re-housed reader.
+    const toggle = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More");
+    await act(async () => { toggle!.click(); });
+    await tick();
+    const drawer = sheet();
+    expect(drawer, "≡ did not raise the drawer").toBeTruthy();
+    const row = drawer!.querySelector<HTMLElement>("[data-rail-id] button");
+    await act(async () => { row!.focus(); });
+    expect(currentZone(), "focus in an open drawer is the rail zone, sheet or no sheet").toBe("rail");
+    await press("h");
+    await tick();
+    expect(document.querySelector(".reader"), "`h` in the drawer must not close the reader behind it").toBeTruthy();
+  });
+
+  it("zero at 800px: h summons the full drawer, esc re-docks it", async () => {
+    setup(800);
+    atWidth(800);
+    await shell({ zero: true });
+    await press("h");
+    await tick();
+    expect(sheet(), "`h` did not summon the drawer at the ribbon tier").toBeTruthy();
+    await press("Escape");
+    await tick();
+    expect(sheet(), "Escape did not re-dock the drawer").toBeNull();
+  });
+
+  it("classic at 800px and 390px: the same key summons the drawer, esc closes it", async () => {
+    for (const px of [800, 390]) {
+      setup(px);
+      atWidth(px);
+      await shell();
+      await press("h");
+      await tick();
+      expect(sheet(), `\`h\` summoned no drawer at classic ${px}px`).toBeTruthy();
+      await press("Escape");
+      await tick();
+      expect(sheet(), `Escape did not close the drawer at ${px}px`).toBeNull();
+      for (const root of roots) await act(() => { root.unmount(); });
+      roots = [];
+      document.body.innerHTML = "";
+    }
   });
 });

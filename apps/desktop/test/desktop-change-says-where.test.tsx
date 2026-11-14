@@ -156,12 +156,3 @@ describe.each(["local", "cloud"] as const)("the %s door on a reader", (door) => 
     expect((hostEl.querySelector("textarea") as HTMLTextAreaElement).value).toBe("People I know.");
   });
 });
-
-describe("the hosted door's act switch", () => {
-  it("does not promise the Rules group its copy of the rules cannot show", () => {
-    const gate = readFileSync(resolve(process.cwd(), "apps/desktop/src/DesktopGate.tsx"), "utf8");
-    expect(gate).toMatch(/status\?\.mode === "cloud" \? \{ actRulesUnmarked: true \}/);
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell).toMatch(/rulesMarked=\{!actRulesUnmarked\}/);
-  });
-});

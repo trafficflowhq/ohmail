@@ -17,12 +17,12 @@ beforeEach(installShellEnv);
 afterEach(teardownShellEnv);
 
 const railItem = (el: HTMLElement, id: string): HTMLElement => {
-  const item = el.querySelector<HTMLElement>(`[data-rail-id="${id}"]`);
+  const item = el.querySelector<HTMLElement>(`[data-rail-id="${id}"] button`);
   expect(item, `no rail row ${id}`).toBeTruthy();
   return item!;
 };
 const countOf = (el: HTMLElement, id: string): string =>
-  (railItem(el, id).querySelector(".cnt")?.textContent ?? "").trim();
+  (railItem(el, id).querySelector(".oh-railentry-count")?.textContent ?? "").trim(); // the kit's count, as the rail draws it
 
 describe("the rail's stream counts mid-catch-up", () => {
   it("withholds the badge and the tooltip until the catch-up lands, then states them", async () => {

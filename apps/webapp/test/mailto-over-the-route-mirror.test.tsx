@@ -272,18 +272,6 @@ describe("a mail link with no mailbox connected", () => {
   });
   afterEach(async () => { await unmountAll(); resetComposerForTest(); });
 
-  it("opens the composer at once with the link's fields; Send cannot go, and the shell says no mailbox is connected", async () => {
-    const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
-    await s.mailto.open(LINK);
-    await waitFor(() => window.location.hash === "#/compose" && s.mailto.seeded === 1, "the link opened", AT_ONCE);
-    await waitFor(() => composeSubject(s.el) === LINK.subject, "the link's letter", 240);
-    expect({
-      to: s.el.querySelector(".view-compose")?.textContent?.includes("lena@example.invalid"),
-      sendDisabled: composeSend(s.el)?.disabled,
-      said: s.el.textContent?.includes(en.sync.noMailbox),
-    }).toEqual({ to: true, sendDisabled: true, said: true });
-  }, 60_000);
-
   it("over words no row can hold, says at once that they stay, and keeps them", async () => {
     const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
     await navigate("#/compose");
@@ -297,5 +285,17 @@ describe("a mail link with no mailbox connected", () => {
     await s.mailto.open(LINK);
     await waitFor(() => toasts().includes(en.drafts.reopenBlockedUnsaved), "the refusal said", AT_ONCE);
     expect({ shown: composeSubject(s.el), seeded: s.mailto.seeded }).toEqual({ shown: "Notes from the meeting", seeded: 1 });
+  }, 60_000);
+
+  it("opens the composer at once with the link's fields; Send cannot go, and the shell says no mailbox is connected", async () => {
+    const s = await mountShell("#/ohbox", [], [], { noMailbox: true });
+    await s.mailto.open(LINK);
+    await waitFor(() => window.location.hash === "#/compose" && s.mailto.seeded === 1, "the link opened", AT_ONCE);
+    await waitFor(() => composeSubject(s.el) === LINK.subject, "the link's letter", 240);
+    expect({
+      to: s.el.querySelector(".view-compose")?.textContent?.includes("lena@example.invalid"),
+      sendDisabled: composeSend(s.el)?.disabled,
+      said: s.el.textContent?.includes(en.frame.connection.noMailbox.title /* the strip's sentence, as the notice says the state */),
+    }).toEqual({ to: true, sendDisabled: true, said: true });
   }, 60_000);
 });

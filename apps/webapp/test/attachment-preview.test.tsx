@@ -420,11 +420,11 @@ describe("the PDF is parsed in a worker the page builds and hands pdf.js as a po
      own thread, the one holding the session. Mutations: the library's getDocument called directly
      → the first four; the race on the worker's error dropped → the dead worker; terminate dropped
      → the teardown; the library's workerSrc set → the last. */
-  it("one module worker from /pdf.worker.min.mjs, and pdf.js is handed the PDFWorker on it", async () => {
+  it("one module worker from the content-named worker, and pdf.js is handed the PDFWorker on it", async () => {
     await mountClosing(pdfEngine());
     await until(pdfDrawn);
     expect(pdfDrawn(), "the PDF never reached the canvas").toBe(true);
-    expect(FakeWorker.built.map((w) => [String(w.url), w.options])).toEqual([["/pdf.worker.min.mjs", { type: "module" }]]);
+    expect(FakeWorker.built.map((w) => [String(w.url), w.options])).toEqual([["/pdf.worker.0613f41490dd6aac.min.mjs", { type: "module" }]]);
     const src = pdfLoads.mock.calls[0]![0] as { worker?: { port?: unknown } };
     expect(src.worker?.port, "pdf.js was left to start a worker of its own").toBe(FakeWorker.built[0]);
   });

@@ -1,0 +1,32 @@
+{
+  "triage": {
+    "title": "Triage",
+    "meta": "{count, plural, one {1 Eintrag} other {# Einträge}}",
+    "pilesAria": "Triage-Stapel",
+    "segLabel": "{name} {count}",
+    "replyLater": "Später antworten",
+    "setAside": "Geparkt",
+    "resurface": "Wieder auftauchen",
+    "hintReply": "Wird in der Antwortrunde eine nach der anderen beantwortet.",
+    "hintAside": "Liegt hier, bis du dafür zurückkommst.",
+    "hintResurface": "Kommt zur eingestellten Zeit in die Ohbox zurück.",
+    "emptyReply": "Nichts zum späteren Antworten.",
+    "emptyAside": "Nichts geparkt.",
+    "emptyResurface": "Nichts, was wieder auftauchen soll.",
+    "cta": "Antwortrunde",
+    "ctaNote": "Geht den Stapel „Später antworten“ durch, eine Nachricht pro Bildschirm.",
+    "frDone": "Fertig → weiter",
+    "frSkip": "Überspringen",
+    "frEmptyTitle": "„Später antworten“ ist leer.",
+    "frEmptyCta": "Zurück zur Triage",
+    "keyReplyRun": "Antwortrunde starten",
+    "runAria": "Antwortrunde",
+    "runEmpty": "„Später antworten“ ist leer.",
+    "runBack": "Zurück zur Triage",
+    "runProgress": "{step} von {total}",
+    "runPlaceholder": "Deine Antwort",
+    "runReplyAria": "Antwort",
+    "runExit": "verlassen",
+    "pileResurfaces": "taucht {when} wieder auf"
+  }
+}

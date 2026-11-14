@@ -1,0 +1,55 @@
+/* THE RAIL STAYS OPERABLE OVER TODAY'S READER SHEET. At 1024px and up the old sheet is the reading surface of the
+   views with no reading column (folders, tags, history, the piles, Trash), and a rail press must not die on its
+   backdrop: the rail stands above the sheet, faded and lifted by hover or focus, as it did beside the old deck
+   (`app.css`, "THE GHOST"). Goes with today's reader. */
+@media (min-width: 1024px) {
+  body.reading .fr-columns > .fr-railzone > .oh-rail {
+    opacity: 0.35;
+    transition: opacity 0.3s var(--swift);
+    pointer-events: auto;
+    position: relative;
+    z-index: calc(var(--z-read) + 1);
+  }
+  body.reading .fr-columns > .fr-railzone > .oh-rail:hover,
+  body.reading .fr-columns > .fr-railzone > .oh-rail:focus-within {
+    opacity: 1;
+  }
+}
+
+/* TODAY'S VIEWS FILL THE WIDE PANE, as they filled the old deck's track: the views keep their own scrollers, so the
+   stage must be a bounded box and never grow to its content. Without it a list is as tall as its rows, nothing
+   scrolls inside it, and every row counts as on screen. Goes with today's views. */
+.fr-wide > .today {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fr-wide > .today > .stage {
+  flex: 1 1 auto;
+}
+
+/* TODAY'S VIEWS NAME THEIR PLACE AGAIN UNDER 1024px. Below that width `app.css` hid each view's own heading because the
+   old top bar carried the place's name; the frame has no top bar, so the heading stands, and the address view keeps its
+   address under the name as at full width. Goes with today's views. */
+@media (max-width: 1023.98px) {
+  .fr-wide .today .view .vhead h1,
+  .fr-wide .today .stream-top h1 {
+    display: block;
+  }
+  .fr-wide .today .view .vhead:not(:has(> :not(h1))) {
+    display: flex;
+  }
+  .fr-wide .today .view-address .vhead .meta {
+    display: block;
+  }
+  .fr-wide .today .view-address .vhead .meta-name {
+    display: none;
+  }
+  /* The way back from a settings section to the section list, where the top bar stood. */
+  .fr-wide .today > .tb-back {
+    align-self: flex-start;
+    margin: 8px 12px 0;
+  }
+}

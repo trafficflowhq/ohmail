@@ -1,0 +1,555 @@
+{
+ "reader": 7,
+ "variant": {
+  "device": "phone",
+  "face": "paper",
+  "scheme": "light",
+  "width": 390,
+  "height": 844,
+  "scale": 1
+ },
+ "page": {
+  "scrollWidth": 390,
+  "clientWidth": 390,
+  "scrollHeight": 844
+ },
+ "fonts": [
+  {
+   "family": "Bricolage Grotesque",
+   "weight": "200 800",
+   "style": "normal"
+  },
+  {
+   "family": "Hanken Grotesk",
+   "weight": "100 900",
+   "style": "normal"
+  },
+  {
+   "family": "JetBrains Mono",
+   "weight": "100 800",
+   "style": "normal"
+  }
+ ],
+ "types": [
+  {
+   "color": "rgb(18, 16, 14)",
+   "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+   "fontSize": "12px",
+   "fontWeight": "700",
+   "fontStyle": "normal",
+   "lineHeight": "12px",
+   "letterSpacing": "normal",
+   "fontVariationSettings": "normal",
+   "textTransform": "none",
+   "fontVariantNumeric": "tabular-nums",
+   "webkitLocale": "\"en\""
+  }
+ ],
+ "paints": [
+  {
+   "colorScheme": "light"
+  },
+  {
+   "backgroundColor": "rgb(240, 235, 227)"
+  },
+  {
+   "backgroundColor": "rgb(255, 255, 255)",
+   "borderRadius": "20px 20px 0px 0px"
+  },
+  {
+   "backgroundColor": "rgb(255, 255, 255)",
+   "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+   "borderRadius": "999px"
+  },
+  {
+   "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 dd97090d69c9"
+  },
+  {
+   "backgroundColor": "rgb(240, 235, 227)",
+   "boxShadow": "rgb(255, 255, 255) 0px 0px 0px 2px",
+   "borderRadius": "999px"
+  },
+  {
+   "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 3 8148a9ed60e6"
+  },
+  {
+   "backgroundColor": "rgb(248, 67, 26)",
+   "boxShadow": "rgb(255, 255, 255) 0px 0px 0px 2px",
+   "borderRadius": "999px"
+  },
+  {
+   "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 ab6f09ce63e7"
+  },
+  {
+   "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 7c8482408d10"
+  },
+  {
+   "ink": "stroke rgb(255, 255, 255) 2.8px round round; shapes 1 bda16f424158"
+  },
+  {
+   "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+   "borderRadius": "999px"
+  },
+  {
+   "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 dc98a7600ba1"
+  },
+  {
+   "ink": "stroke rgb(255, 255, 255) 1.8px round round; shapes 2 340697009586"
+  }
+ ],
+ "nodes": [
+  {
+   "role": "main",
+   "name": "",
+   "box": [
+    0,
+    0,
+    390,
+    844
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   }
+  },
+  {
+   "role": "region",
+   "name": "Nachrichten",
+   "box": [
+    0,
+    0,
+    390,
+    844
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "surfaces": [
+    {
+     "box": [
+      0,
+      64,
+      390,
+      780
+     ],
+     "paint": 2
+    }
+   ]
+  },
+  {
+   "role": "navigation",
+   "name": "Orte",
+   "box": [
+    12,
+    772,
+    366,
+    56
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "400",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "surfaces": [
+    {
+     "box": [
+      12,
+      772,
+      238,
+      56
+     ],
+     "paint": 3
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Ohbox, 5",
+   "box": [
+    16,
+    776,
+    46,
+    48
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "text": [
+    {
+     "said": "5",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      29,
+      790,
+      20,
+      20
+     ],
+     "paint": 4
+    },
+    {
+     "box": [
+      43,
+      779,
+      18,
+      18
+     ],
+     "paint": 5
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Screener, 6",
+   "box": [
+    62,
+    776,
+    46,
+    48
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "text": [
+    {
+     "said": "6",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      75,
+      790,
+      20,
+      20
+     ],
+     "paint": 6
+    },
+    {
+     "box": [
+      89,
+      779,
+      18,
+      18
+     ],
+     "paint": 7
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "News, 5",
+   "box": [
+    108,
+    776,
+    46,
+    48
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "text": [
+    {
+     "said": "5",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      121,
+      790,
+      20,
+      20
+     ],
+     "paint": 8
+    },
+    {
+     "box": [
+      135,
+      779,
+      18,
+      18
+     ],
+     "paint": 5
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Belege, 2",
+   "box": [
+    154,
+    776,
+    46,
+    48
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "text": [
+    {
+     "said": "2",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      167,
+      790,
+      20,
+      20
+     ],
+     "paint": 9
+    },
+    {
+     "box": [
+      181,
+      779,
+      18,
+      18
+     ],
+     "paint": 5
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Mehr",
+   "box": [
+    200,
+    776,
+    46,
+    48
+   ],
+   "drawn": {
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgb(18, 16, 14)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(255, 255, 255)"
+   },
+   "state": [
+    "current page"
+   ],
+   "surfaces": [
+    {
+     "box": [
+      213,
+      790,
+      20,
+      20
+     ],
+     "paint": 10
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Suche",
+   "box": [
+    258,
+    772,
+    56,
+    56
+   ],
+   "drawn": {
+    "color": "rgb(18, 16, 14)",
+    "backgroundColor": "rgb(255, 255, 255)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "22.4px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(18, 16, 14)"
+   },
+   "surfaces": [
+    {
+     "box": [
+      258,
+      772,
+      56,
+      56
+     ],
+     "paint": 11
+    },
+    {
+     "box": [
+      276,
+      790,
+      20,
+      20
+     ],
+     "paint": 12
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Schreiben",
+   "box": [
+    322,
+    772,
+    56,
+    56
+   ],
+   "drawn": {
+    "color": "rgb(255, 255, 255)",
+    "backgroundColor": "rgb(18, 16, 14)",
+    "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+    "fontSize": "16px",
+    "fontWeight": "700",
+    "lineHeight": "16px",
+    "letterSpacing": "normal",
+    "borderRadius": "999px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "rgb(255, 255, 255)"
+   },
+   "surfaces": [
+    {
+     "box": [
+      322,
+      772,
+      56,
+      56
+     ],
+     "paint": 11
+    },
+    {
+     "box": [
+      339,
+      789,
+      22,
+      22
+     ],
+     "paint": 13
+    }
+   ]
+  }
+ ],
+ "loose": {
+  "text": [],
+  "surfaces": [
+   {
+    "box": [
+     0,
+     0,
+     390,
+     844
+    ],
+    "paint": 0
+   },
+   {
+    "box": [
+     0,
+     0,
+     390,
+     844
+    ],
+    "paint": 1
+   }
+  ]
+ }
+}

@@ -172,12 +172,6 @@ describe("the gate passes each door's declaration and staging decision", () => {
     expect(src).toContain("export function DesktopGate()");
   });
 
-  it("declares `sendSurfaceMaxTotalBytes` once, from the door", () => {
-    expect(src.match(/sendSurfaceMaxTotalBytes/g) ?? []).toHaveLength(1);
-    expect(src).toMatch(/sendSurfaceMaxTotalBytes:\s*desktopSendSurface\(status\)/);
-    expect(src).not.toMatch(/sendSurfaceMaxTotalBytes:\s*null/);
-  });
-
   it("builds the window's engine with the door's staging decision", () => {
     expect(src).toMatch(/createLocalEngine\(mount\.key, \{ stageAttachments: stage \}\)/);
     expect(src).toMatch(/const stage = stagesAttachments\(/);

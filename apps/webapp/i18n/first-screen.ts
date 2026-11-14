@@ -1,4 +1,5 @@
 import type { Messages } from "./catalog";
+import { FRAME_AT_REST } from "@ohmail/app/frame/namespaces";
 
 /**
  * THE CATALOGUE THE PRODUCT DOCUMENT INLINES — the namespaces its first screens render, whole,
@@ -15,7 +16,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   linkDesktop: true, authorizeDesktop: true, resume: true, session: true, appError: true,
   account: ["signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutBusy", "signOut"],
   // The shell's frame: rail, dock, palette, list chrome, the key table it registers.
-  rail: true, dock: true, palette: true, ribbon: true, reader: true, shortcuts: true,
+  rail: true, palette: true, ribbon: true, reader: true, shortcuts: true,
   triage: true, message: true, tag: true, trash: true,
   ohbox: [
     "title", "meta", "tail", "emptyPlain", "doorbell", "doorbellAction", "doorbellAria",
@@ -27,6 +28,8 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   screener: ["pileOhbox", "pileReads", "pileReceipts", "pileScreened", "pileSpam", "toastUndo"],
   screening: ["deleteQueuedForOrganizer", "toastRuleSeedGone"],
   settings: ["about", "general", "notifications", "rules", "tags"],
+  // The frame's own words on its first frame at rest (the frame says which).
+  frame: FRAME_AT_REST,
 };
 
 /** Copy one dotted path from `from` into `into`, creating the branches it passes through. */

@@ -90,7 +90,10 @@ const BASE_MESSAGE_NAMESPACES = [
   // surface ever sees `loading`/`failed`), and it is listed for the reason `sync` is: the
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
-  "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
+  "about", "body", "compose", "ohbox", "palette", "rail", "reads", "receipts",
+  // `frame` is the frame's own sentences (`@ohmail/app/frame`, read through `@ohmail/app/text`): the rail's and the
+  // dock's names, the notice slot's "N more", the connection's sentences. The window draws the frame.
+  "frame",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.
@@ -108,19 +111,6 @@ const BASE_MESSAGE_NAMESPACES = [
   // with a file and every real HTML body in an engine-bearing build. A German reader of the shipped
   // binary is exactly the person who would have found them still in English.
   "attachments", "mailBody",
-  // `columns` is the two drag handles between the sidebar, the message list and the reading pane
-  // (`shell/ColumnHandles.tsx`, rendered by `AppShell`) — the accessible label each separator
-  // carries, which is the whole of what a person operating them by keyboard is told they are
-  // holding. Shared-shell code compiled into BOTH bundles, so it belongs here and not in the
-  // window-only list.
-  //
-  // It was MISSED when the resizable columns landed, and the cost is worth recording because it is
-  // the exact failure this array exists to prevent and it still reached a release build: the
-  // namespace filter dropped `columns` out of the catalogue while the code kept reading it, so
-  // `useTranslations("columns")` threw `MISSING_MESSAGE` on the first render and the window smoke
-  // failed on all four platforms. `desktop-messages.test.ts` was RED at that commit and named the
-  // missing entry exactly — nothing ran it before the push.
-  "columns",
   // `folder` is the folder VIEW's namespace (the folders foundation, FOLDERS-SPEC.md) — three
   // sentences: a count and the empty state naming where the folder list comes from. It is NOT
   // the marketing "folders" namespace, which stays excluded below with the other site copy.
@@ -853,6 +843,10 @@ export default defineConfig({
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens/faces.css", replacement: r("../../packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("../../packages/tokens/src/ohmarchy.css") },
+      // The design's sheets and values (the kit's), ABOVE the bare name: `find` matches as a path prefix.
+      { find: "@ohmail/tokens/design.css", replacement: r("../../packages/tokens/src/design/tokens.css") },
+      { find: "@ohmail/tokens/design/motion.css", replacement: r("../../packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design", replacement: r("../../packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
       /* The sample adapter's entry, which the shared shell's demo arm imports. It resolves to
          the real entry file, and that file's one statement re-exports from
@@ -870,12 +864,23 @@ export default defineConfig({
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("../../packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
+      // The kit's two doors, ABOVE the old kit's bare name.
+      { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
+      { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
+         when the platform jobs build this window. */
+      { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },
+      { find: "@ohmail/app/frame/boot", replacement: r("../../packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/frame", replacement: r("../../packages/app/src/frame/index.ts") },
+      { find: "@ohmail/app/text", replacement: r("../../packages/app/src/text/index.ts") },
+      { find: /^use-intl\/core$/, replacement: r("./node_modules/use-intl/dist/esm/core.js") },
       /* Types only, so no import of it survives to be bundled; listed because `tsconfig.json`'s
          `paths` carries it and the two maps are held to each other. */
       { find: "@ohmail/wire", replacement: r("../../packages/wire/src/index.ts") },

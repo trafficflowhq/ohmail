@@ -1,0 +1,6 @@
+{
+  /* The paired page is compiled and bundled as part of apps/desktop (`ui:build:host`, `ui:typecheck`): its options are
+     the desktop's, so the bundler emits these sources exactly as it did when they lived in apps/desktop/src. */
+  "extends": "../desktop/tsconfig.json",
+  "include": ["src"]
+}

@@ -32,6 +32,7 @@ import {
   parseBaseline,
   renderBaseline,
   rowRule,
+  rulingLines,
   totals,
 } from "./lib/baseline.mjs";
 import { judgeControls, plant, ruleSlug, verdictOf } from "./lib/controls.mjs";
@@ -273,8 +274,10 @@ async function everything(root, flags) {
   }
   if (base) {
     const before = baseBaseline(root, base);
-    if (before) refusals.push(...compareWithBase(baseline.rows, before));
-    else say(`baseline: ${base} has no tools/baseline.tsv; nothing to grow against`);
+    if (before) {
+      refusals.push(...compareWithBase(baseline.rows, before));
+      for (const line of rulingLines(baseline.rows, before)) say(`baseline: ${line}`);
+    } else say(`baseline: ${base} has no tools/baseline.tsv; nothing to grow against`);
   }
 
   say(`rules active: ${covered.active.length} (${covered.active.join(", ")})`);

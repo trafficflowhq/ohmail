@@ -6,6 +6,9 @@
  * verb, so the transport a mount hands in today is a wire as it stands. Six replace no input:
  * four shared files reach their route through the server client today, one control exists only
  * in the desktop's own pane, and the Mailboxes pane's verbs live inside the node a mount passes.
+ *
+ * Until its first caller arrives, a shell answers `none` for a call today's views still make themselves: the six wires
+ * that replace no input, and a browser's `images`. The `none:` sentences below say what a 2.0 view does with that answer.
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { None } from "./contract.js";
@@ -210,7 +213,7 @@ export interface HostWires {
   readonly profileImport: ProfileImportWire | None;
   /** Replaces `consentTransport`. `none`: every consent control is withheld. */
   readonly consent: ConsentWire | None;
-  /** Replaces `imageWire`. `none`: no pictures and no switch. */
+  /** Replaces `imageWire`. `none`: this shell hands in no fetcher. Whether pictures are drawn at all is `capabilities.imagesFrom`. */
   readonly images: ImageWire | None;
   /** Replaces `olderBodyWire`. */
   readonly olderBody: OlderBodyWire | None;

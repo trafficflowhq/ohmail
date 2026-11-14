@@ -24,6 +24,16 @@ export interface HostSession {
    * again, keyed by the scope, and sets the scope before the frame's first effect runs.
    */
   readonly scope: string | null;
+  /**
+   * The ohmail account behind this session, as the server confirmed it: an opaque id, never an address. Null where no
+   * account stands behind this shell, and until the answer has come.
+   */
+  readonly account: string | null;
+  /**
+   * The way back to a live session: sign in again, or reload the window. `none` withholds the control, and the frame
+   * says in words to start ohmail again.
+   */
+  readonly recover: ((how: "signIn" | "reload") => void) | None;
   /** Ends the session. No input today: it lives inside the panes each mount hands in. */
   readonly signOut: (() => Promise<void>) | None;
 }

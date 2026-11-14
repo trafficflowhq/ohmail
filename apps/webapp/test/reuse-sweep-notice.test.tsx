@@ -191,6 +191,41 @@ describe("the reuse sweeps a new sign-in is told of", () => {
 });
 
 /**
+ * THE WEB'S NOTICE IN THE FRAME (`useAccountNotices`, the account slot's feed): the same sweeps, the same OK. Drawn
+ * here as the notice slot draws a notice: its title, and each act a button with its label.
+ */
+describe("the reuse sweeps as the web's notice in the frame", () => {
+  const said = "ohmail signed out an older copy of your sign-in.";
+  async function mountNotices(): Promise<void> {
+    const { useAccountNotices } = await import("../app/(product)/mailbox/web-supplies");
+    function Notices() {
+      const list = useAccountNotices();
+      return h("div", null, list.map((n) => h("section", { key: n.kind + (n.id ?? "") },
+        h("p", null, n.title),
+        (n.acts ?? []).map((a) => h("button", { key: a.label, type: "button", onClick: a.onPress }, a.label)))));
+    }
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", children: h(Notices) }));
+    });
+  }
+
+  it("OK takes it away at once, sends one acknowledgement with the ids, and a refusal puts it back", async () => {
+    let answer!: (r: Response) => void;
+    ackAnswer = () => new Promise<Response>((resolve) => { answer = resolve; });
+    await read();
+    await mountNotices();
+    expect(host.textContent).toContain(said);
+    await pressOk();
+    expect(host.textContent, "OK did not take the notice away at once").not.toContain(said);
+    expect(acks).toEqual([{ ids: [sweep.id] }]);
+    await act(async () => { answer(json({ error: { code: "db_busy", message: "busy" } }, 503)); });
+    await settle();
+    expect(host.textContent, "a refused acknowledgement left nothing to press").toContain(said);
+    expect(acks).toHaveLength(1);
+  });
+});
+
+/**
  * ONE LINE HIGH. The notice stood above the shell as a bold title, a list and a paragraph, the
  * whole top of the window on boot. Laid out in Chromium under the window's sheets: the sentence,
  * Details and OK on one row, the box one line high, from the desktop's 390 px minimum window to

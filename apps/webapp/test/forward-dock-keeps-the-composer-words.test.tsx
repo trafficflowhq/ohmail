@@ -126,7 +126,7 @@ async function world(o: { pictured?: boolean } = {}) {
     createdAt: "2026-09-01T00:00:00.000Z", organizerRole: "organizer", organizedBy: null,
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   container = document.createElement("div");
   document.body.appendChild(container);

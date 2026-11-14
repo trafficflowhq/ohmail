@@ -87,7 +87,7 @@ export interface DraftReplyWire {
  * when called: a module that merely imports this one (every test that mocks `api-client` without
  * `api`) touches nothing at load, as before the wire existed.
  */
-const CLOUD_WIRE: DraftReplyWire = {
+export const CLOUD_WIRE: DraftReplyWire = {
   configured: () => apiConfigured(),
   create: (id, idempotencyKey) => api<{ draftId: string }>(`/messages/${id}/draft`, {
     method: "POST",

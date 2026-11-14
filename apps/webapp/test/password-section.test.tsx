@@ -243,13 +243,6 @@ describe("changing the password", () => {
 });
 
 describe("where the pane is reached", () => {
-  it("Settings → Account renders it above the account's own cards, on every build", () => {
-    /* Comments blanked: a mention in prose is not a mount. `CloudShell` serves the managed and
-       the self-hosted build alike (`SELF_HOST_BUILD` chooses nothing here). */
-    const src = readFileSync(resolve(process.cwd(), "apps/webapp/app/(product)/mailbox/CloudShell.tsx"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[^\n]*?\/\/.*$/gm, "");
-    expect(src).toContain("accountSection={<><PasswordSection /><AccountSection /></>}");
-  });
 
   it("the wall opens it by a press, and takes no password before the press", async () => {
     const { AccessLock } = await import("../app/(product)/mailbox/AccessLock.js");

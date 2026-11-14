@@ -23,7 +23,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 let current: MailState | null = null;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -52,7 +52,7 @@ const inputs = (reason: string): MailStateInputs => ({
 
 async function strip(reason: string, locale: "en" | "de"): Promise<string> {
   current = deriveMailState(inputs(reason));
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

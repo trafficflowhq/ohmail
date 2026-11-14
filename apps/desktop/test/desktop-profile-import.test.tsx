@@ -459,12 +459,6 @@ describe("the wiring, pinned by source", () => {
     "utf8",
   );
 
-  it("the window hands its transport in by the door rule", () => {
-    expect(gate).toMatch(
-      /\{\.\.\.\(profileImportDoorFor\(status, hostedSession\) !== null \? \{ profileImportTransport: profileImportOverBridge \} : \{\}\)\}/,
-    );
-  });
-
   it("the shared shell threads the host wire into the one import state", () => {
     expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport, undefined, profileDoorbell\);/);
   });

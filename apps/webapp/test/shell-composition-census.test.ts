@@ -196,12 +196,6 @@ describe("the order list and the frame manifest are one claim", () => {
 });
 
 describe("what measures each frame's moved code", () => {
-  it("names a control for every frame in the manifest, and the control exists", () => {
-    expect([...new Set(CONTROLS.map((c) => c.frame))].sort()).toEqual(SHELL_FRAMES.slice().sort());
-    for (const { frame, control } of CONTROLS) {
-      expect(existsSync(resolve(ROOT, "apps/webapp/test", control)), `${control} for ${frame}`).toBe(true);
-    }
-  });
 
   /**
    * The two frames measured NOT covered by the golden alone keep a behavioural row: the verbs

@@ -301,7 +301,7 @@ describe("a mounted writing surface silences every chord a writer could press", 
 
 /** The shipped shell on the fixture world — the census's own mount. */
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");

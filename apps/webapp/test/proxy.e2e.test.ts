@@ -68,6 +68,12 @@ let next: ChildProcess | null = null;
 let appPort = 0;
 let seen: Seen[] = [];
 
+/**
+ * What names the demo in a served document: the attribute the demo's gate carries where the SERVER decided the request
+ * is the demo (`demo/DemoShell.tsx`). The ribbon is drawn only after hydration, so no served document holds it.
+ */
+const DEMO_MARK = "data-demo";
+
 /** The response the upstream should give for the NEXT request, set per test. */
 let reply: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
   res.writeHead(200, { "content-type": "application/json" });
@@ -353,19 +359,22 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
 
   it("the DEMO makes no upstream request — with the rewrite armed and the API base baked in", async () => {
     // The adversarial shape: `NEXT_PUBLIC_API_BASE=/api` IS in the bundle and the rewrite
-    // IS live, so the demo had every opportunity. This asserts the server half (the
-    // document render); the browser half — zero fetch/EventSource/WebSocket from the
-    // hydrated page — is the Playwright pass recorded in the project's design notes §.
+    // IS live, so the demo had every opportunity. This asserts the server half: the document
+    // the server draws for a request it decided is the demo. The frame lays out by the window,
+    // so that document is the product's empty gate, and the gate carries the server's decision
+    // as DEMO_MARK (the ribbon is drawn after hydration: `frame/demo-hydrated.test.tsx`). The
+    // browser half — zero fetch/EventSource/WebSocket from the hydrated page — is the
+    // Playwright pass recorded in the project's design notes §.
     seen = [];
     const res = await fetch(app("/?demo=1"));
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("demo-ribbon");
+    expect(html, "the server did not decide the demo").toContain(DEMO_MARK);
     expect(seen, "the demo reached the API").toHaveLength(0);
 
     // …and the repeated-parameter shape that used to fall through to the live client.
     const dup = await fetch(app("/?demo=1&demo=0"));
-    expect(await dup.text()).toContain("demo-ribbon");
+    expect(await dup.text(), "the repeated parameter was not the demo").toContain(DEMO_MARK);
     expect(seen).toHaveLength(0);
   });
 
@@ -434,7 +443,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     const res = await fetch(app("/"));
     expect(res.status).toBe(404);
     const html = await res.text();
-    expect(html).not.toContain("demo-ribbon");
+    expect(html).not.toContain(DEMO_MARK);
     expect(html).not.toContain("app-body");      // not the product root layout
     expect(seen, "the anonymous page hit the API").toHaveLength(0);
   });
@@ -447,6 +456,8 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     const html = await res.text();
     expect(html).toContain("app-body");                    // the product root layout
     expect(html).not.toContain("l-hero");
+    // The app's document for a request the server decided is NOT the demo: the same gate, unmarked.
+    expect(html, "a live request's document names the demo").not.toContain(DEMO_MARK);
     // Exactly one upstream call, and it authenticated as a bearer.
     expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
     expect(seen[0]!.headers.authorization).toBe(`Bearer ${TOKEN}`);
@@ -478,7 +489,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     sessionUpstream(200, FULL);
     seen = [];
     const html = await fetch(app("/?demo=1"), { ...withSession }).then((r) => r.text());
-    expect(html).toContain("demo-ribbon");
+    expect(html, "the server did not decide the demo").toContain(DEMO_MARK);
     expect(seen, "the demo reached the API").toHaveLength(0);
   });
 
@@ -500,6 +511,29 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
       expect((await fetch(app(asset))).status, asset).toBe(200);
     }
     expect(seen, "a static path reached the API").toHaveLength(0);
+  });
+
+  it("the content-named pdf worker is kept for a year under the blanket policy; no other path is", async () => {
+    const { PDF_WORKER_SRC } = await import("../app/components/AttachmentPreview");
+    const worker = await fetch(app(PDF_WORKER_SRC));
+    expect(worker.status).toBe(200);
+    expect(worker.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(worker.headers.get("content-security-policy")).toBeTruthy();
+    expect(worker.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(worker.headers.get("set-cookie")).toBeNull();
+    const bytes = Buffer.from(await worker.arrayBuffer());
+    const jarred = Buffer.from(await (await fetch(app(PDF_WORKER_SRC), { headers: { cookie: "tf_session=x" } })).arrayBuffer());
+    expect(jarred.equals(bytes)).toBe(true);
+    const wrong = PDF_WORKER_SRC.replace(/\.([0-9a-f]{16})\./, ".0000000000000000.");
+    for (const path of ["/pdf.worker.min.mjs", wrong, "/sw.js", "/"]) {
+      const res = await fetch(app(path), { redirect: "manual" });
+      expect(res.headers.get("cache-control") ?? "", path).not.toContain("immutable");
+    }
+    /* The framework matches a header rule's source without regard to case, so the same name in upper case (no file,
+       a 404) carries the long life too. Nothing links to it; it is held here so a change in either direction shows. */
+    const shouted = await fetch(app(PDF_WORKER_SRC.toUpperCase()), { redirect: "manual" });
+    expect(shouted.status).toBe(404);
+    expect(shouted.headers.get("cache-control")).toContain("immutable");
   });
 
   // ── REPAIR ────────────────────────────────────────────────────────────────────────
@@ -702,5 +736,71 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     });
     expect(refresh.status).not.toBe(405);
     expect(seen.some((r) => r.path === "/auth/refresh" && r.method === "POST"), "refresh not proxied").toBe(true);
+  });
+
+  /**
+   * THE FIRST PAGE WITHOUT THE PROBE, on a second `next start` of the same build with the setting on. Off (the server
+   * above), a token and the marker cost one session read and the page's word is `now`.
+   */
+  describe("with OHMAIL_FIRST_PAGE_NO_PROBE=1", () => {
+    let unasked: ChildProcess | null = null;
+    let unaskedPort = 0;
+    const at = (path: string): string => `http://127.0.0.1:${unaskedPort}${path}`;
+    const jar = (session: string) => ({ cookie: `tf_session=${session}; tf_resume=${"m".repeat(43)}` });
+    const wordIn = (html: string): string | null => /drawMail\\?":\\?"(now|wait)/.exec(html)?.[1] ?? null;
+    const nonceOf = (res: Response): string | null => /'nonce-([^']+)'/.exec(res.headers.get("content-security-policy") ?? "")?.[1] ?? null;
+
+    beforeAll(async () => {
+      unaskedPort = await freePort();
+      unasked = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(unaskedPort)], {
+        cwd: WEBAPP,
+        env: { ...process.env, TF_API_ORIGIN: `http://127.0.0.1:${upstreamPort}`, OHMAIL_FIRST_PAGE_NO_PROBE: "1" },
+        stdio: "pipe",
+      });
+      await waitFor(at("/"));
+    }, 120_000);
+    afterAll(() => { unasked?.kill("SIGTERM"); });
+
+    it("off: a token and the marker cost one session read, and the page says now", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const res = await fetch(app("/"), { headers: jar(TOKEN) });
+      expect(res.status).toBe(200);
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+      expect(wordIn(await res.text())).toBe("now");
+    });
+
+    it("on: the app's empty document, no request upstream, private, two nonces, no cookie value in it, and the word wait", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const one = await fetch(at("/"), { headers: { ...jar(TOKEN), "x-ohmail-first-page": "now" }, redirect: "manual" });
+      const other = await fetch(at("/"), { headers: jar(`${TOKEN}-other-jar`), redirect: "manual" });
+      expect(seen, "the upstream was asked").toHaveLength(0);
+      for (const res of [one, other]) {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("cache-control")).toContain("private");
+        expect(res.headers.get("cache-control")).toContain("no-store");
+        expect(res.headers.get("set-cookie")).toBeNull();
+      }
+      expect(nonceOf(one)).toBeTruthy();
+      expect(nonceOf(one)).not.toBe(nonceOf(other));
+      const a = await one.text();
+      const b = await other.text();
+      expect(wordIn(a), "a client-sent word was believed").toBe("wait");
+      expect(a).not.toContain(TOKEN);
+      expect(a).not.toContain("m".repeat(43));
+      const blank = (html: string, res: Response) => html.split(nonceOf(res)!).join("N");
+      expect(blank(a, one)).toBe(blank(b, other));
+      const head = await fetch(at("/"), { method: "HEAD", headers: jar(TOKEN) });
+      expect(head.headers.get("set-cookie")).toBeNull();
+      expect(seen).toHaveLength(0);
+    });
+
+    it("on: a token without the marker is still probed", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      await fetch(at("/"), { headers: { cookie: `tf_session=${TOKEN}` } });
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+    });
   });
 });

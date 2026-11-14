@@ -572,7 +572,7 @@ describe("the column of squares stands beside the scroller, never in it", () => 
     const marks = sheet!.querySelector<HTMLElement>(".conv > .thread-marks");
     expect(marks, "the column, in the sheet's conversation").not.toBeNull();
     expect(marks!.querySelectorAll(".tm-sq")).toHaveLength(4);
-    expect(document.querySelectorAll(".app-root > .thread-marks"), "nothing beside the sheet").toHaveLength(0);
+    expect(document.querySelectorAll(".today > .thread-marks"), "nothing beside the sheet").toHaveLength(0);
   }, 30_000);
 });
 

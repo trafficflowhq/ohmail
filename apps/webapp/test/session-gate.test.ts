@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, looksLikeSessionToken, resolveSurface,
+  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, firstPageUnasked, looksLikeSessionToken, resolveSurface,
 } from "../app/session-gate.js";
 import { EDGE_PATHS, OWN_ROUTES } from "../routes.mjs";
 
@@ -398,5 +398,57 @@ describe("the middleware wiring cannot drift from the gate", () => {
     // derives REFRESH_PATH from the `Path=` attribute.
     const cookies = readFileSync(`${HERE}../../../packages/api/src/cookies.ts`, "utf8");
     expect(cookies).toContain(`${SESSION_COOKIE}=\${tokens.accessToken}`);
+  });
+});
+
+/**
+ * THE SIGNED-IN FIRST PAGE THE EDGE DOES NOT ASK ABOUT, behind one setting that is off. With it on, a shape-valid token
+ * AND the resume marker are served the app's empty document without a probe; the browser's own check decides what is
+ * drawn. Every other jar is answered exactly as without it.
+ */
+describe("the first page without the probe", () => {
+  const on = { firstPageUnasked: true } as const;
+
+  it("a token and the marker: the unasked app, and no request leaves", async () => {
+    expect(await resolveSurface({
+      sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on,
+    })).toBe("app-unasked");
+  });
+
+  it("a token without the marker is still probed, which keeps an enrollment session out", async () => {
+    const { fetchImpl, calls } = stubFetch(() => json({ user: { userId: "u-1" }, scope: "enrollment" }));
+    expect(await resolveSurface({ sessionToken: TOKEN, search: "", apiOrigin: API, fetchImpl, ...on })).toBe("marketing");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the marker without a token resumes, as before", async () => {
+    expect(await resolveSurface({
+      sessionToken: null, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on,
+    })).toBe("resume");
+  });
+
+  it("is never the answer for a token of impossible shape, no API, a pending sign-out or the demo", async () => {
+    const base = { sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on };
+    for (const input of [
+      { ...base, sessionToken: "not a token!" },
+      { ...base, apiOrigin: null },
+      { ...base, signOutPending: true },
+      { ...base, search: "demo=1" },
+    ]) {
+      expect(await resolveSurface(input), JSON.stringify({ ...input, fetchImpl: undefined })).not.toBe("app-unasked");
+    }
+  });
+
+  it("off, a token and the marker are probed as before", async () => {
+    const { fetchImpl, calls } = stubFetch(fullSession);
+    expect(await resolveSurface({ sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl })).toBe("app");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the setting is on only when it is exactly 1", () => {
+    expect(firstPageUnasked("1")).toBe(true);
+    for (const value of [undefined, "", "0", "true", " 1", "01", "1 ", "yes"]) {
+      expect(firstPageUnasked(value), String(value)).toBe(false);
+    }
   });
 });

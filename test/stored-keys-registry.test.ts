@@ -42,7 +42,7 @@ const ROOT = process.cwd();
 /** Where a spelling may be a stored name: the clients with their native halves, the engine and the servers. */
 const TREES = [
   "apps/webapp/app", "apps/webapp/public", "apps/webapp/middleware.ts",
-  "apps/desktop/src", "apps/desktop/src-tauri/src", "apps/desktop/src-tauri/tauri.conf.json",
+  "apps/desktop/src", "apps/paired-page/src", "apps/desktop/src-tauri/src", "apps/desktop/src-tauri/tauri.conf.json",
   "apps/mobile/src", "apps/mobile/app", "apps/mobile/app.json", "apps/mobile/plugins", "apps/mobile/modules",
   "apps/sidecar/src", "apps/server/src", "apps/worker/src", "apps/api-vercel/src",
   "packages/client-engine/src", "packages/ui/src", "packages/api/src", "packages/core/src",

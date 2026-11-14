@@ -228,7 +228,7 @@ async function until(seen: () => boolean, from: number, max: number, step = 25):
 async function mountAndSettle(): Promise<void> {
   await shell.mountCloudShell();
   await shell.tick(30_000);
-  expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+  expect(document.body.querySelector(".today"), "the premise: the mail opened").not.toBeNull();
 }
 
 /** Hide for `ms`, then come back as a browser does: visible, then focus. Returns the return's time. */

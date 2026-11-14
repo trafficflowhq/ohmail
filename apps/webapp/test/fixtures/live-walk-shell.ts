@@ -347,7 +347,7 @@ export async function mountShell(
     stageCard?: React.ReactNode;
   } = {},
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../../app/shell/AppShell.js");
+  const { AppShell } = await import("../_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
 

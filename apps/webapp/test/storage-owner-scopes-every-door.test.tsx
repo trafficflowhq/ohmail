@@ -284,7 +284,7 @@ describe("the reply buffers are partitioned by the storage owner", () => {
   });
 
   it("the host door's sweep takes the reply text a pairing named, and its letters' copy notes", async () => {
-    const { HOST_SCRATCH_PREFIXES } = await import("../../desktop/src/host-client/HostGate");
+    const { HOST_SCRATCH_PREFIXES } = await import("../../paired-page/src/HostGate");
     setStorageOwner("pairing-scope-1");
     writeReplyDraft("m-1", words("typed on a phone"));
     writeReplyMeta("m-1", { subject: "a title" });
@@ -482,8 +482,8 @@ const DOORS: readonly Door[] = [
     // fixture composer read and overwrote their unsent message. Its partition is the demo's own now,
     // established in `EngineProvider` where the demo is resolved (both doors pass through it);
     // `demo-touches-nothing-the-product-owns.test.tsx` holds the partition.
-    file: "apps/webapp/app/(product)/demo/page.tsx",
-    call: /<AppShell demo/,
+    file: "apps/webapp/app/(product)/demo/DemoShell.tsx",
+    call: /<EngineProvider demo/,
     key: null,
   },
   {
@@ -492,15 +492,18 @@ const DOORS: readonly Door[] = [
     key: /key=\{shellKey\}/,
   },
   {
-    file: "apps/desktop/src/host-client/HostGate.tsx",
+    file: "apps/paired-page/src/HostGate.tsx",
     call: /setStorageOwner\(paired \? scope\b/,
     key: /key=\{scope\b/,
   },
 ];
 
-/** Every file in the tree that mounts the shell — derived, never remembered. */
+/**
+ * Every file in the tree that mounts the shell — derived, never remembered. Since today's views stand in the frame,
+ * a door mounts the shell as its engine provider with the frame under it: the provider is what the door keys.
+ */
 function mountsOfShell(): string[] {
-  const roots = ["apps/webapp/app", "apps/desktop/src"];
+  const roots = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"];
   const found: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(resolve(ROOT, dir)).sort()) {
@@ -508,7 +511,7 @@ function mountsOfShell(): string[] {
       const rel = `${dir}/${name}`;
       const st = statSync(resolve(ROOT, rel));
       if (st.isDirectory()) walk(rel);
-      else if (name.endsWith(".tsx") && readFileSync(resolve(ROOT, rel), "utf8").includes("<AppShell")) {
+      else if (name.endsWith(".tsx") && readFileSync(resolve(ROOT, rel), "utf8").includes("<EngineProvider")) {
         found.push(rel);
       }
     }
@@ -525,7 +528,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
     for (const file of actual) {
       expect(
         listed.has(file),
-        `${file} mounts AppShell and is not in the door census — a new door inherits no owner ` +
+        `${file} mounts the shell (its engine provider) and is not in the door census — a new door inherits no owner ` +
           "and silently shares one partition with every other",
       ).toBe(true);
     }
@@ -575,11 +578,11 @@ describe("every door that mounts the shared shell names its storage owner", () =
     for (const door of DOORS) {
       if (door.key === null) continue;
       const src = readFileSync(resolve(ROOT, door.file), "utf8");
-      const mount = src.indexOf("<AppShell");
-      expect(mount, `${door.file} no longer mounts AppShell`).toBeGreaterThan(-1);
+      const mount = src.indexOf("<EngineProvider");
+      expect(mount, `${door.file} no longer mounts the shell's engine provider`).toBeGreaterThan(-1);
       expect(
         door.key.test(src.slice(mount, mount + 1600)),
-        `${door.file} does not key AppShell by its storage owner — a change of owner would keep ` +
+        `${door.file} does not key the shell by its storage owner — a change of owner would keep ` +
           "the previous mailbox's compose in state while the partition beneath it moved",
       ).toBe(true);
     }
@@ -606,7 +609,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
    * The partition, the shell and the engine must all name the same identity or none of them does.
    */
   it("the host door rebuilds its engine on the pairing it is keyed and partitioned by", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const deps = /\n\s*\[paired, bearer([^\]]*)\],/.exec(src);
     expect(deps, "the engine memo's dependency list is no longer where this can see it").not.toBeNull();
     expect(
@@ -617,7 +620,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
   });
 
   it("the host door sweeps its at-rest scratch on BOTH departures, not only on a dead session", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const sweeps = src.match(/dropLocalStorageKeys\(HOST_SCRATCH_PREFIXES\)/g) ?? [];
     expect(
       sweeps.length,

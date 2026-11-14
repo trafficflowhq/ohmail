@@ -132,7 +132,7 @@ export async function waitFor(predicate: () => boolean, what: string, timeout = 
 }
 
 export async function shell(s: MirrorStore, engine: OhmailEngine, hash = "#/ohbox"): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   S.store = s; S.engine = engine;
   window.location.hash = hash;

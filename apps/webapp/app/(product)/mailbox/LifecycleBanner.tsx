@@ -1,18 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useLocale, useTranslations } from "next-intl";
-import {
-  ApiError, account, accessFeedFor, apiConfigured, onAccessFeed, putAwayCatchUp,
-  type AccessFeed, type AccountAccess, type AccountLifecycle,
-} from "../../api-client";
-import { SELF_HOST_BUILD } from "../../hello";
+import { useTranslations } from "next-intl";
+import type { AccountLifecycle } from "../../api-client";
 import { dayStamp } from "../../shell/format";
-import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
-import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "@ohmail/app-logic/doors/wall-lift";
-import { leaveForManagePage } from "./SubscriptionSection";
+import { useLifecycleNotice } from "./lifecycle-notice";
 
 /**
  * THE STRIP ABOVE THE APP, while the account is still open and something is running out — and the
@@ -26,8 +17,7 @@ import { leaveForManagePage } from "./SubscriptionSection";
  */
 
 /** A return this long after the last read asks again while nothing is drawn; while one is, the debounce. */
-export { QUIET_RETURN_MS };
-
+export { QUIET_RETURN_MS } from "@ohmail/app-logic/doors/wall-lift";
 /** How close to the end of a trial the strip appears. The day-12 reminder mail is the other half. */
 export const TRIAL_NOTICE_DAYS = 2;
 
@@ -76,109 +66,11 @@ export function dismissKey(notice: Notice, owner: string | null): string {
   return `ohmail.lifecycle.${owner ?? "local"}.${notice.kind}.${about}`;
 }
 
-/**
- * Per SESSION, not for ever: a deadline a person put away this morning is worth saying again
- * tomorrow. `sessionStorage` throws in a private window and answers empty with site data blocked,
- * so every read and write is wrapped and an unreadable store means "not dismissed" — showing a
- * strip twice is a smaller failure than never showing it at all.
- */
-function dismissed(key: string): boolean {
-  try {
-    return globalThis.sessionStorage?.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function remember(key: string): void {
-  /* Through the session door, like every other per-viewer convenience: the door owns the refusal
-     a private window or a full quota gives, and a store that will not keep this is not a reason
-     to keep the strip up. */
-  durableSessionSet(key, "1", "lifecycle.banner");
-}
-
-/** What the feed earns for this viewer: a notice, or `null`. Put-away keys are the dismissal's. */
-function noticeFromFeed(entry: AccessFeed | null, hidden: ReadonlySet<string>, now: number): Notice | null {
-  if (entry === null || !entry.answer.metered) return null;
-  const next = noticeOf(entry.answer.lifecycle, entry.caughtUp ?? undefined, now);
-  if (next === null) return null;
-  const key = dismissKey(next, storageOwner());
-  return hidden.has(key) || dismissed(key) ? null : next;
-}
-
-/** The schedule's read: `true` once the answer earns no deadline, which ends a hand-off poll. */
-async function readForStrip(): Promise<boolean> {
-  const a: AccountAccess = await account.access({ fresh: true });
-  return !a.metered || noticeOf(a.lifecycle, undefined, Date.now()) === null;
-}
-
-/**
- * IT FOLLOWS THE ACCOUNT, not its own mount: it draws from the access feed (`api-client.ts`),
- * so any answer this tab receives moves it, and it asks once on every return to the tab (the
- * wall's schedule, no lift and no clock), polling after a hand-off. Bound: a tab that keeps focus
- * throughout a payment made on another device reads only on its next return.
- */
+/** The strip, drawn from the account's state (`lifecycle-notice.ts`). */
 export function LifecycleBanner() {
   const t = useTranslations("accountLifecycle");
   const tLock = useTranslations("accessLock");
-  /** The account page opens in this screen's language, as the wall's does. */
-  const lang = useLocale() === "de" ? "de" : "en";
-  const active = !SELF_HOST_BUILD && apiConfigured();
-  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
-  // Put away in THIS mount, so "Later" holds where the session store refuses the write.
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const [busy, setBusy] = useState(false);
-  /** Why the last press did not leave — the wall's two sentences, said where the press was. */
-  const [mintRefusal, setMintRefusal] = useState<"failed" | "unverified" | null>(null);
-  const alive = useRef(true);
-  const drawn = useRef(false);
-  useEffect(() => () => { alive.current = false; }, []);
-
-  const notice = noticeFromFeed(entry, hidden, Date.now());
-  useEffect(() => { drawn.current = notice !== null; });
-
-  const { armPoll } = useAccessSchedule({
-    read: active ? readForStrip : undefined,
-    minute: null,
-    owner: readOwner(),
-    returnFloor: () => (drawn.current ? RETURN_DEBOUNCE_MS : QUIET_RETURN_MS),
-    lastAsked: () => accessFeedFor(readOwner())?.at ?? 0,
-  });
-
-  useEffect(() => {
-    if (!active) return;
-    // The first paint joins the answer the shell's mount already asked for, or asks it.
-    void account.access().catch(() => { /* no verdict, no sentence */ });
-  }, [active]);
-
-  const putAway = useCallback(() => {
-    if (notice === null) return;
-    const key = dismissKey(notice, storageOwner());
-    remember(key);
-    if (notice.kind === "caughtUp") putAwayCatchUp(readOwner());
-    setHidden((was) => new Set([...was, key]));
-  }, [notice]);
-
-  const toManage = useCallback(async () => {
-    setBusy(true);
-    setMintRefusal(null);
-    try {
-      const link = await account.manageLink({ lang });
-      const url = link?.url;
-      if (typeof url === "string" && url.length > 0) {
-        armPoll();
-        leaveForManagePage(url);
-        return;
-      }
-      // No page here (the mint's 404), or an answer with no address: the press went nowhere.
-      if (alive.current) setMintRefusal("failed");
-    } catch (err) {
-      // A press is owed a sentence: an unconfirmed address is its own, anything else is "try again".
-      const unverified = err instanceof ApiError && err.status === 403 && err.code === "email_unverified";
-      if (alive.current) setMintRefusal(unverified ? "unverified" : "failed");
-    }
-    if (alive.current) setBusy(false);
-  }, [armPoll, lang]);
+  const { notice, busy, mintRefusal, putAway, toManage } = useLifecycleNotice();
 
   if (notice === null) return null;
 

@@ -21,6 +21,10 @@ const has: WebSupplies = {
   wires: Object.fromEntries(WIRES.map((wire) => [wire, named(wire)])) as WebSupplies["wires"],
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
   notifications: named("notifications"),
+  frame: {
+    places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
+    appearance: named("appearance"), recover: named("recover"),
+  },
 };
 const engine = named<HostContract["engine"]>("engine");
 
@@ -34,6 +38,7 @@ const managed: WebFacts = {
   sendSurface: undefined,
   foldersStorable: true,
   scope: "an-account",
+  account: "an-account",
   build: { version: "1.0.11", commit: "abc" },
 };
 /** A self-hosted server, as it was read: the same server words, invitations, and a staged send. */
@@ -43,13 +48,18 @@ const listed = (host: HostContract) => Object.entries(panesOf(host)).filter(([, 
 const withheld = (host: HostContract) => Object.entries(host.wires).filter(([, wire]) => wire === NONE).map(([wire]) => wire).sort();
 /** The whole record of features: the entry supplied under each name handed on, `none` under every other. */
 const entries = (...handedOn: FeatureName[]) =>
-  Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE]));
+  ({
+    ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
+    places: has.frame.places,
+    stages: has.frame.stages,
+  });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */
 const BROWSER_DEVICE = {
   build: { surface: "web", version: "1.0.11", commit: "abc", mailtoLeaves: true },
   notifications: has.notifications,
-  badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE, appearance: NONE,
+  badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
   textSize: NONE, fold: NONE, liveTheme: NONE,
+  address: has.frame.address, window: has.frame.window, appearance: has.frame.appearance,
 };
 const NO_SIGNAL = {
   hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
@@ -81,7 +91,7 @@ describe("the web shell's answers on the managed service", () => {
   });
 
   it("is the account's own page: a live session under the account's scope, and a browser's device", () => {
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account" });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", recover: has.frame.recover });
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
@@ -137,11 +147,29 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "invites"));
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account" });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", recover: has.frame.recover });
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 
   it("lists no Folders where the server drops the choice", () => {
     expect(listed(webHost(engine, { ...selfHosted, foldersStorable: false }, has))).not.toContain("folders");
+  });
+});
+
+describe("the web shell's account and pictures, in every setting", () => {
+  const SETTINGS: [string, WebFacts][] = [
+    ["managed", managed],
+    ["self-hosted", selfHosted],
+    ["a server that pairs nothing and fetches no picture", { ...managed, server: { pairing: false, remoteImages: false } }],
+    ["before the account is confirmed", { ...managed, account: null }],
+  ];
+
+  it.each(SETTINGS)("%s: the session names the account the server confirmed, and nothing else", (_, facts) => {
+    expect(webHost(engine, facts, has).session.account).toBe(facts.account);
+  });
+
+  it.each(SETTINGS)("%s: pictures come from nowhere or from the machine that unsubscribes", (_, facts) => {
+    const { imagesFrom, unsubscribeFrom } = webHost(engine, facts, has).capabilities;
+    expect(imagesFrom === "none" || imagesFrom === unsubscribeFrom).toBe(true);
   });
 });

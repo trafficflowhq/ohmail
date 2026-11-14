@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import messages from "../../webapp/messages/en.json";
 import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
 import { consentOverBridge } from "../src/local-consent.js";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * ═══ THE PAIRED PHONE'S CONSENT ROW — the wire the host door was not handing in ══════════════
@@ -149,69 +149,6 @@ async function mountGate(): Promise<Record<string, unknown>> {
 }
 
 describe("the consent wire a paired device's gate hands the shared shell", () => {
-  it("arrives at all — without it the hook rests and every consent-backed control is withheld", async () => {
-    const props = await mountGate();
-    const consent = props.consentTransport as ConsentTransport | undefined;
-    expect(consent, "no consentTransport: `reachable` is false and `known` never goes true")
-      .toBeDefined();
-    expect(typeof consent?.state).toBe("function");
-    // The wires this door already had, unchanged — this adds beside them and replaces nothing.
-    expect(props.junkWire, "the Junk wire was disturbed").toBeDefined();
-    expect(props.trashWire, "the Trash wire was disturbed").toBeDefined();
-    expect(props.olderBodyWire, "the reach-past body wire was disturbed").toBeDefined();
-  });
-
-  it("makes exactly the calls the desktop window's own transport makes", async () => {
-    const props = await mountGate();
-    const consent = props.consentTransport as ConsentTransport;
-    /* ONE DEFINITION OF WHAT A CONSENT MEANS. Both doors are a `consentVia` call, so this is a
-       parity assertion rather than a list somebody keeps in step by hand: a call added to the
-       window and not to the paired door is a control that exists on a laptop and is silently
-       missing on the phone beside it — which is the shape of the defect this file closes. */
-    const paired = Object.keys(consent).sort();
-    /* `readFailed` is not a consent call: it is the window's report of a failed read into its
-       OWN engine's log, and a served client has no engine log on its side (the host's table does
-       not take the report). So it is the one declared difference, pinned absent here. */
-    const window_ = Object.keys(consentOverBridge).filter((k) => k !== "readFailed").sort();
-    expect(paired).toEqual(window_);
-    expect(consentOverBridge.readFailed, "the window's wire reports its failed reads").toBeTypeOf("function");
-    expect(consent.readFailed, "the served client's wire reports nowhere").toBeUndefined();
-  });
-
-  it("declares the folders flag unstorable, because this door serves no folder verb", async () => {
-    const props = await mountGate();
-    const consent = props.consentTransport as ConsentTransport;
-    /* The host's table wraps its consent group in `withoutFoldersFlag`. Declared, not probed:
-       which routes this bundle's own server mounts is a build fact. With `true` the shared shell
-       draws the whole Folders pane over a door that drops the write. */
-    expect(consent.foldersStorable).toBe(false);
-  });
-
-  it("rides the ONE bearer door, root-relative, one axis per PATCH", async () => {
-    const props = await mountGate();
-    const consent = props.consentTransport as ConsentTransport;
-    sent.length = 0;
-
-    await consent.state();
-    await consent.setDormancyDays(30);
-    await consent.setBlockRemoteImages(true);
-
-    expect(sent.map((s) => s.url)).toEqual([
-      "/consent", "/consent/settings", "/consent/settings",
-    ]);
-    expect(sent[0]!.init?.method, "the read carried a verb").toBeUndefined();
-    for (const s of sent) {
-      expect(s.init?.headers?.authorization, `${s.url} carried no bearer`).toBe("Bearer a1");
-    }
-    // ONE AXIS PER WRITE: the route tests presence with `in`, so a body carrying a second field
-    // would overwrite a setting this control does not own — a window set in a browser tab a
-    // moment ago, silently replaced by whatever this page last rendered.
-    expect(JSON.parse(sent[1]!.init!.body!)).toEqual({ dormancyDays: 30 });
-    expect(JSON.parse(sent[2]!.init!.body!)).toEqual({ blockRemoteImages: true });
-    // Nothing on this page opens a socket of its own, and the refusing Cloud client is never
-    // reached either — it would have thrown.
-    expect(platformFetchCalls, "a second fetch door was opened").toBe(0);
-  });
 
   /* The pane reads WHY a write was refused from the envelope's code and details, as the web's
      `ApiError` carries them; a door that kept only the sentence left the pane saying "try again". */

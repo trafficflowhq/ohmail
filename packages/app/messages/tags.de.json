@@ -1,0 +1,30 @@
+{
+  "tag": {
+    "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "emptyTitle": "Noch nichts trägt diesen Tag.",
+    "emptyHint": "Drück <kbd>t</kbd> auf einer Nachricht, um ihn zu setzen.",
+    "toastTagged": "Mit „{name}“ getaggt.",
+    "toastUntagged": "Tag „{name}“ entfernt.",
+    "pickerPlaceholder": "Diese Nachricht taggen …",
+    "pickerNone": "Noch keine Tags. Tipp einen Namen, um den ersten anzulegen.",
+    "pickerFoot": "↵ schaltet um",
+    "pickerAria": "Tag hinzufügen",
+    "pickerCreate": "„{name}“ anlegen",
+    "newPlaceholder": "Name …",
+    "newTaken": "Du hast schon einen Tag namens „{name}“.",
+    "toastCreated": "Tag „{name}“ angelegt.",
+    "toastRenamed": "Umbenannt in „{name}“.",
+    "toastDeleted": "Tag „{name}“ gelöscht.",
+    "notOnServer": "Tags speichert ohmail, nicht dein Postfach. Deine Ordner sind echte IMAP-Ordner und bleiben, wenn du gehst; Tags nicht: Wenn du deinen Account löschst, sind sie weg.",
+    "toastTaggedMany": "{count, plural, one {1 Nachricht} other {# Nachrichten}} mit „{name}“ getaggt.",
+    "toastUntaggedMany": "Tag „{name}“ von {count, plural, one {1 Nachricht} other {# Nachrichten}} entfernt.",
+    "manageAria": "Diesen Tag verwalten",
+    "rename": "Umbenennen",
+    "delete": "Löschen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "renameAria": "Tag umbenennen",
+    "deleteAsk": "„{name}“ löschen?",
+    "deleteWhat": "{count, plural, =0 {Nichts trägt ihn. } one {Er hängt an 1 deiner Nachrichten. } other {Er hängt an # deiner Nachrichten. }}Die Nachrichten bleiben, wo sie sind."
+  }
+}

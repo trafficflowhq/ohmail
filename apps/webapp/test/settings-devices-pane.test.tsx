@@ -212,18 +212,6 @@ describe("useDevicePairing — the runtime gate, asked on the MANAGED build too"
     ).toEqual([]);
   });
 
-  it("…and both halves of the mask are pinned at the source: CloudShell passes the resolved demo, AppShell withholds the seam", () => {
-    const read = (p: string): string =>
-      fs.readFileSync(path.join(HERE, "..", p), "utf8");
-    // The hook is handed the same authoritative flag the shell masks by — not a second signal.
-    // RESOLVED rather than the server prop since DEMO-HYDRATION-EGRESS: on a prerendered
-    // `?demo=1` page the prop is false for the life of the mount, so this hook paid the very
-    // `/hello` round trip the case above proves it must not.
-    expect(read("app/(product)/mailbox/CloudShell.tsx")).toContain("useDevicePairing(resolvedDemo)");
-    // Defense in depth in the SHARED shell: the seam joins the account panes' demo mask, so a
-    // future host that wires a node unconditionally still cannot grow the entry in a demo.
-    expect(read("app/shell/AppShell.tsx")).toContain("devicesSection={demo ? undefined : devicesSection}");
-  });
 });
 
 describe("the Settings nav — a wired devicesSection is an entry, an absent one is none", () => {

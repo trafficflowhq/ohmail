@@ -10,7 +10,7 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
 import { DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, desktopSendSurface } from "../src/desktop-send-surface.js";
 import { isPreview, linksOutToBilling } from "../src/distribution.js";
 import { CLOUD_URL } from "../src/doors.js";
-import { pairedHost, type PairedSupplies } from "../src/host-client/host.js";
+import { pairedHost, type PairedSupplies } from "../../paired-page/src/host.js";
 import { desktopHost, type DesktopFacts, type DesktopSupplies } from "../src/host-contract.js";
 
 const WIRES = [
@@ -21,6 +21,11 @@ const WIRES = [
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const engine = named<HostContract["engine"]>("engine");
 
+/** What every shell hands the frame, the same stand-ins for both doors here. */
+const FRAME = {
+  places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
+  appearance: named("appearance"), recover: named("recover"),
+} as DesktopSupplies["frame"];
 const has: DesktopSupplies = {
   signOut: named("signOut"),
   reads: { mailboxes: named("mailboxes"), copyAge: named("copyAge"), access: named("access") },
@@ -30,6 +35,7 @@ const has: DesktopSupplies = {
   },
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as DesktopSupplies["features"],
   notifications: named("notifications"),
+  frame: FRAME,
   badge: named("badge"),
   hostConnection: named("hostConnection"),
   linkIn: named("linkIn"),
@@ -46,6 +52,7 @@ const door = (status: Partial<EngineStatus>, over: Partial<DesktopFacts> = {}): 
   linksOutToBilling: true,
   takesMailLinks: true,
   scope: "a-mailbox",
+  account: null,
   build: { version: "1.0.11", commit: "abc" },
   ...over,
 });
@@ -59,11 +66,15 @@ const withheld = (host: HostContract) => Object.entries(host.wires).filter(([, w
 const without = (panes: string[], ...gone: string[]) => panes.filter((pane) => !gone.includes(pane));
 /** The whole record of features: the entry supplied under each name handed on, `none` under every other. */
 const entries = (from: object, ...handedOn: FeatureName[]) =>
-  Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (from as Record<string, unknown>)[feature] : NONE]));
+  ({
+    ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (from as Record<string, unknown>)[feature] : NONE])),
+    places: FRAME.places,
+    stages: FRAME.stages,
+  });
 /** What the computer is, and what no door hands on yet: a device's verbs and a host's signals. */
 const UNWIRED_VERBS = {
-  language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE, appearance: NONE, textSize: NONE,
-  fold: NONE, liveTheme: NONE,
+  language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE, textSize: NONE,
+  fold: NONE, liveTheme: NONE, address: FRAME.address, window: FRAME.window, appearance: FRAME.appearance,
 };
 const NO_SIGNAL = {
   hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
@@ -99,7 +110,7 @@ describe("the desktop on its own", () => {
     expect(withheld(host)).toEqual(["folderSummary", "liveBody", "seedReview", "suggest"]);
     expect(host.wires.consent).toBe(has.wires.consent.standalone);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: NONE });
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", signOut: has.signOut });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
     expect(host.signals).toEqual({ ...NO_SIGNAL, linkIn: has.linkIn });
   });
 
@@ -135,7 +146,7 @@ describe("the desktop signed in to the managed service", () => {
     expect(withheld(host)).toEqual(["firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
     expect(host.wires.consent).toBe(has.wires.consent.account);
     expect(host.reads).toEqual(has.reads);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", signOut: has.signOut });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
     expect(host.signals).toEqual({ ...NO_SIGNAL, hostConnection: has.hostConnection, linkIn: has.linkIn });
     expect(host.device).toEqual(DESKTOP_DEVICE);
   });
@@ -244,6 +255,7 @@ describe("the page a desktop serves to a phone's browser", () => {
     },
     features: { account: named("account"), accountStrip: named("accountStrip"), screener: named("screener") },
     notifications: named("notifications"),
+  frame: FRAME,
   };
   const host = pairedHost(engine, { scope: "a-pairing", sendCeiling: 32 * 1024 * 1024, build: { version: "1.0.11", commit: "abc" } }, supplies);
 
@@ -264,7 +276,7 @@ describe("the page a desktop serves to a phone's browser", () => {
       "away", "firstRun", "folderSummary", "images", "liveBody", "mailboxes", "organizerNotice", "ownModelAutoSuggest",
       "screening", "seedReview", "suggest",
     ]);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", signOut: supplies.signOut });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", account: null, signOut: supplies.signOut, recover: FRAME.recover });
     expect(host.reads).toEqual({ mailboxes: supplies.mailboxes, copyAge: NONE, access: NONE });
   });
 
@@ -281,5 +293,34 @@ describe("the page a desktop serves to a phone's browser", () => {
     });
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
+  });
+});
+
+describe("the account and the pictures, on every door and on the paired page", () => {
+  const DOORS: [string, DesktopFacts][] = [
+    ["on its own", onItsOwn],
+    ["managed", { ...managed, account: "an-account" }],
+    ["self-hosted", { ...selfHosted, account: "an-account" }],
+    ["paired", paired],
+    ["managed, its session refused", { ...managed, sessionRefused: true, account: "an-account" }],
+  ];
+
+  it.each(DOORS)("%s: the session names the account behind the door, and nothing else", (_, facts) => {
+    expect(desktopHost(engine, facts, has).session.account).toBe(facts.account);
+  });
+
+  it.each(DOORS)("%s: pictures come from nowhere or from the machine that unsubscribes", (_, facts) => {
+    const { imagesFrom, unsubscribeFrom } = desktopHost(engine, facts, has).capabilities;
+    expect(imagesFrom === "none" || imagesFrom === unsubscribeFrom).toBe(true);
+  });
+
+  it("the paired page has no account behind it, and draws no pictures", () => {
+    const supplies = {
+      signOut: named("signOut"), mailboxes: named("mailboxes"), wires: named("wires"), features: named("features"),
+      notifications: named("notifications"), frame: FRAME,
+    } as unknown as PairedSupplies;
+    const host = pairedHost(engine, { scope: "a-pairing", sendCeiling: 1, build: { version: null, commit: null } }, supplies);
+    expect(host.session.account).toBeNull();
+    expect(host.capabilities.imagesFrom).toBe("none");
   });
 });

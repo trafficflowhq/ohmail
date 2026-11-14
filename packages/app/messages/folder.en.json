@@ -1,0 +1,8 @@
+{
+  "folder": {
+    "metaCount": "{count, plural, one {1 message} other {# messages}}",
+    "emptyTitle": "Nothing in this folder",
+    "emptyHint": "It holds no mail. The folder list follows your mail server, so a folder deleted there leaves it.",
+    "gone": "“{name}” is no longer on your mail server."
+  }
+}

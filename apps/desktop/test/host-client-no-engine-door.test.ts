@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
  * build CI runs, runs that scan. A packaged release therefore cannot ship while the name is in
  * the bytes.
  *
- * It was in the bytes. `host-client/transports.ts` imported the five `*Via` factories from the
+ * It was in the bytes. `apps/paired-page/src/transports.ts` imported the five `*Via` factories from the
  * window's own `local-*` modules, each of which binds its factory to the bridge in a module
  * constant — so importing any one of them pulled `bridge-fetch.ts` into the graph and its
  * command name into the served chunk, once. The factories now live in `*-wire.ts` modules that
@@ -42,7 +42,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, "..");
 const DOOR_COMMAND = "engine_request";
-const TRANSPORTS = path.join(APP, "src", "host-client", "transports.ts");
+const TRANSPORTS = path.join(APP, "..", "paired-page", "src", "transports.ts");
 
 /** Every module id the emitted chunks were built from, plus the concatenated emitted code. */
 interface Reading {
@@ -112,7 +112,7 @@ const injectDoor: BuiltPlugin = {
   transform(code, id) {
     if (path.resolve(id.split("?")[0] ?? id) !== TRANSPORTS) return null;
     return {
-      code: 'import { bridgeFetch } from "../bridge-fetch.js";\nvoid bridgeFetch;\n' + code,
+      code: 'import { bridgeFetch } from "../../desktop/src/bridge-fetch.js";\nvoid bridgeFetch;\n' + code,
       map: null,
     };
   },
@@ -131,7 +131,7 @@ describe("the bundle the host door serves names no shell command", () => {
     /* Both floors, because everything below is an ABSENCE: an empty build would pass every one
        of them. The entry's own module and a chunk of real size are what make the absences
        measurements rather than assertions about nothing. */
-    expect(clean.modules.some((id) => rel(id) === "src/host-client/main.tsx")).toBe(true);
+    expect(clean.modules.some((id) => rel(id) === "../paired-page/src/main.tsx")).toBe(true);
     expect(clean.modules.length).toBeGreaterThan(200);
     expect(clean.code.length).toBeGreaterThan(500_000);
   });
@@ -168,7 +168,7 @@ describe("the bundle the host door serves names no shell command", () => {
  * ── THE MECHANISM, AS A SOURCE CENSUS ───────────────────────────────────────────────────────
  *
  * The build above is the evidence; this is the rule, and it is cheap enough to read on every run.
- * `host-client/transports.ts` may import only modules that import no door, so the five factories
+ * `apps/paired-page/src/transports.ts` may import only modules that import no door, so the five factories
  * it needs live in files that spell no transport. A future wire added to that file gets the same
  * treatment or this fails on the new import rather than on a byte count.
  */
@@ -203,7 +203,7 @@ describe("the wire modules the host client imports spell no door", () => {
     const src = fs.readFileSync(TRANSPORTS, "utf8");
     const specifiers = [...src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1]!);
     /* The positive control for this case: the parse found the imports it is judging. */
-    expect(specifiers).toContain("../junk-wire.js");
+    expect(specifiers).toContain("../../desktop/src/junk-wire.js");
     expect(specifiers).toContain("@ohmail/client-engine");
     /* A relative specifier that lands on a `local-*` module is the defect this closed: every one
        of them binds its factory to the bridge in a module constant. */

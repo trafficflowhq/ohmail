@@ -160,7 +160,7 @@ const ROSTER: MailboxFacts[] = [{
 }];
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2"], ["h1", "h2"]));
   const container = document.createElement("div");
@@ -236,22 +236,6 @@ describe("the reader's modal claim, by width", () => {
     expect(sheet.getAttribute("aria-modal")).toBeNull();
   });
 
-  it("desktop: a rail press with the sheet standing lands, and the navigation closes the reader", async () => {
-    /* jsdom dispatches the click regardless of CSS hit-testing, so what this arm proves is the
-       journey's WIRING: a landed rail press navigates and the route transition takes the sheet
-       down — no second press, no Escape. The hit-testing half (the rail keeping pointer events
-       above the overlay at ≥1024px) is the stylesheet's, pinned below. */
-    const container = await shell();
-    await openHistoryRow(container);
-    const ohbox = [...container.querySelectorAll<HTMLButtonElement>(".rail .ritem")]
-      .filter((b) => (b.textContent ?? "").includes("Ohbox"));
-    expect(ohbox.length, "exactly one rail item named Ohbox").toBe(1);
-    await act(async () => { ohbox[0]!.click(); });
-    await settle();
-    expect(document.querySelector(".reader"), "the sheet must be down after the navigation").toBeNull();
-    await waitFor(() => rowIds(container).includes("m1"), "the Ohbox rows to be back on screen");
-  });
-
   it("desktop: the Ohbox open renders the pane, never the sheet — the trigger is the view", async () => {
     const container = await shell();
     await key("j");
@@ -260,6 +244,22 @@ describe("the reader's modal claim, by width", () => {
     expect(document.querySelector(".reader")).toBeNull();
     // The message is on screen in the reading column, not gone with the sheet.
     expect(container.querySelector(".read-col")).not.toBeNull();
+  });
+
+  it("desktop: a rail press with the sheet standing lands, and the navigation closes the reader", async () => {
+    /* jsdom dispatches the click regardless of CSS hit-testing, so what this arm proves is the
+       journey's WIRING: a landed rail press navigates and the route transition takes the sheet
+       down — no second press, no Escape. The hit-testing half (the rail keeping pointer events
+       above the overlay at ≥1024px) is the stylesheet's, pinned below. */
+    const container = await shell();
+    await openHistoryRow(container);
+    const ohbox = [...container.querySelectorAll<HTMLButtonElement>("[data-rail-id] button")]
+      .filter((b) => (b.textContent ?? "").includes("Ohbox"));
+    expect(ohbox.length, "exactly one rail item named Ohbox").toBe(1);
+    await act(async () => { ohbox[0]!.click(); });
+    await settle();
+    expect(document.querySelector(".reader"), "the sheet must be down after the navigation").toBeNull();
+    await waitFor(() => rowIds(container).includes("m1"), "the Ohbox rows to be back on screen");
   });
 });
 

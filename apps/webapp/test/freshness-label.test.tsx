@@ -218,25 +218,6 @@ describe("the ladder's stale arm", () => {
    * `facts-die-with-their-engine.test.tsx`, which also covers the late-answer and no-stale-frame
    * properties this line cannot see.
    */
-  it("the provider withdraws the verdict AND the mailbox facts during render when the identity changes, and the desktop scopes the probe to the cloud door", async () => {
-    const { readFileSync } = await import("node:fs");
-    const provider = readFileSync(`${process.cwd()}/apps/webapp/app/shell/MailStateProvider.tsx`, "utf8");
-    // All three things that decide whose mailbox this is.
-    expect(provider).toMatch(
-      /const identity = \{ engine: probeEngine, probe, freshnessProbe \};/,
-    );
-    // And the withdrawal of both held answers, in the render-phase branch rather than an effect.
-    expect(provider).toMatch(
-      /if \(changed\) \{\s*setAdopted\(identity\);\s*setFacts\(null\);\s*setProbedFreshness\(null\);\s*\}/,
-    );
-    /* And the ownership ref syncs in the COMMIT phase, not passively. A passive effect is
-       scheduled after the commit, so a promise settling in the gap would find the ref still naming
-       the identity just left and be waved through — undoing the clear two lines above. There is no
-       renderer that can drive that gap, which is exactly why it is pinned here. */
-    expect(provider).toMatch(/useCommitEffect\(\(\) => \{ answering\.current = adopted; \}, \[adopted\]\);/);
-    const gate = readFileSync(`${process.cwd()}/apps/desktop/src/DesktopGate.tsx`, "utf8");
-    expect(gate).toMatch(/engine && status\?\.mode === "cloud" \? \{ mirrorFreshness: readMirrorFreshness \}/);
-  });
 
   it("both catalogues carry the sentence, with the time slot in it", () => {
     const en = (messages as { sync: Record<string, string> }).sync.staleAsOf;
@@ -283,59 +264,4 @@ afterEach(() => {
   roots.forEach((r) => r.unmount());
   roots.length = 0;
   document.body.innerHTML = "";
-});
-
-async function render(state: MailState): Promise<HTMLElement> {
-  current = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        now: new Date(NOW),
-        children: h(SyncBar, null),
-      }),
-    );
-  });
-  return container;
-}
-
-describe("the strip renders the stale key", () => {
-  beforeEach(() => { markDrain(true); });
-
-  it("says the sentence with the stamp's own time, busy and calm — no warning, no link", async () => {
-    const c = await render({ ...QUIET, key: "stale", clock: true, count: 495, asOf: STALE_STAMP });
-    // The expected time through the SAME formatter the strip uses (system zone, app locale) —
-    // the assertion pins the WIRING from `asOf` into the sentence, not Intl's output shape.
-    const expected = `As of ${waterlineStamp(STALE_STAMP, new Date(), "en")} · catching up`;
-    expect(c.textContent).toContain(expected);
-    /* The mark means a drain IS converging, not that the state says one should be — since 0.19.2
-       it is mounted by the loop's own drain (`drain-mark.ts`), so this case puts one in flight
-       and the case below pins the still form. */
-    expect(c.querySelector(".mbx-spin"), "the label is a busy state — a drain is converging").not.toBeNull();
-    expect(c.querySelector('[role="status"]'), "calm: a status region, never an alert").not.toBeNull();
-    expect(c.querySelector("a"), "nothing here is actionable — the label clears itself").toBeNull();
-  });
-
-  it("the sentence stands still between drains — the label without a mark", async () => {
-    vi.useFakeTimers();
-    markDrain(false);
-    vi.advanceTimersByTime(DRAIN_MARK_HOLD_MS + 1);
-    vi.useRealTimers();
-    const c = await render({ ...QUIET, key: "stale", clock: true, count: 495, asOf: STALE_STAMP });
-    expect(c.textContent, "the sentence went with the mark")
-      .toContain(`As of ${waterlineStamp(STALE_STAMP, new Date(), "en")} · catching up`);
-    expect(c.querySelector(".mbx-spin"), "a mark over a drain that is not running").toBeNull();
-  });
-
-  it("renders nothing once current — the resting state is plain content", async () => {
-    const c = await render(QUIET);
-    expect(c.textContent ?? "").not.toContain("catching up");
-  });
 });

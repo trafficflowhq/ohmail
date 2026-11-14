@@ -248,7 +248,7 @@ vi.mock("../app/api-client", () => ({
 const seen: { facts: MailboxFacts[] | null } = { facts: null };
 
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: QUIET, mailboxes: seen.facts, refresh: () => {} }),
+  useMailState: () => ({ state: QUIET, mailboxes: seen.facts, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
   // `AppShell` mounts the provider itself, so the stub has to supply it as well as the hook —
   // the mock replaces the whole module, and a missing export is a render-time throw.
   MailStateProvider: ({ children }: { children?: unknown }) => children,
@@ -304,7 +304,7 @@ const fact = (over: Partial<MailboxFacts>): MailboxFacts => ({
 /** The shipped shell on the fixture world over the facts a Cloud account would report. */
 async function mountShell(facts: MailboxFacts[]): Promise<void> {
   seen.facts = facts;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);

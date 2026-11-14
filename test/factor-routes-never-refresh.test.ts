@@ -12,7 +12,7 @@ import { mayRelay, RELAY_ALLOWLIST } from "@trafficflow/api/relay-allowlist";
 import { isRecoverable, mayRefreshFor } from "../apps/webapp/app/session-refresh.js";
 import { CREDENTIAL_REFUSED } from "@ohmail/client-engine";
 import { BearerManagerRN } from "../apps/mobile/src/net/bearer.js";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../apps/desktop/src/host-client/bearer.js";
+import { BearerManager, REFRESH_STORAGE_KEY } from "../apps/paired-page/src/bearer.js";
 import { createCloudAuth } from "../apps/sidecar/src/cloud-auth.js";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
 

@@ -8,7 +8,7 @@
  */
 /* @reads: packages/client-engine/src/idb.ts */
 /* @reads: packages/client-engine/src/engine.ts packages/client-engine/src/engine (the classes the engine is built from) */
-/* @reads: apps/desktop/src/host-client/outbox-store.ts */
+/* @reads: apps/paired-page/src/outbox-store.ts */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -17,7 +17,7 @@ import { engineSource } from "./helpers/engine-source.js";
 
 const ROOT = process.cwd();
 const IDB = resolve(ROOT, "packages/client-engine/src/idb.ts");
-const HOST = resolve(ROOT, "apps/desktop/src/host-client/outbox-store.ts");
+const HOST = resolve(ROOT, "apps/paired-page/src/outbox-store.ts");
 
 const parse = (src: string): ts.SourceFile => ts.createSourceFile("x.ts", src, ts.ScriptTarget.Latest, true);
 function walk(n: ts.Node, visit: (n: ts.Node) => void): void {

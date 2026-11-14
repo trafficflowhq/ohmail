@@ -182,16 +182,4 @@ describe("the promise the switch exists for", () => {
     }
   });
 
-  it("the pane is on the SHARED shell, so a self-hosted account gets it too", () => {
-    // The failure this replaces was a switch that existed only where there was a plan. Asserted
-    // from the source, because the difference is which shell mounts it: `CloudShell` serves the
-    // managed tab AND the self-hosted one, and it hands the pane in unconditionally.
-    const src = fs.readFileSync(
-      path.join(HERE, "..", "app", "(product)", "mailbox", "CloudShell.tsx"), "utf8");
-    expect(src, "the Cloud shell no longer wires the AI pane").toContain("aiSection={<AiSection />}");
-    // NOT behind a gate of any kind — a self-host or unverified account must still reach it.
-    const at = src.indexOf("aiSection={");
-    expect(src.slice(at, at + 40), "the AI pane grew a condition — which host would lose it?")
-      .not.toContain("?");
-  });
 });

@@ -1,0 +1,13 @@
+{
+  "place": {
+    "ohbox": "Ohbox",
+    "reads": "News",
+    "receipts": "Receipts",
+    "screener": "Screener",
+    "screened": "Screened",
+    "spam": "Spam"
+  },
+  "relativeTime": {
+    "justNow": "just now"
+  }
+}

@@ -4,7 +4,7 @@
  * window's Cloud client is a refusing stub under a `connect-src` that admits no address off
  * this machine, so the ask goes down
  * the pipe to the engine on this machine. The wire is `olderBodyVia` (`@ohmail/client-engine`),
- * imported directly by the LAN host client's bearer transport (`host-client/transports.ts`);
+ * imported directly by the LAN host client's bearer transport (`apps/paired-page/src/transports.ts`);
  * this file supplies only `bridgeFetch`. The hosted door serves `GET /messages/:id/body` from
  * the mirror or forwards a reach-past row (`cloud-engine.ts`). A 404/410 means the row is gone
  * — the door's terminal sentence; every other refusal renders `failed` with a real Retry.

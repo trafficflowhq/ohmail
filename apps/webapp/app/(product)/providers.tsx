@@ -6,6 +6,7 @@ import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
 import { THEME_DOOR } from "../shell/face-mirror";
 import { textSizeBootScript } from "../shell/text-size";
+import { frameBootScript } from "@ohmail/app/frame/boot";
 // Every product page hears a revoke and finishes a wipe a closed page left (`revoked-door.ts`),
 // and drops the copy of an account the server says was erased (`erased-door.ts`).
 import "../revoked-door";
@@ -36,6 +37,9 @@ export function Providers({ children, nonce }: { children: ReactNode; nonce?: st
       {/* …and Settings → Text size, the same way and for the same reason: the first frame is
           drawn at the chosen size, never at 100% and then again (`shell/text-size.ts`). */}
       <script nonce={nonce} dangerouslySetInnerHTML={{ __html: textSizeBootScript() }} />
+      {/* …and the frame's scheme, device and pointer, from what the theme script just stamped and from the window
+          (`@ohmail/app/frame/boot`). The frame owns them once it mounts; this says the same thing earlier. */}
+      <script nonce={nonce} dangerouslySetInnerHTML={{ __html: frameBootScript() }} />
       {/* `faces` — the paper/ohmarchy axis is ACTIVE on the product door only: this is the
           host that wired the face controls (Settings → Look, the Option B offer). The
           landing and the admin mount the same provider and deliberately do not pass it. */}

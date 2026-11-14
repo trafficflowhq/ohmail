@@ -256,9 +256,9 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
       h(ThemeProvider, { storageKey: null }, h(ToastHost, null, h(DesktopGate, null)))));
     for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
     expect(el.textContent, "the card is not up").toContain("Open email links with ohmail?");
-    // In the stage's card slot, in the flow: it covers no Save and no reader head.
+    // In the stage's card slot, in the flow: it covers no Save and no reader head. (The stage is today's, inside the frame's main.)
     const ask = el.querySelector<HTMLElement>("[role='dialog'][data-key-beside]");
-    expect({ slot: ask?.parentElement?.matches("main.stage > .stage-notice:first-child"), fixed: ask?.style.position ?? null })
+    expect({ slot: ask?.parentElement?.matches(".stage > .stage-notice:first-child"), fixed: ask?.style.position ?? null })
       .toEqual({ slot: true, fixed: "" });
     const row = (id: string) => el.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
     const press = async (key: string) => {

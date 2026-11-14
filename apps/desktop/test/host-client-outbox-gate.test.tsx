@@ -4,17 +4,20 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { OhmailEngine } from "@ohmail/client-engine";
+import type { FeatureEntry, FrameNotice, HostContract } from "@ohmail/app/host";
 
 import messages from "../../webapp/messages/en.json";
 import { COMPOSE_DRAFT_PREFIX } from "../../webapp/app/shell/compose";
-import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * WHAT THE PAIRED PAGE KEEPS GOES WITH THE PAIRING, AND A BROWSER THAT KEEPS NOTHING SAYS SO.
  * The gate is rendered with the shell captured: its engine is driven, the discard it asks for is
  * recorded, and the strip it hands the shell is rendered. What a discard and the store do to a
- * real IndexedDB is measured with `fake-indexeddb`, beside the engine's own tests.
+ * real IndexedDB is measured with `fake-indexeddb`, beside the engine's own tests. The shell is the frame now: the
+ * host the gate hands it is captured, and what the old shell's props carried is read off it (its engine, the notice
+ * of the account's strip, the Account pane).
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,29 +32,38 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
     dispatchEvent() { return false; },
   })) as never;
 
-let shellProps: Record<string, unknown> | null = null;
+let host: HostContract | null = null;
+/** What the old shell was handed, read off the host the frame is handed. */
+const shellProps = {
+  get engine(): OhmailEngine { return host!.engine as unknown as OhmailEngine; },
+  get accountNotice(): (() => readonly FrameNotice[]) | undefined { return (host!.features.accountStrip as FeatureEntry).notice; },
+  get accountSection(): React.ReactNode { return (host!.features.account as FeatureEntry).render(); },
+};
 let pairProps: ({ onPaired: () => void } & Record<string, unknown>) | null = null;
 /** Every discard the gate asked for, in order: `undefined` is every pairing's. */
 let discards: Array<{ except?: string | null } | undefined> = [];
 
-vi.mock("../../webapp/app/shell/AppShell", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/AppShell")>(
-    "../../webapp/app/shell/AppShell",
-  );
-  return { ...real, AppShell: (props: Record<string, unknown>) => { shellProps = props; return null; } };
+vi.mock("../../webapp/app/shell/TodaysFrame", async () => {
+  const real = await vi.importActual<object>("../../webapp/app/shell/TodaysFrame");
+  return { ...real, TodaysFrame: (props: { host: HostContract }) => { host = props.host; return null; } };
 });
-vi.mock("../src/host-client/PairScreen.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>(
-    "../src/host-client/PairScreen.js",
+/* As the old shell's stand-in did: nothing below the gate drives the engine; the cases drive it themselves. */
+vi.mock("../../webapp/app/shell/engine", async () => {
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/engine")>("../../webapp/app/shell/engine");
+  return { ...real, EngineProvider: ({ children }: { children: React.ReactNode }) => children };
+});
+vi.mock("../../paired-page/src/PairScreen.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>(
+    "../../paired-page/src/PairScreen.js",
   );
   return {
     ...real,
     PairScreen: (props: { onPaired: () => void } & Record<string, unknown>) => { pairProps = props; return null; },
   };
 });
-vi.mock("../src/host-client/outbox-store.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/outbox-store.js")>(
-    "../src/host-client/outbox-store.js",
+vi.mock("../../paired-page/src/outbox-store.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/outbox-store.js")>(
+    "../../paired-page/src/outbox-store.js",
   );
   return {
     ...real,
@@ -138,6 +150,12 @@ async function mount(bearer: BearerManager): Promise<void> {
   await ticks(2);
 }
 
+/** A notice the frame would say: its title and its answers, as the slot draws them. */
+function Said({ notice }: { notice: () => readonly FrameNotice[] }) {
+  const said = notice();
+  return h("div", null, ...said.map((n, i) => h("p", { key: i }, n.title, ...(n.acts ?? []).map((a) => h("button", { key: a.label, type: "button", onClick: a.onPress }, a.label)))));
+}
+
 /** Render a node the gate handed the shell, and read what a person would see. */
 async function textOf(node: unknown): Promise<string> {
   const el = document.createElement("div");
@@ -153,7 +171,7 @@ async function textOf(node: unknown): Promise<string> {
 beforeEach(() => {
   mode = "away";
   reached = [];
-  shellProps = null;
+  host = null;
   pairProps = null;
   discards = [];
   window.localStorage.clear();
@@ -225,14 +243,14 @@ describe("a browser that will not keep them says so, once", () => {
     await ticks(2);
     const notice = shellProps!.accountNotice;
     expect(notice).toBeDefined();
-    expect(await textOf(notice)).toContain(messages.pairLanding.outboxNotKept);
+    expect(await textOf(h(Said, { notice: notice! }))).toContain(messages.pairLanding.outboxNotKept);
 
     // Dismissed, it stays away for this pairing.
     const el = document.createElement("div");
     document.body.append(el);
     const r = createRoot(el);
     await act(async () => {
-      r.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: notice as React.ReactNode }));
+      r.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(Said, { notice: notice! }) }));
     });
     await act(async () => { el.querySelector("button")!.click(); });
     await act(async () => r.unmount());
@@ -288,7 +306,7 @@ describe("Sign out on the paired browser", () => {
   }
 
   async function landing(): Promise<string> {
-    const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>("../src/host-client/PairScreen.js");
+    const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>("../../paired-page/src/PairScreen.js");
     return textOf(h(real.PairScreen, pairProps as unknown as Parameters<typeof real.PairScreen>[0]));
   }
 

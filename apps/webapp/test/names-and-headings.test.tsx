@@ -68,7 +68,7 @@ async function mount(node: React.ReactElement): Promise<HTMLElement> {
 
 async function shell(hash: string): Promise<HTMLElement> {
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   return mount(h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }));
 }
@@ -103,14 +103,19 @@ describe("a control's name is its words (R21-08)", () => {
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const controls = keyedControls(root);
     const names = new Set(controls.map((c) => c.name));
-    for (const want of ["Compose", "Search", "Reply", "Later", "Park", "Screening"]) expect(names, `no control named "${want}"`).toContain(want);
+    for (const want of ["Reply", "Later", "Park", "Screening"]) expect(names, `no control named "${want}"`).toContain(want);
     const withCap = controls.filter((c) => c.caps.some((cap) => cap !== "" && c.name.endsWith(cap)));
     expect(withCap.map((c) => `${c.name} (${c.caps.join(" ")})`), "names that end in their keycap").toEqual([]);
     const byName = Object.fromEntries(controls.map((c) => [c.name, c.keys]));
-    expect(byName.Compose).toBe("c");
     expect(byName.Reply).toBe("r");
-    expect(byName.Search).toBe("/");
     expect(byName.Forward).toBe("Shift+F");
+    /* The rail's Compose and Search print no keycap at rest, and state their keys all the same, as 1.0's did. */
+    const inRail = (want: string) =>
+      [...root.querySelectorAll<HTMLElement>("nav button, nav a")].find((b) => nameOf(b) === want);
+    expect(inRail("Compose"), "the rail has no control named Compose").toBeTruthy();
+    expect(inRail("Compose")!.getAttribute("aria-keyshortcuts")).toBe("c");
+    expect(inRail("Search"), "the rail has no control named Search").toBeTruthy();
+    expect(inRail("Search")!.getAttribute("aria-keyshortcuts")).toBe("/");
   });
 
   it("a keycap that is a control's only text stays its name (control)", async () => {

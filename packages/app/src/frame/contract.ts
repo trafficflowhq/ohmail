@@ -1,0 +1,285 @@
+/**
+ * THE FRAME'S CONTRACT: what a place registers, what the frame's parts take, the one order of the
+ * notice slot, and the commands between features. Types, three lists and one table; it compiles with
+ * no screen present, so a screen task builds on it before the frame's parts exist.
+ */
+import type { ComponentType, ReactNode } from "react";
+import type { IconName, NoticeAct } from "@ohmail/ui/base";
+import type { ToastFn } from "@ohmail/app-logic/press";
+import type {
+  Appearance,
+  HostAddress,
+  HostContract,
+  HostSession,
+  LinkedDraft,
+  None,
+  Pointer,
+  Posture,
+  WindowFacts,
+} from "../host/index.js";
+
+export type { Appearance, Pointer, Posture, WindowFacts };
+
+export const PLACE_IDS = [
+  "ohbox",
+  "news",
+  "receipts",
+  "screener",
+  "later",
+  "parked",
+  "resurface",
+  "history",
+  "drafts",
+  "trash",
+  "tags",
+  "folder",
+  "address",
+  "search",
+  "write",
+  "settings",
+] as const;
+export type PlaceId = (typeof PLACE_IDS)[number];
+export const STAGE_IDS = ["firstRun"] as const;
+export type StageId = (typeof STAGE_IDS)[number];
+export const RAIL_GROUPS = ["main", "later", "more", "tags", "folders"] as const;
+export type RailGroupId = (typeof RAIL_GROUPS)[number];
+
+/** The place a person is in: one object. The shell's address door carries it; a feature never reads the address. */
+export interface Route {
+  readonly place: PlaceId;
+  /** The place's own word: a Screener segment, a tag's, folder's or correspondent's id, a Settings pane. */
+  readonly sub: string | null;
+  /** The letter open in it. */
+  readonly open: string | null;
+  readonly stage: { readonly id: StageId; readonly words: Readonly<Record<string, string>> } | null;
+  readonly words: Readonly<Record<string, string>>;
+}
+export type RouteTarget = Pick<Route, "place"> & Partial<Omit<Route, "place">>;
+
+export type SizeClass = "compact" | "medium" | "expanded";
+export interface LayoutPlan {
+  readonly size: SizeClass;
+  readonly short: boolean;
+  readonly pointer: Pointer;
+  readonly device: "desktop" | "fold" | "phone";
+  readonly pose: "land" | null;
+  readonly rail: "words" | "icons" | "dock";
+  readonly columns: 1 | 2;
+  readonly handles: boolean;
+}
+export interface PaneProps {
+  readonly route: Route;
+  readonly plan: LayoutPlan;
+  readonly keysHere: boolean;
+}
+
+export interface PlaceRail {
+  readonly group: RailGroupId;
+  readonly icon: IconName;
+  /** A key in the place's namespace. */
+  readonly label: string;
+  readonly keyHint?: string;
+  readonly useCount?: () => { readonly count: string; readonly hot: boolean } | null;
+}
+/**
+ * A place's panes. `List` draws on the frame's list sheet beside a rail or an upright dock (a sheet never lies
+ * on a sheet), and on the ground on a phone's width (`plan.device === "phone"`), where it lays its rows' own.
+ * `Reading` and `Wide` draw their own sheets.
+ */
+export type PlacePanes =
+  | {
+      readonly kind: "columns";
+      readonly List: ComponentType<PaneProps>;
+      readonly Reading: ComponentType<PaneProps> | "reader";
+    }
+  | { readonly kind: "wide"; readonly Wide: ComponentType<PaneProps> };
+/** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */
+export interface PlaceEntry {
+  readonly id: PlaceId;
+  readonly body: string;
+  readonly rail: PlaceRail | null;
+  readonly panes: PlacePanes;
+}
+export interface StageEntry {
+  readonly id: StageId;
+  readonly Body: ComponentType<PaneProps>;
+}
+export type FramePlaces = Readonly<Record<PlaceId, PlaceEntry | None>>;
+export type FrameStages = Readonly<Record<StageId, StageEntry | None>>;
+
+/** The address bar the frame reads and writes the fragment through (the host's `device.address`). */
+export type FrameAddress = HostAddress;
+/** The way back to a live session (the host's `session.recover`). `none` withholds the control. */
+export type Recover = HostSession["recover"];
+/** The frame's host is the contract: places and stages are its features, the address, window and look its device. */
+export type FrameHost = HostContract;
+
+export interface ColumnsProps {
+  readonly plan: LayoutPlan;
+  readonly rail: ReactNode;
+  readonly list: ReactNode;
+  /** The list has the keys: the face that rings the column with the keyboard rings the list's sheet. */
+  readonly listKeys: boolean;
+  readonly reading: ReactNode;
+  readonly wide: ReactNode | null;
+  readonly labels: {
+    readonly list: string;
+    readonly reading: string;
+    readonly railWidth: string;
+    readonly listWidth: string;
+  };
+}
+export interface StageProps {
+  readonly open: boolean;
+  readonly label: string;
+  readonly children: ReactNode;
+}
+export interface RailEntryModel {
+  readonly id: string;
+  /** The place the entry stands for where its id is not the place's (today's News is fed as `reads`). */
+  readonly place?: PlaceId;
+  readonly kind: "place" | "sub" | "fold" | "tool";
+  readonly label: string;
+  readonly icon?: IconName;
+  readonly hue?: number;
+  readonly count?: string;
+  readonly countHot?: boolean;
+  readonly keyHint?: string;
+  /** The key also stands at rest in the face that prints keys on its controls (Search's `/`). */
+  readonly keyStands?: boolean;
+  /** Its key in `aria-keyshortcuts`' own spelling ("/", "Shift+F"): said to a screen reader on the entry. */
+  readonly shortcut?: string;
+  readonly current?: boolean;
+  readonly expanded?: boolean;
+  readonly depth?: number;
+  readonly title?: string;
+  readonly onPress: () => void;
+}
+export interface RailModel {
+  readonly groups: readonly {
+    readonly id: string;
+    readonly entries: readonly RailEntryModel[];
+    readonly node?: ReactNode;
+  }[];
+  readonly write: {
+    readonly label: string;
+    readonly keyHint?: string;
+    /** Its key in `aria-keyshortcuts`' own spelling ("c"): said to a screen reader on the way to write. */
+    readonly shortcut?: string;
+    readonly onPress: () => void;
+  } | null;
+  /** The account's line in the rail's foot; null while nobody is known, and the line is withheld. */
+  readonly account: {
+    readonly name: string;
+    readonly address: string;
+    readonly note: string;
+    readonly title: string;
+    readonly onPress: () => void;
+  } | null;
+  readonly pull: {
+    readonly label: string;
+    readonly keyHint?: string;
+    readonly busy: boolean;
+    readonly onPress: () => void;
+  } | null;
+  /** The quiet tools at the end of the account's line (the command palette, the light and dark switch), as given. */
+  readonly tools?: readonly {
+    readonly icon: IconName;
+    /** Its name, with its key where it has one: "Command palette · Ctrl K". */
+    readonly label: string;
+    readonly onPress?: () => void;
+  }[];
+  /**
+   * The classes a shell's own key model finds the rail by while it feeds it (today's views: `rail open`). The rail
+   * then stands in a box that carries them and draws nothing.
+   */
+  readonly mark?: string;
+}
+
+/**
+ * THE ONE ORDER of the notice slot. Lower stands in front. Taken from the simulation's table; the kinds
+ * marked * are the shipped app's alone, placed beside their nearest drawn neighbour.
+ */
+export const NOTICE_RANK = {
+  signedOut: 0,
+  ownerLost: 1, // *
+  noMailbox: 5,
+  offline: 10,
+  hostQuiet: 11, // *
+  mailServerDown: 12,
+  reconnecting: 14,
+  late: 15, // *
+  mailboxPassword: 20,
+  mailboxSync: 22,
+  notSent: 28,
+  sentCopy: 29,
+  unsaved: 30,
+  notKept: 31, // *
+  organizingStopped: 40,
+  notOrganizing: 41,
+  filingStopped: 42,
+  waiting: 43,
+  organizedElsewhere: 44,
+  reader: 45,
+  filingElsewhere: 46,
+  gap: 47,
+  unscreened: 48,
+  filingStuck: 49,
+  filingWaits: 50,
+  mailboxFull: 60,
+  storageFull: 61,
+  storage: 62,
+  payment: 70,
+  grace: 71,
+  trial: 72,
+  update: 80,
+  settingsFound: 81,
+  away: 82,
+  noMail: 83,
+  signInCopies: 84,
+  ohmarchy: 85,
+  caughtUp: 86,
+  sending: 89, // *
+  behind: 90,
+  firstSync: 91,
+  filing: 92,
+  desktopOffer: 95, // *
+} as const;
+export type NoticeKind = keyof typeof NOTICE_RANK;
+export interface FrameNotice {
+  readonly kind: NoticeKind;
+  /** Where one kind stands more than once (one per mailbox): what tells them apart. */
+  readonly id?: string;
+  readonly title: string;
+  readonly hot?: boolean;
+  readonly line?: string;
+  readonly acts?: readonly [NoticeAct] | readonly [NoticeAct, NoticeAct];
+}
+
+/** The few named commands between features. Nothing else crosses a feature's border. */
+export interface FrameCommands {
+  go(to: RouteTarget): void;
+  open(letter: string | null): void;
+  write(draft?: LinkedDraft): void;
+  rail(open: boolean): void;
+  /** A body that stands over the app (a stage not yet registered) holds the frame inert. */
+  hold(held: boolean): void;
+}
+export interface FrameApi {
+  readonly host: FrameHost;
+  readonly route: Route;
+  readonly plan: LayoutPlan;
+  readonly commands: FrameCommands;
+  readonly report: ToastFn;
+}
+
+/*
+ * THE NAMESPACE RULE.
+ * - A feature reads `useText("<its PlaceId>")` and `useText("shared")`, and nothing else.
+ * - Its sentences are `packages/app/messages/<its PlaceId>.en.json` and `.de.json`, both in the same change.
+ * - Keys are `thing.state` under that namespace.
+ * - It never edits another place's file, `order.json` or the aggregates by hand: it runs
+ *   `node packages/app/scripts/catalogue.mjs --write`.
+ * - The frame's namespace is `frame`. Reason words are `reason.<list>.<word>` in `reasons.*.json`, which
+ *   counts as the core's side.
+ */

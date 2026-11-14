@@ -57,7 +57,7 @@ async function settle(n = 8): Promise<void> {
 async function mountShell(hash: string, opts: { faces?: boolean } = {}): Promise<void> {
   await unmount();
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -120,7 +120,7 @@ afterEach(async () => {
 });
 
 /* The shell's first import is paid once here, not inside the first case's five seconds. */
-beforeAll(async () => { await import("../app/shell/AppShell.js"); }, 120_000);
+beforeAll(async () => { await import("./_todays-shell.js"); }, 120_000);
 
 /** `g b`, and the hash change's own task — jsdom dispatches `hashchange` on a timer. */
 async function goToThePile(): Promise<void> {

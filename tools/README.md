@@ -52,6 +52,9 @@ and the task that removes it. A border row also names the package the import rea
   Within one task, a crossing may pass between `ohmail/package-borders:<unit>` and `ohmail/declared-dependency`
   in the same file without being growth, as long as the file's sum over those rules does not grow. Where that
   sum grew, each rule is judged as above, and so is the sum against what other files' sums lost.
+- a row whose task is `ruling:<id>` stands by a written ruling named in the change's message: it is
+  not judged for growth, and what it lost or took over pays for no task's growth. Every run with a base prints one
+  line per ruling id, its findings and rows now and at the base, so a waiver is seen to shrink.
 
 So a new violation cannot be added to the baseline. Nor is a rule switched off in a file: a finding under an
 `eslint-disable` comment counts like any other, a comment that sets a rule is refused in every file, and the

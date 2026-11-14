@@ -3,7 +3,7 @@
  * The window is the shared shell's (`shell/trash-window.ts`); the two paths, the epoch that
  * travels with a UID and the status contract live here once for both doors: the desktop window
  * over its bridge (`local-trash.ts`) and the served host client over its bearer socket
- * (`host-client/transports.ts`). No transport is imported — the served host client has no
+ * (`apps/paired-page/src/transports.ts`). No transport is imported — the served host client has no
  * bridge, and `scan:host` refuses the shell command's name in the phone bundle.
  * GET-ONLY: restore aims at a mirror row's recorded origin folder, and a message the provider
  * filed in Trash has none — "put it back" would be ohmail choosing a folder for somebody's mail.

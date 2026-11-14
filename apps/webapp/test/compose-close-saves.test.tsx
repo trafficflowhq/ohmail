@@ -120,7 +120,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
 let container: HTMLElement;
 
 async function mountCompose(extra: Record<string, unknown> = {}): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = new MemoryMirrorStore();
   await store.load();

@@ -86,7 +86,7 @@ afterEach(async () => {
 
 /** The shipped shell on the fixture world, wrapped exactly as the desktop entry wraps it. */
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");

@@ -195,7 +195,7 @@ function copyUnkept(dto: unknown): boolean {
   return typeof copy === "object" && copy !== null && (copy as { kept?: unknown }).kept === false;
 }
 
-const HOSTED: ProfileImportTransport = {
+export const HOSTED: ProfileImportTransport = {
   candidate: (id) => profileImportApi.candidate(id),
   apply: (id, fingerprint, signatureReplaces) => profileImportApi.apply(id, fingerprint, signatureReplaces),
   status: (id, fingerprint) => profileImportApi.status(id, fingerprint),

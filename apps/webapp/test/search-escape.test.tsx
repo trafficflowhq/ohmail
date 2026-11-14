@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -196,14 +196,24 @@ describe("TRI-F3 — Escape in Search: clear, then leave", () => {
   }, 20000);
 });
 
-describe("TRI-F8 — Escape closes the nav drawer", () => {
-  it("open the drawer from the topbar, press Escape, the drawer and backdrop are gone", async () => {
-    const container = await shell();
-    const openNav = container.querySelector<HTMLButtonElement>(".topbar .tb-btn")!;
-    await act(async () => openNav.click());
-    await waitFor(() => document.querySelector(".rail-bg.open") != null, "the drawer backdrop");
+/*
+ * THE NAV DRAWER IN THE FRAME. Under 840 px the whole rail is More's sheet over the app: the case above's probe re-read
+ * (the dock's More opens it, the sheet's scrim is its backdrop, a window's width is its innerWidth, and Escape is
+ * pressed where the keys are, as a browser does).
+ */
+describe("TRI-F8 — Escape closes the nav drawer, in the frame", () => {
+  afterEach(() => { Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 }); });
 
-    await key("Escape");
-    await waitFor(() => document.querySelector(".rail-bg.open") == null, "Escape closed the drawer");
+  it("open the drawer from the topbar, press Escape, the drawer and backdrop are gone", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    const container = await shell();
+    const openNav = [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === "More")!;
+    await act(async () => openNav.click());
+    await waitFor(() => document.querySelector("[data-scrim]") != null, "the drawer backdrop");
+
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await waitFor(() => document.querySelector("[data-scrim]") == null, "Escape closed the drawer");
   }, 20000);
 });

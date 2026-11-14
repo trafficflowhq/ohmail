@@ -6,8 +6,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import messages from "../../webapp/messages/en.json";
-import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { PairScreen } from "../src/host-client/PairScreen.js";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { PairScreen } from "../../paired-page/src/PairScreen.js";
 
 /**
  * ═══ THE /pair FRAGMENT LANDING — the credential discipline, held behaviourally ═══════════════

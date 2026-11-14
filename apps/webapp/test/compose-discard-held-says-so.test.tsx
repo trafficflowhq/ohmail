@@ -45,7 +45,7 @@ async function goto(hash: string): Promise<void> {
 }
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

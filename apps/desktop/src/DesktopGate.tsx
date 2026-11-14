@@ -24,7 +24,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Button, Spinner, useOptionalToast } from "@ohmail/ui";
 
-import { AppShell } from "../../webapp/app/shell/AppShell";
+import { createFeed, NONE, type HostConnectionState } from "@ohmail/app/host";
+import { EngineProvider } from "../../webapp/app/shell/engine";
+import { DesktopFrame } from "./DesktopFrame.js";
+import { linkSlot } from "./link-in.js";
 import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "../../webapp/app/shell/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
@@ -92,9 +95,6 @@ import { localImageDoor } from "./local-images.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
 
-/** Load it now over the bridge: the hosted door forwards `GET /messages/:id/live-body`. */
-function liveBodyBridge(path: string): Promise<Response> { return bridgeFetch(path); }
-const liveBodyOverBridge = liveBodyVia(liveBodyBridge);
 import { junkOverBridge } from "./local-junk.js";
 import { trashOverBridge } from "./local-trash.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
@@ -111,7 +111,7 @@ import {
 import { LinkAsk } from "./LinkAsk.js";
 import { decideNotices } from "@ohmail/client-engine";
 import { readChannels } from "../../webapp/app/shell/notification-settings";
-import { parseMailto, type MailtoDraft } from "@trafficflow/core/mailto";
+import { parseMailto } from "@trafficflow/core/mailto";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import {
   createLocalEngine, onAccessRefused, waitingFor, type AccessRefusedFacts, type EngineStatus, type SignedOut,
@@ -184,6 +184,10 @@ interface HostedAuth {
  * `restartRequired` is read first where it is used, because its shape is `preAuth`'s. An older
  * engine sends no `sealed` and no `session`, and an absent field is not a fault.
  */
+/** Load it now over the bridge: the hosted door forwards `GET /messages/:id/live-body`. */
+function liveBodyBridge(path: string): Promise<Response> { return bridgeFetch(path); }
+const liveBodyOverBridge = liveBodyVia(liveBodyBridge);
+
 function hostedAuthOf(key: string, health: {
   signedIn?: boolean; sessionExpired?: boolean; restartRequired?: boolean; sealed?: boolean; session?: unknown;
   accountErased?: boolean; queued?: { count?: unknown } | null;
@@ -357,7 +361,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      whose poke fired before this bundle's scripts ran. The parsed draft waits in state until the
      mail client is on screen (the AppShell below consumes it), so a click on a not-yet-connected
      install becomes the compose the moment a mailbox is. See the header. */
-  const [mailtoDraft, setMailtoDraft] = useState<MailtoDraft | null>(null);
+  const [links] = useState(linkSlot);
   useEffect(() => {
     /* ONE READING OF A MAILTO, TWO ORIGINS. The OS hands one to the shell and this window
        claims it; the window's own link seam hands one straight over. Both go through
@@ -365,7 +369,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
        clicked in another application cannot open different compose forms. */
     const seed = (raw: string): void => {
       const draft = parseMailto(raw);
-      if (draft) setMailtoDraft(draft);
+      if (draft) links.offer(draft);
     };
     const claim = async (): Promise<void> => {
       const raw = await claimMailto();
@@ -477,6 +481,9 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      below would be skipped on the renders that return early — which is the "rendered fewer hooks
      than expected" crash, arriving on whichever render first took a different branch. */
   const onUnread = useUnreadSink();
+  /* The other computer's silence as a signal the frame reads: made once, above every early return, for `onUnread`'s
+     reason. */
+  const [connectionFeed] = useState(() => createFeed<HostConnectionState | null>(null, sameConnection));
   /* WHERE THE APP IS, for the one-ask rule below — the SAME hash route `AppShell` gates the
      first-run stage on, so the flow being open and this prompt waiting cannot disagree. A hook,
      so it belongs up here with `onUnread` for the reason that comment gives. */
@@ -1365,393 +1372,56 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
 
   return (
     <>
-      <AppShell
+      <ConnectionValue feed={connectionFeed} value={railConnection ?? null} />
+      {status === null ? (
+        <div className="gate gate-boot">
+          <BootSkeleton active rail />
+        </div>
+      ) : (
         /**
-         * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the shell. Partitioning the
-         * storage was half of it: `ShellInner` holds the compose form in React state and
-         * loads the scratch in a mount effect, so without a key React preserves the
-         * component across a mailbox switch — the owner moves to B while mailbox A's
-         * recipients, subject and body sit in state, and the next autosave writes them into
-         * B's partition or a press sends them under B's identity. `mount.key` is the same id
-         * the partition and the engine are chosen by, so all three change together; a
-         * remount costs a re-read of the correct buffer, which is what was wanted.
+         * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the engine's provider and everything under it.
+         * Partitioning the storage was half of it: today's views hold the compose form in React state and load the
+         * scratch in a mount effect, so without a key React preserves them across a mailbox switch: the owner moves to
+         * B while mailbox A's recipients, subject and body sit in state, and the next autosave writes them into B's
+         * partition or a press sends them under B's identity. `mount.key` is the same id the partition and the engine
+         * are chosen by, so all three change together. On the outermost element, so B's frame never mounts for one
+         * commit over A's engine.
          */
-        key={shellKey}
-        /* Always false, structurally: the early return above means this line is only reached
-           with a real engine behind the window, and `demo` — the ribbon, the frozen clock, the
-           fixtures adapter — would be a lie about somebody's own mail. The desktop has no demo
-           surface at all; the one demo lives on ohmail.app's landing page. */
-        demo={false}
-        /* The managed service only behind its own origin; the local, self-hosted and paired
-           doors name no Cloud holder and state no credit price (`managed-service.ts`). */
-        managedService={isManagedDoor(status)}
-        {...(engine ? { engine } : {})}
-        /* WHAT THE SYNC LINE IS ALLOWED TO SAY. Its ladder begins with "can we see this
-           account's mailboxes?" and stays silent when it cannot — which this window used to
-           be through the whole of a first sync. `GET /mailboxes` is served by both doors
-           from the database on this machine, so the answer costs one call down the pipe;
-           withheld while there is no engine (see `DesktopMailboxes.tsx` for why the probe
-           must reject rather than answer an empty list). On the hosted door these are the
-           ACCOUNT's own mailboxes under the account's own ids, and the same facts feed the
-           From selector — the addresses on offer are the addresses a send can leave from. */
-        {...(engine ? { mailboxFacts: readMailboxFacts } : {})}
-        /* HOW OLD IS THE MAIL ON SCREEN — the sidecar's own verdict (`GET /mirror/freshness`),
-           because the window engine drains the LOCAL feed and cannot know the desktop is days
-           behind the hosted account. Feeds the shared strip's "As of <time> · catching up" arm;
-           withheld with no engine for `mailboxFacts`'s reason. CLOUD DOOR ONLY, structurally:
-           the local door's engine has no such route (its organizer syncs in-process), and
-           passing the probe there anyway would leave the provider holding a previous Cloud
-           door's last verdict — a label about an account this window no longer shows. The
-           provider also resets its held answer when the engine or probe changes; this gate is
-           the first line, that reset the second. */
-        {...(engine && status?.mode === "cloud" ? { mirrorFreshness: readMirrorFreshness } : {})}
-        /* THE OTHER COMPUTER IS NOT ANSWERING — the one standing state this window can be in that
-           the shared shell has no way to learn for itself. Present only on the paired door and
-           only when there is something wrong to say; it also silences the sync strip's "catching
-           up" arm, which would otherwise claim activity that is not happening. See the derivation
-           above and `host-connection.ts` for the grace. */
-        {...(railConnection ? { hostConnection: railConnection } : {})}
-        /* THE SYNC STRIP YIELDS for a refused session: the card says why, and its pull-failure
-           arm would say "Retrying" over a session nothing will renew. */
-        {...(readers !== null && !readers.strip ? { sessionRefused: true } : {})}
-        /* WHAT A SEND FROM THIS WINDOW RIDES (`desktop-send-surface.ts`): the window's own
-           per-send ceiling on the standalone door and on the hosted door, which stages its
-           bytes; the self-hosted and paired doors declare nothing and keep the inline constant.
-           Guarded by `apps/desktop/test/desktop-attach-cap.test.ts`. */
-        {...(engine && desktopSendSurface(status) !== undefined
-          ? { sendSurfaceMaxTotalBytes: desktopSendSurface(status) } : {})}
-        /* SETTINGS → MAILBOXES. The shared pane's own list used to be drawn from the mirror's
-           `mailbox` entities, which only the invented world has — so on a real install it was an
-           empty pane; that fallback is deleted now. This one reads the same facts the sync line
-           does, and names its mode from the door (Cloud on the hosted door, local on the other). */
-        /* THE PANE IS NO LONGER TOLD WHICH ONE MAILBOX THE ENGINE OPENS, and that absence is the
-           multi-mailbox change on this seam — the pane's own header carries the argument.
-           `onStatus` is what replaced it: removing the LAST mailbox leaves the install configured
-           for a mailbox it no longer has, so the pane runs the shell's sign-out afterwards and
-           this gate re-reads its routing from the engine state that comes back. */
-        {...(engine ? { mailboxSection: (
-          <>
-            <DesktopMailboxes
-              door={status?.mode ?? null}
-              /* NAMED ONLY WHEN THERE IS A NAME. The pane's paired arm falls back to the hosted
-                 wording without it, which is wrong but not broken; a sentence with a hole in it
-                 would be both. */
-              host={paired ? hostLabel : null}
-              flavor={flavorOf(status)}
-              server={selfHostedServerOf(status)}
-              onShellStatus={onStatus}
-            />
-            {/* THE FILINGS THAT WAIT, on every door: the local engine serves them; the Cloud door lists Cloud's figures and relays the read and both presses. */}
-            <MailboxFilings api={filingsOverBridge} />
-            {/* THE SELF-CHECK, on the local door only: its engine holds the mirror it compares. */}
-            {status?.mode === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
-          </>
-        ) } : {})}
-        /* SETTINGS → SCREENER. The shared shell's own section reaches an API client that is not
-           in this build, so it drew nothing and the pane was blank. This is the same three
-           controls over the same three columns, over the pipe. */
-        {...(status ? { screeningSection: <DesktopScreening door={status.mode ?? null} /> } : {})}
-        /* THE HOSTED DOOR'S RULES ARE A COPY OF THE ACCOUNT'S, and the copy drops which rules the act
-           wrote, so the act's switch does not promise that group here. */
-        {...(status?.mode === "cloud" ? { actRulesUnmarked: true } : {})}
-        /* SETTINGS → NOTIFICATIONS' OS ANSWER. Unconditional and not gated on `status`: this is a
-           fact about the WINDOW — it holds no notification permission and cannot acquire one, so
-           its shell asks the platform on first use — and that is true before the shell has said
-           anything about a door. Without it the pane falls back to the browser reader, whose
-           `Notification.requestPermission()` resolves here without granting anything: the master
-           switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
-        notificationHost={desktopNotificationHost}
-        /* THE REUSE SWEEPS the account's session read lists, acknowledged over the bridge. */
-        {...(accountDoor && reuseSweeps.length > 0
-          ? {
-              accountNotice: (
-                <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
-              ),
-            }
-          : {})}
-        /* STORAGE, on the Cloud door only: the card atop the Ohbox and Settings → Storage, from the
-           storage block the same access answer carries, and Load it now for a letter emptied for
-           space. Standalone holds every body and has no storage block. A store build gets the
-           numbers with no purchase (`linksOutToBilling`). */
-        {...(accountDoor && storage !== null
-          ? {
-              storageCard: <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
-              storageSection: <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
-            }
-          : {})}
-        {...(accountDoor ? { liveBodyWire: liveBodyOverBridge } : {})}
-        /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
-           facts a standalone install has to answer are not the hosted service's. */
-        {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
-        /* SETTINGS → HELP & CONTACT. The block names the hosted account on the account door and none
-           elsewhere; a mailto here would come back into this window's composer, so the fallback is copy. */
-        {...(status ? { support: { surface: "desktop" as const, version: BUILD_VERSION, commit: BUILD_SHA || null, accountId: hostedAccountId, mailtoLeaves: false } } : {})}
-        /* The pane the web client cannot have. Present only when the shell answered — outside
-           the app there is no install to describe, and an empty one would be a pane about
-           nothing. */
-        desktopSection={
-          status
-            ? {
-                label: desktopPaneLabel(),
-                node: (
-                  <DesktopSettings
-                    status={status}
-                    session={hostedSession}
-                    sealFailed={hostedSealFailed}
-                    /* THE SAME READ THE RAIL LINE USES, handed down rather than taken again: two
-                       clocks for one fact would let the pane and the rail disagree for up to a
-                       poll about whether the other machine is answering. */
-                    connection={paired ? freshness : null}
-                    onStatus={onStatus}
-                    onSwitchDoor={() => setOverlay("doors")}
-                    onSignIn={() => setOverlay("cloud")}
-                    /* PAIR AGAIN opens the pairing card over the running app, exactly as "Sign in
-                       again" opens the cloud form: the door is already chosen, and reconfiguring
-                       would replace the engine and take the mail off the screen to change
-                       nothing. */
-                    onPairAgain={() => setOverlay("host")}
-                    onTakeOver={beginTakeover}
-                    onAiStatus={setAi}
-                  />
-                ),
-              }
-            : undefined
-        }
-        /* SETTINGS → DEVICES — one pane id, one entry per door, two different things behind
-           it. STANDALONE: host mode's pane — publishing the engine on THIS computer is
-           something only an install holding the whole mailbox can offer (`hostDoorFor` is
-           the rule). HOSTED: the ACCOUNT's devices — sessions, the pairing mint, the
-           take-back — which this window did not have at all: an install mirroring the
-           account could not see or revoke a device. A DOOR OUT rather than a form,
-           `DesktopWebSection`'s reason: `POST /pair` and `DELETE /devices/:id` are step-up
-           gated and nothing this app does asserts a second factor — a list over verbs that
-           could only refuse would be worse than the absence. */
-        {...(hostDoorFor(status) === "local"
-          ? { devicesSection: <DesktopDevices /> }
-          : accountDoor
-            ? {
-                devicesSection: (
-                  <DesktopWebSection
-                    place="devices"
-                    copy={{ title: "webDevicesTitle", why: "webDevicesWhy", note: "webDevicesNote" }}
-                  />
-                ),
-              }
-            : {})}
-        /* A SUGGEST CONTROL PER DOOR, because the two doors are not buying the same thing.
-           On the STANDALONE door nothing is metered, so the control names no price and says
-           whether there is a model at all; on the HOSTED door the question is a browser
-           tab's — what would this cost — so that door renders the SHARED ladder over a
-           transport that reaches the account through the engine. Neither is a control with
-           nothing behind it: the hosted one is offered only once a session is held. Which of
-           the three it is — including "none" — is `suggestDoorFor`, a pure function in
-           `doors.ts` for `gateFor`'s reason. */
-        {...(suggestDoor === "local"
-          ? {
-              screenerSuggest: ({ senders, absorb }) => (
-                <LocalSuggest
-                  senders={senders}
-                  absorb={absorb}
-                  ai={ai}
-                  /* THE PANE THE FORM IS ACTUALLY ON. `go("settings")` opened the settings
-                     view at its own default — General — and the model form lives under Desktop,
-                     below the fold: a control saying "Set up a model" that lands somewhere with
-                     no model form on it, leaving the person to find it. `goSettings` names the
-                     pane, and "desktop" is where `DesktopAiSettings` is mounted. */
-                  onConfigure={() => goSettings("desktop")}
-                />
-              ),
-            }
-          : suggestDoor === "cloud"
-            ? {
-                screenerSuggest: ({ senders, resuggestable, unanswered, absorb, absorbStanding }) => (
-                  <CloudSuggest
-                    senders={senders} resuggestable={resuggestable}
-                    unanswered={unanswered} absorb={absorb} absorbStanding={absorbStanding}
-                  />
-                ),
-              }
-            : {})}
-        /* SETTINGS → AWAY RESPONDER. The shared shell offers this when `apiConfigured()`
-           says there is a server — false in EVERY desktop build — so the responder was
-           withheld from a hosted install with a real account, and from a standalone install,
-           wrong too now that the pass lives in `@trafficflow/services` (this engine bundles
-           it; the sidecar's drain runs it with this machine's own SMTP dial). A TRANSPORT
-           and not a section: the same control over whichever row the door owns. `awayDoorFor`
-           returns WHICH door, and `awayIsLocal` carries the one difference: on the
-           standalone door replies go out only while this window is open, and the pane says
-           so rather than borrowing Cloud's always-on copy. */
-        {...(awayDoorFor(status, hostedSession) !== null
-          ? {
-              awayTransport: awayOverBridge,
-              awayIsLocal: awayDoorFor(status, hostedSession) === "local",
-              /* THE THIRD PROMISE. On a paired desktop the row and the drain are the OTHER
-                 computer's, so neither of the two sentences the shell already had is true here:
-                 Cloud's promises an always-on service, and the standalone one names THIS machine
-                 while the machine that has to be awake is the other one. Passing the label is the
-                 whole of the difference, and `AwayResponderRow` prefers it over `awayIsLocal` —
-                 which `awayDoorFor` makes unreachable in this window, since it answers exactly
-                 one arm. WITHOUT this the paired door would have rendered Cloud's copy, which is
-                 the same class of false state the flavor seam exists to end. */
-              /* WITHHELD RATHER THAN EMPTY when there is no label to give. `pairedHostOf` answers
-                 null for an absent or unparseable base, and `?? ""` would have rendered "…while
-                 ohmail is open on ." — a sentence with a hole in it, which is worse than the
-                 standalone one this then falls back to. */
-              ...(awayDoorFor(status, hostedSession) === "host" && hostLabel
-                ? { awayOnHost: hostLabel }
-                : {}),
-            }
-          : {})}
-        /* ACKNOWLEDGING THE ORGANIZER NOTICE — on BOTH doors, and with no door rule of its
-           own, unlike the two seams around it. Those need one because what the route DOES
-           differs between a standalone install and a Cloud-connected one; this one stamps an
-           instant on the caller's own mailbox row, and it is mounted on both doors — served
-           locally on the standalone one, forwarded to the account on the hosted one. The
-           window presses the same path either way, so there is nothing to branch on. */
-        organizerNoticeTransport={organizerNoticeOverBridge}
-        gapLettersTransport={gapLettersOverBridge}
-        /* SETTINGS FOUND ON A MAILBOX — the profile-import card, on BOTH doors, and this is the
-           desktop-standalone tier gaining the flow's flagship case: a mailbox that arrives
-           carrying another ohmail's settings (leave Cloud, install the app) is asked before
-           anything is applied. The same transport-not-a-section rule as the away responder — the
-           card, the counts and the fingerprint-as-consent have ONE implementation and only the
-           wire is injected — but a different door rule, because the engine on this machine
-           serves the four routes ITSELF on the standalone door and forwards them to the account
-           on the hosted one. `profileImportDoorFor` is the rule, a pure function a test drives. */
-        {...(profileImportDoorFor(status, hostedSession) !== null ? { profileImportTransport: profileImportOverBridge } : {})}
-        /* SETTINGS → SCREENER AND GENERAL, THE ACCOUNT'S OWN ROW — the dormancy dial, the
-           auto-suggest opt-in and auto-unsubscribe, all built by the shared shell and withheld
-           here while its `GET /consent` could not run. Two wires, two questions:
-           `consentTransport` reads and writes the FLAG; `suggestWire` PRICES what turning it
-           on would buy — a switch that authorises spending without a quote is the one thing
-           that control must never be. The wires part company at the STANDALONE door
-           (mail 0083): `consentRoutes` are mounted on `localRoutes`, so that install has the
-           row and threads the resolved cutoff as the hosted worker does (`local-consent.ts`);
-           it also feeds `consent.known`, one of the four first-run gates. `suggestWire` STAYS
-           hosted-only: no ledger, no watermark behind a standalone engine. */
-        /* ONE WIRE PER DOOR, and the two differ by exactly one declared capability: the
-           standalone engine serves no folder verb, so its transport says the folders flag is not
-           storable and the shared shell withholds that pane instead of drawing a switch that
-           snaps back. Everything else about the two objects is the same ten calls against the
-           same paths — see `local-consent.ts`. */
-        /* ONE RULE, NOT TWO CONDITIONS. This was `accountDoor ? … : firstRunDoorFor === "local" ? …`,
-           and the pair had a hole exactly where a third door appeared: a paired desktop is
-           neither, so it would have got NO consent transport — no screening window, and nothing
-           on screen saying why — on a door where the host serves the row perfectly well one hop
-           away. `consentDoorFor` is the rule, a pure function a test can drive. */
-        {...(consentDoorFor(status, hostedSession) === "cloud"
-          ? { consentTransport: consentOverBridge }
-          : consentDoorFor(status, hostedSession) === "standalone"
-            ? { consentTransport: consentOverBridgeStandalone }
-            : {})}
-        /* PICTURES, ON EVERY DOOR THIS WINDOW HAS. Unconditional, unlike the consent transport
-           above, because the capability does not differ by door: the local engine serves the
-           image proxy itself, and a paired window's unmatched paths reach the hosted one — both
-           ends run the same `proxyImage` with the same gate. This hands in the pipe, for the
-           pictures and for the Show images press; the policy is the door's and the rendering is
-           the shared shell's. */
-        imageWire={localImageDoor}
-        imagesFromComputer={imagesFromComputer(status)}
-        draftReplyWire={draftReplyOverBridgeFor(status)}
-        {...(accountDoor ? { suggestWire: cloudSuggestWire } : {})}
-        /* THE REACH-PAST BODY WIRE — BOTH doors, `consentTransport`'s transport-not-a-control
-           rule: the door, its states and its sentences are the shared shell's
-           (`shell/older-body.ts`); this hands in the pipe. On the HOSTED door the engine serves
-           a mirrored message's body locally and FORWARDS a reach-past row's to the hosted
-           account. On the STANDALONE door the window's engine boots a BOUNDED in-memory mirror
-           over a store that holds the whole mailbox, so its lists can also hand the shell
-           reach-past rows — and the local `/messages/:id/body` route answers them from the
-           store on this machine. Gating this on the account door was review-caught: it left the
-           standalone reader with exactly the stalled Retry the wire exists to remove. */
-        {...{ olderBodyWire: olderBodyOverBridge }}
-        /* THE JUNK WINDOW'S WIRE — BOTH doors, the same transport-not-a-control rule. The
-           segment, its states, verbs and sweep offer are the shared shell's
-           (`shell/junk-window.ts`); this hands in the pipe. HOSTED: the engine has no junk
-           routes of its own — Junk is never mirrored — so every ask falls through to the
-           write-through proxy. STANDALONE: the engine serves them itself, but the segment
-           stays withheld by the flag in front of it — that door cannot STORE "Use folders"
-           (§17), and the shell gates the control on the flag. NOT "no consent row": the
-           `consentTransport` spread earlier in this prop list hands that door the row's wire;
-           `withoutFoldersFlag` strips this one FIELD (no folder verb; `local-junk.ts`). */
-        {...{ junkWire: junkOverBridge }}
-        /* THE LIVE TRASH WINDOW's wire, on the same terms. Both doors serve `/trash/window*` —
-           the standalone one from `localRoutes`, the hosted one through the relay — and without a
-           wire the section reports "no server" and is withheld, which is what this window did.
-           Two reads and no verb; `local-trash.ts` carries the argument. */
-        {...{ trashWire: trashOverBridge }}
-        /* SETTINGS → SUBSCRIPTION, SECURITY AND ACCOUNT — the three panes the web client has
-           on a hosted account and this window did not: an absent entry reads as "this product
-           does not have that", which for account deletion contradicts what the site promises.
-           All three are doors and nothing else: every control behind Security and Account is
-           step-up gated and nothing this app can do asserts a second factor; Subscription is
-           the service operator's own page, whose state this program does not hold. See
-           `DesktopWebSection` and `DesktopSubscription` — the latter is handed in only where a
-           page is served, so the nav entry follows the page. */
-        /* THE ACCOUNT'S AI SWITCH — behind `accountDoor` like the three panes below, and
-           unconditional within it: the flag exists for every hosted account. The standalone door
-           has no account and keeps its own local-model form on the Desktop pane instead. */
-        {...(accountDoor ? { aiSection: <DesktopAiAccount /> } : {})}
-        /* AND NOT ON THE MAC APP STORE BUILD, whatever the door serves: that pane's one press
-           leaves for the operator's subscription page, which App Review 3.1.1 does not allow a
-           store copy to offer. Withholding the NODE withholds the nav entry too, which is the
-           same mechanism the line above uses for a door that serves no page at all. */
-        {...(accountDoor && billingLinksOut
-          ? { billingSection: <DesktopSubscription onNowhere={withdrawManage} /> }
-          : {})}
-        {...(accountDoor
-          ? {
-              securitySection: (
-                <DesktopWebSection
-                  place="security"
-                  copy={{ title: "webSecurityTitle", why: "webSecurityWhy" }}
-                />
-              ),
-            }
-          : {})}
-        {...(accountDoor
-          ? {
-              accountSection: (
-                <DesktopWebSection
-                  place="account"
-                  copy={{
-                    title: "webAccountTitle",
-                    why: "webAccountWhy",
-                    note: "webAccountNote",
-                  }}
-                />
-              ),
-            }
-          : {})}
-        /* SETTINGS → GENERAL, THE DEFAULT-MAIL ROW. Present whenever the shell answered — the
-           question is about this COMPUTER, not about a door, so both doors get it. Every read
-           and verb in the row is a shell command (`DesktopDefaultMail.tsx`). */
-        {...(status && !isPreview() ? { defaultMailSection: <DefaultMailRow /> } : {})}
-        /* THE ONE-TIME DEFAULT-MAIL ASK — in the stage's card slot above the mail, once a mailbox is
-           connected, and never twice: either answer persists, and "already the default" persists too;
-           the Settings row is the durable way back for "Not now". In the flow, so it covers no Save.
-           NOT WHILE THE SETUP FLOW IS OPEN — measured on the released 0.13.7: at +15 s this prompt
-           stacked ON TOP of the flow's own Continue and Cancel. `route.firstRun` is the stage's own
-           gate in `AppShell`, read through the shared hash router so the two cannot disagree. It WAITS
-           rather than being withheld, as it waits behind a found-settings question. */
-        stageCard={routeNow.firstRun ? undefined : <DefaultMailAsk />}
-        /* A MAILTO CLICK BECOMING THE COMPOSE FORM — the claim effect above holds the parsed
-           fields until this render has a real engine behind it, and the shell seeds compose
-           exactly the way `writeTo` does (see `AppShell`'s `mailtoDraft`). Cleared once seeded,
-           so a remount cannot seed the same click twice. */
-        {...(mailtoDraft ? { mailtoDraft, onMailtoDraftSeeded: () => setMailtoDraft(null) } : {})}
-        /* ── THE GUIDED SETUP FLOW, ON THE DOOR IT WAS WRITTEN FOR ─────────────────────────
-         * The stage is the shared shell's (`app/shell/FirstRun.tsx`) and knows no door; it
-         * asks for one object that can make the calls, and this is the standalone door's.
-         * Absent on the hosted door and before a door is chosen — the whole gate, not a
-         * withheld feature (`firstRunDoorFor` is the rule). THE PROVIDER FORM IS INJECTED
-         * RATHER THAN IMPORTED: `apps/webapp` may not import `AiProviderForm` (a pin asserts
-         * it), and it is the SAME component Settings → AI mounts — one write path to the
-         * model file, and its `onStatus` echo lands in the same `ai` state the suggest
-         * control reads. `pairNode` is the devices surface on `hostDoorFor`'s rule: only an
-         * install that may publish its engine has anything to pair to. */
-        {...(firstRun ? { firstRun } : {})}
-        onUnread={onUnread}
-      />
+        <EngineProvider key={shellKey} demo={false} engine={engine}>
+          <DesktopFrame
+            engine={engine}
+            status={status}
+            session={hostedSession}
+            /* THE CONNECTION NOTICE YIELDS for a refused session: the card says why. */
+            sessionRefused={readers !== null && !readers.strip}
+            sealFailed={hostedSealFailed}
+            paired={paired}
+            hostLabel={hostLabel}
+            freshness={freshness}
+            account={hostedAccountId}
+            storage={accountDoor ? storage : null}
+            mayLinkOut={mayLinkOut}
+            manageOffered={manageOffered}
+            withdrawManage={withdrawManage}
+            rereadAccess={rereadAccess}
+            reuseSweeps={accountDoor ? reuseSweeps : NO_SWEEPS}
+            recheckSweeps={recheckHostedSession}
+            ai={ai}
+            setAi={setAi}
+            onStatus={onStatus}
+            openOverlay={setOverlay}
+            takeOver={beginTakeover}
+            firstRunOpen={routeNow.firstRun}
+            firstRun={firstRun}
+            takesMailLinks={!isPreview()}
+            scope={shellKey}
+            onUnread={onUnread}
+            liveBody={liveBodyOverBridge}
+            links={links}
+            connection={connectionFeed}
+          />
+        </EngineProvider>
+      )}
       {doorOverlay}
       {refusedCard}
       <ScopeShown scope={shellKey} cloud={status?.mode === "cloud"} into={served} />
@@ -1764,6 +1434,21 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
  * Never from `live`: that client is built before the session is read, so a launch that shows only a
  * revoke's card would record a mailbox it never showed, over the one whose keys are owed.
  */
+/** Two readings of the other computer's silence are one when they say the same. */
+function sameConnection(a: HostConnectionState | null, b: HostConnectionState | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.state === b.state && a.words.title === b.words.title && a.words.detail === b.words.detail
+    && a.words.link?.href === b.words.link?.href && a.words.link?.label === b.words.link?.label;
+}
+
+const NO_SWEEPS: readonly never[] = [];
+
+/** Feeds the frame's signal with the gate's reading, after each render that changed it. */
+function ConnectionValue({ feed, value }: { feed: ReturnType<typeof createFeed<HostConnectionState | null>>; value: HostConnectionState | null }) {
+  useLayoutEffect(() => feed.set(value), [feed, value]);
+  return null;
+}
+
 function ScopeShown({ scope, cloud, into }: {
   scope: string; cloud: boolean; into: { current: { scope: string; cloud: boolean } | null };
 }) {
