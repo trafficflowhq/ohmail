@@ -75,7 +75,7 @@ afterEach(async () => {
  */
 async function mountLive(engine: OhmailEngine, olderItems: EngineMessage[] = []) {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const frames: Frame[] = [];
   const older = { available: olderItems.length > 0, items: olderItems, loading: false, error: null, exhausted: true, loadMore: () => {} };
   const lookup = (id: string): EngineMessage | undefined =>

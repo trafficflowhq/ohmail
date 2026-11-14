@@ -29,7 +29,7 @@ import {
   senderName,
   withheldCopyKey,
 } from "./format";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useBodyStalled, useMessageChrome, useWithheldSentence } from "./message-chrome";
 import { useDrawnBody } from "./body-slice";
 import { InvitationNote } from "./InvitationNote";

@@ -112,7 +112,7 @@ describe("the reason a reader's press is refused has one decider, and every refu
 type SourceFile = { file: string; raw: string };
 
 const MAIL_STATE = "packages/app-logic/src/mail-state/mail-state.ts";
-const SCREENER_STATE = "apps/webapp/app/shell/screener-state.ts";
+const SCREENER_STATE = "packages/app-logic/src/screener/screener-state.ts";
 const SHELL_DISPATCH = "packages/app-logic/src/press/shell-dispatch.ts";
 const APP_SHELL = "apps/webapp/app/shell/AppShell.tsx";
 const PHONE_FORM = "apps/mobile/src/ui/standalone-form.ts";

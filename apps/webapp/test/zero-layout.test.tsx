@@ -19,9 +19,9 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { chordKeys, modGlyph } from "../app/shell/keymap";
-import { readColumnHidden } from "../app/shell/narrow";
-import { currentZone } from "../app/shell/zone-nav";
+import { chordKeys, modGlyph } from "@ohmail/app-logic/keys/keymap";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
+import { currentZone } from "@ohmail/app-logic/keys/zone-nav";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;

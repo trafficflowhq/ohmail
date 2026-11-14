@@ -79,13 +79,14 @@ async function flush(n = 20): Promise<void> {
 }
 
 async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, ((m: string) => { toasts.push(m); }) as never);
+    const state = useScreenerState(engine, ACCOUNT, v, ((m: string) => { toasts.push(m); }) as never, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true, selection: sel as never,

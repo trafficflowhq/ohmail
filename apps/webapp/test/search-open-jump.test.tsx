@@ -9,7 +9,8 @@ import { openTargetFor, readerMessageFor } from "../app/shell/AppShell";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 
 /**

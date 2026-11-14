@@ -112,7 +112,7 @@ const writes: Promise<unknown>[] = [];
 
 async function render(engine: OhmailEngine, selectedId: string | null): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const box = ohboxView(engine.read(), engine.openRowHeld());
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: NOW,

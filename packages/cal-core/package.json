@@ -165,6 +165,48 @@
       "ohmail-source": "./src/itip/reply.ts",
       "node": "./dist/itip/reply.js",
       "default": "./src/itip/reply.ts"
+    },
+    "./found/types": {
+      "types": "./src/found/types.ts",
+      "ohmail-source": "./src/found/types.ts",
+      "node": "./dist/found/types.js",
+      "default": "./src/found/types.ts"
+    },
+    "./found/text": {
+      "types": "./src/found/text.ts",
+      "ohmail-source": "./src/found/text.ts",
+      "node": "./dist/found/text.js",
+      "default": "./src/found/text.ts"
+    },
+    "./found/lexicon": {
+      "types": "./src/found/lexicon.ts",
+      "ohmail-source": "./src/found/lexicon.ts",
+      "node": "./dist/found/lexicon.js",
+      "default": "./src/found/lexicon.ts"
+    },
+    "./found/grammar": {
+      "types": "./src/found/grammar.ts",
+      "ohmail-source": "./src/found/grammar.ts",
+      "node": "./dist/found/grammar.js",
+      "default": "./src/found/grammar.ts"
+    },
+    "./found/rules": {
+      "types": "./src/found/rules.ts",
+      "ohmail-source": "./src/found/rules.ts",
+      "node": "./dist/found/rules.js",
+      "default": "./src/found/rules.ts"
+    },
+    "./found/suggestion": {
+      "types": "./src/found/suggestion.ts",
+      "ohmail-source": "./src/found/suggestion.ts",
+      "node": "./dist/found/suggestion.js",
+      "default": "./src/found/suggestion.ts"
+    },
+    "./found/model": {
+      "types": "./src/found/model.ts",
+      "ohmail-source": "./src/found/model.ts",
+      "node": "./dist/found/model.js",
+      "default": "./src/found/model.ts"
     }
   },
   "dependencies": {}

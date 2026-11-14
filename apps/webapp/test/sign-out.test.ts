@@ -624,9 +624,9 @@ describe("a one-account wipe takes only what its reach allows", () => {
     (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = new fake.IDBFactory();
     engine = await import("@ohmail/client-engine");
     k = {
-      locks: (await import("../app/shell/send-lock")).SEND_LOCKS_PREFIX,
-      notes: (await import("../app/shell/mail-send")).SENT_COPY_NOTES_PREFIX,
-      reply: (await import("../app/shell/mail-send")).REPLY_DRAFT_PREFIX,
+      locks: (await import("@ohmail/app-logic/writing/send-lock")).SEND_LOCKS_PREFIX,
+      notes: (await import("@ohmail/app-logic/writing/mail-send")).SENT_COPY_NOTES_PREFIX,
+      reply: (await import("@ohmail/app-logic/writing/mail-send")).REPLY_DRAFT_PREFIX,
       minted: (await import("../app/session-refresh")).SESSION_MINTED_KEY,
       owed: (await import("../app/(product)/resume/signed-out-note")).REVOKE_OWED_PREFIX,
     };
@@ -719,8 +719,8 @@ describe("a one-account wipe takes only what its reach allows", () => {
     return [...FACE, ...PUSH].filter((key) => localStorage.getItem(key) !== null);
   }
   /** A's and B's reply text, body and meta, through the real writer. */
-  async function typeReplies(): Promise<typeof import("../app/shell/mail-send")> {
-    const send = await import("../app/shell/mail-send");
+  async function typeReplies(): Promise<typeof import("@ohmail/app-logic/writing/mail-send")> {
+    const send = await import("@ohmail/app-logic/writing/mail-send");
     for (const owner of [A, B]) {
       send.writeReplyDraft(`m-of-${owner}`, { text: `words of ${owner}`, html: "" }, owner);
       send.writeReplyMeta(`m-of-${owner}`, { subject: `subject of ${owner}` }, owner);
@@ -729,7 +729,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
   }
   const holding = (text: string): string[] =>
     Object.keys(localStorage).filter((key) => localStorage.getItem(key)!.includes(text));
-  const repliesOf = (send: typeof import("../app/shell/mail-send"), owner: string): [string, string | undefined] =>
+  const repliesOf = (send: typeof import("@ohmail/app-logic/writing/mail-send"), owner: string): [string, string | undefined] =>
     [send.readReplyDraft(`m-of-${owner}`, owner).text, send.readReplyMeta(`m-of-${owner}`, owner).subject];
 
   it("`account`: A's reply text, face and push id go; B's reply text, an old key and what names B or nobody stay", async () => {

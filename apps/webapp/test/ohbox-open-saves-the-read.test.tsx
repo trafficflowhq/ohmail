@@ -99,7 +99,7 @@ async function groups(): Promise<{ newForYou: EngineMessage[]; previouslySeen: E
 
 async function draw(): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const g = await groups();
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:10:00.000Z"),

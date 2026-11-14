@@ -72,7 +72,8 @@ function mountRail(): void {
 
 async function render(newForYou: Row[]): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider, useEnabledBinding } = await import("../app/shell/keymap.js");
+  const { useEnabledBinding } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   markSeen = [];
   viewRenders = 0;
   // Called as a function, so the view's own hooks live here and its every render is counted.
@@ -343,7 +344,7 @@ describe("the zone walk: rail ← list → open message", () => {
   it("↑/↓ inside the reading column scroll it by the named step and move no cursor", async () => {
     setViewport();
     await render(FIVE);
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     await key("ArrowDown");
     await key("ArrowRight");
     const col = host!.querySelector<HTMLElement>(".read-col")!;
@@ -449,7 +450,7 @@ describe("the zone walk: rail ← list → open message", () => {
     // re-derives the zone; this hand-made div rides the focus observer instead.
     await act(async () => { document.dispatchEvent(new Event("focusin")); });
 
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     await key("ArrowDown");
     expect(sheet.scrollTop, "↓ did not scroll the visible sheet — focus never entered it, and must not have to")
       .toBe(READER_SCROLL_STEP);
@@ -494,7 +495,7 @@ describe("the zone walk: rail ← list → open message", () => {
     document.body.appendChild(sheet);
     await act(async () => { buried.focus(); });
 
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     await key("ArrowDown", buried);
     expect(sheet.scrollTop, "↓ from a field buried under the sheet did not scroll the sheet")
       .toBe(READER_SCROLL_STEP);
@@ -559,7 +560,7 @@ describe("the zone walk: rail ← list → open message", () => {
     document.body.appendChild(toast); // after the sheet, exactly as ToastHost renders
     await act(async () => { toast.querySelector("button")!.focus(); });
 
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     await key("ArrowDown", toast.querySelector("button")!);
     expect(sheet.scrollTop, "an invisible toast button silenced the visible reader")
       .toBe(READER_SCROLL_STEP);
@@ -592,7 +593,7 @@ describe("the zone walk: rail ← list → open message", () => {
     const row = host!.querySelector<HTMLElement>(".row.sel")!;
     const col = host!.querySelector<HTMLElement>(".read-col")!;
     const items = [...rail!.querySelectorAll<HTMLElement>("button")];
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     viewRenders = 0;
 
     await act(async () => { items[0]!.focus(); });

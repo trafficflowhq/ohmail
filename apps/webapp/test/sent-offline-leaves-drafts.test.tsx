@@ -5,10 +5,11 @@ import { OUTBOX_TYPE, type EngineDraft, type EngineMutation } from "@ohmail/clie
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { readComposeRow, resetComposerForTest } from "../app/shell/compose";
+import { readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import {
   act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * A MESSAGE SENT WHILE OFFLINE LEAVES DRAFTS AS AN ONLINE ONE DOES (a tester report).
@@ -278,7 +279,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
     await rounds(40);
     const letters = unsent(s).filter((d) => d.subject === "Written offline");
-    expect({ letters: letters.length, held: readComposeRow() === (letters[0]?.id ?? "none") },
+    expect({ letters: letters.length, held: readComposeRow(storageOwner()) === (letters[0]?.id ?? "none") },
       "the letter's row was left beside the composer, or written twice").toEqual({ letters: 1, held: true });
   }, 60_000);
 

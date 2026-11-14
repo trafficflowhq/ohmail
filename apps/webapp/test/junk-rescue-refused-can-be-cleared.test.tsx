@@ -79,10 +79,11 @@ async function flush(n = 20): Promise<void> {
 }
 
 async function mount(): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useJunkWindow } = await import("../app/shell/junk-window.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({
@@ -97,7 +98,7 @@ async function mount(): Promise<void> {
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, toast as never);
+    const state = useScreenerState(engine, null, v, toast as never, useScreenerText());
     const junk = useJunkWindow(true, toast as never);
     return h(ScreenerView, {
       owed: false, state, segment: "spam", settled: true,

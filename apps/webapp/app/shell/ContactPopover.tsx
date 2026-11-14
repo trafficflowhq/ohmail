@@ -12,7 +12,7 @@
  */
 import { useRef } from "react";
 import { useTranslations } from "next-intl";
-import { displayAddress, displayAddressee } from "./idn";
+import { displayAddress, displayAddressee } from "@ohmail/app-logic/text/idn";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useOverlayClamp } from "./overlay-clamp";
 import { goAddress } from "./routing";

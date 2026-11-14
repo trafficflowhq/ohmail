@@ -30,11 +30,11 @@ import { showSimilar, substringOpen } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
 import { useSessionReask } from "@ohmail/app-logic/session/session-reask";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
-import { displayAddress } from "../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { addressHref } from "../shell/address-view";
-import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { useZoneIs, useZoneNav } from "../shell/zone-nav";
-import { useFocusFollows } from "../shell/focus-follows";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { useZoneIs, useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { searchSortKey, usePersistedChoice } from "@ohmail/app-logic/storage/persisted-ui";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -622,7 +622,7 @@ export function SearchView({
    * opening a hit instead of the rail row under the cursor. `!inList` declares them
    * inert exactly where the rail owns the keys; the `?` sheet reads the same statement.
    */
-  useZoneNav({});
+  useZoneNav(useTranslations("shortcuts"), {});
   const inList = useZoneIs("list");
 
   const keys: KeyBinding[] = [
@@ -738,6 +738,9 @@ export function SearchView({
       {device}
       {t("scopeNoArchive")}
     </>
+  ) : passState === "unfinished" ? (
+    /* Nothing in the newest mail and the end not reached: no verdict yet (the search screen's words). */
+    device
   ) : passState === "unanswered" || ready === null ? (
     /* The retry stays: a stated dead end with no way out of it is half a sentence. A server that
        answered with a fault could not run the search; it did answer. */
@@ -836,10 +839,12 @@ export function SearchView({
   const rootRef = useRef<HTMLElement>(null);
   useFocusFollows(rootRef, { enter: false });
 
-  /* Near the end of the list, the next store page. */
+  /* Near the end of the list, the next store page; past the walk's bound, the person's scroll looks further. */
   const onScroll = (e: { currentTarget: HTMLElement }) => {
     const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - PAGE_AHEAD_PX) walker.more();
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - PAGE_AHEAD_PX) return;
+    if (walker.atBound()) walker.further();
+    else walker.more();
   };
 
   return (
@@ -912,7 +917,8 @@ export function SearchView({
               {/* "Nothing matched." stands only where the verdict says no count: the verdict
                   already says nothing matched, and saying it twice reads as two answers. */}
               {indexing ? <b>{t("emptyTitleIndexing")}</b>
-                : passState !== "idle" && passState !== "searching" && !verdictCounts ? <b>{t("emptyTitle")}</b> : null}
+                : passState !== "idle" && passState !== "searching" && passState !== "unfinished" && !verdictCounts
+                  ? <b>{t("emptyTitle")}</b> : null}
               {scope}
               {verdictCounts && ready?.total === 0 ? <p className="empty-reach" data-testid="search-depth">{t("scopeDepth")}</p> : null}
               {/* The address door, offered at the moment its two scopes apply. There is no typed

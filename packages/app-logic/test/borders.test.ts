@@ -16,6 +16,7 @@ describe("app-logic's borders, read off its bundle", () => {
   it("bundles its own files and reaches nothing its row does not name", async () => {
     const { inputs, refused } = await readBorders(BORDERS);
     expect(inputs).toContain("packages/app-logic/src/geometry/ui-zoom.ts");
+    expect(inputs).toContain("packages/app-logic/src/keys/keymap.ts");
     expect(refused).toEqual([]);
   });
 

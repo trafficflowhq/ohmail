@@ -283,7 +283,8 @@ describe("nothing is filed until the engine has confirmed the send", () => {
    */
   it("a failed send answers the arm false; a confirmed one answers true", async () => {
     await unmount();
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
     const answers: boolean[] = [];
     const toasts: string[] = [];
     const message = { id: "m1", folder: "INBOX", unread: true, triage: null };
@@ -307,8 +308,9 @@ describe("nothing is filed until the engine has confirmed the send", () => {
     const Probe = (): null => {
       api = useMailSend(
         engine as never,
+        null,
         ((m: string) => toasts.push(m)) as never,
-        (() => { /* the close is another case */ }) as never,
+        useMailSendText(), (() => { /* the close is another case */ }) as never,
         ((_key: string, _m: unknown, accepted: boolean) => { answers.push(accepted); return accepted; }) as never,
       ) as never;
       return null;

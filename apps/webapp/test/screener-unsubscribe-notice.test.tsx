@@ -126,7 +126,8 @@ async function mountState(
     suggestions?: ReadonlyMap<string, unknown>;
   } = {},
 ): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
 
   function Probe(): null {
@@ -134,9 +135,9 @@ async function mountState(
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      opts.suggestions as never,
+      useScreenerText(), opts.suggestions as never,
       undefined,
       opts.autoUnsubscribe,
     ) as unknown as StateLike;

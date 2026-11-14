@@ -11,7 +11,7 @@ import {
 } from "@ohmail/app/host";
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../../shell/AwayResponderRow";
-import type { ComposePrefill } from "../../shell/compose";
+import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import type { ConsentTransport } from "../../shell/consent-state";
 import type { DraftReplyWire } from "../../shell/draft-reply";
 import type { OwnerResolver } from "../../shell/engine";

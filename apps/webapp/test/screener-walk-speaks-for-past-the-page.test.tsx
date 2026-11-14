@@ -89,7 +89,7 @@ beforeEach(() => {
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-const state: { current: import("../app/shell/screener-state.js").ScreenerState | null } = { current: null };
+const state: { current: import("@ohmail/app-logic/screener/screener-state").ScreenerState | null } = { current: null };
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
@@ -105,14 +105,15 @@ async function flush(n = 30): Promise<void> {
 const presented = (engine: OhmailEngine) => presentationReader(engine.read(), consentPartition(engine.read(), { now: NOW }));
 
 async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const view = React.useMemo(() => presented(engine), [v]);
-    const s = useScreenerState(engine, v, (() => {}) as never, undefined, view);
+    const s = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), undefined, view);
     state.current = s;
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {

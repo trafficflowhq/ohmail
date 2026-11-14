@@ -10,18 +10,20 @@ import {
   MutationRejectedError, OhmailEngine, type EngineAdapter, type EngineMutation,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import {
   COMPOSE_SEND_KEY, SENT_BEAT_MS, canCancel, useMailSend, type MailSendApi,
-} from "../app/shell/mail-send";
+} from "@ohmail/app-logic/writing/mail-send";
+import { useMailSendText } from "../app/shell/mail-send-text";
 import {
   EMPTY_COMPOSE, clearComposeDraft, composeSessionId, composeSessionKey, readComposeDraft,
   readComposeRow, writeComposeDraft, writeComposeRow, type ComposeFields,
-} from "../app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 /* The shell's Cancel road is inline in a file of several thousand lines and the claim is an
    ORDER — the withdrawal standing before the discard — which no mounted component can show. The
    anchor rule, and what a hook spelling costs, are written out in the helper. */
 import { sliceOfDeclaration } from "./source-anchor.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * ═══ ONE COMPOSER PER DRAFT ══════════════════════════════════════════════════════════════
@@ -127,7 +129,7 @@ const typed = (over: Partial<ComposeFields> = {}): ComposeFields => ({
 });
 
 function AutosaveHarness({ engine, fields }: { engine: OhmailEngine; fields: ComposeFields }) {
-  autosave = useComposeAutosave({ engine, fields, mailboxId: "mb-1", active: true });
+  autosave = useComposeAutosave({ engine, fields, mailboxId: "mb-1", active: true, scope: storageOwner() });
   return null;
 }
 
@@ -139,13 +141,14 @@ function AutosaveHarness({ engine, fields }: { engine: OhmailEngine; fields: Com
  */
 function ShellHarness({ engine, fields }: { engine: OhmailEngine; fields: ComposeFields }) {
   const settleRef = React.useRef<(rowId: string | null, about: boolean) => void>(() => {});
-  mailSend = useMailSend(engine, () => {}, (key, m, aboutThisCompose) => {
+  mailSend = useMailSend(engine, storageOwner(), () => {}, useMailSendText(), (key, m, aboutThisCompose) => {
     settledWith.push({ key, draftId: (m as { draftId?: string | null }).draftId ?? null });
     if (key === COMPOSE_SEND_KEY) settleRef.current((m as { draftId?: string | null }).draftId ?? null, aboutThisCompose);
   });
   autosave = useComposeAutosave({
     engine, fields, mailboxId: "mb-1", active: true,
     onCleared: () => { cleared += 1; },
+    scope: storageOwner(),
   });
   settleRef.current = (rowId, about) => {
     autosave.settleCompose({ kind: "sentByMirror", rowId, aboutThisCompose: about });
@@ -187,9 +190,9 @@ async function debounce(): Promise<void> {
  * previous message's buffer, row and session go, and the new one is written in their place.
  */
 function openAnother(rowId: string, fields: ComposeFields): void {
-  clearComposeDraft();
-  writeComposeDraft(fields);
-  writeComposeRow(rowId);
+  clearComposeDraft(storageOwner());
+  writeComposeDraft(fields, storageOwner());
+  writeComposeRow(rowId, storageOwner());
 }
 
 beforeEach(() => {
@@ -254,9 +257,9 @@ describe("settling one message never touches another", () => {
     await engine.syncOnce();
 
     // The composer is holding A, and A is what Send is pressed on.
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
-    writeComposeRow("srv-a");
-    const sessionA = composeSessionId();
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
+    writeComposeRow("srv-a", storageOwner());
+    const sessionA = composeSessionId(storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     await act(async () => { autosave.adopt("srv-a", typed({ subject: "A", body: "A body" })); });
     await press("srv-a", "A", "A body");
@@ -272,7 +275,7 @@ describe("settling one message never touches another", () => {
       );
     });
     await act(async () => { autosave.adopt("srv-b", bFields); });
-    expect(composeSessionId(), "the door did not re-mint the session").not.toBe(sessionA);
+    expect(composeSessionId(storageOwner()), "the door did not re-mint the session").not.toBe(sessionA);
 
     await confirm();
 
@@ -284,10 +287,10 @@ describe("settling one message never touches another", () => {
     ).toHaveLength(0);
     expect(autosave.draftId, "the open draft lost its row").toBe("srv-b");
     expect(
-      readComposeDraft().body,
+      readComposeDraft(storageOwner()).body,
       "sending one message emptied the draft the person was writing",
     ).toBe("B body — still being written");
-    expect(readComposeRow(), "sending one message dropped another message's row").toBe("srv-b");
+    expect(readComposeRow(storageOwner()), "sending one message dropped another message's row").toBe("srv-b");
     expect(cleared, "the composer was emptied under the cursor").toBe(0);
   });
 
@@ -302,15 +305,15 @@ describe("settling one message never touches another", () => {
     await engine.hydrate();
     await engine.syncOnce();
 
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
-    writeComposeRow("srv-a");
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     await act(async () => { autosave.adopt("srv-a", typed({ subject: "A", body: "A body" })); });
     await press("srv-a", "A", "A body");
     await confirm();
 
-    expect(readComposeDraft().body, "the delivered text stayed in the buffer").toBe("");
-    expect(readComposeRow()).toBeNull();
+    expect(readComposeDraft(storageOwner()).body, "the delivered text stayed in the buffer").toBe("");
+    expect(readComposeRow(storageOwner())).toBeNull();
     expect(autosave.draftId, "the delivered row was still held").toBeNull();
     expect(cleared, "the surface never closed over a delivered message").toBe(1);
   });
@@ -330,8 +333,8 @@ describe("settling one message never touches another", () => {
     await engine.hydrate();
     await engine.syncOnce();
 
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
-    writeComposeRow("srv-a");
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     await act(async () => { autosave.adopt("srv-a", typed({ subject: "A", body: "A body" })); });
     await press("srv-a", "A", "A body");
@@ -342,7 +345,7 @@ describe("settling one message never touches another", () => {
 
     expect(cleared, "the beat ran, so this measures the close and not the confirmation").toBe(0);
     expect(
-      readComposeDraft().body,
+      readComposeDraft(storageOwner()).body,
       "a reload inside the sent beat would bring the delivered message back into the composer",
     ).toBe("");
   });
@@ -359,7 +362,7 @@ describe("settling one message never touches another", () => {
     await engine.hydrate();
     await engine.syncOnce();
 
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     // Pressed with no row of its own…
     await press(null, "A", "A body");
@@ -391,7 +394,7 @@ describe("a released composer subscribes to nothing", () => {
     await engine.syncOnce();
 
     // Bound to A, and the mirror has nothing to say about it yet.
-    writeComposeRow("srv-a");
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(AutosaveHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     expect(autosave.draftId, "the adoption did not wait for the mirror").toBeNull();
 
@@ -437,7 +440,7 @@ describe("a released composer subscribes to nothing", () => {
     const engine = new OhmailEngine({ adapter: adapterWith() });
     await engine.hydrate();
 
-    writeComposeRow("srv-a");
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(AutosaveHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     expect(autosave.draftId, "the adoption did not wait for the mirror").toBeNull();
 
@@ -456,7 +459,7 @@ describe("a released composer subscribes to nothing", () => {
       autosave.draftId,
       "the composer was re-pointed at the row it had been waiting on, under another message",
     ).toBe("srv-b");
-    expect(readComposeRow()).toBe("srv-b");
+    expect(readComposeRow(storageOwner())).toBe("srv-b");
   });
 
   /**
@@ -483,7 +486,7 @@ describe("a released composer subscribes to nothing", () => {
       return () => { seen.off = true; stop(); };
     };
 
-    writeComposeRow("srv-a");
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(AutosaveHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     expect(handles, "the adoption did not wait, so this case measures nothing").toHaveLength(1);
     expect(handles[0]!.off).toBe(false);
@@ -504,7 +507,7 @@ describe("a released composer subscribes to nothing", () => {
     await engine.hydrate();
     await engine.syncOnce();
 
-    writeComposeRow("srv-a");
+    writeComposeRow("srv-a", storageOwner());
     await mount(h(AutosaveHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     expect(autosave.draftId).toBeNull();
 
@@ -536,7 +539,7 @@ describe("cancelling a queued send cancels it", () => {
 
   /** Press Send with no signal, so the verb lands on the outbox. */
   async function queueOffline(engine: OhmailEngine): Promise<void> {
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
     offline = true;
     await act(async () => {
@@ -595,7 +598,7 @@ describe("cancelling a queued send cancels it", () => {
   it("a compose with no send out is cancelled without asking the engine", async () => {
     const engine = new OhmailEngine({ adapter: adapterWith() });
     await engine.hydrate();
-    writeComposeDraft(typed({ subject: "A", body: "A body" }));
+    writeComposeDraft(typed({ subject: "A", body: "A body" }), storageOwner());
     await mount(h(ShellHarness, { engine, fields: typed({ subject: "A", body: "A body" }) }));
 
     let said: string | null = null;
@@ -681,7 +684,7 @@ describe("the compose cancel asks for the withdrawal before it destroys anything
     const body = sliceOfDeclaration(shell(), "cancelCompose");
     const withdrawAt = body.indexOf("mailSend.withdraw(COMPOSE_SEND_KEY)");
     const discardAt = body.indexOf("autosave.discard()");
-    const clearAt = body.indexOf("clearComposeDraft()");
+    const clearAt = body.indexOf("clearComposeDraft(scope)");
     expect(withdrawAt, "the compose cancel never asks for the withdrawal").toBeGreaterThan(-1);
     expect(discardAt, "the compose cancel stopped discarding the row").toBeGreaterThan(-1);
     expect(clearAt, "the compose cancel stopped clearing the buffer").toBeGreaterThan(-1);

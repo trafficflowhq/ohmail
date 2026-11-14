@@ -18,7 +18,7 @@ import {
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import type { ScreenerState, SpamRow } from "../app/shell/screener-state";
+import type { ScreenerState, SpamRow } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A PRESS ABOUT ONE SENDER NEVER CHANGES HOW ANOTHER SENDER'S MAIL IS FILED. Releasing a sender a
@@ -137,12 +137,13 @@ function engineOver(messages: EngineMessage[], rules: RuleDTO[]): Promise<Ohmail
 }
 
 async function mount(engine: OhmailEngine, locale: "en" | "de" = "en"): Promise<{ get: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerState | null = null;
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    latest = useScreenerState(engine, v, ((message: string) => { toasts.push(message); }) as never);
+    latest = useScreenerState(engine, null, v, ((message: string) => { toasts.push(message); }) as never, useScreenerText());
     return null;
   }
   host = document.createElement("div");

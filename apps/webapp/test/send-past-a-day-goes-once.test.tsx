@@ -59,10 +59,11 @@ async function world() {
 
 /** One surface: compose (`inReplyTo: null`) or the inline reply to m-1. */
 async function mount(e: OhmailEngine, said: string[]) {
-  const { useMailSend, COMPOSE_SEND_KEY } = await import("../app/shell/mail-send.js");
+  const { useMailSend, COMPOSE_SEND_KEY } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let api!: { compose: (body: string) => Promise<void>; reply: (body: string) => Promise<void>; phase: (lane: string) => string; code: (lane: string) => string | null; lane: string };
   const Probe = (): null => {
-    const mail = useMailSend(e as never, ((t: string) => { said.push(t); }) as never, (() => {}) as never, (() => false) as never);
+    const mail = useMailSend(e as never, null, ((t: string) => { said.push(t); }) as never, useMailSendText(), (() => {}) as never, (() => false) as never);
     const press = (m: Record<string, unknown>, o?: unknown) => act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(m, o); });
     api = {
       lane: COMPOSE_SEND_KEY,
@@ -101,10 +102,10 @@ describe("a new message that waited more than a day", () => {
     w.net.offline = false;
     w.net.later = later;
     // The lock reads the wall clock, the engine its own: the jar is aged by the same span.
-    const { sendLocksKey } = await import("../app/shell/send-lock.js");
-    const jar = JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ at: number }>;
+    const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+    const jar = JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Array<{ at: number }>;
     expect(jar.length, "premise: the press wrote its lock").toBeGreaterThan(0);
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify(jar.map((r) => ({ ...r, at: r.at - later }))));
+    window.localStorage.setItem(sendLocksKey(null), JSON.stringify(jar.map((r) => ({ ...r, at: r.at - later }))));
     const e2 = w.engine();
     const s2 = await mount(e2, said);
     await act(async () => { await e2.start(); });
@@ -143,7 +144,7 @@ describe("a new message this tab held queued for more than a day", () => {
 
 describe("a send confirmed and kept only for its echo", () => {
   it("is not the standing send a new reply joins", async () => {
-    const { standingSendKey } = await import("../app/shell/mail-send.js");
+    const { standingSendKey } = await import("@ohmail/app-logic/writing/mail-send");
     const store = new MemoryMirrorStore();
     await store.load();
     const at = new Date().toISOString();

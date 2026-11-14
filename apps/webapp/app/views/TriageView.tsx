@@ -25,9 +25,9 @@ import {
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useKeyBindings } from "../shell/keymap";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
@@ -273,7 +273,7 @@ export function TriageView({
     rows: openable, select: selectRow,
   });
 
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: {
       followId: shown?.id ?? null,
       up: {

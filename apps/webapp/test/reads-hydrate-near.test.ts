@@ -74,7 +74,7 @@ const SEEN = ["s0", "s1", "s2", "s3"];
 
 async function mount(): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const now = new Date("2026-08-02T09:00:00.000Z");
   const tree = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now,

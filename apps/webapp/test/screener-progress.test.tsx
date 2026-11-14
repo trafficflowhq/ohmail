@@ -133,15 +133,16 @@ async function mount(props: {
   /** Further fields laid over the real state — the apply verb's gate, for the run-dress case. */
   overlay?: Record<string, unknown>;
 }): Promise<HTMLElement> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith([held("m1", "one@example.test", 9)]);
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const real = useScreenerState(engine, v, (() => {}) as never);
+    const real = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     const state = {
       ...real,
       ...(props.applying === undefined ? {} : { applying: props.applying }),

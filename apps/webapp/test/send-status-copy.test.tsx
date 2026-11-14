@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SendStatus, sendLine } from "../app/shell/SendStatus.js";
-import { phaseFor, type SendState } from "../app/shell/mail-send.js";
+import { phaseFor, type SendState } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * WHAT A FAILED SEND SAYS — plain sentences, never the wire (owner report, 2026-08-21).

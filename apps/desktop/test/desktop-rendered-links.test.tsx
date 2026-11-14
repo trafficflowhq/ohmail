@@ -13,7 +13,7 @@ import {
 import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
-import type { RichValue } from "../../webapp/app/shell/rich-text";
+import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { SignatureBlock } from "../../webapp/app/shell/SignatureBlock";
 import { SIG_FOLLOWING } from "../../webapp/app/shell/signature";
 import { HeldUnsubscribe } from "../../webapp/app/views/ScreenerView";

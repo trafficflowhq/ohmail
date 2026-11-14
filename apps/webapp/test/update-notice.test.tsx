@@ -17,7 +17,7 @@ import {
 } from "@ohmail/app-logic/doors/app-update";
 import de from "../messages/de.json";
 import { noticeServerAnswered, noticeUpdateAnswer, hearUpdateAnswer } from "../app/shell/update-answer";
-import type { SendLineItem, SendPhase } from "../app/shell/mail-send";
+import type { SendLineItem, SendPhase } from "@ohmail/app-logic/writing/mail-send";
 import { SendWaitsRelay, sendWaitsOf, UpdateDot, UpdateLine } from "../app/shell/UpdateLine";
 
 /**

@@ -10,7 +10,7 @@ import { useTranslations } from "next-intl";
 import type { TagDTO } from "@ohmail/client-engine";
 import { TagDot, TextField, cssRect, cssViewport } from "@ohmail/ui";
 import { hueOf } from "./format";
-import { useFocusFollows } from "./focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 export interface TagPickerState {
   forId: string;

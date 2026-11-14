@@ -12,7 +12,7 @@
  */
 import { useTranslations } from "next-intl";
 import { useOptionalToast } from "@ohmail/ui";
-import { useCursorPlacer, type PlacerScope } from "./keymap";
+import { useCursorPlacer, type PlacerScope } from "@ohmail/app-logic/keys/keymap";
 import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**

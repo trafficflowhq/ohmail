@@ -8,7 +8,7 @@ import { MutationRejectedError, OhmailEngine, REASK_MAX } from "@ohmail/client-e
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { AddressView } from "../app/views/AddressView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * On the paired desktop with the account out

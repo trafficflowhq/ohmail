@@ -22,16 +22,25 @@ New code imports a folder's door. A door is the folder's `index.ts` and names wh
 | `@ohmail/app-logic/mail-state` | the mailbox state ladder and its keys |
 | `@ohmail/app-logic/doors` | the first run, pairing, an update, the wall |
 | `@ohmail/app-logic/ohbox` | the Ohbox's behaviour: placement by arrival, the picks, the read hold, Undo's place, its keys; and the door its model stands behind |
-| `@ohmail/app-logic/geometry`, `/keys`, `/screener`, `/text` | geometry under the text size, key lists, and the types behaviour shares with the views |
+| `@ohmail/app-logic/keys` | the keyboard registry and its bindings, the zones the arrows walk, focus that follows the list |
+| `@ohmail/app-logic/layout` | what the window's width says about the layout |
+| `@ohmail/app-logic/screener` | the Screener's state, its decision journal, and the types a decision shares with the views |
+| `@ohmail/app-logic/writing` | sending once, the send lock, the composer's and the reply's drafts, the rich text |
+| `@ohmail/app-logic/text` | the catalogue's reader as behaviour takes it, and how an address is shown |
+| `@ohmail/app-logic/geometry` | geometry under the text size |
+
+Behaviour is handed its words: a hook that speaks takes a `Translator` (or a small record of them) from its mount,
+never a catalogue of its own.
 
 The files that were moved here out of the web app's shell are still imported one by one
 (`@ohmail/app-logic/<folder>/<file>`), by the shell they came from and by its tests: a move
 changes where a module lives, not which modules a page loads. Each has its own line in
 `package.json` for that, and the line goes when the old shell's last import of the file does.
 
-## Two twins
+## The twins
 
 `geometry/ui-zoom.ts` and `keys/scroll-keys.ts` are the kit's `ui-zoom.ts` and its scroll keys,
+and `screener/decision.ts` holds the kit's quiet destinations, `DECISION_QUIET`; all are
 kept equal by `apps/webapp/test/app-logic-twins.test.ts`. Behaviour does not import the kit, and
 the kit needs both for itself until it is rewritten; then it stops exporting them and the twin
 test goes.

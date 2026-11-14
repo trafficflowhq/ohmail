@@ -6,10 +6,10 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerState } from "../app/shell/screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * THE WAITING TAB SPEAKS FROM THE STORE'S FACTS WHILE THIS DEVICE IMPORTS.

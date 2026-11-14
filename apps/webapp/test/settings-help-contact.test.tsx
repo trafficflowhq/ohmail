@@ -17,7 +17,7 @@ import { HelpContactPane, type SupportSeed } from "../app/shell/HelpContactPane"
 import { SupportDiagnostics } from "../app/shell/SupportDiagnostics";
 import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { RichValue } from "../app/shell/rich-text";
+import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

@@ -218,7 +218,7 @@ describe("the editor's door, whose chunk failed once", () => {
 
   async function mountEditor(): Promise<HTMLElement> {
     const { RichEditor } = await import("../app/shell/RichEditorLazy");
-    const { EMPTY_RICH } = await import("../app/shell/rich-text");
+    const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);

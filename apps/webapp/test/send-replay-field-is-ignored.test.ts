@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MutationResult } from "@ohmail/client-engine";
-import { phaseFor } from "../app/shell/mail-send.js";
+import { phaseFor } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * ═══ THE BROWSER AND DESKTOP COMPOSER IGNORE `firstSend` ════════════════════════════════════

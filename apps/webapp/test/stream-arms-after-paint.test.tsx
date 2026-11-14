@@ -7,7 +7,7 @@ import type { EngineMessage, MessageBody, TagDTO, FeedPartition } from "@ohmail/
 import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * THE ROWS PAINT BEFORE THE STREAM (`ReadsView`, `ReceiptsView`, `visit.ts#afterPaint`).

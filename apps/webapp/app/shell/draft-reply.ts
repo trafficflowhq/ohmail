@@ -19,7 +19,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { ApiError, api, apiConfigured } from "../api-client";
-import type { RichValue } from "./rich-text";
+import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { aiRefusalKey, draftFailureKey } from "./ai-refusal-copy";
 
 /**

@@ -11,7 +11,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { createDeleteUndo, UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
 import { readerMoveRefusal, rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
-import { chordMatches, groupedBindings, type KeyBinding } from "../app/shell/keymap";
+import { chordMatches, groupedBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
 import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 /* The source censuses below anchor on the DECLARED NAME. The rule, and what a hook spelling
    costs, are written out in the helper; `anchor-census.test.ts` refuses the hook spelling

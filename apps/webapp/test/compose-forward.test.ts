@@ -9,7 +9,8 @@ import {
   EMPTY_COMPOSE,
   composeDraftKey,
   type ComposeFields,
-} from "../app/shell/compose.js";
+} from "@ohmail/app-logic/writing/compose";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * ═══ FORWARDING, REACHED FROM THE SURFACE ═══════════════════════════════════════════════
@@ -129,12 +130,12 @@ describe("a forward's kept files ride the plan and the scratch buffer", () => {
   });
 
   it("the buffer keeps the list across a reload; a malformed one reads as nothing removed", () => {
-    writeComposeDraft(forwarding({ forwardParts: ["p-1"] }));
-    expect(readComposeDraft().forwardParts).toEqual(["p-1"]);
-    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: [7] }));
-    expect(readComposeDraft().forwardParts).toBeNull();
-    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: Array.from({ length: 101 }, (_, i) => `p-${i}`) }));
-    expect(readComposeDraft().forwardParts).toBeNull();
+    writeComposeDraft(forwarding({ forwardParts: ["p-1"] }), storageOwner());
+    expect(readComposeDraft(storageOwner()).forwardParts).toEqual(["p-1"]);
+    window.localStorage.setItem(composeDraftKey(storageOwner()), JSON.stringify({ ...forwarding(), forwardParts: [7] }));
+    expect(readComposeDraft(storageOwner()).forwardParts).toBeNull();
+    window.localStorage.setItem(composeDraftKey(storageOwner()), JSON.stringify({ ...forwarding(), forwardParts: Array.from({ length: 101 }, (_, i) => `p-${i}`) }));
+    expect(readComposeDraft(storageOwner()).forwardParts).toBeNull();
   });
 });
 
@@ -146,34 +147,34 @@ describe("the scratch buffer keeps the forward and drops the bytes", () => {
   it("persists forwardOf and restores it", () => {
     // Losing it across a reload would leave a message titled "Fwd: …" that quotes nothing — the
     // user would send an empty mail and only find out from the recipient.
-    writeComposeDraft(forwarding());
-    expect(readComposeDraft().forwardOf).toBe("m-original");
+    writeComposeDraft(forwarding(), storageOwner());
+    expect(readComposeDraft(storageOwner()).forwardOf).toBe("m-original");
   });
 
   it("still strips the attachment bytes from what is stored", () => {
     writeComposeDraft(forwarding({
       attachments: [{ filename: "big.bin", contentType: "application/octet-stream", contentBase64: "AAAA" }],
-    }));
-    const raw = window.localStorage.getItem(composeDraftKey()) ?? "";
+    }), storageOwner());
+    const raw = window.localStorage.getItem(composeDraftKey(storageOwner())) ?? "";
     expect(raw).toContain("m-original");
     expect(raw).not.toContain("AAAA");
-    expect(readComposeDraft().attachments).toEqual([]);
+    expect(readComposeDraft(storageOwner()).attachments).toEqual([]);
   });
 
   it("reads a buffer written before the field existed as a plain compose", () => {
     window.localStorage.setItem(
-      composeDraftKey(),
+      composeDraftKey(storageOwner()),
       JSON.stringify({ to: "a@b.example", cc: "", bcc: "", subject: "s", body: "b", html: "" }),
     );
-    expect(readComposeDraft().forwardOf).toBeNull();
+    expect(readComposeDraft(storageOwner()).forwardOf).toBeNull();
   });
 
   it("ignores a non-string forwardOf rather than trusting it onto the wire", () => {
     window.localStorage.setItem(
-      composeDraftKey(),
+      composeDraftKey(storageOwner()),
       JSON.stringify({ to: "a@b.example", subject: "s", body: "b", forwardOf: { id: "x" } }),
     );
-    expect(readComposeDraft().forwardOf).toBeNull();
+    expect(readComposeDraft(storageOwner()).forwardOf).toBeNull();
   });
 });
 

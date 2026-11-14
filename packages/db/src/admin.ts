@@ -62,6 +62,22 @@ export {
   type AppliedWhens, type ProdSetupOptions,
 } from "./setup-prod.js";
 /**
+ * THE LOCK'S STEP AND ITS CENSUS: what the setup runs where the runtime logins exist, and the
+ * read-only comparison of the catalog with the list. Provisioning only: no request runs them.
+ */
+export {
+  ensureLock, createPolicyStatement, readDeadlines, LOCK_STEP_LOCK_TIMEOUT, type LockReport, type LockStep, type LockSession,
+} from "./row-security/apply.js";
+export {
+  lockCensus, lockDrift, readLockFacts, expectedPolicies, listDigest, catalogDigest,
+  type LockFacts, type TableFacts, type PolicyFacts, type ReaderFacts,
+} from "./row-security/census.js";
+export { rolesCheckStream, runRolesCheck, RUNTIME_ROLES_SCRIPT, ROLES_CHECK_CUT, type RolesCheck } from "./row-security/roles-check.js";
+export {
+  switchLock, LockSwitchRefused, SWITCH_LOCK_TIMEOUT_MS, SWITCH_TRIES, type SwitchReport,
+} from "./row-security/switch.js";
+export { markerText, parseMarker, MARKER_WHY, type MarkerWhy } from "./row-security/census.js";
+/**
  * The Data API half of the lockdown, for a caller that provisions a Supabase-shaped host and
  * must therefore reach a verdict about the endpoint in front of it — not just about the grants.
  * `dataApiPolicyFromEnv` is what `pnpm db:setup:prod` passes; a host with no such credentials

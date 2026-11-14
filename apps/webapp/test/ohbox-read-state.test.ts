@@ -157,7 +157,8 @@ async function mount(rows: Msg[], opts: { selected?: string } = {}): Promise<voi
   // Since that change the view declares its keys into the keyboard registry instead of adding its
   // own `document` listener, so the provider is part of mounting it — and the keypresses
   // below now travel the same path they do in the product.
-  const { KeymapProvider, useKeymap } = await import("../app/shell/keymap.js");
+  const { useKeymap } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const all = rows.map(msg);
   selectedId = opts.selected ?? rows[0]?.id ?? null;
 
@@ -277,7 +278,8 @@ async function mountLive(rows: Msg[]): Promise<void> {
   // The registry probe is here too, and not only in `mount`, for one claim `mount` cannot make:
   // that harness always starts with a row selected, so it can never observe what the `?` sheet
   // says about an Ohbox nobody has touched.
-  const { KeymapProvider, useKeymap } = await import("../app/shell/keymap.js");
+  const { useKeymap } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const Probe = (): null => {
     registry = useKeymap().bindings.map((b) => ({
       chord: b.chord, label: b.label, disabled: b.disabled === true,

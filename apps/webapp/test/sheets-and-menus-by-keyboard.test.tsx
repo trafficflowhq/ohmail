@@ -275,7 +275,7 @@ describe("the collapsed Screener doorbell (R18-01)", () => {
 
 describe("a surface that closes after the page has gone (the unhandled errors at the base)", () => {
   it("throws nothing when the document lost its body before the return ran", async () => {
-    const { useFocusFollows } = await import("../app/shell/focus-follows");
+    const { useFocusFollows } = await import("@ohmail/app-logic/keys/focus-follows");
     const errors: unknown[] = [];
     vi.stubGlobal("queueMicrotask", (cb: () => void) => { try { cb(); } catch (e) { errors.push(e); } });
     function Sheet(): React.ReactElement {

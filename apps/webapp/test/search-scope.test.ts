@@ -16,7 +16,7 @@ import {
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { createEngine } from "../app/shell/engine-config";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * GAP SEARCH SAYS WHAT IT SEARCHED, AT EVERY MOMENT.

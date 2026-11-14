@@ -8,7 +8,7 @@ import {
   type EngineMessage, type EngineMutation, type Folder, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 
@@ -171,9 +171,10 @@ async function mount(opts: {
   /** Replace the suggestions, as a purchase landing does. */
   suggest: (suggestions: Record<string, unknown>) => Promise<void>;
 }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(opts.mail, opts.queued);
   const overlayOf = (s: Record<string, unknown>) =>
     new Map(Object.entries(s).map(([addr, x]) => [senderKey(addr), x]));
@@ -192,7 +193,7 @@ async function mount(opts: {
       ? presentationReader(reader, consentPartition(reader, { now: NOW }))
       : undefined;
     const state = useScreenerState(
-      engine, v, (() => {}) as never, overlay as never, presented as never,
+      engine, null, v, (() => {}) as never, useScreenerText(), overlay as never, presented as never,
       true, opts.role as never, outstanding as never,
     );
     const [sel, setSel] = React.useState<Record<string, string | null>>({

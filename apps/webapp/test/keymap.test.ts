@@ -50,7 +50,7 @@ const text = (): string => host!.textContent ?? "";
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(async () => { await unmount(); vi.useRealTimers(); });
 
-type Binding = import("../app/shell/keymap.js").KeyBinding;
+type Binding = import("@ohmail/app-logic/keys/keymap").KeyBinding;
 
 /**
  * Mount a provider holding `global` bindings with a child holding `view` ones, plus the
@@ -105,7 +105,8 @@ async function mount(opts: MountOpts): Promise<{
   rerender: (next: MountOpts) => Promise<void>;
 }> {
   await unmount();
-  const { KeymapProvider, useKeyBindings, useCursorPlacer } = await import("../app/shell/keymap.js");
+  const { useKeyBindings, useCursorPlacer } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const { ShortcutSheet } = await import("../app/shell/ShortcutSheet.js");
   const counters = { closes: 0 };
   const NO_PLACE = (): boolean => false;
@@ -609,8 +610,9 @@ describe("no cursor is its own reason", () => {
        button that did something other than what it says. */
     const asked: string[] = [];
     let pressed: boolean | null = null;
-    const { KeymapProvider, useKeyBindings, useKeymap, useCursorPlacer } =
-      await import("../app/shell/keymap.js");
+    const { useKeyBindings, useKeymap, useCursorPlacer } =
+      await import("@ohmail/app-logic/keys/keymap");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     function Probe(): null {
       useKeyBindings([b({
         chord: "Backspace", group: "message", disabled: true,
@@ -730,7 +732,8 @@ describe("reading the registry pins no earlier render", () => {
     const vm = await import("node:vm");
     v8.setFlagsFromString("--expose-gc");
     const gc = vm.runInNewContext("gc") as () => void;
-    const { KeymapProvider, useKeyBindings, useEnabledBinding } = await import("../app/shell/keymap.js");
+    const { useKeyBindings, useEnabledBinding } = await import("@ohmail/app-logic/keys/keymap");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     const renders: Array<WeakRef<object>> = [];
     const held: unknown[] = [];
     function Shell({ n }: { n: number }): null {

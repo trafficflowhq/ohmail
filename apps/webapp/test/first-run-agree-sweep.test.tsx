@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import {
   AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver, useFirstRunQueueSettle,
 } from "@ohmail/app-logic/doors/first-run-queue-settle";

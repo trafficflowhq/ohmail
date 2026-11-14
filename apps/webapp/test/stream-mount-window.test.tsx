@@ -7,7 +7,7 @@ import type { EngineMessage, MessageBody, TagDTO, FeedPartition } from "@ohmail/
 import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import {
   STREAM_CARD_ESTIMATE_PX,
   STREAM_WINDOW_MAX,

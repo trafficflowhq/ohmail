@@ -38,7 +38,7 @@
  * consumed. That is now proven by `inline-reply.test.ts` rather than assumed.
  */
 import type { Editor } from "@tiptap/react";
-import { escapeAsParagraphs } from "../../app/shell/rich-text";
+import { escapeAsParagraphs } from "@ohmail/app-logic/writing/rich-text";
 
 /** The editable surface of a mounted `RichEditor`. */
 export type RichSurface = HTMLElement;

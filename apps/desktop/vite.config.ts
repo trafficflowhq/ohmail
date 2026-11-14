@@ -874,6 +874,7 @@ export default defineConfig({
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },

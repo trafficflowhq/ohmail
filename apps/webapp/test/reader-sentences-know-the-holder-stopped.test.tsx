@@ -22,8 +22,8 @@ import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-po
 import { ScreenerView } from "../app/views/ScreenerView";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { ScreenerState } from "../app/shell/screener-state";
+import { KeymapProvider } from "@ohmail/app/keys";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A MACHINE THAT STOPPED ORGANIZING IS NOT CALLED THE ORGANIZER by the web's reader sentences: the
@@ -121,12 +121,13 @@ async function render(node: React.ReactElement, locale: "en" | "de" = "en"): Pro
 
 /** The real Screener state over the real catalogue, read through a getter. */
 async function screenerState(role: ScreenerRole, locale: "en" | "de" = "en"): Promise<() => ScreenerState> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const engine = engineOver(await freshStore());
   let latest: ScreenerState | null = null;
   function Probe(): null {
     latest = useScreenerState(
-      engine, 0, ((m: string) => { toasts.push(m); }) as never, undefined, undefined, true, role,
+      engine, null, 0, ((m: string) => { toasts.push(m); }) as never, useScreenerText(), undefined, undefined, true, role,
     );
     return null;
   }

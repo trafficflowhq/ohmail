@@ -28,8 +28,9 @@ import { SearchView } from "../app/views/SearchView";
 import { TriageView } from "../app/views/TriageView";
 import { TagView } from "../app/views/TagView";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { useScreenerState } from "../app/shell/screener-state";
-import { KeymapProvider } from "../app/shell/keymap";
+import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import { useScreenerText } from "../app/shell/screener-text";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { WithListGone } from "./_list-gone";
 import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 import { settleFirstPaint } from "./_first-paint.js";
@@ -418,7 +419,7 @@ describe("a windowed list announces its true size and every row's true position"
     function Probe(): React.ReactElement {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      const state = useScreenerState(engine, v, none as never);
+      const state = useScreenerState(engine, null, v, none as never, useScreenerText());
       return (
         <ScreenerView {...({
           owed: false, state, segment: "waiting", settled: true,

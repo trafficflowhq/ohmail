@@ -44,7 +44,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
 import { openOverPort, STANDARD_FONTS, type Pdfjs, type PdfSource, type PdfTask } from "./pdf-port";
-import { useKeyBindings } from "../shell/keymap";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
 import { activeFormatLocale, liveCopy } from "../shell/locale";

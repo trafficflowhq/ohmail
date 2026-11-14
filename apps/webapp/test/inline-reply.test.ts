@@ -8,7 +8,7 @@ import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
-import { replyDraftKey } from "../app/shell/mail-send";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
 
 /** The reply buffer for `id`, in the demo's own partition (this shell mounts in demo mode). */
@@ -400,7 +400,7 @@ async function settle(): Promise<void> {
  */
 async function settleClosed(): Promise<void> {
   await settle();
-  const { SENT_BEAT_MS } = await import("../app/shell/mail-send.js");
+  const { SENT_BEAT_MS } = await import("@ohmail/app-logic/writing/mail-send");
   await act(async () => { await vi.advanceTimersByTimeAsync(SENT_BEAT_MS + 80); });
   await settle();
 }

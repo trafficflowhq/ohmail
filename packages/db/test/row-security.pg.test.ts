@@ -1,0 +1,1305 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MIGRATED_DB_SETUP_BUDGET_MS, MIGRATOR_ROLE, PG_MAJORS, ownServersAvailable, startLockGround, type LockGround } from "../src/testing.js";
+import {
+  expectedPolicies, lockCensus, pinSpelling, policyComment, policyDifferences, readLockFacts, type LockFacts,
+} from "../src/row-security/census.js";
+import { createPolicyStatement } from "../src/row-security/apply.js";
+import { LOCK_READERS } from "../src/row-security/names.js";
+import { policyList, lockedTables, policiesOfTable } from "../src/row-security/policies.js";
+import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
+import { readLock, type LockReading } from "../src/row-security/check.js";
+import { switchLock } from "../src/row-security/switch.js";
+import { BINDER_SQL, BINDING_READERS_SQL } from "../src/bound.js";
+
+/**
+ * THE LOCK ON A REAL POSTGRES, ON A SERVER THIS FILE OWNS WHOLE. Roles belong to the whole server,
+ * so the runtime logins are made under their real names by the real script, on a container of this
+ * file's own, for each major the product runs on (the self-hosted servers' 16, the Cloud's 17).
+ *
+ * The cases of one server run in order: a server without the roles, the roles made, the setup that
+ * is not asked, the setup that is, a second run; then each drift on a database of its own.
+ */
+const FILE = "packages/db/test/row-security.pg.test.ts";
+const OWN = ownServersAvailable(FILE);
+const CASE_MS = 120_000;
+
+describe("a server of the test's own is asked of docker, and its absence is named", () => {
+  const unreachable: NodeJS.ProcessEnv = { ...process.env, DOCKER_HOST: "tcp://127.0.0.1:9" };
+
+  it("under TF_REQUIRE_PG=1 a docker that does not answer fails the file, naming docker run", () => {
+    expect(() => ownServersAvailable(FILE, { ...unreachable, TF_REQUIRE_PG: "1" })).toThrow(/docker run/);
+  });
+
+  it("without it the file is skipped, and says so", () => {
+    const env = { ...unreachable };
+    delete env.TF_REQUIRE_PG;
+    expect(ownServersAvailable(FILE, env)).toBe(false);
+  });
+});
+
+for (const major of PG_MAJORS) {
+  describe.skipIf(!OWN)(`the lock's setup on Postgres ${major}`, () => {
+    let ground: LockGround;
+    beforeAll(async () => { ground = await startLockGround(major, `lock_${major}`, "ground"); }, MIGRATED_DB_SETUP_BUDGET_MS);
+    afterAll(() => ground?.stop());
+
+    /** What the catalog of `db` holds of a lock: the schema, the policies, the tables under row security. */
+    async function lockOf(db: string): Promise<{ schema: boolean; policies: number; underRls: number }> {
+      const sql = ground.connectAs(db);
+      try {
+        const [r] = await sql<Array<{ schema: boolean; policies: number; under_rls: number }>>`select
+          exists (select 1 from pg_namespace where nspname = 'ohmail') as schema,
+          (select count(*)::int from pg_policy p join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public') as policies,
+          (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relrowsecurity) as under_rls`;
+        return { schema: r!.schema, policies: r!.policies, underRls: r!.under_rls };
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    /** `statements` on `db` as the migrator, then the census of `db`. */
+    async function plantAndCensus(db: string, statements: string[]): Promise<string[]> {
+      const sql = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        for (const s of statements) await sql.unsafe(s);
+        return await lockCensus(sql);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    it("a server without the roles: the setup, asked or not, makes no lock and its report is as it was", async () => {
+      const said: string[] = [];
+      const report = await ground.setup("ground", undefined, { log: (m) => said.push(m) });
+      expect("lock" in report).toBe(false);
+      expect(said.filter((m) => m.startsWith("lock:"))).toEqual([]);
+      const asked = await ground.setup("ground", undefined, { lock: "apply" });
+      expect("lock" in asked).toBe(false);
+      expect(await lockOf("ground")).toEqual({ schema: false, policies: 0, underRls: 0 });
+      const sql = ground.connectAs("ground");
+      try { expect((await readLock(sql)).verdict).toBe("absent"); } finally { await sql.end({ timeout: 5 }); }
+    }, CASE_MS);
+
+    /** `plant` on the ground as its owner, the setup's answer, then `undo`: a server without the roles. */
+    async function withoutRoles(plant: string[], undo: string[]): Promise<{ report?: object; refused?: string; said: string[] }> {
+      const su = ground.connectAs("ground");
+      const said: string[] = [];
+      try {
+        for (const s of plant) await su.unsafe(s);
+        return await ground.setup("ground", undefined, { log: (m) => said.push(m) })
+          .then((report) => ({ report, said }), (e: Error) => ({ refused: e.message, said }));
+      } finally {
+        for (const s of undo) await su.unsafe(s);
+        await su.end({ timeout: 5 });
+      }
+    }
+
+    it("a server without the roles: row security its owner turned on, on a listed table or one of its own, changes nothing in the setup", async () => {
+      const plain = await withoutRoles([], []);
+      for (const [plant, undo] of [
+        [["alter table public.accounts enable row level security"], ["alter table public.accounts disable row level security"]],
+        [["create table public.someone_elses (id int)", "alter table public.someone_elses enable row level security"], ["drop table public.someone_elses"]],
+      ] as const) {
+        const got = await withoutRoles([...plant], [...undo]);
+        expect(got.refused, plant.join("; ")).toBeUndefined();
+        expect("lock" in got.report!).toBe(false);
+        expect(got.said.filter((m) => m.startsWith("lock:"))).toEqual([]);
+        expect(Object.keys(got.report!).sort()).toEqual(Object.keys(plain.report!).sort());
+      }
+    }, CASE_MS);
+
+    it("a server without the roles that holds a locked store's marks, a forced table, a lock policy or the readers' schema, is refused and nothing changes", async () => {
+      for (const [plant, undo] of [
+        [["alter table public.messages force row level security"], ["alter table public.messages no force row level security"]],
+        [["create policy lock_account on public.accounts using (true)"], ["drop policy lock_account on public.accounts"]],
+        [["create schema ohmail"], ["drop schema ohmail"]],
+      ] as const) {
+        const got = await withoutRoles([...plant], [...undo]);
+        expect(got.refused, plant.join("; ")).toMatch(/lock: this database carries a locked store's marks \(.*\) and this server has none of its runtime logins; nothing was changed/);
+      }
+      expect(await lockOf("ground")).toEqual({ schema: false, policies: 0, underRls: 0 });
+    }, CASE_MS);
+
+    it("the copied roles' script makes the logins over the 2.0 store and answers ROLES_OK", async () => {
+      const said = await ground.makeRoles("ground");
+      expect(said.filter((t) => /ROLES_(DRIFT|REFUSED)/.test(t))).toEqual([]);
+      expect(said.some((t) => t.includes("ROLES_OK migrator=ohmail_migrator bypass=migrator-only"))).toBe(true);
+    }, CASE_MS);
+
+    it("the logins exist and nothing asks for the lock: not applied, nothing written", async () => {
+      const report = await ground.setup("ground", MIGRATOR_ROLE);
+      expect(report.lock).toMatchObject({ state: "not-applied", wrote: 0 });
+      expect(await lockOf("ground")).toEqual({ schema: false, policies: 0, underRls: 0 });
+      await ground.clone("ground", "unlocked");
+    }, CASE_MS);
+
+    it("the logins exist, nothing asks, and only the readers' schema stands, bare or with old readers: not applied, nothing written", async () => {
+      for (const [name, plant] of [["bare_schema", "create schema ohmail"], ["old_readers", BINDING_READERS_SQL]] as const) {
+        const db = await ground.clone("unlocked", name);
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try { await mig.unsafe(plant).simple(); } finally { await mig.end({ timeout: 5 }); }
+        const said: string[] = [];
+        const report = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) });
+        expect(report.lock, name).toMatchObject({ state: "not-applied", wrote: 0, repaired: [] });
+        expect(said.filter((m) => m.startsWith("lock:")), name).toHaveLength(1);
+        expect(await lockOf(db), name).toEqual({ schema: true, policies: 0, underRls: 0 });
+      }
+    }, CASE_MS);
+
+    it("asked: every locked table is forced, exactly the listed policies stand, the deadlines by role, and the census is clean", async () => {
+      const report = await ground.setup("ground", MIGRATOR_ROLE, { lock: "apply" });
+      expect(report.lock).toMatchObject({ state: "locked", tables: lockedTables().length, forced: 101, policies: policyList().length, repaired: [] });
+      expect(report.lock!.wrote).toBeGreaterThan(policyList().length);
+      expect(report.lock!.deadlines).toEqual(Object.fromEntries(Object.entries(ROLE_DEADLINES).map(([role, cell]) =>
+        [role, Object.fromEntries(Object.keys(cell).map((guc) => [guc, true]))])));
+      const sql = ground.connectAs("ground", MIGRATOR_ROLE);
+      try {
+        expect(await lockCensus(sql)).toEqual([]);
+        const [t] = await sql<Array<{ n: number }>>`select count(*)::int as n from pg_tables where schemaname = 'public'`;
+        expect(t!.n).toBe(111);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("a second run writes nothing", async () => {
+      const report = await ground.setup("ground", MIGRATOR_ROLE);
+      expect(report.lock).toMatchObject({ state: "locked", wrote: 0, repaired: [] });
+    }, CASE_MS);
+
+    /**
+     * Every policy of `db` against its row of the list, as the check compares them: the policies
+     * that differ, with how. The second digest of a policy's record is the catalog's own spelling
+     * read back after the step made it, so a policy nobody touched compares equal by construction.
+     */
+    async function policiesNotAsListed(db: string): Promise<{ policies: number; differ: string[] }> {
+      const sql = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        const facts = await sql.begin("read only", (tx) => readLockFacts(tx)) as LockFacts;
+        const rows = new Map(expectedPolicies(facts).map((r) => [`${r.table}.${r.name}`, r]));
+        return {
+          policies: facts.policies.length,
+          differ: facts.policies.flatMap((p) => {
+            const r = rows.get(`${p.table}.${p.name}`);
+            const d = r === undefined ? ["not listed"] : policyDifferences(p, r).map((x) => x.detail);
+            return d.length === 0 ? [] : [`${p.table}.${p.name}: ${d.join("; ")}`];
+          }),
+        };
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    it("a fresh lock: every policy's record holds what the catalog prints for it, and both logins read locked", async () => {
+      expect(await policiesNotAsListed("ground")).toEqual({ policies: policyList().length, differ: [] });
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        expect(await verdictOf("ground", role, { role }), role).toMatchObject({ verdict: "locked", why: [], census: 0, role: { policies: "equal" } });
+      }
+    }, CASE_MS);
+
+    it("a dump of the locked store restored onto a server with the roles: every policy's record still holds what the catalog prints, both logins read locked, and the next setup writes nothing", async () => {
+      const dump = ground.server.dump("ground");
+      expect(dump).toContain("CREATE POLICY lock_account ON public.messages");
+      const db = await ground.clone("template0", "restored");
+      ground.server.restore(db, dump);
+      expect(await policiesNotAsListed(db)).toEqual({ policies: policyList().length, differ: [] });
+      expect(await plantAndCensus(db, [])).toEqual([]);
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        expect(await verdictOf(db, role, { role }), role).toMatchObject({ verdict: "locked", why: [], census: 0, role: { policies: "equal" } });
+      }
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock).toMatchObject({ state: "locked", forced: 101, wrote: 0, repaired: [] });
+    }, CASE_MS);
+
+    it("a dropped policy is red in the census, and the next setup makes it again", async () => {
+      const db = await ground.clone("ground", "drift_dropped");
+      expect(await plantAndCensus(db, ["drop policy lock_account on public.messages"]))
+        .toEqual(["LOCK_DRIFT policies.missing messages.lock_account"]);
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      expect(report.lock!.repaired).toEqual(["policy messages.lock_account was missing: made"]);
+      expect(await plantAndCensus(db, [])).toEqual([]);
+    }, CASE_MS);
+
+    it("a policy the list does not name is red, and the next setup drops it", async () => {
+      const db = await ground.clone("ground", "drift_foreign");
+      expect(await plantAndCensus(db, ["create policy wide_open on public.message_bodies for select to ohmail_api using (true)"]))
+        .toEqual(["LOCK_DRIFT policies.foreign message_bodies.wide_open: a policy the list does not name"]);
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      expect(report.lock!.repaired).toEqual(["policy message_bodies.wide_open is not the list's: dropped"]);
+      expect(await plantAndCensus(db, [])).toEqual([]);
+    }, CASE_MS);
+
+    it("an expression altered under a listed name is red, and the next setup makes it again", async () => {
+      const db = await ground.clone("ground", "drift_altered");
+      expect(await plantAndCensus(db, ["alter policy lock_account on public.messages using (true)"]))
+        .toEqual(["LOCK_DRIFT policies.altered messages.lock_account: its expression is not what was made"]);
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      expect(report.lock!.repaired).toEqual(["policy messages.lock_account is not as it was made: made again"]);
+      expect(await plantAndCensus(db, [])).toEqual([]);
+    }, CASE_MS);
+
+    it("forcing dropped on one table, or row security disabled on another, is red in the census, and the next setup locks each again and names it", async () => {
+      for (const [table, plant, found] of [
+        ["message_bodies", "no force", "on=true forced=false"],
+        ["messages", "disable", "on=false forced=true"],
+      ] as const) {
+        const db = await ground.clone("ground", `drift_flags_${table}`);
+        expect(await plantAndCensus(db, [`alter table public.${table} ${plant} row level security`]))
+          .toEqual([`LOCK_DRIFT tables.flags ${table}: ${found} while the lock is on`]);
+        const said: string[] = [];
+        const report = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) });
+        expect(report.lock).toMatchObject({ forced: 101, wrote: 1, repaired: [`table ${table} was ${found}: locked again`] });
+        expect(said).toContain(`lock: repair: table ${table} was ${found}: locked again`);
+        expect(await plantAndCensus(db, [])).toEqual([]);
+      }
+    }, CASE_MS);
+
+    it("a table in no class is red, and the setup refuses with nothing written", async () => {
+      const db = await ground.clone("ground", "drift_unclassed");
+      expect(await plantAndCensus(db, ["create table public.planted_free (id int)"]))
+        .toEqual(["LOCK_DRIFT tables.unclassed planted_free: a table of public in no class"]);
+      await expect(ground.setup(db, MIGRATOR_ROLE)).rejects.toThrow(/lock: LOCK_DRIFT tables\.unclassed planted_free.*nothing was written/);
+      expect(await plantAndCensus(db, ["drop table public.planted_free"])).toEqual([]);
+    }, CASE_MS);
+
+    it("a new table with the account's column is red until the setup locks it, with no edit of the list", async () => {
+      const db = await ground.clone("ground", "drift_new_table");
+      expect(await plantAndCensus(db, ["create table public.planted_owned (id int, account_id uuid not null)"])).toEqual([
+        "LOCK_DRIFT tables.flags planted_owned: on=false forced=false while the lock is on",
+        "LOCK_DRIFT policies.missing planted_owned.lock_account",
+      ]);
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      expect(report.lock).toMatchObject({ tables: 102, forced: 102, repaired: [] });
+      expect(await plantAndCensus(db, [])).toEqual([]);
+    }, CASE_MS);
+
+    /**
+     * One count as `role` on `db`, in a transaction the binder's own statement binds to `account` ("" names none): the
+     * rows, or the refusal's code. Several statements run in order in that transaction, and the last one counts.
+     */
+    async function boundCount(db: string, role: string, account: string, text: string | readonly string[]): Promise<number | string> {
+      const c = ground.connectAs(db, role);
+      try {
+        return await c.begin(async (tx) => {
+          await tx.unsafe(BINDER_SQL, [account, ""]);
+          let last: Array<Record<string, unknown>> = [];
+          for (const s of typeof text === "string" ? [text] : text) last = await tx.unsafe(s);
+          return Number(last[0]!.n);
+        }) as number;
+      } catch (e) {
+        return String((e as { code?: unknown }).code ?? (e as Error).message);
+      } finally {
+        await c.end({ timeout: 5 });
+      }
+    }
+
+    /** What `table` holds, as each login reads it bound to `a` and naming nothing. */
+    async function readsOf(db: string, table: string, a: string): Promise<Record<string, number | string>> {
+      const n = `select count(*)::int as n from public.${table}`;
+      return {
+        apiBoundA: await boundCount(db, "ohmail_api", a, n), apiNothing: await boundCount(db, "ohmail_api", "", n),
+        workerBoundA: await boundCount(db, "ohmail_worker", a, n), workerNothing: await boundCount(db, "ohmail_worker", "", n),
+      };
+    }
+
+    /**
+     * `table` locked by hand as the step locks a table of the account's class: row security on and
+     * forced, the list's policies for it made by the step's own statement, and the step's record on
+     * each (what the catalog printed for it, read under the step's own spelling settings).
+     */
+    async function lockByHand(db: string, table: string): Promise<void> {
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.begin(async (tx) => {
+          await tx.unsafe(`alter table public.${table} enable row level security, force row level security`);
+          await pinSpelling(tx);
+          for (const r of policiesOfTable(table, true)) {
+            await tx.unsafe(createPolicyStatement(r));
+            const [p] = await tx.unsafe(`select p.polcmd::text as verb,
+                (select coalesce(pg_catalog.array_agg(pg_catalog.pg_get_userbyid(x.r)::text order by 1), '{}') from pg_catalog.unnest(p.polroles) as x(r)) as roles,
+                pg_catalog.pg_get_expr(p.polqual, p.polrelid) as using, pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid) as check
+              from pg_catalog.pg_policy p where p.polrelid = $1::pg_catalog.regclass and p.polname = $2`, [`public.${table}`, r.name]);
+            await tx.unsafe(`comment on policy ${r.name} on public.${table} is '${policyComment(r, p as never)}'`);
+          }
+        });
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+    }
+
+    /** The copied roles' script, run as the migrator on `db` as a release runs it: its notices. */
+    const rolesScript = (db: string): Promise<string[]> => ground.runRolesScript(db);
+
+    /** What a refused step must leave as it found: the policies, the tables under row security and forced, the schema. */
+    async function catalogOf(db: string): Promise<string> {
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        const [r] = await mig.unsafe(`select (select pg_catalog.string_agg(c.relname || '.' || p.polname || ':' || coalesce(pg_catalog.obj_description(p.oid, 'pg_policy'), '-'), ',' order by 1, 2)
+              from pg_catalog.pg_policy p join pg_catalog.pg_class c on c.oid = p.polrelid) as policies,
+            (select pg_catalog.string_agg(c.relname || ':' || c.relrowsecurity || c.relforcerowsecurity, ',' order by 1) from pg_catalog.pg_class c
+              join pg_catalog.pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind in ('r', 'p')) as flags,
+            (select pg_catalog.string_agg(nspname, ',' order by 1) from pg_catalog.pg_namespace where nspname = 'ohmail') as schema`);
+        return JSON.stringify(r);
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+    }
+
+    /** A partitioned table with the account's column and one partition holding a row of each account. */
+    const PARTED = (a: string, b: string): string[] => [
+      "create table public.part_owned (id int not null, account_id uuid not null) partition by list (id)",
+      "create table public.part_owned_1 partition of public.part_owned for values in (1)",
+      `insert into public.part_owned values (1, '${a}'), (1, '${b}')`,
+    ];
+
+    it("a parent's row security holds only where a statement names the parent: read by its own name, a partition answers its own flags and policies", async () => {
+      const db = await ground.clone("ground", "part_proof");
+      const [a, b] = await twoAccounts(db);
+      await plantAndCensus(db, PARTED(a, b));
+      await lockByHand(db, "part_owned");
+      const roles = await rolesScript(db);
+      expect(roles.filter((t) => /ROLES_(OK|DRIFT|REFUSED)/.test(t)).map((t) => t.split(" ")[1])).toEqual(["ROLES_OK"]);
+      expect(roles.some((t) => t.includes("role ohmail_api on public.part_owned_1: [DELETE INSERT SELECT UPDATE]"))).toBe(true);
+      // The parent locked: through it each login reads its account's row. The partition, named by
+      // itself, has no row security of its own: the parent's policy is not consulted, both rows answer.
+      expect({ parent: await readsOf(db, "part_owned", a), partition: await readsOf(db, "part_owned_1", a) }).toEqual({
+        parent: { apiBoundA: 1, apiNothing: 0, workerBoundA: 1, workerNothing: 0 },
+        partition: { apiBoundA: 2, apiNothing: 2, workerBoundA: 2, workerNothing: 2 },
+      });
+      // Its own row security with no policy of its own: nothing answers, whatever the parent holds.
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try { await mig.unsafe("alter table public.part_owned_1 enable row level security, force row level security"); } finally { await mig.end({ timeout: 5 }); }
+      expect(await readsOf(db, "part_owned_1", a)).toEqual({ apiBoundA: 0, apiNothing: 0, workerBoundA: 0, workerNothing: 0 });
+      // Its own copy of the account's policy: the account's row alone, by its own name.
+      await lockByHand(db, "part_owned_1");
+      expect(await readsOf(db, "part_owned_1", a)).toEqual({ apiBoundA: 1, apiNothing: 0, workerBoundA: 1, workerNothing: 0 });
+    }, CASE_MS);
+
+    it("the lock takes no partitioned table: the parent, each partition, one attached after the lock and a sub-partition are named by the census, the check reads broken for both logins, and the setup refuses before it writes", async () => {
+      const db = await ground.clone("ground", "part_refused");
+      const [a, b] = await twoAccounts(db);
+      await plantAndCensus(db, [...PARTED(a, b),
+        "create table public.part_owned_sub partition of public.part_owned for values in (3) partition by hash (account_id)",
+        "create table public.part_owned_sub_0 partition of public.part_owned_sub for values with (modulus 1, remainder 0)",
+        `insert into public.part_owned values (3, '${a}'), (3, '${b}')`]);
+      // As the step locked a partitioned parent before: forced, with the list's policy and its record.
+      await lockByHand(db, "part_owned");
+      // A partition attached after the lock, then the roles' script, which grants every table of public.
+      await plantAndCensus(db, ["create table public.part_owned_2 (id int not null, account_id uuid not null)",
+        `insert into public.part_owned_2 values (2, '${a}'), (2, '${b}')`,
+        "alter table public.part_owned attach partition public.part_owned_2 for values in (2)"]);
+      expect((await rolesScript(db)).filter((t) => /ROLES_(OK|DRIFT|REFUSED)/.test(t)).map((t) => t.split(" ")[1])).toEqual(["ROLES_OK"]);
+      // Each partition, named by itself, answers both accounts to both logins, bound or naming nothing.
+      const open = { apiBoundA: 2, apiNothing: 2, workerBoundA: 2, workerNothing: 2 };
+      for (const t of ["part_owned_1", "part_owned_2", "part_owned_sub", "part_owned_sub_0"]) expect(await readsOf(db, t, a), t).toEqual(open);
+      const tail = "the lock takes no partitioned table";
+      const why = [`part_owned is partitioned; ${tail}`, `part_owned_1 is a partition of part_owned; ${tail}`, `part_owned_2 is a partition of part_owned; ${tail}`,
+        `part_owned_sub is partitioned, and a partition of part_owned; ${tail}`, `part_owned_sub_0 is a partition of part_owned_sub; ${tail}`];
+      const before = await catalogOf(db);
+      const said: string[] = [];
+      const refused = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) })
+        .then((r) => `not refused: ${JSON.stringify(r.lock)}`, (e: Error) => e.message);
+      expect({
+        census: (await plantAndCensus(db, [])).sort(),
+        api: await verdictOf(db, "ohmail_api", { role: "ohmail_api" }).then((v) => ({ verdict: v.verdict, why: v.why })),
+        worker: await verdictOf(db, "ohmail_worker", { role: "ohmail_worker" }).then((v) => ({ verdict: v.verdict, why: v.why })),
+        refused: why.every((w) => refused.includes(`lock: LOCK_DRIFT tables.partitioned ${w.replace(" is ", ": ")}; nothing was written`)),
+        // Refused before it writes: no repair is said that a rollback then takes back.
+        repairsSaid: said.filter((m) => m.startsWith("lock: repair:")),
+        unchanged: await catalogOf(db) === before,
+      }).toEqual({
+        census: [...why.map((w) => `LOCK_DRIFT tables.partitioned ${w.replace(" is ", ": ")}`),
+          "LOCK_DRIFT policies.foreign part_owned.lock_account: a policy the list does not name"].sort(),
+        api: { verdict: "broken", why: [...why, "the policies naming ohmail_api are not the list's"] },
+        worker: { verdict: "broken", why: [...why, "the policies naming ohmail_worker are not the list's"] },
+        refused: true,
+        repairsSaid: [],
+        unchanged: true,
+      });
+      // Asked for the first time, over a store that holds a partitioned table: refused as well, nothing written.
+      const first = await ground.clone("unlocked", "part_first");
+      const [fa, fb] = await twoAccounts(first);
+      await plantAndCensus(first, PARTED(fa, fb));
+      await expect(ground.setup(first, MIGRATOR_ROLE, { lock: "apply" })).rejects
+        .toThrow(`lock: LOCK_DRIFT tables.partitioned part_owned: partitioned; ${tail}; nothing was written`);
+      expect(await lockOf(first)).toEqual({ schema: false, policies: 0, underRls: 0 });
+    }, CASE_MS);
+
+    /** The listed policies that call the reader `name`, as `table.policy`. */
+    const calling = (name: string): string[] => policyList()
+      .filter((r) => `${r.using ?? ""} ${r.check ?? ""}`.includes(`ohmail.${name}()`)).map((r) => `${r.table}.${r.name}`);
+    const missingLines = (keys: string[]): string[] => keys.map((k) => `LOCK_DRIFT policies.missing ${k}`);
+    const madeLines = (keys: string[]): string[] => keys.map((k) => `policy ${k} was missing: made`);
+    /** A listed policy dropped and made again by `create`, with the comment the step wrote on it kept. */
+    const remake = (table: string, name: string, create: string): string => `do $plant$ declare c text := pg_catalog.obj_description(
+        (select p.oid from pg_catalog.pg_policy p where p.polrelid = 'public.${table}'::regclass and p.polname = '${name}'), 'pg_policy');
+      begin drop policy ${name} on public.${table}; ${create}; execute pg_catalog.format('comment on policy ${name} on public.${table} is %L', c); end $plant$`;
+    const KEY_BODY = LOCK_READERS.find((r) => r.name === "current_key")!.body;
+    const OFF = "ohmail.lock off since=2026-11-15T10:00:00.000Z by=ohmail_migrator why=test";
+    const drift = (arm: string, subject: string, detail: string): string => `LOCK_DRIFT ${arm} ${subject}: ${detail}`;
+    /** Code on `table` that runs with its owner's rights: the census's line, and the check's reason. */
+    const PAST_THE_LOCK = "runs with its owner's rights, past the lock";
+    const calls = (what: string, routine: string): string => `${what} calls the SECURITY DEFINER routine ${routine}, which ${PAST_THE_LOCK}`;
+    const codeLine = (table: string, what: string): string => drift("tables.code", table, what);
+    const codeWhy = (table: string, what: string): string => `on ${table}, ${what}`;
+
+    /**
+     * EVERY CLAUSE OF THE CENSUS, each planted on a clone of the locked ground: the exact lines it
+     * reads, and what the next setup does, a repair (and a clean census after) or a refusal.
+     */
+    interface Clause {
+      readonly arm: string;
+      readonly plant: (db: string) => string[];
+      readonly asSuper?: boolean;
+      readonly lines: (db: string) => string[];
+      readonly setup: { readonly repaired: readonly string[] } | { readonly refused: RegExp };
+      /** Statements, as the superuser, that undo a plant the whole server holds. */
+      readonly undo?: readonly string[];
+    }
+    const CLAUSES: Clause[] = [
+      { arm: "tables.column, a column the map does not name", plant: () => ["alter table public.waitlist add column account_id uuid"],
+        lines: () => [drift("tables.column", "waitlist", "account_id present where the map says otherwise"), "LOCK_DRIFT policies.missing waitlist.lock_account"],
+        setup: { refused: /lock: LOCK_DRIFT tables\.column waitlist: account_id present/ } },
+      { arm: "tables.column, a column the map names and the table lost", plant: () => ["alter table public.erased_bearers drop column account_id cascade"],
+        lines: () => [drift("tables.column", "erased_bearers", "account_id missing where the map says otherwise")],
+        setup: { refused: /lock: LOCK_DRIFT tables\.column erased_bearers: account_id missing/ } },
+      { arm: "tables.column, an operations table with the account", plant: () => ["alter table public.auth_throttle add column account_id uuid"],
+        lines: () => [drift("tables.column", "auth_throttle", "account_id present where the map says otherwise"),
+          drift("tables.column", "auth_throttle", "an operations table carries account_id")],
+        setup: { refused: /lock: LOCK_DRIFT tables\.column auth_throttle: an operations table carries account_id/ } },
+      { arm: "tables.flags, an operations table under row security", plant: () => ["alter table public.auth_throttle enable row level security"],
+        lines: () => [drift("tables.flags", "auth_throttle", "an operations table under row security")],
+        setup: { refused: /lock: LOCK_DRIFT tables\.flags auth_throttle: an operations table under row security/ } },
+      { arm: "tables.gone", plant: () => ["drop table public.worker_heartbeats"],
+        lines: () => [drift("tables.gone", "worker_heartbeats", "a listed table is not in the catalog")],
+        setup: { refused: /lock: LOCK_DRIFT tables\.gone worker_heartbeats/ } },
+      { arm: "policies.shape, restrictive", plant: () => [remake("accounts", "lock_worker_wide", "create policy lock_worker_wide on public.accounts as restrictive for select to ohmail_worker using (true)")],
+        lines: () => [drift("policies.shape", "accounts.lock_worker_wide", "restrictive")],
+        setup: { repaired: ["policy accounts.lock_worker_wide is not as it was made: made again"] } },
+      { arm: "policies.shape, the verb", plant: () => [remake("accounts", "lock_worker_wide", "create policy lock_worker_wide on public.accounts for all to ohmail_worker using (true)")],
+        lines: () => [drift("policies.shape", "accounts.lock_worker_wide", "for ALL, the list says SELECT"),
+          drift("policies.altered", "accounts.lock_worker_wide", "its expression is not what was made")],
+        setup: { repaired: ["policy accounts.lock_worker_wide is not as it was made: made again"] } },
+      { arm: "policies.roles", plant: () => ["alter policy lock_account on public.messages to ohmail_api"],
+        lines: () => [drift("policies.roles", "messages.lock_account", "to ohmail_api"), drift("policies.altered", "messages.lock_account", "its expression is not what was made")],
+        setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] } },
+      { arm: "policies.roles, a listed policy moved to PUBLIC", plant: () => ["alter policy lock_account on public.messages to public"],
+        lines: () => [drift("policies.roles", "messages.lock_account", "to public"), drift("policies.altered", "messages.lock_account", "its expression is not what was made")],
+        setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] } },
+      { arm: "policies.unrecorded", plant: () => ["comment on policy lock_account on public.messages is null"],
+        lines: () => [drift("policies.unrecorded", "messages.lock_account", "no record of how it was made")],
+        setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] } },
+      { arm: "policies.listed", plant: () => [`do $plant$ declare c text := pg_catalog.obj_description((select p.oid from pg_catalog.pg_policy p
+          where p.polrelid = 'public.messages'::regclass and p.polname = 'lock_account'), 'pg_policy');
+        begin execute pg_catalog.format('comment on policy lock_account on public.messages is %L',
+          pg_catalog.split_part(c, ' ', 1) || ' ' || pg_catalog.repeat('0', 64) || ' ' || pg_catalog.split_part(c, ' ', 3)); end $plant$`],
+        lines: () => [drift("policies.listed", "messages.lock_account", "made from another version of the list")],
+        // A row of the list that changed is made again as the list's, not as a repair.
+        setup: { repaired: [] } },
+      { arm: "schema.missing", plant: () => ["drop schema ohmail cascade"],
+        lines: () => ["LOCK_DRIFT schema.missing ohmail", ...missingLines([...new Set([...calling("current_account"), ...calling("current_key")])])],
+        setup: { repaired: ["schema ohmail was missing: made", "reader ohmail.current_account was missing: made", "reader ohmail.current_key was missing: made",
+          ...madeLines([...new Set([...calling("current_account"), ...calling("current_key")])])] } },
+      { arm: "schema.usage", plant: () => ["grant usage on schema ohmail to ohmail_api"],
+        lines: () => [drift("schema.usage", "ohmail", "ohmail_api holds USAGE")],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT USAGE on schema ohmail/ } },
+      { arm: "schema.objects, a routine, and one of a reader's name that takes an argument",
+        plant: () => ["create function ohmail.extra() returns int language sql as 'select 1'",
+          "create function ohmail.current_account(x int) returns uuid language sql stable as 'select null::uuid'"],
+        lines: () => [drift("schema.objects", "ohmail", "routine current_account(x integer)"), drift("schema.objects", "ohmail", "routine extra()")],
+        setup: { refused: /lock: LOCK_DRIFT schema\.objects ohmail: routine/ } },
+      { arm: "schema.objects, a relation and a type", plant: () => ["create table ohmail.extra (id int)", "create type ohmail.mood as enum ('calm')"],
+        lines: () => [drift("schema.objects", "ohmail", "relation extra"), drift("schema.objects", "ohmail", "type mood")],
+        setup: { refused: /lock: LOCK_DRIFT schema\.objects ohmail: (relation|type)/ } },
+      { arm: "marker.unreadable", plant: () => ["comment on schema ohmail is 'the lock is off, trust me'"],
+        lines: () => [drift("marker.unreadable", "ohmail", "its comment is no marker")],
+        setup: { refused: /lock: LOCK_DRIFT marker\.unreadable ohmail/ } },
+      { arm: "marker.stale", plant: () => [`comment on schema ohmail is '${OFF}'`],
+        lines: () => [drift("marker.stale", "ohmail", "the marker says off and every table is locked"),
+          ...lockedTables().map((t) => drift("tables.flags", t, "on=true forced=true while the lock is off"))],
+        setup: { refused: /lock: LOCK_DRIFT marker\.stale ohmail/ } },
+      { arm: "readers.missing", plant: () => ["drop function ohmail.current_key() cascade"],
+        lines: () => ["LOCK_DRIFT readers.missing ohmail.current_key", ...missingLines(calling("current_key"))],
+        setup: { repaired: ["reader ohmail.current_key was missing: made", ...madeLines(calling("current_key"))] } },
+      { arm: "readers.differ, body",
+        plant: () => ["create or replace function ohmail.current_account() returns pg_catalog.uuid language sql stable parallel safe as $r$select null::pg_catalog.uuid$r$"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "body")], setup: { repaired: ["reader ohmail.current_account made again: body"] } },
+      { arm: "readers.differ, volatility", plant: () => ["alter function ohmail.current_account() volatile"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "volatility")], setup: { repaired: ["reader ohmail.current_account made again: volatility"] } },
+      { arm: "readers.differ, parallel", plant: () => ["alter function ohmail.current_account() parallel unsafe"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "parallel")], setup: { repaired: ["reader ohmail.current_account made again: parallel"] } },
+      { arm: "readers.differ, security definer", plant: () => ["alter function ohmail.current_account() security definer"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "security definer")],
+        setup: { repaired: ["reader ohmail.current_account made again: security definer"] } },
+      { arm: "readers.differ, settings", plant: () => ["alter function ohmail.current_account() set search_path = pg_catalog"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "settings")], setup: { repaired: ["reader ohmail.current_account made again: settings"] } },
+      { arm: "readers.differ, language",
+        plant: () => ["create or replace function ohmail.current_key() returns pg_catalog.text language plpgsql stable parallel safe as $r$begin return null; end$r$"],
+        lines: () => [drift("readers.differ", "ohmail.current_key", "body, language")], setup: { repaired: ["reader ohmail.current_key made again: body, language"] } },
+      { arm: "readers.differ, return type",
+        plant: () => ["drop function ohmail.current_key() cascade",
+          `create function ohmail.current_key() returns pg_catalog.varchar language sql stable parallel safe as $r$${KEY_BODY}$r$`],
+        lines: () => [drift("readers.differ", "ohmail.current_key", "return type"), ...missingLines(calling("current_key"))],
+        setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_key: return type; nothing was written/ } },
+      { arm: "readers.differ, owner", asSuper: true, plant: () => [`alter function ohmail.current_account() owner to ${ground.server.superuser}`],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "owner")],
+        setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_account: owner; nothing was written/ } },
+      { arm: "readers.differ, privileges", plant: () => ["revoke execute on function ohmail.current_account() from public"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "privileges")],
+        setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_account: privileges; nothing was written/ } },
+      { arm: "readers.differ, strict", plant: () => ["alter function ohmail.current_account() strict"],
+        lines: () => [drift("readers.differ", "ohmail.current_account", "strict")], setup: { repaired: ["reader ohmail.current_account made again: strict"] } },
+      { arm: "readers.differ, kind",
+        plant: () => ["drop function ohmail.current_key() cascade", "create procedure ohmail.current_key() language sql as $r$select 1$r$"],
+        lines: () => [drift("readers.differ", "ohmail.current_key", "body, volatility, parallel, return type, kind"), ...missingLines(calling("current_key"))],
+        setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_key: body, volatility, parallel, return type, kind; nothing was written/ } },
+      { arm: "settings.binding, on a role", asSuper: true, plant: () => ["alter role ohmail_api set ohmail.account = '00000000-0000-4000-8000-000000000001'"],
+        lines: () => [drift("settings.binding", "ohmail_api/-/ohmail.account", "the binding's setting stands on a role or a database")],
+        // The roles' own check reads a login's settings first.
+        setup: { refused: /lock: the runtime roles' check refused: ROLES_DRIFT role ohmail_api: the setting ohmail\.account is set and the rule writes no such setting/ },
+        undo: ["alter role ohmail_api reset ohmail.account"] },
+      { arm: "settings.binding, on this database", asSuper: true, plant: (db) => [`alter database "${db}" set ohmail.key = 'x'`],
+        lines: (db) => [drift("settings.binding", `-/${db}/ohmail.key`, "the binding's setting stands on a role or a database")],
+        setup: { refused: /lock: LOCK_DRIFT settings\.binding -\/clause_\d+\/ohmail\.key/ } },
+      { arm: "grants.ohmail_admin, a grant no policy reads", plant: () => ["grant select (id) on public.messages to ohmail_admin"],
+        lines: () => [drift("grants.ohmail_admin", "messages", "SELECT granted and no policy names the role")],
+        setup: { refused: /lock: LOCK_DRIFT grants\.ohmail_admin messages: SELECT granted and no policy names the role; nothing was written/ } },
+      { arm: "grants.ohmail_admin, a policy nothing is granted for", plant: () => ["revoke select on public.accounts from ohmail_admin"],
+        lines: () => [drift("grants.ohmail_admin", "accounts", "a SELECT policy names the role and nothing is granted")],
+        setup: { refused: /lock: LOCK_DRIFT grants\.ohmail_admin accounts: a SELECT policy names the role and nothing is granted; nothing was written/ } },
+      { arm: "grants.plane_runtime, a grant no policy reads", plant: () => ["grant select on public.messages to plane_runtime"],
+        lines: () => [drift("grants.plane_runtime", "messages", "SELECT granted and no policy names the role")],
+        setup: { refused: /lock: LOCK_DRIFT grants\.plane_runtime messages: SELECT granted and no policy names the role; nothing was written/ } },
+      { arm: "grants.plane_runtime, a policy nothing is granted for", plant: () => ["revoke insert on public.audit_log from plane_runtime"],
+        lines: () => [drift("grants.plane_runtime", "audit_log", "an INSERT policy names the role and nothing is granted")],
+        setup: { refused: /lock: LOCK_DRIFT grants\.plane_runtime audit_log: an INSERT policy names the role and nothing is granted; nothing was written/ } },
+      // Code on a table that runs with its owner's rights, one arm of the census's statement each.
+      { arm: "tables.code, a rule", plant: () => ["create rule note_insert as on insert to public.audit_log do also notify note_insert"],
+        lines: () => [codeLine("audit_log", `the rule note_insert ${PAST_THE_LOCK}`)],
+        setup: { refused: /lock: LOCK_DRIFT tables\.code audit_log: the rule note_insert runs with its owner's rights, past the lock; nothing was written/ } },
+      { arm: "tables.code, a trigger: its routine, or one its condition calls", plant: () => ["create schema side_code",
+        "create function side_code.fire() returns trigger language plpgsql security definer as $f$begin return new; end$f$",
+        "create trigger fire_on_insert after insert on public.audit_log for each row execute function side_code.fire()",
+        "create function side_code.plain() returns trigger language plpgsql as $f$begin return new; end$f$",
+        "create function side_code.yes() returns boolean language sql security definer as $f$select true$f$",
+        "create trigger when_yes before update on public.cal_settings for each row when (side_code.yes()) execute function side_code.plain()"],
+        lines: () => [codeLine("audit_log", calls("the trigger fire_on_insert", "side_code.fire()")), codeLine("cal_settings", calls("the trigger when_yes", "side_code.yes()"))],
+        setup: { refused: /lock: LOCK_DRIFT tables\.code audit_log: the trigger fire_on_insert calls the SECURITY DEFINER routine side_code\.fire\(\), which runs with its owner's rights, past the lock; nothing was written/ } },
+      { arm: "tables.code, a default and a generated column", plant: () => ["create schema side_code",
+        "create function side_code.word() returns text language sql security definer as $f$select 'x'$f$",
+        "alter table public.cal_settings alter column second_zone set default side_code.word()",
+        "create function side_code.word_of(pg_catalog.uuid) returns text language sql immutable security definer as $f$select $1::text$f$",
+        "alter table public.cal_settings add column account_word text generated always as (side_code.word_of(account_id)) stored"],
+        lines: () => [codeLine("cal_settings", calls("the default of second_zone", "side_code.word()")),
+          codeLine("cal_settings", calls("the generated column account_word", "side_code.word_of(uuid)"))],
+        setup: { refused: /lock: LOCK_DRIFT tables\.code cal_settings: the generated column account_word calls the SECURITY DEFINER routine side_code\.word_of\(uuid\)/ } },
+      { arm: "tables.code, a constraint", plant: () => ["create schema side_code",
+        "create function side_code.fits(pg_catalog.uuid) returns boolean language sql security definer as $f$select true$f$",
+        "alter table public.cal_settings add constraint fits_account check (side_code.fits(account_id))"],
+        lines: () => [codeLine("cal_settings", calls("the constraint fits_account", "side_code.fits(uuid)"))],
+        setup: { refused: /lock: LOCK_DRIFT tables\.code cal_settings: the constraint fits_account calls the SECURITY DEFINER routine side_code\.fits\(uuid\)/ } },
+      { arm: "tables.code, an index", plant: () => ["create schema side_code",
+        "create function side_code.word_of(pg_catalog.uuid) returns text language sql immutable security definer as $f$select $1::text$f$",
+        "create index account_word on public.cal_settings (side_code.word_of(account_id))"],
+        lines: () => [codeLine("cal_settings", calls("the index account_word", "side_code.word_of(uuid)"))],
+        setup: { refused: /lock: LOCK_DRIFT tables\.code cal_settings: the index account_word calls the SECURITY DEFINER routine side_code\.word_of\(uuid\)/ } },
+    ];
+
+    for (const [i, c] of CLAUSES.entries()) {
+      it(`the census's clause ${c.arm}: its exact lines, and the next setup ${"refused" in c.setup ? "refuses" : "mends it"}`, async () => {
+        const db = await ground.clone("ground", `clause_${i}`);
+        const su = ground.connectAs(db);
+        try {
+          const planter = c.asSuper === true ? su : ground.connectAs(db, MIGRATOR_ROLE);
+          try { for (const s of c.plant(db)) await planter.unsafe(s); } finally { if (planter !== su) await planter.end({ timeout: 5 }); }
+          expect((await plantAndCensus(db, [])).sort()).toEqual([...c.lines(db)].sort());
+          if ("refused" in c.setup) {
+            await expect(ground.setup(db, MIGRATOR_ROLE)).rejects.toThrow(c.setup.refused);
+          } else {
+            const report = await ground.setup(db, MIGRATOR_ROLE);
+            expect([...report.lock!.repaired].sort()).toEqual([...c.setup.repaired].sort());
+            expect(await plantAndCensus(db, [])).toEqual([]);
+          }
+        } finally {
+          for (const s of c.undo ?? []) await su.unsafe(s);
+          await su.end({ timeout: 5 });
+        }
+      }, CASE_MS);
+    }
+
+    /**
+     * THE RECHECK'S DATABASE PLANTS (2026-11-15), each on a clone of the locked ground that holds a
+     * row of each of two accounts in `cal_settings`: what each login reads there bound to A and
+     * naming nothing, the census, the check judged for each login, and the next setup's answer;
+     * and, where the setup mends it, the lock's reads and verdicts again.
+     */
+    interface RecheckPlant {
+      readonly name: string;
+      readonly asSuper?: boolean;
+      readonly plant: (a: string, b: string) => string[];
+      /** `cal_settings` as the API's login bound to A and naming nothing, then the worker's. */
+      readonly reads: readonly [number, number, number, number];
+      /** Reads past `cal_settings`: the login, bound to A or naming nothing, the statement, its rows, and its rows once mended. */
+      readonly extra?: ReadonlyArray<readonly [string, "A" | "none", string, number, number?]>;
+      readonly census: readonly string[];
+      /**
+       * The check's reasons, judged for each login; none is `locked`. Absent where the check, as
+       * ruled, reads `public` alone: a side schema's objects are the roles' check's to refuse.
+       */
+      readonly api?: readonly string[];
+      readonly worker?: readonly string[];
+      readonly setup: { readonly repaired: readonly string[] } | { readonly refused: RegExp };
+    }
+    const ALTERED = "its expression is not what was made";
+    const UNRECORDED = "no record of how it was made";
+    const notAsListed = (role: string, detail: string, key = "cal_settings.lock_account"): string => `the policy ${key} naming ${role} is not as listed: ${detail}`;
+    const namesDiffer = (role: string): string => `the policies naming ${role} are not the list's`;
+    const MADE_AGAIN = { repaired: ["policy cal_settings.lock_account is not as it was made: made again"] };
+    /** A schema beside `public` both logins may use. */
+    const SIDE = ["create schema side", "grant usage on schema side to ohmail_api, ohmail_worker"];
+    const RECHECK_PLANTS: RecheckPlant[] = [
+      { name: "altered_true", plant: () => ["alter policy lock_account on public.cal_settings using (true) with check (true)"],
+        reads: [2, 2, 2, 2], census: [drift("policies.altered", "cal_settings.lock_account", ALTERED)],
+        api: [notAsListed("ohmail_api", ALTERED)], worker: [notAsListed("ohmail_worker", ALTERED)], setup: MADE_AGAIN },
+      { name: "altered_or_true", plant: () => ["alter policy lock_account on public.cal_settings using (account_id = ohmail.current_account() or true)"],
+        reads: [2, 2, 2, 2], census: [drift("policies.altered", "cal_settings.lock_account", ALTERED)],
+        api: [notAsListed("ohmail_api", ALTERED)], worker: [notAsListed("ohmail_worker", ALTERED)], setup: MADE_AGAIN },
+      { name: "remade_by_hand", plant: () => ["drop policy lock_account on public.cal_settings",
+        "create policy lock_account on public.cal_settings for all to ohmail_api, ohmail_worker using (true) with check (true)"],
+        reads: [2, 2, 2, 2], census: [drift("policies.unrecorded", "cal_settings.lock_account", UNRECORDED)],
+        api: [notAsListed("ohmail_api", UNRECORDED)], worker: [notAsListed("ohmail_worker", UNRECORDED)], setup: MADE_AGAIN },
+      { name: "another_row_of_the_list", plant: () => [`do $plant$ declare c text := pg_catalog.obj_description((select p.oid from pg_catalog.pg_policy p
+          where p.polrelid = 'public.cal_settings'::regclass and p.polname = 'lock_account'), 'pg_policy');
+        begin execute pg_catalog.format('comment on policy lock_account on public.cal_settings is %L',
+          pg_catalog.split_part(c, ' ', 1) || ' ' || pg_catalog.repeat('0', 64) || ' ' || pg_catalog.split_part(c, ' ', 3)); end $plant$`],
+        reads: [1, 0, 1, 0], census: [drift("policies.listed", "cal_settings.lock_account", "made from another version of the list")],
+        api: [notAsListed("ohmail_api", "made from another version of the list")], worker: [notAsListed("ohmail_worker", "made from another version of the list")],
+        // A row of the list that changed is made again as the list's, not as a repair.
+        setup: { repaired: [] } },
+      { name: "a_policy_naming_both_logins", plant: () => ["create policy also on public.cal_settings for select to ohmail_api, ohmail_worker using (true)"],
+        reads: [2, 2, 2, 2], census: [drift("policies.foreign", "cal_settings.also", "a policy the list does not name")],
+        api: [namesDiffer("ohmail_api")], worker: [namesDiffer("ohmail_worker")], setup: { repaired: ["policy cal_settings.also is not the list's: dropped"] } },
+      { name: "a_policy_naming_the_worker", plant: () => ["create policy also on public.cal_settings for select to ohmail_worker using (true)"],
+        reads: [1, 0, 2, 2], census: [drift("policies.foreign", "cal_settings.also", "a policy the list does not name")],
+        api: [], worker: [namesDiffer("ohmail_worker")], setup: { repaired: ["policy cal_settings.also is not the list's: dropped"] } },
+      { name: "the_door_gains_the_worker", plant: () => ["alter policy lock_staff_door on public.staff_sessions to ohmail_api, ohmail_worker"],
+        reads: [1, 0, 1, 0],
+        census: [drift("policies.roles", "staff_sessions.lock_staff_door", "to ohmail_api,ohmail_worker"), drift("policies.altered", "staff_sessions.lock_staff_door", ALTERED)],
+        api: [notAsListed("ohmail_api", `to ohmail_api,ohmail_worker; ${ALTERED}`, "staff_sessions.lock_staff_door")],
+        worker: [notAsListed("ohmail_worker", `to ohmail_api,ohmail_worker; ${ALTERED}`, "staff_sessions.lock_staff_door"), namesDiffer("ohmail_worker")],
+        setup: { repaired: ["policy staff_sessions.lock_staff_door is not as it was made: made again"] } },
+      // The readers and their schema.
+      { name: "the_key_reader_immutable", plant: () => ["alter function ohmail.current_key() immutable"],
+        reads: [1, 0, 1, 0], census: [drift("readers.differ", "ohmail.current_key", "volatility")],
+        api: ["the reader ohmail.current_key differs: volatility"], worker: ["the reader ohmail.current_key differs: volatility"],
+        setup: { repaired: ["reader ohmail.current_key made again: volatility"] } },
+      { name: "the_account_reader_a_definer", plant: () => ["alter function ohmail.current_account() security definer"],
+        reads: [1, 0, 1, 0], census: [drift("readers.differ", "ohmail.current_account", "security definer")],
+        api: ["the reader ohmail.current_account differs: security definer"], worker: ["the reader ohmail.current_account differs: security definer"],
+        setup: { repaired: ["reader ohmail.current_account made again: security definer"] } },
+      { name: "the_account_reader_owned_by_another", asSuper: true, plant: () => [`alter function ohmail.current_account() owner to ${ground.server.superuser}`],
+        reads: [1, 0, 1, 0], census: [drift("readers.differ", "ohmail.current_account", "owner")],
+        api: ["the reader ohmail.current_account differs: owner"], worker: ["the reader ohmail.current_account differs: owner"],
+        setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_account: owner; nothing was written/ } },
+      { name: "the_schema_and_readers_owned_by_the_plane", asSuper: true, plant: () => ["alter schema ohmail owner to plane_runtime",
+        "alter function ohmail.current_account() owner to plane_runtime", "alter function ohmail.current_key() owner to plane_runtime"],
+        reads: [1, 0, 1, 0], census: [drift("schema.usage", "ohmail", "plane_runtime holds USAGE")],
+        api: ["plane_runtime holds USAGE on the schema ohmail"], worker: ["plane_runtime holds USAGE on the schema ohmail"],
+        setup: { refused: /lock: LOCK_DRIFT schema\.usage ohmail: plane_runtime holds USAGE; nothing was written/ } },
+      // PUBLIC, and the table's own flags.
+      { name: "the_listed_policy_to_public", plant: () => ["alter policy lock_account on public.cal_settings to public"],
+        reads: [1, 0, 1, 0],
+        census: [drift("policies.roles", "cal_settings.lock_account", "to public"), drift("policies.altered", "cal_settings.lock_account", ALTERED)],
+        api: ["a policy names PUBLIC: cal_settings.lock_account", notAsListed("ohmail_api", `to public; ${ALTERED}`)],
+        worker: ["a policy names PUBLIC: cal_settings.lock_account", notAsListed("ohmail_worker", `to public; ${ALTERED}`)], setup: MADE_AGAIN },
+      { name: "a_policy_to_public_for_all", plant: () => ["create policy pub on public.cal_settings for all to public using (true) with check (true)"],
+        reads: [2, 2, 2, 2], census: [drift("policies.foreign", "cal_settings.pub", "a policy the list does not name")],
+        api: ["a policy names PUBLIC: cal_settings.pub", namesDiffer("ohmail_api")], worker: ["a policy names PUBLIC: cal_settings.pub", namesDiffer("ohmail_worker")],
+        setup: { repaired: ["policy cal_settings.pub is not the list's: dropped"] } },
+      { name: "the_table_unforced", plant: () => ["alter table public.cal_settings no force row level security"],
+        reads: [1, 0, 1, 0], census: [drift("tables.flags", "cal_settings", "on=true forced=false while the lock is on")],
+        api: ["101 of 101 locked tables on and 100 forced, with no marker"], worker: ["101 of 101 locked tables on and 100 forced, with no marker"],
+        setup: { repaired: ["table cal_settings was on=true forced=false: locked again"] } },
+      { name: "the_table_disabled", plant: () => ["alter table public.cal_settings disable row level security"],
+        reads: [2, 2, 2, 2], census: [drift("tables.flags", "cal_settings", "on=false forced=true while the lock is on")],
+        api: ["100 of 101 locked tables on and 101 forced, with no marker"], worker: ["100 of 101 locked tables on and 101 forced, with no marker"],
+        setup: { repaired: ["table cal_settings was on=false forced=true: locked again"] } },
+      { name: "an_inherited_child_granted", plant: (_a, b) => ["create table public.cal_settings_child () inherits (public.cal_settings)",
+        `insert into public.cal_settings_child (account_id) values ('${b}')`, "grant select on public.cal_settings_child to ohmail_api, ohmail_worker"],
+        // Through its parent the child's row answers the parent's policy; by its own name, nothing holds it until the setup locks it as the new table it is.
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "select count(*)::int as n from public.cal_settings_child", 1, 0],
+          ["ohmail_api", "none", "select count(*)::int as n from public.cal_settings_child", 1, 0]],
+        census: [drift("tables.flags", "cal_settings_child", "on=false forced=false while the lock is on"), "LOCK_DRIFT policies.missing cal_settings_child.lock_account"],
+        api: ["101 of 102 locked tables on and 101 forced, with no marker", namesDiffer("ohmail_api")],
+        worker: ["101 of 102 locked tables on and 101 forced, with no marker", namesDiffer("ohmail_worker")], setup: { repaired: [] } },
+      // Views and definer routines: of public, the check reads them for the login that reaches them; of another schema, the roles' check refuses them.
+      { name: "a_view_of_public_for_the_worker", plant: () => ["create view public.all_settings as select account_id from public.cal_settings",
+        "grant select on public.all_settings to ohmail_worker"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_worker", "none", "select count(*)::int as n from public.all_settings", 2]], census: [],
+        api: [], worker: ["ohmail_worker may read a view or a foreign table of public"],
+        setup: { refused: /ROLES_DRIFT SELECT on the view public\.all_settings: role ohmail_worker reaches it/ } },
+      { name: "a_materialized_view_of_public_for_the_api", plant: () => ["create materialized view public.mv_settings as select account_id from public.cal_settings",
+        "grant select on public.mv_settings to ohmail_api"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "none", "select count(*)::int as n from public.mv_settings", 2]], census: [],
+        api: ["ohmail_api may read a view or a foreign table of public"], worker: [],
+        setup: { refused: /ROLES_DRIFT SELECT on the materialized view public\.mv_settings: role ohmail_api reaches it/ } },
+      { name: "a_view_in_another_schema", plant: () => [...SIDE, "create view side.all_settings as select account_id from public.cal_settings",
+        "grant select on side.all_settings to ohmail_api, ohmail_worker"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "select count(*)::int as n from side.all_settings", 2],
+          ["ohmail_worker", "none", "select count(*)::int as n from side.all_settings", 2]], census: [],
+        setup: { refused: /ROLES_DRIFT USAGE on schema side: role ohmail_api holds it and the rule does not write it/ } },
+      { name: "a_definer_routine_in_another_schema", plant: () => [...SIDE,
+        "create function side.all_settings() returns int language sql security definer as 'select count(*)::int from public.cal_settings'"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "select side.all_settings() as n", 2], ["ohmail_worker", "none", "select side.all_settings() as n", 2]],
+        census: [], setup: { refused: /ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine side\.all_settings\(\): role ohmail_api can run it/ } },
+      { name: "a_copied_table_in_another_schema", plant: () => [...SIDE, "create table side.settings_copy as select * from public.cal_settings",
+        "grant select on side.settings_copy to ohmail_api, ohmail_worker"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "none", "select count(*)::int as n from side.settings_copy", 2]], census: [],
+        setup: { refused: /ROLES_DRIFT SELECT on side\.settings_copy: a direct grant to role ohmail_api outside the rule/ } },
+    ];
+
+    for (const p of RECHECK_PLANTS) {
+      it(`the recheck's plant ${p.name}: what each login reads, the census, the check for each login, and the next setup`, async () => {
+        const db = await ground.clone("ground", `recheck_${p.name}`.slice(0, 60));
+        const [a, b] = await twoAccounts(db);
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try { await mig.unsafe("insert into public.cal_settings (account_id) values ($1), ($2)", [a, b]); } finally { await mig.end({ timeout: 5 }); }
+        const planter = ground.connectAs(db, p.asSuper === true ? undefined : MIGRATOR_ROLE);
+        try { for (const s of p.plant(a, b)) await planter.unsafe(s).simple(); } finally { await planter.end({ timeout: 5 }); }
+        const verdict = async (role: string): Promise<{ verdict: string; why: readonly string[] }> =>
+          verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+        const reading = async (): Promise<object> => ({
+          reads: Object.values(await readsOf(db, "cal_settings", a)),
+          extra: await Promise.all((p.extra ?? []).map(([role, bind, text]) => boundCount(db, role, bind === "A" ? a : "", text))),
+          census: (await plantAndCensus(db, [])).sort(),
+          ...(p.api === undefined ? {} : { api: await verdict("ohmail_api") }),
+          ...(p.worker === undefined ? {} : { worker: await verdict("ohmail_worker") }),
+        });
+        const judged = (why: readonly string[]): object => ({ verdict: why.length === 0 ? "locked" : "broken", why: [...why] });
+        expect(await reading()).toEqual({
+          reads: [...p.reads], extra: (p.extra ?? []).map((x) => x[3]), census: [...p.census].sort(),
+          ...(p.api === undefined ? {} : { api: judged(p.api) }), ...(p.worker === undefined ? {} : { worker: judged(p.worker) }),
+        });
+        if ("refused" in p.setup) {
+          await expect(ground.setup(db, MIGRATOR_ROLE)).rejects.toThrow(p.setup.refused);
+          return;
+        }
+        expect([...(await ground.setup(db, MIGRATOR_ROLE)).lock!.repaired].sort()).toEqual([...p.setup.repaired].sort());
+        expect(await reading()).toEqual({
+          reads: [1, 0, 1, 0], extra: (p.extra ?? []).map((x) => x[4]), census: [],
+          ...(p.api === undefined ? {} : { api: judged([]) }), ...(p.worker === undefined ? {} : { worker: judged([]) }),
+        });
+      }, CASE_MS);
+    }
+
+    /**
+     * CODE ON A TABLE THAT RUNS WITH ITS OWNER'S RIGHTS (the second recheck, 2026-11-15), each on a clone of the
+     * locked ground holding a settings row of each of two accounts. The API's login bound to A fires the code, then reads
+     * its own settings row, into which the code wrote every account's id it could read: run as the login, it reads A's
+     * alone; run with its owner's rights (the migrator, which bypasses), both. A rule's actions run as the table's owner;
+     * a trigger fires its routine with no EXECUTE asked; an expression calls its routine by its id, with no USAGE on the
+     * routine's schema asked. A foreign table of `public` answers with its user mapping's rights.
+     */
+    interface OwnersCode {
+      readonly name: string;
+      readonly asSuper?: boolean;
+      readonly plant: (db: string) => string[];
+      /** Each read: the login, bound to A or naming nothing, the statements in one transaction, and what the last one counts. */
+      readonly reads: ReadonlyArray<readonly [string, "A" | "none", readonly string[], number]>;
+      readonly census: readonly string[];
+      /** The check's reasons, judged for each login; none is `locked`. */
+      readonly api: readonly string[];
+      readonly worker: readonly string[];
+      /** The next setup: it writes nothing, or it refuses and the catalog stays as it was. */
+      readonly setup: "writes nothing" | RegExp;
+    }
+    /** Every account's id the statement can read, written into the settings row of the account `who` names. */
+    const FILL = (who: string): string => "update public.cal_settings set second_zone = (select pg_catalog.string_agg(c2.account_id::text, ',' "
+      + `order by c2.account_id) from public.cal_settings c2) where account_id = ${who}`;
+    /** How many accounts' ids the reader's own settings row holds. */
+    const IDS = "select coalesce(max(pg_catalog.array_length(pg_catalog.string_to_array(second_zone, ','), 1)), 0)::int as n from public.cal_settings";
+    const AUDIT = "insert into public.audit_log (account_id, action) values (pg_catalog.current_setting('ohmail.account')::pg_catalog.uuid, 'fill')";
+    const FAULT = "insert into public.api_faults (route, method, status, error_class, arm) values ('/fill', 'GET', 500, 'Error', 'api')";
+    /** A trigger on the audit log that fills the row of the account it names, its routine in `schema`. */
+    const fillTrigger = (schema: string, definer: boolean): string[] => [
+      `create function ${schema}.fill_ids() returns trigger language plpgsql ${definer ? "security definer " : ""}set search_path = pg_catalog
+        as $f$begin ${FILL("new.account_id")}; return new; end$f$`,
+      `create trigger fill_ids after insert on public.audit_log for each row execute function ${schema}.fill_ids()`,
+    ];
+    /** A default of the settings row that holds every account's id its routine reads, the routine in a schema no login may use. */
+    const idsDefault = (definer: boolean): string[] => ["create schema side_code",
+      `create function side_code.ids() returns text language sql ${definer ? "security definer " : ""}set search_path = pg_catalog
+        as $f$select pg_catalog.string_agg(account_id::text, ',' order by account_id) from public.cal_settings$f$`,
+      "alter table public.cal_settings alter column second_zone set default side_code.ids()"];
+    const both = (why: readonly string[]): { api: readonly string[]; worker: readonly string[] } => ({ api: why, worker: why });
+    const OWNERS_CODE: OwnersCode[] = [
+      { name: "a rule on a locked table", plant: () => [`create rule fill_ids as on insert to public.audit_log do also ${FILL("new.account_id")}`],
+        reads: [["ohmail_api", "A", [AUDIT, IDS], 2]], census: [codeLine("audit_log", `the rule fill_ids ${PAST_THE_LOCK}`)],
+        ...both([codeWhy("audit_log", `the rule fill_ids ${PAST_THE_LOCK}`)]),
+        setup: /lock: LOCK_DRIFT tables\.code audit_log: the rule fill_ids runs with its owner's rights, past the lock; nothing was written/ },
+      { name: "a rule on an operations table",
+        plant: () => [`create rule fill_ids as on insert to public.api_faults do also ${FILL("pg_catalog.current_setting('ohmail.account')::pg_catalog.uuid")}`],
+        reads: [["ohmail_api", "A", [FAULT, IDS], 2]], census: [codeLine("api_faults", `the rule fill_ids ${PAST_THE_LOCK}`)],
+        ...both([codeWhy("api_faults", `the rule fill_ids ${PAST_THE_LOCK}`)]),
+        setup: /lock: LOCK_DRIFT tables\.code api_faults: the rule fill_ids runs with its owner's rights, past the lock; nothing was written/ },
+      { name: "a trigger whose routine is SECURITY DEFINER, its EXECUTE revoked from PUBLIC",
+        plant: () => [...fillTrigger("public", true), "revoke execute on function public.fill_ids() from public"],
+        reads: [["ohmail_api", "A", [AUDIT, IDS], 2]], census: [codeLine("audit_log", calls("the trigger fill_ids", "public.fill_ids()"))],
+        ...both([codeWhy("audit_log", calls("the trigger fill_ids", "public.fill_ids()"))]),
+        setup: /lock: LOCK_DRIFT tables\.code audit_log: the trigger fill_ids calls the SECURITY DEFINER routine public\.fill_ids\(\), which runs with its owner's rights, past the lock; nothing was written/ },
+      { name: "the same trigger, its routine in a schema no login may use", plant: () => ["create schema side_code", ...fillTrigger("side_code", true)],
+        reads: [["ohmail_api", "A", [AUDIT, IDS], 2]], census: [codeLine("audit_log", calls("the trigger fill_ids", "side_code.fill_ids()"))],
+        ...both([codeWhy("audit_log", calls("the trigger fill_ids", "side_code.fill_ids()"))]),
+        setup: /lock: LOCK_DRIFT tables\.code audit_log: the trigger fill_ids calls the SECURITY DEFINER routine side_code\.fill_ids\(\), which runs with its owner's rights, past the lock; nothing was written/ },
+      { name: "a default that calls a SECURITY DEFINER routine of such a schema", plant: () => idsDefault(true),
+        reads: [["ohmail_api", "A", ["update public.cal_settings set second_zone = default", IDS], 2]],
+        census: [codeLine("cal_settings", calls("the default of second_zone", "side_code.ids()"))],
+        ...both([codeWhy("cal_settings", calls("the default of second_zone", "side_code.ids()"))]),
+        setup: /lock: LOCK_DRIFT tables\.code cal_settings: the default of second_zone calls the SECURITY DEFINER routine side_code\.ids\(\), which runs with its owner's rights, past the lock; nothing was written/ },
+      // The controls: the same code run as the login is held by the lock, and nothing names it.
+      { name: "control: the trigger whose routine runs as the login", plant: () => ["create schema side_code", ...fillTrigger("side_code", false)],
+        reads: [["ohmail_api", "A", [AUDIT, IDS], 1]], census: [], ...both([]), setup: "writes nothing" },
+      { name: "control: the default whose routine runs as the login", plant: () => idsDefault(false),
+        reads: [["ohmail_api", "A", ["update public.cal_settings set second_zone = default", IDS], 1]], census: [], ...both([]), setup: "writes nothing" },
+      // The recheck's own control: a definer routine of public that PUBLIC may run is the roles' check's, and the census's.
+      { name: "the definer trigger's routine of public, which every login may also run", plant: () => fillTrigger("public", true),
+        reads: [["ohmail_api", "A", [AUDIT, IDS], 2]], census: [codeLine("audit_log", calls("the trigger fill_ids", "public.fill_ids()"))],
+        api: [codeWhy("audit_log", calls("the trigger fill_ids", "public.fill_ids()")), "ohmail_api may run a SECURITY DEFINER routine of public"],
+        worker: [codeWhy("audit_log", calls("the trigger fill_ids", "public.fill_ids()")), "ohmail_worker may run a SECURITY DEFINER routine of public"],
+        setup: /ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine fill_ids\(\): role ohmail_api can run it/ },
+      // Over the server's own socket, as the migrator, which the user mapping names for everyone.
+      { name: "a foreign table of public both logins may read", asSuper: true,
+        plant: (db) => ["create extension postgres_fdw",
+          `create server loopback foreign data wrapper postgres_fdw options (host '/var/run/postgresql', dbname '${db}')`,
+          `create user mapping for public server loopback options (user '${MIGRATOR_ROLE}', password_required 'false')`,
+          "create foreign table public.settings_elsewhere (account_id uuid) server loopback options (schema_name 'public', table_name 'cal_settings')",
+          `alter foreign table public.settings_elsewhere owner to ${MIGRATOR_ROLE}`, "grant select on public.settings_elsewhere to ohmail_api, ohmail_worker"],
+        reads: [["ohmail_api", "A", ["select count(*)::int as n from public.settings_elsewhere"], 2], ["ohmail_worker", "none", ["select count(*)::int as n from public.settings_elsewhere"], 2]],
+        census: [], api: ["ohmail_api may read a view or a foreign table of public"], worker: ["ohmail_worker may read a view or a foreign table of public"],
+        setup: /ROLES_DRIFT SELECT on the foreign table public\.settings_elsewhere: role ohmail_api reaches it/ },
+    ];
+
+    for (const [i, p] of OWNERS_CODE.entries()) {
+      it(`code that runs with its owner's rights, ${p.name}: what the API bound to A reads through it, the census, the check for each login, and the next setup`, async () => {
+        const db = await ground.clone("ground", `owners_code_${i}`);
+        const [a, b] = await twoAccounts(db);
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try { await mig.unsafe("insert into public.cal_settings (account_id) values ($1), ($2)", [a, b]); } finally { await mig.end({ timeout: 5 }); }
+        const planter = ground.connectAs(db, p.asSuper === true ? undefined : MIGRATOR_ROLE);
+        try { for (const s of p.plant(db)) await planter.unsafe(s).simple(); } finally { await planter.end({ timeout: 5 }); }
+        const verdict = async (role: string): Promise<{ verdict: string; why: readonly string[] }> =>
+          verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+        const judged = (why: readonly string[]): object => ({ verdict: why.length === 0 ? "locked" : "broken", why: [...why] });
+        const before = await catalogOf(db);
+        const said: string[] = [];
+        const setup = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) })
+          .then((r) => ({ wrote: r.lock!.wrote, repaired: r.lock!.repaired }), (e: Error) => e.message);
+        const reads: Array<number | string> = [];
+        for (const [role, bind, text] of p.reads) reads.push(await boundCount(db, role, bind === "A" ? a : "", text));
+        expect({
+          reads,
+          census: (await plantAndCensus(db, [])).sort(),
+          api: await verdict("ohmail_api"),
+          worker: await verdict("ohmail_worker"),
+          setup: typeof setup === "string" && p.setup !== "writes nothing" && p.setup.test(setup) ? "refused" : setup,
+          repairsSaid: said.filter((m) => m.startsWith("lock: repair:")),
+          unchanged: await catalogOf(db) === before,
+        }, p.name).toEqual({
+          reads: p.reads.map((r) => r[3]),
+          census: [...p.census].sort(),
+          api: judged(p.api),
+          worker: judged(p.worker),
+          setup: p.setup === "writes nothing" ? { wrote: 0, repaired: [] } : "refused",
+          repairsSaid: [],
+          unchanged: true,
+        });
+      }, CASE_MS);
+    }
+
+    it("code that runs with its owner's rights beside a drift the step would mend: refused before it writes, and no repair is said", async () => {
+      const db = await ground.clone("ground", "owners_code_beside");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe(`create rule fill_ids as on insert to public.audit_log do also ${FILL("new.account_id")}`);
+        await mig.unsafe("drop policy lock_account on public.messages");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const before = await catalogOf(db);
+      const said: string[] = [];
+      const refused = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) })
+        .then((r) => `not refused: ${JSON.stringify(r.lock)}`, (e: Error) => e.message);
+      expect({
+        refused: refused.includes(`lock: ${codeLine("audit_log", `the rule fill_ids ${PAST_THE_LOCK}`)}; nothing was written`),
+        repairsSaid: said.filter((m) => m.startsWith("lock: repair:")),
+        unchanged: await catalogOf(db) === before,
+      }).toEqual({ refused: true, repairsSaid: [], unchanged: true });
+    }, CASE_MS);
+
+    /** The verdict of `role` on `db`, judged for it, read on a session of its own after `pre`. */
+    async function verdictUnder(db: string, role: string, pre: readonly string[]): Promise<{ verdict: string; why: readonly string[] }> {
+      const sql = ground.connectAs(db, role);
+      try {
+        for (const s of pre) await sql.unsafe(s);
+        const r = await readLock(sql, { role });
+        return { verdict: r.verdict, why: r.why };
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    it("the reading pins, for its transaction alone, the settings a catalog's spelling follows", async () => {
+      const sql = ground.connectAs("ground", MIGRATOR_ROLE);
+      const read = "select pg_catalog.current_setting('IntervalStyle') as interval, pg_catalog.current_setting('quote_all_identifiers') as quote, "
+        + "pg_catalog.current_setting('DateStyle') as date, pg_catalog.current_setting('TimeZone') as zone, pg_catalog.current_setting('search_path') as path";
+      try {
+        for (const s of ["set search_path = public", "set intervalstyle = 'iso_8601'", "set quote_all_identifiers = on", "set datestyle = 'German, DMY'",
+          "set timezone = 'Pacific/Kiritimati'"]) {
+          await sql.unsafe(s);
+        }
+        const inside = await sql.begin("read only", async (tx) => { await readLockFacts(tx); return (await tx.unsafe(read))[0]; });
+        const after = (await sql.unsafe(read))[0];
+        expect({ inside, after }).toEqual({
+          inside: { interval: "postgres", quote: "off", date: "ISO, MDY", zone: "UTC", path: "" },
+          after: { interval: "iso_8601", quote: "on", date: "German, DMY", zone: "Pacific/Kiritimati", path: "public" },
+        });
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    /**
+     * AN UNTOUCHED LOCK UNDER A SETTING THE CATALOG'S SPELLING FOLLOWS (the second recheck): an interval constant
+     * prints as IntervalStyle says (the 35 horizon policies, all the worker's), and every identifier and type name as
+     * quote_all_identifiers says (every policy, and both readers' return type). The reading pins both for its transaction,
+     * and the step records each policy's spelling under the same pins: so the lock reads locked for both logins whether
+     * the setting stands on the reading session, the database, the migrator's role or a login's role, or stood when the
+     * lock was first made, and the setup writes nothing.
+     */
+    const SPELLING_MOVERS = [["IntervalStyle", "iso_8601"], ["quote_all_identifiers", "on"]] as const;
+    for (const [guc, value] of SPELLING_MOVERS) {
+      it(`an untouched lock under ${guc} = ${value}, on the reading session, the database, the migrator's role, a login's role, and when the lock is first made: both logins read locked, and the setup writes nothing`, async () => {
+        const set = `set ${guc} = '${value}'`;
+        const db = await ground.clone("ground", `spelling_${guc.toLowerCase()}`);
+        const first = await ground.clone("unlocked", `spelling_first_${guc.toLowerCase()}`);
+        const word = (v: { verdict: string; why: readonly string[] }): string => (v.why.length === 0 ? v.verdict : `${v.verdict} (${v.why.length}: ${v.why[0]})`);
+        const logins = async (target: string, pre: readonly string[] = []): Promise<string[]> =>
+          [word(await verdictUnder(target, "ohmail_api", pre)), word(await verdictUnder(target, "ohmail_worker", pre))];
+        const setupOf = (target: string, opts: { lock?: "apply" } = {}): Promise<object | string> => ground.setup(target, MIGRATOR_ROLE, opts)
+          .then((r) => ({ state: r.lock!.state, wrote: r.lock!.wrote, repaired: r.lock!.repaired.length }), (e: Error) => e.message);
+        const census = async (target: string): Promise<number> => (await plantAndCensus(target, [])).length;
+        const su = ground.connectAs("postgres");
+        const undo = [`alter database "${db}" reset ${guc}`, `alter role ${MIGRATOR_ROLE} in database "${db}" reset ${guc}`,
+          `alter role ohmail_worker in database "${db}" reset ${guc}`, `alter role ${MIGRATOR_ROLE} in database "${first}" reset ${guc}`];
+        try {
+          const session = { logins: await logins(db, [set]), census: (await plantAndCensus(db, [set])).length };
+          await su.unsafe(`alter database "${db}" set ${guc} = '${value}'`);
+          const database = { logins: await logins(db), census: await census(db), setup: await setupOf(db) };
+          await su.unsafe(undo[0]!);
+          const databaseReset = { logins: await logins(db), setup: await setupOf(db) };
+          await su.unsafe(`alter role ${MIGRATOR_ROLE} in database "${db}" set ${guc} = '${value}'`);
+          const migratorsRole = { setup: await setupOf(db), logins: await logins(db), census: await census(db) };
+          await su.unsafe(undo[1]!);
+          await su.unsafe(`alter role ohmail_worker in database "${db}" set ${guc} = '${value}'`);
+          const refused = await setupOf(db);
+          const loginsRole = { logins: await logins(db),
+            setup: typeof refused === "string" && /ROLES_DRIFT role ohmail_worker: the setting \S+ is set in database/.test(refused) ? "refused by the roles' check" : refused };
+          await su.unsafe(undo[2]!);
+          await su.unsafe(`alter role ${MIGRATOR_ROLE} in database "${first}" set ${guc} = '${value}'`);
+          const made = await setupOf(first, { lock: "apply" });
+          const firstLock = { made: typeof made === "string" ? made : { state: (made as { state: string }).state, repaired: (made as { repaired: number }).repaired },
+            logins: await logins(first), census: await census(first), again: await setupOf(first) };
+          await su.unsafe(undo[3]!);
+          const firstReset = { logins: await logins(first), setup: await setupOf(first) };
+          const LOCKED = ["locked", "locked"];
+          const NOTHING = { state: "locked", wrote: 0, repaired: 0 };
+          expect({ session, database, databaseReset, migratorsRole, loginsRole, firstLock, firstReset }, `${guc} = ${value}`).toEqual({
+            session: { logins: LOCKED, census: 0 },
+            database: { logins: LOCKED, census: 0, setup: NOTHING },
+            databaseReset: { logins: LOCKED, setup: NOTHING },
+            migratorsRole: { setup: NOTHING, logins: LOCKED, census: 0 },
+            loginsRole: { logins: LOCKED, setup: "refused by the roles' check" },
+            firstLock: { made: { state: "locked", repaired: 0 }, logins: LOCKED, census: 0, again: NOTHING },
+            firstReset: { logins: LOCKED, setup: NOTHING },
+          });
+        } finally {
+          // A login's setting in any database is the roles' check's refusal everywhere: none outlives the case.
+          for (const s of undo) await su.unsafe(s);
+          await su.end({ timeout: 5 });
+        }
+      }, CASE_MS);
+    }
+
+    it("a policy altered, or made again by hand, stays broken under each of those settings, on the reading session and on the database", async () => {
+      const db = await ground.clone("ground", "spelling_fail_closed");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("alter policy lock_account on public.cal_settings using (true) with check (true)");
+        await mig.unsafe("alter policy lock_account on public.messages using (account_id = ohmail.current_account() or true)");
+        await mig.unsafe("drop policy lock_account on public.mailboxes");
+        await mig.unsafe("create policy lock_account on public.mailboxes for all to ohmail_api, ohmail_worker using (true) with check (true)");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const broken = (role: string): object => ({ verdict: "broken", why: [notAsListed(role, ALTERED),
+        notAsListed(role, UNRECORDED, "mailboxes.lock_account"), notAsListed(role, ALTERED, "messages.lock_account")] });
+      const both = async (pre: readonly string[] = []): Promise<object[]> => [await verdictUnder(db, "ohmail_api", pre), await verdictUnder(db, "ohmail_worker", pre)];
+      const want = [broken("ohmail_api"), broken("ohmail_worker")];
+      const su = ground.connectAs("postgres");
+      try {
+        const got: Record<string, object[]> = { plain: await both() };
+        for (const [guc, value] of SPELLING_MOVERS) {
+          got[`session ${guc}`] = await both([`set ${guc} = '${value}'`]);
+          await su.unsafe(`alter database "${db}" set ${guc} = '${value}'`);
+          try { got[`database ${guc}`] = await both(); } finally { await su.unsafe(`alter database "${db}" reset ${guc}`); }
+        }
+        expect(got).toEqual(Object.fromEntries(Object.keys(got).map((k) => [k, want])));
+      } finally {
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("a binding setting on another database is that database's: this one's census and check do not read it", async () => {
+      const here = await ground.clone("ground", "binding_here");
+      const there = await ground.clone("ground", "binding_there");
+      const su = ground.connectAs("postgres");
+      try {
+        await su.unsafe(`alter database "${there}" set ohmail.account = '00000000-0000-4000-8000-000000000001'`);
+        expect(await plantAndCensus(here, [])).toEqual([]);
+        expect((await verdictOf(here, "ohmail_api", { role: "ohmail_api" })).verdict).toBe("locked");
+        expect(await plantAndCensus(there, [])).toEqual([drift("settings.binding", `-/${there}/ohmail.account`, "the binding's setting stands on a role or a database")]);
+        expect(await verdictOf(there, "ohmail_api", { role: "ohmail_api" }))
+          .toMatchObject({ verdict: "broken", why: [`the binding's setting stands on a role or a database: -/${there}/ohmail.account`] });
+      } finally {
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("a deadline that drifted on a login refuses the step by the roles' check, and reads back once the roles' script ran", async () => {
+      const su = ground.connectAs("postgres");
+      await su.unsafe("alter role ohmail_api set lock_timeout = '1s'");
+      try {
+        await expect(ground.setup("ground", MIGRATOR_ROLE)).rejects
+          .toThrow(/lock: the runtime roles' check refused: ROLES_DRIFT role ohmail_api: lock_timeout is 1s, not 30000ms/);
+      } finally {
+        await su.unsafe("alter role ohmail_api set lock_timeout = '30000ms'");
+        await su.end({ timeout: 5 });
+      }
+      const report = await ground.setup("ground", MIGRATOR_ROLE);
+      expect(report.lock!.deadlines.ohmail_api).toEqual({ lock_timeout: true, statement_timeout: true, idle_in_transaction_session_timeout: true });
+    }, CASE_MS);
+
+    /** How many rows of `table` `role` reads on `db`, with nothing named. */
+    async function unboundCount(db: string, role: string, table: string): Promise<number> {
+      const sql = ground.connectAs(db, role);
+      try {
+        const [r] = await sql.unsafe(`select count(*)::int as n from public.${table}`) as unknown as Array<{ n: number }>;
+        return r!.n;
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    /** The lock's verdict on `db`, read as `role`, judged for `expect` when given. */
+    async function verdictOf(db: string, role: string, expect?: { role: string }): Promise<LockReading> {
+      const sql = ground.connectAs(db, role);
+      try { return await readLock(sql, expect); } finally { await sql.end({ timeout: 5 }); }
+    }
+
+    it("the marker cannot be a database setting: the migrator may not set an unknown parameter on its database", async () => {
+      const sql = ground.connectAs("ground", MIGRATOR_ROLE);
+      try {
+        const code = await sql.unsafe("alter database ground set ohmail.lock = 'off'").then(() => "taken", (e: { code?: string }) => e.code);
+        expect(code).toBe("42501");
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("the switch off releases the lock and says so; on again, the API's role reads nothing unbound", async () => {
+      const db = await ground.clone("ground", "switch_off_on");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try { await mig.unsafe("insert into public.accounts (name) values ('switched')"); } finally { await mig.end({ timeout: 5 }); }
+      expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
+      const off = await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "off", { why: "test", now: () => new Date("2026-11-15T10:00:00.000Z") });
+      expect(off).toMatchObject({ to: "off", tables: 101, tries: 1, marker: "ohmail.lock off since=2026-11-15T10:00:00.000Z by=ohmail_migrator why=test" });
+      expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(1);
+      expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "off", on: 0, forced: 0, marker: { since: "2026-11-15T10:00:00.000Z", by: "ohmail_migrator", why: "test" } });
+      // The setup over a lock that is off keeps it off, and its policies as listed.
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock).toMatchObject({ state: "off", forced: 0, wrote: 0 });
+      expect(await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "on")).toMatchObject({ to: "on", tables: 101, marker: null });
+      expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
+      expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("locked");
+    }, CASE_MS);
+
+    it("forcing alone taken off, as the switch was first written, releases nobody: the logins own nothing", async () => {
+      const db = await ground.clone("ground", "switch_no_force");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("insert into public.accounts (name) values ('forced')");
+        await mig.unsafe("alter table public.accounts no force row level security");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
+      expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("broken");
+    }, CASE_MS);
+
+    it("the four states read as the table says: locked, a stale marker, off, and a mixed state broken", async () => {
+      const db = await ground.clone("ground", "switch_states");
+      expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("locked");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("comment on schema ohmail is 'ohmail.lock off since=2026-11-15T10:00:00.000Z by=ohmail_migrator why=incident'");
+        expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("stale_marker");
+        await mig.unsafe("comment on schema ohmail is null");
+        await mig.unsafe("alter table public.messages disable row level security");
+        expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "broken", on: 100 });
+        await mig.unsafe("alter table public.messages enable row level security");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "off", { why: "rehearsal" });
+      expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("off");
+    }, CASE_MS);
+
+    it("a switch behind a held lock changes nothing", async () => {
+      const db = await ground.clone("ground", "switch_held");
+      const holder = ground.connectAs(db);
+      try {
+        await holder.unsafe("begin");
+        await holder.unsafe("lock table public.accounts in access share mode");
+        const refused = await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "off", { why: "test", lockTimeoutMs: 200, tries: 2 })
+          .then(() => "switched", (e: { code?: string }) => e.code);
+        expect(refused).toBe("55P03");
+        expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "locked", marker: null });
+      } finally {
+        await holder.unsafe("rollback").catch(() => undefined);
+        await holder.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    it("asked to serve as the API: its own login reads locked; the migrator's address, or a login that may bypass, is broken", async () => {
+      expect(await verdictOf("ground", "ohmail_api", { role: "ohmail_api" })).toMatchObject({ verdict: "locked", role: { policies: "equal", bypass: false } });
+      expect((await verdictOf("ground", MIGRATOR_ROLE, { role: "ohmail_api" })).verdict).toBe("broken");
+      const su = ground.connectAs("postgres");
+      await su.unsafe("alter role ohmail_api bypassrls");
+      try {
+        expect(await verdictOf("ground", "ohmail_api", { role: "ohmail_api" }))
+          .toMatchObject({ verdict: "broken", why: ["ohmail_api may bypass row security"] });
+      } finally {
+        await su.unsafe("alter role ohmail_api nobypassrls");
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    /** Two accounts on `db`, made by the migrator: their ids. */
+    async function twoAccounts(db: string): Promise<[string, string]> {
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        const made = await mig.unsafe("insert into public.accounts (name) values ('A'), ('B') returning id::text as id");
+        return [String(made[0]!.id), String(made[1]!.id)];
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+    }
+
+    /**
+     * On one connection as the API's login, the same read of `accounts` in a transaction bound to
+     * each of `accounts` in turn ("" names none): the driver prepares it once and runs it again, as
+     * a pooled session does. With `param`, the read carries a parameter.
+     */
+    async function preparedReads(db: string, accounts: string[], param = false): Promise<string[][]> {
+      const c = ground.connectAs(db, "ohmail_api");
+      try {
+        const out: string[][] = [];
+        for (const account of accounts) {
+          out.push(await c.begin(async (tx) => {
+            await tx.unsafe(BINDER_SQL, [account, ""]);
+            const read = param
+              ? await tx<Array<{ id: string }>>`select id::text as id from public.accounts where name <> ${"-"}`
+              : await tx<Array<{ id: string }>>`select id::text as id from public.accounts`;
+            return read.map((r) => r.id).sort();
+          }) as string[]);
+        }
+        return out;
+      } finally {
+        await c.end({ timeout: 5 });
+      }
+    }
+
+    it("a policy to PUBLIC: both logins read both accounts; the census names it, the check reads broken, and the next setup drops it", async () => {
+      const db = await ground.clone("ground", "policy_public");
+      const [a, b] = await twoAccounts(db);
+      expect(await preparedReads(db, [a, ""])).toEqual([[a], []]);
+      expect(await plantAndCensus(db, ["create policy pub on public.accounts for select to public using (true)"]))
+        .toEqual(["LOCK_DRIFT policies.foreign accounts.pub: a policy the list does not name"]);
+      expect(await preparedReads(db, [a, ""])).toEqual([[a, b].sort(), [a, b].sort()]);
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        expect(await verdictOf(db, role, { role }), role).toMatchObject({ verdict: "broken", role: { policies: "differ" } });
+      }
+      expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "broken", why: ["a policy names PUBLIC: accounts.pub"] });
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock!.repaired).toEqual(["policy accounts.pub is not the list's: dropped"]);
+      expect(await preparedReads(db, [a, ""])).toEqual([[a], []]);
+      expect((await verdictOf(db, "ohmail_api", { role: "ohmail_api" })).verdict).toBe("locked");
+    }, CASE_MS);
+
+    it("a reader made IMMUTABLE answers the rows of the account a read was prepared under to the next; the census and the check read it, and the next setup makes it again", async () => {
+      const db = await ground.clone("ground", "reader_immutable");
+      const [a, b] = await twoAccounts(db);
+      // The reader as listed: each transaction reads its own account, with or without a parameter.
+      expect(await preparedReads(db, [a, b, ""])).toEqual([[a], [b], []]);
+      expect(await preparedReads(db, [a, a, a, a, a, a, b, ""], true)).toEqual([[a], [a], [a], [a], [a], [a], [b], []]);
+      expect(await plantAndCensus(db, ["alter function ohmail.current_account() immutable"]))
+        .toEqual(["LOCK_DRIFT readers.differ ohmail.current_account: volatility"]);
+      // Planned once, the read keeps the first account it was planned under.
+      expect(await preparedReads(db, [a, b, ""])).toEqual([[a], [a], [a]]);
+      expect(await preparedReads(db, [a, a, a, a, a, a, b, ""], true)).toEqual([[a], [a], [a], [a], [a], [a], [a], [a]]);
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        expect(await verdictOf(db, role, { role }), role)
+          .toMatchObject({ verdict: "broken", why: ["the reader ohmail.current_account differs: volatility"], role: { policies: "equal" } });
+      }
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock!.repaired).toEqual(["reader ohmail.current_account made again: volatility"]);
+      expect(await preparedReads(db, [a, b, ""])).toEqual([[a], [b], []]);
+      expect((await verdictOf(db, "ohmail_api", { role: "ohmail_api" })).verdict).toBe("locked");
+    }, CASE_MS);
+
+    it("a view of public, or a SECURITY DEFINER routine there, reads past the lock with its owner's rights: the check reads broken, and the setup refuses", async () => {
+      for (const [name, plant, read, why, refused] of [
+        ["past_view", ["create view public.all_accounts as select id from public.accounts", "grant select on public.all_accounts to ohmail_api"],
+          "select count(*)::int as n from public.all_accounts", "ohmail_api may read a view or a foreign table of public", /ROLES_DRIFT SELECT on the view public\.all_accounts: role ohmail_api reaches it/],
+        ["past_definer", ["create function public.all_accounts() returns int language sql security definer as 'select count(*)::int from public.accounts'"],
+          "select public.all_accounts() as n", "ohmail_api may run a SECURITY DEFINER routine of public", /ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine all_accounts\(\): role ohmail_api can run it/],
+      ] as const) {
+        const db = await ground.clone("ground", name);
+        const [a] = await twoAccounts(db);
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try { for (const s of plant) await mig.unsafe(s); } finally { await mig.end({ timeout: 5 }); }
+        const api = ground.connectAs(db, "ohmail_api");
+        try {
+          const seen = await api.begin(async (tx) => {
+            await tx.unsafe(BINDER_SQL, [a, ""]);
+            return Number((await tx.unsafe(read))[0]!.n);
+          });
+          expect(seen, name).toBe(2);
+        } finally {
+          await api.end({ timeout: 5 });
+        }
+        expect(await verdictOf(db, "ohmail_api", { role: "ohmail_api" }), name).toMatchObject({ verdict: "broken", why: [why] });
+        await expect(ground.setup(db, MIGRATOR_ROLE), name).rejects.toThrow(refused);
+      }
+    }, CASE_MS);
+
+    it("one login alone: the lock is refused where it stands, and nothing asks it where it does not", async () => {
+      const su = ground.connectAs("postgres");
+      await su.unsafe("alter role ohmail_worker rename to ohmail_worker_aside");
+      try {
+        await expect(ground.setup("ground", MIGRATOR_ROLE)).rejects.toThrow(/lock: refused: of the two runtime logins only ohmail_api exists/);
+        const quiet = await ground.setup("unlocked", MIGRATOR_ROLE);
+        expect(quiet.lock).toMatchObject({ state: "not-applied", wrote: 0 });
+      } finally {
+        await su.unsafe("alter role ohmail_worker_aside rename to ohmail_worker");
+        await su.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+  });
+}

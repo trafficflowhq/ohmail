@@ -9,15 +9,16 @@ import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type FetchLike, type MutationResult,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 import { settleFirstPaint } from "./_first-paint.js";
-import { replyDraftKey } from "../app/shell/mail-send";
-import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+import { DEMO_STORAGE_OWNER, resetStorageOwnerForTest, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /** Where the demo world keeps the reply buffer for `id`: the demo's own partition. */
 const bufferKey = (id: string): string => replyDraftKey(id, DEMO_STORAGE_OWNER);
@@ -595,5 +596,58 @@ describe("buying a drafted reply", () => {
     expect(apiCalls).toHaveLength(1);
     // And the offer is still standing, so a second press is a deliberate act.
     expect([...card.querySelectorAll("button")].map((b) => b.textContent)).toContain("Draft it");
+  });
+});
+
+/* ══ THE DEMO'S WORDS STAY IN THE DEMO ═══════════════════════════════════════════════════ */
+
+describe("a live shell turned into the demo in place keeps the demo's words in the demo's partition", () => {
+  /**
+   * A client-side navigation from `/` to `/?demo=1` changes the live engine for the fixtures
+   * engine without unmounting the page. The shell reads whose stored keys it keeps once, as it
+   * mounts; unless that change is a new mount, the demo reads and writes the signed-in account's
+   * half-written words.
+   */
+  it("stores a reply typed in the demo under the demo, and nothing under the account", async () => {
+    const account = "acc-A1234";
+    document.cookie = `tf_owner=${account}; Path=/`;
+    try {
+      const { AppShell } = await import("./_todays-shell.js");
+      const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+      const live = new OhmailEngine({ adapter: new FixturesAdapter(), storePolicy: { mode: "full" } });
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const root = createRoot(container);
+      roots.push(root);
+      const tree = (demo: boolean): React.ReactElement => h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
+        children: h(ThemeProvider, {
+          storageKey: null,
+          children: h(ToastHost, { children: h(AppShell as never, { demo, engine: live } as never) }),
+        } as never),
+      });
+
+      await act(async () => { root.render(tree(false)); });
+      await drain();
+      expect(storageOwner()).toBe(account);
+
+      await act(async () => { root.render(tree(true)); });
+      await drain();
+      expect(storageOwner()).toBe(DEMO_STORAGE_OWNER);
+
+      await key("j");
+      await key("r");
+      await waitFor(() => replySurface(container) !== null, "the reply editor");
+      await act(async () => { typeInto(replySurface(container)!, "typed in the demo"); });
+      await drain();
+
+      const lane = openReplyId(container);
+      expect(lane, "a reply is open").not.toBe("");
+      expect(window.localStorage.getItem(replyDraftKey(lane, account))).toBeNull();
+      expect(window.localStorage.getItem(replyDraftKey(lane, DEMO_STORAGE_OWNER))).toBe("typed in the demo");
+    } finally {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      resetStorageOwnerForTest();
+    }
   });
 });

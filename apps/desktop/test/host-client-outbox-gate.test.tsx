@@ -7,7 +7,7 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import type { FeatureEntry, FrameNotice, HostContract } from "@ohmail/app/host";
 
 import messages from "../../webapp/messages/en.json";
-import { COMPOSE_DRAFT_PREFIX } from "../../webapp/app/shell/compose";
+import { COMPOSE_DRAFT_PREFIX } from "@ohmail/app-logic/writing/compose";
 import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 import { HostGate } from "../../paired-page/src/HostGate.js";
 

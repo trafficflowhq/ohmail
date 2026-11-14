@@ -11,10 +11,10 @@ import { TextProvider, useTextProvided } from "@ohmail/app/text";
 import { useLocale, useMessages, useTimeZone } from "next-intl";
 import type { HostContract } from "@ohmail/app/host";
 import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
-import { FocusFollows } from "./focus-follows";
-import { KeymapProvider } from "./keymap";
+import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { todaysInputs, type TodaysInputs, type TodaysNodes } from "./todays-inputs";
-import { ZoneCursor } from "./zone-nav";
+import { ZoneCursor } from "@ohmail/app-logic/keys/zone-nav";
 import "./today.css";
 import "./today-tokens.generated.css";
 

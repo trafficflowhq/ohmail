@@ -152,10 +152,11 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
 async function mountView(
   engine: OhmailEngine, opts: { optedIn?: boolean; subscriptionPane?: boolean } = {},
 ): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -163,7 +164,7 @@ async function mountView(
     const suggestions = useScreenerSuggestions({
       active: true, toast: (() => {}) as never, autoSuggest: opts.optedIn === true,
     });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });

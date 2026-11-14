@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { openingCount } from "@ohmail/app-logic/lists/stream-window";
 
 /**

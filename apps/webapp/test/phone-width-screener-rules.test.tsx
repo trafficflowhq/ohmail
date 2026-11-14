@@ -47,7 +47,7 @@ const read = (p: string): string =>
 const APP = read("apps/webapp/app/app.css");
 const RULES = read("apps/webapp/app/views/rules.css");
 const SHEET = read("apps/webapp/app/shell/sender-sheet.css");
-const TOUCH = read("apps/webapp/app/shell/touch-keys.css");
+const TOUCH = read("packages/app/src/keys/touch-keys.css");
 const ABAR = read("apps/webapp/app/shell/action-bar.css");
 
 /** Every `@media` block of `css` with its condition and its rules, in file order. */
@@ -183,16 +183,17 @@ async function render(node: React.ReactElement): Promise<HTMLDivElement> {
 }
 
 async function mountScreener(mail: EngineMessage[], facts: MailboxLabelFact[] | null = [MB_A, MB_B]): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(mail);
   const labels = mailboxLabelResolver(facts);
   function Probe(): React.ReactElement {
     const toast = useToast();
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, toast);
+    const state = useScreenerState(engine, null, v, toast, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     const [full, setFull] = React.useState(false);
     const onFull = React.useCallback((f: boolean) => { fullCalls.push(f); setFull(f); }, []);

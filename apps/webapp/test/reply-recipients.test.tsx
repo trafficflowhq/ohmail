@@ -14,8 +14,8 @@ import {
   replyEnvelopeOnWire,
   replyEnvelopePlan,
 } from "../app/shell/compose-from";
-import { parseRecipients } from "../app/shell/compose";
-import { canSend } from "../app/shell/mail-send";
+import { parseRecipients } from "@ohmail/app-logic/writing/compose";
+import { canSend } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * THE REPLY'S RECIPIENTS ARE ALWAYS EDITABLE — and until they are edited, NOTHING changed.

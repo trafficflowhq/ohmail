@@ -28,7 +28,7 @@ import {
   releaseSendLock,
   sendLocksKey,
   type SendLock,
-} from "../app/shell/send-lock";
+} from "@ohmail/app-logic/writing/send-lock";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 

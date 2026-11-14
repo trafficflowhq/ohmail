@@ -77,7 +77,8 @@ interface Recorded {
  * this app's real shape, and the only shape in which the precedence question is askable.
  */
 async function mount(ids: string[], toastHost = true): Promise<{ el: HTMLElement; rec: Recorded }> {
-  const { KeymapProvider, useCursorPlacer } = await import("../app/shell/keymap.js");
+  const { useCursorPlacer } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const { useMessageVerbs } = await import("../app/shell/message-verbs.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const rows = ids.map(msg);

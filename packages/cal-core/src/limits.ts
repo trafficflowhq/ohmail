@@ -268,3 +268,73 @@ export const DEFAULT_LIMITS: Limits = {
   maxRules: MAX_RULES_PER_EVENT,
   maxPerDay: MAX_CLOCK_READINGS_PER_DAY,
 };
+
+/*
+ * ── events found in a letter's words (`found/`) ───────────────────────────────────────────────────
+ *
+ * A letter is a stranger's text. Its reading is one pass: every character is looked at once to cut
+ * it into words, numbers and marks, the walk reads each of those once, a form reads a few tokens
+ * further ahead, and each sentence is decided once. A step is one character passed, one look at a
+ * token (every look, ahead of the walk or behind it, the same one again included), one sentence
+ * decided or one question to the zone source. So the count bounds the work, whatever a form reads.
+ *
+ * Measured on a desktop (2026-11), the costliest text found: `1-` repeated to the subject's and the
+ * text's ceilings, 309,695 steps (19.0 a character) in a given language, read in 9 ms; the costliest
+ * whole letter is that text with its language left to its words, told from three stop words first
+ * (`we we we`): 325,861 steps (20.0 a character), 52.6 % of the ceiling (found by the look before
+ * landing, measured again after each fix round; after the third, every unit of up to five pieces of
+ * 24 per language with that round's words, "Raum", "Nr", "zwischen", "und", "between", "and", "to",
+ * "postponed", "Öffnungszeiten", "store", "times" among them, 3.36 M readings, and 2.1 M random
+ * units climbed costlier, stay at 19.0 a character or under; after the fourth, which changed neither
+ * figure, the same with "room ", "5 – ", "up to ", "open to ", "postponed to ", "noon", "Gruppe ",
+ * "Halle ", "Beginn ", 2.19 M readings, and 4.06 M random units climbed: 19.0, the costliest new
+ * form `5 – 1-` at 12.5; after the fifth, which added five looks to the letter after its first plain
+ * word, every unit of up to four pieces of 19 and 16 with "court ", "Kurs ", "until ", "$ ", ":11",
+ * "1:11", "13", "zwischen ", "ab " among them, 205,399 units: 19.0, none above `1-`; after the sixth,
+ * which changed neither figure, every unit of up to five pieces of 13 per language with "1st ", "st ",
+ * "Friday ", "Freitag ", "am ", "Raum ", "bis " among them, 795,184 units: 19.0, none above `1-`). The text was found by an exhaustive search of every unit of up to three pieces of a hostile alphabet (digits, dashes, colons, slashes,
+ * stops, breaks, `am`, `pm`, `in`, `to`, `bis`, `Uhr`, …; 8,420 units, both languages) and some 500
+ * hand-made and random units of every form. Plain words cost 2.2 a character. The longest letter of
+ * the test corpus, 198 characters, took 688 steps.
+ */
+
+/** A subject's characters. A subject longer than a line is a sender's trick, not a date. */
+export const MAX_FOUND_SUBJECT_CHARS = 300;
+
+/**
+ * A letter's characters that are read: some forty screens of words, past which a letter's own
+ * sentences have long given way to quotes and footers. At this length a reading takes at most 12 ms.
+ */
+export const MAX_FOUND_TEXT_CHARS = 16_000;
+
+/** One word or number. A longer run is read as one opaque token and means nothing. */
+export const MAX_FOUND_TOKEN_CHARS = 64;
+
+/**
+ * Tokens between a day and a clock that still stand beside each other. "Saturday, 21 November 2026,
+ * doors open at 19:30" has five between; a clock further off belongs to another thought.
+ */
+export const MAX_FOUND_GAP_TOKENS = 12;
+
+/**
+ * Steps one reading may take: twice the costliest text measured at `MAX_FOUND_SUBJECT_CHARS` and
+ * `MAX_FOUND_TEXT_CHARS` in a given language (309,695); the costliest letter whose language is told
+ * from its words (325,861) stays under it. So a letter is read whole and only a caller's lower count
+ * ends one early. Then nothing is offered.
+ */
+export const MAX_FOUND_STEPS = 619_390;
+
+/** Sentences one reading may hand to a model: a proposal and the line that answers it. */
+export const MAX_FOUND_ASKS = 2;
+
+/** One sentence handed to a model, some six lines of a letter. A longer one is not handed. */
+export const MAX_FOUND_ASK_CHARS = 480;
+
+/** The letter's words a stored finding keeps, to show where it came from. */
+export const MAX_FOUND_SOURCE_WORDS_CHARS = 240;
+
+/** A finding's title, from the subject. */
+export const MAX_FOUND_TITLE_CHARS = 200;
+
+/** Days after the letter's own day a finding may lie: two years, a leap day included. */
+export const MAX_FOUND_DAYS_AHEAD = 731;

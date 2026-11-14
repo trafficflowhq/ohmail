@@ -23,8 +23,8 @@ import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
 import { useStoreTimeline } from "@ohmail/app-logic/session/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useZoneNav } from "../shell/zone-nav";
-import { useKeyBindings } from "../shell/keymap";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
@@ -252,7 +252,7 @@ export function HistoryView({
     { chord: "j", group: "navigate", ...stepDown },
     { chord: "k", group: "navigate", ...stepUp },
   ]);
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: { followId: shown?.id ?? null, up: stepUp, down: stepDown },
     reader: {
       selector: ".view-history .read-col",

@@ -22,7 +22,7 @@ import { useTranslations } from "next-intl";
 import { HELD_SEND_RECHECK_MS, listSurface, saysEmpty, type EngineDraft } from "@ohmail/client-engine";
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { ListEmpty } from "../shell/list-view";
@@ -125,7 +125,7 @@ export function DraftsView({
 
   /* The zone model's rail leg only (`zone-nav.tsx`): ← steps to the rail, ↑/↓ walk it, →
      returns. No list config — this view has no keyboard cursor yet — and no reader zone. */
-  useZoneNav({});
+  useZoneNav(useTranslations("shortcuts"), {});
   /** The row whose Discard has been pressed once. One at a time — a list of open confirms is noise. */
   const [confirming, setConfirming] = useState<string | null>(null);
   /**

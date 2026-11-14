@@ -37,7 +37,7 @@ const PINNED: ReadonlyArray<readonly [string, number, string]> = [
    "the sheet's PREVIEW and its unsubscribe disclosure — neither dispatches anything; the count "
    + "on screen and the work that happens come from one function evaluated twice, which is the "
    + "whole reason the sheet calls it at all"],
-  ["shell/screener-state.ts", 1,
+  ["app-logic/screener/screener-state.ts", 1,
    "the Screener's own commit, which is ALREADY inside a delayed-commit window — its decision is "
    + "held for the same UNDO_MS and this plan is what that window sends. A second window here "
    + "would delay one press twice and journal one decision in two places"],

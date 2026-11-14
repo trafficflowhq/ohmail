@@ -198,7 +198,7 @@ async function shellRows(reader: EntityReader): Promise<ShellRow[]> {
   root = createRoot(host);
 
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const box = ohboxView(reader);
 
   await act(async () => {
@@ -522,7 +522,7 @@ describe("a pinned row is drawn the same way wherever it is listed", () => {
       .map((m) => m.id)).toContain("issue-pinned");
 
     const { ReadsView } = await import("../app/views/ReadsView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     if (root) await act(async () => { root!.unmount(); });
     host?.remove();
     host = document.createElement("div");
@@ -613,7 +613,7 @@ describe("the shell binds the position and the badge to different props", () => 
     expect(part.newCount).toBe(1);
 
     const { ReadsView } = await import("../app/views/ReadsView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     if (root) await act(async () => { root!.unmount(); });
     host?.remove();
     host = document.createElement("div");
@@ -657,7 +657,7 @@ describe("the shell binds the position and the badge to different props", () => 
     expect(part.newCount).toBe(1);
 
     const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     if (root) await act(async () => { root!.unmount(); });
     host?.remove();
     host = document.createElement("div");
@@ -725,7 +725,7 @@ async function liveShell(engine: { read(): EntityReader; openRowHeld(): string |
   document.body.appendChild(host);
   root = createRoot(host);
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const render = async (): Promise<void> => {
     const reader = engine.read();
     const box = ohboxView(reader, engine.openRowHeld());
@@ -867,7 +867,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     document.body.appendChild(host);
     root = createRoot(host);
     const { OhboxView } = await import("../app/views/OhboxView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     const readSetFor = (id: string) => conversationReadSet(engine.read(), engine.read(), id);
     const render = async (): Promise<void> => {
       const reader = engine.read();

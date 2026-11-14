@@ -7,8 +7,8 @@ import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type HttpAdapterOptions, type MirrorStore,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import type { ComposeFields } from "../app/shell/compose";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import type { ComposeFields } from "@ohmail/app-logic/writing/compose";
 
 /**
  * A SEND REFUSED FOR GOOD LEAVES ONE DRAFT, NOT TWO. A press with no row makes the adapter create
@@ -142,10 +142,11 @@ interface Surface {
 
 /** The compose surface's two hooks over one engine, wired the way `shell-compose.ts` wires them. */
 async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
-  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("../app/shell/mail-send.js");
-  const { useComposeAutosave } = await import("../app/shell/compose-autosave.js");
-  const { writeComposeDraft } = await import("../app/shell/compose.js");
-  writeComposeDraft(fieldsFor(body));
+  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
+  const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  writeComposeDraft(fieldsFor(body), null);
   let api!: Surface;
   const Probe = (): null => {
     const [fields, setF] = React.useState<ComposeFields>(fieldsFor(body));
@@ -154,8 +155,9 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
       engine as never,
       // STABLE, as the shell's is: a toast re-made per render re-makes the retry driver, and its
       // effect's cleanup then cancels the retry timer for good.
+      null,
       noToast as never,
-      (() => {}) as never,
+      useMailSendText(), (() => {}) as never,
       ((key: string, _m: unknown, accepted: boolean, _phase: unknown, detail?: { left?: { rowId: string; aboutThisCompose: boolean } }) => {
         const left = detail?.left;
         if (!accepted && left && key === "compose") {
@@ -170,6 +172,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
         || sendPendingInOutbox(engine as never, "compose")
         || mail.restoredPending("compose"),
       onCleared: () => {},
+      scope: null,
     });
     fateRef.current = autosave.settleCompose as never;
     api = {
@@ -187,7 +190,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
         await act(async () => {
           setF((f) => {
             const n = { ...f, body: next };
-            writeComposeDraft(n);
+            writeComposeDraft(n, null);
             return n;
           });
         });

@@ -7,9 +7,10 @@
  * of the send rule.
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
-import type { SignatureState } from "./signature";
-import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "@ohmail/app-logic/storage/durable";
-import { isDemoOwned, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import type { SignatureState } from "@ohmail/client-engine";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "../storage/durable.js";
+import { isDemoOwned } from "../storage/storage-owner.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {
@@ -133,16 +134,16 @@ export interface ComposePrefill {
  * was true about the surface and wrong about the storage: nothing cleared the key on sign-out
  * (`clearBootCaches()` removes only `ohmail.boot.`, `clearAllMirrors()` is IndexedDB), so one account's
  * unfinished message survived into the next account on the same browser, where autosave could persist it as
- * THEIR server draft. The suffix is `searchSortKey`'s shape, with the same `"local"` fallback. The owner is
- * `storageOwner()`, not `readOwner()`: the standalone desktop has no cookie, so this key used to resolve to
+ * THEIR server draft. The suffix is `searchSortKey`'s shape, with the same `"local"` fallback. The storage owner is
+ * the scope the mount hands in, not the cookie's alone: the standalone desktop has no cookie, so this key used to resolve to
  * `"local"` for every mailbox on the install at once — and the desktop mounts an engine per mailbox. The legacy
  * key is drained, never read "to migrate": the migrating reader has no way to know whose draft it is.
  */
 /** Every owner's scratch key starts here. Exported so sign-out can sweep them. */
 export const COMPOSE_DRAFT_PREFIX = "ohmail.ui.compose.";
 
-export function composeDraftKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_DRAFT_PREFIX}${owner ?? "local"}.${composerId()}`;
+export function composeDraftKey(owner: StorageScope): string {
+  return `${COMPOSE_DRAFT_PREFIX}${scopeSuffix(owner)}.${composerId()}`;
 }
 
 /**
@@ -206,8 +207,8 @@ function holdsMessage(unit: readonly string[]): boolean {
   return window.localStorage.getItem(unit[0]!) !== null || window.localStorage.getItem(unit[2]!) !== null;
 }
 
-function adoptHandoff(owner: string | null): void {
-  const o = owner ?? "local";
+function adoptHandoff(owner: StorageScope): void {
+  const o = scopeSuffix(owner);
   // Not while this page may still turn out to be a duplicate: the slot would land in the original's keys.
   const locks = claimSettled ? null : composerLocks();
   if (locks !== null) {
@@ -378,13 +379,13 @@ function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
  * window the host names and a browser without Web Locks read their unit exactly as before; every
  * read of the unit at mount waits here — the restore, and the autosave's adoption of its row.
  */
-export function whenComposerReady(ready: () => void, owner: string | null = storageOwner()): () => void {
+export function whenComposerReady(ready: () => void, owner: StorageScope): () => void {
   const locks = composerLocks();
   if (locks === null) {
     ready();
     return () => {};
   }
-  const o = owner ?? "local";
+  const o = scopeSuffix(owner);
   let r = recoveries.get(o);
   if (r === undefined) {
     r = claimComposer(locks).then(() => recoverOrphan(locks, o)).then((got) => {
@@ -399,8 +400,8 @@ export function whenComposerReady(ready: () => void, owner: string | null = stor
 }
 
 /** Did this composer take a dead tab's message? `true` once, for the one sentence that says so. */
-export function takeRecoveredComposer(owner: string | null = storageOwner()): boolean {
-  return unannounced.delete(owner ?? "local");
+export function takeRecoveredComposer(owner: StorageScope): boolean {
+  return unannounced.delete(scopeSuffix(owner));
 }
 
 /** A fresh page, for a test: nothing adopted yet. The tab's id is the test's own sessionStorage. */
@@ -430,10 +431,11 @@ export const LEGACY_COMPOSE_DRAFT_KEY = "ohmail.ui.compose";
  * nothing stronger. Storage can refuse — Safari private mode throws on write — and a refusal must never break
  * composing, so every access is wrapped and a failure simply means the draft lives for as long as the tab does.
  */
-export function readComposeDraft(): ComposeFields {
-  adoptHandoff(storageOwner());
+export function readComposeDraft(scope: StorageScope): ComposeFields {
+  adoptHandoff(scope);
+  const key = composeDraftKey(scope);
   try {
-    const raw = window.localStorage.getItem(composeDraftKey());
+    const raw = window.localStorage.getItem(key);
     if (!raw) return EMPTY_COMPOSE;
     const parsed = JSON.parse(raw) as Partial<ComposeFields>;
     return {
@@ -492,7 +494,7 @@ export function readComposeDraft(): ComposeFields {
  * lost decision, so it raises the same notice. Nothing else changes here: there is no undo window
  * over a compose to degrade, and the draft still lives in React state for the length of the tab.
  */
-export function writeComposeDraft(f: ComposeFields): void {
+export function writeComposeDraft(f: ComposeFields, scope: StorageScope): void {
   /**
    * "EMPTY" IS ABOUT THE TEXT, and `fromMailboxId` deliberately does not count. A sender pick on a form with nothing
    * written in it is not a draft — persisting it would turn every visit to Compose into a stored buffer, and it would
@@ -503,7 +505,7 @@ export function writeComposeDraft(f: ComposeFields): void {
    * document, which is why it is the field that decides. Same rule as `isRichEmpty`.
    */
   if (f.to === "" && f.cc === "" && f.bcc === "" && f.subject === "" && f.body === "") {
-    durableRemove(composeDraftKey(), "compose.draft");
+    durableRemove(composeDraftKey(scope), "compose.draft");
     return;
   }
   // STRIP THE ATTACHMENTS' BYTES. They are held in memory only (see `ComposeFields.attachments`):
@@ -512,10 +514,10 @@ export function writeComposeDraft(f: ComposeFields): void {
   const { attachments: _drop, ...persisted } = f;
   // `locked`: written while this page holds its composer, so a crash leaves a unit it may adopt.
   const locked = composerLocked ? { ...persisted, locked: true } : persisted;
-  const holds = rowHoldsOf(composeDraftKey());
-  const creates = createsOf(composeDraftKey());
+  const holds = rowHoldsOf(composeDraftKey(scope));
+  const creates = createsOf(composeDraftKey(scope));
   const stored = { ...locked, ...(holds !== null ? { holds } : {}), ...(creates.length > 0 ? { creates } : {}) };
-  durableSet(composeDraftKey(), JSON.stringify(stored), "compose.draft");
+  durableSet(composeDraftKey(scope), JSON.stringify(stored), "compose.draft");
 }
 
 /* THE KEYS OF THE CREATES THE COMPOSER CLAIMS for the message in the buffer, kept inside it like the
@@ -535,12 +537,12 @@ function createsOf(key: string): string[] {
   return found;
 }
 
-export function readComposeCreates(owner: string | null = storageOwner()): string[] {
+export function readComposeCreates(owner: StorageScope): string[] {
   adoptHandoff(owner);
   return createsOf(composeDraftKey(owner));
 }
 
-export function writeComposeCreates(keys: readonly string[], owner: string | null = storageOwner()): void {
+export function writeComposeCreates(keys: readonly string[], owner: StorageScope): void {
   const key = composeDraftKey(owner);
   createsMem.set(key, [...keys]);
   try {
@@ -591,13 +593,13 @@ function rowHoldsOf(key: string): ComposeRowHolds | null {
   return found;
 }
 
-export function readComposeRowHolds(owner: string | null = storageOwner()): ComposeRowHolds | null {
+export function readComposeRowHolds(owner: StorageScope): ComposeRowHolds | null {
   adoptHandoff(owner);
   return rowHoldsOf(composeDraftKey(owner));
 }
 
 /** Record what the row holds, and write it into the stored buffer now. */
-export function markComposeRowHolds(holds: ComposeRowHolds, owner: string | null = storageOwner()): void {
+export function markComposeRowHolds(holds: ComposeRowHolds, owner: StorageScope): void {
   const key = composeDraftKey(owner);
   rowHolds.set(key, holds);
   try {
@@ -635,11 +637,11 @@ export function markComposeRowHolds(holds: ComposeRowHolds, owner: string | null
  */
 export const COMPOSE_SESSION_PREFIX = "ohmail.compose.session.";
 
-export function composeSessionKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_SESSION_PREFIX}${owner ?? "local"}.${composerId()}`;
+export function composeSessionKey(owner: StorageScope): string {
+  return `${COMPOSE_SESSION_PREFIX}${scopeSuffix(owner)}.${composerId()}`;
 }
 
-export function composeSessionId(owner: string | null = storageOwner()): string | null {
+export function composeSessionId(owner: StorageScope): string | null {
   adoptHandoff(owner);
   try {
     const held = window.localStorage.getItem(composeSessionKey(owner));
@@ -666,7 +668,7 @@ export function composeSessionId(owner: string | null = storageOwner()): string 
  * {@link clearComposeDraft}'s job, which drops the buffer and the row with it. This only ever restores a session that
  * a record still names.
  */
-export function writeComposeSession(session: string, owner: string | null = storageOwner()): void {
+export function writeComposeSession(session: string, owner: StorageScope): void {
   // The same failure `composeSessionId` answers `null` for, and it is announced the same way.
   durableSet(composeSessionKey(owner), session, "compose.session");
 }
@@ -687,8 +689,8 @@ export function writeComposeSession(session: string, owner: string | null = stor
  */
 export const COMPOSE_ROW_PREFIX = "ohmail.compose.row.";
 
-export function composeRowKey(owner: string | null = storageOwner()): string {
-  return `${COMPOSE_ROW_PREFIX}${owner ?? "local"}.${composerId()}`;
+export function composeRowKey(owner: StorageScope): string {
+  return `${COMPOSE_ROW_PREFIX}${scopeSuffix(owner)}.${composerId()}`;
 }
 
 /**
@@ -706,7 +708,7 @@ export function forgetComposeRows(): void {
   composeRowInMemory.clear();
 }
 
-export function readComposeRow(owner: string | null = storageOwner()): string | null {
+export function readComposeRow(owner: StorageScope): string | null {
   adoptHandoff(owner);
   try {
     const held = window.localStorage.getItem(composeRowKey(owner));
@@ -716,7 +718,7 @@ export function readComposeRow(owner: string | null = storageOwner()): string | 
   }
 }
 
-export function writeComposeRow(id: string | null, owner: string | null = storageOwner()): void {
+export function writeComposeRow(id: string | null, owner: StorageScope): void {
   const key = composeRowKey(owner);
   if (id === null) composeRowInMemory.delete(key);
   else composeRowInMemory.set(key, id);
@@ -726,7 +728,7 @@ export function writeComposeRow(id: string | null, owner: string | null = storag
   else durableSet(key, id, "compose.row");
 }
 
-export function clearComposeDraft(owner: string | null = storageOwner()): void {
+export function clearComposeDraft(owner: StorageScope): void {
   // FIRST, because the remembered row must not survive a clear of the message it names.
   composeRowInMemory.delete(composeRowKey(owner));
   createsMem.delete(composeDraftKey(owner));
@@ -778,7 +780,7 @@ export interface ComposeHeld {
  * composer owns — so a second owner is refused by asking it, not by a registry beside it.
  */
 export function composeStillHolds(
-  held: ComposeHeld, owner: string | null = storageOwner(),
+  held: ComposeHeld, owner: StorageScope,
 ): boolean {
   // A ROW NAMES ITSELF. The send carried one, so the question is whether the composer still has
   // that one — a different row, or none, is a different message.

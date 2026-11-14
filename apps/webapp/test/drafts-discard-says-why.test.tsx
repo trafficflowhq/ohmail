@@ -10,11 +10,12 @@ import {
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
-import { composeRowKey } from "../app/shell/compose";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { composeRowKey } from "@ohmail/app-logic/writing/compose";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
 import * as shell from "./_draft-shell.js";
 import { typeInto as typeIntoRich } from "./fixtures/rich-editor-driver";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * `if (res.status !== "confirmed") return;` stood at the Drafts list's delete: three of the four
@@ -93,7 +94,7 @@ async function makeADraft(): Promise<string> {
   await typeInto("#compose-subject", "Bis Montag");
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey());
+  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
   expect(id, "the compose never wrote a row, so there is nothing to press Delete on").not.toBeNull();
   return id!;
 }

@@ -80,7 +80,7 @@ async function mountReads(opts: { wired: boolean }): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
   // The view registers j/k/↵ on mount, as it does in the shell.
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -236,7 +236,7 @@ describe("a letter answered in place", () => {
   async function mountAnswer(): Promise<void> {
     const { ReadsView } = await import("../app/views/ReadsView.js");
     const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { NONE, type HostContract, type LinkedDraft, type Signal } from "@ohmail/app/host";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
-import type { ComposePrefill } from "./compose";
+import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 
 export interface TodaysSignalInputs {
   hostConnection: HostConnection | undefined;

@@ -16,7 +16,7 @@ import { LinkPopover } from "./LinkPopover";
 import { linkHref, useRenderedLinks } from "../letter-body/rendered-links";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
-} from "./rich-text";
+} from "@ohmail/app-logic/writing/rich-text";
 
 /**
  * The compose and reply editor — eight controls: bold, italic, strike, link, bullet list, numbered list,

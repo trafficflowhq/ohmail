@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { OhboxView } from "../app/views/OhboxView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "@ohmail/app-logic/lists/list-window";
 
 /**

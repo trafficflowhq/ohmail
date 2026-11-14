@@ -46,8 +46,9 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const { KeymapProvider, useKeyBindings, useWritingSurface, useCursorPlacer } =
-  await import("../app/shell/keymap");
+const { useKeyBindings, useWritingSurface, useCursorPlacer } =
+  await import("@ohmail/app-logic/keys/keymap");
+const { KeymapProvider } = await import("@ohmail/app/keys");
 
 let roots: Root[] = [];
 let ran: string[] = [];

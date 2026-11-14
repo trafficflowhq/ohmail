@@ -15,16 +15,16 @@
  * `localStorage` and not the mirror store, because it is SYNCHRONOUS: an IndexedDB write is a
  * promise a killed tab need never settle, while `setItem` has returned before `decide()` does — the
  * compose scratch buffer's own reasoning. Owner-keyed in the shape `composeDraftKey` uses: a
- * decision one account made must never replay for the next account on the same browser. The owner
- * is `storageOwner()`: the standalone desktop has no cookie and mounts one engine per mailbox, and
+ * decision one account made must never replay for the next account on the same browser. The storage owner
+ * is the scope the mount hands in: the standalone desktop has no cookie and mounts one engine per mailbox, and
  * a `"local"` fallback there meant every mailbox replaying every other mailbox's decisions.
  * Storage can refuse (Safari private mode); every access is wrapped, and a refusal means a decision
  * is only as durable as the tab — exactly the behaviour before this file existed.
  */
 
-import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
-import { durableRemove, durableSet, type DurableWrite } from "@ohmail/app-logic/storage/durable";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import type { DecisionDestination, DecisionScope } from "./decision.js";
+import { durableRemove, durableSet, type DurableWrite } from "../storage/durable.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /**
  * One scheduled decision — the trim, not the row. `ScreenerSenderDTO` carries every held message in full, and a
@@ -83,8 +83,8 @@ export const INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 export const SCREENER_INTENTS_PREFIX = "ohmail.screener.intents.";
 
 /** One key per ACCOUNT, holding the whole journal — see the header for why it is owner-keyed. */
-export function screenerIntentsKey(owner: string | null = storageOwner()): string {
-  return `${SCREENER_INTENTS_PREFIX}${owner ?? "local"}`;
+export function screenerIntentsKey(owner: StorageScope): string {
+  return `${SCREENER_INTENTS_PREFIX}${scopeSuffix(owner)}`;
 }
 
 function isSeed(x: unknown): x is NonNullable<ScreenerIntent["seed"]> {
@@ -112,9 +112,10 @@ function isIntent(x: unknown): x is ScreenerIntent {
 }
 
 /** The journal as stored, unfiltered by age. Never throws: a blocked or corrupt jar reads empty. */
-function load(): ScreenerIntent[] {
+function load(scope: StorageScope): ScreenerIntent[] {
+  const key = screenerIntentsKey(scope);
   try {
-    const raw = window.localStorage.getItem(screenerIntentsKey());
+    const raw = window.localStorage.getItem(key);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter(isIntent) : [];
@@ -132,8 +133,8 @@ function load(): ScreenerIntent[] {
  * to keep. The answer travels to `decide`, which commits at once rather than offering an undo it
  * cannot honour.
  */
-function save(rows: ScreenerIntent[]): DurableWrite {
-  const key = screenerIntentsKey();
+function save(rows: ScreenerIntent[], scope: StorageScope): DurableWrite {
+  const key = screenerIntentsKey(scope);
   return rows.length === 0
     ? durableRemove(key, "screener.intents")
     : durableSet(key, JSON.stringify(rows), "screener.intents");
@@ -147,14 +148,14 @@ function save(rows: ScreenerIntent[]): DurableWrite {
  * makes the write idempotent under a re-press after an expiry, which is the only way the two can
  * meet.
  */
-export function armScreenerIntent(intent: ScreenerIntent): DurableWrite {
-  const rows = load().filter((r) => r.id !== intent.id);
+export function armScreenerIntent(intent: ScreenerIntent, scope: StorageScope): DurableWrite {
+  const rows = load(scope).filter((r) => r.id !== intent.id);
   rows.push({
     ...intent,
     heldIds: intent.heldIds.slice(0, INTENT_HELD_IDS_MAX),
     ...(intent.inboxIds ? { inboxIds: intent.inboxIds.slice(0, INTENT_HELD_IDS_MAX) } : {}),
   });
-  return save(rows);
+  return save(rows, scope);
 }
 
 /**
@@ -177,10 +178,10 @@ export const INTENT_HELD_IDS_MAX = 500;
  * this journal is the only durable copy and dropping it early would reopen the whole defect one
  * step further along.
  */
-export function disarmScreenerIntent(id: string): void {
-  const rows = load();
+export function disarmScreenerIntent(id: string, scope: StorageScope): void {
+  const rows = load(scope);
   const kept = rows.filter((r) => r.id !== id);
-  if (kept.length !== rows.length) save(kept);
+  if (kept.length !== rows.length) save(kept, scope);
 }
 
 /**
@@ -210,14 +211,14 @@ export const INTENT_EXPIRED_CLASS = "screener.intent.expired";
  * boot for ever. It is also RETURNED and COUNTED — removal is not the fact, a press that will
  * never be carried out is — and the line carries the class and how many, never a sender.
  */
-export function takeScreenerIntents(nowMs: number): ScreenerIntentSweep {
-  const rows = load();
+export function takeScreenerIntents(nowMs: number, scope: StorageScope): ScreenerIntentSweep {
+  const rows = load(scope);
   if (rows.length === 0) return { live: [], expired: [] };
   const live: ScreenerIntent[] = [];
   const expired: ScreenerIntent[] = [];
   for (const r of rows) (nowMs - r.at <= INTENT_TTL_MS ? live : expired).push(r);
   if (expired.length > 0) {
-    save(live);
+    save(live, scope);
     console.warn("ohmail: screener intents expired", {
       class: INTENT_EXPIRED_CLASS,
       count: expired.length,

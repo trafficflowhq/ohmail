@@ -5,10 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { composeRowKey } from "../app/shell/compose";
-import { sendLocksKey, SEND_LOCK_FORMAT } from "../app/shell/send-lock";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { composeRowKey } from "@ohmail/app-logic/writing/compose";
+import { sendLocksKey, SEND_LOCK_FORMAT } from "@ohmail/app-logic/writing/send-lock";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE DRAFTS LIST'S ENDINGS RELEASE THE RECORD IN EVERY WINDOW (a high verifier finding, the
@@ -90,7 +91,7 @@ async function makeADraft(): Promise<string> {
   // between the press and the write, which is how a green harness comes to measure nothing.
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey());
+  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
   expect(id, "the compose never wrote a row, so there is nothing to press Delete on").not.toBeNull();
   return id!;
 }
@@ -141,7 +142,7 @@ afterEach(async () => {
 });
 
 function parkAt(draftId: string, at: number): void {
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify([{
+  window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
     v: SEND_LOCK_FORMAT, lane: "compose", key: "KEY-HELD", at,
     draftId, fp: "fp-held", subject: `draft:${draftId}`, unverified: true,
   }]));
@@ -168,7 +169,7 @@ describe("a row's server-answered ending releases its record, whichever window p
           expect(b, `the row offers no "${verb}"`).not.toBeNull();
           await press(b!); await settle(20);
         }
-        const jar = JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ draftId?: string }>;
+        const jar = JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]") as Array<{ draftId?: string }>;
         expect({ jarNamesRow: jar.filter((r) => r.draftId === id).length, rowStill: rowOf(id) !== null },
           "the server answered for the row and this window kept its record").toEqual({ jarNamesRow: 0, rowStill: false });
         if (verb === "Send again") {

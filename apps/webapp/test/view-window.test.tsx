@@ -10,7 +10,7 @@ import messages from "../messages/en.json";
 import { OhboxView } from "../app/views/OhboxView";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**

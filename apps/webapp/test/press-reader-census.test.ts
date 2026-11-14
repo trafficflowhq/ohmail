@@ -11,12 +11,12 @@ import { pressReaderSites } from "../../../scripts/lib/press-readers.mjs";
  */
 const ROOT = resolve(__dirname, "..");
 const SITES: Record<string, ReadonlyArray<"refusal-only" | "says-done" | "via-pressVerdict">> = {
-  "app/shell/compose-autosave.ts": ["refusal-only"],     // a refused save keeps the composer open
+  "../../packages/app-logic/src/writing/compose-autosave.ts": ["refusal-only"],     // a refused save keeps the composer open
   "../../packages/app-logic/src/press/delete-undo.ts": ["refusal-only"],          // counts refusals and waits, says neither else
-  "app/shell/mail-send.ts": ["refusal-only"],            // `absorb` reads the send's own outcome
+  "../../packages/app-logic/src/writing/mail-send.ts": ["refusal-only"],            // `absorb` reads the send's own outcome
   "../../packages/app-logic/src/press/press-verdict.ts": ["says-done"],           // moveInBatches — the moved count
-  "app/shell/reply-autosave.ts": ["refusal-only"],       // a refused save ends the attempt
-  "app/shell/screener-state.ts": [
+  "../../packages/app-logic/src/writing/reply-autosave.ts": ["refusal-only"],       // a refused save ends the attempt
+  "../../packages/app-logic/src/screener/screener-state.ts": [
     "via-pressVerdict", "via-pressVerdict",
     "refusal-only",     // the rule press's refusal capture
     "refusal-only",     // allowScreened — said at the press, refused after

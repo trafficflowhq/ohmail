@@ -74,7 +74,7 @@ let bulkRuns: Array<[string, string[]]> = [];
 async function mountOhbox(rows: Row[], locale: "en" | "de" = "en"): Promise<void> {
   setViewport();
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = h(NextIntlClientProvider, {
     locale, messages: locale === "de" ? german : messages, timeZone: "UTC",
     now: new Date("2026-08-02T09:00:00.000Z"),
@@ -112,7 +112,7 @@ async function mountTriage(
 ): Promise<void> {
   setViewport();
   const { TriageView } = await import("../app/views/TriageView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const { WithListGone } = await import("./_list-gone.js");
   const byId = new Map(entries.map((e) => [e.id, msg({ id: e.id, unread: true })]));
   const list = entries.map((e) => ({

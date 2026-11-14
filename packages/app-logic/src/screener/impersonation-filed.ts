@@ -10,15 +10,15 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { AutoFiledItemWire, OhmailEngine } from "@ohmail/client-engine";
-import { durableSet } from "@ohmail/app-logic/storage/durable";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { durableSet } from "../storage/durable.js";
+import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
 
 /**
  * This device's mark, per account (`searchSortKey`'s keying): the newest filing it has acknowledged,
  * as its ISO instant. A timestamp, no mail in it, so it survives sign-out.
  */
 export const IMPERSONATION_SEEN_PREFIX = "ohmail.screener.impersonationSeen.";
-export const impersonationSeenKey = (): string => `${IMPERSONATION_SEEN_PREFIX}${storageOwner() ?? "local"}`;
+export const impersonationSeenKey = (scope: StorageScope): string => `${IMPERSONATION_SEEN_PREFIX}${scopeSuffix(scope)}`;
 
 export interface ImpersonationFiledNotice {
   /** The filings the line counts, newest first. */
@@ -36,9 +36,10 @@ export interface ImpersonationFiledNotice {
 }
 
 /** The device's mark, or `""` when there is none or storage cannot be read. */
-export function readImpersonationSeen(): string {
+export function readImpersonationSeen(scope: StorageScope): string {
+  const key = impersonationSeenKey(scope);
   try {
-    const v = (globalThis as { localStorage?: Storage }).localStorage?.getItem(impersonationSeenKey());
+    const v = (globalThis as { localStorage?: Storage }).localStorage?.getItem(key);
     return typeof v === "string" ? v : "";
   } catch {
     return "";
@@ -71,9 +72,12 @@ export function spamLettersMark(rows: readonly { held: readonly { id: string }[]
  * The notice, or `null` while unread, unanswerable, acknowledged, or where a press is walled (`blocked`).
  * `spamMark` is {@link spamLettersMark} of the Spam shelf.
  */
-export function useImpersonationFiled(engine: OhmailEngine, blocked: boolean, spamMark: string): ImpersonationFiledNotice | null {
+export function useImpersonationFiled(
+  engine: OhmailEngine, blocked: boolean, spamMark: string, scope: StorageScope,
+): ImpersonationFiledNotice | null {
+  const owner = useRef(usePinnedScope(scope));
   const [items, setItems] = useState<AutoFiledItemWire[] | null>(null);
-  const [seen, setSeen] = useState<string>(readImpersonationSeen);
+  const [seen, setSeen] = useState<string>(() => readImpersonationSeen(owner.current));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<"requested" | "failed" | null>(null);
@@ -127,7 +131,7 @@ export function useImpersonationFiled(engine: OhmailEngine, blocked: boolean, sp
     setSeen(newest);
     setOpen(false);
     // A refused jar is announced once by the door itself; the mark still holds for this session.
-    durableSet(impersonationSeenKey(), newest, "screener.impersonationSeen");
+    durableSet(impersonationSeenKey(owner.current), newest, "screener.impersonationSeen");
   };
   return { items: unseen, open, toggle: () => setOpen((o) => !o), busy, said, putBack, acknowledge };
 }

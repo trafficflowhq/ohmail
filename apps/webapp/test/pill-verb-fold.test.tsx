@@ -223,7 +223,8 @@ async function mountBar(open: Record<string, unknown>): Promise<void> {
   await unmount();
   const { MessagePane } = await import("../app/shell/MessagePane.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+  const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   function Declare(): null {
     (useKeyBindings as (b: unknown[]) => void)(

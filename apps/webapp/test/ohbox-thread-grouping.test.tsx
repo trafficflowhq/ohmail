@@ -107,7 +107,7 @@ function Wrapper(): React.ReactElement {
 
 async function render(props: Props): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   OhboxViewC = OhboxView as never;
   viewProps = baseProps(props);
   const el = h(NextIntlClientProvider, {

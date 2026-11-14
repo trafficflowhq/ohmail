@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SendStatus } from "../app/shell/SendStatus.js";
-import { SENDING_LONG_MS, sendVerb, type SendState } from "../app/shell/mail-send.js";
+import { SENDING_LONG_MS, sendVerb, type SendState } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * THE TWO `queued` STATES, AND THE LONG-SEND LINE — the states the ceiling added, said correctly.
@@ -198,11 +198,11 @@ describe("Send later on a letter with files says what it can do before the pick"
     setFiles: (files: boolean) => Promise<void>;
   }> {
     const { ComposeView } = await import("../app/views/ComposeView.js");
-    const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
+    const { EMPTY_COMPOSE, composePlan } = await import("@ohmail/app-logic/writing/compose");
     const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
     const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const { ToastHost } = await import("@ohmail/ui");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => o.kept });
     const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });
@@ -279,11 +279,11 @@ describe("Send later on a letter with files says what it can do before the pick"
   it("a pick while a file is still being read waits for it, then carries both files", async () => {
     // The probe's form: onFields re-renders, so a committed read reaches the form as it does live.
     const { ComposeView } = await import("../app/views/ComposeView.js");
-    const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
+    const { EMPTY_COMPOSE, composePlan } = await import("@ohmail/app-logic/writing/compose");
     const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
     const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const { ToastHost } = await import("@ohmail/ui");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
     const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => ({ kept: true, days: null }) });
     const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });

@@ -47,7 +47,7 @@ import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import { replyAllRecipients } from "./compose-from";
 import type { ConsentState } from "./consent-state";
 import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
-import { displayAddress, displayDomain } from "./idn";
+import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
 import { readerMoveRefusal } from "@ohmail/app-logic/mail-state/mail-state";
 import type { BulkAction, MessageAction } from "./MessagePane";
 import { shellConsentOptions, type FirstImports, type ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
@@ -86,7 +86,7 @@ import {
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
-import type { ScreenerState } from "./screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "@ohmail/app-logic/press/subject-rule";
 import { browserOffline, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";

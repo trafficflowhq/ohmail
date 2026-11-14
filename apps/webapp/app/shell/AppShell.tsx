@@ -80,7 +80,7 @@ import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { avatarHue, placeLabel } from "./format";
 import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
-import { displayAddress, displayDomain } from "./idn";
+import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
 import { MessageGone, MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
@@ -93,7 +93,8 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 import { firstRunImportOver, useFirstRunQueueSettle } from "@ohmail/app-logic/doors/first-run-queue-settle";
 import { useAppLocale } from "./LocaleContext";
-import { useScreenerState } from "./screener-state";
+import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import { useScreenerText } from "./screener-text";
 import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
@@ -106,7 +107,7 @@ import { ScreeningSection } from "./ScreeningSection";
 import { DormancyRow } from "./DormancyRow";
 import {
   useComposeAutosave, reopenWouldOverwrite, type ComposeFate, type ComposeFlush,
-} from "./compose-autosave";
+} from "@ohmail/app-logic/writing/compose-autosave";
 import { filesNotKeptFor } from "./schedule-files";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
@@ -130,13 +131,13 @@ import {
   REPLY_DRAFT_PREFIX, SEND_IN_FLIGHT_PHASES,
   sendPendingInDurableOutbox, sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type LanePromotionPlan, type SendState,
-} from "./mail-send";
+} from "@ohmail/app-logic/writing/mail-send";
 import {
   accountOrganizer, firstRunCounts, firstRunSubject, screenerForMailbox,
 } from "@ohmail/app-logic/doors/first-run-subject";
 import {
   attachSendLockDraft, holdOf, releaseSendLockForRow, unresolvedSendRows,
-} from "./send-lock";
+} from "@ohmail/app-logic/writing/send-lock";
 import {
   clearComposeDraft,
   composePlan,
@@ -150,8 +151,8 @@ import {
   type ComposeFields,
   type ComposePrefill,
   type MailSend as MailSendMutation,
-} from "./compose";
-import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
+} from "@ohmail/app-logic/writing/compose";
+import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import {
   SIG_FOLLOWING, effectiveSignature, effectiveSignatureHtml, withSignature,
   type SignatureState,
@@ -160,13 +161,11 @@ import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-r
 import { RichEditor, preloadRichEditor } from "./RichEditorLazy";
 import { TagPicker, placePicker } from "./TagPicker";
 
-import { ariaShortcut, KeymapProvider, useModGlyph } from "./keymap";
+import { ariaShortcut, useModGlyph } from "@ohmail/app-logic/keys/keymap";
 /* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
    claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
 import { CURSOR_HINT_MS } from "./cursor-placer";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
-import { ZoneCursor } from "./zone-nav";
-import { FocusFollows } from "./focus-follows";
 import "./zone-cursor.css";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { useMayHandOffFor } from "./send-handoff";
@@ -267,6 +266,7 @@ import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-u
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { useShellSetup } from "@ohmail/app-logic/doors/setup-resume";
 import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
@@ -450,7 +450,7 @@ export function TodaysViews(_: PaneProps) {
   const live = useTodaysSignals(useFrame().host.signals);
   return (
     <MailStateHost probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
-      <ShellInner {...fixed} {...live} />
+      <ShellMount {...fixed} {...live} />
     </MailStateHost>
   );
 }
@@ -494,6 +494,17 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
       {children}
     </MailStateProvider>
   );
+}
+
+/**
+ * ONE MOUNT PER ENGINE MODE. The engine provider changes a live engine for the demo's in place (a
+ * client-side navigation to `/?demo=1`), and `ShellInner` reads whose stored keys it keeps once,
+ * as it mounts. Keyed by the mode, that change is a new mount, so the demo keeps its words in its
+ * own partition and never edits the account's. The desktop and the paired page key their frame by
+ * their scope already.
+ */
+function ShellMount(props: ComponentProps<typeof ShellInner>) {
+  return <ShellInner key={useResolvedDemoMode() ? "demo" : "live"} {...props} />;
 }
 
 function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
@@ -561,6 +572,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   onMailtoDraftSeeded?: () => void;
   onUnread?: (unread: number) => void;
 }) {
+  /* WHOSE STORED KEYS THIS MOUNT READS AND WRITES: read once, as the shell mounts, and handed to every
+     hook that keeps something per account. A host that changes the account mounts the shell again. */
+  const scope = useState(() => storageOwner())[0];
   const demo = useDemoMode();
   /* For EFFECT GATES only — see `useResolvedDemoMode`. Never rendered: reading it in output
      would reintroduce the hydration mismatch `useDemoMode` exists to prevent. */
@@ -911,7 +925,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const screenerShownAt = useStableCallback((subject: readonly EngineMessage[], dest: ScreeningDest) =>
     screeningShown(engine.read(), subject, dest, { consent: demo ? null : consent, now: nowAt(), ownAddresses, firstImportDoneAt }));
   const screener = useScreenerState(
-    engine, derived, toast, suggestions.suggestions, presented, autoUnsubscribeDiscloses,
+    engine, scope, derived, toast, useScreenerText(), suggestions.suggestions, presented, autoUnsubscribeDiscloses,
     // The SAME addresses `consentView` was built from — the queue's rows and the partition's
     // reckoning read one list, so the reader is never a row in their own Screener.
     screenerRole, suggestions.outstandingDecisions, ownAddresses, screenerShownAt, screenerRelease,
@@ -1332,7 +1346,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues, inPlaceHost,
-    setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
+    setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
   });
 
   /**
@@ -1419,7 +1433,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   useEffect(() => {
     const id = frItem?.messageId;
     if (!id) return;
-    setFrValues((vals) => (id in vals ? vals : { ...vals, [id]: readReplyDraft(id) }));
+    setFrValues((vals) => (id in vals ? vals : { ...vals, [id]: readReplyDraft(id, scope) }));
   }, [frItem?.messageId]);
 
   useFolderGoneSays(openFolder, route.view === "folder" ? route.folderId : null, consent.foldersEnabled,
@@ -2290,13 +2304,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    deliberately did not adopt. */
                 send={heldRowUnverified(
                   composeStateOnScreen(mailSend.stateOf(COMPOSE_SEND_KEY), mailSend.pressHere(COMPOSE_SEND_KEY)),
-                  readComposeRow(),
+                  readComposeRow(scope),
                   holdOf(engine, {
                     lane: COMPOSE_SEND_KEY,
-                    draftId: readComposeRow(),
-                    session: composeSessionId(),
-                  }),
-                  composeSessionId(),
+                    draftId: readComposeRow(scope),
+                    session: composeSessionId(scope),
+                  }, scope),
+                  composeSessionId(scope),
                 )}
                 /* THE HOLD, AND THIS IS ITS ONE PRODUCER — pinned by the census.
                    The composer came up holding a message a send from the last session is still
@@ -2333,11 +2347,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    callback the Drafts list's verbs dispatch. A held message with no row of its
                    own has nothing the server could resolve. */
                 heldResolve={((): { draftId: string; onResolve: typeof resolveHeldSend } | null => {
-                  const row = readComposeRow();
+                  const row = readComposeRow(scope);
                   return row === null ? null : { draftId: row, onResolve: resolveHeldSend };
                 })()}
                 /* A schedule that ended unsent left its files behind (mail 0179): the row says how many. */
-                filesNotKept={filesNotKeptFor(drafts, readComposeRow())}
+                filesNotKept={filesNotKeptFor(drafts, readComposeRow(scope))}
               />
               </Suspense>
             ) : null}
@@ -2363,7 +2377,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    screen. `unresolvedSendRows` is `holdOf`'s own reading, called rather than
                    restated, and it is O(records) rather than O(drafts). Read here so it costs a
                    jar read only while this view is the route. */
-                heldHere={unresolvedSendRows(COMPOSE_SEND_KEY)}
+                heldHere={unresolvedSendRows(COMPOSE_SEND_KEY, scope)}
                 notSent={notSentRows}
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
@@ -2848,7 +2862,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 // Mirrored into the SAME per-message buffer the inline editor writes and
                 // `settle` clears — so the run's text survives a reload exactly as the
                 // editor's does, and a reply begun in one surface can be finished in the other.
-                if (frItem.messageId) writeReplyDraft(frItem.messageId, v);
+                if (frItem.messageId) writeReplyDraft(frItem.messageId, v, scope);
               }}
             />
           ) : undefined

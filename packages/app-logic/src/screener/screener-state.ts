@@ -11,7 +11,6 @@
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
 import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
-import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
   cardReach,
@@ -57,42 +56,40 @@ import {
   unsubscribeClaim,
   unsubscribeLetterOf,
 } from "@ohmail/client-engine";
-import { scheduleFirstDerivation } from "@ohmail/app-logic/session/first-paint";
-import type { SuggestionOverlay } from "./screener-suggest";
+import { scheduleFirstDerivation } from "../session/first-paint.js";
+import type { SuggestionOverlay } from "./suggestion-overlay.js";
 /* THE ONE ROLE ANSWER, imported rather than restated. `mail-state.ts` owns the derivation the
    mailbox pane renders its own state line from, and a second rule shaped like it here is how two
    surfaces come to describe one mailbox differently. */
-import { readerHolder, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
+import { readerHolder, type ScreenerRole } from "../mail-state/mail-state.js";
 import {
   isNothingOrganizes, organizerRefusalOf, organizerRefusalSentence, type OrganizerRefusal,
-} from "@ohmail/app-logic/press/organizer-refusal";
+} from "../press/organizer-refusal.js";
 import {
   armScreenerIntent,
   disarmScreenerIntent,
   takeScreenerIntents,
   type ScreenerIntent,
-} from "./screener-intents";
-import { createIntentWindows } from "@ohmail/app-logic/press/intent-windows";
+} from "./screener-intents.js";
+import { createIntentWindows, intentWindowsChannel } from "../press/intent-windows.js";
+import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import {
   dispatchScreeningChange,
   holdingRules,
   planScreeningChange,
   releaseRules,
   senderScreening,
-} from "@ohmail/app-logic/press/sender-screening";
-import { pileNames } from "./decision-copy";
-import { screeningShown } from "@ohmail/app-logic/press/press-verdict";
-import { syncIdentityOf } from "@ohmail/app-logic/session/sync-scheduler";
-import { PLACE_LABEL } from "./format";
-import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "./idn";
-import { activeFormatZone } from "./locale";
-import { useAppLocale } from "./LocaleContext";
-import type { UndoToastFn } from "@ohmail/app-logic/press/undo-door";
-import type { ScreenerReleaseWindow } from "@ohmail/app-logic/press/release-window";
-import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
-import type { SpamRow } from "@ohmail/app-logic/screener/spam-row";
-import { givenUpRowIds } from "./screener-given-up";
-import { spamLettersMark, useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed";
+} from "../press/sender-screening.js";
+import { screeningShown } from "../press/press-verdict.js";
+import { syncIdentityOf } from "../session/sync-scheduler.js";
+import { displayAddress, displayAddressee, displayDomain, displayDomainLabel } from "../text/idn.js";
+import type { UndoToastFn } from "../press/undo-door.js";
+import type { ScreenerReleaseWindow } from "../press/release-window.js";
+import { UNDO_MS } from "../press/undo-window.js";
+import type { Translator } from "../text/translator.js";
+import type { SpamRow } from "./spam-row.js";
+import { givenUpRowIds } from "./screener-given-up.js";
+import { spamLettersMark, useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed.js";
 
 /**
  * ONE SUBSCRIBER PER ENGINE for the abandoned list ({@link givenUpRowIds}): a module-level closure
@@ -115,9 +112,24 @@ import {
   DECISION_QUIET,
   type DecisionDestination,
   type DecisionScope,
-} from "@ohmail/ui";
+} from "./decision.js";
 
 export type { SpamRow };
+
+/**
+ * The Screener's words, handed in by the mount: the four catalogue readers it speaks through, the five pile names
+ * and the place labels as the catalogue has them, the locale its stamps are written in, and the zone they are read in.
+ */
+export interface ScreenerText {
+  screener: Translator;
+  screening: Translator;
+  ohbox: Translator;
+  session: Translator;
+  piles: Record<DecisionDestination, string>;
+  places: Readonly<Record<string, string>>;
+  locale: string;
+  zone: () => string;
+}
 
 export interface DecideOptions {
   read: boolean;
@@ -571,9 +583,13 @@ const releaseMove = (messageId: string, folder: Folder, ruled: boolean): EngineM
 
 export function useScreenerState(
   engine: OhmailEngine,
+  /** Whose journal and undo channel these are: the mount's storage scope, kept for the life of the mount. */
+  scope: StorageScope,
   version: number,
   /** The undo door's toast: the decision's Undo is the offer `z` takes back (`undo-door.ts`). */
   toast: UndoToastFn,
+  /** The words it speaks, and the locale and zone it writes stamps in: {@link ScreenerText}. */
+  text: ScreenerText,
   /**
    * Suggestions bought THIS SESSION, keyed by sender — `shell/screener-suggest.ts`.
    *
@@ -649,21 +665,22 @@ export function useScreenerState(
    */
   releaseWindow?: ScreenerReleaseWindow,
 ): ScreenerState {
-  const t = useTranslations("screener");
+  const owner = useRef(usePinnedScope(scope));
+  const t = text.screener;
   /* The five pile names as the catalogue has them, so a toast naming a destination uses the
      word the rail uses. See `decision-copy.ts`. */
-  const piles = pileNames(t);
+  const piles = text.piles;
   // The past-the-gate branch of `commit` speaks the sender-sheet's own sentences (`toastRuled`,
   // `toastRuleFailed`, …), chosen from what the server actually returned — so it reads them from
   // the `screening` namespace, exactly as `AppShell#changeScreening` does.
-  const ts = useTranslations("screening");
+  const ts = text.screening;
   /* The WHY of a reader's refusal — the shell's shared sentence (`organizer-refusal.ts`). */
-  const tWhy = useTranslations("ohbox");
+  const tWhy = text.ohbox;
   const whyOf = (err: Parameters<typeof organizerRefusalOf>[0]): string | null =>
     organizerRefusalSentence(organizerRefusalOf(err, { starting: role.pressRefusal?.kind === "starting" }), tWhy);
   /* "No undo — this browser cannot keep one." ONE sentence for the Screener and the delete key,
      so it lives in the namespace the durability notice uses rather than twice in two piles'. */
-  const tSession = useTranslations("session");
+  const tSession = text.session;
   /* `tick` IS READ, and by one effect only. The boot replay below waits for the cross-tab
      handshake, which settles on a timer rather than on a mirror change — so keying that effect on
      `version` alone would leave a stranded decision sitting until the next drain. */
@@ -675,7 +692,7 @@ export function useScreenerState(
    * only shape a pair of them can be driven in. `bump` is a reducer dispatch and therefore
    * stable, so the coordinator is built once.
    */
-  const windows = useMemo(() => createIntentWindows({ onChange: bump }), []);
+  const windows = useMemo(() => createIntentWindows({ onChange: bump, channel: intentWindowsChannel(owner.current) }), []);
   /** Representatives on the pages past the first, which only the store holds — see `dispatchDecision`. */
   const onwardIds = useRef<ReadonlySet<string>>(new Set());
   const store = useRef({
@@ -729,7 +746,7 @@ export function useScreenerState(
      The memo re-keys on the locale, so a switch re-derives the segments in the same render rather
      than leaving yesterday's stamps in English until the next mutation; the zone is resolved once
      per session and is not a dependency. */
-  const locale = useAppLocale()?.locale ?? "en";
+  const locale = text.locale;
   /* THE FIRST DERIVATION WAITS FOR IDLE; every one after it is synchronous in its own render.
      The cold pass over a warm mirror is the one long task the /mailbox paint still carried
      (132 ms at 10k held, measured 2026-09-19), and nothing at first paint reads these rows —
@@ -749,7 +766,7 @@ export function useScreenerState(
   const queueSettled = firstDerived && storeSettled;
   const segments = useMemo(
     () => (queueSettled
-      ? screenerSegments(queueReader, undefined, locale, activeFormatZone(), ownAddresses)
+      ? screenerSegments(queueReader, undefined, locale, text.zone(), ownAddresses)
       : UNDERIVED_SEGMENTS),
     [queueReader, version, locale, ownAddresses, queueSettled],
   );
@@ -766,9 +783,8 @@ export function useScreenerState(
   const onwardRows = useMemo(() => {
     if (onwardLive.rows.length === 0) return [];
     const shown = new Set(segments.waiting.map((x) => senderKey(x.from.address)));
-    return screenerRowsOfStore(queueReader, onwardLive.rows, undefined, locale, activeFormatZone(), ownAddresses)
+    return screenerRowsOfStore(queueReader, onwardLive.rows, undefined, locale, text.zone(), ownAddresses)
       .filter((x) => !shown.has(senderKey(x.from.address)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onwardLive.rows, segments, queueReader, version, locale, ownAddresses]);
   const nextWaitingCursor = onwardLive.cursor === undefined ? segments.waitingCursor : onwardLive.cursor;
   /* A PRESS BRINGS SOMEBODY NEW. The rows past the page the mirror already shows are the next
@@ -1176,7 +1192,7 @@ export function useScreenerState(
     const id = d.id;
     const derived = d.derived;
     const heldIds = d.heldIds;
-    const done = () => disarmScreenerIntent(id);
+    const done = () => disarmScreenerIntent(id, owner.current);
     /* THE CARD FILES WHAT IT SHOWS: no rule of this press reaches mail already
        filed elsewhere, and the INBOX letters the card listed move by id beside the decision, marked as
        its own (`pressRule`) so the next decision moves them too. A sheet
@@ -1296,7 +1312,7 @@ export function useScreenerState(
         const plan = planScreeningChange(sender, dest, d.scope, true, retroOf);
         // The toast's subject, not the rule's — the rule was already written from `plan`.
         const who = d.scope === "domain" ? displayDomain(sender.domain) : displayAddress(sender.address);
-        const place = PLACE_LABEL[dest] ?? dest;
+        const place = text.places[dest] ?? dest;
         // THE COUNT IS WHAT THE LIST GAINED, never `plan.moved`: the rule re-presents their INBOX mail
         // with no move at all, so a count of the moves said fewer than the Ohbox gained.
         const subject = sender.scopes[d.scope].messages;
@@ -1373,7 +1389,7 @@ export function useScreenerState(
       // decision the reader had just reversed would be re-committed by the next boot — the
       // journal would have turned "user always wins" upside down at the one control that exists
       // to honour it.
-      disarmScreenerIntent(id);
+      disarmScreenerIntent(id, owner.current);
       /* AND NO OTHER TAB MAY REPLAY IT EITHER — a reversal the reader made in this tab is a
          reversal, whichever tab happens to boot next. */
       windows.release([id]);
@@ -1445,7 +1461,7 @@ export function useScreenerState(
      * resolves one way — the next boot reads it and commits. The timers still own the happy
      * path.
      */
-    const written = armScreenerIntent(intentOf(id, entry));
+    const written = armScreenerIntent(intentOf(id, entry), owner.current);
     /**
      * A REFUSED JAR TAKES THE UNDO AWAY, NOT THE DECISION.
      *
@@ -1518,7 +1534,6 @@ export function useScreenerState(
   const waiting = useMemo(() => {
     const overridden = segments.spam.filter((x) => s.overrides.has(x.id));
     return [...segments.waiting, ...onwardRows, ...overridden].map(withSuggestion);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [segments, onwardRows, version, s.overrides.size, suggestions]);
   onwardIds.current = new Set(onwardLive.rows.map((r) => r.messageId));
 
@@ -2128,7 +2143,6 @@ export function useScreenerState(
       alive = false;
       windows.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     /**
@@ -2151,7 +2165,7 @@ export function useScreenerState(
      * exactly as this effect always did.
      */
     if (restoredIntents.current === null) {
-      const swept = takeScreenerIntents(Date.now());
+      const swept = takeScreenerIntents(Date.now(), owner.current);
       restoredIntents.current = swept.live.filter((r) => !s.pending.has(r.id));
       /* THE HIDE PAINTS AT THE READ, not at the first dispatch: `restoredKeys` above is derived
          from this ref, and without a bump the decided senders would stand in the queue until the
@@ -2195,7 +2209,6 @@ export function useScreenerState(
     if (ready.length === 0) return;
     restoredIntents.current = queue.filter((r) => !ready.includes(r));
     for (const r of ready) dispatchDecision(r);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, tick]);
 
   /**
@@ -2397,7 +2410,7 @@ export function useScreenerState(
 
   /* WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — asked at mount and again when Spam's letters change. */
   const spamMark = useMemo(() => spamLettersMark(segments.spam), [segments]);
-  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked", spamMark);
+  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked", spamMark, owner.current);
 
   return {
     heldRelease,

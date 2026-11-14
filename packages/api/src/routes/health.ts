@@ -11,7 +11,7 @@ import { fullSchemaCensus, type SchemaCensus } from "./health-census.js";
    exports only a throwing `mailTierMarkers`, so a list read here would fail the phone's build. */
 import { mailTierMarkers } from "./health-markers.js";
 import { API_VERSION } from "../version.js";
-import type { ApiDeps } from "../deps.js";
+import type { ApiDeps, LockHealthLine } from "../deps.js";
 import type { Route } from "../router.js";
 
 /**
@@ -378,10 +378,22 @@ export const healthRoutes: Route[] = [
           staffDbFault = null;
         }
       }
+      // THE LOCK'S LINE, beside the staff faults and on the same terms: published where the host
+      // injects a reader, never a reason for 503, and a reading that throws publishes nothing.
+      let lock: LockHealthLine | null = null;
+      if (injected?.lock) {
+        try {
+          lock = await injected.lock();
+        } catch {
+          // A reading that fails is no reading: the line is left out, and /health is not darkened by it.
+          lock = null;
+        }
+      }
       const staffFaults = {
         ...(adminError ? { adminFault: adminError } : {}),
         ...(alertsError ? { alertsFault: alertsError } : {}),
         ...(staffDbFault ? { staffDbFault } : {}),
+        ...(lock ? { lock } : {}),
       };
       // Not a fault, and never 503: it is the tripwire for the NEXT provider migration.
       // `unrecognized` here means the connection guards have gone silent again. Emitted beside

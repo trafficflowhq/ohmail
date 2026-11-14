@@ -65,7 +65,7 @@ async function mount(opts: {
 }): Promise<void> {
   setViewport();
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const rows = pinnedRows(opts.pinned.map(msg), (opts.siblings ?? []).map(msg), opts.pinnedAt);
   // The server's own thread length, which a windowed mirror need not hold — stamped on the row
   // the same way `resurfacedThreads` reads it off a synced `thread` record.

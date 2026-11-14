@@ -25,7 +25,7 @@ import {
   type RestartHold,
   type UpdateOffer,
 } from "@ohmail/app-logic/doors/app-update";
-import { COMPOSE_SEND_KEY, type MailSendApi, type SendLineItem, type SendPhase } from "./mail-send";
+import { COMPOSE_SEND_KEY, type MailSendApi, type SendLineItem, type SendPhase } from "@ohmail/app-logic/writing/mail-send";
 
 /** Follow the one offer: adopt what is standing at mount, then listen. */
 export function useUpdateOffer(): UpdateOffer | null {

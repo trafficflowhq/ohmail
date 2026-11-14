@@ -20,7 +20,7 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * Ruled: the Screener card's decision files what the card shows. It used to arm the
@@ -97,7 +97,8 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function mountState(engine: OhmailEngine): Promise<() => StateLike> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
   function Probe(): null {
     const [v, setV] = React.useState(0);
@@ -105,7 +106,7 @@ async function mountState(engine: OhmailEngine): Promise<() => StateLike> {
     // The production shape: the queue built from the mirror as it is PRESENTED (the cutline known).
     const raw = engine.read();
     latest = useScreenerState(
-      engine, v, ((m: string) => { said.push(m); }) as never, undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
+      engine, null, v, ((m: string) => { said.push(m); }) as never, useScreenerText(), undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
     ) as unknown as StateLike;
     return null;
   }
@@ -257,7 +258,8 @@ describe("the card's press past the gate where a rule change travels to the orga
   ] as SyncChange[]);
 
   async function mountShell(engine: OhmailEngine, travels: boolean): Promise<() => StateLike> {
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
     const { placeLabel } = await import("../app/shell/format.js");
     let latest: StateLike | null = null;
@@ -270,7 +272,7 @@ describe("the card's press past the gate where a rule change travels to the orga
       d.routing.planOver.current = travels
         ? (read) => pressRules(read, { travels: true, queued: [], applied: [], unsettled: [], now: NOW }) : null;
       latest = useScreenerState(
-        engine, v, ((m: string) => { said.push(m); }) as never, undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
+        engine, null, v, ((m: string) => { said.push(m); }) as never, useScreenerText(), undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
         true, undefined, [], [], undefined, d.screenerRelease,
       ) as unknown as StateLike;
       return null;

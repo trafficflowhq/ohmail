@@ -8,7 +8,7 @@ import {
 import {
   ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * Close the routing window, so the held rule is sent. A Move moves the mail now and holds the

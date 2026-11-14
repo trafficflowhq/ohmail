@@ -14,7 +14,7 @@ import {
 import type { ComposeAttachment } from "@ohmail/client-engine";
 import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
 import { restartHold } from "@ohmail/app-logic/doors/app-update";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /* The compose preview's PDF opens through pdf.js, which jsdom cannot run: a load that fails. */
 vi.mock("pdfjs-dist", () => ({

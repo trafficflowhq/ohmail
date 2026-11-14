@@ -42,7 +42,7 @@ afterEach(async () => {
 async function mountDock(forwardAsk: string | null): Promise<void> {
   const { MessagePane } = await import("../app/shell/MessagePane.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   host = document.createElement("div");
   host.className = "read-col";
   document.body.appendChild(host);

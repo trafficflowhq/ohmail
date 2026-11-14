@@ -70,10 +70,11 @@ const reply = (body: string) => ({
 
 type Released = Array<{ lane: string; source: string }>;
 async function mount(engine: OhmailEngine, released: Released = [], said: string[] = []): Promise<{ press: (body: string, to?: string, andDone?: boolean) => Promise<void>; phase: () => string; code: () => string | null }> {
-  const { useMailSend } = await import("../app/shell/mail-send.js");
+  const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let api!: { press: (body: string, to?: string, andDone?: boolean) => Promise<void>; phase: () => string; code: () => string | null };
   const Probe = (): null => {
-    const mail = useMailSend(engine as never, ((text: string) => { said.push(text); }) as never, (() => {}) as never,
+    const mail = useMailSend(engine as never, null, ((text: string) => { said.push(text); }) as never, useMailSendText(), (() => {}) as never,
       ((lane: string, _m: unknown, _ok: boolean, _p: unknown, detail?: { andDone?: { source: string } }) => {
         if (detail?.andDone) released.push({ lane, source: detail.andDone.source });
         return false;

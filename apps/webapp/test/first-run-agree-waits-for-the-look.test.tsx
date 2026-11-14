@@ -9,7 +9,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FirstRun, HOLDER_CHECK_MS, HOLDER_REREAD_MS } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { holderAnswered } from "@ohmail/app-logic/reading/reader-holder";
 import type { FirstRunHost, FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";

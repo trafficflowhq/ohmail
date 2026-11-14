@@ -97,9 +97,10 @@ async function flush(): Promise<void> {
 interface Over { store: MemoryMirrorStore; consent: ShellConsentFacts }
 
 async function mount(door: Door, degrade: unknown = null, locale = "en", over?: Over): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const { shellConsentOptions } = await import("@ohmail/app-logic/press/consent-options");
   const engine = await engineWith(door, over?.store);
   function Probe(): React.ReactElement {
@@ -107,7 +108,7 @@ async function mount(door: Door, degrade: unknown = null, locale = "en", over?: 
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const read = engine.read();
     const presented = over ? presentationReader(read, consentPartition(read, shellConsentOptions(over.consent, NOW, []))) : undefined;
-    const state = useScreenerState(engine, v, (() => {}) as never, undefined, presented);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), undefined, presented);
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true, selection: sel as never,

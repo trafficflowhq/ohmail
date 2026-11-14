@@ -158,11 +158,12 @@ describe("the reply's own discharge and the release, over one source", () => {
   afterEach(() => { vi.useRealTimers(); });
 
   async function lane(s: Scene, said: EngineMutation[][], toasts: string[]) {
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
     let api!: { send: (m: unknown, o?: unknown) => void };
     const Probe = (): null => {
       const mail = useMailSend(
-        s.engine as never, ((m: string) => toasts.push(m)) as never, (() => {}) as never,
+        s.engine as never, null, ((m: string) => toasts.push(m)) as never, useMailSendText(), (() => {}) as never,
         ((_k: string, _m: unknown, accepted: boolean, _p: unknown, detail?: { andDone?: SendAndDonePlan }) => {
           if (detail?.andDone === undefined || !accepted) return false;
           return releaseSendAndDone({ presented: s.engine.read(), intent: detail.andDone, dispatch: (m) => applied(s, m), say: (u) => said.push(u) });

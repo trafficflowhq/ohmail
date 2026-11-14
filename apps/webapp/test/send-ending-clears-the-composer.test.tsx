@@ -7,7 +7,7 @@
  * store unhydrated at mount), an aged refusal, a re-minted compose left alone, and an outbox read that
  * never settles.
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -16,7 +16,7 @@ import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-eng
 import type { MirrorStore } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { dto, listen, mailServer } from "../../mobile/test/helpers/mail-server";
-import type { ComposeFields } from "../app/shell/compose";
+import type { ComposeFields } from "@ohmail/app-logic/writing/compose";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,27 +58,29 @@ async function world() {
 
 /** The compose surface as the shell wires it: useMailSend + useComposeAutosave + settleCompose. */
 async function surface(engine: OhmailEngine) {
-  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("../app/shell/mail-send.js");
-  const { useComposeAutosave } = await import("../app/shell/compose-autosave.js");
-  const { readComposeDraft, writeComposeDraft } = await import("../app/shell/compose.js");
-  const initial = readComposeDraft();
+  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
+  const { readComposeDraft, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  const initial = readComposeDraft(null);
   let api!: { body: () => string; held: () => boolean; phase: () => string; write: (b: string) => Promise<void>; press: () => Promise<void> };
   const Probe = (): null => {
     const [fields, setF] = React.useState<ComposeFields>({ ...EMPTY, ...initial } as ComposeFields);
     const settleRef = React.useRef<(rowId: string | null, about: boolean) => void>(() => {});
-    const mail = useMailSend(engine as never, (() => {}) as never,
-      ((key: string, m: { draftId?: string | null }, about: boolean) => { if (key === "compose") settleRef.current(m.draftId ?? null, about); }) as never);
+    const mail = useMailSend(engine as never, null, (() => {}) as never,
+      useMailSendText(), ((key: string, m: { draftId?: string | null }, about: boolean) => { if (key === "compose") settleRef.current(m.draftId ?? null, about); }) as never);
     const autosave = useComposeAutosave({
       engine: engine as never, fields, mailboxId: "mb-1", active: true,
       sendInFlight: SEND_IN_FLIGHT_PHASES.has(mail.stateOf("compose").phase) || sendPendingInOutbox(engine as never, "compose") || mail.restoredPending("compose"),
       onCleared: () => { setF(EMPTY); },
+      scope: null,
     });
     settleRef.current = (rowId, about) => { autosave.settleCompose({ kind: "sentByMirror", rowId, aboutThisCompose: about }); };
     api = {
       body: () => fields.body,
       held: () => mail.restoredPending("compose"),
       phase: () => mail.stateOf("compose").phase,
-      write: async (b) => { await act(async () => { setF(() => { const n = fieldsFor(b); writeComposeDraft(n); return n; }); }); },
+      write: async (b) => { await act(async () => { setF(() => { const n = fieldsFor(b); writeComposeDraft(n, null); return n; }); }); },
       press: async () => {
         await act(async () => { (mail.send as unknown as (m: unknown) => void)({ kind: "mail_send", inReplyTo: null, body: fields.body, subject: "Hello", to: [{ name: null, address: "bo@fake.test" }], mailboxId: "mb-1", ...(autosave.draftId ? { draftId: autosave.draftId } : {}) }); });
       },
@@ -92,8 +94,8 @@ async function surface(engine: OhmailEngine) {
 }
 
 async function sentOffline(w: Awaited<ReturnType<typeof world>>): Promise<void> {
-  const { writeComposeDraft } = await import("../app/shell/compose.js");
-  writeComposeDraft(fieldsFor(FIRST));
+  const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  writeComposeDraft(fieldsFor(FIRST), null);
   const e1 = w.engine();
   const s1 = await surface(e1);
   await act(async () => { await e1.start(); });
@@ -104,14 +106,14 @@ async function sentOffline(w: Awaited<ReturnType<typeof world>>): Promise<void> 
   await unmount();
 }
 async function jar(): Promise<Array<{ at: number }>> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  return JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ at: number }>;
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  return JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Array<{ at: number }>;
 }
 async function ageJar(ms: number): Promise<void> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  window.localStorage.setItem(sendLocksKey(null), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
 }
-const buffered = async (): Promise<string> => (await import("../app/shell/compose.js")).readComposeDraft().body;
+const buffered = async (): Promise<string> => (await import("@ohmail/app-logic/writing/compose")).readComposeDraft(null).body;
 
 beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear(); });
 afterEach(async () => { await unmount(); vi.restoreAllMocks(); });
@@ -149,8 +151,8 @@ describe("a send's ending reaches its composer at any age", () => {
     const w = await world();
     const first = new IndexedDbMirrorStore({ owner: "ending-owner" });
     await first.load();
-    const { writeComposeDraft } = await import("../app/shell/compose.js");
-    writeComposeDraft(fieldsFor(FIRST));
+    const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    writeComposeDraft(fieldsFor(FIRST), null);
     const e1 = w.engine(first);
     const s1 = await surface(e1);
     await act(async () => { await e1.start(); });
@@ -189,9 +191,9 @@ describe("a send's ending reaches its composer at any age", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const w = await world();
     await sentOffline(w);
-    const { clearComposeDraft, writeComposeDraft } = await import("../app/shell/compose.js");
-    clearComposeDraft();
-    writeComposeDraft(fieldsFor("Wann kommt der Ofen?"));
+    const { clearComposeDraft, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(null);
+    writeComposeDraft(fieldsFor("Wann kommt der Ofen?"), null);
     w.net.offline = false;
     await ageJar(8 * DAY);
     const e2 = w.engine();
@@ -216,10 +218,10 @@ describe("a send's ending reaches its composer at any age", () => {
     await settle(20);
     expect({ known: e2.outboxKnown(), held: s2.held() }, "a failed read settled the outbox, or freed the composer")
       .toEqual({ known: false, held: true });
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
     await unmount();
-    clearComposeDraft();
-    (await import("../app/shell/compose.js")).writeComposeDraft(fieldsFor("A different message."));
+    clearComposeDraft(null);
+    (await import("@ohmail/app-logic/writing/compose")).writeComposeDraft(fieldsFor("A different message."), null);
     const s3 = await surface(e2);
     expect(s3.held(), "a new compose after Discard is held by the old message").toBe(false);
   }, 60_000);

@@ -22,9 +22,10 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
-const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap");
+const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+const { KeymapProvider } = await import("@ohmail/app/keys");
 const { RichEditor } = await import("../app/shell/RichEditor");
-const { EMPTY_RICH } = await import("../app/shell/rich-text");
+const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
 
 let roots: Root[] = [];
 

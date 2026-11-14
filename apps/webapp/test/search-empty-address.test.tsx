@@ -14,7 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * the search empty state offers the address door when its two scopes apply.

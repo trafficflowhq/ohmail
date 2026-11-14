@@ -835,3 +835,14 @@ export function recordPgWire(): PgWireRecorder {
     connections: () => wireOpened,
   };
 }
+
+/**
+ * A Postgres the test owns whole (`testing-own-server.ts`), and the lock's ground on it: the store
+ * with the Cloud's roles, made by the real scripts (`testing-lock-ground.ts`). For a test that makes
+ * or uses roles, which belong to the whole server and never to the shared one.
+ */
+export {
+  OWN_SERVER_IMAGES, OWN_SERVER_LIFETIME_S, PG_MAJORS, dockerAnswers, ownServersAvailable, startOwnServer,
+  type OwnServer, type PgMajor,
+} from "./testing-own-server.js";
+export { MIGRATOR_ROLE, ruleVerbs, startLockGround, type LockGround } from "./testing-lock-ground.js";

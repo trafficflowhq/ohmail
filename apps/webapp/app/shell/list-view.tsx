@@ -11,7 +11,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import { listSurface, saysEmpty, type ListSurface } from "@ohmail/client-engine";
 import { ReadColumn, Spinner } from "@ohmail/ui";
 import { MessageGone } from "./MessagePane";
-import { readColumnHidden } from "./narrow";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 
 /** What the shell knows about a row that left: a tombstone its own verbs did not cause, and where to follow it. */

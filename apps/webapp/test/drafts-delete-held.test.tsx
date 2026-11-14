@@ -5,13 +5,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { composeRowKey, composeSessionKey } from "../app/shell/compose";
-import { sendLocksKey, SEND_LOCK_FORMAT } from "../app/shell/send-lock";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { composeRowKey, composeSessionKey } from "@ohmail/app-logic/writing/compose";
+import { sendLocksKey, SEND_LOCK_FORMAT } from "@ohmail/app-logic/writing/send-lock";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 /* The pinned conditional below is read as source, anchored on the DECLARED NAME. Both of this
    file's old bounds named a hook and both had gone stale — see the case for what that cost. */
 import { sliceOfDeclaration } from "./source-anchor.js";
 import { settleFirstPaint } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE DRAFTS LIST'S DELETE, DRIVEN THROUGH THE SHIPPED SHELL. `send-hold-census.test.ts` pins the
@@ -97,14 +98,14 @@ async function makeADraft(): Promise<string> {
   // between the press and the write, which is how a green harness comes to measure nothing.
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey());
+  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
   expect(id, "the compose never wrote a row, so there is nothing to press Delete on").not.toBeNull();
   return id!;
 }
 
 /** An unresolved send record naming this row — what a browser holds after a lost answer. */
 function parkTheRow(draftId: string): void {
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify([{
+  window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
     v: SEND_LOCK_FORMAT, lane: "compose", key: "KEY-HELD", at: Date.now(),
     draftId, fp: "fp-held", subject: `draft:${draftId}`, unverified: true,
   }]));
@@ -184,7 +185,7 @@ describe("Deleting a draft this browser holds a send record for", () => {
 
     expect(rowOf(id), "the discard of a held row was refused — the row a person pressed for weeks").toBeNull();
     expect(toastText(), "a discard that went through was narrated as a refusal").not.toContain("Not discarded");
-    const jar = JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ draftId?: string }>;
+    const jar = JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]") as Array<{ draftId?: string }>;
     expect(
       jar.filter((r) => r.draftId === id).length,
       "the jar still names the discarded row — the next mount would park a message that is gone",
@@ -237,7 +238,7 @@ describe("Deleting a draft this browser holds a send record for", () => {
       body,
       "the Drafts list's Delete asks about the compose session unconditionally — one unresolved "
       + "send then refuses Delete for every draft in the account",
-    ).toContain("session: heldRow !== null && heldRow === draftId ? composeSessionId() : null,");
+    ).toContain("session: heldRow !== null && heldRow === draftId ? composeSessionId(scope) : null,");
     /* AND THE 409 ARM, which the demo world cannot answer with: `FixturesAdapter` never refuses,
        so the race the server settles under its row lock has no fixture here. The server half is
        driven in `packages/api/test/drafts.test.ts` — 409 `send_recorded`, the row still present. */

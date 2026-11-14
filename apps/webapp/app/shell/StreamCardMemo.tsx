@@ -17,7 +17,7 @@ import { useTranslations } from "next-intl";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { StreamCard, StreamArt } from "@ohmail/ui";
 import { senderName, displayTime } from "./format";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";

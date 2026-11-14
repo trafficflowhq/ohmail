@@ -24,7 +24,7 @@ import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -201,7 +201,7 @@ export function TagView({
     rows: messages, select: selectRow,
   });
 
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: {
       followId: shown?.id ?? null,
       up: {

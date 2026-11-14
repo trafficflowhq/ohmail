@@ -12,16 +12,16 @@ import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY,
-} from "../../webapp/app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, sentCopyNotesKey,
-} from "../../webapp/app/shell/mail-send";
+} from "@ohmail/app-logic/writing/mail-send";
 import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
-import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
-import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
+import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "./window-outbox-store.js";

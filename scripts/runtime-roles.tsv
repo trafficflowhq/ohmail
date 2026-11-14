@@ -1,0 +1,44 @@
+# The runtime logins of the Cloud database, as data: who they are, what each may do on which table, and their
+# server-side deadlines. deploy/sql/harden-runtime-roles.sql writes these same rows in its own @rows block; this
+# file states them a second time, independently, and deploy/test/runtime-roles.pg.test.ts holds the catalog the
+# script leaves against it. Tab-separated: kind, role, subject, value. A value of "-" is "nothing".
+#
+# verbs with subject * is the rule for every table of schema public; a named subject narrows it for that table.
+# A table named staff_* that has no row here is refused by the script until it is named.
+# schema rows are the schemas a login may use; where a host keeps the search extensions (pg_trgm, btree_gin) in a
+# schema of their own, the script adds that one by itself. deadline values are milliseconds.
+kind	role	subject	value
+login	ohmail_api	attributes	LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION
+login	ohmail_worker	attributes	LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION
+verbs	ohmail_api	*	SELECT INSERT UPDATE DELETE
+verbs	ohmail_api	staff_users	SELECT INSERT UPDATE
+verbs	ohmail_api	staff_sessions	SELECT INSERT UPDATE
+verbs	ohmail_api	staff_role_grants	SELECT INSERT UPDATE
+verbs	ohmail_api	staff_audit_log	INSERT
+verbs	ohmail_api	staff_audit_events	INSERT
+verbs	ohmail_api	invites	SELECT INSERT UPDATE
+verbs	ohmail_api	waitlist	SELECT INSERT UPDATE
+verbs	ohmail_worker	*	SELECT INSERT UPDATE DELETE
+verbs	ohmail_worker	staff_users	-
+verbs	ohmail_worker	staff_sessions	SELECT UPDATE DELETE
+verbs	ohmail_worker	staff_role_grants	-
+verbs	ohmail_worker	staff_audit_log	-
+verbs	ohmail_worker	staff_audit_events	-
+verbs	ohmail_worker	invites	SELECT UPDATE DELETE
+verbs	ohmail_worker	waitlist	-
+schema	ohmail_api	public	USAGE
+schema	ohmail_worker	public	USAGE
+deadline	ohmail_api	lock_timeout	30000
+deadline	ohmail_api	statement_timeout	55000
+deadline	ohmail_api	idle_in_transaction_session_timeout	60000
+deadline	ohmail_worker	lock_timeout	30000
+deadline	ohmail_worker	statement_timeout	55000
+deadline	ohmail_worker	idle_in_transaction_session_timeout	60000
+deadline	ohmail_admin	lock_timeout	30000
+deadline	ohmail_admin	statement_timeout	55000
+deadline	ohmail_admin	idle_in_transaction_session_timeout	60000
+bypass	ohmail_api	row security	never
+bypass	ohmail_worker	row security	never
+bypass	ohmail_admin	row security	never
+bypass	plane_runtime	row security	never
+bypass	plane_migrator	row security	never

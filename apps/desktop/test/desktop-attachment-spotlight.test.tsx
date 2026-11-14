@@ -11,7 +11,7 @@ import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
 import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
 import { MessageFiles } from "../../webapp/app/shell/MessageFiles.js";
 import { AttachmentPreview } from "../../webapp/app/components/AttachmentPreview.js";
-import { KeymapProvider } from "../../webapp/app/shell/keymap.js";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * THE DESKTOP OPENS AN ATTACHMENT IN THE PREVIEW THE WEB SHOWS, AND DOWNLOAD SAVES IT.

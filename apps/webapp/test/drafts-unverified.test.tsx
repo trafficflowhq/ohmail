@@ -231,7 +231,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
       resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
     );
     expect(shell, "the reopen does not ask whether a record is still unresolved for this row")
-      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,200}\}\);\n\s*const parked = hold\.kind !== "free";/);
+      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,200}\}, scope\);\n\s*const parked = hold\.kind !== "free";/);
     /* THE SERVER'S OWN MARK IS A PARK. The send creates its own row when the press carried none
        and the client never learns that id, so the row in Drafts belongs to a message no record
        here names — and recovering a row the server calls `unverified` is a duplicate by
@@ -240,10 +240,10 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
        disagreement was a second copy: the autosave once decided a message was new two seconds
        after the reopen had decided it was held, created a row and replaced the hold with it. */
     const autosaveSrc = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/compose-autosave.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/compose-autosave.ts"), "utf8",
     );
     const sendSrc = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/mail-send.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/mail-send.ts"), "utf8",
     );
     for (const [src, where] of [[autosaveSrc, "the autosave"], [sendSrc, "the send gate"]] as Array<[string, string]>) {
       expect(src, `${where} decides for itself whether a message is held`)
@@ -259,7 +259,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
         .not.toMatch(/(?:\.status|rowStatus|row\.status)\s*[!=]==\s*"unverified"/);
     }
     const lock = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/send-lock.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/send-lock.ts"), "utf8",
     );
     expect(lock, "the predicate does not read the row's status at all")
       .toMatch(/if \(row\.status !== "draft"\) \{/);
@@ -267,20 +267,20 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
        from this module when the resolution learned to release its own record, and a pin on the
        exact line would make every future consumer look like a regression of `holdOf`. */
     expect(shell, "the held-message predicate is not imported, so the question cannot be asked")
-      .toMatch(/import \{[^}]*\bholdOf\b[^}]*\} from "\.\/send-lock"/);
+      .toMatch(/import \{[^}]*\bholdOf\b[^}]*\} from "@ohmail\/app-logic\/writing\/send-lock"/);
     /* THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING. Unconditionally, one
        unresolved send would park every draft in the account; never, a record naming a session and
        a row it never got attached to would not be found at all. */
     expect(shell, "the reopen does not link the row being opened to the session holding it")
-      .toMatch(/heldRow !== null && heldRow === d\.id \? composeSessionId\(\) : null/);
+      .toMatch(/heldRow !== null && heldRow === d\.id \? composeSessionId\(scope\) : null/);
     /* THE SAME FUNCTION THE RELOAD ASKS. Two call sites that answered this differently is how the
        reload kept minting a second row for a message the reopen had learned to keep parked, so
        the shared name is pinned on both sides rather than the behaviour being described twice. */
     const autosave = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/compose-autosave.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/compose-autosave.ts"), "utf8",
     );
     expect(autosave, "the reload asks a question of its own, which is how the two came to disagree")
-      .toMatch(/holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: held, session: composeSessionId\(\),\n\s*\}\)/);
+      .toMatch(/holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: held, session: composeSessionId\(owner\.current\),\n\s*\}, owner\.current\)/);
 
     // The parked question is asked BEFORE anything is written to the form.
     const askedAt = shell.indexOf('const parked = hold.kind !== "free";');
@@ -296,7 +296,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     // The session is re-minted for every door EXCEPT this one — the whole of the defect — unless a
     // letter whose own send waits is on screen: its session is that send's, never the held row's.
     expect(shell, "the reopen re-mints the session unconditionally, which is the duplicate itself")
-      .toMatch(/if \(!parked \|\| waiting\) clearComposeDraft\(\)/);
+      .toMatch(/if \(!parked \|\| waiting\) clearComposeDraft\(scope\)/);
 
     /*
      * The parked arm's body, read on its own: it takes no row, releases nothing, arms no delete.
@@ -310,9 +310,9 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     /* AND THE IDENTITY GOES BACK. Recognising the park and then presenting the message under a
        session the record never heard of is the same duplicate reached from a door in between. */
     expect(body, "the parked message is not held by its row — the next pause mints one beside it")
-      .toContain('writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id)');
+      .toContain('writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id, scope)');
     expect(body, "the record's own session is not restored, so `canSend` compares against a stranger")
-      .toContain("writeComposeSession(hold.session)");
+      .toContain("writeComposeSession(hold.session, scope)");
     /* AND THE SEND GATE READS THE HELD ROW, not only the jar — the refusal for a row the server
        marked unverified but this browser holds no record of. It is a JSX prop, so it stayed in the
        shell frame when the reopen moved to `shell-compose.ts` (ARCH-022). */
@@ -322,7 +322,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     /* The lane's state reaches the projection as THIS message sees it (`composeStateOnScreen`: another
        message's send is not this one's to show), and the held row is still asked about over it. */
     expect(frame, "the compose send state does not consider the row the composer is holding")
-      .toMatch(/send=\{heldRowUnverified\(\s*composeStateOnScreen\(mailSend\.stateOf\(COMPOSE_SEND_KEY\), mailSend\.pressHere\(COMPOSE_SEND_KEY\)\),\s*readComposeRow\(\),\s*holdOf\(engine, \{/);
+      .toMatch(/send=\{heldRowUnverified\(\s*composeStateOnScreen\(mailSend\.stateOf\(COMPOSE_SEND_KEY\), mailSend\.pressHere\(COMPOSE_SEND_KEY\)\),\s*readComposeRow\(scope\),\s*holdOf\(engine, \{/);
     /* IT DOES RELEASE, AND THAT IS NOT THE RECOVERY DOOR. The recovery door releases and then
        lets the next pause write a FRESH row (`recoverySeed` arms the delete of the stranded one).
        Here the release only drops whatever row the composer was holding for the message being
@@ -330,7 +330,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
        next line holds the parked row instead. Release WITHOUT the re-hold is the defect, so the
        two are asserted together and in that order. */
     const releasedAt = body.indexOf("autosave.release()");
-    const heldAt = body.indexOf('writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id)');
+    const heldAt = body.indexOf('writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id, scope)');
     expect(releasedAt, "the parked branch stopped releasing the row it arrived holding")
       .toBeGreaterThan(-1);
     expect(heldAt, "the release is not followed by the re-hold, so the row is simply dropped")
@@ -338,6 +338,6 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     expect(body, "reopening a parked row arms a delete of the one row that still holds it")
       .not.toContain("draft_discard");
     expect(body, "reopening a parked row re-mints its session")
-      .not.toContain("clearComposeDraft()");
+      .not.toContain("clearComposeDraft(scope)");
   });
 });
