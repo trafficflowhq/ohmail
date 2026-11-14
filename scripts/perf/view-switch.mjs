@@ -44,6 +44,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { OHBOX_LISTS, inOhbox } from "./speed-check.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../..");
@@ -129,11 +130,13 @@ export async function build(out, tree = ROOT, names = false) {
 
 /* ── one arm ────────────────────────────────────────────────────────────────────────────── */
 
-const VIEW = { "1": ".view-ohbox", "2": ".view-reads", "3": ".view-receipts" };
+/** The Ohbox: today's view, or the seated list in the frame's list section (`speed-check.mjs`). */
+const OHBOX = OHBOX_LISTS.join(", ");
+const VIEW = { "1": OHBOX, "2": ".view-reads", "3": ".view-receipts" };
 const RAIL = { "1": "ohbox", "2": "reads", "3": "receipts" };
 
-/** Installed in the page once: the observers and the per-press probe. */
-function pageProbe() {
+/** Installed in the page once: the observers and the per-press probe. `ohbox` is `OHBOX`, handed in. */
+function pageProbe(ohbox) {
   const w = window;
   w.__vs = { lt: [], frames: [] };
   try {
@@ -169,7 +172,8 @@ function pageProbe() {
     const s0 = w.__vsSanitize ?? 0;
     const b0 = (w.__bodyFetches ?? 0) + w.__vsFetches;
     let rowsAt = null; let paintAt = null; let paint2At = null; let streamAt = null; let iframes = 0; let cards = 0;
-    const stream = rows === undefined && viewSel !== ".view-ohbox";
+    /* The Ohbox has no stream. */
+    const stream = rows === undefined && viewSel !== ohbox;
     const rowSel = rows ?? (stream ? ".row" : "[data-index]");
     const check = () => {
       const view = document.querySelector(viewSel);
@@ -255,10 +259,10 @@ async function runScreener(browser, { url, reps, gap, size, errors }) {
     const openScreener = (phase) => press(() => page.click('[data-rail-id="screener"]'), ".view-screener", "[data-index]", "screener", phase);
     const t0 = Date.now();
     await page.goto(url);
-    await page.waitForSelector(".view-ohbox [data-index]", { timeout: 120000 });
+    await page.waitForSelector(inOhbox("[data-index]"), { timeout: 120000 });
     await page.waitForTimeout(1500);
     bootMs = Math.max(bootMs, Date.now() - t0);
-    await page.evaluate(pageProbe);
+    await page.evaluate(pageProbe, OHBOX);
     await openScreener("screener");
     await page.waitForTimeout(gap);
     const [first, other] = r % 2 === 0 ? ["screened", "spam"] : ["spam", "screened"];
@@ -266,7 +270,7 @@ async function runScreener(browser, { url, reps, gap, size, errors }) {
     await tab(other, "other");
     for (let k = 0; k < 4; k++) await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
     for (let k = 0; k < 2; k++) {
-      await press(() => page.keyboard.press("1"), ".view-ohbox", undefined, "1", "away");
+      await press(() => page.keyboard.press("1"), OHBOX, undefined, "1", "away");
       await openScreener("screener-warm");
       await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
     }
@@ -304,7 +308,7 @@ export async function runArm({ dist, engine = "chromium", reps = 10, q, warm = 8
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 300)); });
   const t0 = Date.now();
   await page.goto(`http://127.0.0.1:${srv.address().port}/?${q}#/ohbox`);
-  await page.waitForSelector(".view-ohbox [data-index]", { timeout: 120000 });
+  await page.waitForSelector(inOhbox("[data-index]"), { timeout: 120000 });
   await page.waitForTimeout(1500);
   if (warm > 0) {
     await page.evaluate(async (n) => {
@@ -314,7 +318,7 @@ export async function runArm({ dist, engine = "chromium", reps = 10, q, warm = 8
     await page.waitForTimeout(1000);
   }
   const bootMs = Date.now() - t0;
-  await page.evaluate(pageProbe);
+  await page.evaluate(pageProbe, OHBOX);
   await page.evaluate(() => window.__harness.resetVitals?.());
 
   const presses = [];

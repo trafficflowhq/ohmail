@@ -27,6 +27,11 @@ export const ROOT = resolve(HERE, "../..");
 export const BUDGETS = join(ROOT, "test/contracts/perf-budgets.json");
 const ENTRY = join(HERE, "speed-check-entry.tsx");
 
+/** The Ohbox's list: today's view, or the seated list in the frame's list section, which draws no `.view-ohbox`. */
+export const OHBOX_LISTS = [".view-ohbox", "section.fr-list .ob-list"];
+/** `inner` inside either of the Ohbox's lists, as one selector. */
+export const inOhbox = (inner) => OHBOX_LISTS.map((list) => `${list} ${inner}`).join(", ");
+
 /** An input the check cannot do without is missing. Never a pass. */
 export class Refused extends Error {}
 const refuse = (why) => { throw new Refused(why); };
@@ -148,8 +153,10 @@ function pageProbe() {
     /* The reader holds this letter, its body is final, and the body's box has lines in it: its own
        text, or the text of the framed document (the frame stands empty for a frame or two first). */
     letter: (id) => {
-      /* A narrow window keeps a second, hidden copy of the reader under its sheet: any copy on screen counts. */
-      for (const body of document.querySelectorAll(`article.msg[data-conv-id="${CSS.escape(id)}"][data-body-ready] .msg-body`)) {
+      /* A narrow window keeps a second, hidden copy of the reader under its sheet: any copy on screen counts. Today's
+         reader's letter, or the seated reader's in the frame's reading column. */
+      const at = `[data-conv-id="${CSS.escape(id)}"][data-body-ready]`;
+      for (const body of document.querySelectorAll(`article.msg${at} .msg-body, .rd-letter${at} [data-read-body]`)) {
         if (!shown(body) || body.getBoundingClientRect().height < 8) continue;
         const frame = body.querySelector("iframe");
         const text = frame === null ? body.textContent : frame.contentDocument?.body?.textContent;
@@ -227,7 +234,7 @@ export async function openPage({ dist, engine = "chromium", viewport = "1440x900
   await page.goto(`http://127.0.0.1:${srv.address().port}/?n=${messages}&bodyMs=${bodyMs}#/ohbox`);
   try {
     /* A row of the Ohbox: today's `button.row`, the new list's option. */
-    await page.waitForSelector(".view-ohbox :is(button.row, [role=option])[data-id]", { timeout: 180000 });
+    await page.waitForSelector(inOhbox(":is(button.row, [role=option])[data-id]"), { timeout: 180000 });
   } catch {
     await browser.close();
     srv.close();
