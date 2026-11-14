@@ -1,0 +1,46 @@
+{
+  "id": "ohmail/platform-name",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a platform's environment name in the core",
+      "file": "packages/core/src/planted/platform.ts",
+      "line": 1,
+      "refused": "VERCEL_ENV is a hosting platform's own name; it stands only in a door file (tools/doors.json)"
+    },
+    {
+      "control": "a platform's name as a string",
+      "file": "packages/core/src/planted/platform-literal.ts",
+      "line": 1,
+      "refused": "RAILWAY_REPLICA_ID is a hosting platform's own name; it stands only in a door file (tools/doors.json)"
+    },
+    {
+      "control": "a platform's own package",
+      "file": "packages/core/src/planted/platform-package.ts",
+      "line": 1,
+      "refused": "@vercel/functions is a hosting platform's own name; it stands only in a door file (tools/doors.json)"
+    },
+    {
+      "control": "a crossing and a platform's name under a switch-off comment for the whole file",
+      "file": "packages/core/src/planted/switched-off-file.ts",
+      "line": 3,
+      "refused": "VERCEL_URL is a hosting platform's own name; it stands only in a door file (tools/doors.json)"
+    }
+  ],
+  "green": [
+    {
+      "control": "the same name in a door file",
+      "file": "apps/api-vercel/src/planted/platform.ts"
+    },
+    {
+      "control": "the product's own names that carry a platform's word",
+      "file": "packages/core/src/planted/own-name.ts"
+    },
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

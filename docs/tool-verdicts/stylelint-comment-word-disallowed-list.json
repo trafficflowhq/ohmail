@@ -1,0 +1,20 @@
+{
+  "id": "stylelint:comment-word-disallowed-list",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a style rule switched off in a stylesheet",
+      "file": "packages/ui/src/planted/switch-off.css",
+      "line": 1,
+      "refused": "Unexpected word matching pattern \"/^\\s*stylelint-/\" (comment-word-disallowed-list)"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean stylesheet of the kit",
+      "file": "packages/ui/src/planted/clean.css"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "eslint:unused-directive",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a switch-off comment that switches nothing off",
+      "file": "packages/core/src/planted/unused-directive.ts",
+      "line": 1,
+      "refused": "Unused eslint-disable directive (no problems were reported from 'no-empty')."
+    }
+  ],
+  "green": [
+    {
+      "control": "the linter's name in prose and in a string",
+      "file": "packages/core/src/planted/linter-in-prose.ts"
+    },
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}
