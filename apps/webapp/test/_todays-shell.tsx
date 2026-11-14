@@ -147,6 +147,9 @@ export function hostFromTodaysInputs(
   });
   const support = props.support;
   const consent = props.consentTransport ?? (apiConfigured() ? CLOUD_CONSENT : NONE);
+  /* What the old shell stands above the panes is handed on with today's own places, the ones the frame keeps, and never
+     beside others: a test that draws panes of its own in the frame mounts no old shell over them. */
+  const todays = Object.values(frame.places).some((place) => place !== NONE && place.panes.kind === "wide" && place.panes.kept === true);
   return {
     engine,
     session: {
@@ -184,7 +187,7 @@ export function hostFromTodaysInputs(
       foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
-    features: { ...features, places: frame.places, stages: frame.stages, reader: NONE } as HostContract["features"],
+    features: { ...features, places: frame.places, stages: frame.stages, reader: NONE, above: todays ? frame.above : NONE } as HostContract["features"],
     device: {
       build: support
         ? { surface: support.surface, version: support.version ?? null, commit: support.commit ?? null, mailtoLeaves: support.mailtoLeaves !== false }

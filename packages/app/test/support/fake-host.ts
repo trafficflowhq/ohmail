@@ -87,6 +87,8 @@ export interface FakeHostInput {
   readonly features?: Partial<Record<FeatureName, FeatureEntry | None>>;
   /** The reading column; absent, `none`. */
   readonly reader?: ReaderEntry | None;
+  /** What the host stands above every pane; absent, `none`. */
+  readonly above?: FrameHost["features"]["above"];
   /** The account's mailbox facts; absent, `none`. */
   readonly mailboxes?: HostReads["mailboxes"];
 }
@@ -126,6 +128,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
       reader: input.reader ?? NONE,
+      above: input.above ?? NONE,
       calendar: input.calendar ?? NONE,
     },
     device: {

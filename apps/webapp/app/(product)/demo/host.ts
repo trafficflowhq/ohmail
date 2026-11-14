@@ -49,6 +49,7 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       places: frame.places,
       stages: frame.stages,
       reader: NONE,
+      above: frame.above,
       calendar: frame.calendar,
     },
     device: {

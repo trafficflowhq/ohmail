@@ -67,6 +67,8 @@ export function phoneFrameSupplies(
   return {
     places: mounted.places,
     stages: mounted.stages,
+    /* No old shell stands on the phone: nothing above the panes. */
+    above: NONE,
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),
