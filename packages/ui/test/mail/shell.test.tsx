@@ -8,6 +8,7 @@ import {
   Rail,
   RailEntry,
   RailFoot,
+  readingScroller,
   Sheet,
   Switcher,
   type DockPlace,
@@ -158,6 +159,27 @@ describe("RailEntry", () => {
     );
     expect(screen.queryByText("g o")).toBeNull();
     expect(screen.getByText("1")).toBeTruthy();
+  });
+
+  it("is named by its word alone where its key or its digit is drawn: neither is said with the name", () => {
+    const { rerender } = render(
+      <RailEntry kind="place" icon="ohbox" keyHint="g o" keyShown>
+        Ohbox
+      </RailEntry>,
+    );
+    expect(within(screen.getByRole("button", { name: "Ohbox" })).getByText("g o")).toBeTruthy();
+    rerender(
+      <RailEntry kind="place" icon="ohbox" keyHint="g o" keyStands>
+        Ohbox
+      </RailEntry>,
+    );
+    expect(within(screen.getByRole("button", { name: "Ohbox" })).getByText("g o")).toBeTruthy();
+    rerender(
+      <RailEntry kind="place" icon="ohbox" keyHint="g o" keyShown digit="1">
+        Ohbox
+      </RailEntry>,
+    );
+    expect(within(screen.getByRole("button", { name: "Ohbox" })).getByText("1")).toBeTruthy();
   });
 
   it("names the key that goes there on the button itself, and none where it has none", () => {
@@ -314,6 +336,26 @@ describe("Switcher", () => {
     expect(onSwitch).toHaveBeenCalledWith("cal");
   });
 
+  it("a half with its key drawn is named by its words alone: the key is for the eye and never said", () => {
+    render(
+      <Switcher
+        kind="pair"
+        label="Mail or Calendar"
+        current="mail"
+        mail={{ ...mail, keyHint: "g m" }}
+        cal={{ ...cal, keyHint: "g c" }}
+        keysShown
+      />,
+    );
+    const half = screen.getByRole("button", { name: "ohcal" });
+    expect(within(half).getByText("g c").getAttribute("aria-hidden")).toBe("true");
+    expect(
+      within(screen.getByRole("button", { name: "ohmail" }))
+        .getByText("g m")
+        .closest("[aria-hidden]"),
+    ).not.toBeNull();
+  });
+
   it("as one round button leads to the product you are not in", () => {
     const onSwitch = vi.fn();
     render(
@@ -343,6 +385,26 @@ describe("Sheet, the reading column", () => {
     expect(column.contains(scroller.current)).toBe(true);
     expect(within(scroller.current!).getByText("The first letter")).toBeTruthy();
     expect(within(scroller.current!).getByRole("heading", { name: "Glaze order" })).toBeTruthy();
+  });
+
+  it("lets a part outside the column find that box under any root around it; a root without a reading column has none", () => {
+    const scroller = createRef<HTMLDivElement>();
+    const { container } = render(
+      <>
+        <Sheet kind="list" label="Ohbox">
+          <p>A row</p>
+        </Sheet>
+        <Sheet kind="reading" label="Conversation" scroller={scroller}>
+          <p>The first letter</p>
+        </Sheet>
+      </>,
+    );
+    expect(scroller.current).not.toBeNull();
+    expect(readingScroller(container)).toBe(scroller.current);
+    expect(readingScroller(document)).toBe(scroller.current);
+    expect(readingScroller(screen.getByRole("region", { name: "Conversation" }))).toBe(scroller.current);
+    expect(readingScroller(screen.getByRole("region", { name: "Ohbox" }))).toBeNull();
+    expect(readingScroller(null)).toBeNull();
   });
 
   it("stands the way back first in the bar over the column: named by its word or its label, and a press goes back", () => {

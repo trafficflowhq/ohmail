@@ -519,6 +519,7 @@
       "looks": ["paper-light-phone", "ohmarchy-light-phone"]
     },
     { "component": "CameraSquare", "state": "off", "looks": ["paper-light-phone"] },
+    { "component": "Mark", "state": "bell", "looks": ["paper-light-phone", "ohmarchy-light-phone"] },
     {
       "component": "StepDots",
       "state": "rest",

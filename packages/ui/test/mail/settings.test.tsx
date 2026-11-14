@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, Field, InfoMark, Menu, RadioLines, Seg, Slot } from "../../src/base/index.js";
 import {
@@ -256,6 +257,47 @@ describe("SettingNote, on a sheet that counts and waits", () => {
     expect(note.querySelector("svg")).toBeNull();
     expect(note.hasAttribute("aria-busy")).toBe(false);
     expect(note.tagName).toBe("P");
+  });
+
+  it("is said by a change inside a region that already stands: its words are drawn at once and kept from a screen reader for its first draw, then given to it; drawn by a server they are the reader's from the start", async () => {
+    /* What a screen reader has of the region's words, read in the commit that first draws it. */
+    const atFirstDraw: (string | null)[] = [];
+    const words = () => screen.getByRole("status").querySelector("span")!;
+    function FirstDraw() {
+      useLayoutEffect(() => {
+        atFirstDraw.push(words().getAttribute("aria-hidden"));
+      }, []);
+      return null;
+    }
+    const { rerender } = render(
+      <>
+        <SettingNote said>The mailbox is connected.</SettingNote>
+        <FirstDraw />
+      </>,
+    );
+    expect(atFirstDraw).toEqual(["true"]);
+    expect(screen.getByRole("status").textContent).toBe("The mailbox is connected.");
+    await waitFor(() => expect(words().hasAttribute("aria-hidden")).toBe(false));
+
+    /* Other words while it stands are a change of the region itself: nothing is held back. */
+    rerender(<SettingNote said>The mailbox is paused.</SettingNote>);
+    expect([words().textContent, words().hasAttribute("aria-hidden")]).toEqual([
+      "The mailbox is paused.",
+      false,
+    ]);
+
+    /* A note that only explained and now warns becomes a region with its words in it: held back once more. */
+    cleanup();
+    const explains = render(<SettingNote>Kept for 30 days.</SettingNote>);
+    expect(screen.getByText("Kept for 30 days.").hasAttribute("aria-hidden")).toBe(false);
+    explains.rerender(<SettingNote warn>The payment did not go through.</SettingNote>);
+    expect(words().getAttribute("aria-hidden")).toBe("true");
+    await waitFor(() => expect(words().hasAttribute("aria-hidden")).toBe(false));
+
+    /* A page drawn by a server is read from its top, and without script nothing would give the words back. */
+    expect(renderToStaticMarkup(<SettingNote said>The mailbox is connected.</SettingNote>)).not.toContain(
+      "aria-hidden",
+    );
   });
 });
 

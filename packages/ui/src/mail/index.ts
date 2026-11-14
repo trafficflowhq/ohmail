@@ -14,7 +14,7 @@ export { RailEntry } from "./Shell/RailEntry.js";
 export type { RailEntryProps } from "./Shell/RailEntry.js";
 export { RailFoot } from "./Shell/RailFoot.js";
 export type { RailFootProps, RailFootTool } from "./Shell/RailFoot.js";
-export { Sheet } from "./Shell/Sheet.js";
+export { readingScroller, Sheet } from "./Shell/Sheet.js";
 export type { SheetProps } from "./Shell/Sheet.js";
 export { Switcher } from "./Shell/Switcher.js";
 export type { SwitcherProduct, SwitcherProps, SwitcherSide } from "./Shell/Switcher.js";

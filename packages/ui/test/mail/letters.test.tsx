@@ -129,6 +129,26 @@ describe("MessageHead", () => {
     const marks = screen.getAllByRole("note").map((mark) => mark.textContent);
     expect(marks).toEqual(["Answered by the away responder · Wed 21 Oct 11:02", "Forwarded to Ben Arnold"]);
   });
+
+  it("a mark that tells of something that went wrong leads with what it is, heavy, under the warning sign; a quiet mark has neither", () => {
+    render(
+      <MessageHead
+        sender={{ name: "Lena Kaufmann", address: "lena@studio.example", printed: "You" }}
+        stamp={{ when: "09:12", full: false, title: "Full dates" }}
+        to={[{ word: "to", people: [{ name: "Giulia Rossi" }] }]}
+        marks={[
+          { lead: "No copy in Sent.", text: "The message went out; nothing to send again." },
+          { text: "Forwarded to Ben Arnold" },
+        ]}
+      />,
+    );
+    const [warns, quiet] = screen.getAllByRole("note");
+    expect(warns!.textContent).toBe("No copy in Sent. The message went out; nothing to send again.");
+    expect(within(warns!).getByText("No copy in Sent.").tagName).toBe("B");
+    /* The sign is a picture beside the words: drawn, and said by nobody. */
+    expect(warns!.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect([quiet!.querySelector("svg"), quiet!.querySelector("b")]).toEqual([null, null]);
+  });
 });
 
 describe("TextNotKept", () => {

@@ -1,10 +1,10 @@
 {
   "shard": {
     "id": "kit-mail",
-    "file": "kit-mail-ef39f74114ff.10.tar.gz",
-    "revision": 10,
-    "sha256": "1346e24b1d5e11c3ddbed015fd7280bd80a23841c7b232a78c63ee5403accab8",
-    "bytes": 11241843,
+    "file": "kit-mail-ef39f74114ff.11.tar.gz",
+    "revision": 11,
+    "sha256": "105d15cb58965624176c08d7ec743d435d54a2732da11c636c36ad386b8fa700",
+    "bytes": 11346262,
     "urls": []
   },
   "rows": [
@@ -3856,6 +3856,48 @@
       "scene": { "sha256": "0297e09f3ef5692b5c6dd2338c8ddce0d5c11b468697c38e3c4ec70d2ac02e16" },
       "stateHash": "446bd0e5ca115e43",
       "source": "8b9b0510c0237509",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MessageHead/copy@ohmarchy-light-desktop",
+      "file": "f8549a43bccb4cd1",
+      "png": {
+        "sha256": "c5cdeee02239fd82c0baa1958e9299f0ed661a3b23af285d4edd10b94e4a26fb",
+        "w": 614,
+        "h": 88,
+        "scale": 1
+      },
+      "scene": { "sha256": "c4aa2edd6d82f210401787ef32815b7c1852dbb65fc66cdb5ed5d295491df63f" },
+      "stateHash": "38cadcbb0efc7cd3",
+      "source": "0c650b3c50beb788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MessageHead/copy@paper-light-desktop",
+      "file": "73532fb222ae6a11",
+      "png": {
+        "sha256": "5fe0feae4381cd81a3795707947af237daea66179a61f8c408d2ea72ffb2ce45",
+        "w": 636,
+        "h": 103,
+        "scale": 1
+      },
+      "scene": { "sha256": "c55b05d34c0a29c062d45e29f234552e4840e7aa65e714bef0e6fc4bb05fd128" },
+      "stateHash": "38cadcbb0efc7cd3",
+      "source": "0c650b3c50beb788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MessageHead/copy@paper-light-phone",
+      "file": "7024ba4959781767",
+      "png": {
+        "sha256": "252844d19cfe0e83a0df93bcf7568bff367936cc7825da276b7d0dc7f94ab968",
+        "w": 668,
+        "h": 324,
+        "scale": 2
+      },
+      "scene": { "sha256": "1fab26e41f83aed06b7e422f86efcc4039825d54062010f5ba96638356ce1d3e" },
+      "stateHash": "38cadcbb0efc7cd3",
+      "source": "0c650b3c50beb788",
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {

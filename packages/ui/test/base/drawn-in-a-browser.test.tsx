@@ -21,6 +21,7 @@ import {
   FieldStack,
   FindField,
   JumpBack,
+  Mark,
   Menu,
   MenuItem,
   Notice,
@@ -195,6 +196,60 @@ async function opened<T>(
     await tab.close();
   }
 }
+
+describe("the product's mark", () => {
+  it.each([
+    ["paper", "desktop", 200],
+    ["paper", "phone", 128],
+    ["ohmarchy", "desktop", 96],
+    ["ohmarchy", "phone", 72],
+  ] as const)(
+    "in %s on a %s: a stop that is a doorbell stands exactly where the plain stop stands, a quarter of the letters high, hot; a finger reaches it as far as the smallest control",
+    async (face, device, size) => {
+      const seen = await drawn(
+        <>
+          <Mark hot>oh</Mark>
+          <Mark hot bell={{ label: "Ring the doorbell" }}>
+            oh
+          </Mark>
+        </>,
+        () => {
+          const [plain, belled] = [...document.querySelectorAll("p")];
+          const from = (mark: Element, node: Element) => {
+            const [m, n] = [mark.getBoundingClientRect(), node.getBoundingClientRect()];
+            return [n.left - m.left, n.top - m.top, n.width, n.height].map((v) => Math.round(v * 10) / 10);
+          };
+          const bell = belled!.querySelector("button")!;
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;height:var(--h-s);color:var(--hot)";
+          document.body.append(probe);
+          const least = probe.getBoundingClientRect().height;
+          const hot = getComputedStyle(probe).color;
+          probe.remove();
+          const reach = parseFloat(getComputedStyle(bell, "::after").top);
+          return {
+            size: parseFloat(getComputedStyle(plain!).fontSize),
+            plainStop: from(plain!, plain!.querySelector("i")!),
+            bell: from(belled!, bell),
+            ground: getComputedStyle(bell).backgroundColor === hot,
+            round:
+              getComputedStyle(bell).borderRadius ===
+              getComputedStyle(plain!.querySelector("i")!).borderRadius,
+            marksAlike: plain!.getBoundingClientRect().height === belled!.getBoundingClientRect().height,
+            reached: bell.getBoundingClientRect().height - 2 * reach,
+            least,
+          };
+        },
+        { face, device },
+      );
+      expect(seen.size).toBe(size);
+      expect(seen.plainStop.slice(2)).toEqual([size / 4, size / 4]);
+      expect(seen.bell).toEqual(seen.plainStop);
+      expect([seen.ground, seen.round, seen.marksAlike]).toEqual([true, true, true]);
+      expect(seen.reached).toBe(Math.max(size / 4, seen.least));
+    },
+  );
+});
 
 describe("the full stop", () => {
   it("a step still ahead is a hollow dot ringed in the second ink, in either scheme", async () => {

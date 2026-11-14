@@ -1005,3 +1005,66 @@ describe("words a part measures for itself, in German at the largest Text size",
     60_000,
   );
 });
+
+describe("a report that fades", () => {
+  /** The scene with its report fading: the fade slowed, so that a press surely lands inside it, and set at its half. */
+  async function fading(face: "paper" | "ohmarchy"): Promise<Page> {
+    const page = await mount("report", 1, { face, moving: true });
+    await frames(page);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty("--m-time", "40");
+      document.documentElement.style.setProperty("--d-hush", "calc(700ms * 40)");
+      (window as unknown as { stepScene: () => void }).stepScene();
+      const fade = document.querySelector(".oh-report")!.getAnimations()[0]!;
+      fade.currentTime = Number(fade.effect!.getComputedTiming().duration) / 2;
+    });
+    await frames(page);
+    return page;
+  }
+  const seen = (page: Page) =>
+    page.evaluate(() => {
+      const report = document.querySelector(".oh-report");
+      return {
+        there: report !== null,
+        fading: report ? report.getAnimations().map((a) => a.playState) : [],
+        /* To the eye: partly gone, neither whole nor away. */
+        faded: report ? ((o) => o > 0.05 && o < 0.95)(Number(getComputedStyle(report).opacity)) : null,
+        taken: Number(document.getElementById("taken")!.textContent),
+      };
+    });
+  /** The fade runs out: the part says that it is gone, and what holds it takes it away. */
+  const ended = async (page: Page) => {
+    await page.evaluate(() => document.querySelector(".oh-report")!.getAnimations()[0]!.finish());
+    await frames(page);
+  };
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: a pointer's press on its way back is taken while it fades, half gone to the eye; when the fade has run out it is gone",
+    async (face) => {
+      const page = await fading(face);
+      try {
+        expect(await seen(page)).toEqual({ there: true, fading: ["running"], faded: true, taken: 0 });
+        await page.mouse.click(...(await middleOf(page, ".oh-report button")));
+        expect(await seen(page)).toEqual({ there: true, fading: ["running"], faded: true, taken: 1 });
+        await ended(page);
+        expect(await seen(page)).toEqual({ there: false, fading: [], faded: null, taken: 1 });
+      } finally {
+        await page.close();
+      }
+    },
+    60_000,
+  );
+
+  it("in paper: the keys reach its way back while it fades, and Enter and Space press it", async () => {
+    const page = await fading("paper");
+    try {
+      await page.keyboard.press("Tab");
+      expect(await page.evaluate(() => document.activeElement?.closest(".oh-report") !== null)).toBe(true);
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Space");
+      expect(await seen(page)).toEqual({ there: true, fading: ["running"], faded: true, taken: 2 });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+});

@@ -29,6 +29,8 @@ export { Dot } from "./Primitives/Dot.js";
 export type { DotProps } from "./Primitives/Dot.js";
 export { EndDot } from "./Primitives/EndDot.js";
 export type { EndDotProps } from "./Primitives/EndDot.js";
+export { Mark } from "./Primitives/Mark.js";
+export type { MarkProps } from "./Primitives/Mark.js";
 export { KeyHint } from "./Primitives/KeyHint.js";
 export type { KeyHintProps } from "./Primitives/KeyHint.js";
 export { Slot } from "./Primitives/Slot.js";

@@ -1,3 +1,4 @@
+import { useSaidOnArrival } from "../../base/said-on-arrival.js";
 import { Icon } from "../../icons/Icon.js";
 import "./setting-note.css";
 
@@ -16,7 +17,9 @@ export interface SettingNoteProps {
   busy?: boolean;
   /**
    * A settled outcome that is no fault ("The mailbox is connected."): said when it appears, calmly, with no sign.
-   * A note that only explains the line it stands under leaves it out: it is read, not announced.
+   * A note that only explains the line it stands under leaves it out: it is read, not announced. A note that is
+   * said (this, `warn`, `busy`) is said by a change inside a region that already stands: on a running page its
+   * words are drawn at once and given to a screen reader a moment later.
    */
   said?: boolean;
 }
@@ -24,15 +27,18 @@ export interface SettingNoteProps {
 /** A note on a sheet of settings: the second ink, under the line it is about, at a reading measure. */
 export function SettingNote({ children, warn, busy, said }: SettingNoteProps) {
   const parts = typeof children === "string" ? [children] : children;
+  const live = Boolean(warn || busy || said);
+  /* Said when it appears: by a change inside the region once it stands, never by arriving full. */
+  const held = useSaidOnArrival(live);
   return (
     <p
       className="oh-text oh-settingnote"
       data-warn={warn ? "" : undefined}
-      /* Said when it appears. It never calls itself busy: that would ask a screen reader to wait with it. */
-      role={warn || busy || said ? "status" : undefined}
+      /* It never calls itself busy: that would ask a screen reader to wait with it. */
+      role={live ? "status" : undefined}
     >
       {warn ? <Icon name="warn" size={18} /> : null}
-      <span>
+      <span aria-hidden={held ? true : undefined}>
         {parts.map((part, at) =>
           typeof part === "string" ? (
             part

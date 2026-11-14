@@ -7,6 +7,7 @@ import {
   CameraSquare,
   Counters,
   Empty,
+  Mark,
   Notice,
   NoticeSlot,
   Opening,
@@ -197,6 +198,46 @@ describe("Report", () => {
     );
     expect(onGone).toHaveBeenCalledTimes(1);
   });
+
+  it("takes a press on its way back while it fades, and says that it is gone only when the fade's time has run", () => {
+    /* A fade with a length where no sheet is loaded: its time, and an animation that ends by the case's clock. */
+    const fade = document.createElement("style");
+    fade.textContent = ".oh-report{--d-hush:700ms}";
+    document.head.append(fade);
+    const browsers = Element.prototype.animate;
+    Element.prototype.animate = function (_frames, timing) {
+      let end: ReturnType<typeof setTimeout> | undefined;
+      return {
+        cancel: () => clearTimeout(end),
+        addEventListener: (_event: string, done: () => void) => {
+          end = setTimeout(done, (timing as KeyframeAnimationOptions).duration as number);
+        },
+      } as unknown as Animation;
+    };
+    vi.useFakeTimers();
+    try {
+      const [undo, onGone] = [vi.fn(), vi.fn()];
+      const way = { label: "Undo", onPress: undo };
+      const { rerender } = render(<Report undo={way}>Moved</Report>);
+      rerender(
+        <Report leaving onGone={onGone} undo={way}>
+          Moved
+        </Report>,
+      );
+      vi.advanceTimersByTime(100);
+      expect(onGone).not.toHaveBeenCalled();
+      const back = screen.getByRole("button", { name: "Undo" });
+      expect(back.closest("[data-leaving]")).toBe(screen.getByRole("status"));
+      fireEvent.click(back);
+      expect(undo).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(600);
+      expect(onGone).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      Element.prototype.animate = browsers;
+      fade.remove();
+    }
+  });
 });
 
 describe("Empty, WaitRow, RefusalLine", () => {
@@ -232,6 +273,19 @@ describe("Empty, WaitRow, RefusalLine", () => {
   it("the mark is named as the product's name with its full stop", () => {
     render(<Empty mark="oh" label="6 decided" />);
     expect(screen.getByLabelText("oh.")).toBeTruthy();
+  });
+
+  it("an empty place draws the kit's one mark: the same node a page's mark is, hot while something waits", () => {
+    const { container } = render(<Empty mark="oh" hot label="6 waiting" />);
+    const inPlace = screen.getByLabelText("oh.");
+    const dot = inPlace.querySelector("i");
+    const drawn = [inPlace.tagName, inPlace.className, dot?.className, dot?.getAttribute("data-kind")];
+    cleanup();
+    render(<Mark hot>oh</Mark>);
+    const alone = screen.getByLabelText("oh.");
+    const stop = alone.querySelector("i");
+    expect(drawn).toEqual([alone.tagName, alone.className, stop?.className, stop?.getAttribute("data-kind")]);
+    expect(container.isConnected).toBe(false);
   });
 
   it("an empty place's one answer carries the key that runs it beside its word, where the place hands one", () => {

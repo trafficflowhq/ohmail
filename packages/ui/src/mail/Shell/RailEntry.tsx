@@ -27,7 +27,7 @@ export interface RailEntryProps {
   count?: string;
   /** Somebody is waiting: the face that marks such a count draws it hot. */
   countHot?: boolean;
-  /** The keys that go there, as they are printed. */
+  /** The keys that go there, as they are printed: drawn for the eye, never said with the entry's name. */
   keyHint?: string;
   /** The keys that go there in `aria-keyshortcuts`' own spelling ("/"): said to a screen reader, never drawn. */
   shortcut?: string;
@@ -135,10 +135,14 @@ export function RailEntry(props: RailEntryProps) {
         {props.hint ? <small className="oh-railentry-hint">{props.hint}</small> : null}
       </span>
       {digit ? (
-        <KeyHint shown>{digit}</KeyHint>
+        <KeyHint shown unsaid>
+          {digit}
+        </KeyHint>
       ) : keyHint && (props.keyShown || props.keyStands) ? (
         <span className="oh-railentry-key" data-stands={props.keyShown ? undefined : ""}>
-          <KeyHint shown>{keyHint}</KeyHint>
+          <KeyHint shown unsaid>
+            {keyHint}
+          </KeyHint>
         </span>
       ) : null}
       {count ? (

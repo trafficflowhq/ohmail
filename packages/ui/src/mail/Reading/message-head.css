@@ -179,6 +179,34 @@
     line-height: var(--oh-messagehead-lh);
   }
 
+  /* A mark that tells of something that went wrong: the sign, what it is, heavy, and its sentence, in the ink. */
+  .oh-messagehead-mark[data-warn] {
+    --oh-messagehead-warn-lh: 1.45;
+    --oh-messagehead-warn-measure: 68ch;
+    --oh-messagehead-warn-drop: 3px;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    margin-top: var(--s1);
+    color: var(--ink);
+    font-size: inherit;
+    line-height: var(--oh-messagehead-warn-lh);
+    text-wrap: pretty;
+  }
+
+  .oh-messagehead-mark[data-warn] > .oh-icon {
+    flex: none;
+    margin-top: var(--oh-messagehead-warn-drop);
+  }
+
+  .oh-messagehead-warns {
+    max-width: var(--oh-messagehead-warn-measure);
+  }
+
+  .oh-messagehead-lead {
+    font-weight: var(--w-bold);
+  }
+
   .oh-messagehead-term,
   .oh-messagehead-note {
     color: var(--ink2);

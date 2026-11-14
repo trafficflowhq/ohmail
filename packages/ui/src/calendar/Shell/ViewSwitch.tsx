@@ -7,7 +7,10 @@ import "./view-switch.css";
 export interface ViewSwitchProps<V extends string> {
   /** The group's name: "View". The capsule reads it too, in a place that is no view. */
   label: string;
-  /** The views, each with the key that takes it where the app has one: the kit draws the hint, the app listens. */
+  /**
+   * The views, each with the key that takes it where the app has one: the kit draws the hint for the eye (a
+   * segment is named by its word alone), the app listens.
+   */
   views: readonly { value: V; label: string; keyHint?: string }[];
   /** The view you are in; `null` in a place that is no view. */
   value: V | null;
@@ -69,7 +72,7 @@ export function ViewSwitch<V extends string>({
             onClick={() => onChange?.(view.value)}
           >
             {view.label}
-            {view.keyHint ? <KeyHint>{view.keyHint}</KeyHint> : null}
+            {view.keyHint ? <KeyHint unsaid>{view.keyHint}</KeyHint> : null}
           </button>
         ))}
       </span>

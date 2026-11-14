@@ -12,6 +12,7 @@ import {
   MenuItem,
   Page,
   PhoneSheet,
+  Report,
   Seg,
   Sentence,
   contextTrigger,
@@ -416,7 +417,33 @@ function LineFold() {
   );
 }
 
+/**
+ * A report with its way back. `stepScene` ends its window: it fades, and what holds it takes it away when the
+ * part says that it is gone. Every press on the way back is counted where the case reads it.
+ */
+function ReportLeaving() {
+  const [leaving, setLeaving] = useState(false);
+  const [there, setThere] = useState(true);
+  const [taken, setTaken] = useState(0);
+  step = () => setLeaving(true);
+  return (
+    <div style={{ position: "absolute", left: 40, top: 40 }}>
+      <output id="taken">{taken}</output>
+      {there ? (
+        <Report
+          leaving={leaving}
+          onGone={() => setThere(false)}
+          undo={{ label: "Undo", keyHint: "z", onPress: () => setTaken((n) => n + 1) }}
+        >
+          Moved to News
+        </Report>
+      ) : null}
+    </div>
+  );
+}
+
 const SCENES = {
+  report: ReportLeaving,
   lineFold: LineFold,
   tiles: Tiles,
   piles: Piles,

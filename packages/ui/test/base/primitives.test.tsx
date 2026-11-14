@@ -20,6 +20,7 @@ import {
   InfoMark,
   JumpBack,
   KeyHint,
+  Mark,
   RadioLines,
   Seg,
   Sentence,
@@ -252,6 +253,59 @@ describe("EndDot", () => {
     expect(container.textContent).toBe("5 unread");
     const dot = container.querySelector("[aria-hidden='true']");
     expect(dot?.parentElement?.textContent).toBe("unread");
+  });
+});
+
+describe("Mark", () => {
+  it("is the product's letters with their full stop, said as its name; the stop is drawn and says nothing", () => {
+    const { container } = render(<Mark>oh</Mark>);
+    const mark = screen.getByLabelText("oh.");
+    expect(mark.textContent).toBe("oh");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(mark.querySelector("i")?.getAttribute("aria-hidden")).toBe("true");
+    expect(mark.querySelector("[data-ringing]")).toBeNull();
+  });
+
+  it("its stop is a doorbell where it is handed one: named, and a press rings it once and tells, each press anew", () => {
+    const onRing = vi.fn();
+    render(
+      <Mark hot bell={{ label: "Ring the doorbell", onRing }}>
+        oh
+      </Mark>,
+    );
+    const bell = screen.getByRole("button", { name: "Ring the doorbell" });
+    expect(screen.getByLabelText("oh.").contains(bell)).toBe(true);
+    expect([bell.getAttribute("data-kind"), bell.hasAttribute("data-ringing")]).toEqual(["hot", false]);
+    bell.focus();
+    fireEvent.click(bell);
+    expect(bell.hasAttribute("data-ringing")).toBe(true);
+    /* A second press is a ring of its own: the one that was playing is let go first, then it rings again. */
+    const seen = new MutationObserver(() => {});
+    seen.observe(bell, { attributes: true, attributeFilter: ["data-ringing"], attributeOldValue: true });
+    fireEvent.click(bell);
+    expect(seen.takeRecords().map((change) => change.oldValue)).toEqual(["", null]);
+    seen.disconnect();
+    expect(bell.hasAttribute("data-ringing")).toBe(true);
+    /* The bell itself stays, and the keys on it. */
+    expect([bell.isConnected, document.activeElement === bell]).toEqual([true, true]);
+    expect(onRing).toHaveBeenCalledTimes(2);
+  });
+
+  it("rings once without a press where it is told to: with a bell or without one", () => {
+    const { rerender, container } = render(<Mark hot>oh</Mark>);
+    expect(container.querySelector("[data-ringing]")).toBeNull();
+    rerender(
+      <Mark hot ringing>
+        oh
+      </Mark>,
+    );
+    expect(container.querySelectorAll("[data-ringing]")).toHaveLength(1);
+    rerender(
+      <Mark hot ringing bell={{ label: "Ring the doorbell" }}>
+        oh
+      </Mark>,
+    );
+    expect(screen.getByRole("button", { name: "Ring the doorbell" }).hasAttribute("data-ringing")).toBe(true);
   });
 });
 

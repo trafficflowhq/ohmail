@@ -17,6 +17,7 @@ import {
   HintLine,
   Icon,
   InfoMark,
+  Mark,
   JumpBack,
   KeyHelp,
   KeyHint,
@@ -1160,6 +1161,18 @@ const pages: KitSubject[] = [
     on: onPage,
     target: ".oh-camera",
     render: () => <CameraSquare state="off" label="Camera off" />,
+  },
+  /* The first screen under a finger: the mark over the sentence, its stop the doorbell, a moment after it rang. */
+  {
+    key: "Mark/bell",
+    place: "block",
+    on: onPage,
+    target: ".oh-mark",
+    render: () => (
+      <Mark hot ringing bell={{ label: "Ring the doorbell" }}>
+        oh
+      </Mark>
+    ),
   },
   /* The setup at its provider step: the second of five phases on a desktop, the first of four on a phone. */
   {

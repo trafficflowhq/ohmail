@@ -141,7 +141,9 @@ export function Switcher({ kind, label, current, mail, cal, keysShown, onRail, o
             </span>
             {side.keyHint && keysShown ? (
               <span className="oh-switcher-key">
-                <KeyHint shown>{side.keyHint}</KeyHint>
+                <KeyHint shown unsaid>
+                  {side.keyHint}
+                </KeyHint>
               </span>
             ) : null}
           </button>

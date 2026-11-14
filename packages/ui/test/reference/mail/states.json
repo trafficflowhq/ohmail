@@ -328,6 +328,11 @@
       "state": "marks",
       "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
     },
+    {
+      "component": "MessageHead",
+      "state": "copy",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
     { "component": "LetterViews", "state": "images", "looks": "all" },
     {
       "component": "LetterViews",

@@ -238,6 +238,12 @@
     "alike": [{ "role": "button", "unstated": ["collapsed"] }]
   },
   {
+    "key": "FieldStack/rest@paper-light-phone",
+    "question": "picture",
+    "reason": "A label's line is 18.19 high, so a row of the stack is 84.19 and every row after the first starts on a fraction of a pixel. The reference's page draws the three fields 24, 108 and 192 under the stack's top (the stack stands under a sentence that ends on a fraction there); a stack that starts on a whole pixel draws them at 24, 108 and 193: the third field and the switch under it one pixel lower, and a hair in the arcs of the two short fields. The same stack with a pointer, with the same fractions, is equal in its picture; names, boxes and drawn values are the reference's here too. No rule of the part makes both pages equal.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "Field/refused",
     "reason": "The kit marks a refused field invalid (aria-invalid), so a screen reader says it with the field; the reference's field carries only the line under it.",
     "since": "2026-11-15",

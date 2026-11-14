@@ -255,7 +255,9 @@ export const reading: KitSubject[] = [
   },
   /* A sender who waits, as the column's head: the sentence with its place, the address and what its check found,
      whom the decision is for, and why the place is advised. The reference's column has the keys: where a face rings
-     such a column (ohmarchy), the head stands in its column, whose ring runs along the head's own edges. */
+     such a column (ohmarchy), the head stands in its column, whose ring runs along the head's own edges. The
+     reference's conversation is open at its latest letter: its column is scrolled and the head stays at the top,
+     a pixel over the sheets' edge, so the specimen's column is scrolled as far too. */
   {
     key: "ReadingHead/sentence",
     place: "block",
@@ -263,11 +265,18 @@ export const reading: KitSubject[] = [
     render: (look) =>
       look.face === "ohmarchy" ? (
         <div style={{ display: "flex", height: 240 }}>
-          <Sheet kind="reading" focused head={sentenceHead} />
+          <Sheet kind="reading" focused head={sentenceHead}>
+            <div style={{ height: 480 }} />
+          </Sheet>
         </div>
       ) : (
         <div style={{ margin: "0 var(--ringw)" }}>{sentenceHead}</div>
       ),
+    act: (page) =>
+      page.evaluate(() => {
+        const column = document.querySelector<HTMLElement>("[data-reading-scroll]");
+        if (column) column.scrollTop = 69;
+      }),
   },
   {
     key: "ReadingHead/letter",
