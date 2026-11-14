@@ -185,7 +185,8 @@ jobs:
           ENTRY="$(find "$ROOT/usr/share/applications" -name '*.desktop')"
           cat "$ENTRY"
           grep -aqx 'Name=ohmail preview' "$ENTRY" || { echo "the launcher entry does not say it is a preview" >&2; exit 1; }
-          if grep -aq 'x-scheme-handler' "$ENTRY"; then
+          # The key, not the word: the entry's own comment names the scheme the released app claims.
+          if grep -aq '^MimeType=.*x-scheme-handler' "$ENTRY"; then
             echo "the preview's launcher entry claims a link scheme" >&2; exit 1
           fi
           test -f "$ROOT/usr/bin/ohmail"
