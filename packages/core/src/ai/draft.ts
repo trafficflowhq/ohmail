@@ -110,10 +110,7 @@ export function makeSonnetDrafter(client: AnthropicLike, opts: SonnetDrafterOpts
   return {
     async draft(input: DraftInput, call?: DraftCallOptions): Promise<DraftResult> {
       const params = buildDraftParams(input, opts);
-      const own = call && (call.signal || call.onUsage)
-        ? { ...(call.signal ? { signal: call.signal } : {}), ...(call.onUsage ? { onUsage: call.onUsage } : {}) }
-        : undefined;
-      const resp = await client.messages.create(params, own);
+      const resp = await client.messages.create(params, call);
       // A refusal or a cut-off draft is said as one, never read as a malformed reply.
       const declined = declineOf(resp.stop_reason, resp.stop_details);
       if (declined) throw declined;

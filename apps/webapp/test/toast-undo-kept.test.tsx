@@ -1,340 +1,264 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { useSuggestText } from "../app/shell/suggest-text";
-import {
-  OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
-import messages from "../messages/en.json";
+import type { EngineMessage, SyncResponse } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
-import { createDeleteUndo } from "@ohmail/app-logic/press/delete-undo";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * THE DECISION'S UNDO OUTLIVES THE SUGGESTION SUMMARY — the tester's re-read on a fake server.
- * With automatic suggestions on, a sender arriving while the Screener is open starts the batch for
- * it; decided before the batch answered, the decision's "Ohbox — filed · Undo" was replaced 300 ms
- * later by the batch's summary, because the host drew one capsule. The real hooks, view and host
- * here, only the server faked: the row leaves, the summary shows beneath, the Undo holds its whole
- * window and works. And the window is the GUARD'S: a second decision replacing the first capsule
- * leaves the first decision's commit time where it was; a window closed early withdraws its Undo.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  })) as never;
-
-const NOW = new Date("2026-09-23T12:00:00.000Z");
-let seq = 0;
-let sent: EngineMutation[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let answer: (() => void) | null = null;
-let purchases = 0;
-
-function msg(id: string, from: string): EngineMessage {
-  return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: "2026-09-23T09:00:00.000Z", folder: "ohmail/Screener" as Folder, snippet: `snippet ${id}`, unread: true,
-    hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-09-23T09:00:00.000Z",
-  };
-}
-
-const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
-
-/** The server: the stored-suggestion read answers at once, the PURCHASE when the test says so. */
-function installFetch(): void {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = (typeof input === "string" ? input : String(input)).replace(/^\/api/, "");
-    if (path.startsWith("/screener/suggest")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { senders: string[]; dryRun?: boolean };
-      if (body.dryRun) return json({ dryRun: true, requested: 0, quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [] });
-      purchases++;
-      const reply = json({
-        dryRun: false, requested: body.senders.length, quoted: body.senders.length,
-        quotedCredits: body.senders.length, charged: body.senders.length,
-        suggestions: body.senders.map((s) => ({ sender: s, messageId: `m-${s}`, decision: "yes", confidence: 0.9, rationale: "r" })),
-        skipped: [],
-      });
-      return new Promise<Response>((resolve) => { answer = () => resolve(reply); });
-    }
-    if (path.startsWith("/screener")) {
-      return json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
-    }
-    return json({});
-  }) as typeof fetch;
-}
-
-async function engineWith(held: EngineMessage[]) {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges(held.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
-  let pending: EngineMessage[] = [];
-  const engine = new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => {
-        const batch = pending;
-        pending = [];
-        return {
-          changes: {
-            creates: batch.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })),
-            updates: [], moves: [], deletes: [],
-          },
-          cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-        };
-      },
-      mutate: async (m) => {
-        sent.push(m);
-        const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
-          .map((e) => ({ type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}) }));
-        await store.applyChanges(changes);
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null };
-      },
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async () => ({ text: "body", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
-    },
-  });
-  const deliver = async (m: EngineMessage[]) => {
-    pending = m;
-    await act(async () => { await engine.syncOnce(); });
-    await flush();
-  };
-  return { engine, deliver };
-}
-
-interface Live { waitingCount: number; flush: () => void }
-let live: Live | null = null;
-
-async function mount(engine: OhmailEngine, autoSuggest: boolean): Promise<void> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  function Probe(): React.ReactElement {
-    const toast = useToast();
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const suggestions = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, autoSuggest, toast });
-    const state = useScreenerState(engine, null, v, toast, useScreenerText(), suggestions.suggestions);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
-    live = state as unknown as Live;
-    return h(ScreenerView, {
-      owed: false, state, suggest: suggestions.forSenders(state.unsuggestedSenders),
-      segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(KeymapProvider, { children: h(Probe) }) }) }),
-    }));
-  });
-  await flush();
-}
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
-const tick = async (ms: number) => { await act(async () => { vi.advanceTimersByTime(ms); }); await flush(); };
-const press = async (k: string) => {
-  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
-  await flush();
-};
-const undoCapsule = (): HTMLElement | null => document.querySelector(".toast-held");
-const undoButton = (): HTMLButtonElement | null => document.querySelector(".toast-held .toast-act");
-const notice = (): HTMLElement => document.querySelector<HTMLElement>(".toast:not(.toast-held)")!;
-const decides = () => sent.filter((m) => m.kind === "screener_decide");
 const FILED = "Ohbox — filed";
 const SUMMARY = "1 suggestion · 1 credit used.";
+const UNDONE = /^Undone — 1 waiting again\.$/;
 
-beforeEach(() => {
-  sent = [];
-  answer = null;
-  purchases = 0;
-  localStorage.clear();
-  installFetch();
+const msg = (id: string): EngineMessage => ({
+  id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+  subject: `Subject ${id}`, from: { name: null, address: `${id}@fixture.example` }, to: [], cc: [],
+  date: ISO, folder: "ohmail/Screener", snippet: `snippet ${id}`, unread: true,
+  hasAttachments: false, attachmentCount: 0,
+  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+  triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
 });
+
+let host: HTMLElement | null = null;
+let mounted = false;
+let finishPurchase: (() => void) | null = null;
+let purchases = 0;
+let decisions: string[] = [];
+
+beforeAll(warmCloudShell);
 afterEach(async () => {
-  vi.useRealTimers();
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+  if (mounted) await teardownConfirmEnv();
+  mounted = false;
   host = null;
-  live = null;
+  vi.unstubAllGlobals();
 });
 
-/** the order: the sender arrives, the batch starts for it, the person decides before it answers. */
-async function w6(): Promise<void> {
-  const { engine, deliver } = await engineWith([]);
-  await mount(engine, true);
-  await deliver([msg("w6", "arrival@example.com")]);
-  expect(purchases, "the premise: the automatic batch started for the arrival").toBe(1);
-  expect(live!.waitingCount).toBe(1);
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  await press("o");
-  await tick(200);
-  answer!();
-  await flush();
+async function mount(initial: EngineMessage[], autoSuggest = false) {
+  installConfirmEnv();
+  mounted = true;
+  purchases = 0;
+  decisions = [];
+  finishPurchase = null;
+  window.localStorage.clear();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  vi.stubGlobal("innerWidth", 1280);
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
+
+  const mail = [...initial];
+  scriptSync(() => Response.json({
+    changes: {
+      creates: mail.map((entity, index) => ({
+        type: "message", op: "create", id: entity.id, seq: index + 1, updatedAt: ISO, entity,
+      })),
+      deletes: [], updates: [], moves: [],
+    },
+    cursor: String(mail.length), hasMore: false, serverTime: ISO,
+  } satisfies SyncResponse));
+
+  const fixture = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin);
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.pathname === "/api/mailboxes") {
+      return Response.json({ items: [{
+        id: "mb_1", address: "mailbox@fixture.example", status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
+        lastSyncAt: ISO, createdAt: ISO, providerConfirms: true,
+      }] });
+    }
+    if (method === "GET" && url.pathname === "/api/consent") {
+      const facts = await (await fixture(input, init)).json();
+      return Response.json({ ...facts, autoSuggestAt: autoSuggest ? ISO : null, blockAutoUnsubscribeAt: ISO });
+    }
+    if (method === "GET" && url.pathname === "/api/account/access") {
+      return Response.json({ metered: true, aiEnabled: true });
+    }
+    if (method === "GET" && url.pathname === "/api/screener" && !url.searchParams.has("live")) {
+      return Response.json({ items: [], nextCursor: null, suggestable: { senders: [], maxPerRequest: 50 } });
+    }
+    if (method === "POST" && url.pathname === "/api/screener/suggest") {
+      const { senders, dryRun } = JSON.parse(String(init?.body)) as { senders: string[]; dryRun?: boolean };
+      const reply = Response.json({
+        dryRun: dryRun === true, requested: senders.length, quoted: senders.length,
+        quotedCredits: senders.length, charged: dryRun ? 0 : senders.length, skipped: [],
+        suggestions: dryRun ? [] : senders.map((sender) => ({
+          sender, messageId: mail.find(({ from }) => from.address === sender)!.id,
+          decision: "yes", confidence: 0.9, rationale: "r",
+        })),
+      });
+      if (dryRun) return reply;
+      purchases++;
+      return new Promise<Response>((resolve) => { finishPurchase = () => resolve(reply); });
+    }
+    const id = /^\/api\/screener\/([^/]+)$/.exec(url.pathname)?.[1];
+    if (method === "POST" && id !== undefined) {
+      decisions.push(id);
+      const { dest } = JSON.parse(String(init?.body)) as { dest: string };
+      return Response.json({ messageId: id, appliedFolder: dest, createdRuleId: null });
+    }
+    const body = { text: "body", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null };
+    if (method === "GET" && url.pathname === "/api/messages/bodies") {
+      const ids = url.searchParams.get("ids")?.split(",") ?? [];
+      return Response.json({ items: ids.map((messageId) => ({ messageId, ...body })) });
+    }
+    if (method === "GET" && url.pathname.endsWith("/body")) return Response.json(body);
+    return fixture(input, init);
+  };
+
+  window.location.hash = "#/ohbox";
+  host = await mountCloudShell();
+  await tick(3000);
+  await go("Screener");
+  await tick(1000);
+  return async (letter: EngineMessage) => {
+    mail.push(letter);
+    await act(() => { window.dispatchEvent(new Event("online")); });
+    await tick(3000);
+  };
 }
 
+const screen = () => within(host!);
+const rail = () => within(screen().getByRole("navigation", { name: "Places" }));
+const go = async (where: "Ohbox" | "Screener") => {
+  const item = rail().getByRole("button", { name: (label) => label === where || label.startsWith(`${where} `) });
+  await act(() => { fireEvent.click(item); });
+};
+const waiting = () => screen().queryByRole("listbox", { name: "Screener" });
+const waitingRows = () => {
+  const list = waiting();
+  return list ? within(list).queryAllByRole("option") : [];
+};
+const press = async (key: string) => {
+  const panel = screen().getByRole("toolbar", { name: "Actions" });
+  const button = within(panel).getByRole("button", { name: key === "o" ? "Ohbox" : "Screen out" });
+  await act(() => { fireEvent.click(button); });
+};
+const reportSlot = () => host!.querySelector<HTMLElement>(".fr-report")!;
+const report = () => reportSlot().querySelector<HTMLElement>('[role="status"]:not([data-leaving])');
+const reportText = () => {
+  const message = report()?.cloneNode(true) as HTMLElement | undefined;
+  message?.querySelectorAll("button, kbd").forEach((node) => node.remove());
+  return message?.textContent?.trim() ?? null;
+};
+const undoButton = () => within(reportSlot()).queryByRole("button", { name: /^Undo/ });
+const undo = async () => {
+  const button = undoButton();
+  expect(button).not.toBeNull();
+  await act(() => { fireEvent.click(button!); });
+};
+const answer = async () => {
+  expect(finishPurchase).not.toBeNull();
+  await act(() => { finishPurchase!(); });
+  await tick(0);
+};
+
+/** A sender arrives, automatic advice starts, then the person decides before it answers. */
+async function startDecision(id: string, key = "o") {
+  const deliver = await mount([], true);
+  await deliver(msg(id));
+  expect(waitingRows()).toHaveLength(1);
+  expect(purchases, "the automatic batch started for the arrival").toBe(1);
+  await press(key);
+}
+
+// The frame has one report slot: the summary waits while that slot offers Undo.
 describe("on a fake server: the decision's Undo beside the suggestion summary", () => {
   it("(a)/(c) the row leaves, the summary shows beneath, and the Undo holds its whole window", async () => {
-    await w6();
+    await startDecision("arrival");
+    await tick(200);
+    await answer();
     await tick(400);
-    expect(live!.waitingCount, "the row left").toBe(0);
-    expect(notice().textContent, "the summary is on screen").toBe(SUMMARY);
-    expect(undoCapsule()?.textContent).toContain(FILED);
+    expect(waitingRows(), "the row left").toHaveLength(0);
+    expect(reportText()).toContain(FILED);
+    expect(reportSlot().textContent).not.toContain(SUMMARY);
 
-    await tick(1400); // two seconds after the press
-    expect(undoCapsule()?.className).toContain("on");
-    expect(undoButton(), "the Undo is still offered").not.toBeNull();
-
-    await tick(1000); // the summary's own 2600 ms since it arrived at 200
-    expect(notice().className, "the summary left on its own timer").not.toContain("on");
-    expect(undoCapsule()?.className, "and did not take the decision's capsule with it").toContain("on");
-
-    await tick(UNDO_MS - 3001);
-    expect(undoCapsule()?.className, "the full window, to the millisecond").toContain("on");
-    expect(decides(), "nothing sent inside the window").toHaveLength(0);
+    await tick(1400);
+    expect(undoButton(), "Undo is still offered two seconds in").not.toBeNull();
+    await tick(UNDO_MS - 2001);
+    expect(undoButton(), "the full window, to the millisecond").not.toBeNull();
+    expect(decisions, "nothing sent inside the window").toEqual([]);
     await tick(COMMIT_MS - UNDO_MS + 1);
-    expect(decides(), "committed at the end of the window").toHaveLength(1);
-    expect(undoButton(), "and its button is gone before that").toBeNull();
+    expect(decisions, "committed at the end of the window").toEqual(["arrival"]);
+    expect(undoButton()).toBeNull();
+    expect(reportText(), "the advice report follows the decision in the shared slot").toBe(SUMMARY);
+    await tick(3000);
+    expect(reportSlot().textContent).not.toContain(SUMMARY);
   });
 
   it("(a) Undo pressed two seconds in, beside the summary: the decision is not sent", async () => {
-    await w6();
+    await startDecision("arrival");
+    await tick(200);
+    await answer();
     await tick(1800);
-    expect(notice().textContent).toBe(SUMMARY);
-    await act(async () => { undoButton()!.click(); });
-    await flush();
-    expect(undoCapsule(), "Undo dismissed its own capsule").toBeNull();
-    expect(notice().textContent).toMatch(/^Undone — 1 waiting again\.$/);
-    expect(live!.waitingCount, "the sender is back").toBe(1);
+    expect(reportText()).toContain(FILED);
+    expect(reportSlot().textContent).not.toContain(SUMMARY);
+    await undo();
+    expect(undoButton(), "Undo dismissed its own capsule").toBeNull();
+    expect(reportText()).toMatch(UNDONE);
+    expect(waitingRows(), "the sender is back").toHaveLength(1);
     await tick(COMMIT_MS * 2);
-    expect(decides(), "an undone decision is never sent").toHaveLength(0);
+    expect(decisions, "an undone decision is never sent").toEqual([]);
   });
 });
 
-/**
- * the order, measured on 0.23.1: screened out, Undo pressed 549 ms later, and the batch answering
- * at 1558 ms replaced "Undone" with its summary. The summary is a notice nobody pressed for, so it
- * waits for the Undo's own sentence to finish and then draws; it is never dropped.
- */
 describe("on a fake server: the Undo's own sentence outlives the suggestion summary", () => {
   it("'Undone' holds its window with the batch answering inside it, and the summary follows", async () => {
-    const { engine, deliver } = await engineWith([]);
-    await mount(engine, true);
-    await deliver([msg("w7", "arrival@example.com")]);
-    expect(purchases, "the premise: the automatic batch started for the arrival").toBe(1);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    await press("n");
+    await startDecision("arrival", "n");
     await tick(549);
-    await act(async () => { undoButton()!.click(); });
-    await flush();
-    const UNDONE = /^Undone — 1 waiting again\.$/;
-    expect(notice().textContent).toMatch(UNDONE);
+    await undo();
+    expect(reportText()).toMatch(UNDONE);
     await tick(1558 - 549);
-    answer!();
-    await flush();
+    await answer();
     await tick(2000 - 1558);
-    expect(notice().className).toContain("on");
-    expect(notice().textContent, "the confirmation is not replaced").toMatch(UNDONE);
-    expect(document.body.textContent, "the summary waits").not.toContain(SUMMARY);
+    expect(reportText(), "the confirmation is not replaced").toMatch(UNDONE);
+    expect(reportSlot().textContent, "the summary waits").not.toContain(SUMMARY);
 
-    await tick(549 + 2600 + 300 - 2000 + 1); // Undone's own window and the fade
-    expect(notice().textContent, "then the summary is said, never dropped").toBe(SUMMARY);
-    expect(notice().className).toContain("on");
-    expect(live!.waitingCount, "the sender is back").toBe(1);
+    await tick(549 + 2600 + 300 - 2000 + 1);
+    expect(reportText(), "then the summary is said, never dropped").toBe(SUMMARY);
+    expect(waitingRows(), "the sender is back").toHaveLength(1);
     await tick(COMMIT_MS * 2);
-    expect(decides(), "an undone decision is never sent").toHaveLength(0);
+    expect(decisions, "an undone decision is never sent").toEqual([]);
   });
 });
 
 describe("the window is the guard's, not the capsule's", () => {
   it("a second decision replaces the first capsule and leaves the first decision's commit time as it was", async () => {
-    const { engine } = await engineWith([msg("a", "a@example.com"), msg("b", "b@example.com")]);
-    await mount(engine, false);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const whose = (): string => (/\b([ab])@example\.com/.exec(undoCapsule()?.textContent ?? "")?.[1] ?? "none");
-    await press("o"); // the first sender, at 0
+    await mount([msg("a"), msg("b")]);
+    const whose = () => /\b([ab])@fixture\.example/.exec(reportText() ?? "")?.[1] ?? "none";
+    await press("o");
     const first = whose();
     await tick(1000);
-    await press("o"); // the second, at 1000 — the person acted again
+    await press("o");
     const second = whose();
     expect([first, second].sort(), "the second capsule replaced the first").toEqual(["a", "b"]);
-    expect(document.querySelectorAll(".toast-act")).toHaveLength(1);
-    const ids = () => decides().map((m) => (m as { senderId: string }).senderId);
+    expect(within(reportSlot()).getAllByRole("button", { name: /^Undo/ })).toHaveLength(1);
 
     await tick(COMMIT_MS - 1000 - 1);
-    expect(ids(), "the first not sent before its own window closed").toEqual([]);
+    expect(decisions, "the first not sent before its own window closed").toEqual([]);
     await tick(1);
-    expect(ids(), "the first at COMMIT_MS from ITS press, its capsule long replaced").toEqual([first]);
+    expect(decisions, "the first at its own commit time, its capsule long replaced").toEqual([first]);
     await tick(999);
-    expect(ids()).toEqual([first]);
+    expect(decisions).toEqual([first]);
     await tick(1);
-    expect(ids(), "the second at COMMIT_MS from its own").toEqual([first, second]);
+    expect(decisions, "the second at its own commit time").toEqual([first, second]);
   });
 });
 
 describe("an Undo whose window closed early is withdrawn, never left above its outcome", () => {
   it("leaving the Screener commits the pending decision and takes its capsule with it", async () => {
-    const { engine } = await engineWith([msg("a", "a@example.com")]);
-    await mount(engine, false);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    await mount([msg("a")]);
     await press("o");
-    expect(undoButton(), "the premise: the Undo is offered").not.toBeNull();
-    await act(async () => { live!.flush(); });
-    await flush();
-    expect(decides(), "committed at once").toHaveLength(1);
-    expect(undoCapsule(), "a dead Undo is not left on screen").toBeNull();
+    expect(undoButton(), "the premise: Undo is offered").not.toBeNull();
+    expect(decisions).toEqual([]);
+    await go("Ohbox");
+    await tick(100);
+    expect(window.location.hash).toBe("#/ohbox");
+    expect(decisions, "committed at once").toEqual(["a"]);
+    expect(undoButton(), "a dead Undo is not left on screen").toBeNull();
   });
-
-  it("the delete window withdraws its Undo when it is flushed or undone from the keyboard", () => {
-    const signals: AbortSignal[] = [];
-    let n = 0;
-    const queue = createDeleteUndo({
-      scope: null,
-      mutate: async () => ({ status: "confirmed" }) as never,
-      toast: (_m, o) => { if (o?.signal) signals.push(o.signal); },
-      copy: {
-        deleted: "Deleted.", undo: "Undo", undone: "Kept.", failed: "Refused.", noUndo: "No undo.",
-      },
-      onHeld: () => {},
-      refusal: () => null,
-      pressId: () => `press-${++n}`,
-    });
-    expect(queue.remove({ id: "m1", mailboxId: "mb1" })).toBe(true);
-    expect(signals, "the premise: the press offered an Undo under a signal").toHaveLength(1);
-    expect(signals[0]!.aborted).toBe(false);
-    queue.flush();
-    expect(signals[0]!.aborted, "flushed early: the capsule is withdrawn").toBe(true);
-    queue.remove({ id: "m2", mailboxId: "mb1" });
-    queue.undo("m2");
-    expect(signals[1]!.aborted, "undone from the keyboard: the capsule's Undo is spent").toBe(true);
-  });
+  // The delete window is tested at its own ground press.
 });

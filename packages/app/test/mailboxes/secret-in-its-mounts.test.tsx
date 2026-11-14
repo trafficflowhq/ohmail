@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FirstRunGround } from "@ohmail/app-logic/mailboxes/first-run/ground";
 import { Frame } from "../../src/frame/Frame.js";
-import { NONE, type FirstRunWire, type HostCapabilities } from "../../src/host/index.js";
+import { NONE, type HostCapabilities } from "../../src/host/index.js";
 import { firstRunStage, type FirstRunSlots } from "../../src/mailboxes/first-run/index.js";
 import { TextProvider } from "../../src/text/index.js";
 import frame from "../../messages/frame.en.json" with { type: "json" };
@@ -139,15 +139,14 @@ describe("a password typed at the first run's mailbox step", () => {
       connect: [REFUSED_PASSWORD, { ok: true, value: { mailboxId: id("mbx-2"), address: null } }],
     });
     const verbs = {
-      ai: "unset",
+      ai: "unset" as const,
       probe: vi.fn(() => new Promise(() => {})),
       connect: vi.fn(() => new Promise(() => {})),
       organize: vi.fn(async () => "stored"),
       complete: vi.fn(async () => {}),
       setAiEnabled: vi.fn(async () => {}),
-      probeReason: () => null,
       probeMessage: () => null,
-    } as unknown as FirstRunWire;
+    };
     const ground: FirstRunGround = {
       rows: [],
       account: { onboardingCompletedAt: null },
@@ -201,9 +200,9 @@ describe("a password typed at the first run's mailbox step", () => {
     expect(onThePage()).toEqual({ markup: false, fields: ["password"] });
     const mounts = (): unknown => [
       made.address.writes,
-      (verbs.organize as ReturnType<typeof vi.fn>).mock.calls,
-      (verbs.probe as ReturnType<typeof vi.fn>).mock.calls,
-      (verbs.connect as ReturnType<typeof vi.fn>).mock.calls,
+      verbs.organize.mock.calls,
+      verbs.probe.mock.calls,
+      verbs.connect.mock.calls,
       seen.asks.map((ask) => ask.line),
     ];
 
@@ -230,8 +229,8 @@ describe("a password typed at the first run's mailbox step", () => {
     expect(made.address.writes).toEqual([{ next: "#/first-run/add?mailbox=mbx-2", how: "replace" }]);
     expect(onThePage()).toEqual({ markup: false, fields: [] });
     // The old first-run verbs were never the form's way out.
-    expect((verbs.probe as ReturnType<typeof vi.fn>).mock.calls).toEqual([]);
-    expect((verbs.connect as ReturnType<typeof vi.fn>).mock.calls).toEqual([]);
+    expect(verbs.probe.mock.calls).toEqual([]);
+    expect(verbs.connect.mock.calls).toEqual([]);
     clean(door.calls, mounts());
   });
 });

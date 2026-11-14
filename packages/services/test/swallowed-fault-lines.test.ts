@@ -9,7 +9,7 @@ import {
 } from "../src/index.js";
 import { fakeSpendPort, type FakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 
 /**
  * A FAULT A SERVICE SWALLOWS IS NAMED BY CLASS AND CODE, AND NOTHING IT CARRIES REACHES THE DRAIN.
@@ -66,7 +66,7 @@ const YES: ClassifierResult = { destination: "INBOX", confidence: 0.9, rationale
 const answering: ClassifierPort = { async classify() { return YES; } };
 
 async function world(credits: FakeSpendPort = fakeSpendPort()) {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "swallowed" });
   const alice = await seedMessage(w.db, w.accountId, w.mailboxId, { from: "alice@ex.example" });
   return { ...w, credits, alice };

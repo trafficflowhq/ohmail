@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, max, ne, or, type SQL } from "drizzle-orm";
 import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence, type UnboundDb } from "../context.js";
+import { bridgeTx, runInTransaction, type ContextDb, type Db, type ServiceContext, type TransactionFence, type UnboundDb } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { ringDeviceRevoked } from "./device-doorbell.js";
@@ -269,11 +269,13 @@ export class SessionLifecycle {
    * rotation it never heard about has already replaced.
    */
   async logout(
-    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+    ctx: ServiceContext, b: {
+      allDevices?: boolean; refreshToken?: string; expectedFamily?: string; browser?: boolean; expectedAccount?: string;
+    } = {},
   ): Promise<{ familyIds: string[] }> {
     const db = asTx(ctx);
     const now = ctx.now();
-    if (!b.allDevices && b.refreshToken !== undefined) return this.logoutByRefresh(ctx, b.refreshToken, now);
+    if (!b.allDevices && b.refreshToken !== undefined) return this.logoutByRefresh(ctx, b.refreshToken, now, b);
     const userId = this.requireUser(ctx);
     let familyIds: string[] = [];
     if (b.allDevices) {
@@ -302,6 +304,10 @@ export class SessionLifecycle {
       });
     } else if (ctx.sessionId) {
       const s = (await db.select().from(sessions).where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
+      if ((b.expectedFamily !== undefined && s?.familyId !== b.expectedFamily)
+        || (b.expectedAccount !== undefined && s?.accountId !== b.expectedAccount)) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
       if (s) {
         await this.revokeFamily(db, s.familyId, now);
         familyIds = [s.familyId];
@@ -323,6 +329,7 @@ export class SessionLifecycle {
    */
   private async logoutByRefresh(
     ctx: ServiceContext, presented: string, now: Date,
+    expected: { expectedFamily?: string; browser?: boolean; expectedAccount?: string },
   ): Promise<{ familyIds: string[] }> {
     const db = asTx(ctx);
     const [row] = await db.select({
@@ -334,6 +341,12 @@ export class SessionLifecycle {
       ? await db.select({ familyId: sessions.familyId, userId: sessions.userId, accountId: sessions.accountId })
         .from(sessions).where(eq(sessions.id, sessionId)).limit(1)
       : [];
+    const family = expected.expectedFamily ?? (expected.browser ? row?.familyId : undefined);
+    if ((expected.browser && !row && own)
+      || (family !== undefined && (row?.familyId !== family || (own && own.familyId !== family)))
+      || (expected.expectedAccount !== undefined && row?.accountId !== expected.expectedAccount)) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
     // family → whose sign-out it is, for the audit row: the token's session, else the resolved one.
     const named = new Map<string, { userId: string; sessionId: string; accountId: string }>();
     if (row) named.set(row.familyId, { userId: row.userId, sessionId: row.sessionId, accountId: row.accountId });
@@ -361,6 +374,28 @@ export class SessionLifecycle {
     return { familyIds };
   }
 
+  /** Verify the departed cookie session before a serialized browser clear. */
+  async assertBrowserLogout(
+    expectedFamily: string,
+    { access, refresh }: {
+      access: { digest: string; db: ContextDb } | null;
+      refresh: { digest: string; db: ContextDb } | null;
+    },
+  ): Promise<void> {
+    const [accessSession] = access
+      ? await bridgeTx(access.db).select({ familyId: sessions.familyId, revokedAt: sessions.revokedAt })
+        .from(sessions).where(eq(sessions.accessTokenHash, access.digest)).limit(1)
+      : [];
+    const [row] = refresh
+      ? await bridgeTx(refresh.db).select({ familyId: refreshTokens.familyId, revokedAt: refreshTokens.revokedAt })
+        .from(refreshTokens).where(eq(refreshTokens.tokenHash, refresh.digest)).limit(1)
+      : [accessSession];
+    if (row?.familyId !== expectedFamily || row.revokedAt === null
+      || (accessSession && (accessSession.familyId !== expectedFamily || accessSession.revokedAt === null))) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
+  }
+
   /**
    * Rotate a refresh token. `concurrentGrace` is opt-in, OFF by default, and only the COOKIE
    * surface passes it: several tabs read one `tf_refresh` and present it at once, so a benign
@@ -374,7 +409,9 @@ export class SessionLifecycle {
   async refresh(
     ctx: ServiceContext,
     b: { refreshToken?: string; attemptId?: string },
-    opts: { concurrentGrace?: boolean; surface?: SessionSurface } = {},
+    opts: {
+      concurrentGrace?: boolean; surface?: SessionSurface; expectedAccount?: string; expectedFamily?: string;
+    } = {},
   ): Promise<{ tokens?: OAuthTokens }> {
     const token = b.refreshToken;
     if (!token) throw new ServiceError("refresh_missing", 401, "missing refresh token");
@@ -382,7 +419,7 @@ export class SessionLifecycle {
     // `surfaceTtls`, so there is no second place for the two to drift apart. `attemptId` is read
     // at this door, BEFORE the rotation, so a malformed one refuses without consuming anything.
     const tokens = await this.rotateRefresh(
-      ctx, token, opts.concurrentGrace === true, opts.surface, readAttemptId(b.attemptId),
+      ctx, token, opts.concurrentGrace === true, opts.surface, readAttemptId(b.attemptId), opts,
     );
     return { tokens };
   }
@@ -875,7 +912,7 @@ export class SessionLifecycle {
     // ROLLBACK half is not this line's doing and was once wrongly claimed here: it belongs to
     // `inTransaction`, which buffers a report made inside a transaction and forwards it only on
     // commit. See ACCOUNT_HEADER in `packages/api/src/app.ts`.
-    ctx.noteCredentialAccount?.(user.accountId);
+    ctx.noteCredentialAccount?.(user.accountId, familyId);
     return {
       status: "authenticated",
       user: await this.sessionUser(db, user.id),
@@ -924,7 +961,7 @@ export class SessionLifecycle {
    */
   protected async rotateRefresh(
     ctx: ServiceContext, presented: string, grace: boolean, surface?: SessionSurface,
-    attemptId?: string,
+    attemptId?: string, expected: { expectedAccount?: string; expectedFamily?: string } = {},
   ): Promise<OAuthTokens> {
     const db = asTx(ctx);
     const now = ctx.now();
@@ -983,6 +1020,12 @@ export class SessionLifecycle {
         .where(eq(sessions.id, tx.select({ id: refreshTokens.sessionId }).from(refreshTokens)
           .where(eq(refreshTokens.tokenHash, tokenHash))))
         .limit(1));
+      if (session && (
+        (expected.expectedAccount !== undefined && session.accountId !== expected.expectedAccount)
+        || (expected.expectedFamily !== undefined && session.familyId !== expected.expectedFamily)
+      )) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
       const [row] = await tx.update(refreshTokens)
         .set({ consumedAt: now, consumedByAttempt: attemptHash })
         .where(and(
@@ -1020,6 +1063,10 @@ export class SessionLifecycle {
     const [existing] = await db.select().from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
     if (!existing) throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
+    if ((expected.expectedAccount !== undefined && existing.accountId !== expected.expectedAccount)
+      || (expected.expectedFamily !== undefined && existing.familyId !== expected.expectedFamily)) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
     if (existing.revokedAt) {
       // A session revoked only after its own window closed (the reaper's) ended by expiry. The two
       // stored stamps decide, never `now`: a sign-out stays revoked however long ago it was.
@@ -1239,7 +1286,7 @@ export class SessionLifecycle {
     // `inTransaction`, which buffers this and forwards it only once the transaction commits. A
     // rolled-back mint therefore names nobody. That indirection is the whole reason the buffer
     // exists — see `inTransaction`.
-    ctx.noteCredentialAccount?.(base.accountId);
+    ctx.noteCredentialAccount?.(base.accountId, base.familyId);
     return {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),

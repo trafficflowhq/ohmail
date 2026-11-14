@@ -407,7 +407,7 @@ const { host } = fakeHost({
       displayName: "Studio",
       addressIsOwn: true,
       /* `state=removed`: ohmail no longer reads the mailbox the emptied letter is in. */
-      status: state === "removed" ? "removed" : "active",
+      status: state === "removed" ? "disabled" : "connected",
       organizerRole: "organizer",
     },
   ],

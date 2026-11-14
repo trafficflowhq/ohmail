@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -13,9 +14,8 @@ import messages from "../messages/en.json";
  * an EMPTY stage under a URL that named a person. Nothing failed — the router was right, the
  * view's own render suite was green over a hand-mounted `AddressView`, and the address bar said
  * exactly what the reader had asked for. That is the shape this file exists to refuse, so the
- * assertions are about the SHELL and not about the view: that the stage carries `.view-address`,
- * that the header names the address the hash named, and that the URL is not rewritten out from
- * under it.
+ * assertions cover what the frame gives the address: its name in the header and the first
+ * preview's letter in the URL without an extra history entry.
  *
  * ── ESCAPE, AND WHY IT HAS TWO ARMS ────────────────────────────────────────────────────────
  *
@@ -37,6 +37,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 /** The fixtures' own correspondent — demo mode holds mail from this address. */
 const JONAS = "jonas@lichtgrat.example";
 const HASH = `#/address/${encodeURIComponent(JONAS)}`;
+const FIRST_LETTER_HASH = `${HASH}/m/jonas`;
 
 let roots: Root[] = [];
 let container: HTMLDivElement | null = null;
@@ -121,7 +122,10 @@ describe("the shell mounts the address view at its own hash", () => {
     // means "close this".
     window.history.replaceState(null, "", HASH);
     await mountShell();
-    await settle(() => container!.querySelector(".view-address") != null);
+    const direction = () => screen.queryByRole("group", { name: "Direction" });
+    await settle(() => direction() !== null && window.location.hash === FIRST_LETTER_HASH);
+    expect(direction()).not.toBeNull();
+    expect(window.location.hash).toBe(FIRST_LETTER_HASH);
     // THE PRECONDITION, asserted rather than assumed: with anything stacked behind this entry
     // the case measures the other arm. jsdom's session history accumulates across the cases in
     // one file, which is why this one runs first.
@@ -132,47 +136,46 @@ describe("the shell mounts the address view at its own hash", () => {
     });
     await settle(() => window.location.hash === "#/ohbox");
     expect(window.location.hash).toBe("#/ohbox");
-    await settle(() => container!.querySelector(".view-ohbox") != null);
-    expect(container!.querySelector(".view-ohbox")).not.toBeNull();
-    expect(container!.querySelector(".view-address")).toBeNull();
+    const ohbox = () => screen.queryByRole("heading", { name: "Ohbox" });
+    await settle(() => ohbox() !== null);
+    expect(ohbox()).not.toBeNull();
+    expect(direction()).toBeNull();
   }, 20000);
 
-  it("renders `.view-address` with the address in its header, and leaves the URL alone", async () => {
+  it("names the address and its first letter without adding a history entry", async () => {
     window.history.replaceState(null, "", HASH);
+    const historyLength = window.history.length;
     await mountShell();
-    await settle(() => container!.querySelector(".view-address") != null);
-
-    const view = container!.querySelector(".view-address");
-    expect(view, "the address hash must put the address view on the stage").not.toBeNull();
-    // The header names the person the hash named — the name when the mirror knows one, with the
-    // address beside it; the address alone otherwise. Either way the address is on screen.
-    expect(view!.querySelector(".vhead")!.textContent).toContain(JONAS);
-    // The direction toggle is the view's own control, so this is the address view and not a
-    // pile that happens to carry the class.
-    expect(view!.querySelector(".addr-bar .seg")).not.toBeNull();
-    // AND the URL still says what is on screen: `normalizedHash` must not have trimmed the
-    // fragment to a view it recognises, which is what an unmounted route would have produced.
-    expect(window.location.hash).toBe(HASH);
-    // No other view is on the stage beside it.
-    expect(container!.querySelector(".view-ohbox")).toBeNull();
+    await settle(() => window.location.hash === FIRST_LETTER_HASH);
+    const view = within(screen.getByRole("region", { name: "Messages" }));
+    const heading = view.getByRole("heading", { name: "Jonas Halter" });
+    const header = within(heading.closest("header")!);
+    expect(header.getByText(JONAS, { exact: true })).toBeTruthy();
+    expect(header.getByRole("group", { name: "Direction" })).toBeTruthy();
+    expect(window.location.hash).toBe(FIRST_LETTER_HASH);
+    expect(window.history.length).toBe(historyLength);
+    expect(screen.queryByRole("heading", { name: "Ohbox" })).toBeNull();
   }, 20000);
 
   it("Escape returns to the view the address was followed from", async () => {
     // Two entries: Reads, then the address. This is what a click on an address produces.
     window.history.replaceState(null, "", "#/reads");
     await mountShell();
-    await settle(() => container!.querySelector(".view-reads") != null);
+    const news = () => screen.queryByRole("heading", { name: "News" });
+    const direction = () => screen.queryByRole("group", { name: "Direction" });
+    await settle(() => news() !== null);
+    expect(news()).not.toBeNull();
     await act(async () => { window.location.hash = HASH; });
-    await settle(() => container!.querySelector(".view-address") != null);
-    expect(container!.querySelector(".view-address")).not.toBeNull();
+    await settle(() => direction() !== null);
+    expect(direction()).not.toBeNull();
 
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     });
     await settle(() => window.location.hash === "#/reads");
     expect(window.location.hash, "back to the list the address was clicked in").toBe("#/reads");
-    await settle(() => container!.querySelector(".view-reads") != null);
-    expect(container!.querySelector(".view-reads")).not.toBeNull();
+    await settle(() => news() !== null);
+    expect(news()).not.toBeNull();
   }, 20000);
 
 });

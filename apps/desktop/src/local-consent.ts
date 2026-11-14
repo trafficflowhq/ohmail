@@ -8,6 +8,7 @@
  * is the AI pair, which gates the auto-suggest opt-in.
  */
 
+import { SUGGESTION_GRANT_HEADER, WITHDRAW_SUGGESTION_GRANT_PATH } from "@trafficflow/core/suggestion-consent";
 import { bridgeFetch } from "./bridge-fetch.js";
 import { consentVia } from "./consent-wire.js";
 import type { ConsentReadFailure, ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
@@ -33,8 +34,21 @@ export async function reportConsentReadFailure(report: ConsentReadFailure): Prom
  * The hosted door's transport. A constant rather than a factory: it holds no state, and one
  * object per module is what lets the hook keep a stable wire identity across renders.
  */
+const hostedConsent = consentVia(bridgeFetch, true);
+
 export const consentOverBridge: ConsentTransport = {
-  ...consentVia(bridgeFetch),
+  ...hostedConsent,
+  state: async (grant) => {
+    if (grant) {
+      // Wait for the relay to withdraw the grant before the actual read can fail in the bridge.
+      const withdrawn = await bridgeFetch(WITHDRAW_SUGGESTION_GRANT_PATH, {
+        method: "POST",
+        headers: { [SUGGESTION_GRANT_HEADER]: grant },
+      });
+      if (!withdrawn.ok) throw Object.assign(new Error("Suggestion consent is unavailable."), { status: withdrawn.status });
+    }
+    return hostedConsent.state();
+  },
   readFailed: reportConsentReadFailure,
   /* THE MANAGED TABLE MOUNTS `foldersRoutes`: `/folders*` is not in `cloud-read.ts`, so all
      four verbs fall through to the write-through proxy and the account answers. The self-host
@@ -54,6 +68,7 @@ export const consentOverBridge: ConsentTransport = {
  * cannot be forgotten. A STABLE constant, like its twin — a wire identity across renders.
  */
 export const consentOverBridgeStandalone: ConsentTransport = {
-  ...consentOverBridge,
+  ...consentVia(bridgeFetch),
+  readFailed: reportConsentReadFailure,
   foldersStorable: false,
 };

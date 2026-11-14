@@ -318,7 +318,7 @@ describe("the rows still owed", () => {
 describe("in German", () => {
   it("says every sentence of a matched answer and an empty one in German", async () => {
     await search([GLAZE], { store: (q, opts) => page(q.includes("glaze") ? [GLAZE] : [])(q, opts), lang: "de" });
-    expect(box("Suche")).toHaveProperty("placeholder", "Alles durchsuchen");
+    expect(box("Suche")).toHaveProperty("placeholder", "Suchen");
     await act(async () => {
       fireEvent.change(box("Suche"), { target: { value: "glaze" } });
     });

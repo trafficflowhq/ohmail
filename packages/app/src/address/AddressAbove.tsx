@@ -12,7 +12,7 @@ export function AddressAbove({ model, children }: { model: AddressModel; childre
     <AddressModelContext.Provider value={model}>
       <PlaceMeeting
         visit={model.list.visit}
-        blank={model.loading ? null : { label, hot: false }}
+        blank={model.loading || model.archive?.archive.state === "failed" ? null : { label, hot: false }}
         steps={{ up: t("step.up"), down: t("step.down") }}
       >
         {children}

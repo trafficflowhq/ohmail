@@ -1,6 +1,6 @@
-import { UNMETERED, isSpendMetered, type SpendComposition, type Tx } from "@trafficflow/db";
-import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder } from "@trafficflow/db/cloud";
-import type { AiUsageLine, SpendPort } from "@trafficflow/db";
+import { UNMETERED, isSpendMetered, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge, type EntitlementsComposition, type Tx } from "@trafficflow/db";
+import { makeOwnedDb, makeEntitlementsClient, entitlementsFaultRecorder, refundObligationsOn } from "@trafficflow/db/cloud";
+import type { AccessPort, AiUsageLine, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import {
   generateProposals, ModelDeclinedError, silentLogger, unconfiguredProposer, type Logger, type WorkflowPort,
 } from "@trafficflow/core";
@@ -36,6 +36,8 @@ export async function proposalGeneratePass(
      * showing yesterday's.
      */
     credits?: SpendPort;
+    access?: AccessPort;
+    consentRefunds?: RefundObligationPort;
     /** Where the pass says it did not get the claim. Absent ⇒ silent, as a library must be. */
     log?: Logger;
     /** Where this host records usage: the model call's line, as `propose`, rides the pass's
@@ -48,6 +50,8 @@ export async function proposalGeneratePass(
   // what makes a crash-retry free and a deliberate re-run in a later bucket honest.
   const attemptKey = proposalRunId(deps.accountId, now);
   const log = deps.log ?? silentLogger;
+  const { access } = deps;
+  const consent = access ? modelConsentGate(() => readManagedModelConsent(db, deps.accountId, access)) : undefined;
   /** What a reversal must name, when this pass charged one. */
   let chargedAttempt: string | null = null;
   /**
@@ -70,12 +74,19 @@ export async function proposalGeneratePass(
    * attempt, whose proposals may well have been delivered, so its claim goes back unrefunded.
    */
   let refundOnRelease = false;
+  let withdrawn = false;
   /** The pass's one model call, once made, for the one release to carry. */
   let usageLine: AiUsageLine | undefined;
   const releaseClaim = async (refund: boolean): Promise<void> => {
     if (!deps.credits || !claimed || released) return;
     released = true;
     const usage = usageLine ? { usage: [usageLine] } : {};
+    if (withdrawn && chargedAttempt !== null) {
+      await reverseCharge(deps.credits, deps.consentRefunds, {
+        accountId: deps.accountId, action: "propose", attemptKey, attempt: chargedAttempt, reason: "drafter_failed", ...usage,
+      }, (fact) => log.warn("proposal_consent_refund", { accountId: deps.accountId, fact: fact.fact }));
+      return;
+    }
     await deps.credits.release(deps.accountId, refund && chargedAttempt !== null
       ? { action: "propose", attemptKey, refund: true, attempt: chargedAttempt, ...usage }
       : { action: "propose", attemptKey, refund: false, ...usage });
@@ -87,12 +98,14 @@ export async function proposalGeneratePass(
         : deps.port,
       now: () => now,
       log,
+      beforeDispatch: consent?.beforeDispatch,
       // The money question, asked by `generateProposals` at the only point where the
       // answer is meaningful: after the patterns exist (so a pass that cannot reach a model is
       // never charged) and before the model is called (so revenue precedes token spend). A
       // `false` here abandons the pass without deleting the account's open proposals.
       authorize: deps.credits
         ? async (patterns): Promise<boolean> => {
+            if (consent && !(await consent.allowed())) return false;
             const outcome = await deps.credits!.spend(
               deps.accountId, "propose", attemptKey, { patterns: patterns.length });
             // ANOTHER PASS IS ALREADY BUYING THIS BUCKET: skip the account, and say so. Not a
@@ -117,6 +130,10 @@ export async function proposalGeneratePass(
     // The proposer, the store or the gate faulted. Rethrown so the cron's per-account try/catch
     // logs it and the other accounts still run; the claim goes back refunded, at the door below.
     refundOnRelease = true;
+    if (err instanceof ModelConsentWithdrawn) {
+      withdrawn = true;
+      return { generated: 0 };
+    }
     // A DECLINE IS THIS ACCOUNT'S ANSWER, NOT A FAULT: the proposer threw before the open set was
     // replaced, so the account keeps the proposals it had, and the charge comes back at the door.
     if (err instanceof ModelDeclinedError) {
@@ -193,13 +210,14 @@ export async function runProposalCron(
      * `index.ts` makes, for its reason: `ENTITLEMENTS_URL` set ⇒ the HTTP client, unset ⇒ nothing
      * meters and the spend call sites are handed nothing. */
     // A failed call is a row (arm `worker`), awaited: this process exits when the pass ends.
-    const entitlements: SpendComposition = config.entitlements
+    const entitlements: EntitlementsComposition = config.entitlements
       ? makeEntitlementsClient({
         baseUrl: config.entitlements.url, secret: config.entitlements.secret,
         onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
       })
       : UNMETERED;
     const spend = isSpendMetered(entitlements) ? entitlements : undefined;
+    const consentRefunds = spend ? refundObligationsOn(db as unknown as Tx) : undefined;
     // Armed beside a real port, like the worker body, so a metered call no hook attributed is said.
     const usageRelay = metered && spend ? config.aiUsage : undefined;
     usageRelay?.arm();
@@ -210,7 +228,7 @@ export async function runProposalCron(
           accountId, port, log,
           // ONE port for the invocation; the account is an argument to the spend and the terms
           // come from `SPEND_ACTIONS.propose`.
-          ...(metered && spend ? { credits: spend } : {}),
+          ...(metered && spend ? { credits: spend, access: spend, consentRefunds } : {}),
           ...(usageRelay ? { usageHook: usageRelay.hook } : {}),
         }, now);
         generated += res.generated;

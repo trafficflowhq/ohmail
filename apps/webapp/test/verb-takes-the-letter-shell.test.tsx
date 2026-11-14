@@ -1,10 +1,12 @@
 /** @vitest-environment jsdom */
+import { screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
+import { barVerb, letterShown, lettersShown, menuItem, moreButton } from "./ohbox/_finders.js";
 
 /**
  * TRIAGE VERBS ON AN ANSWERED CONVERSATION ACT AT THE LETTER, through the shipped shell and the
@@ -32,8 +34,8 @@ const consent = (address: string) => create("rule", `rule_${address}`, {
   id: `rule_${address}`, kind: "sender", match: address, destination: "INBOX", priority: 0,
   provenance: "seeded-from-sent", enabled: true, stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: ISO, updatedAt: ISO,
 });
-const thread = (id: string, ids: string[]) => create("thread", id, {
-  id, accountId: "acct_live_1", rootMessageIdHeader: null, subject: "Q3 plan", messageIds: ids,
+const thread = (id: string, ids: string[], subject = "Q3 plan") => create("thread", id, {
+  id, accountId: "acct_live_1", rootMessageIdHeader: null, subject, messageIds: ids,
   lastMessageAt: NEWER, participants: [], updatedAt: ISO,
 });
 const pageOf = (creates: unknown[]) => (): Response => new Response(
@@ -86,7 +88,11 @@ const TAG = create("tag", "tag_1", { id: "tag_1", name: "Keepme", hue: "blue", c
 const chips = (row: HTMLElement): string[] =>
   [...row.querySelectorAll(":is(.tagchip, .oh-tag)")].map((c) => (c.textContent ?? "").trim());
 const selRow = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>('[role="listbox"] :is(.row.sel, [role=option][data-open])')?.dataset.id ?? null;
+  host.querySelector<HTMLElement>('[role="listbox"] [role="option"][data-open]')?.dataset.id ?? null;
+const paletteOptions = () =>
+  [...document.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Command palette"] [role="option"]')];
+const pileSwitch = (host: HTMLElement) => host.querySelector('[role="group"][aria-label="Piles"]');
+const readingDialog = () => document.querySelector('[role="dialog"][aria-label="Reading"]');
 const KAI = { name: "Kai", address: "kai@example.invalid" };
 /** Two answered conversations in Earlier: T (a1, our x2) above U (b1, our y2). */
 const twoAnswered = () => [
@@ -96,7 +102,7 @@ const twoAnswered = () => [
   message("y2", "2026-08-03T07:00:00.000Z", { ...OURS, to: [KAI], threadId: "U", subject: "Re: Budget" }),
   thread("U", ["b1", "y2"]),
 ];
-const rows = (host: HTMLElement): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] :is(.row, [role=option])[data-id]')];
+const rows = (host: HTMLElement): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"][data-id]')];
 const theRow = (host: HTMLElement): HTMLElement => {
   const r = rows(host)[0];
   expect(r, "the conversation's row").toBeTruthy();
@@ -113,20 +119,34 @@ const openRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host));
   await click(theRow(host));
 };
+/**
+ * A verb on the open letter's action panel, by the name the new reader's panel gives it (`barVerb` of the seated
+ * Ohbox's finders): today's bar found it by its class (`abar-later`, `abar-aside`, `abar-resurface`, ...).
+ */
+const BAR_NAMES: Readonly<Record<string, string>> = {
+  "abar-later": "Later", "abar-aside": "Park", "abar-resurface": "Resurface", "abar-done": "Done", "abar-move": "Move",
+};
 const bar = (host: HTMLElement, cls: string): HTMLElement => {
-  const b = host.querySelector<HTMLElement>(`.read-col .${cls}`);
+  const b = barVerb(host, BAR_NAMES[cls] ?? cls);
   expect(b, `the bar's ${cls}`).toBeTruthy();
   return b!;
 };
-const focusedPanel = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".read-col article.pm[aria-current]")?.dataset.convId ?? null;
+/**
+ * The focused panel: the letter of the open conversation the address names (`#/ohbox/m/<id>`), as
+ * `conversation-bar-acts-on-the-opened-panel` reads the ringed panel at the seated Ohbox; a single letter rings none.
+ */
+const focusedPanel = (host: HTMLElement): string | null => {
+  const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
+};
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => { installShellEnv(); seq = 0; window.location.hash = "#/ohbox"; });
 afterEach(async () => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   await teardownShellEnv();
 });
@@ -149,7 +169,7 @@ describe("an answered conversation's row in the shipped shell", () => {
       window.dispatchEvent(new Event("hashchange"));
     });
     await settle();
-    const listed = [...host.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-id]")].map((r) => r.dataset.id);
+    const listed = [...host.querySelectorAll<HTMLElement>('[role="option"][data-id]')].map((r) => r.dataset.id);
     expect(listed).toContain("a1");
     expect(listed).not.toContain("x2");
   }, 60_000);
@@ -181,8 +201,8 @@ describe("an answered conversation's row in the shipped shell", () => {
     const host = await mount(answered());
     await openRow(host);
     await click(bar(host, "abar-resurface"));
-    const tomorrow = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")]
-      .find((b) => b.textContent?.trim() === en.ohbox.resurfaceTomorrow);
+    /* The new reader's Resurface opens its menu of days (an item a day, its time beside it). */
+    const tomorrow = menuItem(en.ohbox.resurfaceTomorrow);
     expect(tomorrow, "the strip's Tomorrow").toBeTruthy();
     await click(tomorrow!);
     expect(sortedPosts()).toEqual([["a1", "bubbled_up"], ["x2", "bubbled_up"]]);
@@ -201,9 +221,11 @@ describe("an answered conversation's row in the shipped shell", () => {
         };
       },
     });
+    /* The frame reads a phone's width off the window's own width, not only the media query. */
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
     const host = await mount(answered());
     await openRow(host);
-    const later = document.querySelector<HTMLElement>(".reader .abar-later");
+    const later = barVerb(document, "Later");
     expect(later, "the sheet's Later").toBeTruthy();
     await click(later!);
     expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
@@ -213,7 +235,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     const host = await mount(answered());
     await click(theRow(host));
     await key("k", { ctrlKey: true });
-    const option = [...document.querySelectorAll<HTMLElement>(".palette li[role=option]")]
+    const option = paletteOptions()
       .find((li) => (li.textContent ?? "").includes(en.palette.resurfaceSel));
     expect(option, "the palette's Resurface selection").toBeTruthy();
     await click(option!);
@@ -232,7 +254,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     const host = await mount(answered());
     const row = theRow(host);
     await pointer("pointerdown", row, 10, 10);
-    const pile = host.querySelector('[data-rail-id="triage"]');
+    const pile = host.querySelector('[data-rail-id="later"]');
     expect(pile, "the rail's Reply Run").toBeTruthy();
     (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => pile;
     await pointer("pointermove", window, 60, 60);
@@ -310,7 +332,7 @@ describe("an answered conversation marked unread still stands for the letter", (
 describe("an answered conversation's row draws the tags of what its verbs act on", () => {
   const paletteTag = async (): Promise<void> => {
     await key("k", { ctrlKey: true });
-    const option = [...document.querySelectorAll<HTMLElement>(".palette li[role=option]")]
+    const option = paletteOptions()
       .find((li) => (li.textContent ?? "").includes("Keepme"));
     expect(option, "the palette's Tag: Keepme").toBeTruthy();
     await click(option!);
@@ -512,16 +534,27 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     await act(async () => { window.location.hash = hash; window.dispatchEvent(new Event("hashchange")); });
     await settle();
   };
-  const railCount = (host: HTMLElement, id: string): string =>
-    (host.querySelector<HTMLElement>(`[data-rail-id="${id}"]`)?.textContent ?? "").replace(/\D+/g, " ").trim();
+  const railCount = (host: HTMLElement, id: string): string | undefined => {
+    const label = host.querySelector(`[data-rail-id="${id}"] button`)?.getAttribute("aria-label");
+    return label?.match(/ (\d+)$/)?.[1];
+  };
   const ids = (host: HTMLElement) => rows(host).map((r) => r.dataset.id);
   /** What the server holds; a test may add to it, and the next sync serves it. */
   let held = new Map<string, ReturnType<typeof create>>();
+  let removed: string[];
   /** A server that keeps what `POST /messages/:id/triage` wrote: every later sync serves the rows as they now stand. */
   const mount = async (creates: Array<ReturnType<typeof create>>): Promise<HTMLElement> => {
     held = new Map(creates.map((c) => [`${c.type}:${c.id}`, c]));
+    removed = [];
     answerSyncWith(() => new Response(
-      JSON.stringify({ changes: { creates: [...held.values()].map((c) => ({ ...c, seq: ++seq })), updates: [], moves: [], deletes: [] }, cursor: `c${seq}`, hasMore: false, serverTime: ISO }),
+      JSON.stringify({
+        changes: {
+          creates: [...held.values()].map((c) => ({ ...c, seq: ++seq })),
+          updates: [], moves: [],
+          deletes: removed.map((id) => ({ type: "message", op: "delete", id, seq: ++seq, updatedAt: ISO })),
+        },
+        cursor: `c${seq}`, hasMore: false, serverTime: ISO,
+      }),
       { status: 200, headers: { "content-type": "application/json" } },
     ));
     const inner = globalThis.fetch;
@@ -561,7 +594,9 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
       }
       return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
     }) as unknown as typeof globalThis.fetch;
-    const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO })]);
+    const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO, organizerChecked: true })], {
+      webContactScreening: true,
+    });
     await settle();
     return host;
   };
@@ -574,8 +609,8 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(sortedPosts()).toEqual(all("set_aside"));
     await goTo("#/triage/aside");
     expect(ids(host), "one row, facing the newest letter").toEqual(["m6"]);
-    expect(railCount(host, "triage-aside")).toBe("1");
-    expect(host.querySelector(".triage-seg")?.textContent).toContain(`${en.triage.setAside} 1`);
+    expect(railCount(host, "parked")).toBe("1");
+    expect(pileSwitch(host)?.textContent).toContain(`${en.triage.setAside} 1`);
   }, 60_000);
 
   it("in Parked, `e` takes all seven out in one press and the Ohbox has the row back; `z` parks all seven again", async () => {
@@ -646,8 +681,8 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     window.location.hash = "#/triage";
     const host = await mount(seven((id) => (id === "m1" || id === "m2" ? "reply_later" : "set_aside")));
     expect(ids(host)).toEqual(["m2"]);
-    expect(railCount(host, "triage")).toBe("1");
-    expect(railCount(host, "triage-aside")).toBe("1");
+    expect(railCount(host, "later")).toBe("1");
+    expect(railCount(host, "parked")).toBe("1");
     await key("f");
     expect(document.body.textContent).toContain(en.triage.runProgress.replace("{step}", "1").replace("{total}", "1"));
   }, 60_000);
@@ -666,7 +701,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     const host = await mount(parkedAboveT());
     expect(ids(host)).toEqual(["z9", "m6"]);
     expect(selRow(host), "the cursor is on T's row").toBe("m6");
-    expect(document.querySelector(".reader"), "no sheet over the column").toBeNull();
+    expect(readingDialog(), "no sheet over the column").toBeNull();
     await key("e");
     expect(sortedPosts()).toEqual(all("none"));
   }, 60_000);
@@ -681,7 +716,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(sortedPosts()).toEqual([["m8", "set_aside"]]);
     await goTo("#/triage/aside/m/m6");
     expect(selRow(host), "the cursor is on T's row, now facing m8").toBe("m8");
-    expect(document.querySelector(".reader")).toBeNull();
+    expect(readingDialog()).toBeNull();
     const before = triagePosts().length;
     await key("e");
     expect(newPosts(before)).toEqual(eight("none"));
@@ -724,10 +759,22 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     return b.state === "bubbled_up" && b.bubbleUpAt ? [b.bubbleUpAt] : [];
   }));
   const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
-    [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] :is(.row, [role=option])[data-id]`)];
+    [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] [role="option"][data-id]`)];
+  /**
+   * A Resurfaced row's Done: the new reader offers no Done beside a list's visit (a letter that came back reads as
+   * its release, which the ROW offers: `reader/actions/use-verbs.ts`, `readSlot`), so the press is the row's own
+   * Done, beside the open row. Today's shell offered it on the reader's bar (`abar-done`) too.
+   */
+  const rowDone = (host: HTMLElement): HTMLElement => {
+    const slot = resurfacedRows(host)[0]?.parentElement;
+    const done = [...(slot?.querySelectorAll<HTMLElement>("button") ?? [])].find((b) => b.textContent?.trim() === "Done");
+    expect(done, "the row's Done").toBeTruthy();
+    return done!;
+  };
   const strip = async (host: HTMLElement, label: string): Promise<void> => {
     await click(bar(host, "abar-resurface"));
-    const b = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((x) => x.textContent?.trim() === label);
+    /* The new reader's Resurface opens its menu of days. */
+    const b = menuItem(label);
     expect(b, `the strip's ${label}`).toBeTruthy();
     await click(b!);
   };
@@ -740,7 +787,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(instants().size, "one instant for the whole conversation").toBe(1);
     expect(ids(host), "the row left the Ohbox").toEqual(["z9"]);
     expect(selRow(host)).toBe("z9");
-    expect(railCount(host, "triage-resurface")).toBe("1");
+    expect(railCount(host, "resurface")).toBe("1");
     await key("z");
     expect(posted("none")).toEqual(all("none"));
     expect(ids(host), "the row is back").toEqual(["m6", "z9"]);
@@ -748,7 +795,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     await key("b");
     await goTo("#/triage/resurface");
     expect(ids(host), "one row, facing the newest letter").toEqual(["m6"]);
-    expect(host.querySelector(".triage-seg")?.textContent).toContain(`${en.triage.resurface} 1`);
+    expect(pileSwitch(host)?.textContent).toContain(`${en.triage.resurface} 1`);
   }, 60_000);
 
   it("a pick (x) then `b`, or the row dragged onto the rail's Resurface, books the same set", async () => {
@@ -761,7 +808,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
     host = await mount(seven());
     await pointer("pointerdown", rows(host)[0]!, 10, 10);
-    const pile = host.querySelector('[data-rail-id="triage-resurface"]');
+    const pile = host.querySelector('[data-rail-id="resurface"]');
     expect(pile, "the rail's Resurface").toBeTruthy();
     (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => pile;
     await pointer("pointermove", window, 60, 60);
@@ -774,7 +821,8 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     window.location.hash = "#/triage/resurface";
     const host = await mount(seven(() => "bubbled_up"));
     expect(ids(host)).toEqual(["m6"]);
-    const done = host.querySelector<HTMLElement>(".view-triage .rsf-done");
+    const done = [...(rows(host)[0]?.parentElement?.querySelectorAll("button") ?? [])]
+      .find((button) => button.getAttribute("aria-label") === "Done" || button.textContent?.trim() === "Done");
     expect(done, "the row's Done").toBeTruthy();
     await click(done!);
     expect(sortedPosts()).toEqual(all("none"));
@@ -811,7 +859,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
     expect(resurfacedRows(host)[0]!.dataset.ids?.split(" ").sort()).toEqual([...IDS].sort());
     await openRow(host);
-    await click(bar(host, "abar-done"));
+    await click(rowDone(host));
     expect(reads()).toEqual([[...IDS].sort()]);
     expect(resurfacedRows(host)).toEqual([]);
   }, 180_000);
@@ -839,8 +887,10 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(posted("none").map(([id]) => id), "our reply's pin is spent").toContain("x7");
   };
   const moveToReceipts = async (host: HTMLElement): Promise<void> => {
-    await click(bar(host, "abar-move"));
-    const receipts = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((b) => (b.textContent ?? "").includes("→ Receipts"));
+    /* The new reader keeps Move in More (FOR-S3-TO-S8 point 63 (d)): More, Move, then the place. */
+    await click(moreButton(host)!);
+    await click(menuItem("Move")!);
+    const receipts = menuItem("Receipts") ?? undefined;
     expect(receipts, "the strip's Receipts").toBeTruthy();
     await click(receipts!);
   };
@@ -862,13 +912,19 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(posted("resurfaced"), "every pin back").toEqual(all("resurfaced"));
     expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
   };
-  /** The face's sender sheet, from a Resurfaced row's avatar (the first, or the one `face` faces); `ruleOff` turns its rule switch off first. */
-  const sheetTo = async (host: HTMLElement, dest: string, ruleOff = false, face?: string): Promise<void> => {
-    const av = (face ? resurfacedRows(host).find((r) => r.dataset.id === face) : resurfacedRows(host)[0])?.querySelector<HTMLElement>(":is(.av, .oh-row-face)");
-    expect(av, "the row's avatar").toBeTruthy();
-    await click(av!);
-    if (ruleOff) await click(document.querySelector<HTMLElement>("#sender-sheet .sm-rule")!);
-    const option = document.querySelector<HTMLElement>(`#sender-sheet [data-dest="${dest}"]`);
+  const openSender = async (host: HTMLElement, subject = /Q3 plan/) => {
+    const list = within(host).getByRole("listbox", { name: en.ohbox.resurfacedGroup });
+    const row = within(list).getByRole("option", { name: subject });
+    await click(row);
+    const avatar = within(row).getByRole("button", { name: en.screening.openFor.replace("{sender}", KAI.name) });
+    await click(avatar);
+    return within(screen.getByRole("dialog", { name: en.screening.aria.replace("{sender}", KAI.address) }));
+  };
+
+  const sheetTo = async (host: HTMLElement, dest: "receipts" | "spam", ruleOff = false, subject?: RegExp): Promise<void> => {
+    const sheet = await openSender(host, subject);
+    if (ruleOff) await click(sheet.getByRole("switch", { name: en.screening.ruleToggleAria }));
+    const option = sheet.queryByRole("option", { name: dest === "receipts" ? "Receipts" : "Spam" });
     expect(option, `the sheet's ${dest}`).toBeTruthy();
     await click(option!);
   };
@@ -970,7 +1026,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
       ...seven(() => "resurfaced"),
       message("u1", "2026-08-02T10:00:00.000Z", { threadId: "U", subject: "Budget", from: KAI, ...pin("u1") }),
       message("u2", "2026-08-02T11:00:00.000Z", { ...OURS, to: [KAI], threadId: "U", subject: "Re: Budget", ...pin("u2") }),
-      thread("U", ["u1", "u2"]),
+      thread("U", ["u1", "u2"], "Budget"),
     ];
   };
   const waitFor = async <T,>(find: () => T | undefined | null, what: string): Promise<T> => {
@@ -981,24 +1037,58 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
   };
 
   it("the sheet's Receipts on Kai's other conversation, then the read-back's Move them, files the letters he left in T and spends the rest of T's pins", async () => {
-    const host = await mount(andU());
-    await sheetTo(host, "receipts", false, "u1");
-    const moveThem = await waitFor(
-      () => [...document.querySelectorAll<HTMLElement>(".toast-act")].find((b) => b.textContent?.trim() === "Move them"),
-      "the read-back's Move them",
-    );
-    await click(moveThem);
-    expect(filedIds().filter((id) => id !== "u1").sort()).toEqual(["m2", "m4", "m6"]);
-    expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "u2", "x7"]);
-    expect(resurfacedRows(host)).toEqual([]);
+    for (const removedId of [null, "u1", "m2"]) {
+      if (removedId) {
+        await teardownShellEnv();
+        installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
+      }
+      const host = await mount(andU());
+      await sheetTo(host, "receipts", false, /Budget/);
+      const moveThem = await waitFor(
+        () => screen.queryByRole("button", { name: "Move them" }),
+        "the read-back's Move them",
+      );
+      if (removedId === "u1") {
+        await goTo("#/receipts");
+        expect(within(host).getByRole("option", { name: /Budget/ })).toBeTruthy();
+        held.delete("message:u1");
+        removed.push("u1");
+        await click(screen.getByRole("button", { name: /Pull new mail/ }));
+        await waitFor(
+          () => !within(host).queryByRole("option", { name: /Budget/ }) || null,
+          "the original letter left the mirror",
+        );
+      }
+      if (removedId === "m2") {
+        const list = within(host).getByRole("listbox", { name: en.ohbox.resurfacedGroup });
+        const plan = () => within(list).getByRole("option", { name: /Q3 plan/ });
+        expect(plan().dataset.ids?.split(" ")).toContain("m2");
+        held.delete("message:m2");
+        removed.push("m2");
+        await click(screen.getByRole("button", { name: /Pull new mail/ }));
+        await waitFor(
+          () => !plan().dataset.ids?.split(" ").includes("m2") || null,
+          "one of the letters offered for moving left the mirror",
+        );
+      }
+      await click(moveThem);
+      const moved = removedId === "m2" ? ["m4", "m6"] : ["m2", "m4", "m6"];
+      expect(filedIds().filter((id) => id !== "u1").sort()).toEqual(moved);
+      expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "u2", "x7"]);
+      expect(resurfacedRows(host)).toEqual([]);
+      const result = `Receipts — ${moved.length} messages moved.`;
+      const notice = removedId === "u1" ? `${en.reader.gone} ${result}` : result;
+      const report = screen.getAllByRole("status").find((status) => status.textContent?.includes(result));
+      expect(report?.textContent).toBe(notice);
+    }
   }, 120_000);
 
   it("Kai's rule left his letters in T for their pins: the sheet's Move them too files them and spends the rest of T's pins", async () => {
     const host = await mount(seven(() => "resurfaced").map((c) => (c.id === `rule_${KAI.address}`
       ? { ...c, entity: { ...c.entity, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: ISO } } }
       : c)));
-    await click(resurfacedRows(host)[0]!.querySelector<HTMLElement>(":is(.av, .oh-row-face)")!);
-    await click(await waitFor(() => document.querySelector<HTMLElement>("#sender-sheet .sm-stayed-move"), "the sheet's Move them too"));
+    const sheet = await openSender(host);
+    await click(await waitFor(() => sheet.queryByRole("button", { name: "Move them too" }), "the sheet's Move them too"));
     expect(filedIds().sort()).toEqual(["m2", "m4", "m6"]);
     expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "x7"]);
     expect(resurfacedRows(host)).toEqual([]);
@@ -1056,7 +1146,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     const one = await mount(seven((id) => (id === "m6" ? "resurfaced" : null)));
     expect(resurfacedRows(one).map((r) => r.dataset.id)).toEqual(["m6"]);
     await openRow(one);
-    await click(bar(one, "abar-done"));
+    await click(rowDone(one));
     expect(reads()).toEqual([["m6"]]);
     expect(triagePosts()).toEqual([]);
   }, 120_000);

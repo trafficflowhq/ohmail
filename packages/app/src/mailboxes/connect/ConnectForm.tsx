@@ -4,6 +4,7 @@ import { NONE } from "../../host/index.js";
 import { useTextLookup } from "../../text/index.js";
 import type { ConnectFormProps, ConnectSubject } from "./contract.js";
 import type { Drawn } from "./drawn.js";
+import { DeviceSignIn } from "./DeviceSignIn.js";
 import { Credentials, Head } from "./Fields.js";
 import { Acts, Outcome, WaysOut } from "./Lines.js";
 import { FORM_WORDS } from "./words.js";
@@ -40,6 +41,7 @@ function Opened({
     kept: ask.kept,
     guard: ask.guard,
     onDone: ask.onDone,
+    ...(ask.onCodeStarted ? { onCodeStarted: ask.onCodeStarted } : {}),
   });
   const d: Drawn = {
     form,
@@ -55,6 +57,9 @@ function Opened({
   if (subject !== null && form.way === null && (door.edit === NONE || subject.signsIn === "provider"))
     return null;
 
+  if (form.code?.kind === "shown" || form.code?.kind === "checking") {
+    return <DeviceSignIn result={form.code} stop={form.stopCode} />;
+  }
   const asking = form.asking;
   return (
     <div className="mbx-connect-part">
@@ -69,6 +74,7 @@ function Opened({
         <Head d={d} />
         <Credentials d={d} />
         <Outcome d={d} />
+        {form.code?.kind === "ended" ? <DeviceSignIn result={form.code} stop={form.stopCode} /> : null}
         <Acts d={d} />
       </form>
       {/* The second factor, asked beside the form it unblocks and outside it: the dialog is a form of its own. */}

@@ -704,8 +704,8 @@ export class BearerManager {
    * this call still sends the live token; everything else the caller set (the idempotency key
    * included) travels as it was. An arrow property so it can be handed bare, receiverless.
    */
-  fetch: FetchLike = async (url, init) => {
-    const res = await this.stampedFetch(url, init);
+  fetch = async (url: string, init?: unknown, pairing?: string): Promise<Response> => {
+    const res = await this.stampedFetch(url, init, pairing);
     // The computer this page is served from says this page is too old for it, or that it is being
     // updated: the one update line (AppShell mounts it) says so, with Reload. The act under way is
     // not judged here, and the answer goes back to its caller whole.
@@ -713,26 +713,37 @@ export class BearerManager {
     return res;
   };
 
-  private stampedFetch: FetchLike = async (url, init) => {
+  private async stampedFetch(url: string, init?: unknown, pairing?: string): Promise<Response> {
     const options = (init ?? {}) as LooseInit;
-    const stamped = (): LooseInit => ({
-      ...options,
-      headers: { ...(options.headers ?? {}), ...this.headers() },
-    });
+    const checkPairing = () => {
+      if (pairing !== undefined && this.pairScope() !== pairing) {
+        throw new DOMException("The browser paired to another computer.", "AbortError");
+      }
+    };
+    const stamped = (): LooseInit => {
+      checkPairing();
+      return { ...options, headers: { ...(options.headers ?? {}), ...this.headers() } };
+    };
+    // An engine keeps its pairing across both attempts, even when the bearer rotates.
+    checkPairing();
     // A press whose 401 is never renewed leaves on a live token: a lapsed window rotates FIRST,
     // then the press is sent once (the phone's rule). An unstated window with a token held is
     // today's path.
     if (!mayRenewFor(url) && this.refresh !== null && this.windowLapsed()) await this.rotate();
     const stampedIn = this.generation;
     const first = await this.fetchImpl(url, stamped());
+    checkPairing();
     if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
     // The server named the CREDENTIAL (a wrong code): the answer itself, never a lapsed session.
     if (await isCredentialRefusal(first)) return first;
+    checkPairing();
     if (this.generation === stampedIn && !(await this.rotate())) return first;
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
-    return this.fetchImpl(url, stamped());
-  };
+    const replay = await this.fetchImpl(url, stamped());
+    checkPairing();
+    return replay;
+  }
 
   /** No access token to send, or its stated window has run out ({@link WINDOW_LEAD_MS} early). */
   private windowLapsed(): boolean {

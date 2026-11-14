@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
 import { GroupHeading, SettingLine, SettingNote } from "@ohmail/ui/mail";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 import { subjectOf } from "@ohmail/app-logic/mailboxes/connect/subject";
 import { FILER_OF_SERVICE, webFilerOf } from "@ohmail/app-logic/mailboxes/pane/organizer";
@@ -16,6 +17,8 @@ import {
 } from "../../host/index.js";
 import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
 import { PaneLines } from "./Lines.js";
+import { OutlookConnect } from "./OutlookConnect.js";
+import { Removal } from "./Removal.js";
 import { Row } from "./Row.js";
 import { useSay } from "./say.js";
 import "./placement.css";
@@ -25,6 +28,8 @@ export interface MailboxesPaneProps {
   readonly wire: MailboxesWire | None;
   /** The connect form's calls, for an edit or a reconnect in a row: the shell's `wires.connect`. */
   readonly connect: ConnectWire | None;
+  /** The host confirmed the account whose mailbox list this pane draws. */
+  readonly deviceReady?: boolean;
   readonly capability: HostCapabilities["mailboxes"];
   /** Whose service this is: who files a mailbox it organizes, in words. */
   readonly service: HostCapabilities["service"];
@@ -138,11 +143,21 @@ function Listed(
             )}
           </>
         ) : (
-          <div className="mbx-pane-acts">
-            <Button icon="plus" onPress={() => props.go("add")}>
-              {say({ key: "connect" })}
-            </Button>
-          </div>
+          <OutlookConnect
+            signIn={signIn}
+            resting={resting}
+            deviceReady={props.deviceReady === true}
+            add={() => props.go("add")}
+            connected={({ connected, created }) => {
+              model.lines.tell({
+                said: {
+                  key: created ? "oauthConnected" : "oauthReconnected",
+                  values: { address: displayAddress(connected.address ?? "") },
+                },
+              });
+              model.wrote();
+            }}
+          />
         )
       ) : null}
       {verbs.out && wire.out !== NONE ? (
@@ -163,6 +178,8 @@ function Listed(
           <SettingNote>{say({ key: "setupAgainWhy" })}</SettingNote>
         </>
       ) : null}
+      {/* The removal's confirmation over the window, for the row it was opened on; the factor's dialog over it. */}
+      <Removal model={model} verbs={verbs} />
       {/* The one second-factor dialog, for the press the server parked; its line names which write it authorises. */}
       {model.gated.asking !== null && factor !== NONE && model.gated.state.at === "asking"
         ? factor({ ...model.gated.asking, line: say({ key: FACTOR_LINE[model.gated.state.act.verb] }) })

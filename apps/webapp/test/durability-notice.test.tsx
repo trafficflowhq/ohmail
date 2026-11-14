@@ -6,9 +6,9 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
+import { within } from "@testing-library/react";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { DurabilityNotice } from "../app/shell/DurabilityNotice";
 import {
   DURABILITY_LOST_EVENT,
   DurabilityLostEvent,
@@ -17,14 +17,16 @@ import {
   durableSet,
   resetDurabilityForTest,
 } from "@ohmail/app-logic/storage/durable";
+import { engineOver, setup, storeWith, teardown } from "./_view-shell";
 
 /**
  * THE BROWSER IS NOT KEEPING DECISIONS, AND THE PRODUCT SAYS SO ONCE.
  *
  * The class this closes: every store the durability slice added swallowed its own write failure,
  * so a private window turned a "durable" decision back into the in-memory one it replaced with
- * nothing anywhere saying so. The write answers now, and the shell's strip is the once-per-session
- * sentence. Both directions are asserted — a refused jar draws it, a healthy jar never does.
+ * nothing anywhere saying so. The write answers now, and the notice the mail ground says in the
+ * frame's one slot is the once-per-session sentence, over the new shell's door. Both directions are
+ * asserted — a refused jar draws it, a healthy jar never does.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -34,21 +36,34 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+/** The words the page was drawn in: what the notice's answer is called there. */
+let drawnIn: typeof en | typeof de = en;
 
-async function mount(messages: unknown = en): Promise<void> {
+/** The new shell as an entry mounts it (the frame over the mail ground), in the language the case names. */
+async function mount(messages: typeof en | typeof de = en): Promise<void> {
+  drawnIn = messages;
+  const engine = engineOver(await storeWith([]));
+  const { MailShell } = await import("./_mail-shell");
+  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: messages as never, timeZone: "UTC", children: h(DurabilityNotice),
+      locale: messages === de ? "de" : "en", messages: messages as never, timeZone: "UTC",
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailShell, { demo: false, engine }) }) }),
     }));
   });
 }
 
-const strip = (): HTMLElement | null => host?.querySelector(".ohx-durability") ?? null;
+/** The notice in the frame's slot: the status that offers this browser's one answer to it. */
+const strip = (): HTMLElement | null =>
+  host === null
+    ? null
+    : within(host).queryByRole("button", { name: drawnIn.session.storageRefusedDismiss })?.closest<HTMLElement>('[role="status"]') ?? null;
 
 beforeEach(() => {
+  setup();
   resetDurabilityForTest();
   window.localStorage.clear();
 });
@@ -58,7 +73,7 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
-  vi.restoreAllMocks();
+  await teardown();
 });
 
 describe("a lost durable write", () => {
@@ -114,7 +129,7 @@ describe("the notice", () => {
     await mount();
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("q"); });
     await act(async () => { durableSet("k", "v", "probe"); });
-    const dismiss = strip()!.querySelector("button")!;
+    const dismiss = within(strip()!).getByRole("button", { name: en.session.storageRefusedDismiss });
     await act(async () => { dismiss.click(); });
     expect(strip()).toBeNull();
     await act(async () => { durableSet("k2", "v", "probe"); });

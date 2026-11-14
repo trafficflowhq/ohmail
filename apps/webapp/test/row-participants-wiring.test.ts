@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { sliceOfDeclaration } from "./source-anchor.js";
 
 /**
  * THE CIRCLES ARE AN APP-WIDE ROW LANGUAGE, NOT AN OHBOX FEATURE.
@@ -24,6 +26,25 @@ import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
  */
 
 const at = (p: string) => fileURLToPath(new URL(`../app/${p}`, import.meta.url));
+const repo = (p: string) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
+
+/** The new tree's models and seats: where a place's rows are read from the mirror. */
+const NEW_TREE = {
+  index: repo("packages/app-logic/src/ohbox/live-mirror.ts"),
+  files(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name)) out.push(full);
+      }
+    };
+    walk(repo("packages/app-logic/src"));
+    walk(repo("packages/app/src"));
+    return out;
+  },
+};
 const read = (p: string) => readFileSync(at(p), "utf8");
 
 /**
@@ -82,11 +103,14 @@ describe("thread circles are wired into every mail list", () => {
    * creeping back into it.
    */
   it("the shell reads a per-version index, never the per-thread scan", () => {
-    // The index is in whichever shell frame declares it (`shell-derivations.ts` since ARCH-022);
-    // the scan is refused in EVERY frame, so it cannot creep back through the file that moved.
-    expect(shellFrameOf("participantIndex").source).toContain("threadParticipantsIndex(presented)");
-    for (const frame of shellFramePaths(process.cwd())) {
-      expect(readFileSync(frame, "utf8"), `${frame} scans per thread again`)
+    /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): a seat's rows read the conversation's people from
+       its live model, which indexes them once a mirror version (`useThreadFacts` of `ohbox/live-mirror.ts`, the
+       model the later list seats copy); the scan is refused in EVERY file of the new tree's models and seats, so it
+       cannot creep back through a seat that copies the model. */
+    expect(sliceOfDeclaration(readFileSync(NEW_TREE.index, "utf8"), "useThreadFacts"))
+      .toContain("threadParticipantsIndex(presented)");
+    for (const file of NEW_TREE.files()) {
+      expect(readFileSync(file, "utf8"), `${file} scans per thread again`)
         .not.toContain("threadParticipants(presented");
     }
   });

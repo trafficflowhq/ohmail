@@ -24,7 +24,16 @@
  * prop would have to thread through all four builders' call sites, and forgetting one is silent.
  */
 
+import { browserStorageMayHold } from "@ohmail/client-engine/durable";
 import { isOwnerShaped, readOwnerMarker, type OwnerMarker } from "./owner-cookie.js";
+
+export const SIGN_OUT_STORAGE_PREFIX = "ohmail.session.scopeCleanup.";
+export const RETIRED_SIGN_OUT_STORAGE = `${SIGN_OUT_STORAGE_PREFIX}legacy`;
+
+/** Unattributed old storage is kept away from live account scopes until a verified shared wipe. */
+export function retiredSignOutStorageHeld(): boolean {
+  return browserStorageMayHold(RETIRED_SIGN_OUT_STORAGE);
+}
 
 /**
  * The identity the HOST established for this surface, or `null` on a surface that has none.

@@ -1,19 +1,18 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach, vi } from "vitest";
-import * as React from "react";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
-import { FirstRun, HOLDER_CHECK_MS, HOLDER_REREAD_MS } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act, cleanup } from "@testing-library/react";
+import de from "../../../packages/app/messages/mailboxes.de.json" with { type: "json" };
+import { HOLDER_CHECK_MS, HOLDER_REREAD_MS } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { holderAnswered } from "@ohmail/app-logic/reading/reader-holder";
-import type { FirstRunHost, FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * SETUP WAITS FOR THE FIRST LOOK AT WHO HOLDS THE MAILBOX. A second computer's
@@ -23,12 +22,15 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  * (`organizerChecked: false`) and reads again every two seconds; a live holder lands on the claim
  * question, and only "Organize here instead" sends the takeover verb. HOW TO WATCH IT FAIL: make
  * `holderAnswered` answer `true` — the waiting cases go red.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`, its wait `use-holder-wait.ts`, its bounds `rules.ts`) over a ground
+ * the case moves (`_first-run-stage.tsx`; a re-read is the ground's refresh), its words the stage's
+ * catalogue (`packages/app/messages/mailboxes.*.json`); the census reads the presses where the new stage makes
+ * them. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const UNLOOKED: OnboardingMailbox = {
   organizerRole: "reader", organizedBy: null, organizerState: null, organizerChecked: false,
@@ -41,65 +43,48 @@ const LIVE: OnboardingMailbox = {
 };
 const STOPPED: OnboardingMailbox = { ...LIVE, organizerState: "stopped" };
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
   vi.useRealTimers();
 });
+
+/** The row the ground hands: the account's id and address beside exactly the case's facts. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow =>
+  ({ id: id("mb-1"), address: "me@example.invalid", holderSince: "26 Sept 2026", ...mailbox }) as FirstRunRow;
 
 async function mount(
   first: OnboardingMailbox, answer: () => FirstRunOrganizeOutcome = () => "stored",
   /** What a re-read answers with; counted in `reads`. */
   refresh: () => void | Promise<void> = () => undefined,
 ) {
-  let current: OnboardingFacts = {
-    door: "local", mailbox: first, account: { onboardingCompletedAt: null }, ai: "unset", queuedSenders: 0,
-  };
+  let current = rowOf(first);
   const organizedWith: Array<Record<string, unknown>> = [];
   const reads = { count: 0 };
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  let bump: (() => void) | null = null;
-  const host: FirstRunHost = {
-    door: "local", ai: current.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => {
-      organizedWith.push(body as Record<string, unknown>);
-      const out = answer();
-      if (out === "stored") {
-        current = { ...current, mailbox: { ...current.mailbox!, organizeConsentedAt: "2026-09-26T08:18:00.000Z" } };
-      }
-      return out;
+  const st = await mountStage({
+    rows: [current],
+    door: "local",
+    live: () => [current],
+    refresh: async () => { reads.count += 1; await refresh(); },
+    verbs: {
+      ai: "unset",
+      organize: async (_id, body) => {
+        organizedWith.push(body as Record<string, unknown>);
+        const out = answer();
+        if (out === "stored") current = { ...current, organizeConsentedAt: "2026-09-26T08:18:00.000Z" };
+        return out;
+      },
+      complete: async () => { /* stamped */ },
+      setAiEnabled: async () => { /* answered */ },
     },
-    complete: async () => { /* stamped */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-  const Stage = () => {
-    const [, set] = React.useState(0);
-    bump = () => set((n) => n + 1);
-    return h(FirstRun, {
-      host, facts: current, onRefresh: () => { reads.count += 1; bump?.(); return refresh(); },
-      onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
-      organizedSince: "26 Sept 2026",
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
   });
+  const el = st.el;
   const button = (label: string) =>
     [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label)) as HTMLButtonElement | undefined;
+  /** The claim question's radios by their names (the stopped holder's "here" has its own). */
+  const NAMES = { here: [t.elsewhereChoiceHere, t.elsewhereChoiceHereStopped], read: [t.elsewhereChoiceRead] };
   return {
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => el.textContent ?? "",
     agree: () => button(t.agree),
     press: async (label: string) => {
@@ -109,21 +94,22 @@ async function mount(
     },
     /** A choice on the claim question, as a click on its radio. */
     pick: async (value: "here" | "read") => {
-      const radio = el.querySelector<HTMLInputElement>(`input[type=radio][value=${value}]`);
+      const radio = [...el.querySelectorAll<HTMLElement>("[role=radio]")].find((r) =>
+        NAMES[value].includes((r.querySelector(".oh-radioline-word")?.textContent ?? "").trim()));
       if (!radio) throw new Error(`no ${value} option`);
       await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
     },
     /** Enter on the step's form — the keyboard's road to the same press. */
     submit: async () => {
       await act(async () => {
-        el.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        el.querySelector("h1")?.closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
         for (let i = 0; i < 12; i++) await Promise.resolve();
       });
     },
     /** The door's next read, as the shell's poll delivers it. */
     read: async (mailbox: OnboardingMailbox) => {
-      current = { ...current, mailbox: { ...mailbox, organizeConsentedAt: current.mailbox!.organizeConsentedAt } };
-      await act(async () => { bump?.(); });
+      current = { ...rowOf(mailbox), organizeConsentedAt: current.organizeConsentedAt };
+      await st.move([current]);
     },
     /** Time passing, as the stage's timers see it. */
     wait: async (ms: number) => {
@@ -281,13 +267,16 @@ describe("holderAnswered reads the door's look", () => {
  */
 describe("census: every organize press carries the verb it means", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/app/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
+  /* Today's first run leaves with the switch (FOR-S7 group 5) and no host mounts it: its presses are the new stage's
+     now (`packages/app-logic/src/mailboxes/first-run/actions.ts`), and the file is not walked while it still stands. */
+  const LEAVING = new Set(["apps/webapp/app/shell/FirstRun.tsx"]);
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === "dist" || name === "build" || name === ".next") continue;
       const p = join(dir, name);
       if (statSync(p).isDirectory()) walk(p, out);
-      else if (/\.(ts|tsx)$/.test(name)) out.push(p);
+      else if (/\.(ts|tsx)$/.test(name) && !LEAVING.has(relative(REPO, p))) out.push(p);
     }
     return out;
   };
@@ -295,13 +284,13 @@ describe("census: every organize press carries the verb it means", () => {
     rel === "apps/sidecar/src/engine.ts" ? readEngineAsOneText() : readFileSync(join(REPO, rel), "utf8"),
   );
   /** A press: a call naming an organize route or an organize method. */
-  const PRESS = /host\.organize\(|mailboxApi\.organize\(|organizePath\(mailboxId\)|\/organize`|"\/local\/organizer\/takeover"/g;
+  const PRESS = /host\.organize\(|verbs\.organize\(|mailboxApi\.organize\(|organizePath\(mailboxId\)|\/organize`|"\/local\/organizer\/takeover"/g;
 
   /** file → how many presses, and what each one ends up asking for. */
   const EXPECTED: Record<string, { presses: number; verb: string }> = {
     // The shared setup: the re-entry press names the takeover; Agree names it only after
     // "Organize here instead", a join otherwise.
-    "apps/webapp/app/shell/FirstRun.tsx": { presses: 2, verb: "takeover only by the person's choice" },
+    "packages/app-logic/src/mailboxes/first-run/actions.ts": { presses: 2, verb: "takeover only by the person's choice" },
     // The desktop host forwards the verb FirstRun chose to the local door (its route builder and
     // its one call).
     "apps/desktop/src/local-first-run.ts": { presses: 2, verb: "forwards FirstRun's verb" },
@@ -331,10 +320,14 @@ describe("census: every organize press carries the verb it means", () => {
   });
 
   it("each press carries the verb its row says", () => {
-    const firstRun = code("apps/webapp/app/shell/FirstRun.tsx");
-    expect(firstRun).toMatch(/host\.organize\(mailboxId, \{ intent: "takeover" \}\)/);
-    expect(firstRun).toMatch(/const intent = claimAnsweredFor === mailboxId && elsewhereChoice === "here" \? "takeover" : "join";/);
-    expect(firstRun.match(/host\.organize\(mailboxId, \{[\s\S]*?intent,\s*\}\)/g) ?? []).toHaveLength(1);
+    /* The new stage: the presses are made in `actions.ts`, Agree's body (and its verb) is built in `use-agree.ts`. */
+    const firstRun = code("packages/app-logic/src/mailboxes/first-run/actions.ts");
+    const agreeBody = code("packages/app-logic/src/mailboxes/first-run/use-agree.ts");
+    expect(firstRun).toMatch(/verbs\.organize\(act\.mailboxId, \{ intent: "takeover" \}\)/);
+    expect(agreeBody).toMatch(/const takingOver = claimAnswered && choice === "here";/);
+    expect(agreeBody).toMatch(/const intent = takingOver \? "takeover" : "join";/);
+    expect(firstRun.match(/verbs\.organize\(act\.mailboxId, act\.body\)/g) ?? []).toHaveLength(1);
+    expect(agreeBody.match(/body: \{[\s\S]*?intent,\s*\}/g) ?? []).toHaveLength(1);
     expect(code("apps/desktop/src/local-first-run.ts")).toMatch(/\.\.\.\(body\.intent \? \{ intent: body\.intent \} : \{\}\)/);
     expect(code("apps/webapp/app/(product)/mailbox/useCloudFirstRun.ts")).toMatch(/mailboxApi\.organize\(id, body\)/);
     expect(code("apps/webapp/app/(product)/mailbox/MailboxSection.tsx")).toMatch(/mailboxApi\.organize\(id\)/);

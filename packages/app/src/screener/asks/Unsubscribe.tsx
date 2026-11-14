@@ -5,23 +5,35 @@
  * or this computer); the yes makes the decision it held, Cancel makes none.
  */
 import type { ScreenerView } from "@ohmail/app-logic/screener";
-import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { Dialog } from "@ohmail/ui/base";
 import { useFrame } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
-import { useScreener } from "../contract.js";
 
 export function Unsubscribe({ view }: { view: ScreenerView }) {
   const t = useText("screener");
   const screening = useText("screening");
-  const model = useScreener();
   const { host } = useFrame();
   const ask = view.ask?.kind === "unsub" ? view.ask : null;
   const from = host.capabilities.unsubscribeFrom;
   const title = ask?.dest === "spam" ? t("place.unsub.spam") : t("place.unsub.screened");
   const how =
     from === "service" ? t("place.unsub.service") : from === "computer" ? t("place.unsub.computer") : null;
-  const claim = ask === null ? "none" : model.unsubClaimOf(ask.sender, view.scopeOf(ask.sender));
+  const claim = ask?.claim ?? "none";
+  const confirm = claim === "may_send" ? screening("unsubCommitMaybe") : title;
+  let explanation: string | null = null;
+  if (ask?.scope === "domain") {
+    explanation = screening(claim === "sends" ? "unsubDomain" : "unsubDomainMaybe", {
+      domain: displayDomainLabel(ask.sender.from.address),
+      senders: ask.senders,
+      place: title,
+    });
+  } else if (ask) {
+    explanation = screening(claim === "sends" ? "unsubSender" : "unsubSenderMaybe", {
+      sender: displayAddress(ask.sender.from.address),
+      place: title,
+    });
+  }
   return (
     <Dialog
       open={ask !== null}
@@ -29,17 +41,10 @@ export function Unsubscribe({ view }: { view: ScreenerView }) {
       title={title}
       line={t("place.unsub.final")}
       keysOn="cancel"
-      confirm={{ label: title, onPress: () => view.answerUnsub(true) }}
+      confirm={{ label: confirm, onPress: () => view.answerUnsub(true) }}
       cancel={{ label: t("cancel") }}
     >
-      {ask === null ? null : (
-        <p className="oh-text">
-          {screening(claim === "sends" ? "unsubSender" : "unsubSenderMaybe", {
-            sender: displayAddress(ask.sender.from.address),
-            place: title,
-          })}
-        </p>
-      )}
+      {explanation === null ? null : <p className="oh-text">{explanation}</p>}
       {how === null ? null : <p className="oh-text">{how}</p>}
     </Dialog>
   );

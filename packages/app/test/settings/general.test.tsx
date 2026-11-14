@@ -44,6 +44,12 @@ describe("General", () => {
     expect(group("Picture quality")).toBeTruthy();
   });
 
+  it("offers the tracking choice when the server supplied only that setting", () => {
+    mount({ ...generalState(), images: null });
+    expect(screen.queryByRole("switch", { name: "Load images in messages" })).toBeNull();
+    expect(sw("Block tracking pixels").getAttribute("aria-checked")).toBe("true");
+  });
+
   it("draws the server's answer: images on, pixels blocked", () => {
     mount(generalState());
     expect(sw("Load images in messages").getAttribute("aria-checked")).toBe("true");

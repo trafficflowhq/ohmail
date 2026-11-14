@@ -4,7 +4,7 @@ import { accounts, routingDecisions } from "@trafficflow/db";
 import type { ClassifierPort, ClassifierInput, ClassifierResult } from "@trafficflow/core";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { ScreenerService } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
 /**
@@ -36,7 +36,7 @@ class SpyClassifier implements ClassifierPort {
 }
 
 async function wired() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener" });
   const credits = fakeSpendPort({ verdict: "ok", charged: true, attempt: "1" });
   const classifier = new SpyClassifier();

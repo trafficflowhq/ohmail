@@ -10,6 +10,7 @@
  */
 
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxTotalOf } from "@ohmail/app-logic/search";
 
 const isStoreRefusals = (v: unknown): v is { count: number; retrying: number; exact: boolean } => {
   const r = v as { count?: unknown; retrying?: unknown; exact?: unknown } | null | undefined;
@@ -20,6 +21,11 @@ const isStoreRefusals = (v: unknown): v is { count: number; retrying: number; ex
 interface MailboxWire {
   id: string;
   address: string;
+  provider?: string;
+  failedAt?: string | null;
+  retryCount?: number;
+  setAside?: number;
+  erasure?: { remaining: number };
   /** The mailbox's user-facing label — `MailboxDTO.displayName`, null when nobody typed one. */
   displayName?: string | null;
   status: string;
@@ -176,12 +182,57 @@ export async function readMailboxFactsVia(
   fetchImpl: (url: string, init?: unknown) => Promise<Response>,
   opts: { counts?: boolean } = {},
 ): Promise<MailboxFacts[]> {
-  // `?counts=1` costs a grouped `count(*)` over the store, so it is asked only while an import is
-  // open — the caller decides from `initialImportCompletedAt`, and the aggregate stops at the stamp.
+  return ((await readMailboxWire(fetchImpl, opts)) ?? []).map(mailboxFactsOf);
+}
+
+/** Search only prints a count when the response explicitly supplies the complete counted roster. */
+export async function readSearchMailboxTotalVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+): Promise<number | null> {
+  const body = await readMailboxResponse(fetchImpl, { counts: true });
+  return Array.isArray(body?.items) ? mailboxTotalOf(body.items) : null;
+}
+
+/** The same complete list, with the additional facts only the Settings pane reads. */
+export async function readMailboxRowsVia(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+  opts: { counts?: boolean } = {},
+) {
+  const rows = await readMailboxWire(fetchImpl, opts);
+  if (!Array.isArray(rows)) throw new Error("The engine did not answer with a mailbox list");
+  return rows.map((item) => {
+    if (!item || typeof item.address !== "string" || typeof item.status !== "string") {
+      throw new Error("The engine did not name every mailbox on the list");
+    }
+    return {
+      ...mailboxFactsOf(item),
+      provider: typeof item.provider === "string" ? item.provider : "",
+      ...(typeof item.failedAt === "string" || item.failedAt === null ? { failedAt: item.failedAt } : {}),
+      ...(typeof item.retryCount === "number" ? { retryCount: item.retryCount } : {}),
+      ...(typeof item.setAside === "number" ? { setAside: item.setAside } : {}),
+      ...(typeof item.erasure?.remaining === "number" ? { erasure: { remaining: item.erasure.remaining } } : {}),
+    };
+  });
+}
+
+async function readMailboxWire(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+  opts: { counts?: boolean },
+): Promise<MailboxWire[] | undefined> {
+  return (await readMailboxResponse(fetchImpl, opts)).items;
+}
+
+async function readMailboxResponse(
+  fetchImpl: (url: string, init?: unknown) => Promise<Response>,
+  opts: { counts?: boolean },
+): Promise<{ items?: MailboxWire[] }> {
   const res = await fetchImpl(opts.counts === true ? "/mailboxes?counts=1" : "/mailboxes");
   if (!res.ok) throw new Error(`the mail engine answered ${res.status} for the mailbox list`);
-  const body = (await res.json()) as { items?: MailboxWire[] };
-  return (body.items ?? []).map((m) => ({
+  return res.json();
+}
+
+function mailboxFactsOf(m: MailboxWire): MailboxFacts {
+  return {
     id: m.id,
     address: m.address,
     ...("displayName" in m ? { displayName: m.displayName } : {}),
@@ -322,5 +373,5 @@ export async function readMailboxFactsVia(
     // `Number.isFinite` guard takes the CORROBORATED path, `earliest` skips it and
     // `minutesSince` answers null.
     createdAt: m.createdAt ?? "",
-  }));
+  };
 }

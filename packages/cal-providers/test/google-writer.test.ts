@@ -200,6 +200,49 @@ const target = (p: { id: string; version: string }) => ({
 const word = (a: WriteAnswer): string => (a.ok ? "ok" : a.reason);
 
 describe("Google's writer", () => {
+  it("compares the confirmed guests to the whole current event before notifying them", async () => {
+    const g = google();
+    const organizer = "studio@example.invalid";
+    const guest = "kiln@example.invalid";
+    const stored = g.plant("evt-firing", { organizer: { email: organizer }, attendees: [{ email: guest }] });
+    const expected = (guests: string[]) => ({ ...target(stored), audience: { organizer, guests } });
+    const change = { summary: "Moved firing" };
+    const update = (guests: string[]) =>
+      g.writer.change(connection, { id: "cal-1" }, expected(guests), change, never);
+    expect(word(await update([]))).toBe("version_stale");
+    expect(g.sent.map((r) => r.method)).toEqual(["GET"]);
+    expect(word(await update([guest]))).toBe("ok");
+    expect(g.sent.at(-1)?.ifMatch).toBe(stored.version);
+  });
+
+  it("refuses duplicate confirmed addresses, omitted attendees, and a change from a single event to a series", async () => {
+    const organizer = "studio@example.invalid";
+    const first = "kiln@example.invalid";
+    const second = "studio-two@example.invalid";
+    for (const [other, guests] of [
+      [{}, [first, first]],
+      [{ attendeesOmitted: true }, [first, second]],
+      [{ recurrence: ["RRULE:FREQ=WEEKLY"] }, [first, second]],
+    ] as const) {
+      const g = google();
+      const stored = g.plant("evt-firing", {
+        organizer: { email: organizer },
+        attendees: [{ email: first }, { email: second }],
+        ...other,
+      });
+      const requested = { ...target(stored), audience: { organizer, guests } };
+      const result = await g.writer.change(
+        connection,
+        { id: "cal-1" },
+        requested,
+        { summary: "Moved firing" },
+        never,
+      );
+      expect(word(result)).toBe("version_stale");
+      expect(g.sent.map((r) => r.method)).toEqual(["GET"]);
+    }
+  });
+
   it("makes a new event under the id the write's key names, tells every invitee, and answers it as a reading would", async () => {
     const g = google();
     const made = await g.writer.create(
@@ -319,6 +362,31 @@ describe("Google's writer", () => {
       "version_stale",
     );
     expect(g.records.get("evt-2")!.status).toBe("confirmed");
+  });
+
+  it("sends a cancellation only after it verifies the event's complete audience", async () => {
+    const g = google();
+    const organizer = "host" + "@example.test";
+    const guest = "visitor" + "@example.test";
+    const audience = { organizer, guests: [guest] };
+    const people = { organizer: { email: organizer }, attendees: [{ email: guest }] };
+    const incomplete = g.plant("incomplete", { ...people, attendeesOmitted: true });
+    const complete = g.plant("complete", people);
+    const remove = (event: typeof complete, guests: string[]) =>
+      g.writer.remove(
+        connection,
+        { id: "cal-1" },
+        { ...target(event), audience: { ...audience, guests } },
+        never,
+      );
+    expect(word(await remove(incomplete, [guest]))).toBe("version_stale");
+    expect(word(await remove(complete, []))).toBe("version_stale");
+    expect(g.sent.map((r) => r.method)).toEqual(["GET", "GET"]);
+    expect(word(await remove(complete, [guest]))).toBe("ok");
+    expect(g.sent.slice(2).map((r) => [r.method, r.ifMatch])).toEqual([
+      ["GET", null],
+      ["DELETE", complete.version],
+    ]);
   });
 
   it("answers an invitation on the account's own line, written back under the tag of the read it was made on", async () => {

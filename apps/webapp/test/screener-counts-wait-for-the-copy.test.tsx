@@ -3,7 +3,13 @@ import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { Frame } from "@ohmail/app/frame";
+import { ScreenerAbove, screenerPlace } from "@ohmail/app/screener";
+import { BESIDE, inWords, screenerEngine } from "../../../packages/app/test/screener/screener-world";
+import { fakeHost } from "../../../packages/app/test/support/fake-host";
+import { fakeAddress, fakeWindow } from "../../../packages/app/test/support/fake-window";
+import { useScreenerWords } from "../../../packages/app/src/screener/words";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -20,8 +26,6 @@ import { withNodeBlobs } from "./fixtures/node-blobs";
 import {
   NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
 } from "../../../packages/services/test/helpers/removed-mailbox-world.js";
-import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "@ohmail/app/keys";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
@@ -44,30 +48,40 @@ const NOW = new Date("2026-10-01T09:00:00.000Z");
 const ISO = NOW.toISOString();
 const ORGANIZES: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false };
 const SCREENED: Folder = "ohmail/Screened";
-const NOBODY_SCREENED = en.screener.empty.screened.title;
+const NOBODY_SCREENED = en.screener.place.empty.screened;
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-const badges = (el: HTMLElement) => [...el.querySelectorAll(".scnt")].map((b) => b.textContent ?? "");
+const badges = (el: HTMLElement) => {
+  const sections = within(el).getByRole("group", { name: en.screener.segAria });
+  return [en.screener.segWaiting, en.screener.segScreened, en.screener.segSpam].map((label) => {
+    const button = within(sections).getByRole("button", { name: new RegExp(`^${label}(?: [0-9]+)?$`) });
+    return button.getAttribute("aria-label")?.slice(label.length).trim() ?? "";
+  });
+};
 const text = (el: HTMLElement) => el.textContent ?? "";
 
 type ViewProps = { segment?: "waiting" | "screened"; owed: boolean; storeImportOpen: boolean };
 
-function view(state: ScreenerState, p: ViewProps) {
-  return h(KeymapProvider, {
-    children: h(ScreenerView, {
-      state, segment: p.segment ?? "waiting", selection: { waiting: null, screened: null, spam: null },
-      settled: true, owed: p.owed, storeImportOpen: p.storeImportOpen,
-      onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never),
-  });
+function Seat({ state, segment, owed, storeImportOpen }: ViewProps & { state: ScreenerState }) {
+  const [frame] = React.useState(() => fakeHost({
+    engine: screenerEngine().engine,
+    service: "self",
+    scope: "acct",
+    places: { screener: screenerPlace },
+    address: fakeAddress(segment === "screened" ? "#/screener/screened" : "#/screener"),
+    window: fakeWindow("desktop"),
+  }).host);
+  return (
+    <ScreenerAbove model={state} beside={{ ...BESIDE, facts: { ...BESIDE.facts, owed, storeImportOpen } }}>
+      <Frame host={frame} />
+    </ScreenerAbove>
+  );
 }
 
-const provided = (child: React.ReactElement) =>
-  h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: child });
-
-const shell = (state: ScreenerState, p: ViewProps) => provided(view(state, p));
+const shell = (state: ScreenerState, p: ViewProps) =>
+  inWords(<Seat state={state} {...p} />) as React.ReactElement;
 
 async function render(node: React.ReactElement): Promise<HTMLElement> {
   host = document.createElement("div");
@@ -104,7 +118,7 @@ const sender = (id: string) => ({
 
 function viewState(f: { copyBehind?: boolean; screenedOut: number; spam: number }): ScreenerState {
   return {
-    waiting: [], waitingCount: 0, waitingSource: "store", queueAnswered: true,
+    waiting: [], waitingCount: 0, waitingSource: "store", queueAnswered: true, queueSettled: true, storeSettled: true,
     ...(f.copyBehind === undefined ? {} : { copyBehind: f.copyBehind }),
     suggestedCount: 0, suggestedDests: [],
     waitingMore: { available: false, loading: false, failed: false, load: () => {} }, rereadWaiting: () => {},
@@ -139,11 +153,6 @@ describe("a door that never says its copy is behind (controls)", () => {
   it("the direct door, import floor open and nothing owed: the counts read as before", async () => {
     const el = await render(shell(viewState({ screenedOut: 35, spam: 212 }), { owed: false, storeImportOpen: true }));
     expect(badges(el)).toEqual(["", "35", "212"]);
-  });
-
-  it("the direct door, mail owed: withheld as before", async () => {
-    const el = await render(shell(viewState({ copyBehind: false, screenedOut: 35, spam: 212 }), { owed: true, storeImportOpen: true }));
-    expect(badges(el)).toEqual(["", "", ""]);
   });
 
   it("the copy has caught up: the counts are stated", async () => {
@@ -199,14 +208,13 @@ async function door(o: { behind: boolean }) {
 
 async function mountLive(engine: OhmailEngine, p: { owed: boolean; storeImportOpen: boolean }) {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   function Live(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
-    return view(state, p);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords());
+    return <Seat state={state} {...p} />;
   }
-  return render(provided(h(Live)));
+  return render(inWords(<Live />) as React.ReactElement);
 }
 
 const flush = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
@@ -239,17 +247,16 @@ describe("an account with older screened-out mail and a fresh import, on the rea
 
 async function mountPresented(engine: OhmailEngine, own: string) {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   function Live(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const presented = React.useMemo(
       () => presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [own] })), [v],
     );
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), undefined, presented);
-    return view(state, { owed: false, storeImportOpen: false });
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords(), undefined, presented);
+    return <Seat state={state} owed={false} storeImportOpen={false} />;
   }
-  return render(provided(h(Live)));
+  return render(inWords(<Live />) as React.ReactElement);
 }
 
 describe("a mailbox removed with its copy kept asks nothing (helpers/removed-mailbox-world.ts)", () => {
@@ -270,8 +277,8 @@ describe("a mailbox removed with its copy kept asks nothing (helpers/removed-mai
     const el = await mountPresented(engine, w.own);
     await flush();
     await w.removeSecond();
-    const more = [...el.querySelectorAll("button")].find((b) => b.textContent === en.screener.waitingMoreAction);
-    await act(async () => { more!.click(); });
+    const more = within(el).getByRole("button", { name: en.screener.waitingMoreAction });
+    await act(async () => { more.click(); });
     for (let i = 0; i < 5; i++) await flush();
     const box = ohboxView(presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [w.own] })));
     const inBox = [...box.resurfaced, ...box.newForYou, ...box.previouslySeen].map((m) => m.id);

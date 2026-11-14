@@ -1,8 +1,9 @@
+import { modelConsentGate, ModelConsentWithdrawn } from "@trafficflow/db";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ModelDeclinedError, SensitivePayloadRefusal } from "@trafficflow/core/mail";
 import type {
-  ClassifierInput, ClassifierPort, ClassifierResult,
+  AiCallOptions, ClassifierInput, ClassifierPort, ClassifierResult,
   DraftInput, DraftPort, DraftResult, KeyProvider,
 } from "@trafficflow/core/mail";
 import { ServiceError } from "@trafficflow/services/mail";
@@ -628,22 +629,33 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
 
   /* ── the ports ───────────────────────────────────────────────────────────────────────────── */
 
-  const classifyThrough = async (input: ClassifierInput): Promise<ClassifierResult> => {
-    const blocked = blockedBy(store);
-    if (blocked) throw refuse(store, blocked);
-    return (await transportFor(store)).classify(input);
+  const withProviderConsent = (selected: StoredAi, call?: AiCallOptions): AiCallOptions => {
+    const consent = modelConsentGate(() => store === selected && blockedBy(store) === null);
+    return { ...call, async beforeDispatch() {
+      if (call?.beforeDispatch) await call.beforeDispatch();
+      await consent.beforeDispatch();
+    } };
   };
 
-  const screenThrough = async (input: ClassifierInput): Promise<ClassifierResult> => {
+  const classifyThrough = async (input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> => {
     const blocked = blockedBy(store);
     if (blocked) throw refuse(store, blocked);
-    return (await transportFor(store)).screen(input);
+    const selected = store;
+    return (await transportFor(selected)).classify(input, withProviderConsent(selected, call));
   };
 
-  const draftThrough = async (input: DraftInput): Promise<DraftResult> => {
+  const screenThrough = async (input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> => {
     const blocked = blockedBy(store);
     if (blocked) throw refuse(store, blocked);
-    return (await transportFor(store)).draft(input);
+    const selected = store;
+    return (await transportFor(selected)).screen(input, withProviderConsent(selected, call));
+  };
+
+  const draftThrough = async (input: DraftInput, call?: AiCallOptions): Promise<DraftResult> => {
+    const blocked = blockedBy(store);
+    if (blocked) throw refuse(store, blocked);
+    const selected = store;
+    return (await transportFor(selected)).draft(input, withProviderConsent(selected, call));
   };
 
   /**
@@ -673,12 +685,13 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    * there is no argument or boolean that reaches the screening question from here.
    */
   const cycleClassifier: ClassifierPort = {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
+    async classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
       try {
-        const result = await classifyThrough(input);
+        const result = await classifyThrough(input, call);
         noteSuccess();
         return result;
       } catch (err) {
+        if (err instanceof ModelConsentWithdrawn) throw err;
         noteFault(err);
         // Rethrown UNWRAPPED, deliberately: a refusal at the sensitivity sink is message-scoped
         // and must not abort the batch, and the loop's own boundary is where it belongs. A decline

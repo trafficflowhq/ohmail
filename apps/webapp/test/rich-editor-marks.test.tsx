@@ -11,9 +11,10 @@ import type { Editor } from "@tiptap/react";
 import { RichEditor } from "../app/shell/RichEditor";
 import { EDITOR_RULES, autolinkHref, nextMarks } from "@ohmail/app/write/editor/marks";
 import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
+import { key, load, MARKS, posOf, typeText } from "./fixtures/rich-editor-boundaries-driver";
 
-/* @reads: apps/webapp/test/editor-feel/rules.pw.ts apps/webapp/test/rich-editor-marks.test.tsx
-   Read by paths built at runtime from __dirname — the rig's rule list and this file's own cases —
+/* @reads: apps/webapp/test/editor-feel/rules.pw.ts apps/webapp/test/rich-editor-marks.test.tsx apps/webapp/test/frame/write-mark-boundaries.test.tsx
+   Read by paths built at runtime from __dirname — the rig and the two files that hold the jsdom cases —
    so no landing pass selects this file when the rig moves; the shape `reads-list.mjs` exists for. */
 
 /**
@@ -74,56 +75,6 @@ afterEach(() => {
   host = null;
 });
 
-/** Load a document and put the caret at `pos` (the end when omitted). */
-function load(ed: Mounted, html: string, pos?: number): void {
-  act(() => {
-    ed.editor().commands.setContent(html);
-    ed.editor().commands.focus(pos ?? "end");
-  });
-}
-
-/** The position after (or before) the first text run containing `text`. */
-function posOf(ed: Mounted, text: string, side: "start" | "end" = "end"): number {
-  let found = -1;
-  ed.editor().state.doc.descendants((node, pos) => {
-    if (found >= 0) return false;
-    if (node.isText && node.text!.includes(text)) {
-      found = pos + node.text!.indexOf(text) + (side === "end" ? text.length : 0);
-      return false;
-    }
-    return true;
-  });
-  if (found < 0) throw new Error(`no ${JSON.stringify(text)} in ${ed.html()}`);
-  return found;
-}
-
-/**
- * A typed character, through the seam the browser's insertion reaches: ProseMirror reads the DOM
- * change and offers it to `handleTextInput` first; unhandled, it inserts with its own marks.
- */
-function typeText(ed: Mounted, text: string): void {
-  act(() => {
-    const view = ed.editor().view;
-    for (const ch of text) {
-      const { from, to } = view.state.selection;
-      // prosemirror-view hands the plugin a fifth argument, the default transaction, exactly as here.
-      const deflt = () => view.state.tr.insertText(ch, from, to);
-      const handled = view.someProp("handleTextInput", (f) => f(view, from, to, ch, deflt));
-      if (!handled) view.dispatch(deflt());
-    }
-  });
-}
-
-/** A real keydown on the surface — the keymaps answer, as they do for a keyboard. */
-function key(ed: Mounted, name: string, init: KeyboardEventInit = {}): void {
-  const codes: Record<string, number> = { Enter: 13, ArrowRight: 39, ArrowLeft: 37, Backspace: 8 };
-  act(() => {
-    ed.editor().view.dom.dispatchEvent(
-      new KeyboardEvent("keydown", { key: name, code: name, keyCode: codes[name] ?? 0, bubbles: true, cancelable: true, ...init }),
-    );
-  });
-}
-
 function backspace(ed: Mounted): void {
   act(() => {
     const view = ed.editor().view;
@@ -136,13 +87,6 @@ const marksBefore = (ed: Mounted): string[] =>
   (ed.editor().state.selection.$from.nodeBefore?.marks ?? []).map((m) => m.type.name).sort();
 
 const A = '<a target="_blank" rel="noopener noreferrer nofollow" href="https://x.example/p">';
-const MARKS: Record<string, [string, string]> = {
-  bold: ["<strong>", "</strong>"],
-  italic: ["<em>", "</em>"],
-  strike: ["<s>", "</s>"],
-  code: ["<code>", "</code>"],
-};
-
 describe("links end where you stop typing them", () => {
   it("[link-end-letter] a letter typed at the end of a link extends it", () => {
     const ed = mount();
@@ -247,51 +191,6 @@ describe("formats stay while you type, and end where Slack ends them", () => {
     });
   }
 
-  it("[code-end-space] a space at the end of inline code leaves the code; a space inside stays code", () => {
-    const ed = mount();
-    load(ed, "<p>ab <code>cd</code></p>");
-    typeText(ed, " y");
-    expect(ed.html()).toBe("<p>ab <code>cd</code> y</p>");
-    load(ed, "<p>ab <code>cd</code> ef</p>", 0);
-    act(() => { ed.editor().commands.focus(posOf(ed, "cd", "start") + 1); });
-    typeText(ed, " ");
-    expect(ed.html()).toBe("<p>ab <code>c d</code> ef</p>");
-  });
-
-  it("[code-end-space] a space at the end of bold stays bold — only code and links end on a space", () => {
-    const ed = mount();
-    load(ed, "<p>ab <strong>cd</strong></p>");
-    typeText(ed, " y");
-    expect(ed.html()).toBe("<p>ab <strong>cd y</strong></p>");
-  });
-
-  it("[enter-keeps] a line break keeps bold, italic and strikethrough and ends code and links", () => {
-    const ed = mount();
-    for (const [mark, [o, c]] of Object.entries(MARKS)) {
-      load(ed, `<p>ab ${o}cd${c}</p>`);
-      key(ed, "Enter");
-      typeText(ed, "z");
-      const kept = mark !== "code";
-      expect(ed.html()).toBe(`<p>ab ${o}cd${c}<br>${kept ? `${o}z${c}` : "z"}</p>`);
-    }
-  });
-
-  it("[enter-keeps] the same rule inside a list item: bold carries to the next item, code does not", () => {
-    const ed = mount();
-    // `TrailingNode` (StarterKit's, shipped before this change) keeps an empty paragraph after a
-    // list at the document's end, so the caret is placed at the item's text, never at "end".
-    load(ed, "<ul><li><p><strong>cd</strong></p></li></ul>", 0);
-    act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
-    key(ed, "Enter");
-    typeText(ed, "z");
-    expect(ed.html()).toBe("<ul><li><p><strong>cd</strong></p></li><li><p><strong>z</strong></p></li></ul><p></p>");
-    load(ed, "<ul><li><p><code>cd</code></p></li></ul>", 0);
-    act(() => { ed.editor().commands.focus(posOf(ed, "cd")); });
-    key(ed, "Enter");
-    typeText(ed, "z");
-    expect(ed.html()).toBe("<ul><li><p><code>cd</code></p></li><li><p>z</p></li></ul><p></p>");
-  });
-
   it("[toggle-sticky] a toggle with nothing selected carries into what you type until toggled off or the caret moves", () => {
     const ed = mount();
     load(ed, "<p></p>", 1);
@@ -389,11 +288,12 @@ describe("what leaves the editor is pinned", () => {
 
 describe("every rule row has its tests", () => {
   it("names each EDITOR_RULES id in this suite and in the real-keyboard rig", () => {
-    const here = readFileSync(resolve(__dirname, "rich-editor-marks.test.tsx"), "utf8");
+    const here = ["rich-editor-marks.test.tsx", "frame/write-mark-boundaries.test.tsx"]
+      .map((file) => readFileSync(resolve(__dirname, file), "utf8"));
     const rig = readFileSync(resolve(__dirname, "editor-feel/rules.pw.ts"), "utf8");
     const missing: string[] = [];
     for (const [id] of EDITOR_RULES) {
-      if (!here.includes(`[${id}]`)) missing.push(`${id} (jsdom)`);
+      if (!here.some((source) => source.includes(`[${id}]`))) missing.push(`${id} (jsdom)`);
       if (!rig.includes(`[${id}]`)) missing.push(`${id} (rig)`);
     }
     expect(missing).toEqual([]);

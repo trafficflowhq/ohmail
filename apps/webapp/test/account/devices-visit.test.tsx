@@ -6,10 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FactorSlot } from "@ohmail/app/account";
 import { en, json, refusal, serve, settle, type Server } from "./account-harness";
 import { hello, qr, watchClipboard, Words } from "./devices-support";
-import { DevicesPane, useDevices } from "../../../../packages/app/src/account/devices/index.js";
 import { serverHello } from "../../app/hello";
 import { useDevicesDoor } from "../../app/(product)/mailbox/devices-door";
-import { DevicesSection } from "../../app/(product)/mailbox/DevicesSection";
+import { ALLOWED_API_ORIGINS } from "../../app/api-origin";
+import { Frame } from "@ohmail/app/frame";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost, NO_ENGINE } from "../../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../../packages/app/test/support/fake-window.js";
 
 /**
  * THE CALLS OF ONE VISIT, BEFORE AND AFTER. The shipped section and the new pane over the web's filling are each
@@ -25,14 +28,6 @@ import { DevicesSection } from "../../app/(product)/mailbox/DevicesSection";
  */
 
 /** The shipped section's factor prompt, stood in for: the case answers it as the dialog would. */
-const prompt = vi.hoisted(() => ({ verified: null as null | (() => void) }));
-vi.mock("../../app/(product)/mailbox/StepUpPrompt", () => ({
-  StepUpPrompt: (props: { onVerified: () => void }) => {
-    prompt.verified = props.onVerified;
-    return null;
-  },
-}));
-
 const DEVICES = "GET /api/devices";
 const CODES = "GET /api/pair";
 const HELLO = "GET /api/hello";
@@ -127,7 +122,6 @@ beforeEach(() => {
   // The lane reads the clock: only the clock is stood in for, so a pause can pass at once.
   vi.useFakeTimers({ toFake: ["Date"] });
   verify = null;
-  prompt.verified = null;
   clipboard = watchClipboard();
   server = scripted();
 });
@@ -187,31 +181,24 @@ async function laneIs(state: "warm" | "cold"): Promise<void> {
   server.forget();
 }
 
-/** Both walks, each from the same state of the lane: what each asked, and what each handed the clipboard. */
-async function bothWalks(lane: "warm" | "cold") {
-  await laneIs(lane);
-  // The shipped section answers in the row: the press that asked turns into the answer.
-  const before = await walk(<DevicesSection />, {
-    factorVerified: () => prompt.verified!(),
-    confirm: (name) => press(name),
+/** One visit to mounted Settings, from the same warm or cold API state as the original walk. */
+async function mountedWalk(lane: "warm" | "cold") {
+  const settings = mailSettings({
+    ...NO_PANE_PARTS,
+    devices: { useDoor: useDevicesDoor, factor, qr },
   });
-  const copiedBefore = [...clipboard.written];
-  cleanup();
-  server.restore();
-  clipboard.restore();
-  clipboard = watchClipboard();
-  server = scripted();
-
-  function Anew() {
-    return <DevicesPane model={useDevices(useDevicesDoor())} factor={factor} qr={qr} />;
-  }
+  const { host } = fakeHost({
+    engine: NO_ENGINE, service: "managed", scope: "devices-visit",
+    address: fakeAddress("#/settings/devices"), places: { settings },
+    features: { devices: { name: "devices", render: () => null } },
+  });
+  const pairingHost = { ...host, capabilities: { ...host.capabilities, pairing: "account" as const } };
   await laneIs(lane);
-  // The new pane answers in its dialog.
-  const after = await walk(<Anew />, {
+  const asked = await walk(<Frame host={pairingHost} />, {
     factorVerified: () => verify!(),
     confirm: (name) => press(name, screen.getByRole("dialog")),
   });
-  return { before, after, copiedBefore, copiedAfter: [...clipboard.written] };
+  return { asked, copied: [...clipboard.written] };
 }
 
 describe("one visit to Settings › Devices asks the server the same things, in the same order", () => {
@@ -232,18 +219,15 @@ describe("one visit to Settings › Devices asks the server the same things, in 
   ];
 
   it("the shipped section and the new pane, while the API has answered lately", async () => {
-    const { before, after, copiedBefore, copiedAfter } = await bothWalks("warm");
+    const { asked, copied } = await mountedWalk("warm");
     // The handshake asks no session, so it is the first out; the lists follow, in their order.
-    expect(before).toEqual([`${HELLO} {}`, ...lists, ...then]);
-    expect(after).toEqual(before);
-    // Both hand the clipboard one link, the same one.
-    expect(copiedBefore).toHaveLength(1);
-    expect(copiedAfter).toEqual(copiedBefore);
+    expect(asked).toEqual([`${HELLO} {}`, ...lists, ...then]);
+    expect(copied).toHaveLength(1);
+    expect(copied).toEqual([`${ALLOWED_API_ORIGINS[0]}/pair#${MADE}`]);
   });
 
   it("the shipped section and the new pane, after a pause: the devices' read leads", async () => {
-    const { before, after } = await bothWalks("cold");
-    expect(before).toEqual([`${DEVICES} {}`, `${HELLO} {}`, `${CODES} {}`, ...then]);
-    expect(after).toEqual(before);
+    const { asked } = await mountedWalk("cold");
+    expect(asked).toEqual([`${DEVICES} {}`, `${HELLO} {}`, `${CODES} {}`, ...then]);
   });
 });

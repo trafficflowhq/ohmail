@@ -1,97 +1,24 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import type { EngineMessage, Folder } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OhmailEngine, MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
 import {
-  OhmailEngine,
-  MemoryMirrorStore,
-  mutationEffects,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
-import { withBodyDoor } from "./_body-door.js";
+  ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell.js";
 
 /**
- * THE SCREENER OPENS ON THE LATEST HELD MESSAGE — INCLUDING ON A WARM ACCOUNT.
- *
- * A sender waiting at the gate usually has more than one message. The held mail renders
- * OLDEST→NEWEST (`selectors.ts`: `held: [...newestFirst].reverse()`), so a fresh render sits at the
- * top on the OLDEST one and the reader takes their consent decision on the least current thing the
- * sender sent. `ScreenerView` fixes that by anchoring the LAST `.hmail` on selection.
- *
- * ── WHY "ON A WARM ACCOUNT" IS THE WHOLE POINT OF THIS FILE ──────────────────────────────────
- *
- * On the DEMO world every held message carries its body verbatim (`bodyOf`'s `m.body !== undefined`
- * branch), so the entries are their final height the first time the anchor runs and it lands
- * correctly. On a real Cloud account every held row is DERIVED: each body starts as a snippet and
- * arrives later through `hydrateBody`. The entries therefore GROW after the anchor has been
- * computed — and the anchor is a raw `scrollTop` in pixels, not an element reference, so growth
- * silently invalidates it. Three snippets at ~100px put the reader 186px down; the same three
- * messages hydrated are ~600px each, and 186px is now inside the FIRST message.
- *
- * That is invisible to every fixture-based test and to any check run against a cold mirror, which
- * is exactly the class of failure `CLAUDE.md` warns about: green against an empty dataset is worth
- * nothing.
- *
- * ── HOW THIS TEST SEES IT, GIVEN THAT jsdom HAS NO LAYOUT ────────────────────────────────────
- *
- * jsdom returns zeros from `getBoundingClientRect` and ignores `scrollTop` writes, so the anchor
- * arithmetic is unobservable by default and any assertion about it would be green by construction.
- * So layout is MODELLED, minimally and explicitly:
- *
- *  · `scrollTop` becomes a real read/write property backed by a `WeakMap`, so the assignment the
- *    component makes can be read back;
- *  · `getBoundingClientRect` on a `.hmail` reports `top = <its offset in the scroller> - scrollTop`,
- *    which is what a browser reports, and `0` for the scroller itself. The component computes
- *    `last.top - read.top + read.scrollTop`, so under this model it lands on the last entry's
- *    offset — the real semantics, not a stand-in for them;
- *  · an entry's height is SNIPPET_PX until its body is hydrated in the mirror and FULL_PX after,
- *    which is the growth the real account exhibits.
- *
- * The premise is asserted before the conclusion: the entries must actually have grown, or the
- * "re-anchored" assertion is about an input that never varied.
+ * The mounted Screener opens its newest letter while bodies are snippets, then keeps the reader's
+ * place as bodies grow. The layout model reports viewport positions from the mounted articles' own sizes.
  */
-
-// See the sync-liveness harness for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
 /** A collapsed held entry — a snippet line and its chrome. */
 const SNIPPET_PX = 100;
 /** The same entry once its body has landed. The ratio is what makes the defect visible. */
 const FULL_PX = 600;
 /** The component's own breathing room above the anchored entry, under the sticky decision bar. */
 const ANCHOR_SLACK = 14;
-/** The decision bar's height: the anchored letter lands below it, never under it (a tester, 0.30.8). */
-const BAR_PX = 90;
 
 // ── the layout model ────────────────────────────────────────────────────────────────────────
-
-const scrollTops = new WeakMap<Element, number>();
-
-Object.defineProperty(Element.prototype, "scrollTop", {
-  configurable: true,
-  get(this: Element) { return scrollTops.get(this) ?? 0; },
-  set(this: Element, v: number) { scrollTops.set(this, Math.max(0, v)); },
-});
 
 /** The ids `fetchBody` has answered for — the premise check, not the layout input. */
 let hydrated = new Set<string>();
@@ -104,7 +31,7 @@ let hydrated = new Set<string>();
 const FULL_BODY_MARK = "the whole of";
 
 function heightOf(el: Element): number {
-  const sid = (el as HTMLElement).dataset?.sid;
+  const sid = within(el as HTMLElement).queryByRole("heading", { level: 2 })?.textContent?.replace(/^Subject /, "");
   const set = sid === undefined ? undefined : grown.get(sid);
   if (set !== undefined) return set;
   return (el.textContent ?? "").includes(FULL_BODY_MARK) ? FULL_PX : SNIPPET_PX;
@@ -136,72 +63,58 @@ class StubResizeObserver {
 async function resized(...els: Element[]): Promise<void> {
   await act(async () => {
     for (const o of observers) {
-      const mine = new Set([...o.first, ...els.filter((e) => o.els.has(e))]);
+      const mine = new Set([...o.first, ...[...o.els].filter((parent) => els.some((el) => parent.contains(el)))]);
       o.first.clear();
       if (mine.size > 0) o.cb([...mine].map((target) => ({ target }) as ResizeObserverEntry), null as never);
     }
   });
 }
-/** The bodies' landing, reported as layout reports it: every mounted letter changed size. */
-const landed = (): Promise<void> => resized(...document.querySelectorAll(".view-screener .scn-read .hmail"));
-const card = (sid: string): HTMLElement =>
-  document.querySelector<HTMLElement>(`.view-screener .scn-read .hmail[data-sid="${sid}"]`)!;
-
-Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
-  const rect = (top: number, height: number): DOMRect =>
-    ({ top, height, bottom: top + height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
-
-  const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
-  if (this === read) return rect(0, 800);
-  // The decision bar: first in the column's flow and sticky at its top, so always at 0.
-  if (this.parentElement === read && (this as HTMLElement).classList.contains("decide")) return rect(0, BAR_PX);
-  if (!(this as HTMLElement).classList?.contains("hmail")) return rect(0, 0);
-
-  // The entry's offset inside the scroller is the bar plus the heights of its predecessors; a
-  // browser reports that MINUS the scroller's current scrollTop, which is what makes the
-  // component's `+ read.scrollTop` term correct rather than decorative.
-  const entries = [...(read?.querySelectorAll<HTMLElement>(".hmail") ?? [])];
-  let offset = read?.querySelector(":scope > .decide") ? BAR_PX : 0;
-  for (const e of entries) {
-    if (e === this) break;
-    offset += heightOf(e);
-  }
-  return rect(offset - (read ? read.scrollTop : 0), heightOf(this));
+const preview = () => within(host ?? document.body).queryByRole("region", { name: "Reading" });
+const scroller = () => preview()?.querySelector<HTMLElement>("[data-reading-scroll]") ?? null;
+const letters = () => {
+  const panel = preview();
+  return panel ? within(panel).queryAllByRole("article") : [];
 };
+const landed = () => resized(...letters());
+const card = (id: string): HTMLElement =>
+  within(preview()!).getByRole("heading", { name: `Subject ${id}` }).closest("article")!;
 
-/** The offset the LAST entry sits at, under the model above. */
-function offsetOfLast(): number {
-  const read = document.querySelector<HTMLElement>(".view-screener .scn-read")!;
-  const entries = [...read.querySelectorAll<HTMLElement>(".hmail")];
-  let offset = 0;
-  for (let i = 0; i < entries.length - 1; i++) offset += heightOf(entries[i]!);
-  return offset;
+function rect(top: number, height: number): DOMRect {
+  return { top, height, bottom: top + height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) };
 }
 
-const scrollerTop = (): number =>
-  document.querySelector<HTMLElement>(".view-screener .scn-read")!.scrollTop;
+function layout(this: Element): DOMRect {
+  const read = scroller();
+  if (this === read) return rect(0, 800);
+  if (this.tagName !== "ARTICLE" || !read?.contains(this)) return rect(0, 0);
+  let offset = 0;
+  for (const letter of letters()) {
+    if (letter === this) break;
+    offset += heightOf(letter);
+  }
+  return rect(offset - read.scrollTop, heightOf(this));
+}
+
+const offsetOfLast = (): number => letters().slice(0, -1).reduce((offset, letter) => offset + heightOf(letter), 0);
+const scrollerTop = (): number => scroller()!.scrollTop;
 
 // ── the world ───────────────────────────────────────────────────────────────────────────────
 
-const NOW = new Date("2026-08-10T12:00:00.000Z");
+const NOW = new Date(ISO);
 let seq = 0;
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 let bodyGate: (() => void) | null = null;
-
-const json = (v: unknown, status = 200) =>
-  new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 
 function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: "acct_live_1", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: `2026-08-10T${String(hour).padStart(2, "0")}:00:00.000Z`,
+    date: `2026-08-04T${String(hour).padStart(2, "0")}:00:00.000Z`,
     folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none",
-    updatedAt: "2026-08-10T09:00:00.000Z",
+    updatedAt: "2026-08-04T09:00:00.000Z",
   };
 }
 
@@ -250,74 +163,46 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
 }
 
 async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      // THE REAL hydration path, not a no-op: this test is about what happens when bodies land.
-      hydrateBody: (id: string) => { void engine.hydrateBody(id); },
-        hydrateBodies: (ids: string[], o?: { urgent?: boolean }) => { void engine.hydrateBodies(ids, o); },
-      full: false, onFull: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: withBodyDoor(engine, h(KeymapProvider, { children: h(Probe) })),
-        }),
-      }),
-    );
-  });
-  await flush();
-  await settleFirstPaint();
+  window.location.hash = "#/screener";
+  host = await mountShell([mailbox({
+    id: "mb", organizerRole: "organizer", organizeConsentedAt: ISO, lastSyncAt: ISO,
+  })], { engine, suggestWire: "none", junkWire: "none" });
+  await tick(50);
+  const list = within(host).getByRole("listbox", { name: "Screener" });
+  await act(async () => { within(list).getByRole("option").click(); });
+  await tick(0);
+  await landed();
 }
 
 async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await act(async () => { await Promise.resolve(); });
+  await tick(0);
+  await landed();
 }
 
 beforeEach(() => {
+  installShellEnv();
+  vi.stubGlobal("innerWidth", 1280);
+  vi.stubGlobal("ResizeObserver", StubResizeObserver);
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(layout);
+  window.localStorage.clear();
   hydrated = new Set();
   bodyGate = null;
   grown.clear();
-  globalThis.fetch = (async () => json({})) as typeof fetch;
-  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = StubResizeObserver;
 });
 
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+  bodyGate?.();
+  await teardownShellEnv();
   host = null;
   observers.clear();
-  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = priorResizeObserver;
+  vi.unstubAllGlobals();
 });
 
 /** One sender, three held messages — the ordinary multi-message shape at the gate. */
 const THREE = () => [
-  msg("oldest", "stranger@example.com", 8),
-  msg("middle", "stranger@example.com", 10),
-  msg("newest", "stranger@example.com", 12),
+  msg("oldest", "stranger@example.test", 8),
+  msg("middle", "stranger@example.test", 10),
+  msg("newest", "stranger@example.test", 12),
 ];
 
 describe("the Screener opens on the sender's LATEST held message", () => {
@@ -325,9 +210,7 @@ describe("the Screener opens on the sender's LATEST held message", () => {
     // The premise. If `held` were newest-first the anchor would be unnecessary and every assertion
     // below would be about nothing.
     await mount(await engineWith(THREE()));
-    const read = host!.querySelector<HTMLElement>(".view-screener .scn-read")!;
-    const subjects = [...read.querySelectorAll(".hmail")]
-      .map((e) => e.querySelector("h2")?.textContent ?? "");
+    const subjects = letters().map((letter) => within(letter).getByRole("heading", { level: 2 }).textContent ?? "");
     expect(subjects).toHaveLength(3);
     expect(subjects[0]).toContain("oldest");
     expect(subjects[2]).toContain("newest");
@@ -371,7 +254,7 @@ describe("the Screener opens on the sender's LATEST held message", () => {
 
   it("a single held message needs no anchoring and gets none", async () => {
     // The one-message case must not scroll at all: the entry is the whole content.
-    await mount(await engineWith([msg("only", "solo@example.com", 9)]));
+    await mount(await engineWith([msg("only", "solo@example.test", 9)]));
     expect(scrollerTop()).toBe(0);
     bodyGate?.();
     await flush();
@@ -401,7 +284,7 @@ describe("the read column holds its letter while the letters around it change", 
     bodyGate?.();
     await flush();
     await landed();
-    const read = document.querySelector<HTMLElement>(".view-screener .scn-read")!;
+    const read = scroller()!;
     read.scrollTop = 700; // the reader's own scroll: the oldest letter (0–600) is above the port
     grown.set("oldest", 900);
     await resized(card("oldest"));
@@ -412,21 +295,21 @@ describe("the read column holds its letter while the letters around it change", 
   });
 
   it("older letters mounted above the reader leave the letter they read in place, while their bodies land", async () => {
-    const six = ["c1", "c2", "c3", "c4", "c5", "c6"].map((id, i) => msg(id, "stranger@example.com", 6 + i));
+    const six = ["c1", "c2", "c3", "c4", "c5", "c6"].map((id, i) => msg(id, "stranger@example.test", 6 + i));
     await mount(await engineWith(six));
     bodyGate?.();
     await flush();
     await landed();
-    const read = document.querySelector<HTMLElement>(".view-screener .scn-read")!;
+    const read = scroller()!;
     Object.defineProperty(read, "clientHeight", { configurable: true, get: () => 800 });
-    expect(read.querySelectorAll(".hmail"), "premise: the newest three are mounted").toHaveLength(3);
+    expect(letters(), "premise: the newest three are mounted").toHaveLength(3);
     const topOf = (el: Element) => el.getBoundingClientRect().top;
     read.scrollTop = 100; // the reader scrolls up, into the first mounted letter
     const before = topOf(card("c4"));
     await act(async () => { read.dispatchEvent(new Event("scroll")); });
-    for (let i = 0; i < 3; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    await tick(60);
     await flush();
-    expect(read.querySelectorAll(".hmail"), "nothing older was mounted").toHaveLength(6);
+    expect(letters(), "nothing older was mounted").toHaveLength(6);
     expect(card("c1").getBoundingClientRect().height, "premise: grown before its first report").toBe(FULL_PX);
     await resized(card("c1"), card("c2"), card("c3"));
     expect(topOf(card("c4")), "the letter being read moved").toBe(before);

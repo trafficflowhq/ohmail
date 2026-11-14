@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { NONE } from "@ohmail/app/host";
+import { TextProvider } from "@ohmail/app/text";
+import { ConnectForm } from "../../../packages/app/src/mailboxes/connect/index.js";
+import { fakeDoor } from "../../../packages/app/test/mailboxes/connect/support.js";
 import { PROVIDERS, providerById, providerLabel } from "../app/shell/providers";
 
 /**
@@ -120,8 +124,11 @@ describe("About — the chrome translates, the imprint facts do not", () => {
 
 describe("the generic provider label — the one preset label that is prose", () => {
   it("the picker's manual tile is German in a German session", async () => {
-    const { ProviderPicker } = await import("../app/shell/ProviderPicker.js");
-    const el = await mount("de", h(ProviderPicker, { value: null, onChange: () => {} }));
+    const { door } = fakeDoor();
+    const el = await mount("de", h(TextProvider, {
+      locale: "de", messages: DE as never, timeZone: "UTC",
+      children: h(ConnectForm, { door, ask: { purpose: { kind: "add" }, onDone: () => {} }, factor: NONE }),
+    }));
     expect(el.textContent).toContain("Jedes andere IMAP-Postfach");
     expect(el.textContent).not.toContain("Any other IMAP mailbox");
     // The brand tiles are names, not prose, and keep their string in every language.
@@ -140,11 +147,9 @@ describe("the generic provider label — the one preset label that is prose", ()
 /**
  * ── A ROW THE SHARED FILE DRAWS ON EVERY SURFACE MAY NOT NAME ONE SURFACE ──────────────────
  *
- * Settings → General's first four rows are drawn by `SettingsView` DIRECTLY rather than injected
- * by a host, and each of their comments says why: both surfaces have a language, a theme, a face
- * and a picture-quality dial, and none of the four needs a server. So the same sentence renders in
- * a browser tab and in the desktop window, and "compressed in this browser" was false in the
- * second — which is how it was reported, from a walk of the desktop app.
+ * The shared General pane draws the language, theme, face and picture-quality explanations.
+ * The host supplies the controls. The same explanations apply wherever those controls are offered.
+ * A desktop walk found that the image quality explanation incorrectly referred to a browser.
  *
  * This is NOT a sweep over the catalogue, deliberately. Most of the strings that name a browser
  * name it correctly: signing out talks about the mail cached in this browser, and there is no
@@ -153,7 +158,7 @@ describe("the generic provider label — the one preset label that is prose", ()
  * a host-injected sentence that says "this browser" and must stay legal.
  */
 describe("the settings rows every surface gets do not name one surface", () => {
-  /** `SettingsView`'s own General section: LanguageRow, theme, FaceRow, ImageQualityRow. */
+  /** Copy read by the shared General pane. */
   const SHARED_ROW_HINTS = [
     "languageHint", "languageHintLocal", "themeHint", "faceHint", "imageQualityHint",
   ] as const;
@@ -167,7 +172,7 @@ describe("the settings rows every surface gets do not name one surface", () => {
       expect(
         NAMES_A_BROWSER.test(s),
         `${lang}.json settings.${key} names a browser, and this row renders in the desktop `
-          + `window too — SettingsView draws it directly, not through a host. Name the device, `
+          + `window too. Name the device, `
           + `or move the row behind a host that only the browser supplies.\n  ${s}`,
       ).toBe(false);
     }

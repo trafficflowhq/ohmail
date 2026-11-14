@@ -111,6 +111,47 @@ afterEach(async () => {
 });
 
 describe("the storage-owner boundary", () => {
+  it("keeps Screening reads and changes with the account that opened Settings", async () => {
+    const { bindApiOwner, screeningSettings, screenerAutoFiled } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    bindApiOwner(A);
+    await expect(screeningSettings.get(A)).resolves.toBeTruthy();
+    expect(asked).toHaveLength(1);
+
+    const staleChange = screeningSettings.set({ ohboxBar: "A's private preference" }, A);
+    setOwnerCookie(B);
+    bindApiOwner(B);
+    await expect(staleChange).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(screenerAutoFiled.get(A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(screenerAutoFiled.undo(["the selected filing"], A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    expect(asked).toHaveLength(1);
+
+    duringFlight = () => {
+      setOwnerCookie(A);
+      bindApiOwner(A);
+    };
+    await expect(screeningSettings.get(B)).rejects.toMatchObject({ code: "owner_mismatch" });
+    expect(asked).toHaveLength(2);
+  });
+
+  it("keeps Screening consent and suggestion requests under their original account", async () => {
+    const { bindApiOwner, consent, screener } = await import("../app/api-client.js");
+    setOwnerCookie(A);
+    bindApiOwner(A);
+    await expect(consent.state(A)).resolves.toBeTruthy();
+    const staleOptIn = consent.setAutoSuggest(true, A);
+    setOwnerCookie(B);
+    bindApiOwner(B);
+    await expect(staleOptIn).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(consent.setAutoAct(true, A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(consent.setDormancyDays(90, "window", A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(consent.setBlockAutoUnsubscribe(true, A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(consent.seedReview(A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(consent.confirmSeed([], {}, A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    await expect(screener.suggest([], { dryRun: true }, A)).rejects.toMatchObject({ code: "owner_mismatch" });
+    expect(asked).toHaveLength(1);
+  });
+
   it("is OFF on a genuinely public surface", async () => {
     const { api } = await import("../app/api-client.js");
     setOwnerCookie(null);

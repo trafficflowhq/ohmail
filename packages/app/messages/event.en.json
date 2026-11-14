@@ -1,5 +1,8 @@
 {
   "event": {
+    "undoDelete": "Undo",
+    "deleteUndone": "Event restored",
+    "undoLate": "Too late to undo",
     "waiting": {
       "device": "Not sent yet from this device",
       "provider": "Waiting for the calendar"
@@ -19,6 +22,7 @@
       "unknown": "The change was not saved."
     },
     "refusal": {
+      "changed": "The event has changed. Open it again to see the latest version.",
       "off": "The calendar is off for this account.",
       "readOnly": "This calendar can be looked at, not changed.",
       "full": "Too many changes are waiting. Try again in a moment.",
@@ -31,6 +35,7 @@
       "unknown": "The change was not saved."
     },
     "taken": {
+      "deleteAudience": "Event removed. Cancellation for {guests}.",
       "create": "Event added",
       "update": "Change saved",
       "delete": "Event removed",

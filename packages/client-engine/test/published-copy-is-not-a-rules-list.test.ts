@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-/* @reads: apps/webapp/app/ packages/app-logic/src/ apps/mobile/src/
+/* @reads: apps/webapp/app/ packages/app-logic/src/ packages/app/src/ apps/mobile/src/
    Walked by path, so a landing selects this file when any of these roots moves. */
 
 /**
@@ -19,7 +19,9 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * a planted view proves the refusal.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/mobile/src"];
+/* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): the new shell's places, panes and the Rules pane are
+   `packages/app/src`, read beside today's views and refused as they are (a surface that draws, never a consent reader). */
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "packages/app/src", "packages/letter-body/src", "apps/mobile/src"];
 const SKIP = new Set(["node_modules", "dist", ".next"]);
 
 /** Every file that reads the published copy, and the consent question it reads it for. */
@@ -34,7 +36,7 @@ const ADMITTED: Record<string, string> = {
   "packages/app-logic/src/consent/consent-row.ts": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
 };
 /** Where a published-copy read is refused whatever its reason: the surfaces that list rules. */
-const REFUSED_ZONES = [/^apps\/webapp\/app\/views\//, /^apps\/webapp\/app\/shell\/rules-/, /^apps\/mobile\/src\/ui\//];
+const REFUSED_ZONES = [/^apps\/webapp\/app\/views\//, /^apps\/webapp\/app\/shell\/rules-/, /^packages\/app\/src\//, /^apps\/mobile\/src\/ui\//];
 
 const READ = /\bmailboxProfiles\s*\(|\.(?:list|get|entries)\s*(?:<[^>()]*>)?\s*\(\s*(?:MAILBOX_PROFILE_TYPE\b|["']mailbox_profile["'])/g;
 

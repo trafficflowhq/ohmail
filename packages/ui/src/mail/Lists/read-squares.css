@@ -196,4 +196,19 @@
   :root[data-touch="1"] .oh-readsquares[data-long] {
     touch-action: pan-y;
   }
+
+  .oh-square-tip-time {
+    margin-inline-start: var(--s2);
+    color: var(--ink2);
+  }
+
+  .oh-square-tip-line {
+    display: block;
+  }
+}
+
+.oh-readsquares-slot[data-hold-tip] {
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }

@@ -1,139 +1,58 @@
 /** @vitest-environment jsdom */
+// First: the new shell's door pins the API base before anything reads it.
+import { act } from "../fixtures/live-walk-shell.js";
+import { mountSeated, seatDown, seatEnv, setViewport } from "../_ohbox-2-seated.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
-import { ToastHost } from "@ohmail/ui";
-import messages from "../../messages/en.json";
 
-/**
- * PULL NEW MAIL IS ONE FLIGHT, BY FINGER OR BY MENU. Under a finger the Ohbox pulled down at its top presses the same
- * binding the list's menu item presses: the shell's one `usePullNewMail`, whose latch lets one ring out at a time.
- * A pull and a press of the menu's item while it is under way put one `POST /sync/pull` on the wire, not two.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-/** A phone's browser: a coarse pointer, as the browser shell reads it. */
-function phoneWindow(): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
-    ({
-      matches: query === "(pointer: coarse)",
-      media: query,
-      onchange: null,
-      addListener() {},
-      removeListener() {},
-      addEventListener() {},
-      removeEventListener() {},
-      dispatchEvent() {
-        return false;
-      },
-    }) as unknown as MediaQueryList;
-}
-
-const json = (status: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+/** A pull gesture and the list's menu item share one in-flight pull request. Exercise both entry points while the first request is pending. */
 
 let posts: number;
 /** The ring's answer waits until the test lets it go: the flight stands while both triggers are pressed. */
 let release: (() => void) | null;
-const originalFetch = globalThis.fetch;
 
-function letter(id: string): Record<string, unknown> {
-  return {
-    id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: id, from: { name: id, address: `${id}@ex.example` }, to: [], cc: [],
-    date: "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: "s", unread: true,
-    hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-  };
+/** A phone's browser: one column, and a coarse pointer, as the browser shell reads it. */
+function phoneWindow(): void {
+  setViewport(true);
+  const narrow = window.matchMedia;
+  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
+    query === "(pointer: coarse)" ? ({ ...narrow(query), matches: true }) as MediaQueryList : narrow(query);
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+/** The served ring held: every `POST /sync/pull` counted, its answer kept until `release`. */
+function holdTheRing(): void {
+  const base = globalThis.fetch;
+  globalThis.fetch = ((url: unknown, init?: RequestInit) => {
+    if ((init?.method ?? "GET").toUpperCase() === "POST" && /\/sync\/pull$/.test(String(url))) {
+      posts += 1;
+      return new Promise<Response>((done) => {
+        release = () =>
+          done(new Response(JSON.stringify({ requested: 1, requestedAt: "2026-08-04T09:00:00.000Z", mailboxes: [] }), {
+            status: 202, headers: { "content-type": "application/json" },
+          }));
+      });
+    }
+    return base(url as RequestInfo, init);
+  }) as typeof globalThis.fetch;
+}
+
+let host: HTMLElement | null = null;
 
 beforeEach(() => {
   posts = 0;
   release = null;
+  seatEnv(true);
   phoneWindow();
-  globalThis.fetch = ((url: string, init?: RequestInit) => {
-    const u = String(url);
-    if ((init?.method ?? "GET") === "POST" && u === "/api/sync/pull") {
-      posts += 1;
-      return new Promise<Response>((done) => {
-        release = () =>
-          done(json(202, { requested: 1, requestedAt: "2026-08-02T09:00:00.000Z", mailboxes: [] }));
-      });
-    }
-    if (u.startsWith("/api/sync?"))
-      return Promise.resolve(
-        json(200, {
-          changes: { creates: [], updates: [], moves: [], deletes: [] },
-          cursor: "AA",
-          hasMore: false,
-          serverTime: "2026-08-02T09:00:00.000Z",
-        }),
-      );
-    return Promise.resolve(json(404, { error: { code: "not_found", message: u } }));
-  }) as unknown as typeof fetch;
 });
 
 afterEach(async () => {
   release?.();
-  if (root) await act(async () => root!.unmount());
-  host?.remove();
-  root = null;
   host = null;
-  globalThis.fetch = originalFetch;
+  await seatDown();
 });
 
 async function mount(): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const { EngineProvider } = await import("../../app/shell/engine");
-  const { usePullNewMail } = await import("../../app/shell/PullNewMail");
-  const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
-  const engine = new OhmailEngine({ adapter: createSyncGate(null).guard(new HttpAdapter({ baseUrl: "/api" })) });
-
-  /* The shell's one binding, handed to the Ohbox as the shell hands it. */
-  function Shell(): React.ReactElement {
-    const pull = usePullNewMail();
-    return h(OhboxView as never, {
-      owed: false, demo: false, settled: true, pull,
-      newForYou: [letter("n1"), letter("n2")], previouslySeen: [],
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(ToastHost, {
-          children: h(EngineProvider as never, {
-            demo: false, engine,
-            children: h(KeymapProvider as never, { children: h(Shell) } as never),
-          } as never),
-        }),
-      }),
-    );
-  });
+  host = await mountSeated([{ id: "n1", unread: true }, { id: "n2", unread: true }]);
+  holdTheRing();
 }
 
 function touches(type: string, at: { x: number; y: number } | null): Event {

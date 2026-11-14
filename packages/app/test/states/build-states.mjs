@@ -33,8 +33,6 @@ const TODAY = () => [
   ...sheetsUnder("packages/ui/src"),
   "apps/webapp/app/app.css",
   "apps/webapp/app/zero-layout.css",
-  "apps/webapp/app/shell/today.css",
-  "apps/webapp/app/shell/today-tokens.generated.css",
 ];
 const sheet = (file) => readFileSync(join(ROOT, file), "utf8").replace(/@import[^;]+;/g, "");
 

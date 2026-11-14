@@ -229,3 +229,24 @@ describe("the edge of what this device holds", () => {
     });
   });
 });
+
+it.each([
+  ["occurrence", ["2026-11-02", "2026-11-17"]],
+  ["following", ["2026-11-02"]],
+] as const)(
+  "hides only the dates under a pending %s deletion and restores them on Undo",
+  (kind, remaining) => {
+    const at = mondayAtNine("2026-11-09");
+    const rows = SERIES.map(held);
+    const list = (events: readonly EventWithWrites[]) =>
+      occurrencesIn({
+        events,
+        calendars: [calendar("cal-1")],
+        query: NOVEMBER,
+        zone: ZURICH,
+        zones,
+      }).shown.map(({ day }) => day);
+    expect(list([{ ...rows[0]!, removals: [{ kind, at }] }, ...rows.slice(1)])).toEqual(remaining);
+    expect(list(rows)).toEqual(["2026-11-02", "2026-11-09", "2026-11-17"]);
+  },
+);

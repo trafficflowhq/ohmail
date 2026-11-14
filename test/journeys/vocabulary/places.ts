@@ -31,7 +31,8 @@ export const PLACES = {
   triage: view("triage", "triage.title"),
   history: view("history", "history.title"),
   search: view("search", "search.title"),
-  compose: view("compose", "compose.title"),
+  /** Write's place: its letter is the reading column's sheet, named as the kit's Write names it (`write.letter`). */
+  compose: { id: "compose", route: "#/compose", landmark: { role: "region", key: "write.letter" } },
   drafts: view("drafts", "drafts.title"),
   trash: view("trash", "rail.trash"),
   settings: view("settings", "settings.title"),

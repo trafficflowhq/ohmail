@@ -5,6 +5,7 @@
   "DELETE /calendar/writes/:id",
   "DELETE /devices/:id",
   "DELETE /drafts/:id",
+  "DELETE /drafts/:id/conditional",
   "DELETE /drafts/:id/schedule",
   "DELETE /folders/:id",
   "DELETE /folders/:id/op",

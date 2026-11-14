@@ -1,4 +1,4 @@
-import type { EngineDraft, EngineMessage } from "@ohmail/wire";
+import type { EngineDraft, EngineMessage, WithheldMarker } from "@ohmail/wire";
 import {
   HISTORY_PAGE_ROWS, type StorePage, storePageKey, type StorePageOpts, type StorePageOutcome, type StoreSearchKey,
   storeSearchList, storeSearchPageKey, type StoreTimelineOutcome,
@@ -8,6 +8,11 @@ import { EngineArchive } from "./archive.js";
 import {
   errorClassOf, type ServerSearchOpts, type ServerSearchOutcome, type ServerSearchSort,
 } from "./server-wire.js";
+
+type OffMirrorBody =
+  | { state: "ready"; text: string; html: string | null; withheld?: WithheldMarker }
+  | { state: "unavailable" }
+  | { state: "failed"; errorClass: string };
 
 export abstract class EngineTimeline extends EngineArchive {
   // ── the store's timeline: History, paged ─────────────────────────────────
@@ -98,13 +103,26 @@ export abstract class EngineTimeline extends EngineArchive {
    * RETURNED, never written: a body record without its message row is exactly what the mirror's
    * bounds forbid. A mirror row takes `hydrateBody` instead. Never rejects.
    */
-  async readBodyOffMirror(messageId: string): Promise<
-    { state: "ready"; text: string; html: string | null } | { state: "unavailable" } | { state: "failed"; errorClass: string }
-  > {
+  readBodyOffMirror(messageId: string): Promise<OffMirrorBody> {
+    const current = this.offMirrorBodyCalls.get(messageId);
+    if (current) return current;
+    const call = this.fetchOffMirrorBody(messageId).finally(() => this.offMirrorBodyCalls.delete(messageId));
+    this.offMirrorBodyCalls.set(messageId, call);
+    return call;
+  }
+
+  private readonly offMirrorBodyCalls = new Map<string, Promise<OffMirrorBody>>();
+
+  private async fetchOffMirrorBody(messageId: string): Promise<OffMirrorBody> {
     try {
       const wire = await this.adapter.fetchBody(messageId, { urgent: true });
       if (wire === null) return { state: "unavailable" };
-      return { state: "ready", text: typeof wire.text === "string" ? wire.text : "", html: typeof wire.html === "string" ? wire.html : null };
+      return {
+        state: "ready",
+        text: typeof wire.text === "string" ? wire.text : "",
+        html: typeof wire.html === "string" ? wire.html : null,
+        ...(wire.withheld ? { withheld: wire.withheld } : {}),
+      };
     } catch (err) {
       return { state: "failed", errorClass: errorClassOf(err) };
     }

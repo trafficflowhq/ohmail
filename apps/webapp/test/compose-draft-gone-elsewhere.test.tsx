@@ -7,14 +7,16 @@
  */
 import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { composeSessionId, handOffComposer, readComposeDraft, readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import { COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { claimSendLock, SEND_LOCK_FORMAT, type SendLock } from "@ohmail/app-logic/writing/send-lock";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { act, message, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
+import { act, message, messageRow, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
 
 /** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
 const OWNER = "acc-gone-elsewhere";
@@ -39,9 +41,15 @@ const deletedElsewhere = (): SyncChange => ({
 let shell: DraftShell;
 const q = <T extends Element>(sel: string): T | null => shell.el.querySelector<T>(sel);
 const text = (): string => shell.el.textContent ?? "";
+const subject = (): HTMLTextAreaElement | null =>
+  q('[role="region"][aria-label="New message"] textarea[aria-label="Subject"]');
+const draftRow = (id: string): HTMLElement | null =>
+  q('[data-rail-id="drafts"] [aria-current="page"]') ? q(`[role="option"][data-id="${id}"]`) : null;
 const button = (label: string): HTMLButtonElement | null =>
-  Array.from(shell.el.querySelectorAll<HTMLButtonElement>(".view-compose button"))
-    .find((b) => (b.textContent ?? "").trim().startsWith(label) && !/later/i.test(b.textContent ?? "")) ?? null;
+  [...shell.el.querySelectorAll<HTMLButtonElement>('[role="region"][aria-label="New message"] button')]
+    .find((b) => (b.getAttribute("aria-label") ?? b.textContent?.trim()) === label) ?? null;
+const report = (): string => [...document.querySelectorAll('.fr-report [role="status"]')]
+  .map((n) => n.textContent ?? "").join(" | ");
 const saves = (): Array<{ draftId?: string | null; subject?: string }> =>
   shell.sent.filter((m) => m.kind === "draft_save") as Array<{ draftId?: string | null; subject?: string }>;
 const sends = (): EngineMutation[] => shell.sent.filter((m) => m.kind === "mail_send");
@@ -49,8 +57,8 @@ const rows = (list: Array<{ draftId?: string | null; subject?: string }>): Array
   list.map((m) => ({ row: m.draftId ?? null, subject: m.subject }));
 
 async function typeSubject(value: string): Promise<void> {
-  const input = q<HTMLInputElement>("#compose-subject")!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  const input = subject()!;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
   await act(async () => {
     setter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -61,19 +69,19 @@ const sync = async (): Promise<void> => { await act(async () => { await shell.en
 
 async function openLetter(over: Partial<EngineDraft> = {}): Promise<void> {
   shell = await mountShell("#/drafts", [], [letter(over)]);
-  await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-  await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-  await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+  await waitFor(() => draftRow(D) !== null, "the letter in Drafts");
+  await press(draftRow(D), "open the letter");
+  await waitFor(() => subject()?.value === "Plans for Friday", "the editor on the letter");
 }
 
-/** This tab's Delete in the Drafts list, confirmed, while the editor holds the row. */
+/** Discard commits after its Undo window closes. */
 async function deleteFromDrafts(): Promise<void> {
   await act(async () => { window.location.hash = "#/drafts"; });
-  await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-discard`) !== null, "the row in Drafts");
-  await press(q(`.draft-row[data-id="${D}"] .draft-discard`), "Delete");
-  const confirm = Array.from(shell.el.querySelectorAll<HTMLButtonElement>(".draft-confirm button"))
-    .find((b) => (b.textContent ?? "").trim() === drafts.discardConfirm) ?? null;
-  await press(confirm, "confirm the delete");
+  await waitFor(() => draftRow(D) !== null, "the row in Drafts");
+  const row = draftRow(D)!.closest<HTMLElement>(".dr-row")!;
+  await press(within(row).getByRole("button", { name: drafts.discard }), "Discard");
+  await waitFor(() => draftRow(D) === null, "the row hidden during Undo");
+  await pause(UNDO_MS);
 }
 
 /** Open the letter, then let another device's delete arrive on `/sync`. */
@@ -166,9 +174,9 @@ describe("a draft deleted on another device while it is open here", () => {
     await pause(200);
     shell.refuseDiscard.on = false;
     // The refused Discard emptied the editor; the letter is opened again from Drafts.
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter still in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter again");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await waitFor(() => draftRow(D) !== null, "the letter still in Drafts");
+    await press(draftRow(D), "open the letter again");
+    await waitFor(() => subject()?.value === "Plans for Friday", "the editor on the letter");
     shell.remote.push(deletedElsewhere());
     await sync();
     await act(async () => { window.location.hash = "#/compose"; });
@@ -178,9 +186,12 @@ describe("a draft deleted on another device while it is open here", () => {
 
   it("Cancel says what it closes: the draft is already gone", async () => {
     await openThenDeletedElsewhere();
-    await press(q<HTMLButtonElement>(".compose-cancel"), "Cancel");
-    expect(q<HTMLElement>("#compose-cancel-what")?.textContent, "Cancel promised to delete a draft that is gone")
-      .toBe(compose.cancelWhatDeletedElsewhere);
+    const discard = within(shell.el).getByRole("button", { name: /^Discard/ });
+    expect(discard.getAttribute("title"), "Discard promised to delete a draft that is gone")
+      .toContain(compose.cancelWhatDeletedElsewhere);
+    await press(discard, "Discard");
+    await waitFor(() => report().includes(messages.ohbox.undo), "Undo offered after closing the local copy");
+    expect(shell.sent.filter((m) => m.kind === "draft_discard" || m.kind === "mail_send")).toEqual([]);
   }, 30_000);
 
   it("the server's 404 to this editor's own save says so before any /sync does, and the words become a new draft", async () => {
@@ -234,7 +245,7 @@ describe("a draft sent from another device while this tab was closed", () => {
     await reopenSent();
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => saves().length > 0, "a save of the kept words", 40).catch(() => undefined);
-    expect({ form: q<HTMLInputElement>("#compose-subject")?.value ?? null, saves: rows(saves()) },
+    expect({ form: subject()?.value ?? null, saves: rows(saves()) },
       "the reconcile cleared words the sent row never held")
       .toEqual({ form: "Plans for Friday, typed before closing", saves: [{ row: null, subject: "Plans for Friday, typed before closing" }] });
     expect(text().includes(compose.sentElsewhereKept ?? "\u0000"), "the editor did not say why").toBe(true);
@@ -370,7 +381,7 @@ describe("this tab's Discard in Drafts of the letter the editor holds", () => {
     await act(async () => { window.location.hash = "#/compose"; });
     await pause(AUTOSAVE_DELAY_MS + 400);
     expect({
-      subject: q<HTMLInputElement>("#compose-subject")?.value ?? null,
+      subject: subject()?.value ?? null,
       resumed: text().includes(compose.resumedNote!),
       buffer: readComposeDraft(OWNER).subject, row: readComposeRow(OWNER), creates: creates(),
     }, "the discarded letter came back in Compose").toEqual({ subject: "", resumed: false, buffer: "", row: null, creates: [] });
@@ -393,10 +404,10 @@ describe("this tab's Discard in Drafts of the letter the editor holds", () => {
     await deleteFromDrafts();
     await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the refused delete");
     await pause(200);
-    const listed = q(`.draft-row[data-id="${D}"]`) !== null;
+    const listed = draftRow(D) !== null;
     await act(async () => { window.location.hash = "#/compose"; });
     await pause(AUTOSAVE_DELAY_MS + 400);
-    expect({ listed, subject: q<HTMLInputElement>("#compose-subject")?.value ?? null, saves: saves().length, row: readComposeRow(OWNER) },
+    expect({ listed, subject: subject()?.value ?? null, saves: saves().length, row: readComposeRow(OWNER) },
       "a refused Discard put the letter back in the editor, or wrote it").toEqual({ listed: true, subject: "", saves: 0, row: null });
   }, 30_000);
 });
@@ -420,7 +431,7 @@ describe("a reload whose stored letter names a row deleted while the tab was clo
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => saves().length > 0, "the save");
     await reopenGone();
-    expect({ form: q<HTMLInputElement>("#compose-subject")?.value ?? null, buffer: readComposeDraft(OWNER).subject, row: readComposeRow(OWNER), creates: creates() },
+    expect({ form: subject()?.value ?? null, buffer: readComposeDraft(OWNER).subject, row: readComposeRow(OWNER), creates: creates() },
       "the reload re-saved a letter deleted on another device").toEqual({ form: "", buffer: "", row: null, creates: [] });
   }, 30_000);
 
@@ -474,7 +485,7 @@ describe("a save that waited offline, then the row was deleted on another device
     await openLetter();
     await editThroughTheQueue("Plans for Friday, edited offline");
     await reload("#/compose");
-    expect({ creates: creates(), form: q<HTMLInputElement>("#compose-subject")?.value ?? null, row: readComposeRow(OWNER), kept: text().includes(compose.deletedElsewhereKept!) },
+    expect({ creates: creates(), form: subject()?.value ?? null, row: readComposeRow(OWNER), kept: text().includes(compose.deletedElsewhereKept!) },
       "a letter whose every word reached the deleted row was made again").toEqual({ creates: [], form: "", row: null, kept: false });
   }, 60_000);
 
@@ -506,7 +517,7 @@ describe("a save that waited offline, then the row was deleted on another device
     shell.offline.on = false;
     await online();
     await pause(AUTOSAVE_DELAY_MS + 400);
-    expect({ creates: creates(), form: q<HTMLInputElement>("#compose-subject")?.value ?? null, says: text().includes(compose.deletedElsewhere!) })
+    expect({ creates: creates(), form: subject()?.value ?? null, says: text().includes(compose.deletedElsewhere!) })
       .toEqual({ creates: [], form: "Plans for Friday, maybe saved", says: true });
   }, 60_000);
 
@@ -516,9 +527,9 @@ describe("a save that waited offline, then the row was deleted on another device
     await typeSubject("Plans for Friday, maybe saved");
     await pause(AUTOSAVE_DELAY_MS + 400);
     await reload("#/compose");
-    const first = { creates: creates().length, form: q<HTMLInputElement>("#compose-subject")?.value ?? null, kept: text().includes(compose.deletedElsewhereKept!), says: text().includes(compose.deletedElsewhere!) };
+    const first = { creates: creates().length, form: subject()?.value ?? null, kept: text().includes(compose.deletedElsewhereKept!), says: text().includes(compose.deletedElsewhere!) };
     await reload("#/compose");
-    const second = { creates: creates().length, form: q<HTMLInputElement>("#compose-subject")?.value ?? null };
+    const second = { creates: creates().length, form: subject()?.value ?? null };
     shell.offline.on = false;
     await typeSubject("Plans for Friday, maybe saved, and more");
     await pause(AUTOSAVE_DELAY_MS + 400);
@@ -535,9 +546,9 @@ describe("a draft changed on another device while it is open here", () => {
   const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
   async function openVersioned(): Promise<void> {
     shell = await mountShell("#/drafts", [], [letter()], { versions: true });
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await waitFor(() => draftRow(D) !== null, "the letter in Drafts");
+    await press(draftRow(D), "open the letter");
+    await waitFor(() => subject()?.value === "Plans for Friday", "the editor on the letter");
   }
 
   it("typing over the other version keeps both texts: the row keeps theirs, what was typed here is a new draft, and it says so", async () => {
@@ -574,18 +585,50 @@ describe("a draft changed on another device while it is open here", () => {
 
   it("Send handed off over the other version: the words typed since the last save become a new draft and stay in the buffer", async () => {
     shell = await mountShell("#/drafts", [], [letter()], { versions: true, handOff: true });
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await waitFor(() => draftRow(D) !== null, "the letter in Drafts");
+    await press(draftRow(D), "open the letter");
+    await waitFor(() => subject()?.value === "Plans for Friday", "the editor on the letter");
     await shell.editElsewhere(D, { body: "Written on the other device." });
     await sync();
     await typeSubject("Plans for Friday, typed here");
     await press(button("Send"), "Send");
     await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 120).catch(() => undefined);
+    await waitFor(() => text().includes(compose.changedElsewhere!), "the new draft acknowledged");
     expect({ took: sends().length, creates: creates(), buffer: readComposeDraft(OWNER).subject, says: text().includes(compose.changedElsewhere!) },
       "the line said the words were kept as a new draft, and none was made").toEqual({
       took: 1, creates: [{ row: null, subject: "Plans for Friday, typed here" }], buffer: "Plans for Friday, typed here", says: true,
     });
+  }, 30_000);
+
+  it("says once that it kept the words when the handed-off letter is reopened before a version refusal", async () => {
+    shell = await mountShell("#/drafts", [], [letter()], { versions: true, handOff: true });
+    await waitFor(() => draftRow(D) !== null, "the letter in Drafts");
+    await press(draftRow(D), "open the letter");
+    await waitFor(() => subject()?.value === "Plans for Friday", "the editor on the letter");
+    const revised = "Plans for Friday, typed here";
+    await typeSubject(revised);
+    let release!: () => void;
+    shell.sendGate.wait = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await press(button("Send"), "Send");
+      await waitFor(() => sends().length === 1 && subject() === null, "the sent letter left Write");
+      await act(async () => { window.location.hash = "#/compose"; });
+      await waitFor(() => subject()?.value === revised, "Write reopened on the letter in flight");
+      await shell.editElsewhere(D, { body: "Written on the other device." });
+      Object.assign(shell.refuseSend, { on: true, code: "draft_changed" });
+    } finally {
+      await act(async () => { release(); });
+    }
+
+    const kept = compose.changedElsewhere!;
+    const write = () => q('[role="region"][aria-label="New message"]');
+    await waitFor(() => write()?.textContent?.includes(kept) === true, "Write says the draft was kept");
+    expect(text().split(kept)).toHaveLength(2);
+    expect(creates()).toEqual([{ row: null, subject: revised }]);
+    expect(readComposeDraft(OWNER).subject).toBe(revised);
+    expect(sends()).toHaveLength(1);
+    await sync();
+    expect(shell.store.get<EngineDraft>("draft", D)?.body).toBe("Written on the other device.");
   }, 30_000);
 
   it("autosaved, then the other device's write, then Send: what is on screen becomes a new draft, and the buffer keeps it", async () => {
@@ -672,11 +715,11 @@ describe("a save refused, then a draft opened from Drafts", () => {
   const B = "d-other";
   const other = letter({ id: B, subject: "Invoice" });
   const TYPED = "Plans for Friday, typed here";
-  const field = (): string | null => q<HTMLInputElement>("#compose-subject")?.value ?? null;
+  const field = (): string | null => subject()?.value ?? null;
   async function openRow(id: string): Promise<void> {
     await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => q(`.draft-row[data-id="${id}"] .draft-open`) !== null, `${id} in Drafts`);
-    await press(q(`.draft-row[data-id="${id}"] .draft-open`), `open ${id}`);
+    await waitFor(() => draftRow(id) !== null, `${id} in Drafts`);
+    await press(draftRow(id), `open ${id}`);
     await pause(300);
   }
   /** The letter open here, and a save of these words the account refused for good. */
@@ -699,7 +742,7 @@ describe("a save refused, then a draft opened from Drafts", () => {
   it("another row: not opened over them, and it says why", async () => {
     await refused();
     await openRow(B);
-    const toast = [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+    const toast = report();
     expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!) }).toEqual({ buffer: TYPED, said: true });
   }, 60_000);
 
@@ -716,7 +759,7 @@ describe("a save refused, then a draft opened from Drafts", () => {
       await act(async () => { window.dispatchEvent(new Event("online")); await shell.engine.flushPending().catch(() => undefined); });
       await pause(300);
       await openRow(target);
-      const toast = [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+      const toast = report();
       expect({ buffer: readComposeDraft(OWNER).subject, said: toast.includes(drafts.reopenBlockedUnsaved!) })
         .toEqual({ buffer: TYPED, said: target === B });
       if (target === D) expect(field()).toBe(TYPED);
@@ -732,8 +775,8 @@ describe("a save refused, then a draft opened from Drafts", () => {
     await typeSubject(TYPED);
     await pause(AUTOSAVE_DELAY_MS + 200);
     await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
-    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open it again");
+    await waitFor(() => draftRow(D) !== null, "the letter in Drafts");
+    await press(draftRow(D), "open it again");
     await act(async () => { shell.saveGate.wait = null; land(); });
     await pause(300);
     expect({ field: field(), buffer: readComposeDraft(OWNER).subject }).toEqual({ field: TYPED, buffer: TYPED });
@@ -793,17 +836,13 @@ describe("a save refused, then a draft opened from Drafts", () => {
     await typeSubject(TYPED);
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => text().includes(compose.draftNotSaved!), "the refusal said", 60);
-    await act(async () => { window.location.hash = "#/history"; });
-    await waitFor(() => q(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
-    await press(q(".view-history :is(.row, [role=option])[data-id='m1']"), "the row m1");
-    const click = async (node: Element | undefined): Promise<void> => {
-      await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    };
-    const kim = (): Element | undefined => [...shell.el.querySelectorAll(".rcpt-chip")].find((c) => (c.textContent ?? "").includes("Kim"));
-    await waitFor(() => kim() !== undefined, "Kim's chip");
-    await click(kim());
-    await waitFor(() => q(".cpop") != null, "the contact popover");
-    await click([...shell.el.querySelectorAll('.cpop [role="menuitem"]')].find((i) => (i.textContent ?? "").includes("Write")));
+    await act(async () => { window.location.hash = "#/ohbox"; });
+    await waitFor(() => messageRow(shell.el, "m1") !== null, "the message in Ohbox");
+    await press(messageRow(shell.el, "m1"), "open the message");
+    const page = within(shell.el);
+    await press(await page.findByRole("button", { name: "Kim Lee" }), "Kim's contact card");
+    const card = await page.findByRole("dialog", { name: /Kim Lee/ });
+    await press(within(card).getByRole("menuitem", { name: /Write/ }), "Write to Kim");
     await pause(300);
     expect({ buffer: readComposeDraft(OWNER).subject, to: readComposeDraft(OWNER).to.includes("kim@") }).toEqual({ buffer: TYPED, to: false });
   }, 60_000);

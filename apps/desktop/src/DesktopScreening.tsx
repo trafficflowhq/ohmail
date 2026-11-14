@@ -9,7 +9,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
+import { autoUnsubscribeConfirms } from "@ohmail/client-engine";
+import { useConsent } from "@ohmail/app-logic/consent";
+import { useDemoMode } from "@ohmail/app-logic/engine";
+import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
+import { useFrame } from "@ohmail/app/frame";
+import { screenerOffers, UnsubscribeSwitch } from "@ohmail/app/settings/screener";
+import { SettingsSheet } from "@ohmail/ui/mail";
+import { useTranslations } from "use-intl";
 import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 
 /* THE ONE STAND-DOWN PREDICATE, aggregated over the roster — the same `readerStandDown` Settings
@@ -195,5 +202,26 @@ export function DesktopScreening({
           in here would have moved that marker. */}
       <DesktopScreeningWords door={door} said={(landed) => heard(landed, true)} latest={watched} />
     </>
+  );
+}
+
+export function DesktopUnsubscribeSettings() {
+  const { host } = useFrame();
+  const consent = useConsent();
+  const demo = useDemoMode();
+  const mailboxes = useMailboxFacts();
+  const { unsubscribe: from } = screenerOffers(host);
+  const { control } = autoUnsubscribeDoor({
+    demo,
+    known: consent.known,
+    on: consent.autoUnsubscribe,
+    standalone: consent.standalone,
+    confirms: autoUnsubscribeConfirms(mailboxes),
+  });
+  if (from === null || !control) return null;
+  return (
+    <SettingsSheet>
+      <UnsubscribeSwitch control={{ on: consent.autoUnsubscribe, from, setBlocked: consent.setBlockAutoUnsubscribe }} />
+    </SettingsSheet>
   );
 }

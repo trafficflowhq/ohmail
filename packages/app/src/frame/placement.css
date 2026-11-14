@@ -41,6 +41,10 @@
   min-height: 0;
 }
 
+.fr-frame:not([data-rail="words"]) {
+  transform-origin: var(--x-app-origin);
+}
+
 .fr-columns {
   position: relative;
   flex: 1 1 auto;
@@ -52,12 +56,17 @@
   min-height: 0;
 }
 
-/* The kit's handles stand by the columns' widths: here those are the frame's, on a box of the frame's that draws nothing. */
+/* The rail handle uses the frame's rail width. */
 .fr-handle {
   --rail: var(--fr-rail);
-  --listw: var(--fr-listw);
 
   display: contents;
+}
+
+.fr-main .fr-handle > [data-column="list"] {
+  /* Anchor to the rendered grid track, including when its saved width is clamped. */
+  grid-column: 1 / 2;
+  inset: 0 auto 0 calc(100% + var(--gap) / 2);
 }
 
 .fr-columns[data-norail] {
@@ -74,6 +83,7 @@
 }
 
 :root[data-device="desktop"] .fr-main {
+  position: relative;
   grid-template-columns: var(--split-user, var(--fr-listw) minmax(0, 1fr));
 }
 
@@ -88,6 +98,14 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* The empty Ohmarchy tile's ring sits outside the reading column's grid cell. */
+:root[data-face="ohmarchy"]:not([data-device="phone"])
+  .fr-reading:not([data-over]):has(> [data-blank-column]) {
+  --fr-blank-ring-outset: calc(var(--ringw) * -1);
+
+  margin: var(--fr-blank-ring-outset) var(--fr-blank-ring-outset) 0;
 }
 
 /* A kept body stays mounted while a place of another body is on screen: its box is hidden and takes no cell. */
@@ -234,8 +252,72 @@
   display: contents;
 }
 
+/* In More, Trash arrives with the sheet. Keep the entry animation for the persistent rail. */
+[data-rail-id="trash"]:where(:not(.fr-railsheet *)) > [data-kind] {
+  --fr-trash-entry-duration: 220ms;
+
+  animation: fr-trash-in var(--fr-trash-entry-duration) var(--swift) both;
+}
+
+@keyframes fr-trash-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+
+  to {
+    opacity: 1;
+    translate: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-rail-id="trash"] > [data-kind] {
+    animation: none;
+  }
+}
+
 /* A fed rail's box for the feeder's key mark: no box of its own, whatever the mark's classes are styled with. */
 .fr-columns > .fr-railzone,
 .fr-railsheet > .fr-railzone {
   display: contents;
+}
+
+.fr-place-failed {
+  margin: var(--s5) var(--s5) var(--s6);
+  max-width: var(--measure);
+}
+
+.fr-place-failed-alert {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.fr-place-failed-title {
+  font-size: var(--t-title);
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.fr-place-failed-line {
+  color: var(--ink2);
+  font-size: var(--t-ui);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.fr-place-failed-details {
+  color: var(--ink2);
+  font-size: var(--t-meta);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.fr-place-failed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  margin-top: var(--s2);
 }

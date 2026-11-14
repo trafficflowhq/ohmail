@@ -49,3 +49,6 @@ apps/webapp/public/pdfjs/
 *.pem
 .access-tokens
 .testmailaccounts
+
+# Generated from the pinned PDF renderer at build time
+/apps/webapp/public/pdf-preview.html

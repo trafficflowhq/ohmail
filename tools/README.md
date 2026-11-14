@@ -20,7 +20,7 @@ CI runs the first two in the `typecheck` job, the baseline read against the run'
 | `ohmail/package-borders`: a file imports only what its folder's row names; an app is never imported                                   | every file                                               | `borders.json`                                      |
 | `ohmail/declared-dependency`: a file imports only what its `package.json` declares                                                    | every file                                               | the manifests                                       |
 | `ohmail/platform-name`: a hosting platform's package or environment name stands only in a door file                                   | every file                                               | `doors.json`                                        |
-| `ohmail/owner-lookup`: only a host's file reads whose storage this is; only the listed parts read the shell's scope                   | product code, tests aside                                | `owner-readers.json`                                |
+| `ohmail/owner-lookup`: only a host's file reads whose storage this is                                                                 | product code, tests aside                                | `owner-readers.json`                                |
 | `ohmail/binder-callers`: only a listed file names a function that binds a database handle to an account or to none                    | product code, tests aside                                | `binders.json`                                      |
 | `ohmail/no-config-comment`: no comment sets a lint rule (`/* eslint rule: off */`)                                                    | every file                                               |                                                     |
 | `ohmail/wire-exports-no-value`                                                                                                        | `packages/wire`                                          |                                                     |
@@ -53,23 +53,14 @@ are not followed: an unexported function that calls a lookup for an export is in
 marker's cookie name spelled in a string, a template or a regular expression is a lookup too, so the marker is not
 read by hand out of the jar; it stands only in a listed file, or in a file of its own list (`markerNameSpellers`) that
 spells it and imports none of the lookups. Shared code does not reach any of the shell's own globals by the global
-object's name either (`no-restricted-properties`; a cast of the global object is not read). A further list closes
-the parts of today's views that read the shell's scope (`useTodaysScope`). Without the hosts' list or that closed one
-every file is refused, and a listed file that imports or spells none of what its list is for is refused, so the lists
-only shrink.
+object's name either (`no-restricted-properties`; a cast of the global object is not read). Without the host reader list every file is refused. A listed file that imports or spells none of the lookups is refused.
 
 `new-tree.txt` lists the folders written for the next major version. Code that came over from 1.0 is not
 reformatted or relinted here; its turn comes after the released line has ended.
 
 ## The old shell's side of the frame
 
-`shell-adapters.json` names the files of the web's old shell that stand between it and the frame (its folder,
-`apps/webapp/app/shell`): the adapters that feed a seated place from the old shell's composition, and the old shell's
-own frame files, each with what it is and the step that ends it. `ohmail/old-shell-adapters` refuses, in that folder,
-a file whose name says that side (`Todays<Name>`, `todays-<name>`) and is not named, and a context whose name says a
-feed (`Todays<Name>`, `<Name>Fed`) where the list does not name it for that file. A place seated after the first one
-reads the mail ground and is named once in the mail entry's list, so no such file and no such context is written any
-more. The list only shrinks: against the base branch the check refuses a file or a context that was added.
+Every host entry is checked against `retained-shell.txt`. Its runtime imports can reach the listed shell helpers. An import of an old view or an unlisted shell helper reports the entry and the file it reached. The retained list only shrinks. Run `node tools/check.mjs --host-shell --base origin/next` to check it on its own.
 
 ## The baseline
 

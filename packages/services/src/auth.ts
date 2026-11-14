@@ -11,7 +11,7 @@
 
 export {
   SessionLifecycle, makeSessionLifecycle, PAIRED_DEVICE_KINDS,
-  assertWebSessionAge, classifyRefreshFailure,
+  assertWebSessionAge, classifyRefreshFailure, holdLiveSession,
   REVOKE_WEB_SESSIONS_MIN_AGE_DAYS, REVOKE_WEB_SESSIONS_MAX_AGE_DAYS,
   type SessionLifecycleDeps, type PairedDeviceKind, type RefreshFailure,
 } from "./auth/session-lifecycle.js";

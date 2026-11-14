@@ -1,5 +1,6 @@
 import { clearAllMirrors, mirrorDbName } from "@ohmail/client-engine";
 import { auth } from "./api-client";
+import { signOutTrouble } from "./sign-out-trouble";
 import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
@@ -10,10 +11,12 @@ import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "@ohmail/app-logic/writing/mail-send";
 import {
-  NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, revokeWakeRegistration,
+  NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, clearBrowserWakeNotices, revokeWakeRegistration,
 } from "./shell/notification-settings";
-import { bindApiOwner, blockApiOwner } from "./api-client";
-import { forgetOwner, markSignedOutPending, readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { bindApiOwner, blockApiOwner, boundApiFamily, boundApiOwner } from "./api-client";
+import { DEVICE_SIGN_IN_KEY, retireDeviceSignIn } from "./(product)/mailbox/device-sign-in";
+import { forgetOwner, markSignedOutPending, readOwner, readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
 import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
 import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
@@ -25,25 +28,27 @@ import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "@ohmail/app-logic/doors/wall
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetRenewalName,
-  forgetSplashPresentation, purgeSiteCache,
+  forgetSplashPresentation, purgeSiteCache, withSessionCookieLock,
 } from "./session-refresh";
 import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
 import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
-import { postSignedOut, thisTabName } from "./signed-out-signal";
+import { postLocalSignOut, postSessionChange, postSignedOut, readSessionFamily, thisTabName } from "./signed-out-signal";
 import { forgetMailDocs } from "@ohmail/letter-body/cache";
+import {
+  PENDING_SIGN_OUT_KEY, readPendingSignOut, accountCleanup, clearAccountCleanup, confirmAccountCleanup,
+  otherAccountCleanup, readIsolatedScope, retainAccountCleanup, retainRetiredCleanup,
+  finishRetiredComposeCleanup, retainRetiredComposeCleanup, type PendingSignOut,
+} from "./pending-sign-out-storage";
+export { PENDING_SIGN_OUT_KEY, readPendingSignOut };
+
 
 /**
- * The one correct way to sign out of the web client. `POST /auth/refresh/logout` revokes the session
- * family this jar's refresh cookie names and clears cookies; the browser is where the mail is, and a
- * sign-out that leaves the mirror behind leaves a readable mailbox on a machine the user is done with.
- * The server call goes first (the failure worth reporting) and the wipe runs REGARDLESS. The name goes
- * with the mail in one act: the `tf_owner` cookie is cleared in the same `finally` as the wipe. It reports
- * what it could not take back: an IndexedDB delete is BLOCKED while another tab holds the database, so tab
- * A once said "signed out" leaving the mirror on disk while tab B was open — the result names what
- * survived and the pane says so. The sign-out guard asserts every `auth.logout` call goes through here.
+ * The server revokes the departed family without writing cookies. The browser retires its local copy
+ * even on a refusal. Cookie clearing and shared cleanup require the exclusive lock and the pending
+ * operation that owns the jar. The HTTP cache result settles separately from the sign-out press.
  */
 export interface SignOutResult {
-  /** True only when this browser is verifiably holding no mirror any more. */
+  /** Whether the browser stores were verified. A confirmed exit also requires serverRefused to be null. */
   cleared: boolean;
   /**
    * The mirror databases still on this origin. Non-empty means another TAB of this origin is
@@ -52,7 +57,7 @@ export interface SignOutResult {
    */
   remaining: string[];
   /**
-   * FALSE means this browser could not be asked what it holds — no `IDBFactory.databases()` and
+   * FALSE means a cleanup step was skipped or this browser could not be asked what it holds. Without `IDBFactory.databases()` and
    * no usable storage for the mirror registry — so an empty `remaining` proves only that the two
    * names we already knew are gone. It is a different sentence from a blocked wipe, with a
    * different remedy, and it must not read as a clean browser.
@@ -60,6 +65,11 @@ export interface SignOutResult {
   inventoryComplete: boolean;
   /** The server refused or was unreachable. The local half ran anyway; the caller is told. */
   serverRefused: string | null;
+  replaced?: true;
+  cacheCleanup?: {
+    readonly state: "pending" | "complete" | "failed";
+    readonly settled: Promise<void>;
+  };
 }
 
 /**
@@ -75,22 +85,12 @@ export interface SignOutResult {
 export async function forgetThisBrowser(
   owner?: string,
   /**
-   * `revokeWake: false` says the CALLER has already taken the wake registration down while it
-   * still had a session to do it with. Only `signOut` passes it, and only because it must: see
-   * the block below.
+   * `revokeWake: false` leaves the shared browser wake subscription alone. Explicit sign-out's
+   * server revocation removes the family's wake registration.
    */
   opts: {
     revokeWake?: boolean;
-    /**
-     * TRUE when the server may still hold this session — the logout was refused or never reached anybody;
-     * only `signOut` passes it. It changes what is WRITTEN, not whether: the local half runs whatever the
-     * server said. Erasing the `tf_owner` marker was the mistake, in this one case: the marker is the one
-     * thing on this origin saying whose session the browser holds, absence is read as silence, and
-     * clearing it while an HttpOnly session was live handed a window open for a DIFFERENT account
-     * permission to keep syncing through the unrevoked session. This path writes {@link OWNER_SIGNED_OUT}
-     * instead: "a session may still exist and it is not this browser's to use" — read as a contradiction
-     * by the sync gate. Not an account id; `readOwner` never hands it back as one.
-     */
+    /** Keep the pending marker and blocked binding until revocation and cleanup both finish. */
     serverHeld?: boolean;
     /**
      * TRUE: forget `owner` and nothing of anybody else — the erased-account door. Its mirror, its
@@ -106,7 +106,7 @@ export async function forgetThisBrowser(
      * notes included ({@link forgetEveryKeyOf}). The erased doors pass it; a revoke keeps them, as a sign-out does.
      */
     erased?: boolean;
-    /** With `only`: how far the wipe may still reach, asked before each step (the revoke door's). Absent, `jar`. */
+    /** How far the wipe may still reach, checked before each step. */
     reach?: () => WipeReach;
   } = {},
 ): Promise<{
@@ -114,9 +114,9 @@ export async function forgetThisBrowser(
   inventoryComplete: boolean;
 }> {
   const only = opts.only === true && owner !== undefined;
-  /** May a step of this scope run now? Only the revoke door narrows it. */
+  /** May a step of this scope run against this browser now? */
   const may = (scope: "jar" | "account"): boolean => {
-    const reach = only && opts.reach ? opts.reach() : "jar";
+    const reach = opts.reach?.() ?? "jar";
     return reach === "jar" || (reach === "account" && scope === "account");
   };
   if (only) {
@@ -141,7 +141,10 @@ export async function forgetThisBrowser(
    * receiving tab obeys only a jar that no longer does) and before the wipe, so no tab keeps
    * painting mail the next person at this browser would read. See `signed-out-signal.ts`.
    */
-  if (may("account")) postSignedOut(owner ?? null);
+  if (may("account")) {
+    postSignedOut(owner ?? null);
+    postSessionChange();
+  }
   /* The sanitized documents this window kept per engine (`mail-doc-cache.ts`): mail, in memory. */
   if (may("jar")) forgetMailDocs();
   /*
@@ -149,10 +152,8 @@ export async function forgetThisBrowser(
    * which push row is its own (the server's prune is device-scoped and a browser ceremony mints no device row), and
    * the id lives in the very keys swept below — so the revoke runs while it is still readable
    * (`revokeWakeRegistration` for the three halves). On the erasure door the server rows went with the account, so
-   * this drops the browser's own subscription. `signOut` opts out (found by review): by here `auth.logout()` has
-   * revoked the session, so running the revoke again would issue a DELETE against a dead credential — and the client
-   * reads the 401 as recoverable, burning an `/auth/refresh` round trip on the flaky-network sign-out. The second
-   * call is skipped rather than the site removed, so the erasure door keeps its own revoke.
+   * this drops the browser's own subscription. Explicit sign-out's server revocation prunes the
+   * family's wake rows. Its serialized cleanup separately closes the browser's notices.
    */
   if (may("jar")) {
     if (opts.revokeWake !== false) await revokeWakeRegistration();
@@ -161,7 +162,9 @@ export async function forgetThisBrowser(
   // remembered so the next boot can paint the partitioned piles before the server answers
   // (`shell/boot-cache.ts`). Cleared by prefix, not by owner — this browser forgets, including
   // whatever an earlier account left behind.
-  const boot = may("account") ? clearBootCaches(only ? owner : undefined) : { survivors: [], enumerated: true };
+  const boot = may("account")
+    ? clearBootCaches(only ? owner : undefined, () => may("account"))
+    : { survivors: [], enumerated: true };
   const survivors = [...boot.survivors];
   // The durable-decision stores, which are mail and are NOT in the mirror:
   // the send lanes, the Screener's intent journal, and the compose scratch
@@ -276,7 +279,8 @@ export async function forgetThisBrowser(
     survivors.push(...await forgetRenewalName());
   }
   const wipe = !may("account") ? { remaining: [], inventory: "complete" as const }
-    : only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
+    : only ? await clearAllMirrors(owner, undefined, { only: true, mayDelete: () => may("account") })
+      : await clearAllMirrors(owner);
   // Last: the mirror's own sweep has decided its registry record by now.
   const named = only && opts.erased === true && may("account") ? forgetEveryKeyOf(owner!) : null;
   return {
@@ -311,7 +315,9 @@ function forgetEveryKeyOf(owner: string): LocalSweep {
  * signed out (`useSignedOutElsewhere`). Answers what could not be removed.
  */
 export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boolean } {
+  retireTabWork();
   const survivors: string[] = [];
+  const handleRemoved = retireDeviceSignIn();
   /*
    * The in-flight Microsoft device-code ceremony keeps its HANDLE in `sessionStorage` — per tab,
    * matching a fifteen-minute grant far better than a store that outlives the browser — so no
@@ -329,6 +335,10 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
     deviceCeremonySwept = false;
     survivors.push("ohmail.deviceCeremony");
   }
+  if (!handleRemoved) {
+    deviceCeremonySwept = false;
+    survivors.push(DEVICE_SIGN_IN_KEY);
+  }
   // The wall's note that this tab pressed the hand-off: an account id and a time, per tab.
   try {
     sessionStorage.removeItem(HANDOFF_KEY);
@@ -344,6 +354,24 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
     survivors.push(...watchLeft);
   }
   return { survivors, deviceCeremonySwept };
+}
+
+/**
+ * THE ACCOUNT'S UNSENT WORDS, as its sign-out's sweep takes them: the letter being written (its words, its session,
+ * its row) and the replies (their words, their meta), every key that names `owner`, nothing of another account's and
+ * nothing of the jar's. A TAB THAT LEARNS ITS ACCOUNT SIGNED OUT ELSEWHERE runs it once its mailbox has left
+ * (`useSignedOutElsewhere`): its composer's leaving save writes as it goes, after the signing tab's sweep ran, and a
+ * closing page hands what it holds to the account's slot. After this a composer that is gone writes nothing more:
+ * its save stands only beside its stored letter (`compose-autosave.ts`, `reply-autosave.ts`). The remembered row in
+ * this tab's memory goes with them. Answers what could not be removed.
+ */
+const UNSENT_WORDS: readonly string[] = [
+  COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX,
+];
+
+export function forgetUnsentWordsOf(owner: string, mayRemove: () => boolean): LocalSweep {
+  forgetComposeRows();
+  return sweepFor(owner, UNSENT_WORDS, (scope) => scope === "account" && mayRemove());
 }
 
 /**
@@ -382,14 +410,17 @@ export type WipeReach = "jar" | "account" | "none";
  */
 function sweepFor(owner: string | null, list: readonly string[], may: (scope: "jar" | "account") => boolean) {
   if (owner === null) return dropLocalStorageKeys(list);
-  const jar = may("jar");
-  const account = may("account");
-  const tags = new Map([...OWNER_TAGGED].map(([p, tag]) => [p, readTag(tag)]));
-  return dropLocalStorageKeysWhere((key) => list.some((p) =>
-    p === REVOKE_OWED_PREFIX ? false
-      : OWNER_KEYED.includes(p) ? account && key.startsWith(`${p}${owner}`)
-        : tags.has(p) ? (jar || (account && tags.get(p) === owner)) && key.startsWith(p)
-          : jar && (p === LEGACY_COMPOSE_DRAFT_KEY ? key === p : key.startsWith(p))));
+  const ownsKey = (key: string) => list.some((p) => {
+    if (p === REVOKE_OWED_PREFIX) return false;
+    if (OWNER_KEYED.includes(p)) {
+      const owned = `${p}${owner}`;
+      return (key === owned || key.startsWith(`${owned}:`) || key.startsWith(`${owned}.`)) && may("account");
+    }
+    if (p === LEGACY_COMPOSE_DRAFT_KEY ? key !== p : !key.startsWith(p)) return false;
+    const tag = OWNER_TAGGED.get(p);
+    return may("jar") || (tag !== undefined && readTag(tag) === owner && may("account"));
+  });
+  return dropLocalStorageKeysWhere(ownsKey, "localStorage", ownsKey);
 }
 
 /** The account an owner-tagged entry names, or `null`: none, or a jar that cannot be read. */
@@ -401,16 +432,35 @@ function readTag(key: string): string | null {
   }
 }
 
+const tabRetirement = new Set<() => void>();
+
+/** End account-bound work as soon as this tab leaves its account. */
+export function subscribeTabRetirement(retire: () => void): () => void {
+  tabRetirement.add(retire);
+  return () => { tabRetirement.delete(retire); };
+}
+
+function retireTabWork(): void {
+  for (const retire of tabRetirement) retire();
+}
+
 /** Sign-out presses per page, by tab name (a test runs two tabs in one document). */
-const presses = new Map<string, number>();
+const presses = new Map<string, { count: number; family: string | null; markerFamily: string | null; finished?: boolean }>();
 
 /**
  * This page's Sign out presses. A mailbox that sees the count move after it mounted has its own press
- * to report (a wipe another tab blocked), so `useSignedOutElsewhere`'s return check stands down there.
+ * to report (a wipe another tab blocked) while its pending sign-out owns the jar.
  * The pending sign-out's finisher is no press, and a mailbox mounted after either still leaves on return.
  */
 export function signOutPresses(tab: string = thisTabName()): number {
-  return presses.get(tab) ?? 0;
+  return presses.get(tab)?.count ?? 0;
+}
+
+export function ownsPendingSignOut(tab: string, since: number): boolean {
+  const press = presses.get(tab);
+  if (!press || press.finished || press.count <= since || readOwnerMarker().kind !== "signed-out") return false;
+  const current = readSessionFamily();
+  return current === press.family || (current === null && press.markerFamily === null);
 }
 
 /**
@@ -419,85 +469,278 @@ export function signOutPresses(tab: string = thisTabName()): number {
  * and after a refusal before anything local is touched. False means another tab signed in (or
  * finished this sign-out) meanwhile; the answer is then `null`, and neither half has run.
  */
-export function signOut(owner?: string): Promise<SignOutResult>;
-export function signOut(owner: string | undefined, opts: { mayProceed: () => boolean }): Promise<SignOutResult | null>;
+export function signOut(owner?: string, opts?: { expectedFamily?: string }): Promise<SignOutResult>;
+export function signOut(owner: string | undefined, opts: { mayProceed: () => boolean; pending?: PendingSignOut | null }): Promise<SignOutResult | null>;
 export async function signOut(
   owner?: string,
-  opts: { mayProceed?: () => boolean } = {},
+  opts: { mayProceed?: () => boolean; expectedFamily?: string; pending?: PendingSignOut | null } = {},
 ): Promise<SignOutResult | null> {
   /*
    * PENDING FROM THE PRESS, before any await: from here every gate reads a sign-out (the edge sends a
    * new tab to the sign-in page, the manage hand-off, the sync gate, this client's verdict, a tab booting
-   * from an earlier answer) and the account's other tabs leave. A 204 or our coded 401 clears it, a
-   * refusal leaves it. `named` is the account the jar named at the press: the wake row's DELETE below
-   * still goes out under it. The finisher's jar is already pending.
+   * from an earlier answer) and the account's other tabs leave. The serialized clear retires it once revocation and cleanup finish.
+   * The finisher's jar is already pending.
    */
   const named = opts.mayProceed === undefined ? readOwner() : null;
-  if (opts.mayProceed === undefined) {
-    presses.set(thisTabName(), signOutPresses() + 1);
+  const markerFamily = readSessionFamily();
+  const confirmedOwner = opts.mayProceed === undefined ? boundApiOwner?.() ?? null : null;
+  const finishing = opts.mayProceed !== undefined;
+  const remembered = readPendingSignOut();
+  const pending = finishing ? (opts.pending === undefined ? remembered : opts.pending) : null;
+  const family = finishing ? (pending === null ? markerFamily : pending.family)
+    : opts.expectedFamily ?? (confirmedOwner === null ? null : boundApiFamily?.(confirmedOwner)) ?? markerFamily;
+  const ownsFamily = () => {
+    const current = readSessionFamily();
+    return current === family || (current === null && markerFamily === null);
+  };
+  const changed = (): SignOutResult | null => opts.mayProceed ? null
+    : { cleared: false, remaining: [], inventoryComplete: false, serverRefused: null, replaced: true };
+  if (!ownsFamily() || (named !== null && (owner ?? confirmedOwner ?? named) !== named)
+    || (confirmedOwner !== null && named !== null && confirmedOwner !== named)) return changed();
+  const departed = finishing ? pending?.account ?? undefined : owner ?? named ?? confirmedOwner ?? undefined;
+  let provedOwner = departed !== undefined && (
+    named === departed || confirmedOwner === departed || pending?.account === departed
+    || (readOwnerMarker().kind === "signed-out" && remembered?.account === departed && remembered.family === family)
+  );
+  const count = signOutPresses() + 1;
+  let operation: PendingSignOut | null = finishing ? pending : departed === undefined || !provedOwner ? null : {
+    press: `${thisTabName()}.${count}`, account: departed, family, isolatedScope: readIsolatedScope(departed, family),
+  };
+  let recorded = false;
+  const ownsOperation = (requireRecord = false) => {
+    const current = readPendingSignOut();
+    if (current === null) return !requireRecord && (finishing ? operation === null : !recorded);
+    return current?.press === operation?.press && current?.account === operation?.account
+      && current?.family === operation?.family;
+  };
+  const mayProceed = () => ownsFamily() && ownsOperation()
+    && readOwnerMarker().kind === "signed-out" && (opts.mayProceed?.() ?? true);
+  if (!finishing) {
+    presses.set(thisTabName(), { count, family, markerFamily });
+    if (operation !== null) {
+      recorded = durableSet(PENDING_SIGN_OUT_KEY, JSON.stringify(operation), "session.signOut") === "stored";
+    }
     markSignedOutPending();
+    if (operation !== null) {
+      retainAccountCleanup(operation);
+      retainRetiredComposeCleanup(operation);
+    }
+    retireTabWork();
+    retireDeviceSignIn();
     postSignedOut(owner ?? null);
+    postSessionChange();
     // A tab closed before the door's request below left still sends it, from `pagehide`.
-    auth.armLogoutOnLeave();
+    auth.armLogoutOnLeave(family ?? undefined, mayProceed, departed);
   }
-  // NEVER THROWS, and the refusal rides the result instead. A `return` inside a `finally`
-  // would have silently swallowed this exception, which is the same shape of quiet loss the
-  // rest of this file exists to stop; and throwing would throw away `remaining`, which is the
-  // one thing the caller cannot find out any other way.
   let serverRefused: string | null = null;
-  /*
-   * Before `auth.logout()`, and the order is the whole fix:
-   * `DELETE /push/subscriptions/:id` is authenticated by the session this
-   * call is about to revoke. After the logout it answers 401 for ever: the
-   * row stays, the sender keeps POSTing wakes, and — because the endpoint
-   * answers 2xx while the subscription lives — the prune-on-404/410 never
-   * fires. So the registration is taken down while a credential still can.
-   * It runs before the logout, and the logout runs regardless of how it
-   * went — a browser asking to be signed out is asking either way.
-   */
-  await revokeWakeRegistration(named !== null ? { signingOutOf: named } : undefined);
   try {
-    await auth.logout({ mayProceed: opts.mayProceed });
+    if (!mayProceed()) return changed();
+    retainRetiredCleanup(operation ?? { press: thisTabName(), account: null, family });
+    if (!finishing || pending?.revoked !== true) {
+      await auth.logout({ mayProceed, expectedFamily: family ?? undefined, expectedAccount: departed });
+      if (!provedOwner && departed !== undefined && family !== null && mayProceed()) {
+        // The successful door checked the expected account against the credential it revoked.
+        provedOwner = true;
+        operation = {
+          press: `${thisTabName()}.${count}`, account: departed, family,
+          isolatedScope: readIsolatedScope(departed, family),
+        };
+        recorded = durableSet(PENDING_SIGN_OUT_KEY, JSON.stringify(operation), "session.signOut") === "stored";
+      }
+    }
   } catch (err) {
-    /**
-     * THE DOOR'S ANSWER IS THE VERDICT. A 204, or a 401 in OUR envelope: the sign-out door read
-     * the jar's refresh cookie and the session, found nothing live to end, and cleared the jar in
-     * the same answer — which is also what the retry after a blocked wipe hears. Everything else
-     * is refused, because the session may still be live: a 401 with no envelope is something in
-     * front of us, a 403 is a refusal that leaves the session alive, and offline is no answer.
-     * The old rule took any 401 from `/auth/logout`, which answers 401 for a replaced access
-     * token before it looks at the family — and so read a live session as ended.
-     */
-    // STRUCTURAL READS, not `err instanceof ApiError`: callers' tests mock `./api-client` with
-    // `{ auth }` alone, and `x instanceof undefined` THROWS here, skipping the local cleanup.
     const status = (err as { status?: unknown } | null)?.status;
     const coded = (err as { wire?: { coded?: unknown } } | null)?.wire?.coded === true;
     const alreadyGone = status === 401 && coded;
-    // NOT THIS CALL'S JAR ANY MORE. A refusal leaves the jar as it was (the door clears it only when
-    // it answers), so a predicate that stopped holding means somebody else wrote it: marking it
-    // pending and wiping it would end the other tab's sign-in. Only a caller with one exits here.
-    if (!alreadyGone && opts.mayProceed !== undefined && !opts.mayProceed()) return null;
     serverRefused = alreadyGone ? null : err instanceof Error ? err.message : String(err);
   }
-  // The door's answer cleared the jar and no longer carries the cache clear (a shared machine keeps a
-  // day of pictures there). Never after a refusal: the jar may be live, and an older API renews it.
-  if (serverRefused === null) purgeSiteCache();
-  {
-    // `revokeWake: false` — already done above, with the session that authorized it.
-    // `serverHeld` carries the one fact the marker has to reflect: whether a session may still
-    // be alive on the other end. See the parameter's own note.
-    const local = await forgetThisBrowser(owner, {
-      revokeWake: false,
-      serverHeld: serverRefused !== null,
-    });
-    // `cleared` needs BOTH: nothing left, and a browser that could actually be asked. Where
-    // neither `databases()` nor a usable registry exists, an empty list only means "the two
-    // names I already knew are gone" — see `clearAllMirrors`'s own header.
-    return {
-      cleared: local.remaining.length === 0 && local.inventoryComplete,
-      remaining: local.remaining,
-      inventoryComplete: local.inventoryComplete,
-      serverRefused,
-    };
+
+  const result = (local: Awaited<ReturnType<typeof forgetThisBrowser>>): SignOutResult => ({
+    cleared: local.remaining.length === 0 && local.inventoryComplete,
+    remaining: local.remaining,
+    inventoryComplete: local.inventoryComplete,
+    serverRefused,
+  });
+
+  // A confirmed result retires the shell immediately. Its navigation follows the local wipe.
+  if (serverRefused === null && mayProceed()) {
+    if (operation?.revoked !== true) {
+      const confirmed = { ...(operation ?? { press: thisTabName(), account: null, family }), revoked: true };
+      if (durableSet(PENDING_SIGN_OUT_KEY, JSON.stringify(confirmed), "session.signOut") === "stored") {
+        operation = confirmed;
+        recorded = true;
+      }
+    }
+    if (!finishing) {
+      const press = presses.get(thisTabName());
+      if (press?.count === count) press.finished = true;
+      postLocalSignOut();
+    }
+    postSessionChange();
   }
+  const mayWipeJar = () => readSessionFamily() === family && mayProceed() && ownsOperation(true);
+  if (family !== null && departed !== undefined && provedOwner && mayWipeJar() && auth.clearLogoutCookies) {
+    const shared = await new Promise<SignOutResult | null>((done) => {
+      void withSessionCookieLock(async () => {
+        if (!mayWipeJar() || !await clearBrowserWakeNotices() || !mayWipeJar()) return;
+        // Keep the pending marker visible until the local stores have been checked.
+        const local = await forgetThisBrowser(departed, {
+          revokeWake: false, serverHeld: true, reach: () => mayWipeJar() ? "jar" : "none",
+        });
+        if (!mayWipeJar()) return;
+        const base = result(local);
+        if (serverRefused !== null || !base.cleared) {
+          if (!base.cleared && operation !== null) {
+            retainAccountCleanup(operation);
+            retainRetiredCleanup(operation);
+          }
+          done(base);
+          return;
+        }
+        const fences = clearAccountCleanup();
+        if (!fences.enumerated || fences.survivors.length > 0) {
+          done(result({ ...local, inventoryComplete: false }));
+          return;
+        }
+        await auth.clearLogoutCookies(family);
+        const ownsClearedJar = () => readOwnerMarker().kind === "absent"
+          && readSessionFamily() === null && ownsOperation(true);
+        if (!ownsClearedJar()) return;
+        bindApiOwner(null);
+        if (operation === null || durableSet(PENDING_SIGN_OUT_KEY,
+          JSON.stringify({ ...operation, cachePending: true }), "session.signOut") === "lost") {
+          done(result({ ...local, inventoryComplete: false }));
+          return;
+        }
+        let state: NonNullable<SignOutResult["cacheCleanup"]>["state"] = "pending";
+        const settled = purgeDepartedCache(ownsClearedJar).then((purged) => {
+          state = purged && durableRemove(PENDING_SIGN_OUT_KEY, "session.signOut") !== "lost" ? "complete" : "failed";
+        });
+        done({
+          ...base,
+          get cleared() { return state === "complete"; },
+          cacheCleanup: { get state() { return state; }, settled },
+        });
+        // Keep cookie writers out while this origin-wide request is in flight.
+        await settled;
+      }, { requireLock: true }).then(() => done(null), () => done(null));
+    });
+    if (shared !== null) return shared;
+  }
+
+  // The jar may have changed hands during revocation. Only the departed account's own copy and
+  // this document's notes can be removed here. A replacement of the same account keeps its copy.
+  const tab = mayProceed() ? forgetThisTab() : { survivors: [] };
+  if (mayProceed()) {
+    forgetMailDocs();
+    forgetComposeRows();
+  }
+  const reach = (): WipeReach => {
+    if (!provedOwner) return "none";
+    const current = readOwner();
+    if (current !== null) return current === departed ? "none" : "account";
+    return readSessionFamily() === family && mayProceed() ? "account" : "none";
+  };
+  const maySweepAccount = departed !== undefined && reach() !== "none";
+  const local = !maySweepAccount
+    ? { remaining: [], inventoryComplete: true }
+    : await forgetDepartedScope(departed, operation?.isolatedScope, reach);
+  const obligation = operation ?? { press: thisTabName(), account: null, family };
+  if (serverRefused === null && mayProceed() && operation?.account != null) retainRetiredComposeCleanup(operation);
+  if (readOwner() !== null) finishRetiredComposeCleanup();
+  if (mayProceed()) retainRetiredCleanup(obligation);
+  if (mayProceed() || provedOwner) {
+    if (!maySweepAccount || !local.inventoryComplete || local.remaining.length > 0) {
+      if (mayProceed() || (readOwner() !== departed && readOwner() !== null)) retainAccountCleanup(obligation);
+    } else if (departed !== undefined && accountCleanup(departed)?.press === obligation.press) {
+      confirmAccountCleanup(departed);
+    }
+  }
+  if (!mayProceed()) return changed();
+  blockApiOwner();
+  return result({
+    remaining: [...local.remaining, ...tab.survivors],
+    inventoryComplete: false,
+  });
+}
+
+async function forgetDepartedScope(departed: string, isolatedScope: string | undefined, reach: () => WipeReach) {
+  const local = await forgetThisBrowser(departed, { only: true, revokeWake: false, reach });
+  if (reach() === "none") return { ...local, inventoryComplete: false };
+  if (!isolatedScope) return local;
+  const isolated = await forgetThisBrowser(isolatedScope, { only: true, revokeWake: false, reach });
+  return {
+    remaining: [...local.remaining, ...isolated.remaining],
+    inventoryComplete: local.inventoryComplete && isolated.inventoryComplete && reach() !== "none",
+  };
+}
+
+/** Finish outstanding account storage before a newly confirmed shell can open that scope. */
+export async function finishAccountCleanup(owner: string, family: string | null, target = owner): Promise<boolean> {
+  const operation = accountCleanup(target);
+  if (operation?.account !== target) return operation === null;
+  const ownsAttempt = () => accountCleanup(target)?.press === operation.press
+    && readOwner() === owner && readSessionFamily() === family && family !== operation.family;
+  if (!ownsAttempt()) return accountCleanup(target) === null;
+  const local = await forgetDepartedScope(target, operation.isolatedScope, () => ownsAttempt() ? "account" : "none");
+  if (ownsAttempt() && local.inventoryComplete && local.remaining.length === 0) {
+    return confirmAccountCleanup(target) && accountCleanup(target)?.press !== operation.press;
+  }
+  return accountCleanup(target) === null;
+}
+
+export async function finishOtherAccountCleanup(owner: string, family: string | null): Promise<void> {
+  for (const target of otherAccountCleanup(owner)) await finishAccountCleanup(owner, family, target);
+}
+
+let retryingCache: { press: string; completion: Promise<boolean> } | undefined;
+
+export async function retryPendingCacheCleanup(): Promise<boolean | null> {
+  const operation = readPendingSignOut();
+  const ownsJar = () => readOwnerMarker().kind === "absent"
+    && readSessionFamily() === null && readPendingSignOut()?.press === operation?.press;
+  if (operation?.cachePending !== true || !ownsJar()) return null;
+  if (retryingCache?.press === operation.press) return retryingCache.completion;
+  const completion = withSessionCookieLock(async () => {
+    if (!ownsJar()) return readPendingSignOut() === null;
+    if (!await purgeDepartedCache(ownsJar)) return false;
+    return durableRemove(PENDING_SIGN_OUT_KEY, "session.signOut") !== "lost";
+  }, { requireLock: true }).catch(() => false);
+  retryingCache = { press: operation.press, completion };
+  try {
+    return await completion;
+  } finally {
+    if (retryingCache?.completion === completion) retryingCache = undefined;
+  }
+}
+
+async function purgeDepartedCache(ownsJar: () => boolean): Promise<boolean> {
+  let leaving = false;
+  for (let attempt = 0; attempt < 2 && ownsJar() && !leaving; attempt += 1) {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const interrupted = new Promise<false>((resolve) => {
+      const stop = () => { controller.abort(); resolve(false); };
+      timer = setTimeout(stop, 2_000);
+    });
+    const leave = () => { leaving = true; controller.abort(); };
+    window.addEventListener("pagehide", leave);
+    try {
+      const purged = await Promise.race([purgeSiteCache(controller.signal), interrupted]);
+      if (purged && ownsJar()) return true;
+    } finally {
+      window.removeEventListener("pagehide", leave);
+      clearTimeout(timer);
+    }
+  }
+  return false;
+}
+
+
+/** A live account with unfinished browser cleanup keeps the Account pane open. */
+export function signOutStayReason(outcome: SignOutResult): "unverified" | "blocked" | null {
+  const trouble = signOutTrouble(outcome);
+  if (trouble === null || trouble.key === "signOutServerRefused"
+    || outcome.replaced || readOwnerMarker().kind !== "account") return null;
+  return trouble.key === "signOutUnverified" ? "unverified" : "blocked";
 }

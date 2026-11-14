@@ -5,6 +5,7 @@ import {
   teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
 import en from "../messages/en.json";
+import folderWords from "../../../packages/app/messages/folder.en.json";
 import de from "../messages/de.json";
 
 /**
@@ -74,6 +75,10 @@ describe("the folder page and a folder that leaves", () => {
     }
   });
 
+  /** What a folder with no letter says: today's page's hint, or the seated folder's own words for it. */
+  const holdsNone = (el: HTMLElement): string =>
+    el.querySelector("section.fr-list") !== null ? folderWords.folder.emptyTitle : en.folder.emptyHint;
+
   it("an empty folder says it holds no mail, and nothing about existing on the server", async () => {
     answerConsentWith({ foldersEnabledAt: ISO });
     answerSyncWith(world);
@@ -83,7 +88,7 @@ describe("the folder page and a folder that leaves", () => {
     await goHash(`#/folder/${FOLDER_ID}`);
     await tick(1_000);
     const text = textOf(el);
-    expect(text).toContain(en.folder.emptyHint);
+    expect(text).toContain(holdsNone(el));
     expect(text).not.toContain("exists on your mail server");
   });
 
@@ -96,7 +101,7 @@ describe("the folder page and a folder that leaves", () => {
     await goHash(`#/folder/${FOLDER_ID}`);
     await tick(1_000);
     const sentence = en.folder.gone.replace("{name}", "Clients");
-    expect(textOf(el), "the precondition: the folder page is open").toContain(en.folder.emptyHint);
+    expect(textOf(el), "the precondition: the folder page is open").toContain(holdsNone(el));
     expect(document.body.textContent ?? "").not.toContain(sentence);
 
     gone = true;
@@ -110,7 +115,8 @@ describe("the folder page and a folder that leaves", () => {
     }
     expect(seenAt, "the folder left the list and nothing said so").toBeGreaterThan(0);
     expect(times, "said more than once").toBe(1);
-    expect(textOf(el)).not.toContain(en.folder.emptyHint);
+    expect(textOf(el)).not.toContain(holdsNone(el));
+    expect(textOf(el)).toContain(en.reader.blank.none);
   });
 
   it("positive control: a link to a folder nobody had open stays silent", async () => {

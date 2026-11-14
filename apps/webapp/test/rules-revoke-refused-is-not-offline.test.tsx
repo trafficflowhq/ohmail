@@ -6,15 +6,21 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, rulesShown,
   type EngineAdapter, type QueuedRuleWrite, type SyncChange,
 } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
-import { SettingsView } from "../app/views/SettingsView";
+import { within } from "@testing-library/react";
+import { MailGround, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { displayRuleMatch } from "@ohmail/app-logic/text/idn";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
+import { MailFrame } from "../app/shell/browser-mail";
+import { mailbox } from "./fixtures/live-walk-shell";
 import { queuedSentence, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
 import { queuedRuleKey } from "@ohmail/app-logic/press/sender-screening";
-import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
 
 /**
  * A REVOKE THE SERVER REFUSED IS NOT "BACK ONLINE". The server answered a revoke 500;
@@ -47,34 +53,55 @@ const setOnline = (on: boolean): void => {
   Object.defineProperty(window.navigator, "onLine", { value: on, configurable: true });
 };
 
-async function open(items: RuleDTO[], answer: Answer, queued: QueuedRuleWrite[] = []): Promise<void> {
-  const view = h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {},
-    rules: {
-      items, queued,
-      onRevoke: async () => answer,
-      onRetarget: async () => answer,
-      pastMail: () => null,
+let listed: RuleDTO[];
+
+async function open(
+  items: RuleDTO[],
+  answer: Answer,
+  queued: readonly QueuedRuleWrite[] = [],
+  onRevoke?: (id: string) => void,
+): Promise<void> {
+  listed = items;
+  const { WebRulesPane } = await import("../app/(product)/mailbox/WebRulesPane");
+  const settings = mailSettings({ ...NO_PANE_PARTS, rules: WebRulesPane });
+  const mail = fakeMail([], [], {}, Object.fromEntries(items.map((rule) => [`rule:${rule.id}`, rule])));
+  const engine = Object.assign(mail.engine, {
+    queuedRuleWrites: () => queued,
+    waitingOnOrganizer: () => [],
+    appliedRuleRequests: () => [],
+    unsettledRulePresses: () => [],
+    mutate: async (mutation: Parameters<typeof mail.engine.mutate>[0]) => {
+      if (mutation.kind === "rule_delete") onRevoke?.(mutation.ruleId);
+      return answer;
     },
+  });
+  const { host: recorded } = fakeHost({
+    engine, service: "managed", scope: "rules-test", above: MailGround,
+    address: fakeAddress("#/settings/rules"), places: { settings },
+    mailboxes: async () => [mailbox({ organizerRole: "organizer" })],
   });
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-10-13T05:00:00.000Z"),
-      children: h(ThemeProvider, { children: h(ToastHost, { children: view }) }),
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailFrame, { host: recorded }) }) }),
     }));
   });
-  const nav = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Rules")!;
-  await act(async () => { nav.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 }
-const buttonIn = (el: ParentNode, text: string) =>
-  [...el.querySelectorAll("button")].find((b) => b.textContent?.trim() === text);
-const press = async (el: Element | undefined) => {
-  await act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+const buttonIn = (el: HTMLElement, name: string | RegExp) =>
+  within(el).getByRole<HTMLButtonElement>("button", { name });
+const press = async (el: Element) => {
+  await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
-const rowOf = (id: string) => host.querySelector<HTMLElement>(`[data-rule-id="${id}"]`);
+const rowName = (rule: RuleDTO) => R.what.sender.replace("{match}", displayRuleMatch(rule.match));
+
+function rowOf(id: string) {
+  const rule = listed.find((candidate) => candidate.id === id)!;
+  return within(host).queryByRole("group", { name: rowName(rule) });
+}
 async function revoke(id: string): Promise<string> {
   await press(buttonIn(rowOf(id)!, R.revoke));
-  await press(buttonIn(host, R.revokeConfirm));
+  await press(buttonIn(within(host).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm));
   return host.textContent ?? "";
 }
 
@@ -116,8 +143,8 @@ describe("what a queued revoke says", () => {
 
   it("a retarget the server refused says so too", async () => {
     await open([rule("a", "b@r34n.example")], { status: "queued", serverFailed: true });
-    await press(buttonIn(rowOf("a")!, R.change));
-    await press(buttonIn(host, "Ohbox"));
+    await press(buttonIn(rowOf("a")!, /^Files into /));
+    await press(within(host).getByRole("menuitemradio", { name: "Ohbox" }));
     expect(host.textContent).toContain(R.toastRetargetFailing);
   });
 
@@ -153,7 +180,7 @@ describe("a rule with a queued revoke is shown as it runs", () => {
 
   it("the search finds it, it says the revoke failed, and its controls wait", async () => {
     await open([rule("a", "b@r34n.example"), rule("z", "c@else.example")], { status: "confirmed" }, queuedOf(true));
-    const search = host.querySelector<HTMLInputElement>(`input[aria-label="${R.searchLabel}"]`)!;
+    const search = within(host).getByRole<HTMLInputElement>("searchbox", { name: R.searchLabel });
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       set.call(search, "r34n");
@@ -163,7 +190,7 @@ describe("a rule with a queued revoke is shown as it runs", () => {
     const row = rowOf("a")!;
     expect(row.textContent).toContain(R.queuedRevokeFailing);
     expect(buttonIn(row, R.revoke)!.disabled).toBe(true);
-    expect(buttonIn(row, R.change)!.disabled).toBe(true);
+    expect(buttonIn(row, /^Files into /)!.disabled).toBe(true);
   });
 
   it("an unsent revoke says it has not been sent", async () => {
@@ -173,32 +200,17 @@ describe("a rule with a queued revoke is shown as it runs", () => {
 
   it("the bulk revoke leaves a rule whose revoke is still queued out of its count and its presses", async () => {
     const pressed: string[] = [];
-    const view = h(SettingsView, {
-      notifications: null, tags: [], tagCounts: {},
-      rules: {
-        items: [rule("a", "b@r34n.example"), rule("b", "c@one.example"), rule("c", "d@two.example")],
-        queued: queuedOf(true),
-        onRevoke: async (id: string) => { pressed.push(id); return { status: "confirmed" as const }; },
-        onRetarget: async () => ({ status: "confirmed" as const }),
-        pastMail: () => null,
-      },
-    });
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-10-13T05:00:00.000Z"),
-        children: h(ThemeProvider, { children: h(ToastHost, { children: view }) }),
-      }));
-    });
-    await press([...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Rules"));
-    await press(host.querySelector(".rules-bulk") ?? undefined);
-    await press(buttonIn(host, "Revoke 2 rules"));
+    await open([rule("a", "b@r34n.example"), rule("b", "c@one.example"), rule("c", "d@two.example")], { status: "confirmed" }, queuedOf(true), (id) => { pressed.push(id); });
+    await press(buttonIn(host, /^Revoke all 2 matching/));
+    const dialog = within(host).getByRole("dialog", { name: "Revoke 2 rules" });
+    await press(buttonIn(dialog, "Revoke 2 rules"));
     expect(pressed.sort()).toEqual(["b", "c"]);
   });
 
   it("nothing queued: no line, controls live (the control)", async () => {
     await open([rule("a", "b@r34n.example")], { status: "confirmed" });
     const row = rowOf("a")!;
-    expect(row.querySelector("[data-queued]")).toBeNull();
+    expect(within(row).queryByText((text) => text === R.queuedRevokeFailing || text === R.queuedRevokeUnsent)).toBeNull();
     expect(buttonIn(row, R.revoke)!.disabled).toBe(false);
   });
 });
@@ -220,22 +232,17 @@ describe("the shell reads the rules as the server runs them", () => {
     }] as SyncChange[]);
     await engine.mutate({ kind: "rule_delete", ruleId: "a" });
 
-    let seen: string[] | null = null;
-    const input = (): ShellDerivationsInput => ({
-      engine, reader: engine.read(), derived: 1, demo: false, resolvedDemo: false,
-      now: new Date("2026-10-13T05:00:00.000Z"), facts: null, seedOwed: false,
-      consent: {
-        known: true, standalone: false, dormancyDays: 30, screeningBaselineAt: null, screeningScope: "all_time",
-        foldersEnabled: false, folderMailboxesOff: {},
-      },
-      route: { view: "settings" as ShellDerivationsInput["route"]["view"], folderId: null },
-      trashWire: undefined, deleting: { held: new Set() }, restoring: { held: new Set() }, routing: { places: new Map() },
+    const queued = engine.queuedRuleWrites();
+    const shown = rulesShown(engine.read(), {
+      readerOnly: false, queued, applied: engine.appliedRuleRequests(), now: new Date("2026-10-13T05:00:00.000Z"),
     });
-    function Probe(): null {
-      seen = useShellDerivations(input()).rules.map((r) => r.id);
-      return null;
-    }
-    await act(async () => { root!.render(h(Probe)); });
-    expect(seen, "the shell's list hid a rule the server still runs").toEqual(["a"]);
+    await open(shown.rules, { status: "confirmed" }, queued);
+    const list = within(host).getByRole("list", { name: messages.settings.rules });
+    const ids = within(list).getAllByRole("listitem").map((row) =>
+      shown.rules.find((rule) => within(row).queryByRole("group", { name: rowName(rule) }))?.id,
+    );
+    expect(ids, "the shell's list hid a rule the server still runs").toEqual(["a"]);
+    expect(rowOf("a")!.textContent).toContain(R.queuedRevokeFailing);
+    expect(buttonIn(rowOf("a")!, R.revoke)!.disabled).toBe(true);
   });
 });

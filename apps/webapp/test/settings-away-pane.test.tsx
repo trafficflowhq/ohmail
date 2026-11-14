@@ -1,4 +1,13 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { NONE, type AwayWire, type FeatureEntry, type HostContract } from "@ohmail/app/host";
+import { fragmentAddress } from "@ohmail/app/host/browser";
+import { MailGround, mailPlaces, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { PANE_IDS } from "../../../packages/app/src/settings/contract.js";
+import { MailFrame } from "../app/shell/browser-mail";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,8 +16,6 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 
-import { PANE_IDS, SettingsView, initialPaneFromUrl } from "../app/views/SettingsView";
-import { AwayResponderRow, type AwayTransport } from "../app/shell/AwayResponderRow";
 import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client";
 import { setActiveCatalog, setActiveFormatZone } from "../app/shell/locale";
 
@@ -43,7 +50,54 @@ const h = React.createElement;
 let host: HTMLDivElement;
 let root: Root;
 
-async function mount(props: Parameters<typeof SettingsView>[0], locale: "en" | "de" = "en") {
+interface Sections {
+  awaySection?: ReactNode;
+  screeningSection?: ReactNode;
+  rules?: {
+    items: unknown[];
+    onRevoke: () => Promise<unknown>;
+    onRetarget: () => Promise<unknown>;
+    pastMail: () => null;
+  };
+}
+
+async function mount(sections: Sections, locale: "en" | "de" = "en", wire?: AwayWire) {
+  const { WEB_PANE_PARTS, WebSettingsAbove } = await import("../app/(product)/mailbox/pane-parts");
+  const { awaySection, screeningSection, rules } = sections;
+  const settings = mailSettings({
+    ...NO_PANE_PARTS,
+    general: () => null,
+    away: wire ? WEB_PANE_PARTS.away : awaySection ? () => awaySection : NONE,
+    screener: screeningSection ? () => screeningSection : NONE,
+    rules: rules ? WEB_PANE_PARTS.rules : NONE,
+  }, WebSettingsAbove);
+  const screener: FeatureEntry | typeof NONE = screeningSection
+    ? { name: "screener", render: () => screeningSection } : NONE;
+  const away: AwayWire | typeof NONE = wire ?? (awaySection ? {
+    state: async () => { throw new Error("The injected control reads no stored row"); },
+    save: async () => { throw new Error("The injected control cannot save"); },
+  } : NONE);
+  const { host: testHost } = fakeHost({
+    engine: fakeMail([]).engine, service: "managed", scope: "away-test",
+    above: MailGround,
+    places: { ohbox: mailPlaces().ohbox, settings },
+    features: { screener },
+    wires: {
+      away,
+      ...(screeningSection ? {
+        autoFiled: {
+          list: async () => { throw new Error("The injected control reads no filed mail"); },
+          putBack: async () => { throw new Error("The injected control cannot file mail"); },
+        },
+      } : {}),
+    },
+  });
+  const frameHost: HostContract = {
+    ...testHost,
+    capabilities: { ...testHost.capabilities, awayRunsOn: away === NONE ? NONE : "service" },
+    device: { ...testHost.device, address: fragmentAddress(window) },
+  };
+  if (!window.location.hash) window.history.replaceState(null, "", "/mailbox#/settings/general");
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -51,30 +105,26 @@ async function mount(props: Parameters<typeof SettingsView>[0], locale: "en" | "
     root.render(
       h(NextIntlClientProvider, {
         locale,
-        messages: locale === "de" ? (de as never) : messages,
+        messages: locale === "de" ? de : messages,
         timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, h(SettingsView, props))),
+        children: h(ThemeProvider, null, h(ToastHost, null, h(MailFrame, { host: frameHost }))),
       }),
     );
   });
 }
-
-const BASE: Parameters<typeof SettingsView>[0] = {
-  notifications: null,
-  tags: [],
-  tagCounts: {},
-};
+const BASE: Sections = {};
 
 /** The responder's control, as the shell injects it: one node, opaque to this view. */
 const AWAY = h("p", { className: "away-probe" }, "Away responder controls");
 
-const navLabels = () =>
-  [...host.querySelectorAll(".set-nav button")].map((b) => b.textContent?.trim());
+const buttonNav = () => within(within(host).getByRole("navigation", {
+  name: (name) => [messages.settings.navAria, de.settings.navAria].includes(name),
+}));
+const navLabels = () => buttonNav().getAllByRole("button")
+  .map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
 
 const choose = async (label: string): Promise<void> => {
-  const entry = [...host.querySelectorAll(".set-nav button")].find(
-    (b) => b.textContent?.trim() === label,
-  );
+  const entry = buttonNav().getByRole("button", { name: label });
   if (!entry) throw new Error(`no settings nav entry labelled ${label}`);
   await act(async () => { entry.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
@@ -142,8 +192,8 @@ describe("`?settings=away` — the deep link the Ohbox notice writes", () => {
   it("is an id the pane switch has, and it opens the pane at mount with no click", async () => {
     expect(PANE_IDS).toContain("away");
     window.history.replaceState(null, "", "/mailbox?settings=away#/settings");
-    expect(initialPaneFromUrl()).toBe("away");
     await mount({ ...BASE, awaySection: AWAY, screeningSection: h("p", null, "posture") });
+    expect(window.location.hash.split("/").at(-1)).toBe("away");
     expect(host.querySelector(".away-probe")).not.toBeNull();
   });
 });
@@ -183,26 +233,8 @@ async function mountRow(
     audience: "screened_in", throttle: "per_day", piles: ["INBOX"], updatedAt: null,
     ...row,
   };
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale, messages: locale === "de" ? (de as never) : messages, timeZone: "UTC",
-        children: h(ThemeProvider, null, h(ToastHost, null, h(
-          /* NARROWED TO THE PROPS THIS MOUNT USES, and that is the honest cast rather than the
-             `as never` the sibling test reaches for: the row declares every prop optional with a
-             defaulted parameter, so `createElement` cannot match it as a `FunctionComponent` and
-             falls through to its last overload — whose error names `Attributes` and not this line.
-             Naming the component's transport prop keeps the object below TYPE-CHECKED against
-             `AwayTransport`, which is where a real mistake in this fixture would be. */
-          AwayResponderRow as React.FunctionComponent<{ transport: AwayTransport }>,
-          { transport: { state: state ?? (async () => stored), save } },
-        ))),
-      }),
-    );
-  });
+  window.history.replaceState(null, "", "/mailbox#/settings/away");
+  await mount({}, locale, { state: state ?? (async () => stored), save });
   // The row loads its own state on mount; the chain settles a tick later (see away-notice.test).
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
@@ -217,17 +249,15 @@ async function mountRow(
  */
 const switchOn = async (): Promise<void> => {
   const name = messages.away.title;
-  const found = [...host.querySelectorAll('[role=switch], input[type=checkbox]')]
-    .filter((el) => el.getAttribute("aria-label") === name
-      || el.getAttribute("name") === name
-      || (el.id !== "" && host.querySelector(`label[for="${el.id}"]`)?.textContent?.trim() === name));
+  const found = within(host).getAllByRole("switch", { name });
   if (found.length !== 1) throw new Error(`away switch: expected 1 control named ${name}, found ${found.length}`);
   await act(async () => { found[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 };
 
 const press = async (label: string): Promise<void> => {
-  const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
+  const name = label === messages.away.untilNone ? messages.away.untilPick : label;
+  const button = within(host).getAllByRole("button", { name }).at(-1);
   if (!button) throw new Error(`no button labelled ${label}`);
   await act(async () => { button.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -247,12 +277,10 @@ const press = async (label: string): Promise<void> => {
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 const dateTrigger = (): HTMLButtonElement =>
-  host.querySelector("#away-until") as HTMLButtonElement;
+  within(host).getByRole<HTMLButtonElement>("button", { name: messages.away.untilPick });
 
 const findButton = (label: string): HTMLButtonElement | undefined =>
-  [...host.querySelectorAll("button")].find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
+  within(host).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
 
 describe("the away responder's end date", () => {
   beforeEach(() => { setActiveFormatZone("UTC"); setActiveCatalog("en", null); });
@@ -336,7 +364,8 @@ describe("the away responder's end date", () => {
     /* `aria-disabled`, not the `disabled` ATTRIBUTE: the picker keeps an out-of-range day
        focusable and refuses its press, so a filter on `.disabled` accepts every cell in the grid
        — including the ones before `min`, which is how this case first picked a day in August. */
-    const cells = [...host.querySelectorAll<HTMLButtonElement>("[data-day]")]
+    const grid = within(host).getByRole("dialog", { name: messages.away.untilPick });
+    const cells = within(grid).getAllByRole<HTMLButtonElement>("gridcell")
       .filter((b) => b.getAttribute("aria-disabled") === null);
     expect(cells.length, "the picker drew no pickable day").toBeGreaterThan(0);
     const day = cells[0]!.getAttribute("data-day")!;
@@ -438,9 +467,7 @@ describe("the away responder's `asked` state ends when the organizer applies the
     expect(host.textContent).toContain(messages.away.applied);
     /* AND THE VALUES, which is the half that makes this a false STATE rather than a stale note:
        the switch was OFF under the waiting note and the applied row has it ON. */
-    const box = host.querySelector("input[type=checkbox]") as HTMLInputElement | null;
-    expect(box?.checked ?? [...host.querySelectorAll("button[role=switch]")]
-      .some((b) => b.getAttribute("aria-checked") === "true")).toBeTruthy();
+    expect(within(host).getByRole("switch", { name: messages.away.title }).getAttribute("aria-checked") === "true").toBeTruthy();
   });
 
   it("keeps saying it is waiting while the answer has not moved — and stops asking", async () => {
@@ -496,7 +523,7 @@ describe("the away responder's `asked` state ends when the organizer applies the
     expect(host.textContent).toContain(messages.away.changedElsewhere);
     expect(host.textContent).not.toContain(messages.away.asked);
     // AND THE VALUES ARE THE ROW'S. The pane states what is true, whoever wrote it.
-    const area = host.querySelector("textarea") as HTMLTextAreaElement | null;
+    const area = within(host).queryByRole<HTMLTextAreaElement>("textbox", { name: messages.away.bodyLabel });
     expect(area?.value).toBe("On sabbatical");
   });
 
@@ -630,20 +657,23 @@ describe("the away responder's `asked` state ends when the organizer applies the
     );
     await switchOn();
     await press("Save");
-    const field = host.querySelector("#away-body") as HTMLTextAreaElement;
+    const field = within(host).getByRole<HTMLTextAreaElement>("textbox", { name: messages.away.bodyLabel });
     const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
     await act(async () => { set.call(field, "Back Tuesday"); field.dispatchEvent(new Event("input", { bubbles: true })); });
 
     answer = APPLIED;
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(host.textContent).toContain(messages.away.applied);
-    expect((host.querySelector("#away-body") as HTMLTextAreaElement).value, "the later edit was overwritten")
+    expect((within(host).getByRole<HTMLTextAreaElement>("textbox", { name: messages.away.bodyLabel })).value, "the later edit was overwritten")
       .toBe("Back Tuesday");
     expect(host.textContent).toContain(messages.away.unsavedStillOn);
 
-    const { go } = await import("../app/shell/routing");
-    await act(async () => { go("ohbox"); });
-    expect(host.querySelector("[role=alertdialog]"), "the hold released without a question").not.toBeNull();
+    const placeNav = within(within(host).getByRole("navigation", { name: "Places" }));
+    await act(async () => { placeNav.getByRole("button", { name: /^Ohbox/ }).click(); });
+    const view = within(host);
+    expect(host.textContent, "the hold released without a question").toContain(messages.away.leaveAsk);
+    expect(view.getByRole("button", { name: messages.away.leaveDiscard })).toBeTruthy();
+    expect(view.getByRole("button", { name: messages.away.leaveKeep })).toBeTruthy();
     expect(window.location.hash).toBe("#/settings/away");
   });
 
@@ -661,9 +691,9 @@ describe("the away responder's `asked` state ends when the organizer applies the
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
     expect(host.textContent).toContain(messages.away.on);
     expect(host.textContent).not.toContain(messages.away.unsavedStillOn);
-    const { go } = await import("../app/shell/routing");
-    await act(async () => { go("ohbox"); });
-    expect(host.querySelector("[role=alertdialog]")).toBeNull();
+    const placeNav = within(within(host).getByRole("navigation", { name: "Places" }));
+    await act(async () => { placeNav.getByRole("button", { name: /^Ohbox/ }).click(); });
+    expect(within(host).queryByRole("alertdialog")).toBeNull();
     expect(window.location.hash).toBe("#/ohbox");
   });
 

@@ -22,7 +22,7 @@ import {
   useScreenerSuggestions,
   type SenderSuggestion,
   type SuggestText,
-} from "../../webapp/app/shell/screener-suggest";
+} from "@ohmail/app-logic/screener/screener-suggest";
 import type { SuggestStanding } from "../../webapp/app/shell/no-suggestion";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 

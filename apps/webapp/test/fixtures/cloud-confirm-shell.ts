@@ -22,12 +22,13 @@
  * SCRIPT THAT RUNS SHORT would otherwise be indistinguishable from a ladder that stopped.
  */
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
 import { clearSessionCookies, csrfTokenFor, sessionCookies } from "@trafficflow/api";
 import { makeAuthConfig } from "@trafficflow/services/auth";
 import messages from "../../messages/en.json";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 import { act as fencedAct, caseLive, endCase, tracked } from "../_case-fence";
 
@@ -202,7 +203,7 @@ export function syncPage(subject: string, accountId = ACCOUNT): Response {
       updates: [], moves: [], deletes: [],
     },
     cursor: "c1", hasMore: false, serverTime: ISO,
-  }, 200);
+  }, 200, { "X-Ohmail-Account": accountId });
 }
 
 let syncScript: (() => Response) | null = null;
@@ -276,7 +277,7 @@ export function installConfirmEnv(): void {
   refreshScript = [coded401];
   sessionAt = [];
   refreshAt = [];
-  logoutScript = [() => withCookies(204, clearSessionCookies())];
+  logoutScript = [() => new Response(null, { status: 204 })];
   logoutAt = 0;
 
   const wire = async (input: unknown, init?: RequestInit): Promise<Response> => {
@@ -289,6 +290,9 @@ export function installConfirmEnv(): void {
     // route. Before the refresh branch, which would otherwise answer the door as a renewal.
     const pathname = new URL(url, "http://localhost").pathname;
     if (pathname === "/auth/refresh/logout") {
+      if (new Headers(init?.headers).get("X-Ohmail-Clear-Logout") === "1") {
+        return withCookies(204, clearSessionCookies());
+      }
       logoutAt += 1;
       return serve(logoutScript, logoutAt);
     }
@@ -331,8 +335,14 @@ export function installConfirmEnv(): void {
     void init;
     return json({}, 200);
   };
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) =>
-    takeCookies(String(input), await wire(input, init))) as unknown as typeof globalThis.fetch;
+  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+    const owner = readOwner();
+    const response = takeCookies(String(input), await wire(input, init));
+    if (owner !== null && response.ok && !response.headers.has("X-Ohmail-Account")) {
+      response.headers.set("X-Ohmail-Account", owner);
+    }
+    return response;
+  }) as unknown as typeof globalThis.fetch;
 
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -400,32 +410,60 @@ export async function warmCloudShell(): Promise<void> {
   await shellModules();
 }
 
-/** Mount the real `CloudShell` behind the provider the Cloud route wraps it in. */
-export function mountCloudShell(): Promise<HTMLElement> {
+/** Mount the real `CloudShell`, with an optional wrapper for cases that need the layout's locale state. */
+export function mountCloudShell(
+  wrap?: (shell: React.ReactElement) => React.ReactElement,
+  hydration?: { from: string; onError: (error: unknown) => void },
+): Promise<HTMLElement> {
   caseLive();
-  return tracked(mountNow());
+  return tracked(mountNow(wrap, hydration));
 }
 
-async function mountNow(): Promise<HTMLElement> {
+/** Hydrate the prerendered page with the query string the server never saw. */
+export async function hydrateCloudShell(at: string): Promise<HTMLElement> {
+  const from = window.location.href;
+  window.history.replaceState(null, "", at);
+  const errors: unknown[] = [];
+  const host = await mountCloudShell(undefined, { from, onError: (error) => errors.push(error) });
+  if (errors.length > 0) throw errors[0];
+  return host;
+}
+
+async function mountNow(
+  wrap?: (shell: React.ReactElement) => React.ReactElement,
+  hydration?: { from: string; onError: (error: unknown) => void },
+): Promise<HTMLElement> {
   const { CloudShell, ThemeProvider, ToastHost, THEME_DOOR } = await shellModules();
   caseLive();
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en",
-      messages,
-      timeZone: "UTC",
-      now: new Date(ISO),
-      children: h(ThemeProvider, {
-        // The product door's persistence, through the same durable door its providers pass.
-        storage: THEME_DOOR,
-        children: h(ToastHost, { children: h(CloudShell, { demo: false }) }),
-      }),
-    }));
+  const shell = h(CloudShell, { demo: false });
+  const tree = h(NextIntlClientProvider, {
+    locale: "en",
+    messages,
+    timeZone: "UTC",
+    now: new Date(ISO),
+    children: h(ThemeProvider, {
+      // The product door's persistence, through the same durable door its providers pass.
+      storage: THEME_DOOR,
+      children: h(ToastHost, { children: wrap?.(shell) ?? shell }),
+    }),
   });
+  if (hydration !== undefined) {
+    const { renderToString } = await import("react-dom/server");
+    const client = window.location.href;
+    window.history.replaceState(null, "", hydration.from);
+    try {
+      container.innerHTML = renderToString(tree);
+    } finally {
+      window.history.replaceState(null, "", client);
+    }
+    await act(async () => { roots.push(hydrateRoot(container, tree, { onRecoverableError: hydration.onError })); });
+  } else {
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => { root.render(tree); });
+  }
   return container;
 }
 
@@ -482,9 +520,9 @@ export const showsEnded = (el: HTMLElement): boolean =>
 export const showsUnconfirmed = (el: HTMLElement): boolean =>
   textOf(el).includes(messages.session.unconfirmedTitle);
 
-/** The mailbox itself. `AppShell`'s root node, which `isSameNode` comparisons hang off. */
+/** The mailbox itself: the frame's root node, which `isSameNode` comparisons hang off. */
 export const shellRoot = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".today");
+  el.querySelector<HTMLElement>(".fr-root");
 
 /** The blocking overlay's node, `SessionEnded`'s markup — present only at `unconfirmed`. */
 export const overlay = (el: HTMLElement): HTMLElement | null =>

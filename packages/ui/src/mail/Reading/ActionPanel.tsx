@@ -9,9 +9,16 @@ export interface PanelVerb {
   /** Its name in what the panel hands back: a press, and what folded. */
   id: string;
   label: string;
+  /**
+   * Its name where the sentence says more than the word drawn (the read slot over a conversation: "Mark 2 unread
+   * messages as read" beside "Mark read"): what a screen reader says and the pointer's hint reads. Left out: `label`.
+   */
+  name?: string;
   icon?: IconName;
   /** The key that runs it, as it is printed: in the pointer's hint, and on the verb where key hints are shown. */
   keyHint?: string;
+  /** The active binding in aria-keyshortcuts syntax. */
+  shortcut?: string;
   /** `ink`: the one capsule of the view. `soft`: one of several answers of one weight. Left out: a word that acts. */
   kind?: "ink" | "soft";
   /** 0 never folds. Otherwise the highest folds behind More first, of equals the later one. Left out: 9. */
@@ -26,7 +33,21 @@ export interface PanelVerb {
   apart?: boolean;
   /** A toggle: whether it holds. */
   pressed?: boolean;
+  dialog?: { readonly id: string; readonly open: boolean };
   disabled?: boolean;
+  /**
+   * It rests and still takes a press, which says why it does nothing (Send over a letter too long to send): drawn as
+   * a verb that is off, said as one (`aria-disabled`), its press handed on. `disabled` wins over it.
+   */
+  resting?: boolean;
+  /**
+   * Refused for now, and why, in a sentence (Send with nothing written: "Write something or attach a file."): drawn and
+   * said as `resting`, the sentence its pointer's hint, its press handed on so that it can say the sentence where the
+   * person looks. `disabled` wins over it.
+   */
+  refused?: string;
+  /** At work after its press (Send while the letter goes): said busy. */
+  busy?: boolean;
   /** The widest label this slot ever shows, so that the panel keeps its width when the label changes. */
   widest?: string;
   /** A count that leads and stays when its word goes: "3", then "selected". The label is the two as one name. */
@@ -52,7 +73,13 @@ export interface ActionPanelProps {
    * What stands behind the panel. It is drawn only while something is behind it or something folded. It says
    * whether its menu stands open, as every control that opens one: shut where `expanded` is not handed.
    */
-  more?: { label: string; behind: boolean; expanded?: boolean; onPress?: (at: HTMLElement) => void };
+  more?: {
+    label: string;
+    behind: boolean;
+    apart?: boolean;
+    expanded?: boolean;
+    onPress?: (at: HTMLElement) => void;
+  };
   /** Key hints are switched on. */
   keysShown?: boolean;
   /** How it stands before it has measured its room: the verbs that are folded, and those that show their icon alone. */
@@ -127,7 +154,7 @@ export function ActionPanel({ label, items, more, keysShown, folded, short, onFo
             className="oh-control oh-actionpanel-verb"
             data-more=""
             data-behind={more.behind ? "" : undefined}
-            data-apart={segment ? "" : undefined}
+            data-apart={segment || more.apart ? "" : undefined}
             hidden={!more.behind && !anyFolded}
             aria-label={more.label}
             title={more.label}
@@ -168,10 +195,20 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       data-hot-icon={verb.hotIcon ? "" : undefined}
       data-short={short ? "" : undefined}
       hidden={folded}
-      aria-label={verb.label}
-      title={verb.keyHint ? `${verb.label} · ${verb.keyHint}` : verb.label}
+      aria-label={verb.name ?? verb.label}
+      aria-keyshortcuts={verb.shortcut}
+      title={
+        verb.refused !== undefined && !verb.disabled
+          ? verb.refused
+          : (verb.name ?? (verb.keyHint ? `${verb.label} · ${verb.keyHint}` : verb.label))
+      }
       aria-pressed={verb.pressed}
+      aria-haspopup={verb.dialog ? "dialog" : undefined}
+      aria-expanded={verb.dialog?.open}
+      aria-controls={verb.dialog?.open ? verb.dialog.id : undefined}
       disabled={verb.disabled}
+      aria-disabled={(verb.resting || verb.refused !== undefined) && !verb.disabled ? true : undefined}
+      aria-busy={verb.busy || undefined}
       onClick={(event) => verb.onPress?.(event.currentTarget)}
     >
       {verb.icon ? <Icon name={verb.icon} size={20} /> : null}
@@ -196,7 +233,11 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
           </i>
         ) : null}
       </span>
-      {verb.keyHint ? <KeyHint shown={keysShown}>{verb.keyHint}</KeyHint> : null}
+      {verb.keyHint ? (
+        <KeyHint shown={keysShown} unsaid>
+          {verb.keyHint}
+        </KeyHint>
+      ) : null}
     </button>
   );
 }

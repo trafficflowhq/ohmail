@@ -51,6 +51,33 @@
     outline: none;
   }
 
+  :is(.oh-row, .oh-row-slot)[data-leaving] {
+    overflow: hidden;
+    animation:
+      oh-row-leave var(--d-out) var(--e-gone) both,
+      oh-row-close var(--d-move) var(--e-move) both;
+  }
+
+  :is(.oh-row, .oh-row-slot)[data-leaving="rail"] {
+    --oh-row-leave-transform: var(--x-out);
+  }
+
+  @keyframes oh-row-leave {
+    to {
+      opacity: var(--o-out);
+      transform: var(--oh-row-leave-transform, none);
+    }
+  }
+
+  @keyframes oh-row-close {
+    from {
+      height: var(--row);
+    }
+    to {
+      height: 0;
+    }
+  }
+
   .oh-row:focus-visible {
     outline: var(--oh-focus) solid var(--focus);
     outline-offset: calc(var(--oh-focus) * -1);
@@ -246,6 +273,19 @@
     text-overflow: ellipsis;
   }
 
+  .oh-row-address[aria-haspopup="dialog"] {
+    white-space: nowrap;
+  }
+
+  .oh-row-contact {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .oh-row-contact.oh-row-address {
+    color: var(--oh-row-second);
+  }
+
   :root[data-touch="0"] .oh-row-address[data-press]:hover {
     color: var(--ink);
     text-decoration: underline;
@@ -353,6 +393,11 @@
     line-height: var(--oh-row-tag-lh);
   }
 
+  .oh-row-first[data-fold-address] > .oh-row-address,
+  .oh-row-first[data-fold-tag] > .oh-tag[data-own] {
+    display: none;
+  }
+
   .oh-row[data-open] .oh-readsquares,
   .oh-row[data-open] .oh-tag {
     background: var(--sheet);
@@ -418,6 +463,19 @@
   .oh-row-first:has(> .oh-row-labels) > .oh-row-who {
     flex: 0 1 auto;
     max-width: none;
+  }
+
+  .oh-row-first:has(> .oh-row-address[data-domain]) > .oh-row-who {
+    flex: 0 1000 auto;
+    min-width: 0;
+  }
+
+  .oh-row-first > .oh-row-address[data-domain] {
+    flex-shrink: 1;
+  }
+
+  .oh-row-first > .oh-row-who[data-domain] {
+    min-width: 0;
   }
 
   /* A sender that is not who the name says: the sign and its word stand where the address would, whole. */
@@ -607,7 +665,7 @@
     align-self: center;
     height: var(--h-s);
     margin-left: var(--s5);
-    background: var(--soft);
+    background: var(--oh-row-own-background, var(--soft));
     box-shadow: var(--oh-row-own-ring);
     font-size: var(--t-ui);
   }
@@ -676,6 +734,10 @@
 
   :root[data-device="phone"] .oh-rows {
     padding: 0 var(--s1) var(--s1);
+  }
+
+  :root:is([data-device="phone"], [data-device="fold"]) .oh-row-first > .oh-tag[data-own] {
+    display: none;
   }
 
   :root[data-touch="1"] .oh-row {
@@ -864,4 +926,63 @@
   .oh-row[data-open] .oh-row-face > .oh-avatar > .oh-dot {
     background: var(--row-open-dot);
   }
+}
+
+/* The resting list uses the kit's row, with room for a name and an address. */
+[data-address-rows] .oh-row {
+  height: calc(var(--h-xl) + var(--s1));
+}
+
+[data-address-rows] .oh-row-face {
+  align-self: center;
+  margin-top: 0;
+}
+
+[data-address-rows] .oh-row-first {
+  min-height: 0;
+}
+
+[data-address-rows] .oh-row:not([data-unread], [data-open]) .oh-row-who {
+  color: var(--ink);
+  font-weight: var(--w-mid);
+}
+
+[data-address-rows] .oh-row-second {
+  display: block;
+  font-size: var(--t-meta);
+}
+
+[data-address-rows] .oh-row:not([data-unread], [data-open]) .oh-row-preview {
+  color: var(--ink2);
+}
+
+/* The standing row paints as the current item without becoming an opened letter. */
+[data-cursor-tint]:has(> .oh-listhead) .oh-row[aria-selected="true"]:not([data-open]) {
+  --oh-under: var(--row-open);
+  --oh-row-second: var(--on-row-open2);
+  --oh-row-cursor: inset 0 0 0 var(--row-ringw) var(--row-ring);
+
+  background: var(--row-open);
+  color: var(--on-row-open);
+}
+
+[data-cursor-tint]:has(> .oh-listhead)
+  .oh-row[aria-selected="true"]:not([data-open])
+  :is(.oh-row-who, .oh-row-subject) {
+  color: var(--on-row-open);
+}
+
+[data-cursor-tint]:has(> .oh-listhead)
+  .oh-row[aria-selected="true"]:not([data-open])
+  :is(.oh-row-address, .oh-row-preview, .oh-row-file) {
+  color: var(--on-row-open2);
+}
+
+:root[data-face="paper"]
+  [data-cursor-tint]:has(> .oh-listhead)
+  .oh-row[aria-selected="true"]:not([data-open])
+  .oh-row-face
+  > .oh-avatar {
+  --oh-avatar-bg: var(--av-open-bg);
+  --oh-avatar-fg: var(--av-open-fg);
 }

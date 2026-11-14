@@ -12,6 +12,7 @@ import {
   textOf,
   tick,
 } from "./fixtures/live-walk-shell";
+import { readingColumn, seatedList } from "./ohbox/_finders";
 
 /**
  * (the code half) — TWO SMALL THINGS THE WALK FOUND, WHICH ARE THE SAME THING TWICE.
@@ -96,9 +97,18 @@ describe("an empty Ohbox says it is empty", () => {
   beforeEach(installShellEnv);
   afterEach(teardownShellEnv);
   /* The list's group headings by their names (the kit's heading draws its count beside the name), its rows as options,
-     its groups as listboxes, and its empty sentence as the kit's Empty says it, the closing dot drawn by the kit. */
+     its groups as listboxes, and its empty sentence as the kit's Empty says it, the closing dot drawn by the kit.
+     RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (the shared fixture mounts
+     `_mail-shell.tsx`), the Ohbox's list is the frame's list section ("Messages") and a group's heading is its level-2
+     heading there, its name the heading's first part; the reading column is the frame's reading section. Expectations
+     as they stood. */
+  const list = (c: HTMLElement): HTMLElement => {
+    const at = seatedList(c);
+    expect(at, "the Ohbox's list is not drawn").not.toBeNull();
+    return at!;
+  };
   const headings = (c: HTMLElement): Array<string | null> =>
-    [...c.querySelectorAll(".view-ohbox .ob-heading .oh-groupheading > span:first-child")].map((n) => n.textContent);
+    [...list(c).querySelectorAll("h2")].map((n) => n.querySelector("span")?.textContent ?? n.textContent);
   const NOTHING = messages.ohbox.empty.nothing;
 
   it("no rows means no group headings, and one line saying so", async () => {
@@ -107,16 +117,16 @@ describe("an empty Ohbox says it is empty", () => {
     const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: no mail").toBe(0);
+    expect(c.querySelectorAll("[role=option][data-id]").length, "the premise: no mail").toBe(0);
     expect(headings(c)).toEqual([]);
-    expect(c.querySelectorAll(".view-ohbox [role=listbox]").length, "an empty listbox to land in").toBe(0);
+    expect(list(c).querySelectorAll("[role=listbox]").length, "an empty listbox to land in").toBe(0);
     expect(textOf(c)).toContain(NOTHING);
 
     // The pane says what it owns and no more: WHY the list is empty is the frame's notice, which says the first sync.
     expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
 
     // One empty state, not two: no "Nothing open." beside "Nothing in your Ohbox.".
-    expect(c.querySelector(".read-col")?.textContent ?? "", "a second empty state").toBe("");
+    expect(readingColumn(c)?.textContent ?? "", "a second empty state").toBe("");
   });
 
   it("and a heading comes back the moment there is something under it", async () => {
@@ -129,7 +139,7 @@ describe("an empty Ohbox says it is empty", () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: mail arrived").toBe(2);
+    expect(c.querySelectorAll("[role=option][data-id]").length, "the premise: mail arrived").toBe(2);
     expect(headings(c)).toEqual(["New"]);
     expect(textOf(c)).not.toContain(NOTHING);
   });

@@ -52,6 +52,7 @@ export interface MonthGridProps {
   onCellPress?: (id: string) => void;
   onMorePress?: (id: string) => void;
   onWeekPress?: (weekId: string) => void;
+  scrollLabel?: string;
   scrollRef?: Ref<HTMLDivElement>;
   onScroll?: UIEventHandler<HTMLDivElement>;
 }
@@ -74,6 +75,8 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
         <div
           key={d.id}
           className="oh-mo-cell"
+          data-cal-drop-day={d.id}
+          data-cal-drop-kind="month"
           data-out={d.outside ? "" : undefined}
           style={{ gridColumn: i + 1 }}
           onClick={onCellPress ? () => onCellPress(d.id) : undefined}
@@ -127,7 +130,7 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
  * that scrolls, each at its own place, and the days of the other months step back.
  */
 export function MonthGrid(props: MonthGridProps) {
-  const { weekdays, weeks, run, scrollRef, onScroll } = props;
+  const { weekdays, weeks, run, scrollLabel, scrollRef, onScroll } = props;
   const numbers = weeks.some((w) => w.weekNumber) ? "" : undefined;
   const rows = weeks.map((w) => <Week key={w.id} week={w} props={props} />);
   return (
@@ -144,6 +147,8 @@ export function MonthGrid(props: MonthGridProps) {
           className="oh-mo-weeks"
           data-run=""
           data-numbers={numbers}
+          role={scrollLabel ? "region" : undefined}
+          aria-label={scrollLabel}
           ref={scrollRef}
           onScroll={onScroll}
           style={{ "--oh-mo-rowh": `${run.rowHeight}px` } as CSSProperties}

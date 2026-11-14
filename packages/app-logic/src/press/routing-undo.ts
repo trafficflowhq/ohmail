@@ -291,7 +291,8 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
          press, asked again of the mirror as it now is. */
       const sender = senderScreening(read, i.seedId, i.address, undefined, over);
       if (!sender) { built.current.set(i.id, null); return []; }
-      const plan = planScreeningChange(sender, i.dest, "sender", true, false);
+      /* Only the sender rule was held. Mail that is waiting now keeps its own Screener decision. */
+      const plan = planScreeningChange(sender, i.dest, "sender", true, false, "leave");
       built.current.set(i.id, plan);
       return liftedOver(over, plan.ruleMutations);
     },

@@ -420,10 +420,7 @@ export const screenerRoutes: Route[] = [
     },
   },
   {
-    // The PRESS: records the command (`junk_sweep_requested_at`, mail 0076) for the worker to
-    // execute under the lease. `work` — it writes on the user's account — and NO IMAP here: the
-    // sweep is a bulk act over mirrored rows, which is the organization the API never applies
-    // itself (junk-window.ts' header draws the line).
+    // A sweep replaces the offered set only if that account's preview still matches.
     method: "POST",
     pattern: "/screener/junk/sweep",
     relay: true,
@@ -431,7 +428,11 @@ export const screenerRoutes: Route[] = [
     replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      return jsonResponse(await requestJunkSweep(deps, ctx));
+      const confirmation = /^"([A-Za-z0-9_-]{43})"$/.exec(req.headers.get("if-match") ?? "")?.[1];
+      if (!confirmation) {
+        throw new ServiceError("stale_junk_sweep", 409, "read a fresh Quarantine preview before confirming");
+      }
+      return jsonResponse(await requestJunkSweep(deps, ctx, confirmation));
     },
   },
   {

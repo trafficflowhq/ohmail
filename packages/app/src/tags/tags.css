@@ -4,3 +4,8 @@
   gap: var(--s1);
   padding-top: var(--s2);
 }
+
+/* A tag's drop-target box in the rail draws nothing: the kit's entry lays out as if it stood alone. */
+.tg-railtarget {
+  display: contents;
+}

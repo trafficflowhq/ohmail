@@ -10,6 +10,16 @@
  * The server's refusal (against its own clock) stays the authority; this refuses what it can know first.
  */
 
+/** The card owns execution. Write's shortcut sheet uses these same chords to teach it. */
+export const SCHEDULE_KEY = "Enter";
+export const SCHEDULE_CHORD = `mod+${SCHEDULE_KEY}`;
+export const LATER_CHOICES = {
+  "1": "evening",
+  "2": "tomorrow",
+  "3": "monday",
+  "4": "custom",
+} as const;
+
 /** How far ahead a server keeps a scheduled letter's files; `days: null`: kept by this computer's own engine. */
 export interface ScheduleFiles {
   readonly kept: boolean;

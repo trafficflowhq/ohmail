@@ -1,12 +1,8 @@
 /**
  * SETTINGS → THIS INSTALL: which door, which mailbox, and the three things that change
- * either. The pane the shared `SettingsView` cannot contain — every control here is a call to
- * the native shell, and that file is compiled into a browser tab too, so it takes the pane as
- * a node and this file supplies one (the seam the hosted Account and Security panes use,
- * mirrored: the web has no shell, the desktop has no account). The webview never touches the
- * disk: signing out clears a sealed credential and removes a settings file IN THE SHELL —
- * this page is one command and rendering the answer. What each action costs is said before
- * it is taken: sign-out keeps the mail copy; a door switch freezes the mirror you leave.
+ * either. The desktop registers this pane with Settings. Signing out clears the sealed
+ * credential and removes the settings file through the native shell. The pane says what each
+ * action does before the press, including what happens to the copy of the mail.
  */
 
 import { useState } from "react";
@@ -19,6 +15,7 @@ import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { hostLabelOf, isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
+import { DefaultMailRow } from "./DesktopDefaultMail.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
@@ -230,6 +227,7 @@ export function DesktopSettings({
    * answering. `null` on every other door, and before the first answer.
    */
   connection,
+  defaultMail = false,
   /** Open the pairing card over the app, for an install whose pairing has ended. */
   onPairAgain,
   /** Begin setting this machine up on its own — the gate owns that flow. */
@@ -239,6 +237,7 @@ export function DesktopSettings({
   session: HostedSession;
   sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
+  defaultMail?: boolean;
   onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
@@ -461,6 +460,7 @@ export function DesktopSettings({
       )}
 
       <SettingsNote>{DOOR_COPY.installPasswordNote}</SettingsNote>
+      {defaultMail ? <DefaultMailRow /> : null}
 
       {/* WHAT BELONGS IN THIS MAILBOX'S OHBOX HAS MOVED, to Settings → Screener, where the rest
           of the screening controls are and where somebody looking for it would look first. It was

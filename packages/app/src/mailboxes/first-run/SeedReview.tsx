@@ -5,16 +5,12 @@
  * pressing does and what it does not: it writes rules and moves nothing. A refused confirm keeps every tick.
  */
 import type { ReactNode } from "react";
-import { Button, Field, Page } from "@ohmail/ui/base";
+import { Button, Field, Page, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import type { SeedOffer } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
-import {
-  useSeedReview,
-  type SeedReview as SeedReviewModel,
-  type SeedReviewWireLike,
-} from "@ohmail/app-logic/mailboxes/first-run/use-seed-review";
-import { Said, leadOf } from "./parts.js";
+import type { SeedReview as SeedReviewModel } from "@ohmail/app-logic/mailboxes/first-run/use-seed-review";
+import { leadOf } from "./parts.js";
 import type { Say } from "./words.js";
 
 /**
@@ -75,26 +71,24 @@ function People({ review, busy, say }: { review: SeedReviewModel; busy: boolean;
   );
 }
 
+/** The review the frame read (`SeedReviewContext`, read where its offer is worked out), drawn as the stage's step. */
 export function SeedReview({
-  wire,
+  review,
   offer,
   say,
 }: {
-  wire: SeedReviewWireLike;
+  review: SeedReviewModel;
   offer: SeedOffer;
   say: Say;
 }): ReactNode {
-  const review = useSeedReview({
-    wire,
-    onDone: offer.done,
-    ...(offer.reopened ? {} : { onNothingToDecide: offer.nothingToDecide }),
-  });
   const { phase } = review;
   const said = (s: string | null): string => s ?? say("seed.errorGeneric");
   if (phase.at === "loading")
     return (
       <Page acts={null}>
-        <Said text={say("seed.loading")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("seed.loading")}
+        </Sentence>
       </Page>
     );
   if (phase.at === "unavailable")
@@ -107,7 +101,9 @@ export function SeedReview({
           </Button>
         }
       >
-        <Said text={say("seed.errorTitle")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("seed.errorTitle")}
+        </Sentence>
       </Page>
     );
   if (review.nothing) {
@@ -121,7 +117,9 @@ export function SeedReview({
           </Button>
         }
       >
-        <Said text={say("seed.nothingToDecide")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("seed.nothingToDecide")}
+        </Sentence>
       </Page>
     );
   }
@@ -167,7 +165,9 @@ export function SeedReview({
         </div>
       }
     >
-      <Said text={say("seed.title", { count: candidates.length })} />
+      <Sentence size="xl" level={1} end="hot">
+        {say("seed.title", { count: candidates.length })}
+      </Sentence>
     </Page>
   );
 }

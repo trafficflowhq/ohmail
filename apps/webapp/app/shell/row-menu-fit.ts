@@ -11,7 +11,7 @@
  */
 import { useLayoutEffect, useState, type CSSProperties, type RefObject } from "react";
 import { cssRect, cssViewport } from "@ohmail/ui";
-import { OVERLAY_EDGE } from "./overlay-clamp";
+import { OVERLAY_EDGE } from "../screening/overlay-clamp";
 
 export interface RowMenuFit {
   up: boolean;

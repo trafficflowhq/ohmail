@@ -4,8 +4,8 @@
  * run's mode is `seed`, which reconfigures the install) or a rail: one verb, and it leaves.
  */
 import type { ReactNode } from "react";
-import { Button, Page } from "@ohmail/ui/base";
-import { Next, Said, StepForm, leadOf, type StepProps } from "./parts.js";
+import { Button, Page, Sentence } from "@ohmail/ui/base";
+import { Next, StepForm, leadOf, type StepProps } from "./parts.js";
 import { WELCOME_TITLE } from "./words.js";
 
 export function Welcome({ run, say, door }: StepProps): ReactNode {
@@ -15,7 +15,9 @@ export function Welcome({ run, say, door }: StepProps): ReactNode {
         line={leadOf(say("onboarding.welcomeLead"))}
         acts={<Next label={say("onboarding.welcomeStart")} />}
       >
-        <Said text={say(WELCOME_TITLE[door])} />
+        <Sentence size="xl" level={1} end="hot">
+          {say(WELCOME_TITLE[door])}
+        </Sentence>
       </Page>
     </StepForm>
   );
@@ -29,7 +31,9 @@ export function Vanished({ run, say }: StepProps): ReactNode {
         line={leadOf(say("onboarding.vanishedLead"))}
         acts={<Next label={say("onboarding.vanishedLeave")} />}
       >
-        <Said text={say("onboarding.vanishedTitle")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("onboarding.vanishedTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );
@@ -52,7 +56,9 @@ export function Choose({ run, say }: StepProps): ReactNode {
         }
         acts={<Next label={say("onboarding.chooseLeave")} />}
       >
-        <Said text={say("onboarding.chooseTitle")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("onboarding.chooseTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );

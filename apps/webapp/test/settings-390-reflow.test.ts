@@ -29,15 +29,14 @@ import { describe, expect, it } from "vitest";
  * Re-measured with the rule applied: document scrollWidth 390 at 390, rows/pills/nav all
  * inside the viewport, both themes.
  *
- * MUTATION WATCH: deleting the `.set-layout > *` block from app.css turns the first
- * assertion red; restoring `white-space: nowrap` on `.rules-confirm .what` turns the
- * second red.
+ * MUTATION WATCH: restoring `white-space: nowrap` on `.rules-confirm .what` turns the
+ * confirm's case red. (Today's settings grid's `.set-layout > *` case left with today's
+ * Settings view; the kit's setting line holds its own.)
  */
 
 const bare = (p: string): string =>
   readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-const APP_CSS = bare("apps/webapp/app/app.css");
 const RULES_CSS = bare("apps/webapp/app/views/rules.css");
 
 /** The declarations of the first `selector { … }` block in `css`, or null. */
@@ -49,17 +48,6 @@ function blockOf(css: string, selector: string): string | null {
   if (open < 0 || close < 0) return null;
   return css.slice(open + 1, close);
 }
-
-describe("SET-H1 — the settings grid releases its items' intrinsic minimum", () => {
-  it("app.css zeroes min-width on .set-layout's grid items", () => {
-    const block = blockOf(APP_CSS, ".set-layout > *");
-    expect(
-      block,
-      "no `.set-layout > *` rule — the Rules pane's nowrap rows will set the sheet's width again",
-    ).toBeTruthy();
-    expect(block!.replace(/\s/g, "")).toContain("min-width:0");
-  });
-});
 
 describe("SET-H1/M4 — the confirm is the one place a rule is read in full", () => {
   it("rules.css lets .rules-confirm .what wrap instead of ellipsizing", () => {
@@ -94,6 +82,8 @@ describe("SET-H1/M4 — the confirm is the one place a rule is read in full", ()
  */
 describe("SET-H1/M5 — the key field keeps a floor at every width", () => {
   it("settings.css gives .set-field-row's field a basis and lets the row wrap", () => {
+    const form = bare("apps/desktop/src/AiProviderForm.tsx");
+    expect(form).toMatch(/<div className="set-field-row">\s*<input\s+id="ai-key"/);
     const css = bare("packages/ui/src/composites/settings.css");
     const row = blockOf(css, ".set-field-row{");
     expect(row, "no `.set-field-row` rule — a field with a verb beside it has no layout").toBeTruthy();

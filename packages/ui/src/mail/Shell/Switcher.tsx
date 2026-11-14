@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useId, useLayoutEffect, useRef, type CSSProperties } from "react";
 import { KeyHint } from "../../base/index.js";
 import { design } from "../../base/tokens.js";
 import { cssRect, type CssRect } from "../../base/ui-zoom.js";
@@ -14,6 +14,7 @@ export interface SwitcherSide {
   /** The side's name, and what its hint says. */
   label: string;
   title?: string;
+  description?: string;
   /** The keys that go there, drawn where key hints are shown. */
   keyHint?: string;
   /** Something on that side waits for you. Only the round button shows it. */
@@ -29,6 +30,8 @@ export interface SwitcherProps {
   label: string;
   /** The product you are in. */
   current: SwitcherProduct;
+  /** The previously mounted product, where its rail was replaced. */
+  from?: SwitcherProduct;
   mail: SwitcherSide;
   cal: SwitcherSide;
   /** Key hints are switched on: each half shows its keys. */
@@ -74,9 +77,20 @@ function dotColours(): CSSProperties {
 const COLOURS = dotColours();
 
 /** Mail or Calendar: the way between the two products, in the same place in both. */
-export function Switcher({ kind, label, current, mail, cal, keysShown, onRail, onSwitch }: SwitcherProps) {
+export function Switcher({
+  kind,
+  label,
+  current,
+  from,
+  mail,
+  cal,
+  keysShown,
+  onRail,
+  onSwitch,
+}: SwitcherProps) {
   const knob = useRef<HTMLElement>(null);
   const stood = useRef<CssRect | null>(null);
+  const descriptionId = useId();
   const sides = { mail, cal };
 
   /* The ink half is one element: it slides to the side you go to. */
@@ -85,10 +99,19 @@ export function Switcher({ kind, label, current, mail, cal, keysShown, onRail, o
     const now = el ? cssRect(el) : null;
     const was = stood.current;
     stood.current = now;
-    if (!el || !now || !was || now.width === 0 || (was.left === now.left && was.width === now.width)) return;
-    const from = `translateX(${was.left - now.left}px) scaleX(${was.width / now.width})`;
-    animate(el, "knob", { ease: "--e-knob", keyframes: [{ transform: from }, { transform: "none" }] });
-  }, [current]);
+    if (!el || !now) return;
+    if (was === null && from && from !== current) {
+      const offset = current === "cal" ? "-" : "";
+      animate(el, "knob", {
+        ease: "--e-knob",
+        keyframes: [{ transform: `translateX(${offset}100%)` }, { transform: "none" }],
+      });
+      return;
+    }
+    if (!was || now.width === 0 || (was.left === now.left && was.width === now.width)) return;
+    const previous = `translateX(${was.left - now.left}px) scaleX(${was.width / now.width})`;
+    animate(el, "knob", { ease: "--e-knob", keyframes: [{ transform: previous }, { transform: "none" }] });
+  }, [current, from]);
 
   if (kind === "round") {
     const to: SwitcherProduct = current === "mail" ? "cal" : "mail";
@@ -100,12 +123,18 @@ export function Switcher({ kind, label, current, mail, cal, keysShown, onRail, o
         data-rail={onRail ? "" : undefined}
         data-absent={side.absent ? "" : undefined}
         aria-label={side.label}
+        aria-describedby={side.description ? descriptionId : undefined}
         title={side.title}
         style={COLOURS}
         onClick={onSwitch && (() => onSwitch(to))}
       >
         <Icon name={SIGN[to]} size={20} />
-        {side.wants ? <i className="oh-switcher-wants" data-product={to} /> : null}
+        {side.wants ? <i className="oh-switcher-wants" data-product={to} aria-hidden /> : null}
+        {side.description ? (
+          <span id={descriptionId} hidden>
+            {side.description}
+          </span>
+        ) : null}
       </button>
     );
   }

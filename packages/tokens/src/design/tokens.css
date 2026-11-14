@@ -39,18 +39,33 @@
   --h-l: 48px;
   --h-xl: 56px;
   --h-bell: 32px;
+  --find-icon: 20px;
+  --find-chip-spacing: 6px;
+  --find-chip-max: 56%;
+  --find-chip-touch-h: 32px;
   --rail: 232px;
   --listw: 420px;
   --gap: 12px;
   --edge: 12px;
   --readw: 740px;
   --row: 72px;
+  --row-byline-fit-floor: 96px;
+  --month-rail-touch-width: 52px;
+  --month-rail-pointer-width: 46px;
+  --month-rail-pointer-step: 26px;
+  --month-rail-gap: 2px;
+  --month-rail-padding: 3px;
   --group: 44px;
   --gutter: 52px;
   --head: 60px;
   --sq-gutter: 40px;
   --measure: 32.5em;
   --sheet-pad: 32px;
+  --stream-preview-reserve: 120px;
+  --sheet-back-height: 40px;
+  --sheet-back-max-width: 60%;
+  --sheet-back-icon: 22px;
+  --sheet-back-gap: 2px;
   --sq: 8px;
   --sq-gap: 4px;
   --sq-y: 10px;
@@ -568,6 +583,25 @@
   --mini-disc: 24px;
   --calhead: var(--h-m);
   --calhead-gap: var(--gap);
+  --cal-grid-air: 10px;
+  --cal-grid-foot: 0px;
+  --cal-grid-hour-min: 28px;
+  --cal-month-week-min: 118px;
+  --cal-dual-gutter: 96px;
+  --cal-dual-gutter-fold: 88px;
+  --cal-strip-row: 48px;
+  --cal-strip-disc: 36px;
+  --cal-phone-month-row: 58px;
+  --cal-phone-month-disc: 32px;
+  --cal-phone-month-marks: 6px;
+  --cal-phone-sheet-foot: 112px;
+  --cal-reading-measure: 720px;
+  --cal-year-row: 30px;
+  --cal-year-row-phone: 28px;
+  --cal-year-disc: 22px;
+  --cal-year-run-top: 5px;
+  --cal-year-run-line: 3px;
+  --cal-year-run-wash: 8%;
 }
 
 :root[data-face="paper"][data-pose="land"][data-icons="1"]{
@@ -595,6 +629,7 @@
 
 :root[data-device="phone"]{
   --hour: 56px;
+  --cal-grid-foot: 104px;
 }
 
 :root[data-device="fold"]{

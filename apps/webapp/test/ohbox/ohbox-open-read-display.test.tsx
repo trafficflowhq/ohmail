@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+// First: the new shell's door pins the API base before anything reads it.
+import {
+  back, click as clickRow, columnHidden, frame, held as heldLog, host as seatHost, idsInGroup, key, mountSeated, rowEl,
+  seatDown, seatEnv, wait, writes,
+} from "../_ohbox-2-seated.js";
 import { headCount, letterShown, readSlot } from "./_finders.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.js";
 
 /**
@@ -13,152 +14,86 @@ import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.j
  * go, the open message's verb says "Mark unread" and the read is SAVED in the same moment, so the
  * counts agree with the row. A j/k preview shows the message and changes nothing. The row keeps
  * its PLACE under New until it is left, and `u` re-bolds it in place, puts the verb back and keeps
- * it unread for the visit. The column is laid out (`fixtures/thread-layout.ts`). The Ohbox is the
- * seated place with its reading column (`prepareSeated({ reading: true })`): the open letter is the
- * reader's, drawn from the letters these inputs name.
+ * it unread for the visit. The column is laid out (`fixtures/thread-layout.ts`).
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's Ohbox view handed its lists (`./_today.js`, which
+ * leaves with today's shell) to THE NEW SHELL's own door (`../_ohbox-2-seated.ts`: the web's shell over a live engine,
+ * a served page, the read wire recorded, the server echoing each write). The three seams the old harness handed the view
+ * are read where the new shell carries them: what was saved is the read wire (`marked`, ids and direction as the seam
+ * had them), the hold is what the engine was asked to hold (`heldLog`: the seat hands its `onHoldRow` to the engine's
+ * `holdOpenRow` and `releaseOpenRow`), and the selection taken away from outside is the address going Back to the
+ * Ohbox's. Every expectation as it stood; one case retired, its holder named where it stood.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** Comfortably past the slide. */
 const AFTER_SLIDE_MS = 400;
 
-function setViewport(mobile = false): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
-    ({
-      matches: mobile, media: query, onchange: null,
-      addListener() {}, removeListener() {},
-      addEventListener() {}, removeEventListener() {},
-      dispatchEvent() { return false; },
-    }) as unknown as MediaQueryList;
-}
+interface Row { id: string; unread: boolean }
 
-interface Row { id: string; unread: boolean; date?: string }
-
-function msg(m: Row): Record<string, unknown> {
-  return {
-    id: m.id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `subj-${m.id}`, from: { name: m.id, address: `${m.id}@ex.example` }, to: [], cc: [],
-    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`, body: `the words of ${m.id}`,
-    unread: m.unread, hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-  };
-}
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-/** The mirror. `onMarkSeen` writes it, the way the engine's optimistic overlay does. */
-let live: Row[] = [];
-let sel: string | null = null;
-const marked: Array<{ ids: string[]; unread: boolean }> = [];
-const heldLog: Array<string | null> = [];
-
-async function draw(): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated({ reading: true });
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      newForYou: live.filter((r) => r.unread).map(msg),
-      previouslySeen: live.filter((r) => !r.unread).map(msg),
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: sel,
-      onSelect: (id: string) => { sel = id; },
-      onEnterReader: () => {}, onMarkAllRead: () => {}, readerId: null, readSetFor: (id: string) => (live.find((r) => r.id === id)?.unread ? [id] : []),
-      onMarkSeen: (ids: string[], unread: boolean) => {
-        marked.push({ ids, unread });
-        for (const id of ids) {
-          const row = live.find((r) => r.id === id);
-          if (row) row.unread = unread;
-        }
-      },
-      onHoldRow: (id: string | null) => { heldLog.push(id); },
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    } as never) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
-}
+/** What was saved, as today's seam carried it. */
+let marked: Array<{ ids: string[]; unread: boolean }> = [];
+let host: HTMLElement | null = null;
 
 async function mount(rows: Row[]): Promise<void> {
-  live = rows.map((r) => ({ ...r }));
-  sel = null;
-  await draw();
-}
-
-function rowEl(id: string): HTMLElement {
-  const el = host!.querySelector<HTMLElement>(`[role=option][data-id="${id}"]`);
-  if (!el) throw new Error(`no row for ${id}`);
-  return el;
-}
-
-function idsInGroup(label: string): string[] {
-  const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
-  if (!box) return [];
-  return [...box.querySelectorAll("[role=option][data-id]")].map((r) => (r as HTMLElement).dataset.id!);
+  host = await mountSeated(rows);
 }
 
 /** The read-state slot of the open message's action panel — "Mark read" or "Mark unread". */
 function verb(): string {
-  const b = readSlot(host!);
+  const b = readSlot(seatHost());
   if (!b) throw new Error("no read-state verb on screen — is a message open in the column?");
   return b.getAttribute("aria-label") ?? "";
 }
 
-/** A frame passes: the rule looks at what is on screen. */
-async function frame(): Promise<void> {
-  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
-  await draw();
-}
-
 async function click(id: string): Promise<void> {
-  await act(async () => { rowEl(id).click(); });
-  await draw();
+  await clickRow(id);
   await frame();
+  marked = writes();
 }
 
-async function press(key: string): Promise<void> {
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-  });
-  await draw();
+async function press(k: string): Promise<void> {
+  await key(k);
   await frame();
+  marked = writes();
 }
 
 async function settle(ms = AFTER_SLIDE_MS): Promise<void> {
-  await draw();
-  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
-  await draw();
+  await wait(ms);
+  marked = writes();
+}
+
+/** Time passes with a letter on screen; what it saved is read after. */
+async function advance(ms: number): Promise<void> {
+  await wait(ms);
+  marked = writes();
+}
+
+/** The address goes Back to the Ohbox's: the selection taken away from outside. */
+async function goBack(): Promise<void> {
+  await back();
+  marked = writes();
+}
+
+/** A frame passes, and what it saved is read. */
+async function draw(): Promise<void> {
+  await frame();
+  marked = writes();
 }
 
 let layout: ThreadLayout;
 beforeEach(() => {
-  vi.useFakeTimers();
-  layout = stubThreadLayout();
-  setViewport();
+  seatEnv();
+  layout = stubThreadLayout({ columnHidden });
+  marked = [];
+  host = null;
 });
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null; sel = null; live = [];
-  marked.length = 0; heldLog.length = 0;
   layout.restore();
-  vi.useRealTimers();
+  await seatDown();
 });
 
-const two = (): Row[] => [{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }];
+/* "a" the newer (09:01 against 09:00 today): the served page dates its rows newest first in the order given. */
+const two = (): Row[] => [{ id: "a", unread: true }, { id: "b", unread: true }];
 
 describe("the selection taken away from outside is a departure", () => {
   // The URL carries the open message, so Back on `#/ohbox/m/A` clears the SHELL's selection while
@@ -166,21 +101,19 @@ describe("the selection taken away from outside is a departure", () => {
   it("Back from a preview within the rest: nothing is ever written for A", async () => {
     await mount(two());
     await press("j");          // a preview of "a"
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    sel = null;
-    await draw();
-    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await advance(1000);
+    await goBack();
+    await advance(4000);
     expect(marked, "a preview left before the rest is not reading").toEqual([]);
   });
 
   it("Back from a preview rested on: its read stands, Back writes nothing more", async () => {
     await mount(two());
     await press("j");
-    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await advance(4000);
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
-    sel = null;
-    await draw();
-    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    await goBack();
+    await advance(4000);
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
   });
 
@@ -190,8 +123,7 @@ describe("the selection taken away from outside is a departure", () => {
     await layout.passDwell(); // its top on screen for the dwell
     await draw();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
-    sel = null;
-    await draw();
+    await goBack();
     expect(marked, "Back is a departure: it releases the place and writes nothing").toEqual([
       { ids: ["a"], unread: false },
     ]);
@@ -217,13 +149,13 @@ describe("the open message's read state is the account's", () => {
   it("a preview shows the message as it is: bold, the verb Mark read, nothing saved; rested on, it reads", async () => {
     await mount(two());
     await press("j");
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await advance(1000);
     await draw();
     expect(rowEl("a").dataset.unseen, "a preview is not a reading").toBe("1");
     expect(verb()).toContain("Mark read");
     expect(marked).toEqual([]);
     expect(letterShown(host!, "a")?.hasAttribute("data-unseen"), "the opened panel wears its unread state").toBe(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
+    await advance(1100);
     await draw();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
     expect(rowEl("a").dataset.unseen).toBeUndefined();
@@ -247,23 +179,14 @@ describe("the open message's read state is the account's", () => {
     const afterU = marked.length;
     await settle();
     await layout.passDwell();
-    await frame();
+    await draw();
     expect(marked.slice(afterU).filter((m) => m.ids.includes("a") && !m.unread)).toEqual([]);
   });
 
-  it("the open writes exactly one read, leaving adds none, and the row then slides to Earlier", async () => {
-    await mount(two());
-    await click("a");
-    await layout.passDwell();
-    await draw();
-    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
-
-    await press("j");          // departure: a preview of b — the place is released, nothing is written
-    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
-    await settle();
-    expect(idsInGroup("New")).toEqual(["b"]);
-    expect(idsInGroup("Earlier")).toEqual(["a"]);
-  });
+  /* "the open writes exactly one read, leaving adds none, and the row then slides to Earlier" RETIRED (share ohbox-2):
+     the same promise is held over the new shell by `ohbox/ohbox-read-state.test.ts`, "the four departures" > "#1 — the
+     cursor moving to a different message releases the place and writes nothing" (an open of "a" saves its one read; j
+     to the next row writes nothing more; after the slide "a" stands in Earlier). */
 
   it("the entered row is reported upward for the engine's hold, and cleared on departure", async () => {
     /* The shell holds the row in New (`holdOpenRow`) from the enter, before anything is read, so

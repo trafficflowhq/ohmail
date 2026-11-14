@@ -9,6 +9,7 @@ import { ListHead, Sheet } from "@ohmail/ui/mail";
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import type { FoundRow } from "@ohmail/app-logic/calendar/found";
 import { useFrame } from "../frame/commands.js";
+import { ProductSwitch } from "../frame/ProductSwitch.js";
 import type { PaneProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
@@ -35,6 +36,7 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
   const head = (
     <ListHead
       title={t("title")}
+      lead={plan.rail === "dock" ? <ProductSwitch kind="round" /> : undefined}
       hot={addable.length > 0}
       aside={
         target !== null && addable.length > 1 ? (

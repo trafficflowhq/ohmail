@@ -1,15 +1,11 @@
 /**
  * THE ROOM: the one press seam of a frame. A feature reaches it with `usePress()`, which throws where no room is on.
- * Whose seam it is, the host's record says, statically (`features.above`, whether that component says `handsSeam`,
- * and `features.reader`):
+ * Whose seam it is, the host's record says, statically (`features.above` and `features.reader`):
  *
  * - with a ground above the panes, or a reader handed: the room's own. One component calls `useShellDispatch` once,
  *   for the frame's life, whatever place is on screen. It stands around everything the room holds, says the held
  *   presses in its own render and binds `z` to its armed Undo. The delete journal a closed tab left is replayed once,
  *   at that one mount;
- * - where the old shell stands above the panes and says so: that shell hands its own (`useRoomHandOver`). The room
- *   mounts none and calls `useShellDispatch` never, and is on at every place the frame draws but the body that shell
- *   keeps, whose views press through the shell's seam themselves;
  * - on a host that hands nothing above the panes and no reader: none. Nothing there can press, so no seam reads the
  *   engine or asks the catalogue a sentence for nobody, and `usePress()` throws.
  *
@@ -29,6 +25,7 @@ import {
 import { EngineContext } from "@ohmail/app-logic/engine";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useShellDispatch, type ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
+import { useRecordWhileSame } from "@ohmail/app-logic/press/stable-callback";
 import { placeLabelOver, pressWords } from "@ohmail/app-logic/reader";
 import { rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
 import type { OhmailEngine } from "@ohmail/client-engine";
@@ -38,13 +35,11 @@ import { useFrame, useReport } from "./commands.js";
 import {
   factsStore,
   HeldContext,
-  holdStore,
-  NO_RESURFACE,
   ownStore,
   resurfaceStore,
   RoomContext,
-  useHandedHolds,
   useRoomFill,
+  useRoomHour,
   wordStore,
   type Facts,
   type HandedFacts,
@@ -55,8 +50,10 @@ import {
 } from "./room-store.js";
 
 export {
+  useMailboxName,
   useMailboxStatus,
   useMailboxWord,
+  useKnownOwnAddresses,
   useOwnAddresses,
   useResurfaceTime,
   useRoomHolds,
@@ -128,13 +125,8 @@ function Seam({
     [ohbox, screener, trash, screening, session, shortcuts],
   );
   const placeLabel = useMemo(() => placeLabelOver((view) => (place.has(view) ? place(view) : "")), [place]);
-  /* The mirror the seam's refusals read: the engine's, read again on every change. */
-  const subscribe = useCallback((changed: () => void) => engine.subscribe(changed), [engine]);
-  useSyncExternalStore(
-    subscribe,
-    () => engine.read().version(),
-    () => 0,
-  );
+  /* The engine's one reader, for its life: the seam asks it at a press, and its watch listens by itself while a press
+     waits, so a change of the mirror renders nothing here (it once rendered this seam at every notice of a drain). */
   const reader = engine.read();
   /* The mailbox facts: a part above the panes hands the ones it holds, else the room reads the host itself. */
   const handed = useSyncExternalStore(room.facts.subscribe, room.facts.get, room.facts.get);
@@ -145,32 +137,32 @@ function Seam({
   const refreshNow = useRef(refresh);
   refreshNow.current = refresh;
   const refreshFacts = useRef(() => refreshNow.current()).current;
-  const seam = useShellDispatch({ engine, reader, toast: report, t, placeLabel, demo, refreshFacts, scope });
+  /* The seam's record, held while no member moved, handed whole to its one context: the room's seam slot. */
+  const seam = useRecordWhileSame(
+    useShellDispatch({ engine, reader, toast: report, t, placeLabel, demo, refreshFacts, scope }),
+  );
   const roster = seam.rosterRef;
   roster.current = rosterStateOf(mailboxes !== NONE, rows);
-  /* The room's own seam keeps no resurface hour: the reader offers its own, and nothing is stored. */
-  useRoomFill(room, { seam, rows, resurface: NO_RESURFACE });
+  /* The account's resurface hour is not the seam's: what holds it above the panes hands it (`useRoomResurface`). */
+  useRoomFill(room, { seam, rows });
   const held = seam.deleting.held;
   const places = seam.routing.places;
   const holds = useMemo((): RoomHolds => ({ held, places }), [held, places]);
   const into = room.seam;
   /* `z` takes back the armed Undo, wherever the person is in the room but a field: a binding of the key map's
-     registry for as long as this seam stands, named in the frame's own word. */
-  const tf = useText("frame");
+     registry for as long as this seam stands, named as the key sheet has always listed it. */
+  const keys = useText("shortcuts");
   useOptionalKeyBindings(
-    [{ chord: "z", group: "app", label: tf("report.undo"), run: () => void into.current?.runArmedUndo() }],
+    [{ chord: "z", group: "app", label: keys("undo"), run: () => void into.current?.runArmedUndo() }],
     "view",
   );
   return <HeldContext.Provider value={holds}>{children}</HeldContext.Provider>;
 }
 
 /**
- * The room of a frame. `whose` is read off the host's record, never off what a child did in a render: where the old
- * shell stands above the panes and says `handsSeam`, it hands its own seam (`useRoomHandOver`), and the room mounts
- * none and calls `useShellDispatch` never. A room that first mounted a seam of its own and then met a handed one would
- * run two for one commit, and the delete journal's replay at mount would run twice. Where the host hands a ground or a
- * reader the room's own seam stands around what the room holds for the frame's life: no walk between places mounts it
- * again. Where it hands neither, no seam stands. `on` says where `usePress()` answers.
+ * The room of a frame. `whose` is read off the host's record, never off what a child did in a render. Where the host
+ * hands a ground or a reader the room's own seam stands around what the room holds for the frame's life: no walk
+ * between places mounts it again. Where it hands neither, no seam stands. `on` says where `usePress()` answers.
  */
 export function RoomGate({
   on,
@@ -182,7 +174,6 @@ export function RoomGate({
   children: ReactNode;
 }): ReactNode {
   const seam = useRef<ShellDispatch | null>(null);
-  const holds = useMemo(holdStore, []);
   const addresses = useMemo(ownStore, []);
   const words = useMemo(wordStore, []);
   const resurface = useMemo(resurfaceStore, []);
@@ -190,8 +181,8 @@ export function RoomGate({
   const binding = useContext(EngineContext);
   const { host } = useFrame();
   const room = useMemo(
-    (): Room => ({ on, whose, seam, holds, own: addresses, words, resurface, facts }),
-    [on, whose, holds, addresses, words, resurface, facts],
+    (): Room => ({ on, whose, seam, own: addresses, words, resurface, facts }),
+    [on, whose, addresses, words, resurface, facts],
   );
   return (
     <RoomContext.Provider value={room}>
@@ -215,34 +206,15 @@ export function RoomGate({
 const NO_SEAM = "this room has no seam: its host hands nothing above the panes and no reader";
 
 /**
- * A SHELL HANDS ITS OWN SEAM TO THE ROOM, once, from what it stands above the panes: the seam every press of its own
- * leaves through, the mailbox facts it holds, and the account's stored resurface hour. At every place the frame draws
- * but the body that shell keeps, the room serves that same seam, so one seam stands per frame, with its undo windows,
- * for the frame's life. It sets no roster (the shell sets its own), binds no key (`z` is the shell's) and reads no
- * host. Throws in a room that mounts its own seam: two seams would stand. Throws in a room with none: its host's record
- * names no shell that hands one.
- */
-export function useRoomHandOver(input: { seam: ShellDispatch; rows: Facts; resurface: ResurfaceTime }): void {
-  const room = useContext(RoomContext);
-  if (room === null) throw new Error("useRoomHandOver: no room stands here");
-  if (room.whose === "own") throw new Error("useRoomHandOver: this room mounts its own seam");
-  if (room.whose === "none") throw new Error(`useRoomHandOver: ${NO_SEAM}`);
-  useRoomFill(room, input);
-  useHandedHolds(room, input.seam);
-}
-
-/**
  * A PART ABOVE THE PANES HANDS THE ROOM THE MAILBOX FACTS IT HOLDS: the mail ground hands the mail state's rows and
  * its re-read. The room's seam then reads its roster, the account's own addresses and the mailbox words off those
  * rows, asks that re-read after a filing press, and reads the host never: one reader of the mailbox facts stands in a
- * frame. With nothing handed the room reads the host itself. Throws with no room, in a room whose seam a shell hands
- * (there the facts come with the hand-over), and in a room with no seam (nothing there reads them).
+ * frame. With nothing handed the room reads the host itself. Throws with no room, and in a room with no seam (nothing
+ * there reads them).
  */
 export function useRoomFacts({ rows, refresh }: HandedFacts): void {
   const room = useContext(RoomContext);
   if (room === null) throw new Error("useRoomFacts: no room stands here");
-  if (room.whose === "handed")
-    throw new Error("useRoomFacts: this room's seam is handed, and its facts with it");
   if (room.whose === "none") throw new Error(`useRoomFacts: ${NO_SEAM}`);
   const { facts } = room;
   /* In the layout phase: the room's own read is a passive effect of the same commit, and finds these handed. */
@@ -251,9 +223,21 @@ export function useRoomFacts({ rows, refresh }: HandedFacts): void {
 }
 
 /**
+ * A PART ABOVE THE PANES HANDS THE ROOM THE ACCOUNT'S RESURFACE HOUR: the mail ground hands the consent row's stored
+ * hour and its way to store another. The reader then books a letter's return at that hour and keeps a newly picked
+ * one for the account. With nothing handed nothing is stored and nothing kept, and the reader offers its own hour.
+ * Throws with no room, and in a room with no seam (nothing there books a return).
+ */
+export function useRoomResurface(hour: ResurfaceTime): void {
+  const room = useContext(RoomContext);
+  if (room === null) throw new Error("useRoomResurface: no room stands here");
+  if (room.whose === "none") throw new Error(`useRoomResurface: ${NO_SEAM}`);
+  useRoomHour(room, hour);
+}
+
+/**
  * The room's press seam. Every member is read at the moment it is used, so a press always reaches the seam that
- * stands now. Throws where no room is on: under a shell that hands its seam, over the body that shell keeps; and
- * everywhere on a host whose room has no seam.
+ * stands now. Throws where no room is on: everywhere on a host whose room has no seam.
  */
 export function usePress(): ShellDispatch {
   const press = usePressWhereOn();

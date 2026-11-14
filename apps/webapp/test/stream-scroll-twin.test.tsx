@@ -1,14 +1,8 @@
 /** @vitest-environment jsdom */
-/**
- * THE STREAM'S SCROLL, TWO IMPLEMENTATIONS, ONE BEHAVIOUR. The web shell's `StreamShell` and the places' carried-over
- * `useStreamScroll` (`@ohmail/app-logic/streams`) stand side by side until the old stream leaves. Each sequence below
- * runs against both, over the same laid-out pile, and the two must land the same cards at the same offsets, report
- * the same landings, announce the same cursor, hold the same anchor and leave the same range.
- */
+/** The scroll seat's landings, cursor and leave range under the same measured sequence. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
 import { useStreamScroll, type StreamScroll } from "@ohmail/app-logic/streams";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -104,46 +98,7 @@ interface Side {
   announced: string[];
 }
 
-async function mountOld(n: number): Promise<Side> {
-  const announced: string[] = [];
-  const ref = React.createRef<StreamHandle>();
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-  let left: StreamLeaveState | null = null;
-  const pileIndexOf = (id: string): number => (/^c\d+$/.test(id) && Number(id.slice(1)) < n ? Number(id.slice(1)) : -1);
-  await act(async () => {
-    root.render(
-      h(StreamShell, {
-        ref,
-        ariaLabel: "stream",
-        onCurrentChange: (id: string) => announced.push(id),
-        onSeen: () => {},
-        onLeave: (s: StreamLeaveState) => {
-          left = s;
-        },
-        pileIndexOf,
-        contentKey: 1,
-        children: cardsOf(n),
-      }),
-    );
-  });
-  const el = container.querySelector<HTMLElement>(".stream")!;
-  return {
-    el,
-    scrollTo: (id, onLanded) => ref.current!.scrollTo(id, onLanded),
-    range: () => {
-      root.unmount();
-      roots = roots.filter((r) => r !== root);
-      const s = left as StreamLeaveState | null;
-      return { newestSeenId: s?.newestSeenId ?? null, bottomVisibleId: s?.bottomVisibleId ?? null };
-    },
-    announced,
-  };
-}
-
-async function mountNew(n: number): Promise<Side> {
+async function mountScroll(n: number): Promise<Side> {
   const announced: string[] = [];
   const handle: { current: StreamScroll | null } = { current: null };
   const pileIndexOf = (id: string): number => (/^c\d+$/.test(id) && Number(id.slice(1)) < n ? Number(id.slice(1)) : -1);
@@ -180,9 +135,9 @@ type Step =
   | { scroll: number }
   | { grow: { card: number; by: number } };
 
-async function run(mount: (n: number) => Promise<Side>, n: number, steps: Step[]) {
+async function run(n: number, steps: Step[]) {
   heights = Array.from({ length: n }, () => 200);
-  const side = await mount(n);
+  const side = await mountScroll(n);
   const geo = layOut(side.el);
   const trace: Array<{ at: number; landed: number }> = [];
   for (const step of steps) {
@@ -204,53 +159,60 @@ async function run(mount: (n: number) => Promise<Side>, n: number, steps: Step[]
   return { trace, announced: side.announced, range: side.range() };
 }
 
-async function twin(n: number, steps: Step[]) {
-  const before = await run(mountOld, n, steps);
-  const after = await run(mountNew, n, steps);
-  return { before, after };
-}
-
 describe("the stream's scroll: the web shell's and the places' agree on one sequence", () => {
   it("a far landing puts the card at the line, reports it once, and starts the run where it rests", async () => {
-    const { before, after } = await twin(40, [{ jump: "c25" }, { scroll: 25 * 200 + 300 }]);
-    expect(before.trace[0]).toEqual({ at: 25 * 200 - 14, landed: 1 });
-    expect(after).toEqual(before);
+    expect(await run(40, [{ jump: "c25" }, { scroll: 25 * 200 + 300 }])).toEqual({
+      trace: [{ at: 25 * 200 - 14, landed: 1 }, { at: 5300, landed: 0 }],
+      announced: ["c26"],
+      range: { newestSeenId: "c24", bottomVisibleId: "c29" },
+    });
   });
 
   it("a near landing is reported at once and flown to the line", async () => {
-    const { before, after } = await twin(20, [{ jump: "c2" }]);
-    expect(before.trace[0]!.landed).toBe(1);
-    expect(after).toEqual(before);
+    expect(await run(20, [{ jump: "c2" }])).toEqual({
+      trace: [{ at: 386, landed: 1 }],
+      announced: [],
+      range: { newestSeenId: "c1", bottomVisibleId: "c4" },
+    });
   });
 
   it("a jump that bottoms out keeps the jumped-to card the cursor, never the pile's last", async () => {
-    const { before, after } = await twin(6, [{ jump: "c4" }]);
-    expect(before.announced).not.toContain("c5");
-    expect(after).toEqual(before);
+    expect(await run(6, [{ jump: "c4" }])).toEqual({
+      trace: [{ at: 600, landed: 1 }],
+      announced: [],
+      range: { newestSeenId: "c3", bottomVisibleId: "c5" },
+    });
   });
 
   it("a hand's scroll moves the cursor along the reading line", async () => {
-    const { before, after } = await twin(20, [{ scroll: 400 }, { scroll: 1210 }, { scroll: 300 }, { scroll: 99999 }]);
-    // At the end the last card is current, though its top never reaches the line.
-    expect(before.announced.at(-1)).toBe("c19");
-    expect(after).toEqual(before);
+    expect(await run(20, [{ scroll: 400 }, { scroll: 1210 }, { scroll: 300 }, { scroll: 99999 }])).toEqual({
+      trace: [400, 1210, 300, 3400].map((at) => ({ at, landed: 0 })),
+      announced: ["c2", "c6", "c1", "c19"],
+      range: { newestSeenId: "c17", bottomVisibleId: "c19" },
+    });
   });
 
   it("a card above the reader that grows moves the scroll by as much, in the same frames", async () => {
-    const { before, after } = await twin(20, [{ jump: "c10" }, { grow: { card: 3, by: 120 } }]);
-    expect(before.trace[1]!.at).toBe(before.trace[0]!.at + 120);
-    expect(after).toEqual(before);
+    expect(await run(20, [{ jump: "c10" }, { grow: { card: 3, by: 120 } }])).toEqual({
+      trace: [{ at: 1986, landed: 1 }, { at: 2106, landed: 0 }],
+      announced: [],
+      range: { newestSeenId: "c9", bottomVisibleId: "c12" },
+    });
   });
 
   it("a move that skips cards ends the run: the leave's range starts on the screen it rests on", async () => {
-    const { before, after } = await twin(40, [{ scroll: 200 }, { scroll: 30 * 200 }]);
-    expect(before.range.newestSeenId).toBe("c30");
-    expect(after).toEqual(before);
+    expect(await run(40, [{ scroll: 200 }, { scroll: 30 * 200 }])).toEqual({
+      trace: [200, 6000].map((at) => ({ at, landed: 0 })),
+      announced: ["c1", "c30"],
+      range: { newestSeenId: "c30", bottomVisibleId: "c32" },
+    });
   });
 
   it("scrolled down by steps, the newest card displayed stays the range's top", async () => {
-    const { before, after } = await twin(20, [{ scroll: 200 }, { scroll: 500 }, { scroll: 800 }]);
-    expect(before.range).toEqual({ newestSeenId: "c1", bottomVisibleId: "c6" });
-    expect(after).toEqual(before);
+    expect(await run(20, [{ scroll: 200 }, { scroll: 500 }, { scroll: 800 }])).toEqual({
+      trace: [200, 500, 800].map((at) => ({ at, landed: 0 })),
+      announced: ["c1", "c2", "c4"],
+      range: { newestSeenId: "c1", bottomVisibleId: "c6" },
+    });
   });
 });

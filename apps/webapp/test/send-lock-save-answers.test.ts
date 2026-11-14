@@ -27,6 +27,7 @@ import {
   claimSendLock,
   releaseSendLock,
   sendLocksKey,
+  sendRecordNames,
   type SendLock,
 } from "@ohmail/app-logic/writing/send-lock";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
@@ -64,6 +65,17 @@ afterEach(() => {
 });
 
 describe("the send lock answers for a write the jar refused", () => {
+  it("checking which draft a send holds leaves the stored claims untouched", () => {
+    const key = sendLocksKey(OWNER);
+    const saved = JSON.stringify([lockOf({ v: 2 }), lockOf({ draftId: "held", subject: "draft:held" })]);
+    window.localStorage.setItem(key, saved);
+    expect(sendRecordNames("compose", "held", null, OWNER)).toBe(true);
+    expect(sendRecordNames("compose", "another", null, OWNER)).toBe(false);
+    expect(window.localStorage.getItem(key)).toBe(saved);
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    expect(sendRecordNames("compose", "another", null, OWNER)).toBe(true);
+  });
+
   /** THE POSITIVE CONTROL: an ordinary jar stores the claim and says nothing. */
   it("a working jar stores the lane and raises no notice", () => {
     claimSendLock(lockOf(), NONE_OWED, OWNER);

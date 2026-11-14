@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { RELAY_ALLOWLIST, relayVerdict } from "@trafficflow/api/relay-allowlist";
+import { createHash, randomUUID } from "node:crypto";
+import { SUGGESTION_GRANT_HEADER, WITHDRAW_SUGGESTION_GRANT_PATH, isSuggestionConsentTimestamp } from "@trafficflow/core/suggestion-consent";
+import { RELAY_ALLOWLIST, normalizePathname, relayVerdict } from "@trafficflow/api/relay-allowlist";
 import { answeredByCloud, mayRenewFor, offlineResponse, REQUEST_DEADLINE_MS, type CloudAuth } from "./cloud-auth.js";
 import type { CloudMirror } from "./cloud-mirror.js";
 import type { Diagnostic } from "./log.js";
@@ -69,7 +70,7 @@ export interface WriteThroughProxy {
 const STRIP_HEADERS = [
   "authorization", "host", "content-length", "connection", "x-ohmail-search-lane", "x-ohmail-echo",
   // The window's own name: the engine names itself on the way out (`cloud-auth.ts`), once.
-  "x-ohmail-client",
+  "x-ohmail-client", SUGGESTION_GRANT_HEADER,
 ];
 
 /**
@@ -133,6 +134,22 @@ async function refusalCodeOf(res: Response): Promise<string | null> {
   }
 }
 
+function requestRecord(body: ArrayBuffer | undefined): Record<string, unknown> | null {
+  if (!body) return null;
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(body));
+    return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function suggestionConsentUnavailable(): Response {
+  return new Response(JSON.stringify({
+    error: { code: "suggestion_consent_unavailable", message: "Suggestion consent is unavailable." },
+  }), { status: 409, headers: { "content-type": "application/json" } });
+}
+
 export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThroughProxy {
   const echoDeadlineMs = cfg.echoDeadlineMs ?? DEFAULT_ECHO_DEADLINE_MS;
   /* An empty allowlist would refuse every write and read as an offline install. */
@@ -156,16 +173,77 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
   const accepted = new Set<Promise<void>>();
   const applied = cfg.applied ?? new Set<string>();
 
+  // This proxy belongs to one hosted account session. Neither the mirror nor an upstream header grants a send.
+  let suggestionGrant: { value: string; stamp: string | null } | null = null;
+  let consentSequence = 0;
+  let answeredConsent = 0;
+  let pendingSuggestionWrites = 0;
+  let pendingConsentBodies = 0;
+  let pendingConsentReads = 0;
+  const withdraw = (order: number) => {
+    if (order < answeredConsent) return;
+    answeredConsent = order;
+    suggestionGrant = null;
+  };
+  const failConsentRead = (order: number, grantAtRead: string | null) => {
+    // A later success may reuse this read's grant. Its failure still withdraws that generation.
+    if (order >= answeredConsent || (grantAtRead !== null && suggestionGrant?.value === grantAtRead)) {
+      withdraw(Math.max(order, answeredConsent));
+    }
+  };
+  const consentAnswer = async (
+    res: Response, order: number, read: boolean, mayGrant: () => boolean, onFailure: () => void,
+  ): Promise<Response> => {
+    let value: { autoSuggestAt?: unknown; dormancyDays?: unknown } | null = null;
+    if (res.ok) {
+      try { value = await res.clone().json(); } catch { /* An unreadable answer withdraws consent. */ }
+    }
+    const stamp = value?.autoSuggestAt;
+    const automatic = isSuggestionConsentTimestamp(stamp);
+    const known = (value?.autoSuggestAt === null || automatic) &&
+      (!read || (typeof value?.dormancyDays === "number" && Number.isFinite(value.dormancyDays)));
+    const headers = new Headers(res.headers);
+    headers.delete(SUGGESTION_GRANT_HEADER);
+    if (!known) {
+      onFailure();
+    } else if (order >= answeredConsent && mayGrant()) {
+      answeredConsent = order;
+      const current = automatic ? stamp : null;
+      if (!suggestionGrant || suggestionGrant.stamp !== current) {
+        suggestionGrant = { value: randomUUID(), stamp: current };
+      }
+      headers.set(SUGGESTION_GRANT_HEADER, suggestionGrant.value);
+    }
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  };
+
   const forward = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const path = `${url.pathname}${url.search}`;
     const method = req.method.toUpperCase();
     const mutation = method !== "GET" && method !== "HEAD";
+    let canonical: string | null = null;
+    try { canonical = normalizePathname(url.pathname); } catch { /* The allowlist refuses malformed paths. */ }
+    if (method === "POST" && canonical === WITHDRAW_SUGGESTION_GRANT_PATH) {
+      const grant = req.headers.get(SUGGESTION_GRANT_HEADER);
+      if (grant !== null && grant === suggestionGrant?.value) withdraw(++consentSequence);
+      return new Response(null, { status: 204 });
+    }
+    const suggestion = method === "POST" && canonical === "/screener/suggest";
+    const consentRead = method === "GET" && canonical === "/consent";
+    const consentSettings = method === "PATCH" && canonical === "/consent/settings";
+    const readOrder = consentRead ? ++consentSequence : null;
+    const grantAtRead = consentRead ? suggestionGrant?.value ?? null : null;
+    const readDuringWrite = pendingSuggestionWrites !== 0;
 
     // PRIMARY OFFLINE GATE. Refused BEFORE the forward, so an offline write reaches neither Cloud
     // nor the local database — the "offline writes nothing" invariant, held by construction.
     if (cfg.mirror.online()) probeOwed = false;
-    else if (mutation || !probeOwed) return offlineResponse();
+    else if (mutation || !probeOwed) {
+      if (readOrder !== null) failConsentRead(readOrder, grantAtRead);
+      else if (consentSettings) withdraw(++consentSequence);
+      return offlineResponse();
+    }
     else probeOwed = false;
 
     /* Matched on the pathname, so a query string cannot slip past it, and refused before the body
@@ -210,18 +288,35 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
 
     const hasBody = method !== "GET" && method !== "HEAD";
     let body: ArrayBuffer | undefined;
+    // A queued quote cannot overtake a Settings write whose body may turn consent Off.
+    if (consentSettings) pendingConsentBodies++;
     try {
       body = hasBody ? await req.arrayBuffer() : undefined;
     } catch (err) {
+      if (consentSettings) withdraw(++consentSequence);
       answered();
       throw err;
+    } finally {
+      if (consentSettings) pendingConsentBodies--;
     }
 
+    const record = suggestion || consentSettings ? requestRecord(body) : null;
+    const automaticPurchase = record?.automatic === true && record.dryRun !== true;
+    const writeOrder = consentSettings && typeof record?.autoSuggest === "boolean" ? ++consentSequence : null;
+    if (writeOrder !== null) {
+      withdraw(writeOrder);
+      pendingSuggestionWrites++;
+    }
+
+    if (consentRead) pendingConsentReads++;
     let res: Response;
     const started = Date.now();
     const sends = method === "POST" && SEND_PATH.test(url.pathname);
     const deadline = mutation ? writeDeadline(sends ? STAGED_UPLOAD_TIMEOUT_MS : REQUEST_DEADLINE_MS) : null;
     try {
+      if (suggestion && (pendingConsentReads !== 0 || pendingConsentBodies !== 0 || pendingSuggestionWrites !== 0 ||
+        !suggestionGrant || req.headers.get(SUGGESTION_GRANT_HEADER) !== suggestionGrant.value ||
+        (automaticPurchase && suggestionGrant.stamp === null))) return suggestionConsentUnavailable();
       res = await cfg.auth.authedFetch(path, {
         method,
         headers,
@@ -231,7 +326,16 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
            account receives it once. A read stays the session's, and a sign-out ends it. */
         ...(deadline ? { signal: deadline.signal } : {}),
       });
+      if (readOrder !== null) {
+        res = await consentAnswer(res, readOrder, true,
+          () => !readDuringWrite && pendingSuggestionWrites === 0, () => failConsentRead(readOrder, grantAtRead));
+      } else if (writeOrder !== null) {
+        res = await consentAnswer(res, writeOrder, false,
+          () => pendingSuggestionWrites === 1, () => withdraw(writeOrder));
+      }
     } catch (err) {
+      if (readOrder !== null) failConsentRead(readOrder, grantAtRead);
+      else if (writeOrder !== null) withdraw(writeOrder);
       /* A send that outlasted its own upload says nothing about the door: the window is answered
          the same retryable 503 and every other write stays open. */
       if (sends && deadline?.signal.aborted === true) {
@@ -252,6 +356,8 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
       });
       return offlineResponse();
     } finally {
+      if (consentRead) pendingConsentReads--;
+      if (writeOrder !== null) pendingSuggestionWrites--;
       deadline?.clear();
       answered();
     }
@@ -302,14 +408,14 @@ export function createWriteThroughProxy(cfg: WriteThroughProxyConfig): WriteThro
     const rows = write ? writeRowsOf(method, url.pathname)?.rows ?? "sync" : "none";
     if (target === null && rows === "none") return res;
     const boxes = rows === "mailboxes" || rows === "sync+mailboxes";
-    const route = routeKeyOf(method, url.pathname) ?? `${method} other`;
+    const routeName = routeKeyOf(method, url.pathname) ?? `${method} other`;
     // A send's own write: the pull and the route's follow-up chain start, and the window's next drain waits for them.
     const later = mutation && req.headers.get("x-ohmail-echo") === "later";
     const bound = later ? 0 : echoDeadlineMs;
     const [seqCovered, freshCovered] = await Promise.all([
-      target !== null ? cfg.mirror.awaitCloudSeq(target, bound, route, later) : Promise.resolve(true),
+      target !== null ? cfg.mirror.awaitCloudSeq(target, bound, routeName, later) : Promise.resolve(true),
       target === null || boxes
-        ? cfg.mirror.awaitFreshPull(bound, { sync: target === null && rows !== "mailboxes", mailboxes: boxes }, route, later)
+        ? cfg.mirror.awaitFreshPull(bound, { sync: target === null && rows !== "mailboxes", mailboxes: boxes }, routeName, later)
         : Promise.resolve(true),
     ]);
     const covered = seqCovered && freshCovered;

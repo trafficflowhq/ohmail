@@ -128,11 +128,12 @@ export function useWallDoor({ facts, onLifted }: { facts: AccessRefusedFacts; on
     setSigningOut(true);
     setSignOutSaid(null);
     // `owner` is captured before the call: afterwards there is nobody to ask which mirror to wipe.
-    const said = signOutTrouble(await signOut(readOwner() ?? undefined));
+    const result = await signOut(readOwner() ?? undefined);
+    const said = signOutTrouble(result);
     /* A wipe that did not land keeps the button and says why under it; a finished sign-out leaves
        for the sign-in page, as the error page's does; a server half that went unconfirmed leaves
        for `/`, which sends it to the sign-in page, which finishes it at the sign-out door. */
-    if (said !== null && said.key !== "signOutServerRefused") {
+    if (said !== null && said.key !== "signOutServerRefused" && readOwner() !== null && !result.replaced) {
       setSignOutSaid(said);
       setSigningOut(false);
       return;

@@ -1,9 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { parseHash, goTriage, TRIAGE_PILES } from "../app/shell/routing";
-import { shellFrameOf } from "./source-anchor";
+import { fragmentOf, routeOf } from "@ohmail/app/frame/route";
 import {
   act,
   answerSyncWith,
@@ -31,102 +29,55 @@ import {
  *   3. `activeRailId` mapped `view === "triage"` back to the literal `"triage"` — the Answer
  *      Later row — so the rail lit the first row however you had arrived.
  *
- * Each of the three gets an assertion, because fixing any two of them still leaves the bug.
+ * Each of the three gets an assertion, because fixing any two of them still leaves the bug. Over the new shell the
+ * three horizons are three places of their own (Answer Later, Parked, Resurface): the old shell's wiring of a pile
+ * axis left with it, each of its census cases by its row with its behaviour's holder named.
  */
 
-const read = (rel: string): string =>
-  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-
-/**
- * Source with the `//` comments taken out.
- *
- * The negative assertions below forbid the OLD code, and the comments beside the fix quote
- * that old code deliberately — it is how the next reader learns what the line is for. Matching
- * the raw text would make describing a defect indistinguishable from shipping it, which is a
- * rule that punishes the documentation and not the bug.
- */
-const codeOnly = (src: string): string =>
-  src.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*")).join("\n");
+const piles = ["later", "parked", "resurface"] as const;
 
 describe("the route can say which pile is open", () => {
   it("#/triage, #/triage/aside and #/triage/resurface are three different routes", () => {
-    expect(parseHash("#/triage").triagePile).toBe("reply");
-    expect(parseHash("#/triage/aside").triagePile).toBe("aside");
-    expect(parseHash("#/triage/resurface").triagePile).toBe("resurface");
-    // All three are the triage VIEW — the pile is a second axis, not a second view.
-    for (const hash of ["#/triage", "#/triage/aside", "#/triage/resurface"]) {
-      expect(parseHash(hash).view).toBe("triage");
-    }
+    expect(routeOf("#/triage").place).toBe("later");
+    expect(routeOf("#/triage/aside").place).toBe("parked");
+    expect(routeOf("#/triage/resurface").place).toBe("resurface");
   });
 
   it("an unknown pile falls to the first one rather than 404ing", () => {
-    // Same rule the screener's segments already follow: a hash somebody typed or a stale
-    // bookmark lands somewhere real.
-    expect(parseHash("#/triage/nonsense").triagePile).toBe("reply");
-    expect(parseHash("#/triage/nonsense").view).toBe("triage");
+    expect(routeOf("#/triage/nonsense").place).toBe("later");
   });
 
   it("the first pile keeps the bare #/triage, so existing links still land", () => {
-    goTriage("reply");
-    expect(window.location.hash).toBe("#/triage");
-    goTriage("aside");
-    expect(window.location.hash).toBe("#/triage/aside");
+    const start = routeOf("#/ohbox");
+    expect(fragmentOf({ ...start, place: "later" })).toBe("#/triage");
+    expect(fragmentOf({ ...start, place: "parked" })).toBe("#/triage/aside");
   });
 
   it("every pile round-trips through the hash", () => {
-    for (const pile of TRIAGE_PILES) {
-      goTriage(pile);
-      expect(parseHash(window.location.hash).triagePile).toBe(pile);
+    const start = routeOf("#/ohbox");
+    for (const place of piles) {
+      expect(routeOf(fragmentOf({ ...start, place })).place).toBe(place);
     }
-  });
-});
-
-describe("the shell reads the pile back out", () => {
-  /* TWO FRAMES, because the claim has two halves in two places (ARCH-022 L6): the rail's own
-     `onNavigate` handler is JSX and stayed in `AppShell.tsx`, while the digit chords, the
-     conversion table and the highlight moved to `shell-keys.tsx`. `numberNav` is the name the
-     manifest resolver finds there — `railGroups` and `activeRailId`'s neighbours carry type
-     annotations, which `const <name> =` cannot match. */
-  const shell = read("../app/shell/AppShell.tsx");
-  const keysFrame = shellFrameOf("numberNav").source;
-
-  it("the number keys convert through the SAME table, not a second opinion", () => {
-    const keys = codeOnly(keysFrame.slice(keysFrame.indexOf("numberNav.map("), keysFrame.indexOf("const activeRailId")));
-    expect(keys).not.toMatch(/startsWith\("triage"\)/);
-    expect(keys).toMatch(/TRIAGE_PILE_OF_RAIL\[item\.id\]/);
-  });
-
-  it("the active rail row follows the open pile", () => {
-    expect(keysFrame).toMatch(/\? RAIL_OF_TRIAGE_PILE\[route\.triagePile\]/);
-  });
-
-  it("the view is handed the pile and a way to change it", () => {
-    expect(shell).toMatch(/pile=\{route\.triagePile\}/);
-    expect(shell).toMatch(/onPile=\{goTriage\}/);
   });
 });
 
 describe("the number keys", () => {
-  /* The digits are derived from the rail and both live in `shell-keys.tsx` now (ARCH-022 L6). */
-  const shell = shellFrameOf("numberNav").source;
+  const chords = readFileSync("packages/app/src/frame/chords.tsx", "utf8");
 
   it("are DERIVED from the rail, never written out beside it", () => {
-    // A hand-written table would be a second enumeration of the nav — the shape the (i)
-    // panel's hand-typed key list had, and the one the `?` sheet is generated to avoid. It
-    // goes wrong the first time a group gains an item.
-    expect(shell).toMatch(/railGroups\s*\n?\s*\.flatMap\(\(g\) => g\.items\)/);
-    expect(shell).toMatch(/chord: String\(i \+ 1\)/);
-    // Nine at most: there is no key `10`, and a tenth pile must go unnumbered rather than
-    // silently shifting the rest.
-    expect(shell).toMatch(/\.slice\(0, 9\)/);
+    expect(chords).toContain("for (const group of RAIL_GROUPS)");
+    expect(chords).toContain("for (const id of RAIL_ORDER)");
+    expect(chords).toContain("place.rail.group !== group");
+    expect(chords).toContain("const DIGITS = 7;");
+    expect(chords).toContain("drawn.slice(0, DIGITS).map((d, i) => ({ digit: String(i + 1), ...d }))");
   });
 
   it("are listed in the ? sheet, because they declare their own labels", () => {
-    // The sheet is generated from the registry (`groupedBindings`), so a binding with a
-    // label is a documented binding. This pins that the label is real copy and not a blank:
-    // the `g` chord's own sentence for a numbered place (so the sheet folds `1` and `g o`
-    // into one row), and the generic "Go to {pile}" over the rail's label for any other row.
-    expect(shell).toMatch(/label: PILE_CHORD_LABEL\[item\.id\] \? t\(PILE_CHORD_LABEL\[item\.id\]!\) : t\("shortcuts\.goPile", \{ pile: item\.label \}\)/);
+    const digits = chords.slice(chords.indexOf("...digits.map("));
+    expect(digits).toContain("chord: digit,");
+    expect(digits).toContain('group: "navigate" as const,');
+    expect(digits).toContain("label: goesTo(words, place, rail),");
+    expect(chords).toContain('rail.keyLabel === undefined ? words(place.id)(rail.label) : words("shortcuts")(rail.keyLabel)');
   });
 });
 

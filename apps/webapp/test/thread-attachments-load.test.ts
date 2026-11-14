@@ -10,7 +10,7 @@ import {
   type SyncChange,
   threadOf,
 } from "@ohmail/client-engine";
-import { useMessageAttachments } from "../app/shell/attachments.js";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
 
 /**
  * ═══ THE THREAD'S LISTS ARE LOADED, NOT ONLY THE FOCUSED MESSAGE'S ═════════════════════════

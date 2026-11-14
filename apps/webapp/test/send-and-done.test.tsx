@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,8 +7,9 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
+import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { openLetter, reportPress } from "./ohbox/_finders.js";
+import { openRow } from "./ohbox/_finders.js";
 
 /**
  * SEND + DONE — THE SECOND SEND ACTION, driven through the WHOLE shell.
@@ -20,9 +22,8 @@ import { openLetter, reportPress } from "./ohbox/_finders.js";
  *
  * The demo adapter confirms every send, so the REFUSED arm cannot be driven here: it is measured
  * where it decides — `client-engine/test/send-and-done.test.ts` drives the intent with a send
- * that answers `false` and asserts nothing is dispatched, and the case below pins the other half
- * of that composition, that the shell answers the arm `true` on a CONFIRMATION and on nothing
- * else.
+ * that answers `false` and asserts nothing is dispatched, and the confirmation test pins the other half
+ * of that composition: Writing answers the arm true only on confirmation.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -60,7 +61,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -71,19 +72,12 @@ async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  /* THE EDITOR ARRIVES THROUGH THE ONE DYNAMIC DOOR, so the chunk is asked for the way the
-     product asks for it — `preloadRichEditor`, the door's own preload — and then settled. A
-     press alone leaves the Suspense frame standing, and this file's subject is the second
-     BUTTON beside Send, not how many rounds the import takes. */
-  const { preloadRichEditor } = await import("../app/shell/RichEditorLazy.js");
-  await act(async () => { await preloadRichEditor(); });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await settleFirstPaint();
   // The Ohbox rests until somebody picks a row; `j` is the product's own act.
   await key("j");
 }
@@ -100,38 +94,35 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 /* The editor arrives through a dynamic import (the shell loads it off the first paint), so a
    press that opens one is followed by a drain before the surface is read — the subject here is
    the second BUTTON, never how many microtasks the import takes. */
-const drain = async (): Promise<void> => {
-  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
-};
+const drain = settleEditor;
 
-const editors = (): HTMLElement[] =>
-  [...[openLetter(host!), openLetterDe(host!)].filter((x): x is HTMLElement => x !== null), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
+const page = () => within(host!);
+
+const editors = (): HTMLElement[] => [
+  ...page().queryAllByRole("textbox", { name: messages.write.reply.text }),
+  ...page().queryAllByRole("textbox", { name: de.write.reply.text }),
+];
 
 async function type(text: string): Promise<void> {
   const editor = editors()[0]!;
   await act(async () => { typeInto(editor, text); });
 }
 
-/**
- * The pill's Undo: today's capsule's, or at a seated place the frame's report's press (declared), whose
- * text carries its key beside the word.
- */
-const undoPress = (): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo")
-  ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress()! : undefined);
-/* ASKED OF THE HELPER: the open letter's region in the German catalogue's names (the helper's are the English). */
-const openLetterDe = (root: ParentNode): HTMLElement | null =>
-  root.querySelector<HTMLElement>(`section[aria-label="${de.frame.landmark.reading}"] [role="region"][aria-label="${de.reader.pane}"]`);
+const reports = (words: string): HTMLElement[] =>
+  page().queryAllByRole("status").filter((status) => status.textContent?.includes(words));
 
-/** The second action, found by the class the shell gives it — never by its words. */
-const doneButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
-const sendButton = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-/** The message the open editor answers. */
+const undoPress = (): HTMLElement | null => {
+  const report = reports(messages.reply.toastSentAndDone)[0];
+  return report === undefined ? null : within(report).queryByRole("button", { name: /^Undo\b/ });
+};
+
+const doneButton = (): HTMLElement | null =>
+  page().queryByRole("button", { name: messages.reply.sendAndDone })
+  ?? page().queryByRole("button", { name: de.reply.sendAndDone });
+const sendButton = (): HTMLElement => page().getByRole("button", { name: messages.write.send });
+/** The message the open editor answers: the open letter's, while a reply's editor stands under it. */
 const replyFor = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+  editors().length > 0 ? (openRow(host!)?.dataset.id ?? "") : "";
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1); });
@@ -174,7 +165,9 @@ describe("the second action is offered exactly where the engine offers a plan", 
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     await settle();
-    expect(host!.querySelector(".reply-send-done")).toBeNull();
+    expect(page().getByRole("textbox", { name: messages.write.subject })).toBeTruthy();
+    expect(sendButton()).toBeTruthy();
+    expect(doneButton()).toBeNull();
   });
 
   /**
@@ -213,7 +206,7 @@ describe("the press sends, then files, and says so once", () => {
     await act(async () => { doneButton()!.click(); });
     await settle();
 
-    expect(host!.textContent).toContain("Sent · marked done");
+    expect(reports("Sent · marked done")).toHaveLength(1);
     /* The SETTLED pill. "One press, one sentence" is not readable here — the host renders one
        capsule and both sentences would land in a single React flush, so a displaced one leaves
        nothing to assert on (a per-step sampler was tried and read green under the mutation).
@@ -235,8 +228,8 @@ describe("the press sends, then files, and says so once", () => {
     await act(async () => { sendButton().click(); });
     await settle();
 
-    expect(host!.textContent).toContain("Reply sent.");
-    expect(host!.textContent).not.toContain("Sent · marked done");
+    expect(reports("Reply sent.")).toHaveLength(1);
+    expect(reports("Sent · marked done")).toHaveLength(0);
   });
 
   /**
@@ -256,7 +249,7 @@ describe("the press sends, then files, and says so once", () => {
       }));
     });
     await settle();
-    expect(host!.textContent).toContain("Sent · marked done");
+    expect(reports("Sent · marked done")).toHaveLength(1);
   });
   /**
    * CONTROL. MUTATION WATCHED: read the plan AFTER the send instead of at the press (move the
@@ -277,76 +270,10 @@ describe("the press sends, then files, and says so once", () => {
     await act(async () => { undo.click(); });
     await settle();
 
-    expect(host!.textContent).toContain("Undone");
+    expect(reports("Undone")).toHaveLength(1);
     /* The row is back where it was, which is exactly what the offer returning says: the
        engine's rule answers a plan again only for a message that is not finished. */
     expect(doneButton(), "Undo did not restore the row").not.toBeNull();
-  });
-});
-
-describe("nothing is filed until the engine has confirmed the send", () => {
-  /**
-   * CONTROL. MUTATION WATCHED: call the outcome hook with `true` from `absorb`'s terminal
-   * branch, or drop the `next.phase !== "queued"` test, and a send that FAILED files the
-   * message it never delivered.
-   *
-   * The demo adapter confirms everything, so this drives `useMailSend` directly against an
-   * engine that rejects. The other half of the composition — that a `false` dispatches nothing
-   * — is measured on the intent itself in `client-engine/test/send-and-done.test.ts`.
-   */
-  it("a failed send answers the arm false; a confirmed one answers true", async () => {
-    await unmount();
-    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
-    const answers: boolean[] = [];
-    const toasts: string[] = [];
-    const message = { id: "m1", folder: "INBOX", unread: true, triage: null };
-    const reader = { get: () => message, list: () => [], entries: () => [], version: () => 1 };
-    /** Rejects the first send, confirms the second — one engine, both outcomes. */
-    let nth = 0;
-    const engine = {
-      mutate: async () => {
-        nth += 1;
-        return nth === 1
-          ? { id: "i", key: `k${nth}`, seq: nth, status: "rolled_back", error: { code: "send_failed", retryable: false } }
-          : { id: "i", key: `k${nth}`, seq: nth, status: "confirmed" };
-      },
-      read: () => reader,
-      flushPending: async () => [],
-      pendingMutations: () => [],
-      subscribe: () => () => { /* nothing notifies */ },
-      hasLateResults: () => false,
-    };
-    let api!: { send: (m: Record<string, unknown>) => void };
-    const Probe = (): null => {
-      api = useMailSend(
-        engine as never,
-        null,
-        ((m: string) => toasts.push(m)) as never,
-        useMailSendText(), (() => { /* the close is another case */ }) as never,
-        ((_key: string, _m: unknown, accepted: boolean) => { answers.push(accepted); return accepted; }) as never,
-      ) as never;
-      return null;
-    };
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(Probe),
-      }));
-    });
-
-    await act(async () => { api.send({ kind: "mail_send", inReplyTo: "m1", body: "one" }); });
-    await settle();
-    expect(answers, "the failed send did not answer the arm").toEqual([false]);
-
-    await act(async () => { api.send({ kind: "mail_send", inReplyTo: "m1", body: "two" }); });
-    await settle();
-    expect(answers).toEqual([false, true]);
-    /* …and the lane kept its silence for the confirmed one, because the arm spoke. */
-    expect(toasts).not.toContain("Reply sent.");
   });
 });
 
@@ -365,16 +292,11 @@ describe("the offer reads the Ohbox ON SCREEN", () => {
     const { resolve } = await import("node:path");
     /* The root run and the package run are both what CI does — jsdom has no file `import.meta`,
        so the path is resolved from the working directory, as `reply-panel.test.tsx` does. */
-    /* THE THREE SITES ARE THREE FILES NOW (ARCH-022). The shell's press went to `shell-compose.ts`
-       with the editor and the chord to `shell-keys.tsx` with the keymap; only the per-render offer
-       stayed. Counting one file read 2 and said the rule had lost a site. So the census names the
-       files it covers and asks the WHOLE set — the claim was never "three in AppShell", it was
-       "every site, and every one of them asks the projection". A file that cannot be read is a
-       refusal, not a zero. */
+    // The composer checks the projected list again at the press. Write's displayed offer
+    // checks it at render, and the keyboard uses that same offer.
     const rels = [
-      "apps/webapp/app/shell/AppShell.tsx",
+      "packages/app-logic/src/writing/writing-of.ts",
       "packages/app-logic/src/writing/shell-compose.ts",
-      "apps/webapp/app/shell/shell-keys.tsx",
     ];
     const read = (rel: string): string => {
       try { return readFileSync(resolve(process.cwd(), rel), "utf8"); }
@@ -386,8 +308,13 @@ describe("the offer reads the Ohbox ON SCREEN", () => {
       per.map((f) => `${f.rel}:${f.calls.length}`),
       "the rule is asked at the press, at every render and by the chord — one site in each",
     ).toEqual(rels.map((rel) => `${rel}:1`));
-    expect(calls.length, "the rule is asked at the press, at every render and by the chord").toBe(3);
+    expect(calls.length, "the rule is asked at the press, at every render and by the chord").toBe(rels.length);
     expect([...new Set(calls)]).toEqual(["sendAndDonePlanFor(presented,"]);
+    expect(
+      read("packages/app/src/mail/ground/MailKeys.tsx"),
+      "the chord asks the per-render offer (the projection's), never a rule of its own",
+    ).toMatch(/writing\.sendReplyAndDone\(replyTo\)/);
+    expect(read("packages/app/src/mail/ground/MailKeys.tsx")).not.toMatch(/sendAndDonePlanFor\(/);
   });
 });
 
@@ -400,6 +327,6 @@ describe("the German catalogue carries both halves", () => {
     await type("Donnerstag passt.");
     await act(async () => { doneButton()!.click(); });
     await settle();
-    expect(host!.textContent).toContain("Gesendet · erledigt");
+    expect(reports("Gesendet · erledigt")).toHaveLength(1);
   });
 });

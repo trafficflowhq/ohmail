@@ -1,13 +1,41 @@
 /** @vitest-environment jsdom */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { IndexedDbMirrorStore } from "@ohmail/client-engine";
 import { sliceOfDeclaration } from "./source-anchor.js";
 
 /** The sign-out door's answer, as each case scripts it. Only `auth` is replaced (see the last describe). */
-const mockLogout = vi.fn(async (): Promise<void> => {});
+type Logout = typeof import("../app/api-client").auth.logout;
+const mockLogout = vi.fn<Logout>(async () => {});
+function mockClear() {
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+}
+function installPendingFamily() {
+  document.cookie = "tf_family=fixture-family; Path=/";
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: { request: async (_name: string, _opts: unknown, run: () => Promise<unknown>) => run() },
+  });
+}
+
+async function installMirrorInventory() {
+  vi.stubGlobal("indexedDB", new IDBFactory());
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const mirror = new IndexedDbMirrorStore({ owner: "fixture-account" });
+  await mirror.load();
+  mirror.close();
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(navigator, "locks");
+  document.cookie = "tf_family=; Path=/; Max-Age=0";
+});
 vi.mock("../app/api-client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../app/api-client")>()),
-  auth: { logout: mockLogout, armLogoutOnLeave: () => undefined },
+  auth: { logout: mockLogout, clearLogoutCookies: mockClear, armLogoutOnLeave: () => undefined },
 }));
 
 /**
@@ -48,43 +76,21 @@ describe("signOut", () => {
   const src = read("../app/sign-out.ts");
 
   it("revokes the session AND wipes the local mirror", () => {
-    // The door is asked with the caller's predicate, which only the sign-in page's finisher passes.
-    expect(src).toMatch(/await auth\.logout\(\{ mayProceed: opts\.mayProceed \}\)/);
+    // The door checks the press again after waiting for the cookie lock.
+    expect(src).toMatch(/await auth\.logout\(\{ mayProceed, expectedFamily: family \?\? undefined, expectedAccount: departed \}\)/);
     expect(src).toMatch(/await clearAllMirrors\(owner\)/);
     expect(src).toContain('from "@ohmail/client-engine"');
   });
 
-  it("wipes even when the server call failed — the refusal is CAUGHT, never a short circuit", () => {
-    // A logout whose network call failed is still a user who asked to be signed out of
-    // THIS browser. Refusing to clear local mail because the server was unreachable would
-    // be exactly the wrong way round.
-    //
-    // ── THE SHAPE MOVED, AND THE ASSERTION WAS STRENGTHENED RATHER THAN RELAXED ───────────
-    //
-    // This used to read the body of a `try { … } finally { … }` and require the wipe to be
-    // inside the `finally`. That shape stopped being available the moment `signOut` had to
-    // ANSWER something (whether the wipe landed): a `return` inside a `finally` silently
-    // swallows the pending exception, which is the same class of quiet loss the rest of this
-    // file exists to prevent. So the refusal is caught into a value, and the wipe is
-    // unconditional code after it — a stronger property than "inside a finally", because it
-    // also forbids an early `return`/`throw` between the two.
-    expect(src).toMatch(/catch \(err\) \{[\s\S]*?serverRefused = /);
-    // Nothing may leave the function between catching the refusal and running the local half.
-    //
-    // THE ENDPOINT IS ASSERTED, and that is not ceremony. It was `lastIndexOf("…(owner)")`, an
-    // exact call SHAPE — so the day the call grew an option object the lookup returned -1 and
-    // `slice(start, -1)` silently widened to the rest of the function. It failed loudly that
-    // time, which was luck: a tail with no `return` in it would have passed vacuously over a
-    // slice this check was never meant to cover. The prefix matches either shape, and a lookup
-    // that finds nothing is now the failure it always should have been.
-    const start = src.indexOf("serverRefused = alreadyGone");
-    const end = src.lastIndexOf("forgetThisBrowser(owner");
-    expect(start, "the refusal assignment moved").toBeGreaterThan(-1);
-    expect(end, "the local half's call moved — this check is measuring nothing").toBeGreaterThan(start);
-    const between = src.slice(start, end);
-    expect(between, "no early exit may stand between the refusal and the wipe")
-      .not.toMatch(/\breturn\b|\bthrow\b/);
-    // …and the refusal is REPORTED rather than dropped: it rides the result.
+  it("keeps cleanup after a refusal and serializes the shared sweep", () => {
+    const start = src.indexOf("const alreadyGone = status === 401 && coded;");
+    const shared = src.indexOf("await forgetThisBrowser(departed, {", start);
+    const scoped = src.indexOf('await forgetThisBrowser(departed, { only: true', shared);
+    expect(start).toBeGreaterThan(-1);
+    expect(shared).toBeGreaterThan(start);
+    expect(scoped).toBeGreaterThan(shared);
+    expect(src.slice(start, shared)).toContain("withSessionCookieLock(async () => {");
+    expect(src.slice(shared, scoped)).toContain("{ requireLock: true }");
     expect(src).toMatch(/serverRefused,?\s*\}/);
 
     // THE DOOR'S ANSWER IS THE VERDICT: a 204, or a 401 in OUR envelope — the sign-out door saying
@@ -160,14 +166,14 @@ describe("the sign-out CONTROL is wired", () => {
     // the server logout (that door revokes by erasing the account), and both come from the one
     // module so the two cannot drift apart.
     expect(account).toMatch(/import \{ forgetThisBrowser, signOut \} from "\.\.\/\.\.\/sign-out"/);
-    expect(account).toMatch(/signOut\(owner\)/);
+    expect(account).toMatch(/signOut\(owner, \{ expectedFamily \}\)/);
     expect(account).not.toMatch(/\bauth\.logout\s*\(/);
   });
 
   it("passes the storage owner, so the right mirror is the one wiped", () => {
     // `clearAllMirrors(undefined)` would be a best-effort sweep rather than this account's
     // database. The account is read from state that was loaded before the call.
-    expect(account).toMatch(/doSignOut\(who\.accountId\)/);
+    expect(account).toMatch(/doSignOut\(who\.accountId, who\.familyId\)/);
   });
 
   it("leaves the SPA after signing out — the session is gone, the server must re-decide", () => {
@@ -330,7 +336,7 @@ describe("the sign-out CONTROL is wired", () => {
     // a live HttpOnly session this page cannot expire. `signOut` no longer throws at all (both
     // failures ride its result), so a `catch` here would be dead code standing in for a
     // property it no longer holds. Its sibling case above pins the server half.
-    expect(body).toMatch(/const outcome = await signOut\(owner\)/);
+    expect(body).toMatch(/const outcome = await signOut\(owner, \{ expectedFamily \}\)/);
     expect(reader).toMatch(/if \(!outcome\.cleared\) return \{ key: "signOutBlocked" \};/);
     const gate = body.indexOf('if (said !== null && said.key !== "signOutServerRefused") {');
     const leave = body.indexOf("window.location.assign");
@@ -372,17 +378,10 @@ describe("the door's answer is the verdict", () => {
 
   beforeEach(async () => {
     mockLogout.mockReset();
+    installPendingFamily();
     holdEveryRequest();
     localStorage.clear();
-    // jsdom has no IndexedDB: a factory that holds nothing, so the wipe completes and is not the subject.
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
-      databases: async () => [],
-      deleteDatabase: () => {
-        const req = { onsuccess: null } as unknown as IDBOpenDBRequest;
-        queueMicrotask(() => (req.onsuccess as unknown as (() => void) | null)?.());
-        return req;
-      },
-    } as unknown as IDBFactory;
+    await installMirrorInventory();
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
     (await import("../app/api-client")).bindApiOwner(null);
   });
@@ -539,27 +538,34 @@ describe("the finisher's predicate", () => {
   const JOURNAL = "ohmail.screener.intents.";
   const pending = (): boolean => document.cookie.split("; ").includes(`tf_owner=${PENDING}`);
 
+  async function rememberPending() {
+    const { PENDING_SIGN_OUT_KEY } = await import("../app/sign-out");
+    localStorage.setItem(PENDING_SIGN_OUT_KEY, JSON.stringify({
+      press: "fixture-press", account: "acct_left", family: "fixture-family",
+    }));
+  }
+
   beforeEach(async () => {
     mockLogout.mockReset();
+    installPendingFamily();
     holdEveryRequest();
     localStorage.clear();
-    (globalThis as unknown as { indexedDB: IDBFactory }).indexedDB = {
-      databases: async () => [],
-      deleteDatabase: () => {
-        const req = { onsuccess: null } as unknown as IDBOpenDBRequest;
-        queueMicrotask(() => (req.onsuccess as unknown as (() => void) | null)?.());
-        return req;
-      },
-    } as unknown as IDBFactory;
+    await installMirrorInventory();
     document.cookie = `tf_owner=${PENDING}; Path=/`;
+    await rememberPending();
     (await import("../app/api-client")).blockApiOwner();
   });
 
   it("is handed to the door, which asks it inside the cookie lock", async () => {
-    mockLogout.mockResolvedValueOnce(undefined);
+    mockLogout.mockImplementationOnce(async (opts) => {
+      expect(opts?.mayProceed?.()).toBe(true);
+      document.cookie = `tf_owner=${OTHER}; Path=/`;
+      expect(opts?.mayProceed?.()).toBe(false);
+      document.cookie = `tf_owner=${PENDING}; Path=/`;
+    });
     const { signOut } = await import("../app/sign-out");
     await signOut(undefined, { mayProceed: pending });
-    expect(mockLogout).toHaveBeenCalledWith({ mayProceed: pending });
+    expect(mockLogout).toHaveBeenCalledTimes(1);
   });
 
   it("a refusal over a jar another tab signed in to answers null, and marks and sweeps nothing", async () => {
@@ -593,10 +599,10 @@ describe("the finisher's predicate", () => {
     const { signOut } = await import("../app/sign-out");
     for (const answer of ["ok", new ApiError(401, "refresh_revoked", "revoked", undefined, { coded: true })] as const) {
       document.cookie = `tf_owner=${PENDING}; Path=/`;
+      installPendingFamily();
+      await rememberPending();
       localStorage.setItem(`${JOURNAL}acct_left`, "[]");
       mockLogout.mockImplementationOnce(async () => {
-        // The door's answer clears the jar, `tf_owner` with it.
-        document.cookie = "tf_owner=; Path=/; Max-Age=0";
         if (answer !== "ok") throw answer;
       });
       const before = purgesSent();
@@ -608,16 +614,16 @@ describe("the finisher's predicate", () => {
     }
   });
 
-  it("WITHOUT a predicate there is no such exit: every press runs its local half", async () => {
+  it("an ordinary refusal still wipes the local copy and leaves sign-out pending", async () => {
     const { ApiError, OFFLINE_CODE } = await import("../app/api-client");
-    mockLogout.mockImplementationOnce(async () => {
-      document.cookie = `tf_owner=${OTHER}; Path=/`;
-      throw new ApiError(0, OFFLINE_CODE, "We could not reach ohmail.");
-    });
+    const key = `${JOURNAL}acct_left`;
+    localStorage.setItem(key, "fixture");
+    mockLogout.mockRejectedValueOnce(new ApiError(0, OFFLINE_CODE, "We could not reach ohmail."));
     const { signOut } = await import("../app/sign-out");
-    const out = await signOut();
+    const out = await signOut("acct_left");
     expect(out.serverRefused).toBe("We could not reach ohmail.");
-    expect(pending(), "a press with no predicate skipped its local half").toBe(true);
+    expect(pending()).toBe(true);
+    expect(localStorage.getItem(key)).toBeNull();
   });
 });
 
@@ -711,7 +717,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
 
   it("each account's preferences outlive a whole sign-out and a revoke; an erasure takes its own", async () => {
     const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
-    const { seedNotNowKey } = await import("../app/shell/seed-offer");
+    const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
     const { readAfterVerb, writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
     const prefs = (owner: string): string[] =>
       [searchSortKey(owner), seedNotNowKey(owner), foldersOpenedKey(owner), mailOriginalKey(owner)];

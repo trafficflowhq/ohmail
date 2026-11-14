@@ -16,15 +16,22 @@ export interface DiscardRefusal {
   readonly at: number;
 }
 
+export type DiscardResult = PressVerdict | { kind: "blocked"; why: DiscardRefusalWhy } | { kind: "changed" };
+
+export function draftChanged(shown: EngineDraft, current: EngineDraft): boolean {
+  return shown.contentRevision !== current.contentRevision || shown.updatedAt !== current.updatedAt;
+}
+export type WithdrawResult = "none" | "withdrawn" | "placeholder-withdrawn" | "already_sent" | "unknown";
+
 export interface DraftsDoor {
   /** Opens a row: a reply as that reply where its letter is on this device, else in the composer. */
   open(d: EngineDraft): void;
   /** The hold's answer for a Discard: a running send or a store this browser cannot read refuses. */
   decide(draftId: string): { kind: "go" } | { kind: "refuse"; why: DiscardRefusalWhy };
   /** Takes back a send waiting on the row. `none`: nothing waited. */
-  withdrawWaiting(draftId: string): Promise<"none" | "withdrawn" | "already_sent" | "unknown">;
+  withdrawWaiting(draftId: string): Promise<WithdrawResult>;
   /** The delete, with every editor holding the row emptied and its send record released on a confirmed answer. */
-  discard(draftId: string): Promise<PressVerdict>;
+  discard(draftId: string, shown?: EngineDraft): Promise<DiscardResult>;
   cancelSchedule(id: string): void;
   editScheduled(d: EngineDraft): void;
   resolve(id: string, outcome: "arrived" | "not_arrived"): void;

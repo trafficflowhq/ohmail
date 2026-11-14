@@ -4,13 +4,14 @@
  */
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
-import { senderKey } from "@ohmail/client-engine";
+import { BODY_FETCH_TIMEOUT_MS, domainOfAddress, senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
 import { isNothingOrganizes, type OrganizerRefusal } from "../press/organizer-refusal.js";
 import type { DecisionDestination, DecisionScope } from "./decision.js";
 import type { KeySegment } from "./keys.js";
 import { nextAfterDecision } from "./next-sender.js";
-import type { ScreenerState } from "./screener-state.js";
+import type { ConfirmedBulkDecision, ConfirmedSenders, ScreenerState } from "./screener-state.js";
+import { acceptDestOf } from "./filter.js";
 import type { ScreenerAsk, ScreenerShown } from "./view.js";
 
 /**
@@ -21,39 +22,128 @@ export const refused = (
   r: ScreenerState["role"] & { pressRefusal?: OrganizerRefusal | null; takeoverAsked?: true },
 ) => r.takeoverAsked !== true && (r.mode === "blocked" || isNothingOrganizes(r.pressRefusal));
 
-/**
- * Mark all spam's question: the senders it named when it opened. It closes once nobody it named is left, so a later
- * arrival never reopens it; the yes moves the senders it named, and only them.
- */
-export function useAllSpamAsk(
+type BulkKind = "allSpam" | "applySuggestions";
+
+const unsubscribeCount = (senders: ConfirmedSenders): number =>
+  new Set([...senders.values()].flatMap((entry) => entry.unsubscribeIds)).size;
+
+/** The two bulk actions share one account-bound question and one snapshot of what can leave. */
+export function useBulkAsk(
   state: ScreenerState,
-  scopeOf: (s: ScreenerSenderDTO) => DecisionScope,
   segment: KeySegment,
+  scopeOf: (row: ScreenerSenderDTO) => DecisionScope,
+  simulated: boolean,
 ) {
-  const [askSet, setAskSet] = useState<ReadonlySet<string> | null>(null);
-  useEffect(() => setAskSet(null), [segment]);
-  const asked =
-    askSet === null
-      ? []
-      : state.waiting.filter((w) => !state.isExiting(w.id) && askSet.has(senderKey(w.from.address)));
-  useEffect(() => {
-    if (askSet !== null && asked.length === 0) setAskSet(null);
-  }, [askSet, asked.length]);
+  const engine = useEngineOrNull();
+  const [draft, setDraft] = useState<{
+    engine: typeof engine;
+    account: ScreenerState["accountScope"];
+    kind: BulkKind;
+    senders: ConfirmedSenders;
+  } | null>(null);
+  const current =
+    segment === "waiting" && draft?.engine === engine && draft.account === state.accountScope ? draft : null;
+  const waiting = state.waiting.filter((row) => !state.isExiting(row.id));
+  const rowIds = new Map(
+    waiting.map((row) => [
+      senderKey(row.from.address),
+      new Set(row.held.length ? row.held.map((letter) => letter.id) : [row.id]),
+    ]),
+  );
+  const remaining = new Map<string, ConfirmedBulkDecision>();
+  if (current)
+    for (const [key, entry] of current.senders) {
+      const own = rowIds.get(key);
+      if (!own || !entry.ids.some((id) => own.has(id))) continue;
+      const visible =
+        entry.scope === "sender"
+          ? own
+          : new Set(
+              [...rowIds]
+                .filter(([from]) => domainOfAddress(from) === domainOfAddress(key))
+                .flatMap(([, ids]) => [...ids]),
+            );
+      const ids = entry.ids.filter((id) => visible.has(id));
+      remaining.set(key, {
+        ...entry,
+        ids,
+        unsubscribeIds: entry.unsubscribeIds.filter((id) => visible.has(id)),
+      });
+    }
+  const reconcileDraft = () => {
+    if (!draft) return;
+    if (!current || !remaining.size) {
+      setDraft(null);
+      return;
+    }
+    if (
+      remaining.size !== current.senders.size ||
+      [...remaining].some(([key, entry]) => entry.ids.length !== current.senders.get(key)?.ids.length)
+    )
+      setDraft({ ...current, senders: remaining });
+  };
+  useEffect(reconcileDraft);
+  const file = (kind: BulkKind, senders: ConfirmedSenders) => {
+    if (refused(state.role)) return;
+    if (kind === "allSpam")
+      state.markAllSpam(
+        () => "sender",
+        (row) => senders.has(senderKey(row.from.address)),
+        senders,
+      );
+    else state.applyAll(scopeOf, senders);
+  };
+  const begin = (kind: BulkKind) => {
+    if (current || refused(state.role) || state.applying != null) return;
+    const senders = new Map(
+      waiting.flatMap((row) => {
+        const key = senderKey(row.from.address);
+        const dest = kind === "allSpam" ? "spam" : acceptDestOf(row);
+        if (!dest) return [];
+        const scope = kind === "allSpam" ? "sender" : scopeOf(row);
+        const ids =
+          scope === "sender"
+            ? [...(rowIds.get(key) ?? [])]
+            : [
+                ...new Set(
+                  [...rowIds]
+                    .filter(([other]) => domainOfAddress(other) === domainOfAddress(key))
+                    .flatMap(([, ids]) => [...ids]),
+                ),
+              ];
+        const demoting = dest === "spam" || dest === "screened";
+        const unsubscribeIds =
+          !demoting || simulated
+            ? []
+            : (state.bulkUnsubscribeIds?.(row, scope, ids) ??
+              ((state.unsubClaimOf?.(row, scope) ?? "none") === "none" ? [] : ids));
+        return [[key, { scope, dest, ids, unsubscribeIds }] as const];
+      }),
+    );
+    if (!senders.size) return;
+    if (kind === "applySuggestions" && unsubscribeCount(senders) === 0) file(kind, senders);
+    else setDraft({ engine, account: state.accountScope, kind, senders });
+  };
   return {
-    asked,
-    open: askSet !== null,
-    close: () => setAskSet(null),
-    ask: () => {
-      const named = state.waiting.filter((w) => !state.isExiting(w.id));
-      if (named.length > 0) setAskSet(new Set(named.map((w) => senderKey(w.from.address))));
-    },
+    question:
+      current && remaining.size > 0
+        ? {
+            kind: current.kind,
+            senders: waiting.filter((row) => remaining.has(senderKey(row.from.address))),
+            unsubscribeCount: unsubscribeCount(remaining),
+          }
+        : null,
+    close: () => setDraft(null),
+    begin,
     answer: (yes: boolean) => {
-      const set = askSet;
-      setAskSet(null);
-      if (yes && set !== null) state.markAllSpam(scopeOf, (w) => set.has(senderKey(w.from.address)));
+      setDraft(null);
+      if (yes && current && remaining.size) file(current.kind, remaining);
     },
   };
 }
+
+/** One fetch, one slot's wait, and time for the mirror to publish the answer. */
+export const HELD_BODY_STALL_MS = BODY_FETCH_TIMEOUT_MS * 2 + 3_000;
 
 /**
  * THE MOUNTED LETTERS' BODIES ASK AS ONE URGENT REQUEST: a person is reading them, so they do not queue behind
@@ -94,6 +184,8 @@ export interface DecideInput {
   readonly openId: string | null;
   /** The open waiting sender nobody has decided yet. */
   readonly openWaiting: ScreenerSenderDTO | null;
+  /** The demo shows the courtesy in its copy, but sends no unsubscribe request. */
+  readonly simulated?: boolean;
   /** Every id the section walks, and whether one is still a row to move to. */
   readonly ids: readonly string[];
   readonly isRow: (id: string) => boolean;
@@ -111,47 +203,91 @@ export interface DecideInput {
 export function useDecide(input: DecideInput) {
   const { state, openWaiting, scopeOf } = input;
   const [unsub, setUnsub] = useState<Extract<ScreenerAsk, { kind: "unsub" }> | null>(null);
-  useEffect(() => setUnsub(null), [input.segment, input.openId]);
+  const engine = useEngineOrNull();
+  const account = state.accountScope;
+  const openSender = openWaiting === null ? null : senderKey(openWaiting.from.address);
+  useEffect(() => setUnsub(null), [input.segment, openSender, engine, account]);
   /* `stay`: a row's own press on a sender that is not the open one leaves the selection where it is. */
-  const leave = (sender: ScreenerSenderDTO, dest: DecisionDestination, read: boolean, stay = false) => {
+  const leave = (
+    sender: ScreenerSenderDTO,
+    dest: DecisionDestination,
+    read: boolean,
+    scope: DecisionScope,
+    stay = false,
+    applyRetro?: boolean,
+    unsubscribeIds?: readonly string[],
+  ) => {
     const next = nextAfterDecision(input.ids, sender.id, (id) => input.isRow(id) && !state.isExiting(id));
     input.closeShown();
-    state.decide(sender, dest, { read, scope: scopeOf(sender) });
+    // The derived card's existing branch applies no retro pass and still moves the Inbox mail it shows.
+    // An explicit false would select the separate sheet branch and leave those messages behind.
+    const retro = applyRetro === false && sender.derived === true ? undefined : applyRetro;
+    state.decide(sender, dest, { read, scope, applyRetro: retro, unsubscribeIds });
     if (refused(state.role) || stay) return;
     input.left(next);
   };
-  const decide = (dest: DecisionDestination, read: boolean) => {
-    if (openWaiting === null) return;
-    const demoting = dest === "screened" || dest === "spam";
-    if (
-      demoting &&
-      !refused(state.role) &&
-      state.unsubClaimOf(openWaiting, scopeOf(openWaiting)) !== "none"
-    ) {
-      input.closeShown();
-      setUnsub({ kind: "unsub", sender: openWaiting, dest, read });
-      return;
-    }
-    leave(openWaiting, dest, read);
+  const askUnsubscribe = (
+    sender: ScreenerSenderDTO,
+    dest: DecisionDestination,
+    read: boolean,
+    scope: DecisionScope,
+    applyRetro?: boolean,
+  ): boolean => {
+    if ((dest !== "screened" && dest !== "spam") || input.simulated || refused(state.role)) return false;
+    const claim = state.unsubClaimOf(sender, scope);
+    if (claim === "none") return false;
+    const domain = domainOfAddress(senderKey(sender.from.address));
+    const rows = [
+      sender,
+      ...state.waiting.filter(
+        (row) =>
+          scope === "domain" &&
+          row.id !== sender.id &&
+          domainOfAddress(senderKey(row.from.address)) === domain &&
+          !state.isExiting(row.id),
+      ),
+    ];
+    const ids = [...new Set(rows.flatMap((row) => row.held.map((letter) => letter.id)))];
+    const unsubscribeIds = state.bulkUnsubscribeIds?.(sender, scope, ids) ?? ids;
+    input.closeShown();
+    setUnsub({
+      kind: "unsub",
+      sender,
+      dest,
+      read,
+      scope,
+      applyRetro,
+      claim,
+      unsubscribeIds,
+      senders: rows.length,
+    });
+    return true;
   };
-  /**
-   * A row's accept: the open sender's goes the open sender's way. Another sender's asks first as well where an
-   * unsubscribe would go out, about that sender; else the press alone files them, and the selection stays.
-   */
+  const decide = (dest: DecisionDestination, read: boolean, applyRetro?: boolean) => {
+    if (openWaiting === null) return;
+    const scope = scopeOf(openWaiting);
+    if (!askUnsubscribe(openWaiting, dest, read, scope, applyRetro))
+      leave(openWaiting, dest, read, scope, false, applyRetro);
+  };
   const decideRow = (sender: ScreenerSenderDTO, dest: DecisionDestination) => {
     if (sender.id === input.openId) return decide(dest, false);
-    const demoting = dest === "screened" || dest === "spam";
-    if (demoting && !refused(state.role) && state.unsubClaimOf(sender, scopeOf(sender)) !== "none") {
-      input.closeShown();
-      setUnsub({ kind: "unsub", sender, dest, read: false });
-      return;
-    }
-    leave(sender, dest, false, true);
+    const scope = scopeOf(sender);
+    if (!askUnsubscribe(sender, dest, false, scope)) leave(sender, dest, false, scope, true);
   };
   const answerUnsub = (yes: boolean) => {
     const asked = unsub;
     setUnsub(null);
-    if (yes && asked !== null) leave(asked.sender, asked.dest, asked.read, asked.sender.id !== input.openId);
+    if (yes && asked !== null) {
+      leave(
+        asked.sender,
+        asked.dest,
+        asked.read,
+        asked.scope,
+        asked.sender.id !== input.openId,
+        asked.applyRetro,
+        asked.unsubscribeIds,
+      );
+    }
   };
   return { decide, decideRow, answerUnsub, unsub, dropUnsub: () => setUnsub(null) };
 }

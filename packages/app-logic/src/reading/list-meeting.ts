@@ -4,7 +4,8 @@
  * list says what it holds. One object for any list, so the column never reads a list's own model.
  */
 import { createContext, useContext, type Context } from "react";
-import type { MessageAction } from "../press/actions.js";
+import type { EngineMessage, MessageBody } from "@ohmail/wire";
+import type { MessageAction, MoveTarget } from "../press/actions.js";
 import type { ThreadReadWiring } from "./reader-seen.js";
 
 export interface ListStep {
@@ -17,6 +18,8 @@ export interface ListStep {
 export interface ListVisit {
   /** The letter this visit is of. */
   readonly openId: string;
+  /** A row already answered by this place, when the reader needs to verify it off the mirror. */
+  readonly row?: EngineMessage;
   /** As its row presents it: a letter that came back reads unread whatever its stored flag says. */
   readonly unread: boolean;
   /** The read rule's record, the hold's doors, the walk channel. */
@@ -34,7 +37,15 @@ export interface ListBlank {
   readonly hot: boolean;
 }
 
+export interface OffMirrorLetter {
+  readonly message: EngineMessage;
+  readonly body?: MessageBody;
+  readonly retry?: () => void;
+}
+
 export interface ListMeeting {
+  readonly offMirror?: OffMirrorLetter;
+  readonly archiveHit?: EngineMessage | null;
   readonly visit: ListVisit | null;
   readonly blank: ListBlank | null;
 }
@@ -52,4 +63,20 @@ export function useListVisit(openId: string | null): ListVisit | null {
 export function useListBlank(): ListBlank | null | undefined {
   const meeting = useContext(ListMeetingContext);
   return meeting === null ? undefined : meeting.blank;
+}
+
+/** A place that presents its own reading cards supplies their Move through the same filing path as a list. */
+export type ListMove = (message: EngineMessage, place: MoveTarget) => void;
+export const ListMoveContext = createContext<ListMove | null>(null);
+
+/** The list's selected row, where it stands outside the local mirror. */
+export function useOffMirrorLetter(openId: string): OffMirrorLetter | null {
+  const letter = useContext(ListMeetingContext)?.offMirror;
+  return letter?.message.id === openId ? letter : null;
+}
+
+/** A Search result carried by this visit only. */
+export function useArchiveHit(openId: string): EngineMessage | null {
+  const hit = useContext(ListMeetingContext)?.archiveHit;
+  return hit?.id === openId ? hit : null;
 }

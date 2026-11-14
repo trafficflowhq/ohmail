@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
@@ -24,54 +25,76 @@ const railItem = (el: HTMLElement, id: string): HTMLElement => {
 const countOf = (el: HTMLElement, id: string): string =>
   (railItem(el, id).querySelector(".oh-railentry-count")?.textContent ?? "").trim(); // the kit's count, as the rail draws it
 /* The Ohbox head's claim about its unread mail: the title's dot, hot once the head may say something is unread, plain
-   (ink) while it may not. The head prints no count beside its title (the rail says the number). */
+   (ink) while it may not. The head prints no count beside its title (the rail says the number). The head is the
+   heading of the frame's list section ("Messages"); its dot is the kit's `Dot`, which says its kind. */
 const headClaim = (el: HTMLElement): string | undefined =>
-  el.querySelector<HTMLElement>(".view-ohbox .oh-listhead-title .oh-dot")?.dataset.kind;
+  el.querySelector<HTMLElement>('section[aria-label="Messages"] h1 [data-kind]')?.dataset.kind;
+/* What the rail's entry says of its count to a person who cannot see the badge: its accessible name ("Ohbox 3"), the
+   kit's `RailEntry` label. Today's rail said it in a tooltip ("3 unread of 3 messages", "Counting unread…"); the
+   new rail draws none (the studio's), and the name is where it says the number, or none while it may not. */
+const spoken = (el: HTMLElement, id: string): string => {
+  const b = railItem(el, id);
+  /* What is said: the entry's digit is drawn beside its name, unsaid (`aria-hidden`), as the rail draws it always. */
+  const copy = b.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+  return b.getAttribute("aria-label") ?? (copy.textContent ?? "").trim();
+};
+
+/** A warm reopen whose catch-up drain is held open until the case releases it. */
+async function warmReopen(): Promise<{ el: HTMLElement; held: Array<() => void>; release: () => void }> {
+  const { HttpAdapter, LAST_DRAIN_AT_META, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+  const store = new MemoryMirrorStore();
+  await store.applyResponse(await page(3).json());
+  await store.setMeta(LAST_DRAIN_AT_META, new Date(Date.parse(ISO) - 90 * 60_000).toISOString());
+
+  // Every `/sync` is held until the case releases them all; after that they answer at once.
+  const held: Array<() => void> = [];
+  let open = false;
+  const release = (): void => { open = true; for (const r of held.splice(0)) r(); };
+  const empty = (): Response => new Response(JSON.stringify({
+    changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "c-after", hasMore: false, serverTime: ISO,
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  const engine = new OhmailEngine({
+    adapter: new HttpAdapter({
+      baseUrl: "/api",
+      fetch: async (url: string) => {
+        // The catch-up, held open until the case lets it land.
+        if (String(url).includes("/sync")) {
+          return open ? empty() : new Promise<Response>((resolve) => { held.push(() => resolve(empty())); });
+        }
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      },
+    }),
+    store,
+  });
+  const el = await mountShell([mailbox({ lastSyncAt: ISO } as Partial<MailboxFacts>)], { engine });
+  await tick(LOADING_GRACE_MS * 4);
+  return { el, held, release };
+}
 
 describe("the rail's stream counts mid-catch-up", () => {
-  it("withholds the badge and the tooltip until the catch-up lands, then states them", async () => {
-    const { HttpAdapter, LAST_DRAIN_AT_META, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
-    const store = new MemoryMirrorStore();
-    await store.applyResponse(await page(3).json());
-    await store.setMeta(LAST_DRAIN_AT_META, new Date(Date.parse(ISO) - 90 * 60_000).toISOString());
-
-    // Every `/sync` is held until the case releases them all; after that they answer at once.
-    const held: Array<() => void> = [];
-    let open = false;
-    const release = (): void => { open = true; for (const r of held.splice(0)) r(); };
-    const empty = (): Response => new Response(JSON.stringify({
-      changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "c-after", hasMore: false, serverTime: ISO,
-    }), { status: 200, headers: { "content-type": "application/json" } });
-    const engine = new OhmailEngine({
-      adapter: new HttpAdapter({
-        baseUrl: "/api",
-        fetch: async (url: string) => {
-          // The catch-up, held open until the case lets it land.
-          if (String(url).includes("/sync")) {
-            return open ? empty() : new Promise<Response>((resolve) => { held.push(() => resolve(empty())); });
-          }
-          return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-        },
-      }),
-      store,
-    });
-    const el = await mountShell([mailbox({ lastSyncAt: ISO } as Partial<MailboxFacts>)], { engine });
-    await tick(LOADING_GRACE_MS * 4);
-
+  it("withholds the Ohbox's badge and its spoken count until the catch-up lands, then states them", async () => {
+    const { el, held, release } = await warmReopen();
     // MUTATION: `mayCount` forced true — the badge reads 3 and the tooltip counts mid-catch-up.
     expect(countOf(el, "ohbox"), "the Ohbox badge counted a mirror still catching up").toBe("");
     // Rows on screen, no number yet: the rail and the header say it is counting, never 0 and never nothing.
-    expect(railItem(el, "ohbox").getAttribute("title"), "the Ohbox tooltip counted mid-catch-up").toBe("Counting unread…");
+    expect(spoken(el, "ohbox"), "the Ohbox's entry said a count mid-catch-up").toBe("Ohbox");
     expect(headClaim(el), "the Ohbox header claimed unread mail mid-catch-up").toBe("ink");
-    expect(railItem(el, "reads").getAttribute("title"), "the News tooltip counted mid-catch-up").toBeNull();
 
     // The control: the same rail states its numbers once the catch-up has landed.
     expect(held.length, "the catch-up never started").toBeGreaterThan(0);
     release();
     await tick(LOADING_GRACE_MS * 4);
     expect(countOf(el, "ohbox")).toBe("3");
-    expect(railItem(el, "ohbox").getAttribute("title")).toContain("3 unread");
+    expect(spoken(el, "ohbox")).toBe("Ohbox 3");
     expect(headClaim(el)).toBe("hot");
+  }, 30_000);
+
+  it("withholds News's count mid-catch-up", async () => {
+    const { el } = await warmReopen();
+    expect(railItem(el, "news").getAttribute("title"), "the News tooltip counted mid-catch-up").toBeNull();
+    expect(countOf(el, "news")).toBe("");
+    expect(spoken(el, "news")).toBe("News");
   }, 30_000);
 });
 
@@ -115,7 +138,9 @@ describe("the Screener strip before the store's first queue answer", () => {
     return { el, release: () => { open = true; for (const r of held.splice(0)) r(); } };
   }
   /* The doorbell's words are its name ("2 first-time senders waiting — open the Screener"); it prints the number alone. */
-  const bell = (el: HTMLElement): string => el.querySelector(".view-ohbox .oh-doorbell")?.getAttribute("aria-label") ?? "";
+  const waitingButton = (el: HTMLElement) =>
+    within(el).queryByRole("button", { name: /first-time senders? waiting.*open the Screener/i });
+  const bell = (el: HTMLElement): string => waitingButton(el)?.getAttribute("aria-label") ?? "";
 
   it("claims no waiting sender the store does not hold, before or after its answer", async () => {
     const { el, release } = await start(false);
@@ -187,7 +212,8 @@ describe("the Screener strip before the store's first queue answer", () => {
 
     const said = new Set<string>();
     const note = (): void => {
-      const n = bell(el).includes("waiting") ? el.querySelector(".view-ohbox .oh-doorbell .oh-doorbell-count")?.textContent : null;
+      const button = waitingButton(el);
+      const n = button ? within(button).queryByText(/^\d+$/)?.textContent : null;
       said.add(`strip:${n ?? "-"}`);
       said.add(`rail:${countOf(el, "screener") || "-"}`);
     };

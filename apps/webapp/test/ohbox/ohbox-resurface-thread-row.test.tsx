@@ -1,11 +1,9 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { pinnedRows } from "../_resurfaced-rows.js";
+import { ohboxList } from "../_ohbox-1-list.js";
 
 /**
  * ONE ROW PER CONVERSATION UNDER RESURFACED, AS THE DOM — the rendered half of FEAT-020.
@@ -13,19 +11,14 @@ import { pinnedRows } from "../_resurfaced-rows.js";
  * The pin is per message, so a conversation parked as three messages stood as three rows, and the
  * reply that arrived while it was away stood a fourth time under "New for you". `resurfacedThreads`
  * answers which conversations are back; this measures what the list does with that answer: one row,
- * its lead in `data-id` and every member in `data-ids`, the conversation's own length, and the
- * badge for what arrived since the pin went up — a chip, distinct from the unread dot, because the
- * dot says "not read" and this says "somebody wrote while this was waiting".
+ * its lead in `data-id` and every member in `data-ids`.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests) from today's harness (`./_today.js` `prepareSeated` under
+ * today's `KeymapProvider`) to the Ohbox's own list drawn from its model (`../_ohbox-1-list.tsx`: the real
+ * `useOhboxList` fed the same rows, as the seat draws them). The expectation is as it stood. Today's second describe
+ * ("the badge says somebody wrote since you asked to see this again": a chip of today's row, its one case asserting
+ * nothing) retired with today's Ohbox view: the kit's row draws no such chip.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function setViewport(): void {
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
@@ -53,53 +46,24 @@ function msg(m: Row): EngineMessage {
   } as unknown as EngineMessage;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 
 async function mount(opts: {
   pinned: Row[];
   siblings?: Row[];
   /** When the pin went up — anything arriving after it and unread is "new since". */
   pinnedAt?: string;
-  thread?: { id: string; messageIds: string[] };
 }): Promise<void> {
   setViewport();
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
   const rows = pinnedRows(opts.pinned.map(msg), (opts.siblings ?? []).map(msg), opts.pinnedAt);
-  // The server's own thread length, which a windowed mirror need not hold — stamped on the row
-  // the same way `resurfacedThreads` reads it off a synced `thread` record.
-  const withCount = opts.thread
-    ? rows.map((r) => (r.key === opts.thread!.id
-      ? { ...r, count: opts.thread!.messageIds.length, countFromThread: true }
-      : r))
-    : rows;
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: NOW,
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      resurfacedRows: withCount,
-      newForYou: [], previouslySeen: [],
-      replyDone: null,
-      tags: [], now: NOW,
-      selectedId: null,
-      onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: { run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-      onMarkAllRead: () => {},
-    } as never) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  host = ohboxList({ resurfacedRows: rows, newForYou: [], previouslySeen: [], now: NOW }).container;
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  host?.remove();
+beforeEach(() => {
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
+});
+afterEach(() => {
+  cleanup();
   host = null;
 });
 
@@ -125,23 +89,6 @@ describe("a resurfaced conversation is one row in the DOM", () => {
     // `idsInGroup` reads leads only — the contract `ohbox-resurface-once` asserts one level up.
     expect(els[0]!.getAttribute("data-id")).toBe("m-3");
     expect(els[0]!.getAttribute("data-ids")?.split(" ").sort()).toEqual(["m-1", "m-2", "m-3"]);
-  });
-
-});
-
-describe("the badge says somebody wrote since you asked to see this again", () => {
-  const conversation = {
-    pinned: [{ id: "pin", threadId: "T", date: "2026-09-01T09:00:00.000Z" }],
-    siblings: [{ id: "reply", threadId: "T", date: "2026-09-05T09:00:00.000Z", unread: true }],
-  };
-
-
-  /**
-   * MUTATION WATCHED: render the chip on `newSince >= 0` rather than `> 0` and every resurfaced
-   * row in the product wears a "0 new" badge.
-   */
-  it("is absent when nothing arrived since the pin", async () => {
-    await mount({ pinned: [{ id: "pin", threadId: "T" }, { id: "old", threadId: "T" }] });
   });
 
 });

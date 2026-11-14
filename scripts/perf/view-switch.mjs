@@ -2,7 +2,7 @@
 /**
  * VIEW-SWITCH HARNESS — how long a press of 1/2/3 (or a click on the rail) takes to paint the pile
  * it names, over a large local mirror, in real engines. Local fixtures only: the page is
- * `view-switch-entry.tsx` (the real AppShell over a FixturesAdapter), served from loopback.
+ * `view-switch-entry.tsx` (the mounted mail frame over a FixturesAdapter), served from loopback.
  *
  *   node scripts/perf/view-switch.mjs build --out DIR [--tree ROOT]
  *       Bundle the page from ROOT's sources (default: this checkout) into DIR. `--tree` builds an
@@ -44,7 +44,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { OHBOX_LISTS, inOhbox } from "./speed-check.mjs";
+import { inOhbox } from "./speed-check.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../..");
@@ -96,8 +96,8 @@ export async function build(out, tree = ROOT, names = false) {
       b.onResolve({ filter: /^next-intl$/ }, (a) => b.resolve("use-intl", { kind: a.kind, resolveDir: tree }));
       b.onResolve({ filter: /^(react|react-dom|use-intl)(\/.*)?$/ }, (a) =>
         a.pluginData === "root" ? undefined : b.resolve(a.path, { kind: a.kind, resolveDir: tree, pluginData: "root" }));
-      /* The sanitize counter: every call site under the web app, wrapped. The definition is not. */
-      b.onLoad({ filter: /apps\/webapp\/app\/.*\.tsx?$/ }, (a) => {
+      /* Count calls in the older web renderer and in the shared body renderer used by the frame. */
+      b.onLoad({ filter: /(?:apps\/webapp\/app|packages\/letter-body\/src)\/.*\.tsx?$/ }, (a) => {
         const src = readFileSync(a.path, "utf8");
         if (!/(?<!function )\bsanitizeMailHtml\(/.test(src)) return undefined;
         const counted = src.replace(/(?<!function )\bsanitizeMailHtml\(/g, "__vsCounted(sanitizeMailHtml)(");
@@ -130,13 +130,39 @@ export async function build(out, tree = ROOT, names = false) {
 
 /* ── one arm ────────────────────────────────────────────────────────────────────────────── */
 
-/** The Ohbox: today's view, or the seated list in the frame's list section (`speed-check.mjs`). */
-const OHBOX = OHBOX_LISTS.join(", ");
-const VIEW = { "1": OHBOX, "2": ".view-reads", "3": ".view-receipts" };
-const RAIL = { "1": "ohbox", "2": "reads", "3": "receipts" };
+const FRAME_PLACE = "main.fr-main";
+const mountedStream = (name) => ({
+  place: FRAME_PLACE,
+  list: `[role="listbox"][aria-label="${name}"]`,
+  rows: '[role="option"]',
+  stream: `[role="region"][aria-label="${name} stream"]`,
+  card: "[data-stream-item]",
+});
+const legacyStream = (place) => ({ place, list: place, rows: ".row", stream: place, card: ".scast" });
+const MOUNTED_VIEWS = {
+  "1": { place: FRAME_PLACE, list: "section.fr-list .ob-list", rows: "[data-index]" },
+  "2": mountedStream("News"),
+  "3": mountedStream("Receipts"),
+};
+const LEGACY_VIEWS = {
+  "1": { place: ".view-ohbox", list: ".view-ohbox", rows: "[data-index]" },
+  "2": legacyStream(".view-reads"),
+  "3": legacyStream(".view-receipts"),
+};
+// A released bundle can have a mounted Ohbox beside older places. A visible legacy view
+// takes precedence over any matching list region nested within it.
+const VIEWS = Object.fromEntries(Object.keys(MOUNTED_VIEWS).map((key) =>
+  [key, [LEGACY_VIEWS[key], MOUNTED_VIEWS[key]]]));
+const RAIL = { "1": ["ohbox"], "2": ["news", "reads"], "3": ["receipts"] };
 
-/** Installed in the page once: the observers and the per-press probe. `ohbox` is `OHBOX`, handed in. */
-function pageProbe(ohbox) {
+async function clickPlace(page, ids) {
+  const entry = page.locator(ids.map((id) => `[data-rail-id="${id}"]`).join(", "));
+  const button = entry.getByRole("button");
+  await (await button.count() > 0 ? button : entry).click();
+}
+
+/** Installed in the page once: the observers and the per-press probe. */
+function pageProbe() {
   const w = window;
   w.__vs = { lt: [], frames: [] };
   try {
@@ -158,8 +184,8 @@ function pageProbe(ohbox) {
     return n;
   };
   /** Resolves with the press's readings; `t0` is the LAST keydown/pointerdown seen after arming.
-      `rows` names the rows to wait for instead of the pile's own (no stream follows them). */
-  w.__vsArm = (viewSel, presses, rows) => new Promise((resolve) => {
+      A stream place paints its rows and cards in separate regions. */
+  w.__vsArm = (targets, presses) => new Promise((resolve) => {
     let t0 = null;
     let seen = 0;
     const onPress = () => { seen += 1; if (seen >= presses) t0 = performance.now(); };
@@ -172,26 +198,30 @@ function pageProbe(ohbox) {
     const s0 = w.__vsSanitize ?? 0;
     const b0 = (w.__bodyFetches ?? 0) + w.__vsFetches;
     let rowsAt = null; let paintAt = null; let paint2At = null; let streamAt = null; let iframes = 0; let cards = 0;
-    /* The Ohbox has no stream. */
-    const stream = rows === undefined && viewSel !== ohbox;
-    const rowSel = rows ?? (stream ? ".row" : "[data-index]");
+    let rowCount = 0;
+    const checksStream = targets.some(({ stream }) => stream !== undefined);
     const check = () => {
-      const view = document.querySelector(viewSel);
-      if (t0 !== null && rowsAt === null && visible(view, rowSel) > 0) {
-        /* Seen in this frame's callback, so this frame paints them: the next frame's callback runs
-           after that paint (`paint`). One frame later again is the two-frames-after reading the
-           earlier harness took (`paint2`), kept so its numbers can be compared. */
-        rowsAt = performance.now();
-        const v = document.querySelector(viewSel);
-        iframes = v ? v.querySelectorAll("iframe").length : 0;
-        cards = v ? v.querySelectorAll(".scast").length : 0;
-        requestAnimationFrame(() => {
-          paintAt = performance.now();
-          requestAnimationFrame(() => { paint2At = performance.now(); });
-        });
+      if (t0 !== null) for (const { place, list, rows, stream, card } of targets) {
+        const streamRegion = stream === undefined ? null : document.querySelector(stream);
+        if (rowsAt === null) {
+          rowCount = visible(document.querySelector(list), rows);
+          if (rowCount > 0) {
+            /* Seen in this frame's callback, so this frame paints them: the next frame's callback runs
+               after that paint (`paint`). One frame later again is the two-frames-after reading the
+               earlier harness took (`paint2`), kept so its numbers can be compared. */
+            rowsAt = performance.now();
+            // The active place contains both columns of a mounted pile.
+            iframes = document.querySelector(place)?.querySelectorAll("iframe").length ?? 0;
+            cards = streamRegion?.querySelectorAll(card).length ?? 0;
+            requestAnimationFrame(() => {
+              paintAt = performance.now();
+              requestAnimationFrame(() => { paint2At = performance.now(); });
+            });
+          }
+        }
+        if (streamAt === null && visible(streamRegion, card) > 0) streamAt = performance.now();
       }
-      if (t0 !== null && stream && streamAt === null && visible(view, ".scast") > 0) streamAt = performance.now();
-      if (paint2At !== null && (!stream || streamAt !== null)) return settle();
+      if (paint2At !== null && (!checksStream || streamAt !== null)) return settle();
       requestAnimationFrame(check);
     };
     const settle = () => {
@@ -216,7 +246,7 @@ function pageProbe(ohbox) {
           paintMs: paintAt - t0, paint2Ms: paint2At - t0, rowsMs: rowsAt - t0, streamMs: streamAt === null ? null : streamAt - t0,
           settleMs: Math.max(paintAt, last) - t0,
           maxLong: Math.max(0, ...lts.map((x) => x.d)), maxGap,
-          iframes, cards,
+          iframes, cards, rows: rowCount,
           sanitize: (w.__vsSanitize ?? 0) - s0,
           requests: (w.__bodyFetches ?? 0) + w.__vsFetches - b0,
         });
@@ -231,7 +261,11 @@ function pageProbe(ohbox) {
    held segment's tab first (Screened out and Spam take turns), the other one, and warm switches:
    between the two tabs, and by way of the Ohbox and the Screener again. `--gap` is the wait
    between opening the Screener and the first tab click. */
-const SCN_TAB = { waiting: 0, screened: 1, spam: 2 };
+const SCN_TAB = { screened: /^Screened out(?: \d+)?$/, spam: /^Spam(?: \d+)?$/ };
+const LEGACY_SCN_TAB = { screened: 1, spam: 2 };
+const LEGACY_SCN = ".view-screener";
+const SCN_LIST = '[role="listbox"][aria-label="Screener"]';
+const SCN_ROW = '[role="option"][data-id]';
 const SCN_ROWS = { screened: '[data-id^="screened:"]', spam: '[data-id^="spam:"]' };
 
 async function runScreener(browser, { url, reps, gap, size, errors }) {
@@ -242,37 +276,51 @@ async function runScreener(browser, { url, reps, gap, size, errors }) {
     const page = await browser.newPage({ viewport: size });
     page.on("pageerror", (e) => errors.push(String(e).slice(0, 300)));
     page.on("console", (m) => { if (m.type() === "error") errors.push(m.text().slice(0, 300)); });
-    const tabs = page.locator(".view-screener .scn-seg [role=\"tab\"]");
-    const shown = () => page.evaluate(() => {
-      const on = [...document.querySelectorAll(".view-screener .scn-seg [role=\"tab\"]")]
-        .findIndex((b) => b.getAttribute("aria-selected") === "true");
-      return ["waiting", "screened", "spam"][on] ?? null;
-    });
-    const press = async (act, viewSel, rows, view, phase) => {
-      const wait = page.evaluate(([sel, r]) => window.__vsArm(sel, 1, r), [viewSel, rows]);
-      await page.waitForTimeout(30);
-      await act();
-      presses.push({ how: "click", view, phase, ...(await wait) });
-      await page.waitForTimeout(250);
-    };
-    const tab = (seg, phase) => press(() => tabs.nth(SCN_TAB[seg]).click(), ".view-screener", SCN_ROWS[seg], seg, phase);
-    const openScreener = (phase) => press(() => page.click('[data-rail-id="screener"]'), ".view-screener", "[data-index]", "screener", phase);
     const t0 = Date.now();
     await page.goto(url);
     await page.waitForSelector(inOhbox("[data-index]"), { timeout: 120000 });
     await page.waitForTimeout(1500);
     bootMs = Math.max(bootMs, Date.now() - t0);
-    await page.evaluate(pageProbe, OHBOX);
+    const probes = (mountedRows, legacyRows) => [
+      { place: FRAME_PLACE, list: SCN_LIST, rows: mountedRows },
+      { place: LEGACY_SCN, list: LEGACY_SCN, rows: legacyRows },
+    ];
+    const tabs = page.getByRole("group", { name: "Screener sections", exact: true });
+    const oldTabs = page.locator(`${LEGACY_SCN} .scn-seg [role="tab"]`);
+    const button = (seg) => tabs.getByRole("button", { name: SCN_TAB[seg] });
+    const oldTab = (seg) => oldTabs.nth(LEGACY_SCN_TAB[seg]);
+    const nextSegment = async () => {
+      const pressed = await tabs.isVisible()
+        ? await button("spam").getAttribute("aria-pressed")
+        : await oldTab("spam").getAttribute("aria-selected");
+      return pressed === "true" ? "screened" : "spam";
+    };
+    const press = async (act, target, view, phase) => {
+      const wait = page.evaluate((target) => window.__vsArm(target, 1), target);
+      await page.waitForTimeout(30);
+      await act();
+      presses.push({ how: "click", view, phase, ...(await wait) });
+      await page.waitForTimeout(250);
+    };
+    const tab = (seg, phase) => press(
+      async () => (await tabs.isVisible() ? button(seg) : oldTab(seg)).click(),
+      probes(SCN_ROW + SCN_ROWS[seg], SCN_ROWS[seg]), seg, phase,
+    );
+    const openScreener = (phase) => press(
+      () => clickPlace(page, ["screener"]),
+      probes(SCN_ROW, "[data-index]"), "screener", phase,
+    );
+    await page.evaluate(pageProbe);
     await openScreener("screener");
     await page.waitForTimeout(gap);
     const [first, other] = r % 2 === 0 ? ["screened", "spam"] : ["spam", "screened"];
     await tab(first, "first");
     await tab(other, "other");
-    for (let k = 0; k < 4; k++) await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
+    for (let k = 0; k < 4; k++) await tab(await nextSegment(), "warm");
     for (let k = 0; k < 2; k++) {
-      await press(() => page.keyboard.press("1"), OHBOX, undefined, "1", "away");
+      await press(() => page.keyboard.press("1"), VIEWS["1"], "1", "away");
       await openScreener("screener-warm");
-      await tab((await shown()) === "spam" ? "screened" : "spam", "warm");
+      await tab(await nextSegment(), "warm");
     }
     await page.close();
   }
@@ -318,15 +366,15 @@ export async function runArm({ dist, engine = "chromium", reps = 10, q, warm = 8
     await page.waitForTimeout(1000);
   }
   const bootMs = Date.now() - t0;
-  await page.evaluate(pageProbe, OHBOX);
+  await page.evaluate(pageProbe);
   await page.evaluate(() => window.__harness.resetVitals?.());
 
   const presses = [];
   const press = async (how, k, phase) => {
-    const wait = page.evaluate(([sel]) => window.__vsArm(sel, 1), [VIEW[k]]);
+    const wait = page.evaluate((target) => window.__vsArm(target, 1), VIEWS[k]);
     await page.waitForTimeout(30);
     if (how === "key") await page.keyboard.press(k);
-    else await page.click(`[data-rail-id="${RAIL[k]}"]`);
+    else await clickPlace(page, RAIL[k]);
     const r = await wait;
     presses.push({ how, view: k, phase, ...r });
     await page.waitForTimeout(250);
@@ -352,13 +400,13 @@ export async function runArm({ dist, engine = "chromium", reps = 10, q, warm = 8
   }
   /* RAPID: 2,3,2,3 then 2, a fast hand's forty ms apart, timed from the last press. */
   for (let r = 0; r < reps; r++) {
-    const wait = page.evaluate(([sel]) => window.__vsArm(sel, 5), [VIEW["2"]]);
+    const wait = page.evaluate((target) => window.__vsArm(target, 5), VIEWS["2"]);
     await page.waitForTimeout(30);
     for (const k of ["2", "3", "2", "3", "2"]) { await page.keyboard.press(k); await page.waitForTimeout(40); }
     const res = await wait;
     presses.push({ how: "key", view: "2", phase: "rapid", ...res });
     await page.waitForTimeout(250);
-    const back = page.evaluate(([sel]) => window.__vsArm(sel, 1), [VIEW["1"]]);
+    const back = page.evaluate((target) => window.__vsArm(target, 1), VIEWS["1"]);
     await page.waitForTimeout(30);
     await page.keyboard.press("1");
     await back;

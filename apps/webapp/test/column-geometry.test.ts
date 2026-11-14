@@ -43,15 +43,15 @@ import {
  * the geometry LOOKS like — `scripts/columns-render.mjs` is the rendered assertion, in real
  * Chromium at three widths and both faces. This is the text and the arithmetic.
  *
- * Mutations watched: `--rail-track` inlined back into `.deck` as three literals → the
- * "the handle reads the deck's own track" case red; `column-gap` back to `16px` → red;
- * the boot script's `Math.min` ceiling changed to 400 → the agreement table red at 720;
- * `.list-col{position:relative}` deleted → red.
+ * Mutations watched: the boot script's `Math.min` ceiling changed to 400 → the agreement table
+ * red at 720. Today's deck, split and list column rules left this file with today's views: the
+ * new frame's columns are held by its own cases (`packages/app/test/frame/rooms-in-a-browser`,
+ * the kit's column handle in `packages/ui/test/mail/shell.test.tsx`); the boot frame's two rules
+ * stay here while the desktop's boot frame draws them.
  */
 
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const APP = read("apps/webapp/app/app.css");
-const ZERO = read("apps/webapp/app/zero-layout.css");
 
 /** The declarations of the rule whose selector list starts a line with exactly `selector`. */
 function blockOf(css: string, selector: string): string {
@@ -62,29 +62,6 @@ function blockOf(css: string, selector: string): string {
 }
 
 describe("app.css — the two properties the columns hang on, and the numbers they clamp to", () => {
-  it("the deck's rail track IS the clamp, written once and named so the handle can reuse it", () => {
-    const deck = blockOf(APP, ".deck");
-    // Asserted against the constant the STAMP composes its own room from, so the stylesheet and
-    // the two writers cannot drift on what the rail's track is.
-    expect(deck).toContain(`--rail-track: ${RAIL_TRACK};`);
-    expect(deck).toContain("grid-template-columns: var(--rail-track) 1fr;");
-    // The rail's separator stands in the deck's gap; without this it has no containing block.
-    expect(deck).toContain("position: relative;");
-  });
-
-  it("the split falls through to the token when nobody has dragged, and its gap IS the tile gap", () => {
-    const split = blockOf(APP, ".view.split");
-    expect(split).toContain(`grid-template-columns: var(${SPLIT_VAR}, var(--split));`);
-    // Was a literal 16px, which under the ohmarchy face was the one 16px seam in a 10px
-    // system — and is now also the width of the strip standing in it.
-    expect(split).toContain("column-gap: var(--gap-tile);");
-    expect(split).not.toContain("16px");
-  });
-
-  it("the list column is a positioning context, because its separator is portalled into it", () => {
-    expect(blockOf(APP, ".list-col")).toContain("position: relative;");
-  });
-
   it("the boot silhouette stands in the SAME two properties, so nothing jumps when it fills in", () => {
     const sk = blockOf(APP, ".boot-sk-window");
     expect(sk).toContain(RAIL_TRACK);
@@ -98,17 +75,6 @@ describe("app.css — the two properties the columns hang on, and the numbers th
     const foot = blockOf(APP, ".gate-boot > .boot-foot");
     expect(foot).toContain(`width: ${RAIL_TRACK};`);
     expect(foot).toContain("left: var(--gap-edge);");
-  });
-});
-
-describe("zero-layout.css — the ladder's own answer to a split that survives below 1024", () => {
-  it("the ribbon tier keeps the dragged width and re-shows the list's separator", () => {
-    const band = ZERO.slice(ZERO.indexOf("@media (min-width: 722px) and (max-width: 1023.98px)"));
-    expect(band).toContain(`grid-template-columns: var(${SPLIT_VAR}, var(--split));`);
-    expect(band).toMatch(/:root\[data-layout="zero"\] \.col-handle-list \{\s*display: block;/);
-    // The rail is a docked 52px ribbon at this tier — a width the ladder chooses, not the
-    // reader — so its handle stays hidden.
-    expect(band).not.toContain("col-handle-rail");
   });
 });
 

@@ -459,7 +459,33 @@ export class FixturesAdapter implements EngineAdapter {
       });
     }
 
-    const effects = mutationEffects(this.reader(), m, { now: this.now, uuid: this.uuid });
+    const reader = this.reader();
+    const effects = mutationEffects(reader, m, { now: this.now, uuid: this.uuid });
+    if (m.kind === "mail_send" && m.sendAt && effects[0]) {
+      const scheduled = effects[0].entity as EngineDraft;
+      const current = m.draftId ? reader.get<EngineDraft>("draft", m.draftId) : undefined;
+      if (m.draftId && !current) {
+        throw new MutationRejectedError("draft not found", { status: 404, code: "not_found" });
+      }
+      if (current && current.status !== "draft") {
+        throw new MutationRejectedError("draft cannot be scheduled", { status: 409, code: "conflict" });
+      }
+      if (m.ifContentRevision && m.ifContentRevision !== current?.contentRevision) {
+        throw new MutationRejectedError("draft has changed", { status: 409, code: "draft_changed" });
+      }
+      if (current?.html && m.html === undefined) {
+        throw new MutationRejectedError("the draft holds formatted text", { status: 400, code: "validation_failed" });
+      }
+      // A saved draft keeps its creation, reply context and other account metadata.
+      const row: EngineDraft = {
+        ...(current ?? scheduled),
+        mailboxId: scheduled.mailboxId, subject: scheduled.subject, body: m.body,
+        to: scheduled.to, cc: scheduled.cc, bcc: scheduled.bcc, html: m.html ?? null,
+        status: "scheduled", sendAt: m.sendAt, sendError: null, sendFiles: m.attachments?.length ?? 0,
+        updatedAt: scheduled.updatedAt,
+      };
+      effects[0] = { type: "draft", id: row.id, entity: row };
+    }
     if (effects.length === 0) {
       throw new MutationRejectedError(`mutation target not found (${m.kind})`, { status: 404, code: "not_found" });
     }
@@ -480,6 +506,8 @@ export class FixturesAdapter implements EngineAdapter {
       ...(m.kind === "draft_save" && m.draftId === null && effects[0]
         ? { entityId: effects[0].id }
         : {}),
+      ...(m.kind === "mail_send" && !m.sendAt && effects[0]?.type === "draft"
+        ? { sentDraftId: effects[0].id } : {}),
       /**
        * THE MINTED Message-ID OF A SEND, because a demo that cannot show sent mail is not showing the product. `POST
        * /drafts/:id/send` answers `{status:"sent", providerMessageId}` and the engine turns that into the optimistic

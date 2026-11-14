@@ -5,7 +5,7 @@
  * account and the attempt that claimed it, and a close that finds no such row is a fault, never a
  * quiet nothing.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { ChangeItem, ProviderWord } from "@ohmail/cal-providers";
 import { calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import { parseWritePayload } from "@trafficflow/db/calendar";
@@ -159,7 +159,8 @@ function versionIn(items: readonly ChangeItem[], providerId: string | null): str
  * transaction (one `now()` for both, which the door's `after` rule reads). Only where the write's
  * own request made it so (`written`: its 2xx, and at CalDAV its own tag) do the writes that waited
  * on the old version take the new one: a write found done answers a copy that may be someone
- * else's newer one, and what waited behind it keeps its version and is refused for it.
+ * else's newer one, and what waited behind it keeps its version and is refused for it. A
+ * cancellation always keeps the version whose audience it was confirmed against.
  */
 export async function settleApplied(
   ctx: SettleContext, w: ClaimedWrite, items: readonly ChangeItem[], targetProviderId: string | null, written: boolean,
@@ -200,7 +201,9 @@ export async function settleApplied(
     if (version !== null && written) {
       await tx.update(calWrites).set({ baseVersionTag: version, updatedAt: sql`now()` }).where(and(
         eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.eventId, w.eventId), eq(calWrites.state, "pending"),
-        sql`${calWrites.id} <> ${w.id}`, sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,
+        ne(calWrites.op, "delete"),
+        sql`${calWrites.id} <> ${w.id}`, sql`(${calWrites.payload}->'act'->>'personalSeries') is null`,
+        sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,
       ));
     }
     const stamped = await tx.update(calEvents).set({ updatedAt: sql`now()` })

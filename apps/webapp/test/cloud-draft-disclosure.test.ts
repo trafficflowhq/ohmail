@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import en from "../messages/en.json";
-import de from "../messages/de.json";
+import en from "../../../packages/app/messages/mailboxes.en.json";
+import de from "../../../packages/app/messages/mailboxes.de.json";
 
 /**
  * WHAT A CLOUD DRAFT SENDS, SAID ON THE FIRST-RUN CONSENT STEP. The sentence said only the sender,
@@ -11,9 +11,13 @@ import de from "../messages/de.json";
  * to `MAX_THREAD_MESSAGES` other messages of its thread (sender and extract) and up to
  * `DEFAULT_KB_K` knowledge-base notes. The counts are read off the service, so a change to what a
  * draft sends breaks this file before it can make the sentence false.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the step is the new first run's AI step, which says the
+ * service's sentence by the key its words name (`packages/app/src/mailboxes/first-run/words.ts`, `PROVIDER_STEP`),
+ * from the catalogue the new stage speaks (`packages/app/messages/mailboxes.*.json`). Every expectation is as it stood.
  */
 
-/* @reads: packages/services/src/drafting-service.ts apps/webapp/app/shell/FirstRun.tsx */
+/* @reads: packages/services/src/drafting-service.ts packages/app/src/mailboxes/first-run/words.ts */
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const SERVICE = read("../../../packages/services/src/drafting-service.ts");
 
@@ -33,7 +37,9 @@ describe("the Cloud consent step says what a draft sends", () => {
   });
 
   it("the first-run step shows this sentence", () => {
-    expect(read("../app/shell/FirstRun.tsx")).toContain('t("providerCloudBody")');
+    expect(read("../../../packages/app/src/mailboxes/first-run/words.ts")).toContain(
+      'cloud: { title: "onboarding.providerCloudTitle", body: () => "onboarding.providerCloudBody" }',
+    );
   });
 
   it("names both counts, in English and German, and no longer says only", () => {

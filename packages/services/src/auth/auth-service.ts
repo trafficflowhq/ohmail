@@ -2904,8 +2904,9 @@ export class AuthService extends SessionLifecycle {
     const expiresAt = new Date(now.getTime() + this.cfg.loginTokenTtlMs);
 
     await this.revokeEnrollmentSessions(db, user.id, now);
+    const familyId = randomUUID();
     await db.insert(sessions).values({
-      accountId: user.accountId, userId: user.id, deviceId: null, familyId: randomUUID(),
+      accountId: user.accountId, userId: user.id, deviceId: null, familyId,
       scope: "enrollment",
       accessTokenHash: hashToken(token),
       accessExpiresAt: expiresAt,
@@ -2922,7 +2923,7 @@ export class AuthService extends SessionLifecycle {
     // `/auth/login`, `/auth/verify-email` and `/auth/register` answered with an enrollment
     // credential and named nobody. Success tail, and inside a transaction the report is buffered
     // to the commit by `inTransaction`.
-    ctx.noteCredentialAccount?.(user.accountId);
+    ctx.noteCredentialAccount?.(user.accountId, familyId);
     return {
       status: "enrollment",
       user: await this.sessionUser(db, user.id),
@@ -3574,7 +3575,9 @@ export class AuthService extends SessionLifecycle {
    * the sign-out back would leave a session live; a row left is wakes to a signed-out device.
    */
   override async logout(
-    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+    ctx: ServiceContext, b: {
+      allDevices?: boolean; refreshToken?: string; expectedFamily?: string; browser?: boolean; expectedAccount?: string;
+    } = {},
   ): Promise<{ familyIds: string[] }> {
     if (!b.allDevices && b.refreshToken !== undefined) {
       const out = await super.logout(ctx, b);

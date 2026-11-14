@@ -268,10 +268,17 @@ function persistedWired(e: { mutation: { kind: string }; wired?: boolean }): boo
   return e.mutation.kind === "mail_send" && e.wired !== false;
 }
 
+/** A confirmed unsubscribe may travel on the live request only. */
+function filingMutation(mutation: EngineMutation): EngineMutation {
+  if (mutation.kind !== "screener_decide" || !("unsubscribeIds" in mutation)) return mutation;
+  const { unsubscribeIds: _grant, ...filing } = mutation;
+  return filing;
+}
+
 /** One pending verb as the row that is persisted for it. */
 function outboxEntryOf(p: PendingMutation): PersistedOutboxEntry {
   return {
-    v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: p.mutation,
+    v: OUTBOX_ENTRY_VERSION, id: p.id, key: p.key, n: p.n, at: p.at, mutation: filingMutation(p.mutation),
     ...(p.attempts !== undefined ? { attempts: p.attempts } : {}),
     ...(p.nextAt !== undefined ? { nextAt: p.nextAt } : {}),
     ...(p.waitIsServerNamed !== undefined ? { waitIsServerNamed: p.waitIsServerNamed } : {}),
@@ -585,7 +592,7 @@ export interface AbandonedMutation {
 }
 
 export {
-  andDoneOf, byAtN, explicitRead, isCreatedRow, isPersistedOutboxEntry, NO_QUEUED, OUTBOX_EXPIRED_MESSAGE,
+  andDoneOf, byAtN, explicitRead, filingMutation, isCreatedRow, isPersistedOutboxEntry, NO_QUEUED, OUTBOX_EXPIRED_MESSAGE,
   outboxEntryOf, pastCreateDedupe, type PersistedOutboxEntry, persistedWired, pressAgeOf, readLeftBy,
   retiresAbandoned, supersedeKey, WITHDRAW_UNCONFIRMED_SENTENCE, withdrawnResult, worseWithdraw,
 };

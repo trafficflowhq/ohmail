@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { screen, within } from "@testing-library/react";
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -13,7 +14,8 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { CURSOR_HINT_MS } from "../app/shell/AppShell";
+import { CURSOR_HINT_MS } from "@ohmail/app-logic/keys";
+import { reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -86,6 +88,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* The frame's report animates its way out (the kit's motion): jsdom has no Web Animations. */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -114,7 +118,7 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-08T09:00:00.000Z", unread: false,
+  to: [], cc: [], labels: [], date: "2026-09-08T09:00:00.000Z", unread: false,
   updatedAt: "2026-09-08T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -206,7 +210,7 @@ const ORGANIZER_ROSTER: MailboxFacts[] = [{
 }];
 
 async function shell(ids: string[]): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(ids));
   const container = document.createElement("div");
@@ -235,7 +239,7 @@ async function shell(ids: string[]): Promise<HTMLElement> {
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
+    (document.activeElement ?? document).dispatchEvent(
       new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
     );
   });
@@ -259,7 +263,8 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const selectedIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row.sel, [role=option][data-open])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
+/** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
+const toastText = (): string => reportSays();
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 /**
@@ -269,10 +274,10 @@ const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_d
  */
 const hintFor = (label: string): string => messages.cursor.placed.replace("{label}", label);
 
-/** The `?` sheet's row for one label, and the sentence (if any) it carries. */
-const sheetRow = (label: string): HTMLElement | undefined =>
-  [...document.querySelectorAll<HTMLElement>(".ks li")]
-    .find((li) => (li.querySelector(".ks-lab")?.textContent ?? "").trim() === label);
+const shortcutSheet = () => screen.queryByRole("dialog", { name: messages.shortcuts.title });
+const sheetRow = (label: string): HTMLElement | null =>
+  within(screen.getByRole("dialog", { name: messages.shortcuts.title })).queryByText(label)?.closest("p") ?? null;
+
 
 describe("a list with rows and no cursor", () => {
   it("no cursor exists until somebody presses something — an arrival places nothing", async () => {
@@ -356,17 +361,15 @@ describe("a list with rows and no cursor", () => {
        or timing change is visible here rather than silently disagreeing. */
     await shell(["m1", "m2", "m3"]);
     await key("Backspace");
-    expect(document.querySelector(".toast .toast-act"), "the hint offers an action").toBeNull();
+    /* The premise: the hint stands (in the frame's report at a seated place), so its offering nothing means something. */
+    expect(toastText()).toBe(hintFor(messages.shortcuts.deleteKey));
+    expect(reportPress(), "the hint offers an action").toBeNull();
     expect(CURSOR_HINT_MS).toBe(2400);
   }, 30000);
 
-  it("the hint is ANNOUNCED — the toast's own live region, asserted rather than assumed", async () => {
-    await shell(["m1", "m2", "m3"]);
-    await key("Backspace");
-    const toast = document.querySelector(".toast");
-    expect(toast?.getAttribute("role")).toBe("status");
-    expect(toast?.getAttribute("aria-live")).toBe("polite");
-  }, 30000);
+  /* "the hint is ANNOUNCED": the hint is said in the frame's report (the seat's own cursor cases read it by its role,
+     `status`), and the report is said when it appears by the kit's own case: `packages/ui/test/base/feedback.test.tsx`,
+     "a region that is said when it appears". */
 
   it("focus does NOT move to the row — the ring is the indicator, the keyboard stays where it is", async () => {
     const container = await shell(["m1", "m2", "m3"]);
@@ -390,11 +393,11 @@ describe("a list with rows and no cursor", () => {
   it("A QUESTION STANDING OVER THE DECK owns the key — nothing is placed under it", async () => {
     const container = await shell(["m1", "m2", "m3"]);
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
-    /* The sheet dismisses on ANY key, so this press both closes it and — with the gate missing —
-       would place a cursor underneath it. The gate is read at the press, not after. */
+    await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
+    // The dialog owns the keystroke even though it dismisses on that same press.
     await key("Backspace");
     await settle();
+    expect(shortcutSheet()).toBeNull();
     expect(selectedIds(container), "a cursor was placed under an open dialog").toEqual([]);
   }, 30000);
 });
@@ -416,13 +419,21 @@ describe("a list with NO rows", () => {
 describe("a binding resting for ANOTHER reason keeps falling through", () => {
   it("`f` rests on an EMPTY REPLY-LATER PILE, not on a cursor — it places nothing", async () => {
     const container = await shell(["m1", "m2", "m3"]);
-    /* THE CLAIM UNDER TEST, asserted first so this cannot pass on a live binding: the sheet is
-       generated from the same table the dispatcher walks, and `f`'s row is greyed here. */
+    // Park one letter so the mounted Piles list has a row a wrong first press could select.
+    await key("e");
+    await key("e");
+    await waitFor(() => sent.some((m) => m.kind === "triage_set"), "the Park request");
+    await act(async () => {
+      window.location.hash = "#/triage/aside";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() => rowIds(container).length === 1, "the letter in Parked");
+    await key("Escape");
+    await waitFor(() => selectedIds(container).length === 0, "the Parked reading closes");
+    expect(rowIds(container), "the Parked list still has a row").toHaveLength(1);
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
-    const row = sheetRow(messages.shortcuts.replyRun);
-    expect(row, "the sheet does not list the Reply Run").toBeDefined();
-    expect(row!.className, "`f` is live here, so this case proves nothing").toContain("off");
+    await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
+    expect(sheetRow(messages.triage.keyReplyRun), "Reply Run is unavailable with nothing to answer").toBeNull();
     await key("Escape");
     await settle();
 
@@ -435,10 +446,8 @@ describe("a binding resting for ANOTHER reason keeps falling through", () => {
   it("`p` is an APP verb — the rule is scoped to the message group and `p` places nothing", async () => {
     const container = await shell(["m1", "m2", "m3"]);
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
-    const row = sheetRow(messages.shortcuts.pull);
-    expect(row, "the sheet does not list Pull").toBeDefined();
-    expect(row!.className, "Pull is live here, so this case proves nothing").toContain("off");
+    await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
+    expect(sheetRow(messages.shortcuts.pull), "the host offers no live Pull shortcut").toBeNull();
     await key("Escape");
     await settle();
 
@@ -466,18 +475,18 @@ describe("the `?` sheet says WHY a message row is grey", () => {
   it("a row waiting for a cursor carries the sentence; a live row carries none", async () => {
     await shell(["m1", "m2", "m3"]);
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
+    await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
     const del = sheetRow(messages.shortcuts.deleteKey);
-    expect(del, "the sheet does not document the delete key").toBeDefined();
-    expect(del!.className).toContain("off");
+    expect(del, "the sheet does not document the delete key").toBeTruthy();
+    expect(del!.getAttribute("aria-disabled")).toBe("true");
     expect(del!.getAttribute("title")).toBe(messages.shortcuts.needsCursor);
 
     /* A LIVE ROW MUST NOT CARRY IT. Compose is bound with no `disabled` at all, so a sentence on
        it would mean the title had stopped tracking the reason and become decoration. */
     const compose = sheetRow(messages.shortcuts.compose);
-    expect(compose, "the sheet does not document Compose").toBeDefined();
-    expect(compose!.className ?? "").not.toContain("off");
+    expect(compose, "the sheet does not document Compose").toBeTruthy();
+    expect(compose!.getAttribute("aria-disabled")).not.toBe("true");
     expect(compose!.getAttribute("title")).toBeNull();
   }, 30000);
 
@@ -485,11 +494,11 @@ describe("the `?` sheet says WHY a message row is grey", () => {
     await shell(["m1", "m2", "m3"]);
     await key("j");
     await key("?");
-    await waitFor(() => document.querySelector(".ks") != null, "the shortcut sheet");
+    await waitFor(() => shortcutSheet() !== null, "the shortcut sheet");
 
     const del = sheetRow(messages.shortcuts.deleteKey);
-    expect(del, "the sheet does not document the delete key").toBeDefined();
-    expect(del!.className ?? "").not.toContain("off");
+    expect(del, "the sheet does not document the delete key").toBeTruthy();
+    expect(del!.getAttribute("aria-disabled")).not.toBe("true");
     expect(del!.getAttribute("title"), "the sentence outlived the state it describes").toBeNull();
   }, 30000);
 });

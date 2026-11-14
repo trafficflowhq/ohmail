@@ -24,6 +24,7 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import { useComposer } from "@ohmail/app-logic/writing/composer-record";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
+import { announceUpdate, resetUpdateStoreForTests, restartHold, type UpdateOffer } from "@ohmail/app-logic/doors/app-update";
 import { readReplyMeta } from "@ohmail/app-logic/writing/mail-send";
 import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import {
@@ -37,9 +38,15 @@ import {
   type Route,
 } from "@ohmail/app/frame";
 import { NONE, type LinkIn, type LinkedDraft, type ReaderEntry } from "@ohmail/app/host";
-import { KeymapProvider } from "@ohmail/app/keys";
 import { MailGround } from "@ohmail/app/mail";
-import { ConsentMount, MailStateMount, PresentedMount } from "@ohmail/app/mail/ground";
+/* The ground's mounts one by one, by path: the ground stands them inside `MailGround`; the second entry
+   `@ohmail/app/mail/ground` leaves with the switch. */
+import { ConsentMount } from "../../../../packages/app/src/mail/ground/ConsentMount.js";
+import { MailStateMount } from "../../../../packages/app/src/mail/ground/MailStateMount.js";
+import { PresentedMount } from "../../../../packages/app/src/mail/ground/PresentedMount.js";
+import { WritingMount } from "../../../../packages/app/src/mail/ground/WritingMount.js";
+import { ScreenerAbove, type ScreenerBeside } from "@ohmail/app/screener";
+import type { ScreenerState } from "@ohmail/app-logic/screener";
 import { TextProvider, type Messages } from "@ohmail/app/text";
 import { useWriting, type Writing } from "@ohmail/app/write";
 import { fakeHost } from "../../../../packages/app/test/support/fake-host.js";
@@ -109,6 +116,10 @@ interface Account {
   readonly sendGate: { wait: Promise<void> | null };
   /** While set, a draft's save waits on it before the server answers: a save still in the air. */
   readonly saveGate: { wait: Promise<void> | null };
+  /** Each row's version on the server, where the account keeps them (`versions`): set one to change it elsewhere. */
+  readonly versions: Map<string, string> | null;
+  /** While on, every change waits on the outbox (no signal); turned off, the signal is back. */
+  readonly offline: { on: boolean };
 }
 async function account(
   scope: string,
@@ -125,15 +136,19 @@ async function account(
     refusesSend?: boolean;
     /** Each row has a version on the server, and a save stating another one is refused. */
     versions?: boolean;
+    /** What stands above the panes in place of the mail ground (a case that stands the Screener's model itself). */
+    above?: FrameHost["features"]["above"];
   } = {},
 ): Promise<Account> {
   const sent: EngineMutation[] = [];
   const sendGate: Account["sendGate"] = { wait: null };
   const saveGate: Account["saveGate"] = { wait: null };
   const store = await storeWith(o.messages ?? [message("m1")], o.drafts ?? []);
+  const versions = o.versions === true ? new Map<string, string>() : null;
+  const offline = { on: o.offline === true };
   const engine = engineOver(
-    store, sent, { on: o.refusesSend === true }, saveGate, [], { on: o.offline === true }, sendGate,
-    undefined, undefined, undefined, undefined, undefined, o.versions === true ? new Map<string, string>() : null,
+    store, sent, { on: o.refusesSend === true }, saveGate, [], offline, sendGate,
+    undefined, undefined, undefined, undefined, undefined, versions,
   );
   const address = fakeAddress(o.at ?? "#/ohbox");
   const { host } = fakeHost({
@@ -142,7 +157,7 @@ async function account(
     scope,
     places: PLACES,
     reader: READER,
-    above: MailGround,
+    above: o.above ?? MailGround,
     mailboxes: async () => ROSTER,
     window: fakeWindow(o.room ?? "desktop"),
     address,
@@ -155,16 +170,16 @@ async function account(
     sent,
     sendGate,
     saveGate,
+    versions,
+    offline,
   };
 }
 
-/** The frame over a host, under the web's words and a key map, as a shell stands it. */
+/** The frame over a host, under the web's words, as a shell stands it (the frame stands its own key map). */
 function Stood({ host }: { readonly host: FrameHost }): ReactNode {
   return (
     <TextProvider locale="en" messages={WORDS} timeZone="UTC">
-      <KeymapProvider>
-        <Frame host={host} />
-      </KeymapProvider>
+      <Frame host={host} />
     </TextProvider>
   );
 }
@@ -237,6 +252,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   resetComposerForTest();
+  resetUpdateStoreForTests();
   vi.restoreAllMocks();
   seen = null;
   handed.inputs.length = 0;
@@ -464,6 +480,31 @@ describe("whose words the composer holds, under the mail ground", () => {
     60_000,
   );
 
+  it("a reply whose leaving update is refused as changed elsewhere after its account's keys were swept while the frame stood: its words reach a row of the account, and no key of that account is written again", async () => {
+    const A = await account("acc-a", { versions: true });
+    const stood = await stand(A.host);
+    await writeReply("AWORDS-REPLY first words");
+    await waitFor(() => readReplyMeta("m1", "acc-a").row?.rev !== undefined, "the reply's row, as its first save made it", 400);
+    const first = readReplyMeta("m1", "acc-a").row!.id;
+    await act(async () => now().composer.onReplyBody({ text: "AWORDS-REPLY first words, and more", html: "" }));
+    await waitFor(() => holding("and more").length > 0, "the newer words in this browser's store");
+    /* The row is changed on another device: the leaving update states a version the server no longer holds. */
+    A.versions!.set(first, "changed-elsewhere");
+    const before = saves(A).length;
+    /* The host sweeps the account's keys while the frame stands, then ends the scope, with no render in between. */
+    seen = null;
+    await act(async () => {
+      for (const key of naming("acc-a")) localStorage.removeItem(key);
+      stood.rerender(<Stood host={{ ...A.host, session: { ...A.host.session, scope: null } }} />);
+    });
+    await waitFor(() => saves(A).length > before, "the reply's save, as its composer left");
+    await rounds(80);
+    const rows = A.engine.read().list<EngineDraft>("draft").filter((d) => d.inReplyToMessageId === "m1");
+    expect(rows.some((d) => d.id !== first && d.body === "AWORDS-REPLY first words, and more"), "the fork's row on the account, with the words the composer left with").toBe(true);
+    expect(naming("acc-a"), "a key of the account written after its sweep").toEqual([]);
+    expect(sends(A), "signing out sends nothing").toEqual([]);
+  }, 60_000);
+
   it("a letter whose account's keys were swept while the frame stood is saved as the scope ends, and no key of that account is written again", async () => {
     const A = await account("acc-a");
     const stood = await stand(A.host);
@@ -482,6 +523,30 @@ describe("whose words the composer holds, under the mail ground", () => {
     expect(sends(A), "signing out sends nothing").toEqual([]);
   }, 60_000);
 });
+
+/**
+ * The ground's pieces the composer reads, with the Screener's model stood by the case: its suggestion run says why
+ * the last run could not buy (`standing`), as the Screener's own mount hands it beside the model.
+ */
+function groundWithStanding(standing: "no_budget" | "refused" | null): NonNullable<FrameHost["features"]["above"]> {
+  const beside = {
+    suggest: { priced: true, control: { standing } },
+  } as unknown as ScreenerBeside;
+  const model = { flush: () => undefined } as unknown as ScreenerState;
+  return function Ground({ children }: { readonly children: ReactNode }) {
+    return (
+      <MailStateMount>
+        <ConsentMount>
+          <PresentedMount>
+            <ScreenerAbove model={model} beside={beside}>
+              <WritingMount>{children}</WritingMount>
+            </ScreenerAbove>
+          </PresentedMount>
+        </ConsentMount>
+      </MailStateMount>
+    );
+  };
+}
 
 /** A draft wire that counts what it is asked. */
 function countingWire(): { wire: DraftReplyWire; asked: { create: string[]; read: string[] } } {
@@ -517,6 +582,17 @@ describe("the host's draft wire reaches the one composer, and none is never repl
     expect(now().composer.replyBody.text).toBe("Noon works.");
     expect(now().writing.replyTo).toBe("m1");
     expect(sends(A), "a drafted reply is not a sent one").toEqual([]);
+  }, 60_000);
+
+  it.each([
+    ["the balance was last refused as empty", "no_budget", true],
+    ["the last run was refused for another reason", "refused", false],
+    ["no run has been refused", null, false],
+  ] as const)("where the Screener's standing says %s, the draft says so instead of its price: %s", async (_, standing, empty) => {
+    const { wire } = countingWire();
+    const A = await account("acc-a", { draftReply: wire, above: groundWithStanding(standing) });
+    await stand(A.host);
+    expect(now().writing.draftReplyChrome.noCredits === true, "the draft's control told the balance is empty").toBe(empty);
   }, 60_000);
 
   it("a host that names no drafter: no control, and nothing is asked of any wire", async () => {
@@ -843,6 +919,48 @@ describe("the reply's open letter is the mount's own", () => {
     await rounds(6);
     expect(now().writing.heldReplyRow("m1"), "the placeholder offered as a held reply").toBeNull();
     expect(now().composer.notSentRows.size, "the placeholder said as not sent").toBe(0);
+  }, 60_000);
+
+  it("a reply sent while every change waits on the outbox holds the restart: the update notice offers no Restart and says it waits for the letter, until the letter has left", async () => {
+    const A = await account("acc-a", { offline: true });
+    await stand(A.host);
+    await writeReply("AWORDS-REPLY sent offline");
+    await act(async () => now().composer.sendReply("m1"));
+    await waitFor(() => restartHold() === "send", "the restart held while the letter waits");
+    await act(async () => announceUpdate({ kind: "ready", version: "2.0.1", act: () => undefined } as UpdateOffer));
+    await rounds(4);
+    const restart = (): HTMLElement | null => document.querySelector<HTMLElement>(`button[aria-label="${en.update.lineRestart}"]`)
+      ?? [...document.querySelectorAll<HTMLElement>("button")].find((b) => (b.textContent ?? "").trim() === en.update.lineRestart) ?? null;
+    expect(restart(), "Restart offered while the letter waits").toBeNull();
+    expect(document.body.textContent, "the update notice says it waits for the letter").toContain(en.update.lineAfterSend);
+    /* The signal is back: the letter leaves, and the hold with it. */
+    A.offline.on = false;
+    await act(async () => void window.dispatchEvent(new Event("online")));
+    await waitFor(() => sends(A).length === 1, "the letter on the wire");
+    await waitFor(() => restartHold() === null, "the restart no longer held");
+    await waitFor(() => restart() !== null, "Restart offered again");
+  }, 60_000);
+
+  it("a letter that did not leave is said in the notices: whom it was for, that it was not sent, and its way back to every word", async () => {
+    const A = await account("acc-a", { refusesSend: true });
+    await stand(A.host);
+    await writeLetter("AWORDS-SUBJECT", "AWORDS-LETTER refused");
+    await act(async () => now().composer.sendCompose());
+    const notice = (): HTMLElement | undefined =>
+      [...document.querySelectorAll<HTMLElement>('[role="status"]')].find((el) =>
+        (el.textContent ?? "").includes("AWORDS-SUBJECT"),
+      );
+    await waitFor(() => notice() !== undefined && (notice()!.textContent ?? "").includes(en.compose.statusFailed), "the notice of the letter that did not leave");
+    expect(sends(A), "one send for one press").toHaveLength(1);
+    /* Its way back: the letter, with every word, in the composer. */
+    await go(() => now().commands.go({ place: "ohbox" }));
+    expect(A.address.read(), "at the Ohbox, away from the letter").toBe("#/ohbox");
+    await act(async () => void fireEvent.click(within(notice()!).getByRole("button", { name: en.sendingLine.open })));
+    await waitFor(() => A.address.read().startsWith("#/compose"), "Open leads back to the letter");
+    await rounds(6);
+    expect(notice(), "the ending leaves the notices once its letter is open").toBeUndefined();
+    expect(now().composer.compose.body, "the words of the letter that did not go").toBe("AWORDS-LETTER refused");
+    expect(now().composer.compose.subject).toBe("AWORDS-SUBJECT");
   }, 60_000);
 
   it("a reply sent and left that is refused is said by the frame's report, with its way back, and its words are kept", async () => {

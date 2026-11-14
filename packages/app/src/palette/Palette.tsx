@@ -14,7 +14,7 @@ import { keysOf } from "./keys-of.js";
 import { narrow } from "./narrow.js";
 import { liveOffer, rowsOf } from "./order.js";
 
-const OWN_CHORD = "mod+k";
+export const PALETTE_CHORD = "mod+k";
 
 export function Palette({ open, onClose }: OverProps) {
   const t = useText("palette");
@@ -33,7 +33,7 @@ export function Palette({ open, onClose }: OverProps) {
   useKeyBindings(
     [
       {
-        chord: OWN_CHORD,
+        chord: PALETTE_CHORD,
         group: "app",
         label: keysWords("palette"),
         inInput: true,
@@ -52,12 +52,12 @@ export function Palette({ open, onClose }: OverProps) {
     offer.run();
   };
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!chordMatches(OWN_CHORD, e.nativeEvent)) return false;
+    if (!chordMatches(PALETTE_CHORD, e.nativeEvent)) return false;
     e.preventDefault();
     onClose();
     return true;
   };
-  const own = keysOf(OWN_CHORD, bindings, mod);
+  const own = keysOf(PALETTE_CHORD, bindings, mod);
 
   return (
     <KitPalette

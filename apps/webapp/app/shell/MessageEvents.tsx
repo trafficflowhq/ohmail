@@ -9,23 +9,12 @@
  * stands in its own boundary: a calendar part that throws drops its card, never the pane.
  */
 import { useEffect } from "react";
-import { IcsEventCard } from "../components/IcsEventCard";
+import { IcsEventCards } from "../components/IcsEventCard";
 import { useMessageChrome } from "./message-chrome";
-import { ViewBoundary } from "./ViewBoundary";
 
 export function MessageEvents({ messageId }: { messageId: string }) {
   const attachments = useMessageChrome().attachments;
   const hold = attachments?.hold;
   useEffect(() => hold?.(messageId), [hold, messageId]);
-  const events = attachments?.eventsOf(messageId) ?? [];
-  if (events.length === 0) return null;
-  return (
-    <div className="msg-events">
-      {events.map((e) => (
-        <ViewBoundary key={e.partId} fallback={null}>
-          <IcsEventCard event={e.event} />
-        </ViewBoundary>
-      ))}
-    </div>
-  );
+  return <IcsEventCards events={attachments?.eventsOf(messageId) ?? []} />;
 }

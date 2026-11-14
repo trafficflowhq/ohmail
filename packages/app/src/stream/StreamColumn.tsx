@@ -7,162 +7,352 @@
  * press opens the letter in the reader. A visit starts with every item shut.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
+import type { ConversationShown } from "@ohmail/app-logic/reader";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
+import { useDayClock } from "@ohmail/app-logic/session/day-clock";
+import { lineStampOf, useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { estimateCardHeight } from "@ohmail/ui";
 import { Button } from "@ohmail/ui/base";
 import { BlankColumn, GroupHeading, Message, MessageHead, Sheet } from "@ohmail/ui/mail";
-import { useFrame } from "../frame/index.js";
+import { useFrame, useSelectionBar } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
-import { useLocale, useText, type Text } from "../text/index.js";
+import { BodyLoadStatus } from "../reader/BodyLoadStatus.js";
+import { useLocale, useText, useTimeZone, type Text } from "../text/index.js";
+import { ReceiptEvents } from "./ReceiptEvents.js";
 import { senderOf, stampOf, useStreamText } from "./words.js";
 
-/** Items mounted at the opening, and how many more each time the stream nears its foot. */
-export const STREAM_RUN = 24;
+import { useHoldForReply, useStreamClips, useStreamViewport, type Clip } from "./use-stream-column.js";
+import { useStreamItem } from "./use-stream-item.js";
 
-interface Clip {
-  readonly phone: boolean;
-  readonly whole: ReadonlySet<string>;
-  /** The item opened whole (true), or shut again (false); the press on it says which. */
-  readonly set: (id: string, whole: boolean) => void;
-}
+const noReply = (): null => null;
 
-function Item({
-  m,
-  model,
-  t,
-  locale,
-  clip,
-}: {
+interface StreamItemProps {
   m: EngineMessage;
   model: StreamModel;
   t: Text;
   locale: string;
   clip: Clip;
-}) {
+  now: Date;
+  text: string | null;
+  near: boolean;
+  conversation?: ConversationShown;
+}
+
+function Item({ m, model, t, locale, clip, now, text, near, conversation }: StreamItemProps) {
+  const { reader, whole, card, control, bodyState, pending, receiptEvents, inControl, press } = useStreamItem(
+    m,
+    model,
+    clip,
+    conversation,
+  );
   const who = senderOf(m);
-  const stamp = stampOf(m.date, t, locale);
-  const text = model.textOf(m.id);
-  const whole = !clip.phone && clip.whole.has(m.id);
-  /* The control's press is the control's: the item's own press, heard after it on the way up, leaves it alone. */
-  const byControl = useRef(false);
-  const press = (): void => {
-    if (byControl.current) {
-      byControl.current = false;
-      return;
-    }
-    if (!clip.phone) clip.set(m.id, true);
-    model.open(m.id);
-  };
-  const control = (): void => {
-    byControl.current = true;
-    if (clip.phone) {
-      model.open(m.id);
-      return;
-    }
-    clip.set(m.id, !whole);
-    if (!whole) model.open(m.id);
-  };
+  const stamp = stampOf(m.date, t, locale, now);
+  const amountInHead = model.place === "receipts" && !m.subject;
+  const headingAmount = amountInHead ? undefined : m.amount;
+  const PreviewBody =
+    reader !== NONE && (near || model.actionId === m.id) && !model.hidePrefetchedNotice(m.id)
+      ? reader.PreviewBody
+      : undefined;
+  const previewHead =
+    reader !== NONE && reader.PreviewHead ? (
+      <reader.PreviewHead message={m} hideBodyNotice={model.hidePrefetchedNotice(m.id)} />
+    ) : (
+      <MessageHead
+        sender={{ ...who, displayAddress: displayAddress(who.address) }}
+        stamp={{ when: stamp.when, full: false, title: stamp.full }}
+        amount={amountInHead ? m.amount : undefined}
+        staticMetadata
+      />
+    );
+  const hasReceiptEvents = receiptEvents !== null;
   return (
     <div
+      ref={card}
       className={text === null ? "st-item st-pend" : "st-item"}
       data-stream-item={m.id}
+      data-held={whole && model.actionId === m.id ? "" : undefined}
+      data-expanded={whole || conversation !== undefined ? "" : undefined}
+      data-unseen={m.unread ? "" : undefined}
+      tabIndex={whole ? 0 : undefined}
+      onFocus={(event) => {
+        const card = event.currentTarget;
+        if (
+          (whole || conversation !== undefined) &&
+          model.addressedId !== m.id &&
+          card.contains(event.target) &&
+          !event.target.closest(".oh-over") &&
+          !card.contains(event.relatedTarget)
+        )
+          model.open(m.id);
+      }}
       data-open={model.openId === m.id ? "" : undefined}
-      onPointerDown={() => model.read.enter()}
-      onClick={press}
+      onPointerDown={(e) => {
+        if (!inControl(e.target)) model.read.enter();
+      }}
+      onClick={(e) => {
+        if (!inControl(e.target)) press();
+      }}
     >
-      <Message
-        head={<MessageHead sender={who} stamp={{ when: stamp.when, full: false, title: stamp.full }} />}
-        subject={m.subject || undefined}
-        clip={
-          clip.phone
-            ? { open: false, word: t("item.full"), goes: true, onPress: control }
-            : { open: whole, word: t(whole ? "item.collapse" : "item.expand"), onPress: control }
-        }
-      >
-        {text ?? t("item.loading")}
-      </Message>
+      {(whole || conversation !== undefined) && reader !== NONE && reader.OpenCard ? (
+        <reader.OpenCard
+          message={m}
+          opened={model.openId === m.id}
+          conversation={conversation}
+          scroller={model.scroller}
+          onEnter={() => model.read.enter(m.id)}
+          clip={whole ? { open: true, word: t("item.collapse"), onPress: control } : undefined}
+        />
+      ) : (
+        <Message
+          head={
+            hasReceiptEvents ? (
+              <>
+                {previewHead}
+                {headingAmount ? (
+                  <p className="oh-text oh-display oh-message-amount st-receipt-amount">{headingAmount}</p>
+                ) : null}
+                {m.subject ? <h2 className="oh-text oh-display oh-message-subject">{m.subject}</h2> : null}
+                {receiptEvents}
+              </>
+            ) : (
+              previewHead
+            )
+          }
+          subject={hasReceiptEvents ? undefined : m.subject || undefined}
+          amount={hasReceiptEvents ? undefined : headingAmount}
+          files={
+            hasReceiptEvents && m.hasAttachments ? <span className="oh-vh">{t("item.file")}</span> : undefined
+          }
+          clip={
+            clip.phone
+              ? { open: false, word: t("item.full"), goes: true, pending, onPress: control }
+              : {
+                  open: whole,
+                  word: t(whole ? "item.collapse" : "item.expand"),
+                  description: t("item.keyboardOpen"),
+                  pending,
+                  onPress: control,
+                }
+          }
+        >
+          {bodyState === "loading" || bodyState === "failed" ? (
+            <>
+              <BodyLoadStatus state={bodyState} messageId={m.id} preview />
+              <div className="oh-message-body">{m.snippet}</div>
+            </>
+          ) : PreviewBody ? (
+            <div className="oh-message-body">
+              <PreviewBody message={m}>{text ?? m.snippet ?? ""}</PreviewBody>
+            </div>
+          ) : (
+            (text ?? m.snippet ?? "")
+          )}
+        </Message>
+      )}
     </div>
   );
 }
 
-export function StreamColumn({ phone }: { phone: boolean }) {
-  const model = useStreamModel();
-  const t = useStreamText(model.place);
-  /* The blank of an empty stream is the Ohbox's own word, "All read". */
-  const blank = useText("ohbox");
-  const locale = useLocale();
-  const { host, commands } = useFrame();
-  const reader = host.features.reader;
-  const [run, setRun] = useState(STREAM_RUN);
-  const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set());
-  const setOne = useCallback(
-    (id: string, open: boolean) =>
-      setWhole((was) => {
-        if (was.has(id) === open) return was;
-        const next = new Set(was);
-        if (open) next.add(id);
-        else next.delete(id);
-        return next;
-      }),
-    [],
-  );
-  const clip: Clip = { phone, whole, set: setOne };
-  const openId = model.openId;
-  const openAt = openId === null ? -1 : model.items.findIndex((m) => m.id === openId);
+export function StreamColumn(props: { phone: boolean; keysHere: boolean }) {
+  const { place } = useStreamModel();
+  const column = <StreamColumnBody {...props} />;
+  return place === "receipts" ? <ReceiptEvents>{column}</ReceiptEvents> : column;
+}
 
-  /*
-   * An item opened from the list stands in the stream: mounted, then landed on, once per opening. The scroll is the
-   * press's, not a hand's. The run growing under a letter that stays open (End reaching the foot) lands nothing again.
-   */
-  const { scroll } = model;
-  const landedId = useRef<string | null>(null);
-  useEffect(() => {
-    if (openAt < 0 || openId === null) {
-      landedId.current = null;
-      return;
-    }
-    if (openAt >= run) {
-      setRun(openAt + STREAM_RUN);
-      return;
-    }
-    if (model.scroller === null || landedId.current === openId) return;
-    landedId.current = openId;
-    scroll.scrollTo(openId);
-  }, [openAt, run, openId, model.scroller, scroll]);
-
-  /* More of the pile as the stream nears its foot. */
-  useEffect(() => {
-    const scroller = model.scroller;
-    if (!scroller || run >= model.items.length) return;
-    const grow = (): void => {
-      if (scroller.scrollTop + scroller.clientHeight * 2 >= scroller.scrollHeight)
-        setRun((r) => r + STREAM_RUN);
-    };
-    scroller.addEventListener("scroll", grow, { passive: true });
-    return () => scroller.removeEventListener("scroll", grow);
-  }, [model.scroller, model.items.length, run]);
-
+function StreamColumnBody({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
+  const {
+    model,
+    t,
+    blank,
+    newsText,
+    locale,
+    now,
+    lineStamp,
+    host,
+    commands,
+    reader,
+    reply,
+    replyHost,
+    setReplyCard,
+    inline,
+    panelKeys,
+    actionId,
+    panelId,
+    keyboardOpened,
+    whole,
+    clip,
+    viewport,
+  } = useStreamColumnModel({ phone, keysHere });
+  const { start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
   if (model.mayState && model.items.length === 0) return <BlankColumn>{blank("blank.clear")}</BlankColumn>;
-  const shown = model.items.slice(0, run);
+  const shown = model.items.slice(start, end);
   const panel =
-    reader !== NONE && model.openId !== null && openAt >= 0 ? (
-      <reader.Actions messageId={model.openId} />
+    reader !== NONE && panelId !== null && (!phone || inline) ? (
+      <reader.Actions
+        messageId={panelId}
+        deleteKeyId={model.openId ?? panelId}
+        canDeleteKey={model.canDeleteKey}
+        canAnswerKey={model.canAnswerKey}
+        keysHere={panelKeys && actionId !== null}
+        focus={keyboardOpened?.id === panelId && whole.has(panelId)}
+        showPanel={model.actionVisit || whole.has(panelId) || replyHost === panelId}
+        markUnread={model.markUnread}
+      />
     ) : undefined;
   return (
-    <Sheet kind="reading" label={t("stream.label")} scroller={model.attach} foot={panel}>
-      {shown.map((m, i) => (
-        <div key={m.id}>
-          {model.lineShown && i === model.freshCount ? (
-            <GroupHeading>{t("waterline.label")}</GroupHeading>
-          ) : null}
-          <Item m={m} model={model} t={t} locale={locale} clip={clip} />
-        </div>
-      ))}
-      {model.place === "receipts" && model.items.length > 0 && run >= model.items.length ? (
+    <Sheet
+      kind="reading"
+      label={t("stream.label")}
+      scroller={attach}
+      manualScrollAnchor={shown.length > 0}
+      extendTop={!phone}
+      foot={panel}
+    >
+      <div
+        ref={column}
+        className="st-window"
+        data-stream-window=""
+        data-receipts={model.place === "receipts" ? "" : undefined}
+      >
+        {padTopPx > 0 ? <div aria-hidden data-stream-head style={{ height: padTopPx }} /> : null}
+        {shown.map((m, i) => {
+          const conversation = reply?.conversations.get(m.id);
+          const folded = clip.linked !== m.id && !clip.whole.has(m.id) && conversation === undefined;
+          const text = model.textOf(m.id);
+          const estimate = estimateCardHeight({
+            width,
+            subject: m.subject || "",
+            preview: text ?? m.snippet ?? "",
+            recipients: m.to.length + m.cc.length > 1,
+            touch: phone,
+            clamped: text === null,
+          });
+          return (
+            <div
+              key={m.id}
+              className="st-window-card"
+              data-stream-window-item={m.id}
+              data-folded={folded ? "" : undefined}
+              style={{ containIntrinsicBlockSize: `auto ${estimate}px` }}
+              ref={replyHost === m.id ? setReplyCard : undefined}
+            >
+              {model.lineShown && start + i === model.freshCount ? (
+                <GroupHeading count={lineStamp}>{t("waterline.label")}</GroupHeading>
+              ) : null}
+              <Item
+                m={m}
+                model={model}
+                t={t}
+                locale={locale}
+                clip={clip}
+                now={now}
+                text={text}
+                near={near.has(m.id)}
+                conversation={conversation}
+              />
+              {replyHost === m.id ? reply?.sheet : null}
+            </div>
+          );
+        })}
+        {padBottomPx > 0 ? <div aria-hidden data-stream-tail style={{ height: padBottomPx }} /> : null}
+      </div>
+      {model.place === "news" && model.mayState && end === model.items.length ? (
+        <p>{newsText("streamTail")}</p>
+      ) : null}
+      {model.place === "receipts" &&
+      host.features.places.search !== NONE &&
+      model.items.length > 0 &&
+      end === model.items.length ? (
         <Button kind="quiet" size="s" onPress={() => commands.go({ place: "search" })}>
           {t("search.older")}
         </Button>
       ) : null}
     </Sheet>
   );
+}
+
+function useStreamColumnModel({ phone, keysHere }: { phone: boolean; keysHere: boolean }) {
+  const model = useStreamModel();
+  const t = useStreamText(model.place);
+  /* The blank of an empty stream is the Ohbox's own word, "All read". */
+  const blank = useText("ohbox");
+  const newsText = useText("reads");
+  const locale = useLocale();
+  const { host, commands, route } = useFrame();
+  const now = useDayClock(null, useTimeZone());
+  const lineStamp =
+    model.place === "news" && model.lineAt ? lineStampOf(model.lineAt, now, locale) || undefined : undefined;
+  const reader = host.features.reader;
+  const useInlineReply = reader === NONE ? noReply : (reader.useInlineReply ?? noReply);
+  const { actionId } = model;
+  const inline = phone && keysHere && model.addressedId !== null;
+  const panelKeys = phone ? inline : keysHere;
+  const reply = useInlineReply(panelKeys ? actionId : null, model.items);
+  useHoldForReply(model, reply);
+  const [replyCard, setReplyCard] = useState<HTMLDivElement | null>(null);
+  const replyHost = !phone || inline ? (reply?.messageId ?? null) : null;
+  useSelectionBar(inline && reader !== NONE);
+  useOptionalKeyBindings(
+    inline && replyHost === null
+      ? [
+          {
+            chord: "Escape",
+            group: "message",
+            label: t("item.collapse"),
+            run: model.closeInline,
+          },
+        ]
+      : [],
+  );
+  useLayoutEffect(() => {
+    if (replyHost !== null && replyCard) return model.scroll.revealEnd(replyHost, replyCard);
+  }, [model.scroll, replyCard, replyHost]);
+  const viewport = useStreamViewport(model);
+  const { clip, keyboardOpened, restored, whole } = useStreamClips(model, phone, route.open, viewport);
+  const { start, end } = viewport;
+  const { scroll, read, toolbar } = model;
+  const lastWindow = useRef({ start, end });
+  const refreshRead = read.windowChanged;
+  useEffect(() => {
+    const previous = lastWindow.current;
+    lastWindow.current = { start, end };
+    if (previous.start === start && previous.end === end) return;
+    scroll.windowChanged();
+    refreshRead();
+  }, [start, end, scroll, refreshRead]);
+
+  const fallback =
+    route.open === null && restored !== null && whole.has(restored) && scroll.onScreen(restored)
+      ? restored
+      : null;
+  const panelId = actionId ?? fallback;
+  useEffect(() => {
+    toolbar.current = panelId;
+  }, [toolbar, panelId]);
+
+  return {
+    model,
+    t,
+    blank,
+    newsText,
+    locale,
+    now,
+    lineStamp,
+    host,
+    commands,
+    reader,
+    reply,
+    replyHost,
+    setReplyCard,
+    inline,
+    panelKeys,
+    actionId,
+    panelId,
+    keyboardOpened,
+    whole,
+    clip,
+    viewport,
+  };
 }

@@ -2,10 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ToastHost } from "@ohmail/ui";
+import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import frameEn from "../../../packages/app/messages/frame.en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
@@ -207,14 +208,29 @@ async function mount(managed?: boolean): Promise<{ container: HTMLElement; engin
     adapter: createSyncGate(null).guard(new HttpAdapter({ baseUrl: "/api" })),
   });
   const { EngineProvider } = await import("../app/shell/engine");
-  const { PullNewMail, usePullNewMail } = await import("../app/shell/PullNewMail");
+  /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (1)): the hook is bound as the mail ground binds it
+     (`packages/app/src/mail/ground/PullMount.tsx`: one `usePullNewMail` a frame, its words the new catalogue's `sync`,
+     which says the same as the web's), and the button is the kit's rail entry fed as the ground's foot feeds it
+     (`mail/ground/MailRail.ts`: the label `pull` or `pulling`, `busy`, the press). Today's two placements (rail foot,
+     topbar) are the frame's two draws of the one fed foot (`frame/RailHost.tsx`): the kit's `RailFoot` where an
+     account is known, the bare entry where none is. */
+  const { usePullNewMail } = await import("@ohmail/app-logic/session/pull-new-mail");
+  const { useToast } = await import("@ohmail/ui");
+  const { RailEntry, RailFoot } = await import("@ohmail/ui/mail");
+  const { TextProvider, useText } = await import("@ohmail/app/text");
   const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
 
   function Harness(): React.ReactElement {
-    const binding = usePullNewMail(probe);
+    const ts = useText("sync");
+    const binding = usePullNewMail(probe, useToast(), ts);
+    const pull = binding.available
+      ? { label: ts(binding.pulling ? "pulling" : "pull"), busy: binding.pulling, onPress: binding.pull }
+      : undefined;
     return h(React.Fragment, null,
-      h(PullNewMail, { variant: "rail", binding, key: "r" }),
-      h(PullNewMail, { variant: "topbar", binding, key: "t" }),
+      h("div", { "data-placement": "rail", key: "r" },
+        h(RailFoot, { pull, account: { name: "Me", address: "me@example.test", note: "1 mailbox", title: "Mailboxes" } })),
+      h("div", { "data-placement": "topbar", key: "t" },
+        pull ? h(RailEntry, { kind: "tool", icon: "pull", busy: pull.busy, title: pull.label, onPress: pull.onPress, children: pull.label }) : null),
     );
   }
 
@@ -224,9 +240,11 @@ async function mount(managed?: boolean): Promise<{ container: HTMLElement; engin
   roots.push(root);
   await act(async () => {
     root.render(
-      h(NextIntlClientProvider, {
+      /* The web's page stands its catalogue (the capsule's own words read it) and the new shell's text above both. */
+      h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children:
+      h(TextProvider, {
         locale: "en",
-        messages,
+        messages: frameEn as never,
         timeZone: "UTC",
         children: h(ToastHost, {
           children: h(EngineProvider, {
@@ -238,16 +256,23 @@ async function mount(managed?: boolean): Promise<{ container: HTMLElement; engin
           }),
         }),
       }),
+      }),
     );
   });
   return { container, engine };
 }
 
+/** The rail's Pull new mail: the kit's entry in the foot (re-pointed from today's `.rail-pull`). */
 const railButton = (c: HTMLElement): HTMLButtonElement => {
-  const btn = c.querySelector<HTMLButtonElement>(".rail-pull");
+  const btn = c.querySelector<HTMLButtonElement>('[data-placement="rail"] button.oh-railentry');
   if (!btn) throw new Error("the rail placement did not render");
   return btn;
 };
+/** The second placement of the one binding (re-pointed from today's `.tb-btn`). */
+const topbarButton = (c: HTMLElement): HTMLButtonElement | null =>
+  c.querySelector<HTMLButtonElement>('[data-placement="topbar"] button.oh-railentry');
+/** Busy as a screen reader hears it: the kit says it by `aria-busy="true"` and leaves the attribute off at rest. */
+const busy = (btn: Element | null): "true" | "false" => (btn?.getAttribute("aria-busy") === "true" ? "true" : "false");
 
 const press = async (c: HTMLElement): Promise<void> => {
   await act(async () => {
@@ -266,14 +291,15 @@ describe("the press, end to end", () => {
   it("paints busy in the same commit, rings ONCE, and a second press mid-flight adds nothing", async () => {
     const { container } = await mount();
     const btn = railButton(container);
-    expect(btn.getAttribute("aria-busy")).toBe("false");
+    expect(busy(btn)).toBe("false");
 
     await press(container);
-    expect(btn.getAttribute("aria-busy"), "the press did not paint").toBe("true");
-    expect(btn.className).toContain("pull-busy");
+    expect(busy(btn), "the press did not paint").toBe("true");
+    /* The spinning mark: the kit turns the entry's sign while `aria-busy="true"` stands (`rail-entry.css`). */
+    expect(btn.matches('.oh-railentry[aria-busy="true"]') && btn.querySelector(".oh-railentry-sign") !== null).toBe(true);
     expect(btn.textContent).toContain("Checking your mail server");
     // Both placements carry the one binding — the topbar copy is busy too.
-    expect(container.querySelector(".tb-btn")?.getAttribute("aria-busy")).toBe("true");
+    expect(busy(topbarButton(container))).toBe("true");
     expect(posts, "the ring never left, or left twice").toHaveLength(1);
 
     await press(container); // mid-flight — the latch, not the disabled attribute, refuses it
@@ -289,11 +315,11 @@ describe("the press, end to end", () => {
     // First poll (2 s): the stamp predates the baseline — the scan has not happened; still busy.
     await advance(2_000);
     expect(probeAsks).toBe(1);
-    expect(btn.getAttribute("aria-busy"), "settled on a stamp OLDER than the baseline").toBe("true");
+    expect(busy(btn), "settled on a stamp OLDER than the baseline").toBe("true");
     // Second poll: the worker's DB-clock stamp passed the baseline — the scan happened; settle.
     await advance(2_000);
     expect(probeAsks).toBe(2);
-    expect(btn.getAttribute("aria-busy")).toBe("false");
+    expect(busy(btn)).toBe("false");
     expect(document.body.textContent).toContain("Checked — nothing new.");
   });
 
@@ -304,9 +330,9 @@ describe("the press, end to end", () => {
 
     await press(container);
     await advance(29_000);
-    expect(btn.getAttribute("aria-busy"), "gave up before the advertised cap").toBe("true");
+    expect(busy(btn), "gave up before the advertised cap").toBe("true");
     await advance(2_000);
-    expect(btn.getAttribute("aria-busy")).toBe("false");
+    expect(busy(btn)).toBe("false");
     expect(document.body.textContent).toContain("Still checking. New mail arrives on its own.");
     expect(document.body.textContent).not.toContain("nothing new");
   });
@@ -321,8 +347,8 @@ describe("the press, end to end", () => {
     const btn = railButton(container);
     await press(container);
     await advance(2_000);
-    expect(btn.getAttribute("aria-busy"), "the press kept spinning over a server it cannot reach").toBe("false");
-    expect(document.body.textContent).toContain(messages.sync.pullUnreachable);
+    expect(busy(btn), "the press kept spinning over a server it cannot reach").toBe("false");
+    expect(document.body.textContent).toContain(frameEn.sync.pullUnreachable);
     expect(document.body.textContent).not.toContain("New mail arrives on its own");
   });
 
@@ -331,8 +357,8 @@ describe("the press, end to end", () => {
     const { container } = await mount();
     await press(container);
     await advance(2_000);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
-    expect(document.body.textContent).toContain(messages.sync.pullUnreachable);
+    expect(busy(railButton(container))).toBe("false");
+    expect(document.body.textContent).toContain(frameEn.sync.pullUnreachable);
   });
 
   it("a HALF-OPEN post-scan /sync cannot hold the gesture: busy clears at the judge cap, and nothing is claimed", async () => {
@@ -346,7 +372,7 @@ describe("the press, end to end", () => {
     await advance(2_000); // settle observed
     await advance(10_000); // the judge cap on the flush drain
     await advance(500);
-    expect(railButton(container).getAttribute("aria-busy"), "a hung drain held the gesture").toBe("false");
+    expect(busy(railButton(container)), "a hung drain held the gesture").toBe("false");
     expect(document.body.textContent).not.toContain("nothing new");
     expect(document.body.textContent).not.toContain("Still checking");
     // …and the latch is free: a new press rings again.
@@ -362,7 +388,7 @@ describe("the press, end to end", () => {
     failSync = true; // the judgment drains reject
     await advance(2_000);
     await advance(1_000);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+    expect(busy(railButton(container))).toBe("false");
     expect(document.body.textContent, "a failed drain was passed off as a quiet mailbox").not.toContain("nothing new");
   });
 
@@ -385,7 +411,7 @@ describe("the press, end to end", () => {
     });
     await advance(2_000);
     await advance(500);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+    expect(busy(railButton(container))).toBe("false");
     expect(engine.read().get("message", "fresh-1"), "the fresh post-scan drain never ran").toBeTruthy();
     expect(document.body.textContent, "a stale coalesced drain earned the quiet sentence").not.toContain("nothing new");
   });
@@ -397,7 +423,7 @@ describe("the press, end to end", () => {
     deliverArrival = true; // the press's own immediate drain delivers one message
     await press(container);
     await advance(2_000);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+    expect(busy(railButton(container))).toBe("false");
     // One extra flush: the settling drain and the scheduler's own poll can coalesce, and the
     // page's apply is a microtask chain the advancing act may return ahead of.
     await advance(0);
@@ -427,14 +453,14 @@ describe("the press, when the server says new mail is not being fetched", () => 
     const { container } = await mount();
     await press(container);
     await advance(0);
-    expect(railButton(container).getAttribute("aria-busy"), "the press kept spinning").toBe("false");
-    expect(container.querySelector(".tb-btn")?.getAttribute("aria-busy")).toBe("false");
-    expect(document.body.textContent).toContain(messages.sync.pullBehind);
+    expect(busy(railButton(container)), "the press kept spinning").toBe("false");
+    expect(busy(topbarButton(container))).toBe("false");
+    expect(document.body.textContent).toContain(frameEn.sync.pullBehind);
     // Nothing is watched and nothing waits: the cap passes with no probe read and no second sentence.
     await advance(31_000);
     expect(probeAsks, "the watch ran anyway").toBe(0);
-    expect(document.body.textContent).not.toContain(messages.sync.pullSlow);
-    expect(document.body.textContent).not.toContain(messages.sync.pullQuiet);
+    expect(document.body.textContent).not.toContain(frameEn.sync.pullSlow);
+    expect(document.body.textContent).not.toContain(frameEn.sync.pullQuiet);
     // The request is stamped and the next press rings again.
     await press(container);
     expect(posts).toHaveLength(2);
@@ -445,8 +471,8 @@ describe("the press, when the server says new mail is not being fetched", () => 
     const { container } = await mount();
     await press(container);
     await advance(0);
-    expect(document.body.textContent).toContain(messages.sync.pullBehind);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
+    expect(document.body.textContent).toContain(frameEn.sync.pullBehind);
+    expect(busy(railButton(container))).toBe("false");
   });
 
   it("on a server somebody runs themselves it names that server, never ohmail Cloud", async () => {
@@ -454,9 +480,9 @@ describe("the press, when the server says new mail is not being fetched", () => 
     const { container } = await mount(false);
     await press(container);
     await advance(0);
-    expect(document.body.textContent).toContain(messages.sync.pullBehindServer);
+    expect(document.body.textContent).toContain(frameEn.sync.pullBehindServer);
     expect(document.body.textContent, "a self-hosted server was called Cloud").not.toMatch(/Cloud/);
-    expect(messages.sync.pullBehind).toMatch(/ohmail Cloud/);
+    expect(frameEn.sync.pullBehind).toMatch(/ohmail Cloud/);
   });
 
   it.each([
@@ -468,10 +494,10 @@ describe("the press, when the server says new mail is not being fetched", () => 
     const { container } = await mount();
     await press(container);
     await advance(2_000);
-    expect(railButton(container).getAttribute("aria-busy"), "the watch was skipped").toBe("true");
+    expect(busy(railButton(container)), "the watch was skipped").toBe("true");
     await advance(2_000);
-    expect(railButton(container).getAttribute("aria-busy")).toBe("false");
-    expect(document.body.textContent).toContain(messages.sync.pullQuiet);
-    expect(document.body.textContent).not.toContain(messages.sync.pullBehind);
+    expect(busy(railButton(container))).toBe("false");
+    expect(document.body.textContent).toContain(frameEn.sync.pullQuiet);
+    expect(document.body.textContent).not.toContain(frameEn.sync.pullBehind);
   });
 });

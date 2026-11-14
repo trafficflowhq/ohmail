@@ -205,6 +205,11 @@ describe("MonthRail", () => {
     expect(within(rail).getByRole("button", { name: "2026" }).getAttribute("aria-current")).toBeNull();
     fireEvent.click(within(rail).getByRole("button", { name: "2025" }));
     expect(onPick).toHaveBeenCalledWith("2025");
+    october.focus();
+    fireEvent.click(october, { detail: 1 });
+    expect(onPick).toHaveBeenNthCalledWith(2, "2026-10");
+    fireEvent.click(october, { detail: 0 });
+    expect(onPick).toHaveBeenNthCalledWith(3, "2026-10", true);
   });
 
   it("leaves a list with nothing to step through standing alone", () => {

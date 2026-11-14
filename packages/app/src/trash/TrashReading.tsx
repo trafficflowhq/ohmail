@@ -5,10 +5,11 @@
  */
 import { useState } from "react";
 import { useTrashModel } from "@ohmail/app-logic/trash";
+import { RefusalLine } from "@ohmail/ui/base";
 import { ActionPanel, BlankColumn, Message, MessageHead, ReadingHead, Sheet } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { useText } from "../text/index.js";
-import { useTrashKeys } from "./keys.js";
+import { useRestoreBinding, useTrashKeys } from "./keys.js";
 
 export function TrashReading({ keysHere }: PaneProps) {
   const model = useTrashModel();
@@ -17,11 +18,8 @@ export function TrashReading({ keysHere }: PaneProps) {
   const tr = useText("reader");
   const row = model.openRow;
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
-  useTrashKeys(
-    keysHere,
-    root,
-    row === null ? null : { read: () => model.flipRead(row), restore: () => model.restore(row) },
-  );
+  useRestoreBinding(true, t("restoreKey"), keysHere && row !== null ? () => model.restore(row) : undefined);
+  useTrashKeys(keysHere, root, row === null ? null : { read: () => model.flipRead(row) });
   if (row !== null) {
     const who = row.from.name ?? row.from.address;
     const unread = model.unreadOf(row);
@@ -90,20 +88,28 @@ export function TrashReading({ keysHere }: PaneProps) {
         <Message
           head={
             <MessageHead
+              staticMetadata
               sender={{ name: who, address: live.from.address }}
               stamp={{ when: live.date ? model.stamp(live.date) : "", full: false, title: live.date ?? "" }}
             />
           }
         >
-          {body.phase === "ready"
-            ? body.text
-            : body.phase === "failed"
-              ? t("liveBodyFailed")
-              : t("liveBodyLoading")}
+          {body.phase === "ready" ? (
+            body.text
+          ) : body.phase === "failed" ? (
+            /* A text that could not be read is said so, with the one way to ask for it again: one more read. */
+            <RefusalLine
+              way={{ label: t("liveRetry"), onPress: () => model.live.openBody(live, { retry: true }) }}
+            >
+              {t("liveBodyFailed")}
+            </RefusalLine>
+          ) : (
+            t("liveBodyLoading")
+          )}
         </Message>
       </Sheet>
     );
   }
-  const count = model.page.items.length;
-  return <BlankColumn>{count > 0 ? t("title") : t("emptyTitle")}</BlankColumn>;
+  if (model.gone) return <BlankColumn>{tr("goneShort")}</BlankColumn>;
+  return <BlankColumn>{t(model.deletedEmpty ? "emptyTitle" : "title")}</BlankColumn>;
 }

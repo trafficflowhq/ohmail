@@ -7,17 +7,25 @@ import { render, type RenderResult } from "@testing-library/react";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import type { LayoutPlan, PaneProps, Route } from "../../src/frame/contract.js";
+import { Frame } from "../../src/frame/Frame.js";
 import { NONE } from "../../src/host/index.js";
-import { OhboxAbove, OhboxList, type OhboxBeside } from "../../src/ohbox/index.js";
+/* The list's parts from their own files, as the seat imports them (`ohbox/Seat.tsx`). */
+import { OhboxAbove } from "../../src/ohbox/OhboxAbove.js";
+import { OhboxList } from "../../src/ohbox/OhboxList.js";
+import { ohboxPlace } from "../../src/ohbox/place.js";
+import type { OhboxBeside } from "../../src/ohbox/beside.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import ohboxDe from "../../messages/ohbox.de.json" with { type: "json" };
 import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };
 import sharedDe from "../../messages/shared.de.json" with { type: "json" };
 import sharedEn from "../../messages/shared.en.json" with { type: "json" };
+import frameDe from "../../messages/frame.de.json" with { type: "json" };
+import frameEn from "../../messages/frame.en.json" with { type: "json" };
+import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
 
 export const WORDS: Record<"en" | "de", Messages> = {
-  en: { ...ohboxEn, ...sharedEn } as Messages,
-  de: { ...ohboxDe, ...sharedDe } as Messages,
+  en: { ...frameEn, ...ohboxEn, ...sharedEn } as Messages,
+  de: { ...frameDe, ...ohboxDe, ...sharedDe } as Messages,
 };
 
 export const at = (hour: number, minute = 0): string =>
@@ -193,7 +201,7 @@ export function inputOf(said: Said, over: Partial<OhboxListInput> = {}): OhboxLi
     },
     t: (key) => key,
     columnHidden: () => false,
-    /* No shell stands over this world: the after-verb choice is the default, as for a list drawn in no shell. */
+    /* These fixtures drive the list with the default after-verb choice. */
     afterVerb: () => DEFAULT_AFTER_VERB,
     rowSelector: "[data-id]",
     avatarSelector: null,
@@ -219,9 +227,24 @@ export function ohbox(
   });
   let side = beside(said, opts.side);
   const lang = opts.lang ?? "en";
+  function List() {
+    return <Ohbox input={props} side={side} plan={opts.plan ?? DESKTOP} open={opts.open ?? null} />;
+  }
+  const { host } = fakeHost({
+    engine: NO_ENGINE,
+    service: "self",
+    scope: "a",
+    places: {
+      ohbox: {
+        ...ohboxPlace,
+        rail: ohboxPlace.rail && { ...ohboxPlace.rail, useCount: undefined },
+        panes: { kind: "columns", List, Reading: "reader", keepsOpen: true },
+      },
+    },
+  });
   const tree = () => (
     <TextProvider locale={lang} messages={WORDS[lang]} timeZone="UTC">
-      <Ohbox input={props} side={side} plan={opts.plan ?? DESKTOP} open={opts.open ?? null} />
+      <Frame host={host} />
     </TextProvider>
   );
   const view = render(tree());

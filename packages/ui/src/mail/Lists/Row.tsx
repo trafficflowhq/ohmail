@@ -57,6 +57,12 @@ export interface RowProps {
   who: string;
   /** The address after the name. With a pointer it is the handle of the contact card. */
   address?: string;
+  /** The sender identity chip between the name and address. */
+  senderCheck?: { label: string; title: string };
+  /** The address is identity evidence on this row: let the name yield before its domain. */
+  keepAddressDomain?: boolean;
+  /** Omit the address if clipping would leave less than the byline fit floor or three fifths of it. */
+  fitAddress?: boolean;
   /** The circles: who the row leads with, then one other voice. Empty: the row is no person and shows its `sign`. */
   people: readonly RowPerson[];
   /** From three people on, the small circle counts the others: "+2". */
@@ -118,6 +124,8 @@ export interface RowProps {
   picked?: boolean;
   /** The row a search or a link took you to: a wash that settles once, so you see which row it is. */
   located?: boolean;
+  /** A decided row slides toward the rail or fades in place before it leaves the list. */
+  leaving?: "rail" | "fade";
   /** The verb a row offers while the pointer or the keys are on it: Done. */
   quick?: { label: string; icon: IconName; onPress?: () => void };
   /** A button of its own that always stands: Discard, Cancel send. */
@@ -127,8 +135,13 @@ export interface RowProps {
   /** Under a finger: the verb at each side, and how far the list's layer says the row is pulled. */
   swipe?: RowSwipe;
   onOpen?: () => void;
+  onKeyboardOpen?: () => void;
   /** A press on the address: the contact card opens at it. */
   onContact?: (anchor: HTMLElement) => void;
+  /** A native contact link. When supplied, the address leads to this fragment. */
+  contactHref?: string;
+  faceAction?: { label: string; onPress: (anchor: HTMLElement) => void };
+  addressAction?: (anchor: HTMLButtonElement) => void;
   /** A right click, the menu key or the other key that opens the context menu: the row's menu, where the pointer is. */
   onMenu?: (at: { x: number; y: number }) => void;
   /** In a listbox: the row is an option, named and described as the list says. Absent, it is a button. */
@@ -143,7 +156,8 @@ const stop = (event: { stopPropagation(): void }) => event.stopPropagation();
 
 /** One conversation: who, what about, how far read. */
 export function Row(props: RowProps) {
-  const { subject, preview, unread, open, picked, entry, quick, own, onOpen, onContact, onMenu } = props;
+  const { subject, preview, unread, open, picked, entry, quick, own, leaving, onOpen, onContact, onMenu } =
+    props;
   const swipe = rowSwipe(props.swipe);
   const { listing, mark, place, tick } = props;
   const el = useKeysFollowStop(listing?.stop);
@@ -160,7 +174,7 @@ export function Row(props: RowProps) {
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
-    press?.();
+    if (press) (props.onKeyboardOpen ?? press)();
   };
   const menu = onMenu
     ? (event: MouseEvent<HTMLDivElement>) => {
@@ -168,12 +182,18 @@ export function Row(props: RowProps) {
         onMenu(cssPoint(event));
       }
     : undefined;
-  const contact = onContact
-    ? (event: MouseEvent<HTMLElement>) => {
-        event.stopPropagation();
-        onContact(event.currentTarget);
-      }
-    : undefined;
+  const contact =
+    onContact || props.contactHref
+      ? (event: MouseEvent<HTMLElement>) => {
+          event.stopPropagation();
+          if (!onContact) return;
+          if (props.contactHref) {
+            if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+            event.preventDefault();
+          }
+          onContact(event.currentTarget);
+        }
+      : undefined;
 
   const row = (
     <div
@@ -199,11 +219,13 @@ export function Row(props: RowProps) {
       data-cursor={props.cursor ? "" : undefined}
       data-picked={picked ? "" : undefined}
       data-located={props.located ? "" : undefined}
+      data-leaving={slotted ? undefined : leaving}
       data-receded={props.receded ? "" : undefined}
       data-own={own ? "" : undefined}
       data-tick={tick ? "" : undefined}
       data-swiping={swipe.moving ? "" : undefined}
       aria-selected={listing ? listing.selected : picked ? true : undefined}
+      inert={!slotted && leaving !== undefined}
       style={swipe.style}
       onClick={press}
       onKeyDown={key}
@@ -233,7 +255,13 @@ export function Row(props: RowProps) {
      the verb a swipe lands on stands on the ground behind it. A right click on a verb is the row's menu. */
   if (!slotted) return row;
   return (
-    <div className="oh-row-slot" data-index={props.swipe ? mark?.index : undefined} onContextMenu={menu}>
+    <div
+      className="oh-row-slot"
+      data-index={props.swipe ? mark?.index : undefined}
+      data-leaving={leaving}
+      inert={leaving !== undefined}
+      onContextMenu={menu}
+    >
       {swipe.back}
       {row}
       <RowVerbs quick={quick} own={own} travel={swipe.style} />
@@ -243,16 +271,20 @@ export function Row(props: RowProps) {
 }
 
 /** The circle or circles, the sign of a section, and the check a pick turns it into. */
-function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread, tick, stream }: RowProps) {
+function RowFace({
+  people,
+  peopleMore,
+  peopleLabel,
+  sign,
+  entry,
+  unread,
+  tick,
+  stream,
+  faceAction,
+}: RowProps) {
   const [lead, second] = people;
-  return (
-    <span
-      className="oh-row-face"
-      data-pair={second || peopleMore ? "" : undefined}
-      role={peopleLabel ? "img" : undefined}
-      aria-label={peopleLabel}
-      title={peopleLabel}
-    >
+  const face = (
+    <>
       {lead ? (
         <Avatar name={lead.name} address={lead.address} unread={unread && !tick && !stream} />
       ) : sign ? (
@@ -268,6 +300,33 @@ function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread, tick, s
       <i className="oh-row-check">
         <Icon name="check" size={18} />
       </i>
+    </>
+  );
+  const pair = second || peopleMore ? "" : undefined;
+  return faceAction ? (
+    <button
+      type="button"
+      className="oh-control oh-row-face"
+      data-pair={pair}
+      title={faceAction.label}
+      aria-label={faceAction.label}
+      aria-haspopup="dialog"
+      onClick={(event) => {
+        event.stopPropagation();
+        faceAction.onPress(event.currentTarget);
+      }}
+    >
+      {face}
+    </button>
+  ) : (
+    <span
+      className="oh-row-face"
+      data-pair={pair}
+      role={peopleLabel ? "img" : undefined}
+      aria-label={peopleLabel}
+      title={peopleLabel}
+    >
+      {face}
     </span>
   );
 }

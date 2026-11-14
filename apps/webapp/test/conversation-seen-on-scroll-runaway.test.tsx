@@ -16,7 +16,10 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
 
 const observers: Array<() => void> = [];
 let layout: ThreadLayout;
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+/** The frame's reading column, where the new shell reads the open conversation. */
+const col = (): HTMLElement => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]')!;
+/** The letter the reading column landed on: the one its address names. */
+const landed = (): string | undefined => /\/m\/([^/?]+)$/.exec(window.location.hash)?.[1];
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
 /** The app's own scroll: no input before it. */
 const bareScroll = async (top: number): Promise<void> => {
@@ -24,7 +27,7 @@ const bareScroll = async (top: number): Promise<void> => {
 };
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => {
@@ -49,7 +52,7 @@ const SIX = ["p1", "p2", "p3", "p4", "p5", "p6"];
 async function previewSix(): Promise<void> {
   await mountThread(SIX.map((id, i) => msg(id, i * 10)));
   await key("j");
-  expect(document.querySelector('.read-col [aria-current="true"]')?.getAttribute("data-conv-id"), "landed at the newest").toBe("p6");
+  expect(landed(), "landed at the newest").toBe("p6");
 }
 
 describe("nothing but a person's act enters a visit, and nothing is read before it", () => {
@@ -78,8 +81,8 @@ describe("nothing but a person's act enters a visit, and nothing is read before 
     await layout.passDwell();
     await settle();
     expect(glances(), "entered: what comes on screen reads, however it got there").toEqual([["p6"], ["p5"]]);
-    expect(col().querySelector('article.pm[data-conv-id="p5"]')?.hasAttribute("data-unseen")).toBe(false);
-    expect(col().querySelector('article.pm[data-conv-id="p4"]')?.hasAttribute("data-unseen")).toBe(true);
+    expect(col().querySelector('[data-conv-id="p5"]')?.hasAttribute("data-unseen")).toBe(false);
+    expect(col().querySelector('[data-conv-id="p4"]')?.hasAttribute("data-unseen")).toBe(true);
   }, 30_000);
 
   it("a visit entered in one conversation does not carry into the next one previewed", async () => {
@@ -92,7 +95,7 @@ describe("nothing but a person's act enters a visit, and nothing is read before 
     await settle();
     expect(glances(), "the click entered the first conversation").toEqual([["p6"]]);
     await key("j");
-    expect(document.querySelector('.read-col [aria-current="true"]')?.getAttribute("data-conv-id"), "j moved to the second conversation").toBe("q3");
+    expect(landed(), "j moved to the second conversation").toBe("q3");
     await act(async () => { for (const tickObserver of observers) tickObserver(); });
     await bareScroll(100);
     await bareScroll(layout.topOf("q3") - 14);

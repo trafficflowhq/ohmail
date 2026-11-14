@@ -38,6 +38,7 @@ const LISTS_LETTERS: ReadonlySet<string> = new Set<PlaceId>([
   "news",
   "receipts",
   "history",
+  "drafts",
   "search",
   "tags",
   "folder",
@@ -123,6 +124,13 @@ function cutTail(path: string): { path: string; open: string | null } {
   return { path, open: null };
 }
 
+/** Whether the address differs from its canonical form only by a letter tail. */
+export function hasLetterTail(fragment: string, canonical: string): boolean {
+  const at = fragment.indexOf("?");
+  const { path, open } = cutTail(at === -1 ? fragment : fragment.slice(0, at));
+  return open !== null && path + (at === -1 ? "" : fragment.slice(at)) === canonical;
+}
+
 function placeOf(path: string, query: string): Route {
   const [head = "", ...rest] = path.split("/");
   const tail = rest.join("/");
@@ -131,7 +139,7 @@ function placeOf(path: string, query: string): Route {
   if (head === "screener") return route("screener", { sub: SEGMENTS.has(rest[0] ?? "") ? rest[0]! : null });
   if (head === "triage") return route(PILES.get(rest[0] ?? "") ?? "later");
   if (head === "settings") {
-    const pane = PANES.has(rest[0] ?? "") ? rest[0]! : null;
+    const pane = PANES.has(rest[0] ?? "") || rest[0] === "calaccounts" ? rest[0]! : null;
     const mailbox = pane === "mailboxes" ? mailboxOf(query) : null;
     return route("settings", { sub: pane, words: mailbox === null ? {} : { mailbox } });
   }
@@ -205,7 +213,7 @@ const CALENDAR_PRODUCT_HEAD = "cal";
 const CALENDAR_BY_HEAD: ReadonlyMap<string, CalendarPlaceId> = new Map(
   (Object.entries(CALENDAR_ADDRESS) as [CalendarPlaceId, string][]).map(([place, head]) => [head, place]),
 );
-const CALENDAR_PANELS: ReadonlySet<string> = new Set(CALENDAR_PANEL_IDS);
+const CALENDAR_PANELS: ReadonlySet<string> = new Set([...CALENDAR_PANEL_IDS, "new"]);
 const DAY_SHAPE = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** The tail segment before an open event. */
 const EVENT_MARK = "e";

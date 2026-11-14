@@ -83,6 +83,10 @@ export interface MutationResult {
    * {@link MutationRejectedError.entityId} (an `unverified` send's row, a withdrawn one's).
    */
   entityId?: string;
+  /** The exact draft this send delivered, if the adapter identified it. */
+  sentDraftId?: string;
+  /** On a settled replay, the draft was still sent at this account sequence. The replay emitted no change. */
+  sentDraftThrough?: number;
   /**
    * THE DECISION WAS ACCEPTED FOR ANOTHER INSTALL TO CARRY OUT — see
    * {@link MutationOutcome.pendingWith}.
@@ -256,6 +260,10 @@ interface PendingMutation {
   id: string;
   key: string;
   mutation: EngineMutation;
+  /** Receipt for this press and the mutation as dispatched, including a narrowed read on retry. */
+  onSettled?: (result: MutationResult, mutation: EngineMutation) => void;
+  /** This first save's running transport attempt, shared with a Discard that needs its confirmed id. */
+  createAttempt?: Promise<MutationResult>;
   /** This engine's claim on the row for the attempt in flight — see {@link OhmailEngine.claimForSend}. */
   sending?: string;
   /**

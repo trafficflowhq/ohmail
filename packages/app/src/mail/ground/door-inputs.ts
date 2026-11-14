@@ -19,7 +19,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { useConsent } from "@ohmail/app-logic/consent";
 import { useEngine } from "@ohmail/app-logic/engine";
-import { syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
+import { confirmedSyncEngine, syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
 import { useFrame, useReport } from "../../frame/index.js";
 import type { HostDevice, HostWires } from "../../host/index.js";
 import { useText } from "../../text/index.js";
@@ -41,6 +41,7 @@ export interface DoorInputs {
     readonly mode: "auto" | "manual";
     readonly loadPixels: boolean;
     readonly mayRead: () => boolean;
+    readonly consentOwner: () => object | null;
     readonly onFailed: (sentence: string) => void;
   };
 }
@@ -75,6 +76,7 @@ export function useDoorInputs(): DoorInputs {
       /* The address of a picture is asked for by the renderer itself, past every other guard of the account's
          boundary: so it is minted only while this window may still read for the account its engine was opened for. */
       mayRead: () => syncMayRead(engine),
+      consentOwner: () => confirmedSyncEngine(engine),
       onFailed: (sentence) => report(sentence),
     },
   };

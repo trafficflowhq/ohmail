@@ -8,6 +8,7 @@ export * from "./held-window.js";
 export * from "./list-window.js";
 export * from "./older-mail.js";
 export * from "./pile-note.js";
+export * from "./place-live.js";
 export * from "./stream-landing-read.js";
 export * from "./stream-near.js";
 export * from "./stream-window.js";

@@ -12,11 +12,15 @@ import { ZURICH, calendarOf, event, suggestion } from "../invitations/fixtures.j
 
 const zones = intlZones();
 
-function rowsOf(suggestions: readonly CalendarSuggestionRecord[], events: readonly EventWithWrites[] = []) {
+function rowsOf(
+  suggestions: readonly CalendarSuggestionRecord[],
+  events: readonly EventWithWrites[] = [],
+  calendars = [calendarOf()],
+) {
   return foundOf({
     suggestions,
     events,
-    calendars: [calendarOf()],
+    calendars,
     todayKey: "2026-11-16",
     zone: ZURICH,
     zones,
@@ -88,6 +92,7 @@ describe("which events found in mail may be offered", () => {
       occurrence: null,
       day: "2026-11-20",
     });
+    expect(rowsOf([found], [held(on)], [calendarOf({ access: "busy" })])[0]!.alreadyOn).toBeNull();
     expect(rowsOf([found], [held({ ...on, title: "Another" })])[0]!.alreadyOn).toBeNull();
     expect(rowsOf([found], [held({ ...on, calendarId: "cal-hidden" })])[0]!.alreadyOn).toBeNull();
   });

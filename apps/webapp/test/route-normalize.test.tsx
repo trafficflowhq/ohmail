@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { canonicalHash, normalizedHash, parseHash } from "../app/shell/routing";
+import { fragmentOf, routeOf } from "@ohmail/app/frame/route";
 
 /**
  * STA-F9 — AN UNKNOWN HASH DOES NOT SIT IN THE ADDRESS BAR OVER A RENDERED OHBOX.
@@ -57,13 +58,23 @@ describe("normalizedHash — the rewrite decision, as a pure function", () => {
 });
 
 describe("the Mailboxes pane names a mailbox — the strip's link opens that mailbox's block", () => {
+  /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (1)): the address is read and written by the frame's router
+     (`@ohmail/app/frame/route`: `routeOf` reads, `fragmentOf` writes), which Settings' seated Mailboxes pane opens by;
+     today's `parseHash`/`canonicalHash` are no host's router any more. The named mailbox is the route's `words.mailbox`;
+     a fragment is canonical when the router writes it back as it was read. */
+  const mailboxOfRoute = (hash: string): string | null => routeOf(hash).words.mailbox ?? null;
+  const normalized = (hash: string): string | null => {
+    const canonical = fragmentOf(routeOf(hash));
+    return canonical === hash ? null : canonical;
+  };
+
   it("`?mailbox=` round-trips on the mailboxes pane", () => {
-    expect(parseHash("#/settings/mailboxes?mailbox=mbx-2").settingsMailboxId).toBe("mbx-2");
-    expect(normalizedHash("#/settings/mailboxes?mailbox=mbx-2")).toBeNull();
-    expect(parseHash("#/settings/mailboxes?mailbox=a%2Fb").settingsMailboxId).toBe("a/b");
-    expect(canonicalHash(parseHash("#/settings/mailboxes?mailbox=a%2Fb"))).toBe("#/settings/mailboxes?mailbox=a%2Fb");
-    expect(parseHash("#/settings/mailboxes").settingsMailboxId).toBeNull();
-    expect(normalizedHash("#/settings/mailboxes?mailbox=")).toBe("#/settings/mailboxes");
+    expect(mailboxOfRoute("#/settings/mailboxes?mailbox=mbx-2")).toBe("mbx-2");
+    expect(normalized("#/settings/mailboxes?mailbox=mbx-2")).toBeNull();
+    expect(mailboxOfRoute("#/settings/mailboxes?mailbox=a%2Fb")).toBe("a/b");
+    expect(fragmentOf(routeOf("#/settings/mailboxes?mailbox=a%2Fb"))).toBe("#/settings/mailboxes?mailbox=a%2Fb");
+    expect(mailboxOfRoute("#/settings/mailboxes")).toBeNull();
+    expect(normalized("#/settings/mailboxes?mailbox=")).toBe("#/settings/mailboxes");
   });
 
   it("is dropped on every other pane and view", () => {
@@ -72,8 +83,8 @@ describe("the Mailboxes pane names a mailbox — the strip's link opens that mai
       ["#/settings?mailbox=mbx-2", "#/settings"],
       ["#/ohbox?mailbox=mbx-2", "#/ohbox"],
     ] as const) {
-      expect(parseHash(hash).settingsMailboxId, hash).toBeNull();
-      expect(normalizedHash(hash), hash).toBe(to);
+      expect(mailboxOfRoute(hash), hash).toBeNull();
+      expect(normalized(hash), hash).toBe(to);
     }
   });
 });
@@ -154,7 +165,10 @@ describe("the shell corrects the address bar", () => {
         await new Promise((r) => setTimeout(r, 25));
       });
     }
-    expect(container.querySelector(".view-ohbox"), "the fallback view").not.toBeNull();
+    /* Re-pointed to the new shell: the Ohbox stands when the rail names it the place on screen (the contract's
+       `data-rail-id`, the entry's `aria-current`) and its list is drawn (today's `.view-ohbox`). */
+    expect(container.querySelector('[data-rail-id="ohbox"] [aria-current="page"]') !== null
+      && container.querySelector("section.fr-list") !== null ? container : null, "the fallback view").not.toBeNull();
     expect(window.location.hash, "the URL must say what is on screen").toBe("#/ohbox");
   }, 20000);
 });

@@ -192,7 +192,10 @@ describe("a mailto activation becomes the compose form", () => {
     expect(window.location.hash).toBe("#/compose");
     const text = el.textContent ?? "";
     expect(text).toContain("ada@example.test");
-    const subject = el.querySelector<HTMLInputElement>("input[value='Loom plans']");
+    /* RE-POINTED: Write's letter names its subject field "Subject"; the field is found by role and
+       name and read by its value (the new letter's field may be a line that grows: an input or a text area). */
+    const subject = [...el.querySelectorAll<HTMLInputElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]')]
+      .find((f) => f.value === "Loom plans") ?? null;
     expect(subject, "the subject did not reach its field").not.toBeNull();
     expect(text).toContain("First line");
     expect(text).toContain("Second");
@@ -277,7 +280,7 @@ describe("a mailto activation becomes the compose form", () => {
 
 /**
  * THE DESKTOP KEEPS A LETTER UNDER THE MAILBOX ITS GATE MOUNTED. The same real gate over the same stand-in shell, with
- * the real frame and today's views: the scope the gate hands its frame is the mailbox it mounted, so a letter typed
+ * the real frame and Write's letter: the scope the gate hands its frame is the mailbox it mounted, so a letter typed
  * here is kept under that mailbox's keys; a mailbox switched in place keeps the first one's last words under the first
  * and opens the second composer empty; a door given up draws no mail and leaves the words where they were.
  * Seen red with either hand-over fixed to one value (the gate's `scope={shellKey}`, the frame's `scope: p.scope`): the
@@ -288,7 +291,9 @@ describe("the desktop keeps words under the mounted mailbox", () => {
   const pause = async (ms: number): Promise<void> => {
     for (let left = ms; left > 0; left -= 50) await act(async () => { await new Promise((r) => setTimeout(r, Math.min(50, left))); });
   };
-  const subject = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('input[aria-label="Subject"]');
+  /* RE-POINTED: Write's letter's subject, by role and name (an input or a text area). */
+  const subject = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]');
   const type = async (words: string): Promise<void> => {
     await act(async () => { fireEvent.change(subject()!, { target: { value: words } }); });
   };

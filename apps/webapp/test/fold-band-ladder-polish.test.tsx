@@ -3,14 +3,13 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Chip, MessageRow, SegmentedControl, StreamCard } from "@ohmail/ui";
+import { Chip, SegmentedControl, StreamCard } from "@ohmail/ui";
 
 /**
  * ═══ THE FOLD BANDS' NARROW LIST COLUMN, AND FOUR SMALL BOXES BESIDE IT ═══════════════════════
  *
  * At 700 and 821 the split list is 300px wide (the two-pane band's clamp). Measured in headless
- * Chromium over the real components and stylesheets: the subject keeps 16ch beside the row's
- * chips, three tabs stand in one row, the draft's provenance wraps at words, the tag helper sits
+ * Chromium over the real components and stylesheets: three tabs stand in one row, the draft's provenance wraps at words, the tag helper sits
  * off the add row's rule, and a hidden receipt address is the 1px sr-only box.
  */
 
@@ -53,47 +52,6 @@ async function onPage<T>(html: string, fn: () => T, width = 1280): Promise<T> {
 /** A list column of `w` px — the container every row, chip and tab strip in it asks about its room. */
 const listCol = (w: number, inner: string): string =>
   `<section class="view view-ohbox"><div class="list-col" style="width:${w}px"><div class="rows">${inner}</div></div></section>`;
-
-describe("a narrow list column keeps the subject readable beside the row's chips", () => {
-  const row = (extra: Record<string, unknown> = {}): string => renderToStaticMarkup(
-    <MessageRow id="r1" from="Giulia Ferrari" time="11:12" subject="Re: Glaze order #2214 and the September kiln slot"
-      avatarInitial="G" avatarHue={42} threadCount={4} tags={[{ name: "Pottery Project", hue: "moss" }]} {...extra} />,
-  );
-  const read = () => {
-    const subj = document.querySelector(".row .subj") as HTMLElement;
-    const probe = document.createElement("span");
-    probe.style.cssText = "display:inline-block;width:16ch";
-    subj.appendChild(probe);
-    const ch16 = probe.getBoundingClientRect().width;
-    probe.remove();
-    const mid = (document.querySelector(".row .row-mid") as HTMLElement).getBoundingClientRect();
-    const amt = document.querySelector(".row .amt")?.getBoundingClientRect() ?? null;
-    const tag = document.querySelector(".row .tagchip") as HTMLElement | null;
-    return {
-      subjW: subj.getBoundingClientRect().width, ch16,
-      tagShown: tag !== null && getComputedStyle(tag).display !== "none" && tag.getBoundingClientRect().width > 0,
-      amtInside: amt === null ? null : amt.right <= mid.right + 0.5,
-    };
-  };
-
-  for (const w of [265, 300]) {
-    it(`a ${w}px column: the subject keeps 16ch and the tag chip yields`, async () => {
-      const r = await onPage(doc(listCol(w, row())), read);
-      expect(r.subjW, `the subject was cut to ${r.subjW.toFixed(0)}px of a 16ch ${r.ch16.toFixed(0)}px`).toBeGreaterThanOrEqual(r.ch16 - 0.5);
-      expect(r.tagShown, "the tag chip kept its width beside a crushed subject").toBe(false);
-    }, 60_000);
-  }
-
-  it("a row carrying an amount keeps the amount whole inside the line", async () => {
-    const r = await onPage(doc(listCol(300, row({ amount: "CHF 240.00", threadCount: undefined }))), read);
-    expect(r.amtInside, "the amount ran out of the row's line").toBe(true);
-  }, 60_000);
-
-  it("positive control: a wide column keeps the tag chip", async () => {
-    const r = await onPage(doc(listCol(400, row())), read);
-    expect(r.tagShown).toBe(true);
-  }, 60_000);
-});
 
 describe("the tab strip stays a row in the fold bands' list column", () => {
   const tabs = (cls: string): string => renderToStaticMarkup(

@@ -124,7 +124,7 @@ describe("the draft's usage rides its release", () => {
     await new DraftingService().draftFromMessage(w.ctx, w.messageId, {
       drafter, credits: w.watched, obligations: w.obligations, attemptKey,
     });
-    expect(drafter.calls).toEqual([[expect.anything()]]);
+    expect(drafter.calls).toEqual([[expect.anything(), { beforeDispatch: expect.any(Function) }]]);
     expect(w.credits.releases).toEqual([]);
   });
 

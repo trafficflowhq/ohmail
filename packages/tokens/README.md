@@ -67,6 +67,11 @@ It exits 0 when nothing differs that `source/declared.tsv` does not name, 1 on a
 row that matched nothing, and 2 when one of the four files is missing. There is no default sheet. The icons
 it compares are `packages/ui/src/icons/icons.json`.
 
+The older sheet predates measurements authored in component rules. Supply their reference stylesheet
+with `--supplement packages/tokens/reference/full-stop-components.css`. It records the Full Stop
+product transition and phone Reader Back values and cites their rules. The comparison checks these
+values directly and reports any disagreement.
+
 A row of `declared.tsv` names one token, or with `*` a whole part or rule that one side leaves out. It never
 stands for the tokens of a part both sides have.
 

@@ -26,6 +26,7 @@ import {
   subscribeSessionTruth,
 } from "@ohmail/app-logic/session/session-truth";
 import { clientDeclaration, declareClient } from "./shell/client-declaration";
+import { EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER, postSessionChange, readSessionFamily } from "./signed-out-signal";
 import { RELOAD_REMEDY, hearUpdateAnswer } from "./shell/update-answer";
 
 /**
@@ -181,7 +182,7 @@ export async function withSessionCookieLock<T>(
    * waits on the session row and has its successor revoked (`sign-out-races-a-renewal.pg.test.ts`),
    * so a late renewal answer can only plant an ended family. A sign-in may never take these terms.
    */
-  opts: { waitMs?: number; unlockedAfterWait?: boolean } = {},
+  opts: { waitMs?: number; unlockedAfterWait?: boolean; requireLock?: boolean } = {},
 ): Promise<T> {
   /*
    * PER CALL, in a closure, and never module state: two ceremonies can be in flight in one tab
@@ -193,11 +194,14 @@ export async function withSessionCookieLock<T>(
   const run = async (): Promise<T> => {
     started = true;
     const before = csrfToken();
+    const ownerBefore = readOwner();
+    const familyBefore = readSessionFamily();
     try {
       return await fn();
     } finally {
       // A ceremony that minted a session is a mint like a refresh's: the renewal counts from it.
       const after = csrfToken();
+      if (readOwner() !== ownerBefore || readSessionFamily() !== familyBefore) postSessionChange();
       if (after !== null && after !== before) {
         noteSessionMinted();
         // A minted session disproves a held death. Signed out, `/login` latches one (its session
@@ -241,10 +245,11 @@ export async function withSessionCookieLock<T>(
      * window is the only instrument.
      */
     if (isAbort(err)) {
-      if (opts.unlockedAfterWait === true) return run();
+      if (!opts.requireLock && opts.unlockedAfterWait === true) return run();
       throw new SessionBusyError();
     }
   }
+  if (opts.requireLock) throw new SessionBusyError();
   return run();
 }
 
@@ -441,6 +446,8 @@ export interface ResumeOptions {
    * live page has renewed past it, for the same account, is taken inside the lock and nothing is presented.
    */
   staleJar?: string;
+  expectedAccount?: string;
+  expectedFamily?: string;
   /**
    * THE DOOR'S REFUSAL, told INSIDE the cross-tab lock: what this writes for other tabs is there before
    * the next tab's grant. Across processes a holder can hear its own release after that tab has run.
@@ -783,6 +790,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // Read INSIDE the lock, not before it: a queued tab must send the cookie and CSRF value
       // current AFTER the winner's rotation landed, which is the whole point of queueing.
       const csrf = csrfToken();
+      const familyBefore = readSessionFamily();
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
       const revokeBefore = revokeCapture();
@@ -801,6 +809,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
           "content-type": "application/json",
           ...ERASED_DECLARATION,
           ...clientDeclaration(),
+          ...(opts.expectedAccount ? { [EXPECTED_ACCOUNT_HEADER]: opts.expectedAccount } : {}),
+          ...(opts.expectedFamily ? { [EXPECTED_FAMILY_HEADER]: opts.expectedFamily } : {}),
           ...(csrf ? { "X-CSRF-Token": csrf } : {}),
         },
         body: JSON.stringify({ attemptId }),
@@ -830,7 +840,10 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // opposite fact with the same authority (`markSessionAlive` publishes a revival). The death
       // latch additionally requires the door's own refusal code: a 401 without one is a platform
       // interposing itself.
+      if (readOwner() !== judged.owner || readSessionFamily() !== familyBefore) postSessionChange();
       if (res.status === 204) {
+        const answerOwner = res.headers.get("X-Ohmail-Account");
+        if (opts.expectedAccount !== undefined && answerOwner !== opts.expectedAccount) return "unavailable";
         // The jar's own name as it is now: an answer landing after a Sign out press keeps the reserved word.
         restampOwner();
         // The name stays owed: a browser killed before it saves this answer's cookies presents it again.
@@ -926,21 +939,23 @@ const CACHE_PURGE_HEADER = "x-ohmail-clear";
  * "Checking your sign-in…" for a minute, and a confirmed sign-out ran out its deadline and was named
  * unconfirmed. Asked for on its own, once a confirmed answer is in hand (`sign-out.ts`, the erase in
  * `AccountSection.tsx`, the refusals here), never for an unconfirmed one: an older API reads it as a
- * renewal. Never awaited, outside `api()`, the lane and the single flight, and `keepalive` so it
- * outlives the navigation away. The door answers it before reading the jar and sets no cookie. A lost
- * one costs the clear, never the sign-in.
+ * renewal. It runs outside `api()` and the refresh single flight. Explicit sign-out tracks its
+ * answer separately from the press and aborts the attempt when the page leaves. The door answers it
+ * before reading the jar and sets no cookie.
  */
-export function purgeSiteCache(): void {
+export async function purgeSiteCache(signal?: AbortSignal): Promise<boolean> {
   try {
-    void fetch(REFRESH_ENDPOINT, {
+    const reply = await fetch(REFRESH_ENDPOINT, {
       method: "POST",
       headers: { [CACHE_PURGE_HEADER]: "cache", ...clientDeclaration() },
       credentials: "same-origin",
       cache: "no-store",
       keepalive: true,
-    }).catch(() => undefined);
+      signal,
+    });
+    return reply.status === 202 && reply.headers.get("clear-site-data") === '"cache"';
   } catch {
-    /* no fetch here: nothing to clear */
+    return false;
   }
 }
 
@@ -1284,7 +1299,7 @@ function armLateWatch(own: string, name: string, at: number, account: string | n
 
 let renewTimer: ReturnType<typeof setTimeout> | null = null;
 /** What the jar held when the renewal was armed: a skip is decided against it. */
-let armed: { owner: string; csrf: string | null } | null = null;
+let armed: { owner: string; family: string | null; csrf: string | null } | null = null;
 /** The timer fired while the tab was hidden; the next `visible` pays it. */
 let renewOwed = false;
 let watchingVisibility = false;
@@ -1300,12 +1315,18 @@ function stopRenewal(): void {
   renewOwed = false;
 }
 
+/** The account frame left this document. Cancel work armed for its session. */
+export function retireSessionRenewal(): void {
+  stopRenewal();
+  inFlightRequest?.abort();
+}
+
 function armRenewal(): void {
   stopRenewal();
   if (typeof window === "undefined") return;
   const owner = readOwner();
   if (owner === null) return;
-  armed = { owner, csrf: csrfToken() };
+  armed = { owner, family: readSessionFamily(), csrf: csrfToken() };
   const lead = ACCESS_WINDOW_MS * RENEW_AT_FRACTION - Math.random() * RENEW_JITTER_MS;
   // From the mint, capped at a whole lead (a clock stepped back); unknown age renews at once.
   const minted = lastSessionMint();
@@ -1330,7 +1351,7 @@ function armRenewal(): void {
  * value is another tab's fresh session.
  */
 function renewalOwed(): boolean {
-  if (armed === null || readOwner() !== armed.owner) return false;
+  if (armed === null || readOwner() !== armed.owner || readSessionFamily() !== armed.family) return false;
   const csrf = csrfToken();
   return csrf === null || csrf === armed.csrf;
 }
@@ -1338,11 +1359,11 @@ function renewalOwed(): boolean {
 async function renew(attempt: number): Promise<void> {
   if (armed === null || sessionIsDead()) return;
   if (tabHidden()) { renewOwed = true; return; }
-  const owner = armed.owner;
+  const { owner, family } = armed;
   // A 204 publishes a revival, and the revival re-arms from its own moment.
-  if (await resumeSession({ mayProceed: renewalOwed }) === "resumed") return;
+  if (await resumeSession({ mayProceed: renewalOwed, expectedFamily: family ?? undefined }) === "resumed") return;
   if (!renewalOwed()) {
-    if (armed !== null && readOwner() === owner) armRenewal();
+    if (armed !== null && readOwner() === owner && readSessionFamily() === family) armRenewal();
     return;
   }
   const report = lastRefreshReport();

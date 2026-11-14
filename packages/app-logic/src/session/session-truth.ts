@@ -121,7 +121,7 @@ export function registerSessionProbe(fn: (() => void) | null): void {
   probe = fn;
 }
 
-type SessionTransport = (url: string, init?: RequestInit) => Promise<Response>;
+type SessionTransport = (url: string, init?: RequestInit, owner?: string | null) => Promise<Response>;
 /** The Cloud build's credential door for the engine's requests — absent everywhere else. */
 let transport: SessionTransport | null = null;
 
@@ -134,8 +134,8 @@ export function registerSessionTransport(fn: SessionTransport | null): void {
  * THE ENGINE'S TRANSPORT ON THIS BUILD, read per request: the registered credential door, or the
  * platform's fetch where none is (the desktop). `engine-config.ts` hands it to the adapter.
  */
-export function sessionFetch(url: string, init?: RequestInit): Promise<Response> {
-  return transport !== null ? transport(url, init) : globalThis.fetch(url, init);
+export function sessionFetch(url: string, init?: RequestInit, owner?: string | null): Promise<Response> {
+  return transport !== null ? transport(url, init, owner) : globalThis.fetch(url, init);
 }
 
 /**

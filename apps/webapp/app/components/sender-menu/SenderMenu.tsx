@@ -1,0 +1,955 @@
+"use client";
+
+/**
+ * The sender's screening, as a popover reachable from any list or open message; anchored like the
+ * tag picker, Escape and outside click dismiss. It states the consequence BEFORE the click: from the
+ * Screener the change becomes a rule, from anywhere else it moves the mail only (`sender-screening.ts`).
+ * A scope switch is offered only where the address has a domain that is not a shared provider's
+ * (there a sentence says decisions are per address: `rule-order.ts#sharedProviderAllowRefusal`),
+ * defaulting to the ADDRESS, the counts on the switch so the wide option shows its size. And a way
+ * into the detail view: every message from this address or domain and why it sits there.
+ */
+
+/**
+ * A pre-click disclosure for the two reject destinations: screening a waiting sender out ALSO arms
+ * auto-unsubscribe (the screener calls `onScreenOut` after the commit), so one click on a domain can
+ * send one-click unsubscribe requests to every list under it. That is a CONFIRM, not a toast — a
+ * sentence shown after the act is not a disclosure. It is conditional on the account's switch (mail
+ * 0054) and an unsubscribe service ({@link autoUnsubscribe}). The server asks for any of the sender's
+ * mail offering one-click, now and later, so the confirm says that condition, made a fact where a held
+ * letter is seen offering it from a sender its provider confirmed (`unsubscribeClaim` over
+ * {@link lettersFor}).
+ */
+
+/**
+ * The addition that changes the default: creating a rule also applies it to the mail already in the
+ * mailbox, and that is the default. Choosing a destination for a sender PAST the gate writes a rule as
+ * well as moving the mail (`rule_create`); the toggle is ON by default. The rule toggle is only
+ * offered for a sender the Screener is NOT holding — a waiting sender's rule is promoted by
+ * `POST /screener/:id` inside the decision itself. The rule path does NOT carry the unsubscribe
+ * disclosure, checked not assumed: `unsubscribe.onScreenOut` has one production caller
+ * (`screener-service.ts`, `decide`'s reject branch) and `RulesService.create` calls nothing, so
+ * warning here would train people to click through the real confirm above.
+ */
+
+/**
+ * THE PAST IS ITS OWN QUESTION (0.19). It rode the rule toggle, so keeping old mail where it was
+ * meant abandoning the rule — the opposite of the choice asked for. A second switch under the rule,
+ * on by default, offered at the gate too: there the rule is a given and the backlog is all that is
+ * left to decide.
+ */
+import type { Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useTranslations } from "next-intl";
+import {
+  VIEW_OF_FOLDER, type ConflictGroup, type PressForecast, type RulesInPlay,
+  type UnsubscribeClaim, type UnsubscribeLetter, ruleMatchKey, ruleTwins, twinWinner,
+  unsubscribeClaim,
+} from "@ohmail/client-engine";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
+import { Avatar, Icon, InfoNote, Kbd } from "@ohmail/ui";
+import { usePileNames } from "../../shell/decision-copy";
+import { avatarHue, initialsOf, placeLabel } from "../../shell/format";
+import { displayAddress, displayAddressee, displayDomain } from "@ohmail/app-logic/text/idn";
+import { useOverlayFit } from "../../screening/overlay-clamp";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
+import { addressHash as addressHref } from "../../shell/routing";
+import { useSenderCheckWords } from "../../screening/sender-check";
+import "../../shell/sender-sheet.css";
+import { SheetClose } from "../../screening/SheetClose";
+import {
+  DECISION_OF_DEST,
+  RETRO_DEFAULT_ON,
+  SCREENING_DESTS,
+  countedOf,
+  ownFolderName,
+  ownFolderOf,
+  planScreeningChange,
+  ruleMatchOf,
+  screeningOrganizerCopy,
+  type ScreeningDest,
+  type ScreeningPlace,
+  type ScreeningPress,
+  type ScreeningScope,
+  type SenderScreening,
+} from "@ohmail/app-logic/press/sender-screening";
+
+/** One line per place and reason, in the order the rows came: the newest first. */
+export function stayedLines(
+  elsewhere: ReadonlyArray<{ id: string; place: ScreeningPlace }>, why: ReadonlyMap<string, StayedWhy>,
+): Array<{ place: ScreeningPlace; why: StayedWhy; ids: string[] }> {
+  const lines = new Map<string, { place: ScreeningPlace; why: StayedWhy; ids: string[] }>();
+  for (const e of elsewhere) {
+    const w = why.get(e.id);
+    if (w === undefined) continue;
+    const k = `${e.place}\u0000${w}`;
+    const line = lines.get(k) ?? { place: e.place, why: w, ids: [] };
+    line.ids.push(e.id);
+    lines.set(k, line);
+  }
+  return [...lines.values()];
+}
+
+/** The key of each reason's sentence; a failed check offers no move. */
+const STAYED_KEY: Record<StayedWhy, string> = {
+  replied: "stayedReplied", "set-aside": "stayedSetAside",
+  "filed-elsewhere": "stayedFiledElsewhere", "failed-checks": "stayedFailedChecks",
+};
+
+/** The sheet's id, which its opener names in `aria-controls` while it stands. */
+export const SENDER_SHEET_ID = "sender-sheet";
+
+export interface SenderMenuState {
+  /** Any message from the sender — the mirror resolves the rest. */
+  messageId: string;
+  /**
+   * THE SUBJECT, when it is not the message's sender — a contact chip's To/Cc address
+   * (viewer redesign). `senderScreening` resolves every fact from it instead of `from.address`,
+   * and every dispatch off this sheet (`changeScreening`, `openSenderAudit`) must carry it
+   * too, or the sheet would SHOW one person and rule on another. Absent for every opener
+   * that predates chips: the sender resolves, byte for byte as before.
+   */
+  address?: string;
+  x: number;
+  y: number;
+  /** The anchor's edges, for the viewport clamp — see `overlay-clamp.ts`. */
+  anchorTop?: number;
+  anchorBottom?: number;
+}
+
+export function SenderMenu({
+  id = SENDER_SHEET_ID,
+  state,
+  sender,
+  onChoose,
+  onOpenDetail,
+  onSubjectRule,
+  stayedFor,
+  mailboxNameOf,
+  onMoveToo,
+  autoUnsubscribe = true,
+  fromComputer = false,
+  lettersFor,
+  unsubscribeRecipientsFor,
+  forecastFor,
+  rulesFor,
+  organizer,
+  backRef,
+  own = false,
+  onClose,
+}: {
+  id?: string;
+  state: SenderMenuState;
+  sender: SenderScreening;
+  /**
+   * THE SUBJECT IS THE ACCOUNT ITSELF (`isOwnSubject`): no destination, rule switch or subject
+   * split is offered, since each would be a rule on our own address, which the server refuses.
+   */
+  own?: boolean;
+  onChoose: (
+    dest: ScreeningDest,
+    scope: ScreeningScope,
+    makeRule: boolean,
+    applyRetro: boolean,
+    press?: ScreeningPress,
+    unsubscribeIds?: readonly string[],
+  ) => void | false;
+  /**
+   * THE PRESS, BEFORE IT IS MADE — where the list would show the subject's mail after it
+   * (`press-forecast.ts`). Absent or `null` (the demo): no step is asked and the press commits.
+   */
+  forecastFor?: (dest: ScreeningDest, scope: ScreeningScope, makeRule: boolean, applyRetro: boolean) => PressForecast | null;
+  unsubscribeRecipientsFor?: (scope: ScreeningScope) => { ids: readonly string[]; senders: number };
+  /** "Their rules": every rule deciding the subject's mail today, as the list places it. */
+  rulesFor?: (scope: ScreeningScope) => RulesInPlay | null;
+  /**
+   * Another install organizes the subject's mailbox: a rule made here is made on its next pass.
+   * `nobody` where its lease lapsed (`otherOrganizerOf`, the refusal's decider).
+   */
+  organizer?: { name: string | null; nobody?: boolean } | undefined;
+  /** Where the shell's Escape asks the sheet to step back before closing it. */
+  backRef?: MutableRefObject<(() => boolean) | null>;
+  onOpenDetail: (scope: ScreeningScope) => void;
+  /**
+   * OPEN THE SUBJECT-RULE SHEET for this sender — the row below the detail link.
+   *
+   * OPTIONAL, so every existing mount of this component keeps compiling and simply does not offer
+   * the row. That is the honest degradation rather than a dead control, and it is the same shape
+   * `chrome.openSubjectRule` uses one layer up.
+   */
+  onSubjectRule?: () => void;
+  /**
+   * WHY THE ROWS ELSEWHERE STAYED — asked of the server once a rule's pass has finished and some of
+   * the subject's mail is still shown elsewhere (`GET /screener/stayed`). Absent: no reason named.
+   */
+  stayedFor?: (ids: readonly string[]) => Promise<ReadonlyMap<string, StayedWhy>>;
+  /**
+   * A mailbox's own label, `null` where it has none — never its address. Names a folder of the
+   * person's own beside its mailbox when two mailboxes have one of that name.
+   */
+  mailboxNameOf?: (mailboxId: string) => string | null;
+  /** "Move it too": the same move a verdict's "Move them" makes, to the rule's place. */
+  onMoveToo?: (ids: readonly string[], dest: ScreeningDest) => void;
+  /**
+   * Will a screen-out actually send the one-click request? — the account switch (mail 0054) and the
+   * build, ANDed one layer up (`AppShell#autoUnsubscribeDiscloses`). The second half of the
+   * confirm's condition: `ScreeningPlan.unsubscribes` answers whether this PATH arms the mechanism
+   * (a fact about the code); this answers whether the mechanism is armed at all (the account and
+   * the deployment). Both must be true or the sheet asks consent for something that will not
+   * happen. Defaults to TRUE — the default is the disclosure: an untaught mount keeps asking, and
+   * the failure to avoid is the silent one, a stale caller dropping a warning about a request that
+   * is still being sent.
+   */
+  autoUnsubscribe?: boolean;
+  /**
+   * The reader's own computer sends the request (the desktop's local engine, or the paired host's),
+   * so the confirm's fine print says so and names the network address the sender sees. Absent: the
+   * hosted worker sends it from our servers, the web shell's case.
+   */
+  fromComputer?: boolean;
+  /**
+   * Each held letter the scope's press moves: its one-click posture (`null` while unread) and its
+   * provider's verdict on the sender. Absent: nothing is known, and an armed press says the request
+   * as a condition (`unsubscribe-claim.ts`).
+   */
+  lettersFor?: (scope: ScreeningScope) => readonly UnsubscribeLetter[];
+  onClose: () => void;
+}) {
+  const t = useTranslations("screening");
+  /* The five pile names, from the Screener's namespace — the same words the rail and the
+     decision bar use. See `decision-copy.ts`. */
+  const piles = usePileNames();
+  // The identity fact off the newest marked message the sheet's subject sent (mail 0148); with none
+  // marked, the newest one whose provider did not confirm the brand's own address.
+  const checkWords = useSenderCheckWords();
+  // The letter the sheet opened on, when its provider failed it: that check is said first.
+  const seed = sender.messages.find((m) => m.id === state.messageId);
+  const seedLine = seed === undefined ? null : checkWords.line(seed);
+  const failedLine = seedLine?.reason === "failed" ? seedLine : null;
+  const checkLine = failedLine ?? checkWords.lineAmong(sender.messages);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [scope, setScope] = useState<ScreeningScope>("sender");
+  /** The sheet's step: the list, the resolve step over rules that disagree, or the unsubscribe
+      confirm. One question at a time; Escape steps back to the list before it closes the sheet. */
+  const [step, setStep] = useState<SheetStep>({ kind: "list" });
+  const confirm = step.kind === "unsubscribe" ? step.dest : null;
+  /** The destination that opened the step, so stepping back returns focus to it. */
+  const openedFrom = useRef<ScreeningDest | null>(null);
+  /** ON by default. The requirement is about the DEFAULT, not about offering an option. */
+  const [makeRule, setMakeRule] = useState(true);
+  /**
+   * …and whether that rule also reaches the mail already filed — the SECOND question, which used
+   * to ride the first. Same default, on; separate state, because "file their future mail there
+   * and leave my old mail alone" was unsayable while the only opt-out was abandoning the rule.
+   */
+  const [applyRetro, setApplyRetro] = useState(RETRO_DEFAULT_ON);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) onClose();
+    };
+    // `mousedown` on the document, matching the tag picker: a `click` listener would race
+    // the very click that opened this.
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [onClose]);
+
+  /** Back to the list, focus on the destination that opened the step. `false` on the list. */
+  const refocus = useRef<ScreeningDest | null>(null);
+  const stepBack = (): boolean => {
+    if (step.kind === "list") return false;
+    refocus.current = openedFrom.current;
+    setStep({ kind: "list" });
+    return true;
+  };
+  useEffect(() => {
+    if (step.kind !== "list" || refocus.current === null) return;
+    rootRef.current?.querySelector<HTMLElement>(`[data-dest="${refocus.current}"]`)?.focus();
+    refocus.current = null;
+  }, [step]);
+  useEffect(() => {
+    if (!backRef) return undefined;
+    backRef.current = stepBack;
+    return () => { backRef.current = null; };
+  });
+
+  const label = displayAddressee(sender.name, sender.address);
+  /**
+   * THE ADDRESS AND DOMAIN AS THE COPY READS THEM — an internationalized domain decoded
+   * (`idn.ts`). Every sentence in this menu is a promise about what a rule will do, and it should
+   * name the sender the way the reader knows them. What the rule is WRITTEN from stays
+   * `sender.address` / `sender.domain`, which is also what `avatarHue` keys on below.
+   */
+  const who = displayAddress(sender.address);
+  const whichDomain = displayDomain(sender.domain);
+  /** The press's unsubscribe sentence: a fact where a letter offers one-click, else a condition. */
+  const unsubSentence = (choice: ScreeningScope, claim: Exclude<UnsubscribeClaim, "none">, senders: number, place: string): string =>
+    choice === "domain"
+      ? t(claim === "sends" ? "unsubDomain" : "unsubDomainMaybe", { domain: whichDomain, senders, place })
+      : t(claim === "sends" ? "unsubSender" : "unsubSenderMaybe", { sender: who, place });
+  // Offered only when there IS a domain: `decide` answers 422 for an address with no `@`
+  // (an empty `match` on a domain rule is compared against the empty domain of every other
+  // malformed address), so the switch must not present a choice the server refuses. Nor on a
+  // shared provider, where a domain decision admits nobody and the server refuses it too.
+  const sharedDomain = sender.domain !== "" && isSharedProviderDomain(sender.domain);
+  const canScope = sender.domain !== "" && !sharedDomain;
+  const subject = sender.scopes[scope];
+  const organizerNote = organizer && (organizer.nobody || makeRule || subject.waiting)
+    ? screeningOrganizerCopy(organizer) : null;
+  /** At the address: a screen-out the store says files the list's claims alone (mail 0150). */
+  const listClaims = scope === "sender" && sender.listClaims !== undefined;
+  /* A rule press files the letter it was made on now (`seedMove`), so the footer says so; a contact
+     chip's subject holds no such letter and keeps the sentence that nothing here moves. */
+  const seedSays = subject.messages.some((m) => m.id === state.messageId) ? "" : "Chip";
+  const inPlay = rulesFor?.(scope) ?? null;
+  /* THE ROWS A FINISHED PASS LEFT ELSEWHERE, AND WHY. Asked only when the rule deciding the subject
+     was asked for its backlog and the pass has finished; while it runs, a row elsewhere is on its
+     way, not left. Each line counts rows of one place and one reason, so the lines and the split
+     above read the same mail; a row the server names no reason for is not listed. */
+  const winner = twinWinner(ruleTwins(sender.rules, scope, ruleMatchOf(sender, scope)));
+  const passDone = winner?.retro?.requestedAt != null && winner.retro.doneAt != null;
+  // EVERY ROW: the engine pages the route's ceiling, so the lines count what the split counts.
+  const askIds = passDone ? (subject.elsewhere ?? []).map((e) => e.id) : [];
+  const askKey = askIds.join(",");
+  const [why, setWhy] = useState<{ key: string; map: ReadonlyMap<string, StayedWhy> } | null>(null);
+  useEffect(() => {
+    if (!stayedFor || askKey === "") return;
+    let live = true;
+    void stayedFor(askKey.split(",")).then((map) => { if (live) setWhy({ key: askKey, map }); });
+    return () => { live = false; };
+  }, [askKey, stayedFor]);
+  const stayed = why && why.key === askKey ? stayedLines(subject.elsewhere ?? [], why.map) : [];
+  /** A place the lists show mail in, by the names the rail uses. */
+  const placeName = (p: ScreeningPlace): string => {
+    const folder = ownFolderOf(p);
+    if (folder !== null) {
+      return ownFolderName(folder, subject.places.map((q) => q.place), (name, mailboxId) => {
+        const label = mailboxNameOf?.(mailboxId) ?? null;
+        return label === null ? name : t("folderInMailbox", { folder: name, mailbox: label });
+      });
+    }
+    return p === "screener" ? t("placeScreener") : p === "history" ? t("placeHistory") : piles[p as ScreeningDest];
+  };
+  /** A rule's destination by the same names; a folder of the user's own by its leaf. */
+  const pileOf = (folder: Folder | null): string => {
+    if (folder === null) return t("placeHistory");
+    const view = VIEW_OF_FOLDER[canonicalDestination(folder) as Folder];
+    return view && view in piles ? piles[view as ScreeningDest] : view === "screener" ? t("placeScreener") : placeLabel(folder);
+  };
+  /** What a rule claims — all of an address's mail, a subject or text term, or a whole domain. */
+  const conditionOf = (r: RuleDTO): string => {
+    if (r.kind === "domain") return t("scopeDomain", { domain: displayDomain(r.match) });
+    // At domain scope an address rule is somebody's own: named by the address it is about.
+    if (scope === "domain") return displayAddress(r.match);
+    const subjectTerm = (r.subjectContains ?? "").trim();
+    if (subjectTerm) return t("ruleSubject", { term: subjectTerm });
+    const bodyTerm = (r.bodyContains ?? "").trim();
+    if (bodyTerm) return t("ruleBody", { term: bodyTerm });
+    return t("ruleAll");
+  };
+
+  /**
+   * Committing goes through `planScreeningChange` — the SAME function `AppShell` will call —
+   * so the number this sheet shows and the work that happens cannot disagree. Computing it
+   * here for the preview and there for the dispatch is one function evaluated twice, not two
+   * implementations that agree today.
+   */
+  const preview = confirm ? planScreeningChange(sender, confirm, scope, makeRule, applyRetro) : null;
+
+  const claimFor = (dest: ScreeningDest, choice: ScreeningScope): UnsubscribeClaim => unsubscribeClaim({
+    armed: autoUnsubscribe && planScreeningChange(sender, dest, choice, makeRule, applyRetro).unsubscribes,
+    letters: lettersFor?.(choice) ?? [],
+  });
+
+  const commit = (dest: ScreeningDest, refreshOnly = false) => {
+    // The disclosure is owed exactly when the wire will arm auto-unsubscribe AND the mechanism is
+    // armed at all. `ScreeningPlan.unsubscribes` decides the first — the one place that condition
+    // about the PATH lives — and {@link autoUnsubscribe} the second; see its note for why the two
+    // are separate questions rather than one flag pushed down into the planner.
+    const recipients = unsubscribeRecipientsFor?.(scope);
+    const unsub = recipients?.ids.length === 0 ? "none" : claimFor(dest, scope);
+    /* A RULE THAT DISAGREES IS ASKED ABOUT FIRST — only when the press writes one (or decides at
+       the gate) and the forecast finds a rule keeping mail elsewhere, or an exception to write. */
+    const asks = makeRule || subject.waiting;
+    const forecast = asks ? forecastFor?.(dest, scope, makeRule, applyRetro) ?? null : null;
+    const asked = forecast ? stepClass(forecast, scope) : null;
+    /* A SHARED PROVIDER'S DOMAIN IS NEVER A TILE: its domain rule above the address is answered by
+       the address, which is the "keep" tile, without asking to widen the press to everyone there. */
+    const addressOnly = asked === "domain" && sharedDomain;
+    const cls = addressOnly ? null : asked;
+    if (forecast && cls) {
+      openedFrom.current = dest;
+      const domainForecast = cls === "domain" ? forecastFor?.(dest, "domain", makeRule, applyRetro) : null;
+      const domainClaim = domainForecast ? claimFor(dest, "domain") : "none";
+      const domainRecipients = unsubscribeRecipientsFor?.("domain");
+      const wider = domainForecast ? {
+        forecast: domainForecast,
+        unsub: domainRecipients?.ids.length === 0 ? "none" as const : domainClaim,
+        recipients: domainClaim === "none" && domainRecipients ? { ids: [], senders: 0 } : domainRecipients,
+      } : null;
+      setStep({ kind: "resolve", dest, forecast, cls, choice: defaultChoice(cls, forecast), unsub, recipients, wider });
+      return;
+    }
+    if (unsub !== "none") {
+      openedFrom.current = dest;
+      setStep({ kind: "unsubscribe", dest, unsub, recipients });
+      return;
+    }
+    if (refreshOnly) { setStep({ kind: "list" }); return; }
+    if (addressOnly && forecast) {
+      onChoose(dest, scope, makeRule, applyRetro, {
+        resolution: "keep", shown: forecast.groups.map((g) => g.rule), forecast,
+      });
+      return;
+    }
+    onChoose(dest, scope, makeRule, applyRetro);
+  };
+
+  /**
+   * THE VIEWPORT CLAMP. This sheet is ~580px tall and `placePicker`'s flip guessed 190,
+   * so anchored to the LAST message of a thread — the default reading position — everything
+   * below "Reads" rendered off-screen with no way to reach it. The hook re-places the box
+   * against its measured height: below the anchor, flipped above it, or capped with an inner
+   * scroll, but never past the viewport's edges. See `overlay-clamp.ts` for the geometry.
+   */
+  const { style, full } = useOverlayFit(rootRef, state);
+  useFocusFollows(rootRef, { onEscape: () => { if (!stepBack()) onClose(); } });
+
+  const head = (
+    <div className="sm-head">
+      <Avatar initials={initialsOf(label)} hue={avatarHue(sender.address)} size="s" />
+      <span className="sm-who">
+        <b>{label}</b>
+        {sender.name ? <small>{who}</small> : null}
+      </span>
+    </div>
+  );
+  const selectedTile = step.kind === "resolve" ? tilesOf(step.cls, step.forecast, step.choice) : null;
+  const widerChoice = step.kind === "resolve" && selectedTile?.scope === "domain" ? step.wider : null;
+  const shownUnsub = step.kind === "resolve" ? widerChoice?.unsub ?? step.unsub : "none";
+
+  // Our own address: the sentence instead of the press, and the ways onward that write nothing.
+  if (own) {
+    // A letter claiming our address that its provider failed is not our mail: the check is said.
+    return (
+      <div ref={rootRef} id={id} className={full ? "senderm sm-full" : "senderm"} role="dialog"
+        aria-modal="true" aria-label={t("aria", { sender: who })} style={style}>
+        <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
+        {head}
+        {failedLine ? (
+          <p className="sm-check" data-reason="failed"><Icon name="shield" size={12} /><span>{failedLine.text}</span></p>
+        ) : <div className="sm-now">{t("toastOwnAddress")}</div>}
+        <div className="sm-links">
+          <button type="button" className="sm-detail" onClick={() => onOpenDetail("sender")}>
+            {t("auditOpen", { count: sender.scopes.sender.messages.length })}
+          </button>
+          <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>{t("addressOpen")}</a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={rootRef}
+      id={id}
+      className={full ? "senderm sm-full" : "senderm"}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t("aria", { sender: who })}
+
+      style={style}
+    >
+      {/* A SHEET THAT FILLS THE SCREEN CARRIES ITS OWN WAY OUT. On a phone the outside tap is an
+          18px strip and there is no Escape key, so the full-height sheet gets a 44px close that
+          stays in its corner while the sheet scrolls. A sheet with room around it keeps its
+          face; it is dismissed by the page around it. */}
+      <SheetClose full={full} label={t("auditClose")} onClose={onClose} />
+      {head}
+      {/* THE IDENTITY FACT before any choice: the name claims a company this address does not
+          belong to, or the company's own address went unconfirmed by the provider — said as the
+          reader and the Screener row say it. */}
+      {checkLine ? (
+        <p className="sm-check" data-reason={checkLine.reason}><Icon name="shield" size={12} /><span>{checkLine.text}</span></p>
+      ) : null}
+
+      {canScope ? (
+        <>
+        <div className="sm-sec">{t("scopeAria")}</div>
+        <div className="sm-scope" role="radiogroup" aria-label={t("scopeAria")}>
+          {(["sender", "domain"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              role="radio"
+              aria-checked={scope === s}
+              className={scope === s ? "on" : undefined}
+              onClick={() => { setScope(s); setStep({ kind: "list" }); }}
+            >
+              {s === "sender" ? t("scopeAddress") : t("scopeDomain", { domain: whichDomain })}
+              {/* THE SIZE OF THE CHOICE, ON THE CHOICE: the count of messages and senders is the domain
+                  scope's size before it is chosen. A shared provider never reaches this switch. */}
+              <small>
+                {s === "domain"
+                  ? t("scopeCount", {
+                      count: countedOf(sender.scopes.domain),
+                      senders: sender.scopes.domain.placedSenders,
+                    })
+                  : t("scopeCountOne", { count: countedOf(sender.scopes.sender) })}
+              </small>
+            </button>
+          ))}
+        </div>
+        </>
+      ) : sharedDomain ? (
+        <p className="sm-shared" data-reason="shared-provider">{t("scopeShared", { domain: whichDomain })}</p>
+      ) : null}
+
+      {/* The counts are the places' own: a row in no place (Trash, Junk, Sent) is in no number, and
+          a subject with nothing in any place has no count line at all. */}
+      {countedOf(subject) > 0 ? <div className="sm-now">
+        {subject.current
+          ? t("nowIn", { place: placeName(subject.current), count: countedOf(subject) })
+          : subject.places.length >= 2 && subject.places.length <= 3
+            // Two or three places are named, each with its count; four or more stay "spread".
+            ? t("nowSplit", {
+                count: countedOf(subject),
+                places: subject.places.map((p) => t("nowSplitPart", { place: placeName(p.place), count: p.count })).join(" · "),
+              })
+            : t("nowSpread", { count: countedOf(subject) })}
+      </div> : null}
+
+      {stayed.length > 0 && subject.ruled !== null ? (
+        <div className="sm-stayed">
+          {stayed.map((line) => (
+            <div className="sm-stayed-line" key={`${line.place}:${line.why}`}>
+              <span>{t(STAYED_KEY[line.why], { count: line.ids.length, place: placeName(line.place) })}</span>
+              {line.why !== "failed-checks" && onMoveToo ? (
+                <button type="button" className="sm-stayed-move" onClick={() => onMoveToo(line.ids, subject.ruled!)}>
+                  {t("stayedMoveToo", { count: line.ids.length })}
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {inPlay?.worthShowing ? (
+        <div className="sm-rules">
+          <div className="sm-rules-head">{t("rulesHead")}</div>
+          {inPlay.lines.slice(0, 3).map((line) => (
+            <RuleLineRow key={line.rules[0]!.id} rules={line.rules} count={line.count} condition={conditionOf} pile={pileOf} />
+          ))}
+          {inPlay.inside ? (
+            <div className="sm-rule-line">
+              <span className="cond">{t("ruleInside", { senders: inPlay.inside.senders })}</span>
+              <span className="n">{inPlay.inside.count}</span>
+            </div>
+          ) : null}
+          {inPlay.lines.length > 3 ? (
+            <div className="sm-rules-more">{t("rulesMore", { count: inPlay.lines.length - 3 })}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── THE RULE, WHICH IS NOW THE DEFAULT ───────────────────────────────────────────
+          ABOVE the destinations, because it changes what clicking one of them does and a
+          control read afterwards is not a choice. Offered only past the gate: a waiting
+          sender's rule is promoted by the decide itself, so a switch there would be a control
+          that cannot change the outcome. The PAST-mail row below is offered in both places,
+          because that answer changes the outcome at the gate as well.
+
+          It is a settings row — the label block left, the switch right, the note under — and
+          the WHOLE row is the switch (`role="switch"` on the one button; the knob inside it is a
+          drawing keyed off the row's own state), so a tap anywhere on the row turns the rule.
+          `sm-rule` names it for a test without depending on order. */}
+      {!subject.waiting ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={makeRule}
+          aria-label={t("ruleToggleAria")}
+          className="sm-rule"
+          onClick={() => setMakeRule((on) => !on)}
+        >
+          <span className="lab">
+            <b>{t("ruleToggle")}</b>
+          </span>
+          <span className="switch" aria-hidden="true">
+            <i />
+          </span>
+        </button>
+      ) : null}
+
+      {/* ── AND WHETHER IT REACHES THE MAIL ALREADY HERE ─────────────────────────────────
+          A second row, indented under the rule, because it is a question ABOUT the rule and not a
+          peer of it. Offered whenever a rule will be in force — past the gate that means the switch
+          above is on; at the gate the decide promotes one regardless, so this is the only answer
+          left to give, and it is the only door to a decided sender's mail that has already left the
+          Screener.
+
+          The note states the SIZE with the mirror's own honesty (`auditCount`'s grammar): the count
+          is what this install has synced, and the pass walks what is on the server. The count is
+          never phrased as a promise that they all move — the pass re-evaluates through
+          `evaluateRules` and skips what the user acted on; the footer states the leave-alone set. */}
+      {subject.waiting || makeRule ? (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={applyRetro}
+          aria-label={t("retroToggleAria")}
+          className="sm-retro"
+          onClick={() => setApplyRetro((on) => !on)}
+        >
+          <span className="lab">
+            <b>{t("retroToggle")}</b>
+            <small>{t("retroToggleNote", { count: subject.messages.length })}</small>
+          </span>
+          <span className="switch" aria-hidden="true">
+            <i />
+          </span>
+        </button>
+      ) : null}
+
+      <div className="sm-sec">{t("sectionWhere")}</div>
+
+      {/* ── THE CONFIRM, WHICH CARRIES THE DISCLOSURE ──────────────────────────────────────
+          Not an "are you sure?" — the user is sure. It is the one moment at which "this will
+          also ask these senders to stop mailing you" can be READ, before it is true. */}
+      {step.kind === "resolve" ? (
+        <ResolveStep
+          step={step}
+          scope={scope}
+          place={piles[step.dest]}
+          domain={whichDomain}
+          domainSenders={sender.scopes.domain.senders}
+          domainCount={sender.scopes.domain.messages.length}
+          condition={conditionOf}
+          pile={pileOf}
+          unsubscribeSentence={shownUnsub === "none" ? null
+            : unsubSentence(widerChoice ? "domain" : scope, shownUnsub,
+              (widerChoice ?? step).recipients?.senders ?? sender.scopes[widerChoice ? "domain" : scope].senders, piles[step.dest])}
+          unsubscribeCommit={shownUnsub === "sends" ? t("unsubCommit") : t("unsubCommitMaybe")}
+          onChoice={(choice) => setStep({ ...step, choice })}
+          onCommit={() => {
+            const tile = tilesOf(step.cls, step.forecast, step.choice);
+            const chosen = widerChoice?.forecast ?? step.forecast;
+            const result = onChoose(step.dest, tile.scope ?? scope, makeRule, applyRetro, {
+              resolution: tile.resolution, shown: chosen.groups.map((g) => g.rule), forecast: chosen,
+              ...(widerChoice ? { widenedFrom: {
+                forecast: step.forecast, unsubscribe: shownUnsub,
+              } } : {}),
+            }, shownUnsub === "none" ? undefined : (widerChoice ?? step).recipients?.ids);
+            if (result === false) commit(step.dest, true);
+            else setStep({ kind: "list" });
+          }}
+          onCancel={() => { stepBack(); }}
+        />
+      ) : confirm && preview && step.kind === "unsubscribe" ? (
+        <div className="sm-confirm" data-unsub={step.unsub}>
+          <p>{unsubSentence(scope, step.unsub, step.recipients?.senders ?? preview.senders, piles[confirm])}</p>
+          {/* THE FINE PRINT, SPLIT ON WHAT A PERSON MUST READ BEFORE PRESSING.
+              "Once, and there is no undo" is the irreversible part and it stays on screen with
+              the disclosure shut. HOW the request travels — from our servers rather than the
+              browser, or from the person's own computer on the desktop, and what happens to a
+              sender with no unsubscribe link — is mechanism: it is worth having and it is worth
+              having HERE, but it was three lines of 10.5px type between the sentence that says
+              what will happen and the button that does it. */}
+          <InfoNote
+            className="sm-confirm-fine"
+            lead={t("unsubFine")}
+            moreLabel={t("unsubFineMoreLabel")}
+          >
+            {t(fromComputer ? "unsubFineMoreComputer" : "unsubFineMore")}
+          </InfoNote>
+          <span className="sm-confirm-row">
+            <button type="button" className="go" onClick={() => { setStep({ kind: "list" }); onChoose(confirm, scope, makeRule, applyRetro, undefined, step.recipients?.ids); }}>
+              {step.unsub === "sends" ? t("unsubCommit") : t("unsubCommitMaybe")}
+            </button>
+            <button type="button" onClick={() => { stepBack(); }}>{t("cancel")} <Kbd>esc</Kbd></button>
+          </span>
+        </div>
+      ) : (
+        <ul role="listbox" aria-label={t("aria", { sender: who })}>
+          {SCREENING_DESTS.map((dest) => (
+            <li
+              key={dest}
+              data-dest={dest}
+              role="option"
+              /* Where their RULE files their mail — never where the letters sit (`ruled`). */
+              aria-selected={subject.ruled === dest}
+              className={subject.ruled === dest ? "sel" : undefined}
+              // Focusable and key-operable: the sheet opens from the `s` key, and an option a
+              // keyboard cannot reach is the same defect as one rendered off-screen.
+              tabIndex={0}
+              onClick={() => commit(dest)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  commit(dest);
+                }
+              }}
+            >
+              {piles[dest]}
+              {/* The two destinations that can send mail on your behalf are marked before you
+                  reach them, not only in the confirm that follows. */}
+              {DECISION_OF_DEST[dest] === "no" && subject.waiting && !listClaims ? (
+                <span className="sm-warn" aria-hidden="true">↗</span>
+              ) : null}
+              {subject.ruled === dest ? <span className="ck">✓</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="sm-links">
+      <button type="button" className="sm-detail" onClick={() => onOpenDetail(scope)}>
+        {t("auditOpen", { count: subject.messages.length })}
+      </button>
+
+      {/* Everything from and to this address — the address view (`#/address/<addr>`). On a list row
+          and a stream card the address pixels are this sheet's own handle (`sender-hit.ts`), so this
+          row is the one way from those surfaces into that view; the search result row and the
+          reader's chips link directly. A LINK, not a verb: it opens a different question, so it sits
+          with the ways onward, not among the destinations. A real `<a href>` — the hash is what the
+          router reads — and the sheet closes on press. Address scope only: a domain has no page. */}
+      {scope === "sender" ? (
+        <a className="sm-detail" href={addressHref(sender.address)} onClick={onClose}>
+          {t("addressOpen")}
+        </a>
+      ) : null}
+
+      {/* Split this sender by subject — the row that admits this sheet's limit: everything above
+          decides where ALL of an address's mail goes, and a sender who sends two kinds has no answer
+          here. Offered only at address scope — a domain scope is wider, not finer, and the server
+          refuses a subject term on a domain rule, so offering it would end in a 400. A LINK to the
+          finer sheet, not a control that writes: it asks a different question, so it sits below the
+          destinations with the detail link (`.sm-detail` for that reason). */}
+      {onSubjectRule && scope === "sender" ? (
+        <button type="button" className="sm-detail" onClick={onSubjectRule}>
+          {t("subjectRuleOpen")}
+        </button>
+      ) : null}
+      </div>
+
+      {/* The footer's three true sentences. A Screener-held sender goes through the endpoint that
+          promotes a rule. Past the gate the sentence follows the toggle — `footNoRule` became false
+          the moment `rule_create` existed, so it is now what the opt-out says, still exactly true
+          there. `footWillRule` states the outcome ("future mail files there too"), not the
+          mechanism, because the footer cannot know which destination is about to be clicked: for a
+          destination a rule already covers, nothing is written and only the outcome sentence stays
+          true. The toast, which does know, names the difference — `screeningToast`. */}
+      {organizerNote ? <div className="sm-org">{t(organizerNote.key, organizerNote.values)}</div> : null}
+
+      {/* NOTHING ORGANIZES THE MAILBOX: every sentence below promises filing an organizer performs, so
+          the line above stands in their place. */}
+      {organizer?.nobody ? null : <div className="sm-foot">
+        {/* One sentence per pair of answers — (a rule, the past) at the gate and past it. The
+            retroactive arm names the past AND the thing that has no undo: mail this moves stays
+            moved when the rule is later revoked, because `DELETE /rules/:id` touches the rules row
+            and nothing else. It says "the mail ohmail has already filed for you" rather than "the
+            mail already in your mailbox", which was wider than the pass: only the six folders
+            ohmail organizes are candidates, so a customer's own folders and their Sent are never
+            touched. */}
+        {subject.waiting
+          ? applyRetro
+            ? scope === "domain"
+              ? t("footRuleRetroDomain", { domain: whichDomain })
+              : t("footRuleRetro", { sender: who })
+            : scope === "domain"
+              ? t("footRuleDomain", { domain: whichDomain })
+              : t("footRule", { sender: who })
+          : makeRule
+            ? applyRetro
+              ? scope === "domain"
+                ? t(`footWillRuleRetroDomain${seedSays}`, { domain: whichDomain })
+                : t(`footWillRuleRetro${seedSays}`, { sender: who })
+              : scope === "domain"
+                ? t(`footWillRuleDomain${seedSays}`, { domain: whichDomain })
+                : t(`footWillRule${seedSays}`, { sender: who })
+            : t("footNoRule")}
+        {/* A list's claims the store says a screen-out files alone: those two presses make no rule. */}
+        {subject.waiting && listClaims ? <> {t("footListClaim", { brand: sender.listClaims!.brand })}</> : null}
+      </div>}
+    </div>
+  );
+}
+
+/** The sheet's step. `resolve` carries the forecast it asks over and the tile chosen. */
+type UnsubscribeRecipients = { ids: readonly string[]; senders: number };
+
+type SheetStep =
+  | { kind: "list" }
+  | { kind: "unsubscribe"; dest: ScreeningDest; unsub: Exclude<UnsubscribeClaim, "none">; recipients?: UnsubscribeRecipients }
+  | {
+      kind: "resolve"; dest: ScreeningDest; forecast: PressForecast; cls: StepClass; choice: 0 | 1;
+      /** What the press says about the unsubscribe: its sentence stands under the rule question. */
+      unsub: UnsubscribeClaim;
+      recipients?: UnsubscribeRecipients;
+      wider: { forecast: PressForecast; unsub: UnsubscribeClaim; recipients?: UnsubscribeRecipients } | null;
+    };
+
+/** Which question the step asks: a term rule of theirs, a domain rule above the address, or the
+    people inside a domain with rules of their own. */
+type StepClass = "term" | "domain" | "inside";
+
+const isTerm = (g: ConflictGroup) => g.cause === "term-subject" || g.cause === "term-body";
+
+function stepClass(f: PressForecast, scope: ScreeningScope): StepClass | null {
+  if (scope === "sender" && f.groups.some(isTerm)) return "term";
+  if (scope === "sender" && (f.exception !== null || f.groups.some((g) => g.cause === "domain-outranks"))) return "domain";
+  if (scope === "domain" && f.groups.some((g) => g.cause === "own-rule-inside")) return "inside";
+  return null;
+}
+
+/** The press wins over their own term rule; their own address rules inside a domain stay. */
+function defaultChoice(cls: StepClass, f: PressForecast): 0 | 1 {
+  if (cls === "domain") return f.exception ? 0 : 1;
+  return 0;
+}
+
+/** What each tile answers: the resolution, and a scope when the tile widens the press. */
+function tilesOf(cls: StepClass, f: PressForecast, choice: 0 | 1): { resolution: "remove" | "keep"; scope?: ScreeningScope } {
+  const tiles: Array<{ resolution: "remove" | "keep"; scope?: ScreeningScope }> =
+    cls === "term" ? [{ resolution: "remove" }, { resolution: "keep" }]
+      : cls === "inside" ? [{ resolution: "keep" }, { resolution: "remove" }]
+        : f.exception ? [{ resolution: "keep" }, { resolution: "keep", scope: "domain" }]
+          : [{ resolution: "keep", scope: "domain" }, { resolution: "keep" }];
+  return tiles[choice]!;
+}
+
+/** One line of a rule list: its condition, the place it files to, and the rows it places. */
+function RuleLineRow({ rules, count, condition, pile }: {
+  rules: readonly RuleDTO[]; count: number | null;
+  condition: (r: RuleDTO) => string; pile: (f: Folder | null) => string;
+}) {
+  const t = useTranslations("screening");
+  const r = rules[0]!;
+  return (
+    <div className="sm-rule-line">
+      <span className="cond">
+        {t("ruleLine", { condition: condition(r), place: pile(r.destination) })}
+        {rules.length > 1 ? <span className="twins" aria-label={t("ruleTwinsAria", { count: rules.length })}> ×{rules.length}</span> : null}
+      </span>
+      {count === null ? (
+        <InfoNote className="n un" lead={t("ruleUncounted")} moreLabel={t("ruleUncountedMore")}>
+          {t("ruleUncountedMore")}
+        </InfoNote>
+      ) : (
+        <span className="n">{count}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * THE RESOLVE STEP — the rules that disagree with the press, and two answers, the default chosen.
+ * A radiogroup (↑/↓, Enter commits); Escape and Cancel go back to the list. The counts are the
+ * forecast's, placed as the list will show them, so the tile and the sentence after agree.
+ */
+function ResolveStep({
+  step, scope, place, domain, domainSenders, domainCount, condition, pile, unsubscribeSentence,
+  unsubscribeCommit, onChoice, onCommit, onCancel,
+}: {
+  step: Extract<SheetStep, { kind: "resolve" }>;
+  scope: ScreeningScope;
+  place: string;
+  domain: string;
+  domainSenders: number;
+  domainCount: number;
+  condition: (r: RuleDTO) => string;
+  pile: (f: Folder | null) => string;
+  unsubscribeSentence: string | null;
+  unsubscribeCommit: string;
+  onChoice: (choice: 0 | 1) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const t = useTranslations("screening");
+  const tilesRef = useRef<HTMLDivElement>(null);
+  const f = step.forecast;
+  const terms = f.groups.filter(isTerm);
+  const inside = f.groups.filter((g) => g.cause === "own-rule-inside");
+  const outranking = f.exception?.rule ?? f.groups.find((g) => g.cause === "domain-outranks")?.rule ?? null;
+  const listed = step.cls === "term" ? terms : step.cls === "inside" ? inside : [];
+  const keptRows = listed.reduce((n, g) => n + (g.rows?.length ?? 0), 0);
+  const counted = listed.every((g) => g.rows !== null);
+  const insideSenders = new Set(inside.map((g) => ruleMatchKey(g.rule.match))).size;
+  const all = (condition: string) => t("ruleLine", { condition, place });
+  const wide = all(t("scopeDomain", { domain }));
+
+  const title = step.cls === "term"
+    ? t("resolveTitle", { place, rules: terms.length })
+    : step.cls === "inside"
+      ? t("resolveTitleDetail", { place, detail: t("ruleInside", { senders: insideSenders }) })
+      : t("resolveDomainTitle", { place, domain, domainPlace: pile(outranking?.destination ?? null) });
+
+  const keepTile = {
+    title: t("resolveKeepTitle"), count: f.keep.landing.length,
+    note: counted ? t("resolveKeepNote", { count: keptRows, rules: listed.length || 1 }) : t("resolveKeepNoteUncounted"),
+  };
+  const tiles = step.cls === "term"
+    ? [{ title: all(t("ruleAll")), count: f.remove.landing.length, note: t("resolveAllNote", { rules: terms.length }) }, keepTile]
+    : step.cls === "inside"
+      ? [
+          { title: t("resolveInsideKeepTitle"), count: f.keep.landing.length, note: null },
+          { title: wide, count: f.remove.landing.length, note: t("resolveInsideAllNote", { rules: inside.length }) },
+        ]
+      : f.exception
+        ? [
+            { title: all(t("ruleOnlyThis")), count: f.keep.landing.length,
+              note: t("resolveExceptNote", { domain, domainPlace: pile(outranking?.destination ?? null) }) },
+            { title: wide, count: domainCount, note: t("resolveWholeNote", { senders: domainSenders }) },
+          ]
+        : [{ title: wide, count: domainCount, note: t("resolveWholeNote", { senders: domainSenders }) }, keepTile];
+
+  useEffect(() => {
+    tilesRef.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }, [step.choice]);
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); onChoice(step.choice === 0 ? 1 : 0); }
+    else if (e.key === "Enter") { e.preventDefault(); onCommit(); }
+  };
+
+  return (
+    <div className="sm-confirm sm-resolve">
+      <p>{title}</p>
+      <div className="sm-rules in-step">
+        {step.cls === "domain" && outranking ? (
+          <RuleLineRow rules={[outranking]} count={scope === "sender" ? f.keep.places.size : null} condition={condition} pile={pile} />
+        ) : (
+          listed.slice(0, 3).map((g) => (
+            <RuleLineRow key={g.rule.id} rules={[g.rule]} count={g.rows?.length ?? null} condition={condition} pile={pile} />
+          ))
+        )}
+      </div>
+      <div className="sm-choices" role="radiogroup" aria-label={t("resolveChoiceAria")} ref={tilesRef} onKeyDown={onKey}>
+        {tiles.map((tile, i) => (
+          <button
+            key={i}
+            type="button"
+            role="radio"
+            aria-checked={step.choice === i}
+            tabIndex={step.choice === i ? 0 : -1}
+            className={step.choice === i ? "sm-choice on" : "sm-choice"}
+            onClick={() => onChoice(i as 0 | 1)}
+          >
+            <span className="head"><b>{tile.title}</b><span className="n">{t("scopeCountOne", { count: tile.count })}</span></span>
+            {tile.note ? <small>{tile.note}</small> : null}
+          </button>
+        ))}
+      </div>
+      {unsubscribeSentence ? (
+        <p className="sm-resolve-unsub">{unsubscribeSentence} {t("unsubFine")}</p>
+      ) : null}
+      <span className="sm-confirm-row">
+        <button type="button" className="go" onClick={onCommit}>
+          {unsubscribeSentence ? unsubscribeCommit : t("resolveGo", { place })} <Kbd>↵</Kbd>
+        </button>
+        <button type="button" onClick={onCancel}>{t("cancel")} <Kbd>esc</Kbd></button>
+      </span>
+    </div>
+  );
+}

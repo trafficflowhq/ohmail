@@ -7,6 +7,7 @@ import "./menu.css";
 export interface MenuItemProps {
   /** The verb, or the choice. */
   children: string;
+  label?: string;
   icon?: IconName;
   /** A note at the right: when, how many. */
   note?: string;
@@ -27,6 +28,7 @@ export interface MenuItemProps {
 /** One line of a menu. */
 export function MenuItem({
   children,
+  label,
   icon,
   note,
   keyHint,
@@ -43,6 +45,7 @@ export function MenuItem({
       className="oh-control oh-menu-item"
       role={checked === undefined ? "menuitem" : many ? "menuitemcheckbox" : "menuitemradio"}
       aria-checked={checked}
+      aria-label={label}
       disabled={disabled}
       data-sub={hue === undefined ? undefined : ""}
       data-dot={dot ? "" : undefined}

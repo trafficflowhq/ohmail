@@ -63,7 +63,7 @@ async function world(locks: EngineLocks | null) {
 type Surface = Awaited<ReturnType<typeof surface>>;
 async function surface(engine: OhmailEngine) {
   const { useMailSend, replyDockState } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   const settled: string[] = [];
   const outcomes: string[] = [];
   let api!: { press: (kind: "reply" | "forward" | "compose", b: string) => Promise<void>; dock: (l: string) => string; withdraw: (l: string) => Promise<string> };

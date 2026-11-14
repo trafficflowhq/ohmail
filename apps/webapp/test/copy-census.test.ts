@@ -10,6 +10,7 @@ import {
   HANDED_READERS,
   handedReaderNamespaces,
   isProse,
+  mountedScreenerReaderBindings,
   scanCopy,
   scanKeyReads,
   type CopyFinding,
@@ -142,7 +143,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
    * so a key missing from `de.json` alone renders English rather than a raw key — quieter, and
    * exactly the half-English screen this lane exists to end.
    */
-  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src"];
+  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components/sender-menu", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src"];
   const cat = (lang: "en" | "de"): Record<string, unknown> =>
     JSON.parse(fs.readFileSync(path.join(REPO, `apps/webapp/messages/${lang}.json`), "utf8"));
   const EN = cat("en");
@@ -172,6 +173,11 @@ describe("every key the code reads is in BOTH catalogues", () => {
   });
 
   it("each handed reader's namespace is the one its caller binds", () => {
+    expect(mountedScreenerReaderBindings(REPO)).toEqual({
+      state: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
+      suggestions: { t: "screener", tAi: "aiRefusal" },
+    });
+
     const drift: string[] = [];
     for (const [file, row] of Object.entries(HANDED_READERS)) {
       const table = [...new Set(Object.values(row.readers))].sort();

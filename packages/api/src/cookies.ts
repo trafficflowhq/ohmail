@@ -31,7 +31,7 @@ const seconds = (ms: number): number => Math.floor(ms / 1000);
  * one; when both spellings are present the prefixed one is ours and wins.
  */
 export const HOST_PREFIX = "__Host-";
-export type CredentialCookie = "tf_session" | "tf_refresh" | "tf_csrf" | "tf_resume" | "tf_owner";
+export type CredentialCookie = "tf_session" | "tf_refresh" | "tf_csrf" | "tf_resume" | "tf_owner" | "tf_family";
 
 export function jarCookie(jar: Readonly<Record<string, string>>, name: CredentialCookie): string | undefined {
   return jar[`${HOST_PREFIX}${name}`] ?? jar[name];
@@ -66,6 +66,13 @@ export function presentedResumeMarker(raw: unknown): string | null {
  * `apps/webapp/app/shell/owner-cookie.ts` reads it and the two must not drift.
  */
 export const OWNER_COOKIE = "tf_owner";
+export const FAMILY_COOKIE = "tf_family";
+
+export function jarAwaitsBrowserLogout(jar: Readonly<Record<string, string>>): boolean {
+  return jarCookie(jar, OWNER_COOKIE) === "signed_out_pending";
+}
+
+const FAMILY_CLEAR = `${FAMILY_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`;
 
 /**
  * The account-id characters this will put in a cookie value, and nothing else. It keeps an id
@@ -96,6 +103,7 @@ export function sessionCookies(
   csrfToken: string,
   cfg: AuthConfig,
   owner: string | null,
+  familyId?: string,
 ): string[] {
   const accessMax = seconds(cfg.accessTtlMs);
   const refreshMax = seconds(cfg.refreshTtlMs);
@@ -108,6 +116,9 @@ export function sessionCookies(
     // XSS cannot plant.
     `${RESUME_COOKIE}=${resumeMarkerFor(tokens.refreshToken)}; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=${refreshMax}`,
     ...ownerCookie(owner, cfg),
+    // A stable, readable identifier for matching tabs across access-token rotation.
+    ...(familyId && ownerCookieValue(familyId)
+      ? [`${FAMILY_COOKIE}=${familyId}; SameSite=Strict; Secure; Path=/; Max-Age=${refreshMax}`] : []),
   ];
 }
 
@@ -144,18 +155,22 @@ const REFRESH_CLEAR = "tf_refresh=; HttpOnly; SameSite=Strict; Secure; Path=/aut
  * splash once it lapsed, and the splash renewed that family — another account's mailbox on a
  * shared computer, after a sign-out the server never confirmed. A full sign-in replaces both.
  */
-export function enrollmentCookies(enrollmentToken: string, csrfToken: string, cfg: AuthConfig): string[] {
+export function enrollmentCookies(
+  enrollmentToken: string, csrfToken: string, cfg: AuthConfig, familyId?: string,
+): string[] {
   const max = seconds(cfg.loginTokenTtlMs);
   return [
     `tf_session=${enrollmentToken}; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
     `tf_csrf=${csrfToken}; SameSite=Strict; Secure; Path=/; Max-Age=${max}`,
     REFRESH_CLEAR,
     ...clearResumeCookie(),
+    ...(familyId && ownerCookieValue(familyId)
+      ? [`${FAMILY_COOKIE}=${familyId}; SameSite=Strict; Secure; Path=/; Max-Age=${max}`] : [FAMILY_CLEAR]),
   ];
 }
 
 /**
- * The same five cookies with `Max-Age=0` (expire on logout / session death). The marker must
+ * The session cookies and markers with `Max-Age=0` (expire on logout / session death). The resume marker must
  * be cleared: a logout that left it behind sends the next visit to the resume splash, which
  * fails and bounces to the landing. The attributes must match the set exactly,
  * `SameSite=Lax` included, or the browser treats it as a different cookie and the deletion
@@ -171,6 +186,7 @@ export function clearSessionCookies(): string[] {
     "tf_csrf=; SameSite=Strict; Secure; Path=/; Max-Age=0",
     ...clearResumeCookie(),
     `${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`,
+    FAMILY_CLEAR,
   ];
 }
 

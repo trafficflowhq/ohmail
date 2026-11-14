@@ -157,6 +157,15 @@ export function trashLiveState(c: {
 const liveOnly = (rows: TrashWindowItemWire[]): TrashWindowItemWire[] =>
   rows.filter((r) => r.origin !== "ohmail");
 
+/** Server pages can interleave mailboxes out of date order. Undated rows keep their server order. */
+function sortByDate(rows: TrashWindowItemWire[]): TrashWindowItemWire[] {
+  const time = (row: TrashWindowItemWire): number => {
+    const parsed = row.date === null ? NaN : Date.parse(row.date);
+    return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+  };
+  return rows.sort((a, b) => time(b) - time(a));
+}
+
 /**
  * The window's state machine. `active` is "the Trash view is on screen AND the feature is on":
  * the first page is read once on arrival and the whole state is dropped on leaving, because
@@ -221,7 +230,7 @@ export function useTrashWindow(active: boolean, given: TrashLiveWire | "none"): 
     void wire.list().then(
       (page) => {
         if (generation.current !== gen) return;
-        setItems(liveOnly(page.items));
+        setItems(sortByDate(liveOnly(page.items)));
         setBoxes(page.mailboxes);
         setNextCursor(page.nextCursor);
         setPhase("ready");
@@ -274,7 +283,7 @@ export function useTrashWindow(active: boolean, given: TrashLiveWire | "none"): 
         }
         setItems((cur) => {
           const have = new Set(cur.map(trashLiveKeyOf));
-          return [...cur, ...liveOnly(page.items).filter((i) => !have.has(trashLiveKeyOf(i)))];
+          return sortByDate([...cur, ...liveOnly(page.items).filter((i) => !have.has(trashLiveKeyOf(i)))]);
         });
         setBoxes(page.mailboxes);
         setNextCursor(page.nextCursor);

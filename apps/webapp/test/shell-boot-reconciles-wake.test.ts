@@ -97,7 +97,6 @@ const ALL_ON = JSON.stringify({
   scheduled: true, pairing: true, showSenderAndSubject: false,
 });
 
-const APP = existsSync("apps/webapp/app") ? "apps/webapp/app" : "app";
 
 describe("the shell's boot reconcile", () => {
   beforeEach(() => {
@@ -106,12 +105,19 @@ describe("the shell's boot reconcile", () => {
     window.localStorage.clear();
     installShellEnv();
     installFakeCaches();
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, write: () => Promise<void>) => write() },
+    });
     Object.defineProperty(globalThis, "Notification", {
       configurable: true,
       value: { permission: "granted" },
     });
   });
-  afterEach(async () => { await teardownShellEnv(); });
+  afterEach(async () => {
+    Reflect.deleteProperty(navigator, "locks");
+    await teardownShellEnv();
+  });
 
   it("a sign-in over stale switches restores the worker's permission, Settings unopened", async () => {
     /*
@@ -121,8 +127,10 @@ describe("the shell's boot reconcile", () => {
      */
     window.localStorage.setItem(CHANNELS_KEY, ALL_ON);
     installPushCapableBrowser();
+    /* The boot's two doors are the host's own (`device.notifications`): the web's entry hands the browser's host. */
+    const { browserNotificationHost } = await import("../app/shell/notification-settings");
 
-    const container = await mountShell([mailbox()]);
+    const container = await mountShell([mailbox()], { notificationHost: browserNotificationHost });
     await tick(0);
 
     /*
@@ -173,17 +181,43 @@ describe("the shell's boot reconcile", () => {
      * So the pin is on `resolvedDemo` specifically. `if (demo)` passing here again would be the
      * defect returning under a name that reads correct.
      */
-    const shell = readFileSync(`${APP}/shell/AppShell.tsx`, "utf8");
+    /* The mail ground reconciles and relabels in separate effects over the host's notification door. */
+    const shell = readFileSync(`${existsSync("packages/app/src") ? "packages/app/src" : "../../packages/app/src"}/mail/ground/boot-wake.ts`, "utf8");
     expect(shell).toMatch(
-      /if \(resolvedDemo\) return;\s*\n\s*void reconcileWakeRegistration\(t\("settings\.notifyClosedBody"\)\);/,
+      /if \(demo \|\| !worded\) return;\s*\n\s*const doors = now\.current\.notifications;\s*\n\s*if \(doors !== NONE\) void doors\.reconcile\?\.\(now\.current\.body\);/,
     );
     // …and the relabel that follows the account's locale is gated the same way, and is a RELABEL:
     // re-running the reconcile there would recompute `enabled` from an intent.
     expect(shell).toMatch(
-      /if \(resolvedDemo\) return;\s*\n\s*void updateNotifyWords\("ohmail", t\("settings\.notifyClosedBody"\)\);/,
+      /if \(demo \|\| !worded\) return;\s*\n\s*const doors = now\.current\.notifications;\s*\n\s*if \(doors !== NONE\) void doors\.relabel\?\.\(TITLE, body\);/,
     );
     // The hook must be the effect-only one. Reading it in render output would reintroduce the
     // hydration mismatch `useDemoMode` exists to prevent.
-    expect(shell).toMatch(/const resolvedDemo = useResolvedDemoMode\(\);/);
+    expect(shell).toMatch(/const demo = useResolvedDemoMode\(\);/);
+    expect(shell).not.toMatch(/\buseDemoMode\(/);
+  });
+
+  it("over the new shell (the frame on the mail ground): the same sign-in restores the worker's permission, Settings unopened", async () => {
+    /*
+     * THE SAME DEFECT, DRIVEN OVER THE SHELL THAT REPLACES TODAY'S. There the boot is the mail ground's
+     * (`MailBoot`), and the two doors it presses are the host's own (`device.notifications`): the web's entry
+     * hands the browser's host, so this mount hands it too. Nothing else of the case moved.
+     */
+    window.localStorage.setItem(CHANNELS_KEY, ALL_ON);
+    installPushCapableBrowser();
+    const { browserNotificationHost } = await import("../app/shell/notification-settings");
+
+    const container = await mountShell([mailbox()], { notificationHost: browserNotificationHost });
+    await tick(0);
+
+    const writes = cachePuts.filter((p) => p.url === NOTIFY_STATE_URL);
+    expect(writes.length, "the new shell booted without reconciling at all").toBeGreaterThan(0);
+    expect(registered, "the boot never reached the push path").toEqual(["/sw.js"]);
+    expect(JSON.parse(writes.at(-1)!.body).enabled).toBe(true);
+    expect(JSON.parse(writes.at(-1)!.body).body).toBe("New mail.");
+    expect(container.querySelector('[role="switch"]'),
+      "the settings pane rendered — this proves nothing about a boot")
+      .toBeNull();
+    expect(window.location.hash).not.toContain("settings");
   });
 });

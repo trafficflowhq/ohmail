@@ -10,6 +10,7 @@ import type { RailModel } from "../frame/contract.js";
 
 export interface ListMenuItem {
   readonly label: string;
+  readonly spoken?: string;
   readonly icon?: IconName;
   /** A note at the right: how many. */
   readonly note?: string;
@@ -63,6 +64,7 @@ export function ListMenu({
         {all.map((item, index) => (
           <MenuGroup key={index} rule={index > 0 && item.apart === true}>
             <MenuItem
+              label={item.spoken}
               icon={item.icon}
               note={item.note}
               disabled={item.disabled}

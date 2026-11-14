@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { mailboxes, messages, folderState, changeLog, learningSignals, rules } from "@trafficflow/db";
+import { accountSettings, mailboxes, messages, folderState, changeLog, learningSignals, rules } from "@trafficflow/db";
 import { and, asc, eq } from "drizzle-orm";
 import type { AdapterPort, NativeLocator } from "@trafficflow/core";
 import type {
@@ -68,6 +68,13 @@ export async function makeCtx(now = new Date("2026-07-28T12:00:00Z")): Promise<{
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "mila@lichtgrat.example" }).returning();
   const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "r" };
   return { db, accountId, mailboxId: mb.id, ctx };
+}
+
+/** A suggestion fixture starts with the account's own affirmative grant. */
+export async function makeSuggestionCtx(now?: Date) {
+  const world = await makeCtx(now);
+  await world.db.insert(accountSettings).values({ accountId: world.accountId, autoSuggestAt: world.ctx.now() });
+  return world;
 }
 
 /**

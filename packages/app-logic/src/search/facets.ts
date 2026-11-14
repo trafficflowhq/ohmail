@@ -4,10 +4,11 @@
  * and goes to the store, each as its own filter.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   folderLeaf,
   VIEW_OF_FOLDER,
+  type OhmailEngine,
   type SearchHit,
   type ServerSearchFacets,
   type ServerSearchFilters,
@@ -26,6 +27,8 @@ export interface Filter {
   label: string;
   /** The store's own key for this facet — the stored folder path or the sender address. */
   raw?: string;
+  /** A Place picked before typing narrows the device to that full path too. */
+  exactPath?: true;
 }
 
 /** The store's facet for a folder path, as the device keys it: a view id, else the leaf. */
@@ -41,7 +44,7 @@ export const NONE_PRESSED: Pressed = [];
 
 /** A facet pressed: the same one again lets it go; `apart` keeps the other groups' facets, else it is the only one. */
 export function pressOf(pressed: Pressed, next: Filter, apart: boolean): Pressed {
-  const same = pressed.some((f) => f.group === next.group && f.label === next.label);
+  const same = pressedBy(pressed, filterPick(next));
   const others = apart ? pressed.filter((f) => f.group !== next.group) : NONE_PRESSED;
   return same ? others : [...others, next];
 }
@@ -59,7 +62,11 @@ export function storeFiltersOf(pressed: Pressed): ServerSearchFilters | undefine
 
 /** One pressed facet holds for a letter. */
 function holds(m: EngineMessage, filter: Filter): boolean {
-  if (filter.group === "folder") return folderKeyOf(m.folder) === filter.label;
+  if (filter.group === "folder") {
+    return filter.exactPath
+      ? m.folder === filter.raw
+      : folderKeyOf(m.folder) === (filter.raw === undefined ? filter.label : folderKeyOf(filter.raw));
+  }
   if (filter.group === "from") {
     return filter.raw !== undefined
       ? m.from.address.toLowerCase() === filter.raw.toLowerCase()
@@ -77,12 +84,24 @@ export function applyFilter(list: readonly SearchHit[], pressed: Pressed): reado
 /** The pick a facet item carries, as the filter it becomes. */
 export function filterOf(pick: SearchFacetPick, t: Translator): Filter {
   if (pick.group === "refine") return { group: "refine", label: t("facetAttachment") };
-  return { group: pick.group, label: pick.key, ...(pick.raw !== null ? { raw: pick.raw } : {}) };
+  return {
+    group: pick.group,
+    label: pick.key,
+    ...(pick.raw !== null ? { raw: pick.raw } : {}),
+    ...(pick.group === "folder" && pick.exactPath ? { exactPath: true } : {}),
+  };
 }
 
 /** Is this item a pressed one. */
 function pressedBy(pressed: Pressed, pick: SearchFacetPick): boolean {
-  return pressed.some((f) => f.group === pick.group && (pick.group === "refine" || f.label === pick.key));
+  return pressed.some((f) => {
+    if (f.group !== pick.group) return false;
+    if (pick.group === "refine") return true;
+    if (pick.group === "folder" && (f.exactPath || pick.exactPath)) {
+      return f.exactPath === pick.exactPath && f.raw === pick.raw;
+    }
+    return f.label === pick.key;
+  });
 }
 
 /**
@@ -140,18 +159,11 @@ export function facetGroupsOf(
         }),
       });
     }
-    const folders = new Map<string, { count: number; path: string }>();
-    for (const [path, count] of Object.entries(facets.folder)) {
-      const key = folderKeyOf(path);
-      const was = folders.get(key);
-      folders.set(key, { count: (was?.count ?? 0) + count, path: was?.path ?? path });
-    }
-    if (folders.size) {
+    const folders = folderPicks(Object.keys(facets.folder));
+    if (folders.length) {
       groups.push({
         group: "folder",
-        items: [...folders.entries()].map(([key, { count, path }]) =>
-          item({ group: "folder", key, raw: path }, key, counted(count)),
-        ),
+        items: folders.map((pick) => item(pick, pick.key, counted(facets.folder[pick.raw]))),
       });
     }
     if (facets.hasAttachments.true > 0) {
@@ -216,11 +228,14 @@ export function withPressed(groups: SearchFacetGroup[], pressed: Pressed): Searc
 /** The pick a pressed facet came from. */
 function filterPick(f: Filter): SearchFacetPick {
   if (f.group === "refine") return { group: "refine" };
+  if (f.group === "folder" && f.exactPath)
+    return { group: "folder", key: f.label, raw: f.raw ?? null, exactPath: true };
   return { group: f.group, key: f.label, raw: f.raw ?? null };
 }
 
 export interface FacetsInput {
   readonly store: StorePass;
+  readonly engine: OhmailEngine;
   readonly trimmed: string;
   readonly pressed: Pressed;
   /** The place and the files are two parts of the question (the host's server takes a person). */
@@ -240,6 +255,7 @@ export interface FacetsInput {
  */
 export function useFacets({
   store,
+  engine,
   trimmed,
   pressed,
   apart,
@@ -250,7 +266,6 @@ export function useFacets({
   t,
 }: FacetsInput): SearchFacetGroup[] {
   const storeFacets = useStoreFacets(store.ready, pressed, store.question, store.askedText);
-  if (!answered) return apart ? withPressed([], pressed) : [];
   const facets = storeFacets && storeFacets.q === trimmed ? storeFacets.facets : null;
   const rows = (): EngineMessage[] => {
     if (store.ready === null)
@@ -262,6 +277,69 @@ export function useFacets({
     }
     return out;
   };
-  const groups = facetGroupsOf(facets, storeFacets?.exact === true, rows, pressed, t);
-  return apart ? withPressed(groups, pressed) : groups;
+  const groups =
+    answered && (!apart || trimmed !== "")
+      ? facetGroupsOf(facets, storeFacets?.exact === true, rows, pressed, t)
+      : [];
+  const needsPlaces = apart && !groups.some((group) => group.group === "folder");
+  const messageStamp = needsPlaces ? engine.read().stampOf("message") : 0;
+  const places = useMemo(
+    () => (needsPlaces ? blankPlaces(engine, messageStamp) : []),
+    [needsPlaces, engine, messageStamp],
+  );
+  if (!apart) return groups;
+  if (needsPlaces) {
+    groups.push({
+      group: "folder",
+      items: places.map((pick) => ({
+        pick,
+        label: pick.key,
+        count: null,
+        pressed: pressedBy(pressed, pick),
+      })),
+    });
+  }
+  if (!groups.some((group) => group.group === "refine")) {
+    groups.push({
+      group: "refine",
+      items: [
+        {
+          pick: { group: "refine" },
+          label: t("facetAttachment"),
+          count: null,
+          pressed: pressedBy(pressed, { group: "refine" }),
+        },
+      ],
+    });
+  }
+  return withPressed(groups, pressed);
+}
+
+/** Offer the folders the mirror knows. These are server query keys, without mirror-only counts. */
+function blankPlaces(
+  engine: OhmailEngine,
+  _messageStamp: number,
+): Extract<SearchFacetPick, { group: "folder" }>[] {
+  const paths = new Set(
+    engine
+      .read()
+      .list<EngineMessage>("message")
+      .map((message) => message.folder),
+  );
+  return folderPicks(paths).map((pick) => ({ ...pick, exactPath: true }));
+}
+
+/** Use the display leaf unless two different paths would have the same name. */
+function folderPicks(
+  paths: Iterable<string>,
+): (Extract<SearchFacetPick, { group: "folder" }> & { raw: string })[] {
+  const keys = new Map<string, number>();
+  for (const path of paths) {
+    const key = folderKeyOf(path);
+    keys.set(key, (keys.get(key) ?? 0) + 1);
+  }
+  return [...paths].map((raw) => {
+    const key = folderKeyOf(raw);
+    return { group: "folder", key: keys.get(key) === 1 ? key : raw, raw };
+  });
 }

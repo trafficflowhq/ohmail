@@ -3590,6 +3590,7 @@ fn a_pending_local_door_that_gave_up_is_retried_onto_no_door() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(Some(Mode::Local)),
     };
@@ -5441,6 +5442,7 @@ fn given_up_with_lock(name: &str, record: &str) -> (Shell, PathBuf, PathBuf) {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5925,6 +5927,7 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -6001,6 +6004,7 @@ fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -6038,6 +6042,7 @@ fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -6081,6 +6086,7 @@ fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -6136,6 +6142,44 @@ fn signed_in_root(name: &str, cloud_url: &str) -> PathBuf {
 /// The door a root was made with, as `logout_of` takes it.
 fn door_of(root: &Path) -> Option<crate::config::Config> {
     crate::config::read(&root.join(crate::config::CONFIG_FILE_NAME))
+}
+
+#[test]
+fn stale_mailbox_removal_cannot_sign_out_a_replaced_engine_with_the_same_config() {
+    let root = local_door_root("remove-same-config");
+    let shell = Shell::rooted_for_tests(&root);
+    let first = shell.status()["localDoorVersion"].as_u64().unwrap() as u32;
+    assert_eq!(shell.status()["localDoorVersion"], first);
+
+    *shell.engine.lock().unwrap() = Arc::new(Engine::inert(EngineState::Stopped));
+    let current = door_of(&root);
+    let refusal = shell
+        .logout_matching(current.clone(), Some(first))
+        .expect_err("the window saw the previous engine");
+    assert!(refusal.contains(LOGOUT_UNCHANGED) && refusal.contains("changed"));
+    assert_eq!(door_of(&root), current);
+    assert_ne!(shell.status()["localDoorVersion"], first);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn stale_mailbox_removal_cannot_sign_out_a_door_changed_before_the_window_polls() {
+    let root = local_door_root("remove-changed-door");
+    let shell = Shell::rooted_for_tests(&root);
+    let first = shell.status()["localDoorVersion"].as_u64().unwrap() as u32;
+    let mut changed = door_of(&root).unwrap();
+    let Config::Local(ref mut local) = changed else {
+        panic!("standalone fixture")
+    };
+    local.imap_port += 1;
+    config::write(&root.join(config::CONFIG_FILE_NAME), &changed).unwrap();
+
+    let refusal = shell
+        .logout_matching(Some(changed.clone()), Some(first))
+        .expect_err("the window saw the previous config");
+    assert!(refusal.contains(LOGOUT_UNCHANGED) && refusal.contains("changed"));
+    assert_eq!(door_of(&root), Some(changed));
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

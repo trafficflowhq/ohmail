@@ -15,7 +15,7 @@ import { desktopHost, type DesktopFacts, type DesktopSupplies } from "../src/hos
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "images", "olderBody", "junk", "trash",
-  "suggest", "draftReply", "firstRun", "screening", "autoFiled", "ownModelAutoSuggest", "mailboxes",
+  "draftReply", "firstRun", "connect", "screening", "autoFiled", "ownModelAutoSuggest", "mailboxes",
 ] as const;
 /** A stand-in that is only ever compared: which thing was handed on, not what it does. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
@@ -37,6 +37,9 @@ const has: DesktopSupplies = {
   notifications: named("notifications"),
   frame: FRAME,
   badge: named("badge"),
+  language: named("language"),
+  openLink: named("openLink"),
+  saveFile: named("saveFile"),
   hostConnection: named("hostConnection"),
   linkIn: named("linkIn"),
 };
@@ -77,7 +80,7 @@ const entries = (from: object, ...handedOn: FeatureName[]) =>
   });
 /** What the computer is, and what no door hands on yet: a device's verbs and a host's signals. */
 const UNWIRED_VERBS = {
-  language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE, textSize: NONE,
+  language: NONE, pickFile: NONE, defaultMail: NONE, textSize: NONE,
   fold: NONE, liveTheme: NONE, address: FRAME.address, window: FRAME.window, appearance: FRAME.appearance,
 };
 const NO_SIGNAL = {
@@ -86,9 +89,13 @@ const NO_SIGNAL = {
 };
 const DESKTOP_DEVICE = {
   ...UNWIRED_VERBS,
-  build: { surface: "desktop", version: "1.0.11", commit: "abc", mailtoLeaves: false },
+  build: { surface: "desktop", version: "1.0.11", commit: "abc", mailtoLeaves: false, desktopDownload: null },
   notifications: has.notifications,
   badge: has.badge,
+  language: has.language,
+  /* The window's way out to an address the app makes, and its shell that saves a letter's file by id. */
+  openLink: has.openLink,
+  saveFile: has.saveFile,
 };
 /** What every door hands on: its mailboxes, the two panes about the computer, the mail-program row and ask, the Screener, Help. */
 const EVERY_DOOR = ["mailboxes", "about", "desktop", "defaultMail", "stageCard", "screener", "help"] as const;
@@ -106,16 +113,17 @@ describe("the desktop on its own", () => {
     expect(host.capabilities).toEqual({
       service: "ownComputer", prices: "none", sendCeiling: desktopSendSurface(onItsOwn.status), awayRunsOn: "thisComputer",
       rulesMarked: true, imagesFrom: "computer", unsubscribeFrom: "computer", foldersStorable: false, suggest: "ownModel",
-      pairing: "hostMode", account: "none", firstRunDoor: "local", mailboxes: "here", language: "install", searchBy: "words", products: "none",
+      pairing: "hostMode", account: "none", firstRunDoor: "local", mailboxes: "here", language: "install", searchBy: "people", products: "none",
     });
     expect(typeof host.capabilities.sendCeiling).toBe("number");
   });
 
   it("has no account behind it: no live body, no spend, no access answer, no copy to age", () => {
-    expect(withheld(host)).toEqual(["calendar", "connect", "folderSummary", "liveBody", "seedReview", "suggest"]);
+    expect(withheld(host)).toEqual(["calendar", "folderSummary", "liveBody", "seedReview", "suggest"]);
+    expect(host.wires.connect).toBe(has.wires.connect);
     expect(host.wires.consent).toBe(has.wires.consent.standalone);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: NONE });
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
     expect(host.signals).toEqual({ ...NO_SIGNAL, linkIn: has.linkIn });
   });
 
@@ -141,17 +149,27 @@ describe("the desktop signed in to the managed service", () => {
   it("answers each capability as its control showed it", () => {
     expect(host.capabilities).toEqual({
       service: "managed", prices: "none", sendCeiling: desktopSendSurface(managed.status), awayRunsOn: "service",
-      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced",
+      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "none",
       pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
     expect(typeof host.capabilities.sendCeiling).toBe("number");
   });
 
+  it("hands the mail ground no suggestion wire and says no suggestion, on the managed service and on a server of one's own", () => {
+    /* An account whose row says "suggest by itself" opens the Screener in this window: the ground's one run is handed
+       no wire and draws no control, so nothing is priced, bought or listed as bought without a press on the
+       window's own control. */
+    for (const signedIn of [managed, selfHosted]) {
+      const answers = desktopHost(engine, signedIn, has);
+      expect({ wire: answers.wires.suggest, says: answers.capabilities.suggest }).toEqual({ wire: NONE, says: "none" });
+    }
+  });
+
   it("carries the account's wires over the pipe, and no first run", () => {
-    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
+    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview", "suggest"]);
     expect(host.wires.consent).toBe(has.wires.consent.account);
     expect(host.reads).toEqual(has.reads);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", mirrorAccount: null, account: null, accountAddress: null, signOut: has.signOut, recover: FRAME.recover, today: NONE });
     expect(host.signals).toEqual({ ...NO_SIGNAL, hostConnection: has.hostConnection, linkIn: has.linkIn });
     expect(host.device).toEqual(DESKTOP_DEVICE);
   });
@@ -197,7 +215,7 @@ describe("the desktop signed in to a self-hosted server", () => {
   it("answers each capability as its control showed it", () => {
     expect(host.capabilities).toEqual({
       service: "self", prices: "none", sendCeiling: DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, awayRunsOn: "service",
-      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced",
+      rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "none",
       pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
   });
@@ -260,9 +278,11 @@ describe("the page a desktop serves to a phone's browser", () => {
     },
     features: { account: named("account"), accountStrip: named("accountStrip"), screener: named("screener") },
     notifications: named("notifications"),
+    language: named("language"),
+    openLink: named("openLink"),
   frame: FRAME,
   };
-  const host = pairedHost(engine, { scope: "a-pairing", sendCeiling: 32 * 1024 * 1024, build: { version: "1.0.11", commit: "abc" } }, supplies);
+  const host = pairedHost(engine, { scope: "a-pairing", mirrorAccount: "a-mirror", sendCeiling: 32 * 1024 * 1024, build: { version: "1.0.11", commit: "abc" } }, supplies);
 
   it("lists the sections its Settings menu showed", () => {
     expect(listed(host)).toEqual(["account", "rules", "screener", "signatures"]);
@@ -281,7 +301,7 @@ describe("the page a desktop serves to a phone's browser", () => {
       "away", "calendar", "connect", "firstRun", "folderSummary", "images", "liveBody", "mailboxes", "organizerNotice", "ownModelAutoSuggest",
       "screening", "seedReview", "suggest",
     ]);
-    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", account: null, signOut: supplies.signOut, recover: FRAME.recover });
+    expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", mirrorAccount: "a-mirror", account: null, accountAddress: null, signOut: supplies.signOut, recover: FRAME.recover, today: NONE });
     expect(host.reads).toEqual({ mailboxes: supplies.mailboxes, copyAge: NONE, access: NONE });
   });
 
@@ -289,12 +309,20 @@ describe("the page a desktop serves to a phone's browser", () => {
     expect(host.features).toEqual(entries(supplies.features, "account", "accountStrip", "screener"));
   });
 
+  it("hands the mail ground no suggestion wire and says no suggestion: nothing is priced or bought from this page", () => {
+    expect({ wire: host.wires.suggest, says: host.capabilities.suggest }).toEqual({ wire: NONE, says: "none" });
+  });
+
   it("is a page in a browser: its own notification reader, no badge, a mailto that leaves, and no signal", () => {
     expect(host.device).toEqual({
       ...UNWIRED_VERBS,
-      build: { surface: "pairedPage", version: "1.0.11", commit: "abc", mailtoLeaves: true },
+      build: { surface: "pairedPage", version: "1.0.11", commit: "abc", mailtoLeaves: true, desktopDownload: null },
       notifications: supplies.notifications,
       badge: NONE,
+      language: supplies.language,
+      /* A new tab of the phone's browser for an address the app makes; a browser saves a file itself. */
+      openLink: supplies.openLink,
+      saveFile: NONE,
     });
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
@@ -324,7 +352,7 @@ describe("the account and the pictures, on every door and on the paired page", (
       signOut: named("signOut"), mailboxes: named("mailboxes"), wires: named("wires"), features: named("features"),
       notifications: named("notifications"), frame: FRAME,
     } as unknown as PairedSupplies;
-    const host = pairedHost(engine, { scope: "a-pairing", sendCeiling: 1, build: { version: null, commit: null } }, supplies);
+    const host = pairedHost(engine, { scope: "a-pairing", mirrorAccount: null, sendCeiling: 1, build: { version: null, commit: null } }, supplies);
     expect(host.session.account).toBeNull();
     expect(host.capabilities.imagesFrom).toBe("none");
   });

@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { screen, within } from "@testing-library/react";
 import messages from "../messages/en.json";
+import { storeMessage } from "./_store-fixture";
+import {
+  ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell";
 
 /**
- * TRI-F3 / TRI-F8 — ESCAPE CLOSES WHAT IS OPEN, IN SEARCH AND OVER THE NAV DRAWER.
+ * ESCAPE CLOSES WHAT IS OPEN, IN SEARCH AND OVER THE NAV DRAWER.
  *
  * The app's own `?` sheet reads "esc — Close what is open", and two surfaces contradicted it:
  *
@@ -19,101 +21,39 @@ import messages from "../messages/en.json";
  *
  * Every case runs the real shell on the fixture world and presses the real key.
  */
-(globalThis as unknown as { React: unknown }).React = React;
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-let roots: Root[] = [];
-
-beforeEach(() => {
-  window.location.hash = "";
-  Object.defineProperty(window, "matchMedia", {
-    configurable: true,
-    writable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      onchange: null,
-      dispatchEvent: () => false,
-    }),
-  });
-  (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
-  const el = Element.prototype as unknown as Record<string, () => void>;
-  el.scrollIntoView = () => {};
-  el.scrollTo = () => {};
-  (globalThis as Record<string, unknown>).IntersectionObserver = class {
-    observe(): void {}
-    unobserve(): void {}
-    disconnect(): void {}
-    takeRecords(): [] {
-      return [];
-    }
-  };
-  vi.spyOn(console, "error").mockImplementation(() => {});
-});
-
+const width = window.innerWidth;
+beforeEach(installShellEnv);
 afterEach(async () => {
-  for (const root of roots) {
-    await act(() => {
-      root.unmount();
-    });
-  }
-  roots = [];
-  document.body.innerHTML = "";
-  delete (globalThis as Record<string, unknown>).IntersectionObserver;
-  delete (globalThis as Record<string, unknown>).CSS;
-  vi.restoreAllMocks();
+  await teardownShellEnv();
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
-  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  roots.push(root);
-
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(ThemeProvider, {
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
-        }),
-      }),
-    );
-  });
-  return container;
+  const sync = page(1);
+  answerSyncWith(() => sync.clone());
+  const hit = storeMessage(0, ISO, { accountId: "acct_live_1", subject: "Glaze delivery" });
+  const fetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const url = new URL(String(input), "https://harness.invalid");
+    if (url.pathname.endsWith("/search")) {
+      const items = url.searchParams.get("q") === "glaze" ? [hit] : [];
+      return Promise.resolve(Response.json({ items, total: items.length, totalExact: true, ms: 4 }));
+    }
+    return fetch(input, init);
+  };
+  const host = await mountShell([mailbox({ id: "mb_1", lastSyncAt: ISO })]);
+  await tick(0);
+  return host;
 }
 
-const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
+const key = async (key: string): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
     );
   });
+  await tick(50);
 };
-
-async function waitFor(predicate: () => boolean, what: string, timeout = 3000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 25));
-    });
-  }
-  throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
-}
 
 async function type(input: HTMLInputElement, value: string): Promise<void> {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -123,71 +63,70 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-const searchInput = (el: HTMLElement): HTMLInputElement | null =>
-  el.querySelector<HTMLInputElement>(".view-search input");
+const searchInput = (el: HTMLElement): HTMLInputElement =>
+  within(el).getByRole<HTMLInputElement>("textbox", { name: messages.search.aria });
+const keySheet = () => screen.queryByRole("dialog", { name: messages.shortcuts.title });
+const news = (el: HTMLElement) => within(el).getByRole("heading", { name: "News" });
+const ohbox = (el: HTMLElement) => within(el).getByRole("heading", { name: "Ohbox" });
 
-describe("TRI-F3 — Escape in Search: clear, then leave", () => {
+describe("Escape in Search: clear, then leave", () => {
   it("first press clears the query, second returns to the view `/` was pressed in", async () => {
     const container = await shell();
     // Enter Search from Reads — the way back out must be Reads, not a hard-coded Ohbox.
     // Wait on the VIEW, not the raw hash: jsdom delivers `hashchange` a task later, and two
     // navigations inside one task cancel out before React ever sees the first.
-    await key("g");
-    await key("r");
-    await waitFor(() => container.querySelector(".view-reads") != null, "the Reads pile");
+    const rail = within(container).getByRole("navigation", { name: "Places" });
+    await act(async () => { within(rail).getByRole("button", { name: "News" }).click(); });
+    await tick(100);
+    expect(news(container)).toBeTruthy();
     await key("/");
-    await waitFor(() => searchInput(container) != null, "search input");
-    await type(searchInput(container)!, "glaze");
-    await waitFor(() => container.querySelectorAll(".hit-w").length > 0, "hits");
+    await type(searchInput(container), "glaze");
+    await tick(1_000);
+    expect(within(container).getByRole("button", { name: /Glaze delivery/i })).toBeTruthy();
 
     await key("Escape");
-    expect(searchInput(container)!.value, "Escape did not clear the query").toBe("");
+    expect(searchInput(container).value, "Escape did not clear the query").toBe("");
     expect(window.location.hash, "one Escape must not also leave").toBe("#/search");
 
     await key("Escape");
-    await waitFor(() => container.querySelector(".view-reads") != null, "back to Reads");
+    expect(news(container)).toBeTruthy();
     expect(window.location.hash).toBe("#/reads");
   }, 20000);
 
   it("on an empty box a single Escape leaves", async () => {
     const container = await shell();
     await key("/");
-    await waitFor(() => searchInput(container) != null, "search input");
     await key("Escape");
-    await waitFor(() => container.querySelector(".view-ohbox") != null, "back out of Search");
+    expect(ohbox(container)).toBeTruthy();
     expect(window.location.hash).toBe("#/ohbox");
   }, 20000);
 
   it("an overlay still outranks the view: Escape closes the ? sheet, the query survives", async () => {
     const container = await shell();
     await key("/");
-    await waitFor(() => searchInput(container) != null, "search input");
-    await type(searchInput(container)!, "glaze");
+    await type(searchInput(container), "glaze");
 
-    await key("Shift", { shiftKey: true });
-    await key("?", { shiftKey: true });
-    await waitFor(() => container.querySelector(".ks") != null, "the ? sheet");
+    searchInput(container).blur();
+    await key("?");
+    expect(keySheet()).toBeTruthy();
 
     await key("Escape");
-    expect(container.querySelector(".ks"), "Escape did not close the sheet").toBeNull();
-    expect(searchInput(container)!.value, "Escape spent itself on the query instead").toBe("glaze");
+    expect(keySheet(), "Escape did not close the sheet").toBeNull();
+    expect(searchInput(container).value, "Escape spent itself on the query instead").toBe("glaze");
   }, 20000);
 
   it("re-entering keeps the old query SELECTED, so typing replaces instead of appending", async () => {
     const container = await shell();
     await key("/");
-    await waitFor(() => searchInput(container) != null, "search input");
-    await type(searchInput(container)!, "glaze");
+    await type(searchInput(container), "glaze");
 
-    await key("g");
-    await key("o");
-    // The view, not the hash — Search must actually UNMOUNT before `/` remounts it, or the
-    // mount effect under test never runs (see the note on the first case).
-    await waitFor(() => container.querySelector(".view-ohbox") != null, "away to the Ohbox");
+    const rail = within(container).getByRole("navigation", { name: "Places" });
+    await act(async () => { within(rail).getByRole("button", { name: /^Ohbox/ }).click(); });
+    await tick(50);
+    expect(ohbox(container)).toBeTruthy();
     await key("/");
-    await waitFor(() => searchInput(container) != null, "search again");
 
-    const input = searchInput(container)!;
+    const input = searchInput(container);
     expect(input.value).toBe("glaze"); // the answer survives the round trip…
     expect(
       [input.selectionStart, input.selectionEnd],
@@ -201,19 +140,15 @@ describe("TRI-F3 — Escape in Search: clear, then leave", () => {
  * (the dock's More opens it, the sheet's scrim is its backdrop, a window's width is its innerWidth, and Escape is
  * pressed where the keys are, as a browser does).
  */
-describe("TRI-F8 — Escape closes the nav drawer, in the frame", () => {
-  afterEach(() => { Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 }); });
-
+describe("Escape closes the nav drawer, in the frame", () => {
   it("open the drawer from the topbar, press Escape, the drawer and backdrop are gone", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
     const container = await shell();
-    const openNav = [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === "More")!;
-    await act(async () => openNav.click());
-    await waitFor(() => document.querySelector("[data-scrim]") != null, "the drawer backdrop");
-
-    await act(async () => {
-      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    });
-    await waitFor(() => document.querySelector("[data-scrim]") == null, "Escape closed the drawer");
+    const openNav = within(container).getByRole("button", { name: "More" });
+    await act(async () => { openNav.click(); });
+    await tick(50);
+    expect(document.querySelector("[data-scrim]")).not.toBeNull();
+    await key("Escape");
+    expect(document.querySelector("[data-scrim]")).toBeNull();
   }, 20000);
 });

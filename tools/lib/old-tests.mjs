@@ -42,7 +42,7 @@ export const MOUNTS = {
   "mount-trash": ["trash"],
   "mount-settings": ["settings", "pane:*"],
   "host-panes": ["pane:*"],
-  "mount-calendar": ["calendar"],
+  "mount-calendar": ["calendar", "reader:invitation"],
 };
 /** Who may own a gap: a mount, the switch (or one of its commits), the kit, or the dispatcher for a product decision. */
 export const OWNERS = [...Object.keys(MOUNTS), ...SWITCH, "switch", "kit", "dispatcher"];
@@ -127,7 +127,9 @@ function shapeFaults(row, given) {
   if (!/^\d{2}$/.test(row.share))
     faults.push(`the share "${row.share}" is not the census's share by its two digits`);
   if (word === "WAITS" && !given.targets.has(what))
-    faults.push(`WAITS:${what} names no place, pane:<id>, stage:<id>, reader, ground or calendar`);
+    faults.push(
+      `WAITS:${what} names no place, pane:<id>, stage:<id>, reader, reader:invitation, ground or calendar`,
+    );
   else if (word === "GAP" && !OWNERS.includes(what))
     faults.push(`GAP:${what} names no owner: a mount, the switch or one of its commits, kit, or dispatcher`);
   else if (
@@ -282,6 +284,9 @@ export function compareOldTestsWithBase({ rows, neverRed, baseRows, baseNeverRed
   );
   for (const row of baseRows) {
     if (held.has(row.file) || sortedByCase.has(row.file)) continue;
+    // A row whose case has no name named no case: an older reader took a call with no argument (`if (test())`)
+    // for one. It leaves without a holder; a case of a name is never written so.
+    if (splitKey(row.file).name === "") continue;
     refusals.push(
       `old tests: ${row.file}: a row never leaves the checklist; a file or case that leaves is RETIRED by its row (D)`,
     );

@@ -1,392 +1,329 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage, EngineMutation, Folder, UnsubscribeHeaderState } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  MemoryMirrorStore, OhmailEngine, autoUnsubscribeConfirms, consentPartition, mutationEffects, presentationReader, senderKey,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
-import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
+import type { EngineMessage, Folder, MessageBodyWire, UnsubscribeHeaderState } from "@ohmail/wire";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
+import type { SyncChange } from "@ohmail/client-engine";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
-import { queueDoor } from "./fixtures/queue-door.js";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, scriptSync, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell";
 
-/**
- * the real Screener over the real state hook, at 1280 and 390: the card's bar, the row's
- * menu and Accept, and the bulk strip say the one-click unsubscribe before Screen out or Spam is
- * pressed — the sender-level condition (now and their later mail) for every decide at the gate, a
- * fact where a held letter offers one-click, nothing with the switch off or a row past the gate. The
- * toast states Undo's reach: it stops the request with the decision, sent when the window closes.
- *
- * TO WATCH IT FAIL: in `unsubscribe-claim.ts#unsubscribeClaim`, return `"sends"` for every armed
- * press — the conditional cases go red; return `"none"` — every armed case goes red.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-
-/** 1280: nothing narrow matches. 390: every max-width query does, as a phone's browser answers. */
-function setWidth(px: 1280 | 390): void {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = ((query: string) => ({
-    matches: px === 390 && /max-width/.test(query), media: query, onchange: null,
-    addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-}
-
-const NOW = new Date("2026-08-02T12:00:00.000Z");
-let seq = 0;
-let sent: EngineMutation[] = [];
-let toasts: Array<{ message: string; onAction?: () => void; undo?: boolean }> = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-function msg(id: string, from: string, folder: Folder = "ohmail/Screener"): EngineMessage {
-  return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: "2026-08-02T09:00:00.000Z", folder, snippet: `snippet ${id}`, unread: true,
-    hasAttachments: false, attachmentCount: 0,
-    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
-  };
-}
-
-/**
- * A held letter with its body read: the posture the server stated on it, and what its provider said
- * about its author (`authVerdict`; absent is nobody asked).
- */
+// Exercise disclosure before a decision through the Web entry. Past-gate and claim-only
+// decisions also check which writes reach the Web API after the Undo window.
 interface Held {
-  id: string; from: string; posture: UnsubscribeHeaderState | "unread"; folder?: Folder;
+  id: string;
+  from: string;
+  posture: UnsubscribeHeaderState;
+  folder?: Folder;
   verdict?: EngineMessage["authVerdict"];
-  /** The identity fact on the letter, as the mirror carries it (a claim, through a list or not). */
   check?: EngineMessage["senderCheck"];
 }
 
-/**
- * `claimsOnly`: the store's queue answers over the held letters, and names these senders' screen-out
- * as filing their claims alone (`checked.claimsOnly`, the server's word: a list the person let in).
- */
-async function engineWith(held: Held[], claimsOnly?: readonly string[]): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges([
-    ...held.map((x): SyncChange => {
-      const m = {
-        ...msg(x.id, x.from, x.folder), ...(x.verdict === undefined ? {} : { authVerdict: x.verdict }),
-        ...(x.check === undefined ? {} : { senderCheck: x.check }),
-      };
-      return { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m };
-    }),
-    ...held.filter((x) => x.posture !== "unread").map((x): SyncChange => ({
-      type: "message_body", op: "create", id: x.id, seq: ++seq, updatedAt: NOW.toISOString(),
-      entity: {
-        messageId: x.id, state: "ready", text: "body", html: null, loadedRemoteContent: false,
-        unsubscribe: x.posture, unsubscribeUrl: null, withheld: null,
-      },
-    })),
-  ]);
-  return new OhmailEngine({
-    store,
-    now: () => NOW,
-    adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
-      mutate: async (m) => {
-        sent.push(m);
-        const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
-          .map((e) => ({
-            type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq,
-            updatedAt: NOW.toISOString(), entity: e.entity, ...(e.move ? { move: e.move } : {}),
-          }));
-        await store.applyChanges(changes);
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null };
-      },
-      withdrawSend: async () => ({ outcome: "unsupported" as const }),
-      fetchBody: async () => null,
-      ...(claimsOnly === undefined ? {} : {
-        screenerWaiting: queueDoor(held.filter((x) => (x.folder ?? "ohmail/Screener") === "ohmail/Screener").map((x) => ({
-          messageId: x.id, address: x.from, receivedAt: "2026-08-02T09:00:00.000Z",
-          ...(x.check ? { checked: { ...x.check, ...(claimsOnly.includes(x.from) ? { claimsOnly: true } : {}) } } : {}),
-        }))),
-      }),
-    },
-  });
+let host: HTMLElement | null = null;
+let mounting = false;
+let writes: { path: string; body: unknown }[] = [];
+let heldById = new Map<string, Held>();
+const copy = messages.screener;
+
+beforeAll(warmCloudShell, 30_000);
+afterEach(async () => {
+  if (mounting) await teardownConfirmEnv();
+  mounting = false;
+  host = null;
+  vi.unstubAllGlobals();
+});
+
+function message(letter: Held): EngineMessage {
+  return {
+    id: letter.id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+    subject: `Subject ${letter.id}`, from: { name: null, address: letter.from }, to: [], cc: [],
+    date: ISO, folder: letter.folder ?? "ohmail/Screener", snippet: `snippet ${letter.id}`, unread: true,
+    hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
+    ...(letter.verdict === undefined ? {} : { authVerdict: letter.verdict }),
+    ...(letter.check === undefined ? {} : { senderCheck: letter.check }),
+  };
 }
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
+function bodyOf(id: string): MessageBodyWire | null {
+  const posture = heldById.get(id)?.posture;
+  if (posture === undefined) return null;
+  return { text: "body", html: null, loadedRemoteContent: false, unsubscribe: posture, unsubscribeUrl: null };
 }
 
-/** The real waiting Screener, the first sender selected so its card is on screen. */
 async function mount(opts: {
-  held: Held[]; width: 1280 | 390; autoUnsubscribe?: boolean; suggestions?: Record<string, string>;
-  /** Compose the queue as the shell does, so an INBOX sender is presented at the gate (`gatePhysical:false`). */
-  pastTheGate?: boolean;
-  /** The store's queue answers, naming these senders' screen-out as filing their claims alone. */
+  held: Held[]; width: 1280 | 390; suggestions?: Record<string, string>;
   claimsOnly?: readonly string[];
-}): Promise<{ latest: () => ScreenerState }> {
-  setWidth(opts.width);
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const engine = await engineWith(opts.held, opts.claimsOnly);
-  const overlay = new Map(Object.entries(opts.suggestions ?? {}).map(([a, dest]) => [
-    senderKey(a), { dest, confidence: 0.9, rationale: "because" },
-  ]));
-  let live: ScreenerState | null = null;
+}): Promise<void> {
+  installConfirmEnv();
+  mounting = true;
+  writes = [];
+  heldById = new Map(opts.held.map((letter) => [letter.id, letter]));
+  window.localStorage.clear();
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  vi.stubGlobal("innerWidth", opts.width);
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(
-      engine, null, v,
-      ((message: string, o?: { onAction?: () => void; undo?: boolean }) => {
-        toasts.push({ message, ...(o?.onAction ? { onAction: o.onAction } : {}), ...(o?.undo ? { undo: true } : {}) });
-      }) as never,
-      useScreenerText(), overlay as never,
-      (opts.pastTheGate ? presentationReader(engine.read(), consentPartition(engine.read(), { now: NOW })) : undefined) as never,
-      opts.autoUnsubscribe,
-    );
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: state.waiting[0]?.id ?? null, screened: null, spam: null,
-    });
-    live = state;
-    return h(ScreenerView, {
-      owed: false, state, segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: opts.width === 390, onFull: () => {},
-    } as never);
-  }
+  const creates = opts.held.flatMap((letter, index): SyncChange[] => [
+    { type: "message", op: "create", id: letter.id, seq: index * 2 + 1, updatedAt: ISO, entity: message(letter) },
+    {
+      type: "message_body", op: "create", id: letter.id, seq: index * 2 + 2, updatedAt: ISO,
+      entity: { ...bodyOf(letter.id), messageId: letter.id, state: "ready", withheld: null },
+    },
+  ]);
+  let seq = creates.length;
+  scriptSync(() => Response.json({
+    changes: { creates, updates: [], moves: [], deletes: [] },
+    cursor: String(creates.length), hasMore: false, serverTime: ISO,
+  }));
 
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(ThemeProvider, { storageKey: null, children: h(KeymapProvider, { children: h(Probe) }) }),
-    }));
+  const reply = (body: unknown, status = 200, written = false) => Response.json(body, {
+    status,
+    headers: { "X-Ohmail-Account": ACCOUNT, ...(written ? { "X-Sync-Seq": String(++seq) } : {}) },
   });
-  await flush();
-  await settleFirstPaint();
-  return { latest: () => live! };
+  const fixture = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input), window.location.origin);
+    const path = url.pathname;
+    const method = init?.method ?? "GET";
+    if (method === "GET" && path === "/api/messages/bodies") {
+      const ids = url.searchParams.get("ids")?.split(",") ?? [];
+      return reply({ items: ids.flatMap((id) => {
+        const body = bodyOf(id);
+        return body === null ? [] : [{ messageId: id, ...body }];
+      }) });
+    }
+    const bodyId = /^\/api\/messages\/([^/]+)\/body$/.exec(path)?.[1];
+    if (method === "GET" && bodyId !== undefined) {
+      const body = bodyOf(bodyId);
+      return body === null ? new Response(null, { status: 404 }) : reply(body);
+    }
+    if (method === "GET" && path === "/api/mailboxes") {
+      return reply({ items: [{
+        id: "mb_1", address: ["mailbox", "example.invalid"].join("@"), status: "connected",
+        organizerRole: "organizer", initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
+        lastSyncAt: ISO, createdAt: ISO, providerConfirms: true,
+      }] });
+    }
+    if (method === "GET" && path === "/api/screener" && (opts.claimsOnly || opts.suggestions)) {
+      const items = opts.held.map((letter) => {
+        const destination = opts.suggestions?.[letter.from];
+        return {
+          id: letter.id, messageId: letter.id, mailboxId: "mb_1",
+          sender: { name: null, address: letter.from }, subject: `Subject ${letter.id}`,
+          snippet: "", receivedAt: ISO, updatedAt: ISO,
+          ...(letter.check && { checked: { ...letter.check, claimsOnly: opts.claimsOnly?.includes(letter.from) === true } }),
+          aiSuggestion: destination ? {
+            decision: destination === "ohmail/Screened" ? "no" : "yes", destination,
+            confidence: 0.9, rationale: "because",
+          } : null,
+        };
+      });
+      return reply({ items, nextCursor: null, total: items.length, suggestable: { senders: [], maxPerRequest: 50 } });
+    }
+    if (method !== "GET" && /^\/api\/(rules|messages|screener)(?:\/|$)/.test(path)) {
+      const body = JSON.parse(String(init?.body ?? "null"));
+      writes.push({ path, body });
+      if (path === "/api/rules") {
+        return reply({
+          id: "rule-new", kind: body.kind, match: body.match, destination: body.destination,
+          priority: 0, enabled: true, provenance: "manual", createdAt: ISO, updatedAt: ISO,
+          stats: { hits: 0, lastHitAt: null, demotions: 0 },
+        }, 201, true);
+      }
+      if (path.endsWith("/move")) return reply({ ...message(opts.held[0]!), folder: body.folder }, 200, true);
+      return reply({ messageId: path.split("/").at(-1), appliedFolder: body.dest, createdRuleId: null }, 200, true);
+    }
+    return fixture(input, init);
+  };
+  window.location.hash = opts.suggestions ? "#/ohbox" : "#/screener";
+  host = await mountCloudShell();
+  await tick(3000);
+  if (opts.suggestions) {
+    const rail = within(screen().getByRole("navigation", { name: "Places" }));
+    await click(rail.getByRole("button", { name: /^Screener/ }));
+    await tick(1000);
+  }
+  expect(host.querySelector("[data-columns]")?.getAttribute("data-columns")).toBe(opts.width === 390 ? "1" : "2");
+  await click(rowOf(opts.held[0]!.from));
 }
 
-async function click(el: Element): Promise<void> {
-  await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await flush();
+const screen = () => within(host!);
+const page = () => within(document.body);
+function rowOf(address: string): HTMLElement {
+  const list = within(screen().getByRole("listbox", { name: copy.title }));
+  const row = list.queryByRole("option", { name: (name) => name.startsWith(`${address}:`) });
+  expect(row, "the sender is waiting in the Screener").toBeTruthy();
+  return row!;
+}
+async function click(el: HTMLElement): Promise<void> {
+  await act(async () => { el.click(); });
+  await tick(50);
 }
 
-/** The card's own line under the bar, or `null` where it says nothing. */
-const cardLine = (): string | null => host!.querySelector(".decide .d-unsub")?.textContent ?? null;
+const cardLine = (): string | null => {
+  const card = screen().queryByRole("region", { name: messages.frame.landmark.reading })
+    ?? screen().queryByRole("dialog", { name: messages.frame.landmark.reading });
+  return (card ? within(card) : screen()).queryByText(/^(Screen out and Spam also (?:send|ask to unsubscribe)|Where .* offers one-click unsubscribe)/)?.textContent ?? null;
+};
+const capsule = (label: RegExp) => within(screen().getByRole("toolbar", { name: copy.place.panel }))
+  .getByRole("button", { name: label });
+function report(): string {
+  const status = host!.querySelector('.fr-report [role="status"]:not([data-leaving])');
+  expect(status, "the filing decision is reported").toBeTruthy();
+  const sentence = status!.cloneNode(true) as HTMLElement;
+  sentence.querySelectorAll("button, kbd").forEach((node) => node.remove());
+  return sentence.textContent ?? "";
+}
+async function screenOut(): Promise<void> {
+  await click(capsule(/^Screen out/));
+  const confirmation = page().queryByRole("dialog", { name: copy.place.unsub.screened });
+  if (confirmation) {
+    await click(within(confirmation).getByRole("button", {
+      name: (name) => name === copy.place.unsub.screened || name === messages.screening.unsubCommitMaybe,
+    }));
+  }
+}
 
-/** The card's capsule whose label is `label` — its key cap stripped. */
-function capsule(label: string): HTMLElement {
-  const b = [...host!.querySelectorAll<HTMLElement>(".decide .d-main")].find((x) => (x.textContent ?? "").replace(/[orcnxy]$/, "").trim() === label);
-  if (!b) throw new Error(`no "${label}" on the card — on screen: ${host!.textContent}`);
-  return b;
+async function expectScreenOutRequest(id: string): Promise<void> {
+  expect(writes, "nothing is sent during Undo").toEqual([]);
+  await tick(COMMIT_MS + 800);
+  expect(writes).toEqual([{
+    path: `/api/screener/${id}`,
+    body: { decision: "no", dest: "ohmail/Screened", scope: "sender", applyRetro: false },
+  }]);
 }
 
 const ONE_CLICK = "news@list.example";
 const NO_OFFER = "person@plain.example";
 
-beforeEach(() => {
-  sent = [];
-  toasts = [];
-  window.localStorage.clear();
-  globalThis.fetch = (async () => new Response("{}", { status: 200 })) as typeof fetch;
-});
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-});
-
 describe.each([1280, 390] as const)("the Screener card at %i says the unsubscribe before the press", (width) => {
-  it("a sender whose held letter offers one-click: the card says it as a fact", async () => {
-    await mount({ held: [{ id: "a1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
-  });
-
-  it("a one-click letter its provider did not confirm: the condition, never the fact — the pass sends only for a confirmed sender", async () => {
-    await mount({ held: [{ id: "a2", from: ONE_CLICK, posture: "one_click", verdict: "unavailable" }], width });
-    expect(cardLine()).toBe(`Where ${ONE_CLICK} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
-  });
-
-  it("every held letter read and none offering it: the condition still stands — later mail and past mail may offer one", async () => {
-    await mount({ held: [{ id: "b1", from: NO_OFFER, posture: "no_header" }, { id: "b2", from: NO_OFFER, posture: "not_one_click" }], width });
-    expect(cardLine()).toBe(`Where ${NO_OFFER} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
-  });
-
-  it("a held letter still unread: the card says it as a condition, never as a promise", async () => {
-    await mount({ held: [{ id: "c1", from: NO_OFFER, posture: "no_header" }, { id: "c2", from: NO_OFFER, posture: "unread" }], width });
-    expect(cardLine()).toBe(`Where ${NO_OFFER} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
-  });
-
-  it("the account's switch off: nothing is said, whatever the sender offers", async () => {
-    await mount({ held: [{ id: "d1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width, autoUnsubscribe: false });
-    expect(cardLine()).toBeNull();
-    expect(capsule("Screen out")).toBeTruthy();
-  });
-
   it("a row past the gate takes the rule path, which asks nothing: no line, and no request named", async () => {
-    await mount({ held: [{ id: "p1", from: ONE_CLICK, posture: "one_click", folder: "INBOX" }], width, pastTheGate: true });
-    expect(capsule("Screen out"), "premise: the card is on screen").toBeTruthy();
+    await mount({ held: [{ id: "p1", from: ONE_CLICK, posture: "one_click", folder: "INBOX" }], width });
+    expect(capsule(/^Screen out/), "premise: the card is on screen").toBeTruthy();
     expect(cardLine()).toBeNull();
-    await click(capsule("Screen out"));
-    expect(toasts.at(-1)!.message).not.toContain("unsubscrib");
+    await screenOut();
+    await tick(COMMIT_MS + 800);
+    expect(writes).toContainEqual({
+      path: "/api/rules",
+      body: { kind: "sender", match: ONE_CLICK, destination: "ohmail/Screened", applyRetro: false },
+    });
+    expect(writes.some(({ path }) => path.startsWith("/api/screener/") || path.endsWith("/unsubscribe"))).toBe(false);
+    expect(report()).not.toContain("unsubscrib");
   });
 });
 
 describe("a claim through a list's address: Screen out files those letters alone and asks nothing", () => {
   const CLAIM = { reason: "impersonation", brand: "PostFinance", domainShared: false, list: true } as const;
-  /** The bar's rule line, the consequence a press has before it is made. */
-  const ruleLine = (): string => host!.querySelector(".decide .d-note")?.textContent ?? "";
+  const genericRuleLine = () => screen().queryByText(/^Becomes a rule/i);
 
   it("a list the person let in: the card says what Screen out files, promises no rule and names no unsubscribe, nor does the press", async () => {
     await mount({ held: [{ id: "l1", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [ONE_CLICK] });
     expect(cardLine()).toBeNull();
-    expect(host!.querySelector("[data-list-claim]")?.textContent)
-      .toBe("Screening out sets aside only the messages that claim to be PostFinance. The list's other mail stays where it is.");
-    expect(ruleLine()).toContain(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`);
-    await click(capsule("Screen out"));
-    expect(toasts.at(-1)!.message)
-      .toBe(`Screened out — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`);
-  });
+    expect(screen().getByText(
+      "Screen out and Spam are the exception here: they set aside only the messages that claim to be PostFinance, and make no rule.",
+    )).toBeTruthy();
+    expect(genericRuleLine()).toBeNull();
+    expect(screen().getByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeTruthy();
+    await click(capsule(/^Screen out/));
+    expect(page().queryByRole("dialog", { name: copy.place.unsub.screened })).toBeNull();
+    expect(report()).toBe(`Screened out — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`);
+    await expectScreenOutRequest("l1");
+    const destinations = [
+      ["Ohbox", "INBOX"], ["News", "ohmail/News"], ["Receipts", "ohmail/Receipts"], ["Spam", "ohmail/Quarantine"],
+    ] as const;
+    for (const [name, dest] of destinations) {
+      await teardownConfirmEnv();
+      vi.unstubAllGlobals();
+      await mount({ held: [{ id: "l1", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [ONE_CLICK] });
+      expect(screen().getByText(`Ohbox, News and Receipts become a rule — future mail from ${ONE_CLICK} files automatically. Screen out and Spam write no rule here.`)).toBeTruthy();
+      await click(capsule(new RegExp(`^${name}$`)));
+      expect(page().queryByRole("dialog", { name: /unsubscribe/i })).toBeNull();
+      expect(writes).toEqual([]);
+      const spam = name === "Spam";
+      expect(report()).toBe(spam
+        ? `Marked spam — only the messages from ${ONE_CLICK} that claim to be PostFinance. No rule was made, so the list's other mail stays where it is.`
+        : `${name} — filed. Future mail from ${ONE_CLICK} files there automatically.`);
+      await tick(COMMIT_MS + 800);
+      expect(writes).toEqual([{
+        path: "/api/screener/l1",
+        body: { decision: spam ? "no" : "yes", dest, scope: spam ? "confirmed_sender" : "sender", applyRetro: false,
+          ...(spam ? { confirmedIds: ["l1"] } : {}) },
+      }]);
+    }
+  }, 30_000);
 
   it("CONTROL: a list the person never let in is screened out as an address: the rule, the unsubscribe, and no list-claim line", async () => {
     await mount({ held: [{ id: "l3", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: CLAIM }], width: 1280, claimsOnly: [] });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
-    expect(host!.querySelector("[data-list-claim]")).toBeNull();
-    expect(ruleLine()).toContain(`Becomes a rule — future mail from ${ONE_CLICK} files automatically.`);
-    await click(capsule("Screen out"));
-    expect(toasts.at(-1)!.message).toContain(`Screened out — ${ONE_CLICK}.`);
+    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`);
+    expect(screen().queryByText(/they set aside only the messages that claim to be/)).toBeNull();
+    expect(genericRuleLine()).toBeNull();
+    await click(capsule(/^Screen out/));
+    const confirmation = within(page().getByRole("dialog", { name: copy.place.unsub.screened }));
+    expect(confirmation.getByText("Once sent, it cannot be undone.")).toBeTruthy();
+    expect(confirmation.getByText(
+      `Screen out and unsubscribe. ${ONE_CLICK} is still waiting. Later mail from them follows this rule. Confirming also sends them a one-click unsubscribe request for the waiting mail.`,
+    )).toBeTruthy();
+    expect(writes, "nothing is sent before Yes").toEqual([]);
+    await click(confirmation.getByRole("button", { name: copy.place.unsub.screened }));
+    expect(report()).toContain(`Screened out — ${ONE_CLICK}.`);
+    await tick(COMMIT_MS + 800);
+    expect(writes).toEqual([{
+      path: "/api/screener/l3",
+      body: {
+        decision: "no", dest: "ohmail/Screened", scope: "sender", applyRetro: false,
+        unsubscribeIds: ["l3"],
+      },
+    }]);
   });
 
   it("CONTROL: the same claim at an address no list posts as says the unsubscribe, and no list line", async () => {
     await mount({ held: [{ id: "l2", from: ONE_CLICK, posture: "one_click", verdict: "pass", check: { ...CLAIM, list: false } }], width: 1280 });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
-    expect(host!.querySelector("[data-list-claim]")).toBeNull();
-  });
-});
-
-describe("the press, and how far its Undo reaches", () => {
-  it("Undo inside the window stops the decision and the request: nothing reaches the wire", async () => {
-    const { latest } = await mount({ held: [{ id: "e1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
-    await click(capsule("Screen out"));
-    const said = toasts.at(-1)!;
-    expect(said.message).toContain("Undo also stops their one-click unsubscribe request");
-    expect(said.message).toContain("cannot be taken back");
-    expect(said.undo, "the toast carries no Undo").toBe(true);
-    await act(async () => { said.onAction!(); });
-    await act(async () => { latest().flush(); });
-    await flush();
-    expect(sent.filter((m) => m.kind === "screener_decide")).toHaveLength(0);
-  });
-
-  it("left alone, the window closes and the screen-out is sent once — the request the server then makes", async () => {
-    const { latest } = await mount({ held: [{ id: "f1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
-    await click(capsule("Screen out"));
-    await act(async () => { latest().flush(); });
-    await flush();
-    const decides = sent.filter((m) => m.kind === "screener_decide");
-    expect(decides).toHaveLength(1);
-    expect(decides[0]).toMatchObject({ decision: "no" });
-  });
-
-  it("a sender whose held letter offers none: the toast still names the request as the sender-level condition", async () => {
-    await mount({ held: [{ id: "g1", from: NO_OFFER, posture: "no_header" }], width: 390 });
-    await click(capsule("Screen out"));
-    expect(toasts.at(-1)!.message).toContain("Screened out");
-    expect(toasts.at(-1)!.message).toContain("Where they offer one-click unsubscribe, ohmail asks to unsubscribe you once Undo is gone, and again for their later mail");
-  });
-});
-
-/**
- * WHERE NO MAILBOX'S PROVIDER CAN CONFIRM A SENDER (every host but Gmail's and Microsoft's), the
- * server refuses every automatic request, so the card, the bulk strip and the toast promise none —
- * the shell's own door over the account's mailbox rows (`autoUnsubscribeDoor`, `autoUnsubscribeConfirms`).
- */
-describe("an account whose mailboxes' providers ohmail cannot read says no unsubscribe before or after the press", () => {
-  const discloses = (providerConfirms: boolean): boolean => autoUnsubscribeDoor({
-    demo: false, known: true, on: true, standalone: false,
-    confirms: autoUnsubscribeConfirms([{ status: "connected", providerConfirms }]),
-  }).discloses;
-
-  it("nothing on the card, the bulk strip or the toast, over a one-click letter", async () => {
-    await mount({ held: [{ id: "m1", from: ONE_CLICK, posture: "one_click", verdict: "unavailable" }], width: 1280, autoUnsubscribe: discloses(false) });
-    expect(capsule("Screen out"), "premise: the card is on screen").toBeTruthy();
-    expect(cardLine()).toBeNull();
-    expect(host!.querySelector(".scn-bulk-unsub")).toBeNull();
-    await click(capsule("Screen out"));
-    expect(toasts.at(-1)!.message).toContain("Screened out");
-    expect(toasts.at(-1)!.message).not.toContain("unsubscrib");
-  });
-
-  it("the control: a Gmail mailbox's confirmed one-click letter is said as a fact", async () => {
-    await mount({ held: [{ id: "m2", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280, autoUnsubscribe: discloses(true) });
-    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
+    expect(cardLine()).toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`);
+    expect(screen().queryByText(/they set aside only the messages that claim to be/)).toBeNull();
   });
 });
 
 describe("the row's menu, its Accept and the bulk strip say it before the press too", () => {
-  const slot = (address: string): HTMLElement => {
-    const found = [...host!.querySelectorAll<HTMLElement>(".row-slot")].find((s) =>
-      (s.querySelector(".row")?.textContent ?? "").includes(address));
-    if (!found) throw new Error(`no row for ${address}`);
-    return found.querySelector<HTMLElement>(".row-actions")!;
-  };
+  const slot = (address: string) => within(rowOf(address).parentElement!);
+
+  async function menuFor(address: string) {
+    await click(slot(address).getByRole("button", { name: copy.place.choose }));
+    return within(page().getByRole("menu", { name: copy.rowMoreAria }));
+  }
 
   it("the menu that offers Screen out and Spam names the request: a fact for a one-click sender, the condition for one offering none", async () => {
     await mount({
       held: [{ id: "h1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }, { id: "h2", from: NO_OFFER, posture: "no_header" }],
       width: 1280,
     });
-    await click(slot(ONE_CLICK).querySelector(".scn-act-more")!);
-    expect(slot(ONE_CLICK).querySelector(".scn-act-unsub")?.textContent)
-      .toBe(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
-    await click(slot(ONE_CLICK).querySelector(".scn-act-more")!);
-    await click(slot(NO_OFFER).querySelector(".scn-act-more")!);
-    expect(slot(NO_OFFER).querySelector(".scn-act-dest"), "positive control: the menu is open").not.toBeNull();
-    expect(slot(NO_OFFER).querySelector(".scn-act-unsub")?.textContent).toBe(`Where ${NO_OFFER} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
+    const oneClick = await menuFor(ONE_CLICK);
+    expect(oneClick.getByText(`Screen out and Spam also send ${ONE_CLICK} a one-click unsubscribe request for the waiting mail.`)).toBeTruthy();
+    await act(async () => {
+      oneClick.getByRole("menuitem", { name: copy.pileScreened }).dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape", bubbles: true, cancelable: true,
+      }));
+    });
+    await tick(50);
+    const noOffer = await menuFor(NO_OFFER);
+    expect(noOffer.getByRole("menuitem", { name: copy.pileScreened })).toBeTruthy();
+    expect(noOffer.getByText(`Screen out and Spam also ask to unsubscribe you if the waiting mail from ${NO_OFFER} offers one-click unsubscribe.`)).toBeTruthy();
   });
 
   it("an Accept that screens out says it unsubscribes; an Accept that keeps says nothing", async () => {
     await mount({
       held: [{ id: "i1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }, { id: "i2", from: "keep@shop.example", posture: "one_click", verdict: "pass" }],
       width: 1280,
-      suggestions: { [ONE_CLICK]: "screened", "keep@shop.example": "receipts" },
+      suggestions: { [ONE_CLICK]: "ohmail/Screened", "keep@shop.example": "ohmail/Receipts" },
     });
-    expect(slot(ONE_CLICK).querySelector(".scn-act-yes")?.textContent).toBe("Accept and unsubscribe");
-    expect(slot("keep@shop.example").querySelector(".scn-act-yes")?.textContent).toBe("Accept");
-  });
-
-  it("the bulk strip says it for any waiting sender, and not with the switch off", async () => {
-    await mount({ held: [{ id: "j1", from: ONE_CLICK, posture: "one_click", verdict: "pass" }], width: 1280 });
-    expect(host!.querySelector(".scn-bulk-unsub")?.textContent)
-      .toBe("Where a sender offers one-click unsubscribe, Spam and Screen out here also ask to unsubscribe you, now and for their later mail.");
-    await act(async () => { root!.unmount(); });
-    host!.remove();
-    root = null;
-    await mount({ held: [{ id: "k1", from: NO_OFFER, posture: "no_header" }], width: 1280, autoUnsubscribe: false });
-    expect(host!.textContent, "positive control: the bulk strip is on screen").toContain("Mark all spam");
-    expect(host!.querySelector(".scn-bulk-unsub")).toBeNull();
+    expect(slot(ONE_CLICK).getByRole("button", { name: copy.place.unsub.screened })).toBeTruthy();
+    const keep = [...heldById.values()][1]!.from;
+    expect(slot(keep).getByRole("button", { name: "Receipts" })).toBeTruthy();
+    expect(slot(keep).queryByRole("button", { name: /unsubscribe/i })).toBeNull();
   });
 });

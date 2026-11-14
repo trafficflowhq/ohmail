@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { useFormatter } from "next-intl";
+import { devicesOf, type OhmailEngine } from "@ohmail/client-engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine";
+import { showDevicesListed } from "@ohmail/app-logic/notices/use-notices";
 import type { Answer, DeviceKind, DeviceName, DeviceSession, DevicesDoor } from "@ohmail/app/account";
 import { ApiError, devices as devicesApi, pair, type DeviceDTO } from "../../api-client";
 import { ALLOWED_API_ORIGINS } from "../../api-origin";
@@ -81,7 +84,7 @@ function pairOrigin(): string {
  * The pairing link is assembled here, once, from the one answer that carries its token. The token rides the
  * fragment, which no request carries; it is in no log line and no stored key, and only the link leaves this file.
  */
-export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid): DevicesDoor {
+export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid, expectedOwner?: string | null, engine?: OhmailEngine | null): DevicesDoor {
   const tried = async <T>(call: () => Promise<T>): Promise<Answer<T>> => {
     try {
       return { ok: true, value: await call() };
@@ -91,13 +94,15 @@ export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid): D
   };
   return {
     async read() {
+      const at = engine ? devicesOf(engine.read()) : null;
       try {
-        const [{ items: sessions }, { items: made }] = await Promise.all([devicesApi.list(), pair.list()]);
+        const [{ items: sessions }, { items: made }] = await Promise.all([devicesApi.list(expectedOwner), pair.list(expectedOwner)]);
         // Live pairing codes only: spent and expired rows are history, and invites are the Invites pane's.
         const live = made.filter((code) => code.grant === "device-pair" && code.status === "live");
         return {
           ok: true,
           value: {
+            ...(engine && at ? { onShown: () => showDevicesListed(engine, at) } : {}),
             sessions: sessions.map((device) => sessionOf(device, said)),
             codes: live.map((code) => ({
               id: code.id,
@@ -118,13 +123,13 @@ export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid): D
     },
     add: (name) =>
       tried(async () => {
-        const made = await pair.mintDevice(name ? { label: name } : {});
+        const made = await pair.mintDevice(name ? { label: name } : {}, expectedOwner);
         return { id: made.id, link: `${pairOrigin()}/pair#${made.token}`, name: made.label };
       }),
     revokeCode: (id) =>
       tried(async () => {
         try {
-          await pair.revoke(id);
+          await pair.revoke(id, expectedOwner);
         } catch (err) {
           // Spent, expired or revoked elsewhere: the row is leaving the list either way.
           if (!(err instanceof ApiError && err.status === 404)) throw err;
@@ -133,10 +138,10 @@ export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid): D
       }),
     remove: (id) =>
       tried(async () => {
-        await devicesApi.revoke(id);
+        await devicesApi.revoke(id, expectedOwner);
         return null;
       }),
-    signOutWeb: () => tried(async () => ({ ended: (await devicesApi.revokeWebSessions()).revoked })),
+    signOutWeb: () => tried(async () => ({ ended: (await devicesApi.revokeWebSessions(expectedOwner)).revoked })),
     async copy(text) {
       try {
         await navigator.clipboard.writeText(text);
@@ -149,7 +154,8 @@ export function devicesDoor(say: (err: unknown) => string, said: DevicesSaid): D
 }
 
 /** The web's Devices door, its refusals, days and times said in the reader's language. */
-export function useDevicesDoor(): DevicesDoor {
+export function useDevicesDoor(expectedOwner?: string | null): DevicesDoor {
+  const engine = useEngineOrNull();
   const say = useRefusalSentence();
   const format = useFormatter();
   // The door stays one door whatever formatter a draw hands in: a new door would ask both lists again.
@@ -162,7 +168,28 @@ export function useDevicesDoor(): DevicesDoor {
       devicesDoor(say, {
         day: (iso) => formatter.current.dateTime(new Date(iso), { dateStyle: "medium" }),
         clock: (iso) => formatter.current.dateTime(new Date(iso), { timeStyle: "short" }),
-      }),
-    [say],
+      }, expectedOwner, engine),
+    [say, expectedOwner, engine],
   );
+}
+
+
+export function useDevicesWatch(): ((refresh: () => void) => () => void) | undefined {
+  const engine = useEngineOrNull();
+  return useMemo(() => {
+    if (!engine) return undefined;
+    return (refresh: () => void) => {
+      const numbers = () => {
+        const count = devicesOf(engine.read());
+        return count ? `${count.made}/${count.revoked}` : "";
+      };
+      let last = numbers();
+      return engine.subscribe(() => {
+        const now = numbers();
+        if (last === now) return;
+        last = now;
+        refresh();
+      });
+    };
+  }, [engine]);
 }

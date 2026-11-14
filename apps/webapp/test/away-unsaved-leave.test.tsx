@@ -3,55 +3,32 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { fireEvent, getByRole, getByText, queryByRole, queryByText, within } from "@testing-library/react";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
+import { bindApiOwner, type AwayResponderSaveWire, type AwayResponderWire } from "../app/api-client";
 import messages from "../messages/en.json";
-
-import { SettingsView } from "../app/views/SettingsView";
-import { AwayResponderRow, type AwayTransport } from "../app/shell/AwayResponderRow";
-import type { AwayResponderSaveWire, AwayResponderWire } from "../app/api-client";
-import { go, goSettings, useHashRoute } from "../app/shell/routing";
 
 /**
  * THE AWAY SWITCH SAYS WHAT IS SAVED.
  *
  * Pressing the switch drew "On. Replies to new mail, …" while nothing was stored, Save sat below
  * the fold, and leaving the pane dropped the change without a word: somebody who flipped it on
- * before a holiday was told replies would go out and none did. Measured here through the real
- * settings view, the real row and the shell's own hash routing:
+ * before a holiday was told replies would go out and none did. Measured through the signed-in Settings pane and browser navigation:
  *  · the status line states the SAVED row; an unsaved change has its own sentence and its own Save;
  *  · leaving with one asks — through the rail's verb, a settings pane switch, and Back/a link —
  *    and Discard leaves without a write, Keep editing stays with the edit;
  *  · controls: a save still writes the message unchanged, and switching off says off once saved.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
-
-let host: HTMLDivElement;
-let root: Root;
+let host: HTMLElement;
 let puts: Array<Omit<AwayResponderWire, "updatedAt">>;
 
 const A = messages.away;
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-};
-
-/** The shell's shape: the route decides whether the settings view is on screen at all. */
-function Shell({ transport }: { transport: AwayTransport }) {
-  const route = useHashRoute();
-  if (route.view !== "settings") return h("p", { className: "elsewhere" }, route.view);
-  return h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {},
-    pane: route.settingsPane ?? undefined,
-    onSelectPane: goSettings,
-    screeningSection: h("p", null, "posture"),
-    awaySection: h(AwayResponderRow as React.FunctionComponent<{ transport: AwayTransport }>, { transport }),
-  });
-}
 
 async function mount(row: Partial<AwayResponderSaveWire> = {}, url = "/mailbox#/settings/away"): Promise<void> {
   const stored: AwayResponderSaveWire = {
@@ -60,47 +37,59 @@ async function mount(row: Partial<AwayResponderSaveWire> = {}, url = "/mailbox#/
     ...row,
   };
   puts = [];
-  const transport: AwayTransport = {
-    state: async () => stored,
-    save: async (next) => { puts.push(next); Object.assign(stored, next, { updatedAt: "t1" }); return { ...stored }; },
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (new URL(String(input), location.origin).pathname !== "/api/away-responder") {
+      return fetch(input, init);
+    }
+    if (init?.method === "PUT") {
+      const next = JSON.parse(String(init.body)) as Omit<AwayResponderWire, "updatedAt">;
+      puts.push(next);
+      Object.assign(stored, next, { updatedAt: "t1" });
+    }
+    return Response.json(stored);
   };
   window.history.replaceState(null, "", url);
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(ThemeProvider, null, h(ToastHost, null, h(Shell, { transport }))),
-    }));
-  });
-  await settle();
+  host = await mountCloudShell();
+  await tick(2500);
 }
 
-const awaySwitch = (): Element => {
-  const found = [...host.querySelectorAll("[role=switch], input[type=checkbox]")]
-    .filter((el) => el.getAttribute("aria-label") === A.title);
-  if (found.length !== 1) throw new Error(`away switch: expected 1, found ${found.length}`);
-  return found[0]!;
+const awaySwitch = () => getByRole(host, "switch", { name: A.title });
+const pane = () => getByRole(host, "region", { name: A.title });
+const menu = () => within(getByRole(host, "navigation", { name: messages.settings.navAria }));
+const button = (name: string) => getByRole(pane(), "button", { name });
+const save = () => {
+  const unsaved = getByText(pane(), (text) => text === A.unsavedStillOff || text === A.unsavedStillOn);
+  const announcement = unsaved.closest<HTMLElement>("[aria-live]");
+  if (!announcement) throw new Error("the unsaved announcement is missing");
+  return within(announcement).getByRole("button", { name: A.save });
 };
-const flip = async (): Promise<void> => {
-  await act(async () => { awaySwitch().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await settle();
+const press = async (el: Element) => {
+  await act(() => { fireEvent.click(el); });
+  await tick(100);
 };
-const buttons = (label: string): HTMLButtonElement[] =>
-  [...host.querySelectorAll("button")].filter((b) => b.textContent?.trim() === label) as HTMLButtonElement[];
-const press = async (el: Element): Promise<void> => {
-  await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await settle();
-};
-const text = (): string => host.textContent ?? "";
-const question = (): Element | null => host.querySelector("[role=alertdialog]");
-const onSettings = (): boolean => host.querySelector(".elsewhere") === null;
+const flip = () => press(awaySwitch());
+const text = () => host.textContent ?? "";
+const question = () => queryByText(host, (text) => text.endsWith(A.leaveAsk));
+const onSettings = () =>
+  queryByRole(host, "navigation", { name: messages.settings.navAria }) !== null ||
+  queryByRole(host, "region", { name: messages.settings.title }) !== null;
+const goOhbox = () => press(getByRole(within(host).getByRole("navigation", { name: "Places" }), "button", { name: /^Ohbox/ }));
 
-beforeEach(() => { window.history.replaceState(null, "", "/mailbox"); });
+beforeEach(() => {
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  localStorage.clear();
+  installConfirmEnv();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+});
 afterEach(async () => {
-  await act(() => root.unmount());
-  host.remove();
+  await teardownConfirmEnv();
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
   window.history.replaceState(null, "", "/");
 });
 
@@ -113,8 +102,7 @@ describe("the status line states the saved responder", () => {
     expect(text()).toContain(A.off);
     expect(text()).toContain(A.unsavedStillOff);
     /* The Save beside the sentence, in the block under the switch. */
-    const block = host.querySelector(".away-unsaved");
-    expect(block?.textContent).toContain(A.save);
+    expect(save().textContent).toContain(A.save);
     expect(puts).toHaveLength(0);
   });
 
@@ -125,14 +113,14 @@ describe("the status line states the saved responder", () => {
     expect(text()).not.toContain("On until");
     await flip();
     expect(text()).not.toContain("On until");
-    await press(host.querySelector(".away-unsaved button")!);
+    await press(save());
     expect(text()).toContain("On until ");
   });
 
   it("CONTROL: the Save beside it writes the row, the message unchanged, and the line says On", async () => {
     await mount();
     await flip();
-    await press(host.querySelector(".away-unsaved button")!);
+    await press(save());
     expect(puts).toHaveLength(1);
     expect(puts[0]!.enabled).toBe(true);
     expect(puts[0]!.body).toBe("Back Monday");
@@ -140,8 +128,7 @@ describe("the status line states the saved responder", () => {
     expect(text()).not.toContain(A.unsavedStillOff);
     expect(text()).toContain(A.saved);
     /* Nothing unsaved, nothing to ask: leaving goes. */
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings()).toBe(false);
   });
 
@@ -151,7 +138,7 @@ describe("the status line states the saved responder", () => {
     await flip();
     expect(text()).toContain(A.on);
     expect(text()).toContain(A.unsavedStillOn);
-    await press(buttons(A.save)[0]!);
+    await press(save());
     expect(puts.at(-1)!.enabled).toBe(false);
     expect(text()).toContain(A.off);
     expect(text()).not.toContain(A.on);
@@ -163,21 +150,19 @@ describe("leaving with an unsaved change asks", () => {
     await mount();
     await flip();
     const depth = window.history.length;
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings(), "the pane was left without a question").toBe(true);
     /* Asked BEFORE the hash is written: no history entry for a leave that did not happen. */
     expect(window.history.length).toBe(depth);
     expect(window.location.hash).toBe("#/settings/away");
-    expect(question()?.getAttribute("aria-label")).toBe(A.leaveAsk);
-    await press(buttons(A.leaveKeep)[0]!);
+    expect(question()?.textContent).toContain(A.leaveAsk);
+    await press(button(A.leaveKeep));
     expect(question()).toBeNull();
     expect(onSettings()).toBe(true);
     expect(awaySwitch().getAttribute("aria-checked") ?? String((awaySwitch() as HTMLInputElement).checked)).toBe("true");
 
-    await act(async () => { go("ohbox"); });
-    await settle();
-    await press(buttons(A.leaveDiscard)[0]!);
+    await goOhbox();
+    await press(button(A.leaveDiscard));
     expect(onSettings()).toBe(false);
     expect(window.location.hash).toBe("#/ohbox");
     expect(puts).toHaveLength(0);
@@ -187,11 +172,11 @@ describe("leaving with an unsaved change asks", () => {
     await mount();
     await flip();
     await act(async () => { window.location.hash = "#/screener"; });
-    await settle();
+    await tick(100);
     expect(onSettings()).toBe(true);
     expect(window.location.hash).toBe("#/settings/away");
     expect(question()).not.toBeNull();
-    await press(buttons(A.leaveDiscard)[0]!);
+    await press(button(A.leaveDiscard));
     expect(window.location.hash).toBe("#/screener");
     expect(onSettings()).toBe(false);
     expect(puts).toHaveLength(0);
@@ -200,7 +185,7 @@ describe("leaving with an unsaved change asks", () => {
   it("another settings pane is a leave as well", async () => {
     await mount();
     await flip();
-    const entry = [...host.querySelectorAll(".set-nav button")].find((b) => b.textContent?.trim() === "Screener");
+    const entry = menu().getByRole("button", { name: messages.settings.screener });
     const depth = window.history.length;
     await press(entry!);
     expect(window.location.hash).toBe("#/settings/away");
@@ -218,62 +203,56 @@ describe("leaving with an unsaved change asks", () => {
     expect(unload()).toBe(false);
     await flip();
     expect(unload()).toBe(true);
-    await press(host.querySelector(".away-unsaved button")!);
+    await press(save());
     expect(unload()).toBe(false);
   });
 
   it("CONTROL: a message typed and deleted over an empty one is no change", async () => {
     await mount({ body: null });
-    const field = host.querySelector("#away-body") as HTMLTextAreaElement;
+    const field = getByRole(host, "textbox", { name: A.bodyLabel });
     const type = async (v: string): Promise<void> => {
-      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-      await act(async () => { set.call(field, v); field.dispatchEvent(new Event("input", { bubbles: true })); });
-      await settle();
+      await act(() => { fireEvent.change(field, { target: { value: v } }); });
+      await tick(100);
     };
     await type("x");
     expect(text()).toContain(A.unsavedStillOff);
     await type("");
     expect(text()).not.toContain(A.unsavedStillOff);
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings()).toBe(false);
   });
 
   it("the pane's own nav entry under a bare #/settings is no leave; another pane still asks", async () => {
-    await mount({}, "/mailbox?settings=away#/settings");
+    const depth = window.history.length;
+    await mount({}, "/mailbox?settings=away&source=bookmark#/settings");
+    expect(window.location.hash).toBe("#/settings/away");
+    expect(window.location.search).toBe("?source=bookmark");
+    expect(window.history.length).toBe(depth);
     await flip();
-    const entry = (label: string) => [...host.querySelectorAll(".set-nav button")].find((b) => b.textContent?.trim() === label)!;
-    await press(entry(A.title));
+    await press(menu().getByRole("button", { name: A.title }));
     expect(question()).toBeNull();
     expect(text()).toContain(A.unsavedStillOff);
-    await press(entry("Screener"));
+    await press(menu().getByRole("button", { name: messages.settings.screener }));
     expect(question()).not.toBeNull();
   });
 
   it("CONTROL: a pile ticked and unticked over an old spelling or an inert Screener pile is no change", async () => {
     await mount({ piles: ["INBOX", "ohmail/Reads", "ohmail/Screener"] as never });
-    const box = (v: string) => host.querySelector(`input[name="away-piles"][value="${v}"]`) as HTMLInputElement;
-    await press(box("ohmail/Receipts"));
+    await press(button(A.pileReceipts));
     expect(text()).toContain(A.unsavedStillOff);
-    await press(box("ohmail/Receipts"));
+    await press(button(A.pileReceipts));
     expect(text()).not.toContain(A.unsavedStillOff);
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings()).toBe(false);
   });
 
   it("every verb that writes the hash asks the hold first", () => {
-    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../app/shell/routing.ts"), "utf8");
-    for (const verb of ["go", "goTag", "goFolder", "goAddress", "goScreener", "goTriage", "goSettings", "goFirstRun"]) {
-      const body = src.slice(src.indexOf(`export function ${verb}(`));
-      const end = body.indexOf("\n}\n");
-      const decl = body.slice(0, end);
-      // The write is the hash itself, or `navigate`, which writes it and tells the route at once.
-      expect(decl, verb).toMatch(/if \(heldBefore\(next, \(\) => \w+\([^)]*\)\)\) return;\n[\s\S]*(?:window\.location\.hash = next|navigate\(next\));/);
-    }
-    const navigate = src.slice(src.indexOf("function navigate("));
-    expect(navigate.slice(0, navigate.indexOf("\n}\n")), "navigate no longer writes the hash first")
-      .toMatch(/^function navigate\(next: string\): void \{\n\s*window\.location\.hash = next;/);
+    const address = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../packages/app/src/host/browser/address.ts"), "utf8");
+    const writer = address.slice(address.indexOf("  function write("), address.indexOf("\n  return {\n    read,"));
+    expect(writer, "the frame's address").toMatch(/if \(heldBefore\(next, \(\) => write\(next, how, mark\)\)\) return;\n[\s\S]*writeFragment\(window, position, next, how, mark\);/);
+    const fragment = address.slice(address.indexOf("function writeFragment("), address.indexOf("function subscribeToFragment("));
+    expect(fragment, "the guarded writer pushes or replaces the hash").toContain("window.location.hash = next;");
+    expect(fragment).toMatch(/window\.history\.replaceState\([^;]+, "", next\)/);
   });
 
   it("CONTROL: an edit put back by hand is no change — nothing asks", async () => {
@@ -281,8 +260,7 @@ describe("leaving with an unsaved change asks", () => {
     await flip();
     await flip();
     expect(text()).not.toContain(A.unsavedStillOff);
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings()).toBe(false);
   });
 });

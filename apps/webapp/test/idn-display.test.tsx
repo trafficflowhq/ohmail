@@ -29,8 +29,9 @@ import { settleFirstPaint } from "./_first-paint.js";
  *  · **The decoder**, pinned against `node:url`'s own `domainToUnicode` rather than against
  *    hand-written expectations — the reference implementation is available in Node and absent in
  *    the browser, which is the entire reason the decoder exists.
- *  · **The seams**, RENDERED: the From selector, a stream row and the Settings row, mounted from
- *    the shipped components. And the invariant in the other direction — the mutation a send
+ *  · **The seams**, RENDERED: the From selector (Write's From line, over the new shell's door) and
+ *    the Settings row, mounted from the shipped components (the stream row: `idn-display-list-row`).
+ *    And the invariant in the other direction — the mutation a send
  *    dispatches must carry the STORED form, byte for byte. A helper that decoded one layer too
  *    early would pass every unit test above and corrupt an envelope.
  */
@@ -209,33 +210,40 @@ const QUIET: MailState = {
 
 const listed: MailboxDTO[] = [];
 
-vi.mock("../app/api-client", () => ({
-  apiConfigured: () => true,
-  // The Screener's refusal copy reads this constant to give an unreachable server its own
-  // sentence; the value is asserted against the real export in `owner-marker-three-states`.
-  OFFLINE_CODE: "network_unreachable",
-  assertPasskey: async () => ({}),
-  webauthnAvailable: () => false,
-  codeOf: (e: unknown) => (e as { code?: string }).code ?? null,
-  messageOf: (e: unknown) => String(e),
-  auth: {
-    session: async () => ({ user: { email: "owner@example.test", emailVerified: true }, scope: "full" }),
-  },
-  billing: {
-    subscription: async () => ({
-      subscription: {
-        plan: "solo", status: "active", mailboxLimit: 5, monthlyCredits: 500,
-        currentPeriodEnd: null, cancelAtPeriodEnd: false, graceUntil: null,
-      },
-      balance: 0,
-      plans: {},
-      entitlements: {
-        mailboxLimit: 5, canAddMailbox: true, aiEnabled: false, syncEnabled: true, reason: "active",
-      },
-    }),
-  },
-  mailboxes: { list: async () => ({ items: listed }), create: async () => listed[0]!, resync: async () => undefined },
-}));
+vi.mock("../app/api-client", async (importOriginal) => {
+  // The rendered shell reaches exports this test never stubs (for example `boundApiOwner`, read
+  // when the page wires its connect and mailboxes calls), so keep the real module underneath and
+  // override only the pieces this test drives.
+  const actual = await importOriginal<typeof import("../app/api-client")>();
+  return {
+    ...actual,
+    apiConfigured: () => true,
+    // The Screener's refusal copy reads this constant to give an unreachable server its own
+    // sentence; the value is asserted against the real export in `owner-marker-three-states`.
+    OFFLINE_CODE: "network_unreachable",
+    assertPasskey: async () => ({}),
+    webauthnAvailable: () => false,
+    codeOf: (e: unknown) => (e as { code?: string }).code ?? null,
+    messageOf: (e: unknown) => String(e),
+    auth: {
+      session: async () => ({ user: { email: "owner@example.test", emailVerified: true }, scope: "full" }),
+    },
+    billing: {
+      subscription: async () => ({
+        subscription: {
+          plan: "solo", status: "active", mailboxLimit: 5, monthlyCredits: 500,
+          currentPeriodEnd: null, cancelAtPeriodEnd: false, graceUntil: null,
+        },
+        balance: 0,
+        plans: {},
+        entitlements: {
+          mailboxLimit: 5, canAddMailbox: true, aiEnabled: false, syncEnabled: true, reason: "active",
+        },
+      }),
+    },
+    mailboxes: { list: async () => ({ items: listed }), create: async () => listed[0]!, resync: async () => undefined },
+  };
+});
 
 /**
  * The mailbox facts, as `useMailState()` answers them.
@@ -248,14 +256,24 @@ vi.mock("../app/api-client", () => ({
  */
 const seen: { facts: MailboxFacts[] | null } = { facts: null };
 
-vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
-  useMailState: () => ({ state: QUIET, mailboxes: seen.facts, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
-}));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async (importOriginal) => {
+  // The From line reads `MailStateContext` straight out of this module, so the stub keeps the real
+  // exports underneath and overrides only the hook this test drives.
+  const actual = await importOriginal<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>();
+  return {
+    ...actual,
+    useMailState: () => ({ state: QUIET, mailboxes: seen.facts, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
+  };
+});
 // `AppShell` mounts the provider itself, so the stub has to supply it as well as the hook: the provider
 // stands in a file of its own, and the real one would ask the stubbed module for the binding it makes.
-vi.mock("@ohmail/app/mail-state", () => ({
-  MailStateProvider: ({ children }: { children?: unknown }) => children,
-}));
+vi.mock("@ohmail/app/mail-state", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ohmail/app/mail-state")>();
+  return {
+    ...actual,
+    MailStateProvider: ({ children }: { children?: unknown }) => children,
+  };
+});
 
 beforeEach(() => {
   dispatched = [];
@@ -345,14 +363,28 @@ async function setValue(el: HTMLElement, proto: object, value: string, event: st
   });
 }
 
+/** Write's letter, by its landmark: the region named for a new message. */
+const letter = (): HTMLElement | null => host!.querySelector<HTMLElement>('[role="region"][aria-label="New message"]');
+/** Write's From line, by the name its chooser carries ("From <address>: choose another address"). */
+const fromChooser = (): HTMLButtonElement | null =>
+  [...(letter()?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((b) => (b.getAttribute("aria-label") ?? "").startsWith("From ")) ?? null;
+/** The From line's value where there is nothing to choose: the line the kit marks as the From line, its label aside. */
+const fromWords = (): string | null => {
+  const line = letter()?.querySelector<HTMLElement>('[data-line="from"]');
+  return line ? [...line.children].filter((c) => c.tagName !== "B").map((c) => c.textContent ?? "").join("") : null;
+};
+
 describe("ACCEPTANCE: the compose From selector", () => {
   it("names the mailbox the way its owner wrote it, not in punycode", async () => {
     await mountShell([fact({}), fact({ id: "mb2", address: "other@example.test", createdAt: "2025-03-02T00:00:00.000Z" })]);
     await goCompose();
 
-    const control = host!.querySelector<HTMLElement>("#compose-from");
+    const control = fromChooser();
     expect(control, "compose rendered no From control at all").not.toBeNull();
-    const texts = [...host!.querySelectorAll<HTMLOptionElement>("#compose-from option")].map((o) => o.textContent);
+    await act(async () => { control!.click(); });
+    const menu = document.querySelector<HTMLElement>('[role="menu"][aria-label="From"]');
+    const texts = [...(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])].map((o) => o.textContent);
     expect(texts).toContain(SHOWN);
     expect(texts.join("|"), "the punycode form is still on screen").not.toContain("xn--");
   });
@@ -360,20 +392,20 @@ describe("ACCEPTANCE: the compose From selector", () => {
   it("states a single IDN mailbox readably, with no control to choose from", async () => {
     await mountShell([fact({})]);
     await goCompose();
-    expect(host!.querySelector<HTMLElement>("#compose-from")!.textContent).toBe(SHOWN);
+    expect(fromWords()).toBe(SHOWN);
   });
 
   it("SENDS THE STORED FORM — the decode never reaches the wire", async () => {
     await mountShell([fact({})]);
     await goCompose();
 
-    const to = host!.querySelector<HTMLInputElement>("#compose-to")!;
+    const to = letter()!.querySelector<HTMLInputElement>('input[aria-label="To"]')!;
     // Typed exactly as a mailbox stores it: the recipient field's content IS the wire value and is
     // deliberately not decoded, so what the user typed is what leaves.
     await setValue(to, window.HTMLInputElement.prototype, `nora@${ACE}`, "input");
-    await act(async () => { typeInto(host!.querySelector<HTMLElement>(".compose-editor .rte-surface")!, "Hallo."); });
+    await act(async () => { typeInto(letter()!.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]')!, "Hallo."); });
 
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
+    const send = [...letter()!.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Send or discard"] button')]
       .find((b) => buttonLabel(b) === "Send")!;
     expect(send.disabled, "Send stayed locked with a recipient and a body").toBe(false);
     await act(async () => { send.click(); });
@@ -388,38 +420,8 @@ describe("ACCEPTANCE: the compose From selector", () => {
   });
 });
 
-describe("ACCEPTANCE: a list row", () => {
-  it("prints the sender's readable address, and keeps the hue keyed on the stored one", async () => {
-    const { StreamCardMemo } = await import("../app/shell/StreamCardMemo.js");
-    const m = {
-      id: "m1", accountId: "a", mailboxId: "mb1", threadId: null, messageIdHeader: null,
-      subject: "Rechnung", from: { name: "Sarada", address: STORED }, to: [], cc: [],
-      date: "2026-08-01T09:00:00.000Z", folder: "INBOX", snippet: "s", unread: false, labels: [],
-    } as unknown as EngineMessage;
-
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-    roots.push(root);
-    await act(async () => {
-      root.render(
-        h(NextIntlClientProvider, {
-          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-          children: h(StreamCardMemo, {
-            m, now: new Date("2026-08-02T09:00:00.000Z"),
-            current: false, expanded: false, viewer: true, unread: false,
-            bodyText: "body", bodyState: "full" as const, bodyHtml: null, bodyLoadedRemote: false,
-            loadingLabel: "…", failedLabel: "!", withheldKey: "withheld", onReask: () => {},
-            onSelect: () => {}, onToggle: () => {},
-          }),
-        }),
-      );
-    });
-
-    expect(host.querySelector(".addr")?.textContent).toBe(SHOWN);
-    expect(host.textContent, "the punycode form is still on the row").not.toContain("xn--");
-  });
-});
+// "ACCEPTANCE: a list row" moved to `idn-display-list-row.test.tsx`: it mounts today's stream card, which waits for
+// the streams' mount; this file then stands over the new shell alone.
 
 describe("ACCEPTANCE: the Settings → Mailboxes row", () => {
   it("names the connected mailbox readably, in the row and in its hover title", async () => {

@@ -1,3 +1,4 @@
+import { GroupHeading } from "@ohmail/ui/mail";
 /**
  * THE MONTH: six weeks from the week of the picked day's month (or from the week the run was scrolled to).
  * A press on a date opens its Day, on a cell picks the day (on the picked one, opens it), on +N opens the
@@ -15,6 +16,8 @@ import {
   dayShort,
   monthOfDay,
   monthWeeks,
+  shiftMonth,
+  firstOfMonth,
   rowTime,
   weekdayNames,
   yearOf,
@@ -23,27 +26,35 @@ import {
   type RangeInput,
   type ViewEvent,
 } from "@ohmail/app-logic/calendar";
+import type { CalendarEventDrag } from "../calendar/view.js";
+import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useLocale, useText } from "../text/index.js";
+import type { MonthRun } from "./use-month-run.js";
 import "./month.css";
 
 export interface MonthViewProps {
   readonly input: RangeInput;
   readonly acts: RangeActs;
   readonly edge: HeldEdge;
+  readonly onDrag?: CalendarEventDrag;
   /** The week the run was scrolled to, where it was. */
   readonly top?: string | null;
+  readonly run?: MonthRun | null;
 }
 
 const keyOf = (e: ViewEvent): string => e.id;
 
-export function MonthView({ input, acts, edge, top }: MonthViewProps) {
+export function MonthView({ input, acts, edge, run, top: at, onDrag }: MonthViewProps) {
   const t = useText("month");
   const month = monthOfDay(input.anchor);
+  const visibleMonth = run?.month ?? month;
+  const top = run?.first ?? at;
+  const count = run?.count;
   const grid = useMemo(
     () =>
       monthWeeks({
-        month,
+        month: visibleMonth,
         weekStart: input.weekStart,
         today: input.today,
         picked: input.anchor,
@@ -53,10 +64,11 @@ export function MonthView({ input, acts, edge, top }: MonthViewProps) {
         items: input.events,
         keyOf,
         open: input.open,
-        top: top ?? null,
+        top,
+        count,
       }),
     [
-      month,
+      visibleMonth,
       input.weekStart,
       input.today,
       input.anchor,
@@ -66,14 +78,16 @@ export function MonthView({ input, acts, edge, top }: MonthViewProps) {
       input.events,
       input.open,
       top,
+      count,
     ],
   );
+  const swipe = useCalendarSwipe((n) => acts.pick(firstOfMonth(shiftMonth(month, n))));
   const notice = (
     <>
       <HeldNotice
         edge={edge}
-        first={grid.weeks[0]!.id}
-        last={addDays(grid.weeks.at(-1)!.id, 6)}
+        first={run?.visibleFirst ?? grid.weeks[0]!.id}
+        last={run?.visibleLast ?? addDays(grid.weeks.at(-1)!.id, 6)}
         today={input.today}
         className="cal-mo-note"
       />
@@ -85,7 +99,9 @@ export function MonthView({ input, acts, edge, top }: MonthViewProps) {
     return (
       <div className="cal-mo" data-device="phone">
         {notice}
-        <PhoneMonth input={input} acts={acts} grid={grid} />
+        <div className="cal-mo-pick" {...swipe}>
+          <PhoneMonth input={input} acts={acts} grid={grid} />
+        </div>
         <PickedDay input={input} acts={acts} />
       </div>
     );
@@ -93,7 +109,7 @@ export function MonthView({ input, acts, edge, top }: MonthViewProps) {
     <div className="cal-mo" data-device={input.device}>
       {notice}
       <div className="cal-mo-grid">
-        <GridMonth input={input} acts={acts} grid={grid} />
+        <GridMonth input={input} acts={acts} grid={grid} run={run} onDrag={onDrag} />
       </div>
     </div>
   );
@@ -118,38 +134,48 @@ function PickedDay({ input, acts }: { input: RangeInput; acts: RangeActs }) {
     [input.anchor, input.today, input.zone, input.zones, input.events],
   );
   const rows = day?.rows ?? [];
-  if (!rows.length) return <p className="cal-mo-none">{t("nothing")}</p>;
+  const hot = input.anchor === input.today;
+  const heading = hot ? t("today") : dayShort(input.anchor, locale, yearOf(input.today));
   return (
-    <div className="cal-mo-day" role="list">
-      {rows.map((r) => {
-        const { time, now } = rowTime({ ...r, day: input.anchor }, input.today, input.nowMinute);
-        const words =
-          time.kind === "allDay"
-            ? t("allDay")
-            : time.kind === "until"
-              ? t("until", { time: clockTime(time.minute, locale) })
-              : time.kind === "untilDay"
-                ? t("untilDay", { day: dayShort(time.day, locale) })
-                : time.to === null
-                  ? clockTime(time.from, locale)
-                  : t("span", { from: clockTime(time.from, locale), to: clockTime(time.to, locale) });
-        return (
-          <AgendaRow
-            key={r.key}
-            mark={{ kind: "calendar", tone: r.item.tone }}
-            title={r.item.title}
-            time={words}
-            second={[r.item.second, ...r.item.people].filter(Boolean).join(" · ") || undefined}
-            now={now}
-            off={r.item.state === "off"}
-            quiet={r.item.state === "maybe"}
-            waits={r.item.waits}
-            open={r.key === input.open}
-            onOpen={() => acts.event(r.item)}
-          />
-        );
-      })}
-    </div>
+    <section className="cal-mo-day" aria-label={heading}>
+      <GroupHeading count={rows.length ? String(rows.length) : undefined} hot={hot}>
+        {heading}
+      </GroupHeading>
+      {rows.length ? (
+        <div role="list">
+          {rows.map((r) => {
+            const { time, now } = rowTime({ ...r, day: input.anchor }, input.today, input.nowMinute);
+            const words =
+              time.kind === "allDay"
+                ? t("allDay")
+                : time.kind === "until"
+                  ? t("until", { time: clockTime(time.minute, locale) })
+                  : time.kind === "untilDay"
+                    ? t("untilDay", { day: dayShort(time.day, locale) })
+                    : time.to === null
+                      ? clockTime(time.from, locale)
+                      : t("span", { from: clockTime(time.from, locale), to: clockTime(time.to, locale) });
+            return (
+              <AgendaRow
+                key={r.key}
+                mark={{ kind: "calendar", tone: r.item.tone }}
+                title={r.item.title}
+                time={words}
+                second={[r.item.second, ...r.item.people].filter(Boolean).join(" · ") || undefined}
+                now={now}
+                off={r.item.state === "off"}
+                quiet={r.item.state === "maybe"}
+                waits={r.item.waits}
+                open={r.key === input.open}
+                onOpen={() => acts.event(r.item)}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <p className="cal-mo-none">{t("nothing")}</p>
+      )}
+    </section>
   );
 }
 
@@ -160,25 +186,29 @@ function PhoneMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs;
   const t = useText("month");
   const locale = useLocale();
   const thisYear = yearOf(input.today);
-  const days = grid.weeks.flatMap((w) => w.days);
-  const busy = new Set(
-    grid.weeks.flatMap((w) =>
-      w.pieces.flatMap((p) => Array.from({ length: p.to - p.from + 1 }, (_, k) => addDays(w.id, p.from + k))),
-    ),
-  );
   return (
     <MiniMonth
       size="phone"
+      compactDays
       weekdays={weekdayNames(locale, input.weekStart, "narrow")}
-      days={days.map((d) => ({
-        id: d.id,
-        number: String(d.day),
-        label: dayLong(d.id, locale, thisYear),
-        today: d.today,
-        picked: d.picked,
-        outside: d.outside,
-        busy: busy.has(d.id) || d.more > 0,
-      }))}
+      days={grid.weeks.flatMap((week) =>
+        week.days.map((d, index) => ({
+          id: d.id,
+          number: String(d.day),
+          label: dayLong(d.id, locale, thisYear),
+          today: d.today,
+          picked: d.picked,
+          outside: d.outside,
+          busy: week.pieces.some((piece) => piece.from <= index && index <= piece.to) || d.more > 0,
+          marks: [
+            ...new Set(
+              week.pieces
+                .filter((piece) => piece.from <= index && index <= piece.to)
+                .map((piece) => piece.item.tone),
+            ),
+          ].slice(0, 3),
+        })),
+      )}
       weekNumbers={
         input.weekNumbers
           ? grid.weeks.map((w) =>
@@ -193,12 +223,25 @@ function PhoneMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs;
 }
 
 /** The desktop's weeks: runs across the week, timed lines on their day, +N. */
-function GridMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs; grid: Grid }) {
+function GridMonth({
+  input,
+  acts,
+  grid,
+  run,
+  onDrag,
+}: {
+  input: RangeInput;
+  acts: RangeActs;
+  grid: Grid;
+  run?: MonthRun | null;
+  onDrag: CalendarEventDrag | undefined;
+}) {
   const t = useText("month");
   const locale = useLocale();
   const thisYear = yearOf(input.today);
-  const weeks: MonthGridWeek[] = grid.weeks.map((w) => ({
+  const weeks: MonthGridWeek[] = grid.weeks.map((w, index) => ({
     id: w.id,
+    at: run ? run.start + index : undefined,
     weekNumber: w.number
       ? { number: w.number.week, label: t("weekLabel", { number: w.number.week }) }
       : undefined,
@@ -217,6 +260,7 @@ function GridMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs; 
           viewOnly={p.item.viewOnly}
           style={{ gridColumn: `${p.from + 1} / ${p.to + 2}`, gridRow: p.row + 2 }}
           onPress={() => acts.event(p.item)}
+          onPointerDown={onDrag ? (event) => onDrag(p.item.id, event) : undefined}
         />
       )),
     days: w.days.map((d, i) => ({
@@ -243,6 +287,7 @@ function GridMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs; 
               viewOnly={p.item.viewOnly}
               style={{ gridColumn: i + 1, gridRow: p.row + 2 }}
               onPress={() => acts.event(p.item)}
+              onPointerDown={onDrag ? (event) => onDrag(p.item.id, event) : undefined}
             />
           );
         }),
@@ -259,6 +304,10 @@ function GridMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs; 
     <MonthGrid
       weekdays={weekdayNames(locale, input.weekStart, "short")}
       weeks={weeks}
+      run={run ? { rowHeight: run.rowHeight, height: run.height } : undefined}
+      scrollLabel={run ? t("title") : undefined}
+      scrollRef={run?.scrollRef}
+      onScroll={run?.onScroll}
       onDayPress={(id) => acts.view("day", id)}
       onCellPress={(id) => (id === input.anchor ? acts.view("day", id) : acts.pick(id))}
       onMorePress={(id) => acts.view("day", id)}

@@ -1,8 +1,6 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -275,7 +273,7 @@ async function shell(
   history: string[] = [],
   consent: ConsentDouble = consentTransport,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(IDS, history));
   lastEngine = engine;

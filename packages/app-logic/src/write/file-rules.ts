@@ -1,6 +1,6 @@
 /**
  * A LETTER'S FILES, THE RULES: the ceiling a letter states, and the two commits (a pick, a quality move), each over
- * the list as it stands. Pure; the hook that drives them is `files.ts`.
+ * the list as it stands. The hook that drives them is `files.ts`.
  */
 import type { ComposeAttachment } from "@ohmail/wire";
 import {
@@ -20,6 +20,16 @@ export interface PicturesPort {
   compress(file: Blob, level: ImageQualityLevel): Promise<{ blob: Blob; contentType: string }>;
 }
 export type Pictures = PicturesPort | "none";
+
+/** A host-held file. Its metadata is available before the letter asks for bytes. */
+export interface DroppedFile {
+  readonly name: string;
+  readonly size: number;
+  readonly type: string;
+  readonly state: "ok" | "too_large" | "unreadable";
+  /** The reader checks the receiving letter before asking for each chunk. */
+  read(signal?: AbortSignal, stillHere?: () => boolean): Promise<File>;
+}
 
 /**
  * What the window can carry in one send: `strict`, the hosted request's own bound; `mailbox`, no bound of its own
@@ -57,6 +67,26 @@ export interface Picked {
   readonly bytes: number;
   readonly originalBytes: number;
   readonly compressed: boolean;
+}
+
+/** Reproject the pick against the current list and ceiling, refusing staged files that no longer fit. */
+export function remainingRoom(
+  list: readonly ComposeAttachment[],
+  cap: number,
+  picked: Picked[],
+  refuse: (cap: number) => void,
+): number {
+  let remaining = cap - totalBytes(list);
+  for (let i = 0; i < picked.length;) {
+    if (picked[i]!.bytes <= remaining) {
+      remaining -= picked[i]!.bytes;
+      i += 1;
+    } else {
+      picked.splice(i, 1);
+      refuse(cap);
+    }
+  }
+  return remaining;
 }
 
 export interface Admitted {
@@ -167,15 +197,35 @@ export function requalified(
 }
 
 /** Bytes to base64, with no `data:` prefix. */
-export function readAsBase64(file: Blob): Promise<string> {
+export function readAsBase64(file: Blob, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    const retire = (): void => signal?.removeEventListener("abort", abort);
+    const abort = (): void => {
+      retire();
+      reject(signal?.reason);
+      reader.abort();
+    };
+    reader.onerror = () => {
+      retire();
+      reject(reader.error ?? new Error("read failed"));
+    };
     reader.onload = () => {
+      retire();
       const result = typeof reader.result === "string" ? reader.result : "";
       const comma = result.indexOf(",");
       resolve(comma >= 0 ? result.slice(comma + 1) : "");
     };
-    reader.readAsDataURL(file);
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      reader.readAsDataURL(file);
+    } catch (error) {
+      retire();
+      reject(error);
+    }
   });
 }

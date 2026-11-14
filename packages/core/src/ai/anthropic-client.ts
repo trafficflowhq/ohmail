@@ -190,6 +190,11 @@ export interface AnthropicClientOptions {
   log?: Logger;
 }
 
+const GUARDED_ERROR_TYPES = new Set([
+  "invalid_request_error", "authentication_error", "billing_error", "permission_error",
+  "not_found_error", "request_too_large", "rate_limit_error", "api_error", "overloaded_error",
+]);
+
 /** Remove any occurrence of the key from a string bound for a log or an Error. */
 function scrub(text: string, apiKey: string): string {
   if (!apiKey) return text;
@@ -298,6 +303,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
         params: unknown, call?: { signal?: AbortSignal } & AiCallOptions,
       ): Promise<{ content: unknown; usage?: unknown; stop_reason?: unknown; stop_details?: unknown }> {
         const startedAt = now();
+        const guarded = Boolean(call?.beforeDispatch);
         // THE CALLER'S DEADLINE BINDS EVERY ATTEMPT AND EVERY WAIT BETWEEN THEM. A per-attempt
         // timeout plus a `retry-after` of up to 20 s outlived the function it ran in; once the
         // signal fires no attempt starts and a wait in progress ends, so the caller's own close
@@ -326,6 +332,16 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
             lastError ??= new AnthropicTransportError("anthropic request not started: the caller's deadline passed");
             break;
           }
+          if (call?.beforeDispatch) {
+            try {
+              await call.beforeDispatch();
+            } catch (err) {
+              if (attempt === 0) throw err;
+              lastError = err;
+              break;
+            }
+            if (deadline?.aborted) continue;
+          }
           attempt++;
           let response: Response | undefined;
           let transportError: unknown;
@@ -338,6 +354,7 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
                 "anthropic-version": ANTHROPIC_API_VERSION,
               },
               body,
+              ...(guarded ? { redirect: "error" as const } : {}),
               signal: deadline ? eitherSignal(AbortSignal.timeout(timeoutMs), deadline) : AbortSignal.timeout(timeoutMs),
             });
           } catch (err) {
@@ -346,10 +363,16 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
           }
 
           if (response) {
-            lastStatus = response.status;
-            lastRequestId = response.headers.get("request-id");
+            const status = response.status;
+            lastStatus = status;
+            const requestId = response.headers.get("request-id");
+            lastRequestId = guarded && !/^req_[A-Za-z0-9]{1,64}$/.test(requestId ?? "") ? null : requestId;
             if (response.ok) {
-              const parsed = (await response.json()) as {
+              const parsed = (await response.json().catch((err: unknown) => {
+                if (!guarded) throw err;
+                throw new AnthropicApiError(status, null, lastRequestId,
+                  "The model provider returned an unreadable response.");
+              })) as {
                 content?: unknown; usage?: unknown; model?: unknown; stop_reason?: unknown; stop_details?: unknown;
               };
               const usage = readUsage(parsed.usage);
@@ -367,20 +390,21 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
               };
             }
 
-            // Read the body for the error TYPE. Anthropic's messages never contain the key, but
-            // scrub anyway — this string ends up in logs and in a 500's diagnosis.
             const text = await response.text().catch(() => "");
             let errorType: string | null = null;
-            let detail = text.slice(0, 500);
+            let detail = guarded ? "" : text.slice(0, 500);
             try {
               const parsed = JSON.parse(text) as { error?: { type?: unknown; message?: unknown } };
-              if (typeof parsed.error?.type === "string") errorType = parsed.error.type;
-              if (typeof parsed.error?.message === "string") detail = parsed.error.message;
-            } catch { /* not JSON: keep the truncated raw text */ }
+              if (typeof parsed.error?.type === "string" && (!guarded || GUARDED_ERROR_TYPES.has(parsed.error.type))) {
+                errorType = parsed.error.type;
+              }
+              if (!guarded && typeof parsed.error?.message === "string") detail = parsed.error.message;
+            } catch { /* No structured error type was supplied. */ }
 
             lastError = new AnthropicApiError(
               response.status, errorType, lastRequestId,
-              scrub(`anthropic ${response.status}${errorType ? ` ${errorType}` : ""}: ${detail}`, apiKey),
+              guarded ? "The model provider rejected the request."
+                : scrub(`anthropic ${response.status}${errorType ? ` ${errorType}` : ""}: ${detail}`, apiKey),
             );
             if (!RETRIABLE_STATUS.has(response.status) || attempt > maxRetries) break;
             const wait = retryAfterMs(response.headers)
@@ -389,10 +413,12 @@ export function makeAnthropicClient(opts: AnthropicClientOptions): AnthropicLike
             continue;
           }
 
-          lastError = new AnthropicTransportError(
-            scrub(`anthropic request failed: ${String((transportError as Error)?.name ?? transportError)}`, apiKey),
-            transportError,
-          );
+          lastError = guarded
+            ? new AnthropicTransportError("The model provider could not be reached.")
+            : new AnthropicTransportError(
+              scrub(`anthropic request failed: ${String((transportError as Error)?.name ?? transportError)}`, apiKey),
+              transportError,
+            );
           if (attempt > maxRetries) break;
           await waitFor(Math.round(backoffMs * 2 ** (attempt - 1) * (0.75 + random() * 0.5)));
         }

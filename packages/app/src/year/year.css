@@ -55,3 +55,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.cal-yr {
+  border-radius: var(--r-sheet);
+  background: var(--sheet);
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+.cal-yr[data-device="phone"] {
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  scroll-padding-block-end: var(--cal-phone-sheet-foot);
+}
+.cal-yr[data-device="phone"] .cal-yr-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3) var(--s4);
+  padding: var(--s2) var(--s3) var(--cal-phone-sheet-foot);
+}

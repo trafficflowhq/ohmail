@@ -29,6 +29,9 @@ const ROOTS = [
   new URL("../../../apps/webapp/app/", import.meta.url),
   new URL("../../app-logic/src/", import.meta.url),
   new URL("../../letter-body/src/", import.meta.url),
+  /* The new shell's surfaces (RULING-NEW-SHELL-FIRST D (3)): the frame, the mail ground and every place it mounts,
+     which say the completion sentences today's `apps/webapp/app/shell` said. */
+  new URL("../../app/src/", import.meta.url),
   new URL("../../../apps/mobile/src/", import.meta.url),
 ];
 
@@ -64,7 +67,8 @@ function sources(): Array<{ rel: string; src: string }> {
   for (const root of ROOTS) {
     const dir = fileURLToPath(root);
     const rel = root.href.includes("webapp") ? "apps/webapp/app" : root.href.includes("app-logic") ? "packages/app-logic/src"
-      : root.href.includes("letter-body") ? "packages/letter-body/src" : "apps/mobile/src";
+      : root.href.includes("letter-body") ? "packages/letter-body/src"
+      : root.href.includes("/packages/app/src/") ? "packages/app/src" : "apps/mobile/src";
     walk(dir.replace(/\/$/, ""), rel);
   }
   return out;
@@ -88,7 +92,9 @@ describe("the completion census — no surface says done from a folded status", 
     const files = sources();
     expect(files.length, "no surface source was read — the walk broke").toBeGreaterThan(100);
     expect(files.some((f) => f.rel.endsWith("apps/mobile/src/state/live.ts"))).toBe(true);
-    expect(files.some((f) => f.rel.endsWith("apps/webapp/app/shell/AppShell.tsx"))).toBe(true);
+    /* The shell the hosts mount, re-pointed by path from today's `AppShell.tsx` (RULING-NEW-SHELL-FIRST D (3)): the new
+       shell's mail ground, which each host hands above every place. */
+    expect(files.some((f) => f.rel.endsWith("packages/app/src/mail/MailGround.tsx"))).toBe(true);
   });
 
   /** …and the detector finds a fold when there is one, or an empty answer means nothing. */
@@ -132,6 +138,10 @@ describe("the completion census — no surface says done from a folded status", 
        unrelated `pressVerdict` in the draft verbs and vouched for a seam it no longer contains. */
     expect(reaches("packages/app-logic/src/press/shell-dispatch.ts", "pressVerdict"), "the shell's dispatchPress").toBe(true);
     expect(reaches("packages/app-logic/src/screener/screener-state.ts", "pressVerdict"), "the Screener's moveAll").toBe(true);
-    expect(reaches("apps/webapp/app/views/RulesView.tsx", "pressVerdict"), "the rules pane's report").toBe(true);
+    expect(reaches("packages/app-logic/src/press/rule-management.ts", "pressVerdict"), "the rules pane's report").toBe(true);
+    expect(reaches("apps/webapp/app/(product)/mailbox/WebRulesPane.tsx", "BrowserRulesPane as WebRulesPane"),
+      "the browser mounts the shared Rules pane").toBe(true);
+    expect(reaches("packages/app/src/settings/browser/RulesSettings.tsx", "useRuleActions("),
+      "the mounted rules pane uses the reporting actions").toBe(true);
   });
 });

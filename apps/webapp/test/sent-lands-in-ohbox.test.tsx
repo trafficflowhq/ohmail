@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
 import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -99,7 +100,7 @@ const settled = async (): Promise<void> => {
 };
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -111,7 +112,7 @@ async function shell(): Promise<HTMLElement> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -128,33 +129,26 @@ const goto = async (hash: string): Promise<void> => {
   await drain();
 };
 
-const clickText = async (el: HTMLElement, label: string): Promise<void> => {
-  // The label WITHOUT the keycap the button may wear (Send prints its ⌘↵ cap now).
-  const bare = (x: HTMLElement): string => {
-    const kbd = x.querySelector("kbd")?.textContent ?? "";
-    return (x.textContent ?? "").replace(kbd, "").trim();
-  };
-  const b = [...el.querySelectorAll<HTMLButtonElement>("button")]
-    .find((x) => bare(x) === label);
-  if (!b) throw new Error(`no button reading ${JSON.stringify(label)} on screen`);
-  await act(async () => { b.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+const compose = (el: HTMLElement) => within(within(el).getByRole("region", { name: messages.write.letter }));
+
+const clickSend = async (el: HTMLElement): Promise<void> => {
+  const button = compose(el).getByRole("button", { name: messages.write.send });
+  await act(async () => { fireEvent.click(button); });
 };
 
-/** Rows under a named group, top to bottom — `[role=listbox]` carries the group's label. */
-const rowsUnder = (el: HTMLElement, label: string): HTMLElement[] => [
-  ...el.querySelectorAll<HTMLElement>(`[aria-label="${label}"] :is(.row, [role=option])[data-id]`),
-];
+/** Rows under a named group, top to bottom. */
+const rowsUnder = (el: HTMLElement, name: string): HTMLElement[] => {
+  const group = within(el).queryByRole("listbox", { name });
+  return group === null ? [] : within(group).queryAllByRole("option");
+};
 
-/** Write a whole message into the compose form: one recipient, one line of body. */
+const openLetter = (el: HTMLElement) => within(el).queryByRole("region", { name: "Open message" });
+
 async function writeMessage(el: HTMLElement, to: string, body: string): Promise<void> {
-  const input = el.querySelector<HTMLInputElement>("#compose-to")!;
+  const letter = compose(el);
   await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!
-      .set!.call(input, to);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await act(async () => {
-    typeInto(el.querySelector<HTMLElement>(".compose-editor .rte-surface")!, body);
+    fireEvent.change(letter.getByRole("combobox", { name: messages.write.to }), { target: { value: to + ", " } });
+    typeInto(letter.getByRole("textbox", { name: messages.write.text }), body);
   });
   await drain();
 }
@@ -184,7 +178,7 @@ describe("sending a message returns to the Ohbox, with the message in it", () =>
 
     await goto("#/compose");
     await writeMessage(el, "nora@example.net", "Donnerstag passt.");
-    await clickText(el, "Send");
+    await clickSend(el);
     await drain();
     await settled();
 
@@ -211,18 +205,18 @@ describe("sending a message returns to the Ohbox, with the message in it", () =>
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
     });
     await drain();
-    expect(el.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])"), "nothing was opened to begin with")
+    expect(openLetter(el), "nothing was opened to begin with")
       .not.toBeNull();
 
     await goto("#/compose");
     await writeMessage(el, "nora@example.net", "Donnerstag passt.");
-    await clickText(el, "Send");
+    await clickSend(el);
     await drain();
     await settled();
 
     expect(window.location.hash).toBe("#/ohbox");
     expect(
-      el.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])"),
+      openLetter(el),
       "the Ohbox still had a message open from before the compose",
     ).toBeNull();
   });
@@ -231,22 +225,28 @@ describe("sending a message returns to the Ohbox, with the message in it", () =>
     // The other side of "on the confirmation, not on the press". Navigating at press time would
     // take somebody away from a message that may still fail, and away from its text.
     let release!: () => void;
+    let sent = false;
     const gate = new Promise<void>((r) => { release = r; });
     const real = OhmailEngine.prototype.mutate;
     vi.spyOn(OhmailEngine.prototype, "mutate").mockImplementation(async function patched(
       this: OhmailEngine, m: EngineMutation,
     ): Promise<MutationResult> {
-      if (m.kind === "mail_send") await gate;
+      if (m.kind === "mail_send") {
+        sent = true;
+        await gate;
+      }
       return real.call(this, m);
     });
 
     const el = await shell();
     await goto("#/compose");
     await writeMessage(el, "nora@example.net", "Donnerstag passt.");
-    await clickText(el, "Send");
+    await clickSend(el);
     await drain();
 
+    expect(sent, "the press never reached the send gate").toBe(true);
     expect(window.location.hash, "the shell navigated before the send confirmed").toBe("#/compose");
+    expect(compose(el).getByRole("textbox", { name: messages.write.text }).textContent).toContain("Donnerstag passt.");
 
     release();
     await drain();

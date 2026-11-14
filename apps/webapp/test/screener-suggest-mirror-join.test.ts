@@ -1,7 +1,7 @@
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { joinSuggestion } from "@ohmail/app-logic/screener/screener-state";
-import type { SenderSuggestion, SuggestionOverlay } from "../app/shell/screener-suggest";
+import type { SenderSuggestion, SuggestionOverlay } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * THE TWO SOURCES OF ONE CHIP, JOINED IN ONE PLACE. The mirror fills a derived row's `ai` from

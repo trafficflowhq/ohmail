@@ -73,9 +73,9 @@ export function writeBootCache(scope: string, owner: string, value: unknown): vo
  * some earlier account left behind is exactly what must not survive the one act whose meaning
  * is leaving nothing behind.
  */
-export function clearBootCaches(owner?: string): LocalSweep {
+export function clearBootCaches(owner?: string, mayRemove?: (key: string) => boolean): LocalSweep {
   // `owner` narrows it to one account's caches — the erased-account door, which is not a sign-out.
-  if (owner !== undefined) return dropLocalStorageKeysWhere((k) => k.startsWith(PREFIX) && k.endsWith(`.${owner}`));
+  if (owner !== undefined) return dropLocalStorageKeysWhere((k) => k.startsWith(PREFIX) && k.endsWith(`.${owner}`), "localStorage", mayRemove);
   return dropLocalStorageKeys([PREFIX]);
 }
 
@@ -103,6 +103,7 @@ export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
 /** {@link dropLocalStorageKeys} for any rule over the key — the same pass, removal and read-back, in either jar. */
 export function dropLocalStorageKeysWhere(
   doom: (key: string) => boolean, area: "localStorage" | "sessionStorage" = "localStorage",
+  mayRemove: (key: string) => boolean = () => true,
 ): LocalSweep {
   try {
     const jar = window[area];
@@ -113,7 +114,7 @@ export function dropLocalStorageKeysWhere(
     }
     for (const key of doomed) {
       try {
-        jar.removeItem(key);
+        if (mayRemove(key)) jar.removeItem(key);
       } catch {
         /* one refusal must not spare the rest — the read-back below is the judge */
       }

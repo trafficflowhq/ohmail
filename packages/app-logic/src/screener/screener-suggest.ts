@@ -11,7 +11,8 @@
  * same press twice covers the same senders.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useStableCallback } from "../press/stable-callback.js";
 import { senderKey } from "@ohmail/client-engine";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import type { ToastFn } from "../press/report.js";
@@ -111,6 +112,8 @@ export type SuggestMode = "new" | "again";
 
 /** The control, already bound to the senders it would act on. */
 export interface SuggestBatchControl {
+  /** The mounted account has no current consent answer. */
+  disabled?: boolean;
   /** Waiting senders with no suggestion yet — how much there is to buy. */
   available: number;
   /**
@@ -216,7 +219,7 @@ export interface AutoOptInControl {
   /** Unsuggested senders waiting right now. The batch is the first {@link batchSize} of them. */
   available: number;
   /** `running` never occurs: this control buys nothing. */
-  phase: SuggestPhase;
+  phase: Exclude<SuggestPhase, "running">;
   /** The SERVER's quote for the next batch. Null until the dry run answers — and no price, no consent. */
   quote: { senders: number; credits: number } | null;
   /** One translated sentence about the current state, or null. */
@@ -325,7 +328,7 @@ export interface SuggestWire {
    */
   suggest: (
     senders: string[],
-    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean },
+    opts?: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean; maySend?: () => boolean; relayGrant?: string | null },
   ) => Promise<ScreenerSuggestWire>;
   /**
    * The sentence to show for a refusal this transport produced.
@@ -501,6 +504,10 @@ export function useScreenerSuggestions(opts: {
    * surface that supplies one.
    */
   wire: SuggestWire | "none";
+  /** Mounted hosts supply the current scope's live consent check. */
+  permission?: {
+    known: boolean; version: number; grant: (automatic: boolean) => number | null; relayGrant?: string | null;
+  };
   /**
    * WHERE ANSWERS LAND WHEN THE OVERLAY ON SCREEN IS SOMEBODY ELSE'S.
    *
@@ -527,7 +534,13 @@ export function useScreenerSuggestions(opts: {
   const t = opts.text.screener;
   const metered = useManagedService();
   const { active, toast } = opts;
-  const autoSuggest = opts.autoSuggest === true;
+  const permissionKnown = opts.permission?.known !== false;
+  const permissionVersion = opts.permission?.version ?? 0;
+  const relayGrant = opts.permission?.relayGrant;
+  // Each run supplies its original version so a newer grant cannot authorize an older request.
+  const canRequest = useStableCallback((version: number, automatic: boolean = false) =>
+    (opts.permission ? opts.permission.grant(automatic) : 0) === version);
+  const autoSuggest = opts.autoSuggest === true && permissionKnown;
   const wire = opts.wire === "none" ? NO_WIRE : opts.wire;
 
   const [suggestions, setSuggestions] = useState<SuggestionOverlay>(() => new Map());
@@ -573,16 +586,16 @@ export function useScreenerSuggestions(opts: {
   /** The standing as last written, for the access read below, which must not close over state. */
   const standingNow = useRef<SuggestStanding | null>(null);
   /** The ONE writer: this hook's rows, and the host's when the rows are somebody else's. */
-  const writeStanding = useCallback((next: SuggestStanding | null) => {
+  const writeStanding = useStableCallback((next: SuggestStanding | null) => {
     standingNow.current = next;
     setStanding(next);
     link.current.publishStanding?.(next);
-  }, []);
+  });
   /** See {@link ScreenerSuggestions.absorbStanding}: written here, never published back. */
-  const absorbStanding = useCallback((next: SuggestStanding | null) => {
+  const absorbStanding = useStableCallback((next: SuggestStanding | null) => {
     standingNow.current = next;
     setStanding(next);
-  }, []);
+  });
   /** See {@link ScreenerSuggestions.outstandingDecisions} — read off the one page fetch below. */
   const [outstanding, setOutstanding] = useState<readonly PendingDecision[]>([]);
   /**
@@ -599,7 +612,7 @@ export function useScreenerSuggestions(opts: {
    * pressable button under the wrong number.
    */
   const [optIn, setOptIn] = useState<{
-    phase: SuggestPhase;
+    phase: AutoOptInControl["phase"];
     quote: { senders: number; credits: number } | null;
     notice: string | null;
   }>({ phase: "closed", quote: null, notice: null });
@@ -613,6 +626,9 @@ export function useScreenerSuggestions(opts: {
    */
   const io = useRef({
     run: 0,
+    permissionVersion,
+    quotedPermission: permissionVersion,
+    optInPermission: permissionVersion,
     /**
      * WHAT EACH CHUNK WAS QUOTED, in credits, in `chunksOf` order — the ceiling the confirm hands
      * back per request (`maxCredits`).
@@ -683,6 +699,22 @@ export function useScreenerSuggestions(opts: {
     autoHeldOut: new Set<string>(),
   });
 
+  useEffect(() => {
+    const revoked = io.current.permissionVersion !== permissionVersion;
+    io.current.permissionVersion = permissionVersion;
+    if (permissionKnown && !revoked) return;
+    io.current.optInRun++;
+    setOptIn({ phase: "closed", quote: null, notice: null });
+    if (phase === "running") return;
+    io.current.run++;
+    io.current.quotedChunks = [];
+    setPhase("closed");
+    setMode("new");
+    setQuote(null);
+    setNotice(null);
+    setRefused(false);
+  }, [permissionKnown, permissionVersion, phase]);
+
   /**
    * Bumped when the ACTIVE queue gains a sender this session has not seen — at most once per
    * sender, guarded by `seenKeys`, so it can never loop. Two consumers: the automatic batch
@@ -737,7 +769,7 @@ export function useScreenerSuggestions(opts: {
    * has a fact to state that no code here carries.
    */
   const tAi = opts.text.aiRefusal;
-  const whyFor = useCallback((err: unknown, fallback: string): string => {
+  const whyFor = useStableCallback((err: unknown, fallback: string): string => {
     const key = aiRefusalKey(err);
     if (key !== null) return tAi(key);
     // A refusal this client produced has no server voice to borrow — see {@link clientRefusalKey}.
@@ -745,7 +777,7 @@ export function useScreenerSuggestions(opts: {
     const here = clientRefusalKey(err);
     if (here !== null) return notify.current.t(here);
     return link.current.wire.messageFor(err, fallback);
-  }, [tAi]);
+  });
   /** Held for the effect below, which may not read a `useCallback` that changes every render. */
   const say = useRef(whyFor);
   say.current = whyFor;
@@ -790,7 +822,7 @@ export function useScreenerSuggestions(opts: {
     };
   }, [refused, writeStanding]);
 
-  const merge = useCallback(
+  const merge = useStableCallback(
     (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => {
       if (rows.length === 0) return;
       // OUT TO THE HOST'S OVERLAY FIRST, when there is one. Absent on every surface that owns its
@@ -804,9 +836,7 @@ export function useScreenerSuggestions(opts: {
         }
         return next;
       });
-    },
-    [],
-  );
+    });
 
   /**
    * Read what has already been bought — on EVERY Screener activation and once per queue GAIN.
@@ -818,7 +848,7 @@ export function useScreenerSuggestions(opts: {
    * catch happens seconds after the row appears. ONE page: the server's queue is `date desc`
    * like the list on screen, so a page covers the front of both.
    */
-  const readStored = useCallback(
+  const readStored = useStableCallback(
     async (alive: () => boolean): Promise<void> => {
       if (!alive()) return;
       io.current.lastHydrateAt = Date.now();
@@ -869,9 +899,7 @@ export function useScreenerSuggestions(opts: {
         // free (`charged: 0`). So both outcomes release the gate; only the ordering is bought.
         if (alive()) setHydrateSettled(true);
       }
-    },
-    [merge],
-  );
+    });
 
   /**
    * THE ACTIVATION READ — the catch-up. It runs the moment the Screener comes on screen, on the
@@ -934,7 +962,7 @@ export function useScreenerSuggestions(opts: {
       io.current.autoFired = false;
       return;
     }
-    if (!autoSuggest || !link.current.wire.configured()) return;
+    if (!autoSuggest || !canRequest(permissionVersion, true) || !link.current.wire.configured()) return;
     if (!hydrateSettled) return;
     if (io.current.autoFired || io.current.autoDisarmed) return;
     const set = autoBatchOf(io.current.queue, io.current.autoHeldOut);
@@ -951,7 +979,10 @@ export function useScreenerSuggestions(opts: {
       try {
         // `automatic`: NOBODY PRESSED THIS, and the server holds it to the automatic rule — a sender
         // whose mail is kept out of automatic AI comes back `no_auto_ai`, unasked and uncharged.
-        const res = await link.current.wire.suggest(set, { idempotencyKey: newKey(), automatic: true })
+        const res = await link.current.wire.suggest(set, {
+          idempotencyKey: newKey(), automatic: true, relayGrant,
+          maySend: () => io.current.autoRun === run && canRequest(permissionVersion, true),
+        })
           .finally(() => flying(setInFlight, set, false));
         // Remembered even from a stale answer: the verdict is about the sender, not this run.
         for (const s of res.skipped) {
@@ -996,11 +1027,9 @@ export function useScreenerSuggestions(opts: {
         notify.current.toast(why);
       }
     })();
-    // FOUR DEPENDENCIES, ALL OF THEM REAL SIGNALS: is the Screener open, did the account opt in,
-    // has hydration settled, and is there anything in the queue yet. `toast`/`t` are read through
-    // `notify` precisely so they cannot smuggle a fifth — see that ref's comment for the
-    // measurement that made this necessary rather than tidy.
-  }, [active, autoSuggest, hydrateSettled, queueReady, merge, writeStanding]);
+    // Eligibility follows the open state, consent, hydration and queue. Read copy and toast
+    // through `notify` so unrelated render changes do not restart the automatic run.
+  }, [active, autoSuggest, canRequest, permissionVersion, relayGrant, hydrateSettled, queueReady, merge, writeStanding]);
 
   /**
    * Deliberately NOT memoised. It is called during render and closes over every piece of the
@@ -1093,6 +1122,8 @@ export function useScreenerSuggestions(opts: {
      * re-ask is honestly free; `kind` picks the right sentence.
      */
     const price = (n: number, from: string[], kind: SuggestMode) => {
+      if (!canRequest(permissionVersion)) return;
+      io.current.quotedPermission = permissionVersion;
       const set = from.slice(0, n);
       if (set.length === 0) {
         setPhase("ready");
@@ -1114,9 +1145,12 @@ export function useScreenerSuggestions(opts: {
         let senders = 0;
         let credits = 0;
         for (const chunk of chunksOf(set)) {
+          if (io.current.run !== run || !canRequest(permissionVersion)) return;
           let res;
           try {
-            res = await wire.suggest(chunk, { dryRun: true });
+            res = await wire.suggest(chunk, {
+              dryRun: true, relayGrant, maySend: () => io.current.run === run && canRequest(permissionVersion),
+            });
           } catch (err) {
             if (io.current.run !== run) return;
             setPhase("ready");
@@ -1130,7 +1164,7 @@ export function useScreenerSuggestions(opts: {
             if (stood !== null) writeStanding(stood);
             return;
           }
-          if (io.current.run !== run) return;
+          if (io.current.run !== run || !canRequest(permissionVersion)) return;
           // NO PRICE, NO PURCHASE — for ANY chunk. A server that answers without `quotedCredits`
           // (one deployed before the field existed, reached in the minutes between two deploys)
           // leaves part of the cost unknown, and an unknown cost is not one a person can consent
@@ -1173,7 +1207,10 @@ export function useScreenerSuggestions(opts: {
       price(start, from, kind);
     };
 
+    const quotedRun = io.current.run;
+    const quoteCurrent = io.current.quotedPermission === permissionVersion;
     return {
+      disabled: !permissionKnown,
       available: addresses.length,
       resuggestable: resuggestable.length,
       unanswered,
@@ -1181,8 +1218,8 @@ export function useScreenerSuggestions(opts: {
       pool: target.length,
       sizes,
       size: chosen,
-      phase,
-      quote,
+      phase: quoteCurrent || phase === "running" ? phase : "closed",
+      quote: quoteCurrent ? quote : null,
       notice,
       progress,
       standing,
@@ -1195,6 +1232,8 @@ export function useScreenerSuggestions(opts: {
         price(n, target, mode);
       },
       cancel: () => {
+        // A CONFIRMED PURCHASE IS NOT CANCELLED: what it was charged for is drawn and said when it answers.
+        if (phase === "running") return;
         io.current.run++;
         setPhase("closed");
         setQuote(null);
@@ -1211,16 +1250,19 @@ export function useScreenerSuggestions(opts: {
        * ONE idempotency key PER CHUNK — a retry replays that chunk's answer, a re-press re-buys only
        * chunks that never landed (landed ones answer `duplicate`, cost 0); a shared key would make
        * chunk 2 replay chunk 1's response. `run` is captured once and checked per chunk on arrival —
-       * a second press aborts the loop, and it is never re-bumped inside it (self-cancellation moved
-       * inside one purchase). Chips land incrementally; a stopped or thrown chunk halts the loop, the
-       * summary names what actually charged, spend never exceeds the quote.
+       * a newer price aborts the loop (a cancel does not: what was charged is kept), and it is never
+       * re-bumped inside it (self-cancellation moved inside one purchase). Chips land incrementally; a
+       * stopped or thrown chunk halts the loop, the summary names what actually charged, spend never
+       * exceeds the quote.
        */
       confirm: () => {
         // THE SET THE OPEN LADDER QUOTED, whichever it is. Sliced from `target` and not from
         // `addresses`, or a confirmed re-ask would buy the front of the buy list — a purchase over
         // senders the price on screen never covered.
         const set = target.slice(0, chosen);
-        if (set.length === 0 || phase === "running") return;
+        // NO PRICE, NO PURCHASE, whichever surface pressed: only a set with a whole quote of at least one sender.
+        if (set.length === 0 || phase !== "ready" || quote === null || quote.senders === 0) return;
+        if (!quoteCurrent || quotedRun !== io.current.run || !canRequest(permissionVersion)) return;
         const run = ++io.current.run;
         const total = set.length;
         setPhase("running");
@@ -1246,6 +1288,7 @@ export function useScreenerSuggestions(opts: {
           /* The position in `chunksOf(set)`, which is how a chunk finds the price it was quoted. */
           let chunkIndex = -1;
           for (const chunk of chunksOf(set)) {
+            if (io.current.run !== run || !canRequest(permissionVersion)) break;
             chunkIndex++;
             let res;
             try {
@@ -1257,6 +1300,8 @@ export function useScreenerSuggestions(opts: {
               flying(setInFlight, chunk, true);
               res = await wire.suggest(chunk, {
                 idempotencyKey: newKey(),
+                relayGrant,
+                maySend: () => io.current.run === run && canRequest(permissionVersion),
                 ...(typeof quotedFor === "number" ? { maxCredits: quotedFor } : {}),
               }).finally(() => flying(setInFlight, chunk, false));
             } catch (err) {
@@ -1356,6 +1401,8 @@ export function useScreenerSuggestions(opts: {
    */
   const autoOptIn = (addresses: string[]): AutoOptInControl => {
     const open = () => {
+      if (!canRequest(permissionVersion)) return;
+      io.current.optInPermission = permissionVersion;
       // The batch's own set and the batch's own rule, so the quote prices exactly what it buys.
       const set = autoBatchOf(addresses, io.current.autoHeldOut);
       // NOTHING TO BUY IS ANSWERED LOCALLY, not by the server. `parseSenderSet` 400s on an empty
@@ -1371,8 +1418,11 @@ export function useScreenerSuggestions(opts: {
       setOptIn({ phase: "pricing", quote: null, notice: null });
       void (async () => {
         try {
-          const res = await wire.suggest(set, { dryRun: true, automatic: true });
-          if (io.current.optInRun !== run) return;
+          const res = await wire.suggest(set, {
+            dryRun: true, automatic: true, relayGrant,
+            maySend: () => io.current.optInRun === run && canRequest(permissionVersion),
+          });
+          if (io.current.optInRun !== run || !canRequest(permissionVersion)) return;
           // NO PRICE, NO CONSENT — the same rule the manual control states, and it has to be
           // restated here rather than shared because this is the flow that authorises EVERY
           // later batch rather than one. A server too old to carry `quotedCredits` leaves the
@@ -1398,13 +1448,14 @@ export function useScreenerSuggestions(opts: {
       })();
     };
 
+    const quoteCurrent = io.current.optInPermission === permissionVersion;
     return {
       supported: wire.configured(),
       batchSize: AUTO_BATCH_SIZE,
       available: addresses.length,
-      phase: optIn.phase,
-      quote: optIn.quote,
-      notice: optIn.notice,
+      phase: quoteCurrent ? optIn.phase : "closed",
+      quote: quoteCurrent ? optIn.quote : null,
+      notice: quoteCurrent ? optIn.notice : null,
       open,
       cancel: () => {
         io.current.optInRun++;

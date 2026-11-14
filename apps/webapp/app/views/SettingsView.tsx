@@ -41,7 +41,8 @@ import {
 import { Icon, type FaceName } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
-import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
+import type { ApplyFaceAllDevices } from "@ohmail/app/mail";
+import { FaceRow } from "../shell/FaceRow";
 import { TextSizeRow } from "../shell/TextSizeRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { AfterVerbRow } from "../shell/AfterVerbRow";
@@ -58,7 +59,7 @@ import {
 } from "../shell/notification-settings";
 import { NONE } from "@ohmail/app/host";
 import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
-import { useTodaysScope } from "../shell/todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
@@ -736,7 +737,7 @@ export function SettingsView({
 }) {
   const t = useTranslations("settings");
   /* The scope of the shell Settings is drawn in: the demo's own word says the pane stands in the demo. */
-  const scope = useTodaysScope();
+  const scope = useScopeHere();
   /** The `tag` namespace owns what a tag IS; `settings` owns this pane's chrome. */
   const tg = useTranslations("tag");
   /** The zone keys' shared vocabulary — the same words the rail's arrows carry. */
@@ -819,7 +820,8 @@ export function SettingsView({
     o === "no_server_key" ? t("notifyNoServerKey")
       : o === "row_remains" ? t("notifyRowRemains")
         : o === "not_registered" ? t("notifyNotRegistered")
-          : null;
+          : o === "unsupported" ? t("notifyWakeUnsupported")
+            : null;
 
   const setNotify = useCallback((next: NotificationChannels, at: NoticePermission) => {
     setNotifyChannels(next);

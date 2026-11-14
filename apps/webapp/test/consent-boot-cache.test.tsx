@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import {
   ISO, act, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
@@ -13,7 +14,7 @@ import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-eng
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
-import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
+import { usePartitionOf, type PartitionInput } from "@ohmail/app-logic/consent/partition";
 import { CLOUD_CONSENT } from "../app/(product)/mailbox/consent-over-api";
 import { CONSENT_BOOT_SCOPE, useConsentState, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { DEMO_STORAGE_OWNER, resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -102,7 +103,7 @@ const world = (): Response =>
   );
 
 const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+  within(c).queryAllByRole("option").map((row) => row.dataset.id ?? "");
 
 /** A valid cached answer, as the previous session's successful fetch would have written it. */
 const seedConsentCache = (owner: string, over: Record<string, unknown> = {}): void => {
@@ -258,6 +259,8 @@ describe("boot presents the partitioned piles from the account's cached answer",
     // …and it armed nothing.
     expect(captured.current!.autoSuggest).toBe(false);
     expect(captured.current!.blockRemoteImages).toBe(true);
+    expect(captured.current!.remoteImagesKnown).toBe(false);
+    expect(captured.current!.trackingPixelsKnown).toBe(false);
 
     await act(() => root.unmount());
   });
@@ -541,19 +544,19 @@ describe("the remembered own addresses are the mount's mirror's account's", () =
     };
     const first = await namedFor(FIRST);
     const second = await namedFor(SECOND);
-    const input = (engine: OhmailEngine): ShellDerivationsInput => ({
+    /* The one derivation of the partition (the mail ground's, which the old shell's derivations called): what the
+       ground hands it above the panes, the facts of `GET /mailboxes` not answered yet. */
+    const input = (engine: OhmailEngine): PartitionInput => ({
       engine, reader: engine.read(), derived: 1, demo: false, resolvedDemo: false,
-      now: new Date(ISO), facts: null, seedOwed: false,
+      now: new Date(ISO), facts: null,
       consent: {
         known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "all_time",
-        foldersEnabled: false, folderMailboxesOff: {},
+        foldersEnabled: false,
       },
-      route: { view: "screener" as ShellDerivationsInput["route"]["view"], folderId: null },
-      trashWire: undefined, deleting: { held: new Set() }, restoring: { held: new Set() }, routing: { places: new Map() },
     });
     let own: string[] = [];
     function Probe({ engine }: { engine: OhmailEngine }): null {
-      own = useShellDerivations(input(engine)).ownAddresses;
+      own = usePartitionOf(input(engine)).ownAddresses;
       return null;
     }
     const container = document.createElement("div");

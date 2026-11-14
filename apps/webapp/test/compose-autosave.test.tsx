@@ -17,7 +17,7 @@ import { readReplyMeta, replyMetaKey } from "@ohmail/app-logic/writing/mail-send
 import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /* The census below reads the shell AS SOURCE and has to find one declaration in it. The rule,
    and what a hook spelling costs, are written out in the helper. */
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
+import { sliceOfDeclaration } from "./source-anchor.js";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 
@@ -1246,12 +1246,16 @@ describe("the shell is the consumer, not just the harness", () => {
   /**
    * THE WIRING, STRUCTURALLY. Everything above drives the hook directly, which is exactly the
    * blind spot `fetchBody` and `searchServer` shipped through: a hook that works perfectly and
-   * is called by nothing. Both ends are pinned here — the shell arms the hook and gives its id
-   * to the plan, and the Drafts list is rendered from the selector rather than from a copy.
+   * is called by nothing. The mail ground mounts the writer, which arms the hook and gives its
+   * draft id to Send.
    */
-  it("AppShell arms autosave, feeds Send its id, and renders the list", async () => {
+  it("the mounted writer arms autosave and gives Send the same draft id", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
+    const ground = readFileSync(resolve("packages/app/src/mail/MailGround.tsx"), "utf8");
+    const writing = readFileSync(resolve("packages/app/src/mail/ground/WritingMount.tsx"), "utf8");
+    expect(ground).toMatch(/<WritingMount>/);
+    expect(writing).toMatch(/useShellCompose\(inputs\.composer\)/);
     const shell = readFileSync(
       resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
@@ -1261,15 +1265,28 @@ describe("the shell is the consumer, not just the harness", () => {
       .toMatch(/active:\s*route\.view === "compose"/);
     expect(shell, "Send would create a second row beside the autosaved one")
       .toMatch(/composePlan\(\{ \.\.\.compose, forwardParts: [^}]*\}, composeMailbox, autosave\.draftId\)/);
-    expect(shellFrameOf("drafts").source, "the Drafts list is built from something other than the selector")
+  });
+
+  it("the Drafts list is rendered from the selector, and the rail reaches it", async () => {
+    const { readFileSync } = await import("node:fs");
+    const read = (file: string) => readFileSync(file, "utf8");
+
+    expect(read("packages/app-logic/src/writing/composer-lists.ts"), "the composer bypasses the drafts selector")
       .toContain("draftsList(reader)");
-    /* The rail entry is chrome, and the rail left `AppShell.tsx` for `shell-keys.tsx` with the
-       palette and the global chords (ARCH-022 L6). Asked of the FRAME that declares the rail:
-       `railGroups` carries a type annotation, so `const railGroups =` is not in the file and the
-       resolver has no name to find — `railGroupsWithHints`, which maps over it, is the one it
-       does. */
-    expect(shellFrameOf("railGroupsWithHints").source, "there is no way to reach the Drafts list")
-      .toContain('id: "drafts"');
+    const inputs = read("packages/app/src/mail/ground/writing-inputs.ts");
+    expect(inputs).toContain("const lists = useComposerLists(engine, reader, derived)");
+    expect(inputs).toContain("drafts: lists.drafts");
+    expect(read("packages/app/src/drafts/Seat.tsx"), "the seat does not pass the composer's drafts to the list")
+      .toMatch(/useDraftsList\(\{\s*drafts: composer\.drafts,/);
+    expect(read("packages/app/src/drafts/DraftsList.tsx"), "the mounted list does not use the seat's drafts")
+      .toContain("model.drafts.slice(");
+
+    expect(read("packages/app/src/mail/places.ts"), "Drafts is not mounted")
+      .toContain("drafts: draftsPlaceOn(DraftsSeat)");
+    const place = read("packages/app/src/drafts/place.ts");
+    expect(place, "there is no way to reach the Drafts list").toContain('id: "drafts"');
+    expect(place).toMatch(/rail: \{[^\n]*icon: "drafts"/);
+    expect(place).toMatch(/List: DraftsList/);
   });
 
   /**
@@ -1410,11 +1427,9 @@ describe("the shell is the consumer, not just the harness", () => {
    */
   it("every site that writes a draft row is accounted for, and the writing one asks the predicate", async () => {
     const { readFileSync } = await import("node:fs");
-    const read = (f: string): string =>
-      readFileSync(`${process.cwd()}/apps/webapp/app/shell/${f}`, "utf8");
     const readWriting = (f: string): string =>
       readFileSync(`${process.cwd()}/packages/app-logic/src/writing/${f}`, "utf8");
-    const shell = read("../../../../packages/app-logic/src/writing/shell-compose.ts");
+    const shell = readWriting("shell-compose.ts");
     const autosave = readWriting("compose-autosave.ts");
     const send = readWriting("mail-send.ts");
     const lock = readWriting("send-lock.ts");
@@ -1520,21 +1535,18 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(shell, "the reply seed delete reaches the compose surface's rows")
       .toMatch(/replySeedDrafts\.current\.delete\(key\);\s*\n\s*void engine\.mutate\(\{ kind: "draft_discard"/);
 
-    // 5. `discardDraft` is a person pressing Delete on a row in the list. It is not this
-    //    predicate's business to refuse that, and it is the one place a held row IS deleted on
-    //    purpose. (The server answers 500 for such a row today — recorded as its own gap.)
-    /* Anchored on the DECLARED NAME, not on the hook it happens to be declared with. The
-       previous spelling named the memo primitive; a codemod rewrote every one of them in the
-       shell and this positive `toMatch` then failed with the sentence for a different defect
-       ("the shell stopped using this name") instead of for the stale anchor it was.
-       `sliceOfDeclaration` throws `anchor not found: discardDraft` if the shell stops declaring
-       it, which is the existence half of this claim, and the slice it returns is the
-       declaration itself — so the assertion is that this site is the one that reaches the wire,
-       rather than merely that some line somewhere spells the name. */
+    // 5. Explicit Discard reaches the same final delete from the editor or after the list's Undo window.
+    const seat = readFileSync("packages/app/src/drafts/Seat.tsx", "utf8");
+    expect(seat, "the list's explicit Discard no longer reaches the draft delete")
+      .toMatch(/discard: \(id\) =>\s*composer\.discardDraftRow\(\s*id,/);
     expect(
       sliceOfDeclaration(shell, "discardDraft"),
-      "the explicit Delete moved out of the drafts list",
-    ).toContain('kind: "draft_discard"');
+      "the editor's explicit Discard no longer shares the draft delete",
+    ).toContain("await discardDraftRow(listed)");
+    expect(
+      sliceOfDeclaration(shell, "discardDraftRow"),
+      "the explicit Discard no longer writes the selected row's delete",
+    ).toContain('engine.mutate({ kind: "draft_discard", draftId })');
 
     // 6. THE ORPHANED-LANE PROMOTION. It creates a row for a reply whose parent another mail
     //    client deleted, so the compose surface's record says nothing about it — the question is
@@ -1912,8 +1924,9 @@ describe("a body past the ceiling is refused here, not at the server", () => {
     // this branch only appears once somebody has pasted a book into the form.
     // Through `unknown`: the catalogues' inferred literal types nest objects, so the direct
     // assertion is a TS2352 the webapp's own typecheck refuses. The runtime read is unchanged.
-    const en = (await import("../messages/en.json")).default as unknown as Record<string, Record<string, string>>;
-    const de = (await import("../messages/de.json")).default as unknown as Record<string, Record<string, string>>;
+    /* Write's letter and reply read these sentences from the shared Write catalogue. */
+    const en = (await import("../../../packages/app/messages/write.en.json")).default as unknown as Record<string, Record<string, string>>;
+    const de = (await import("../../../packages/app/messages/write.de.json")).default as unknown as Record<string, Record<string, string>>;
     for (const key of ["draftNote", "bodyTooLong"]) {
       expect(en.compose?.[key], `en.compose.${key}`).toBeTruthy();
       expect(de.compose?.[key], `de.compose.${key}`).toBeTruthy();

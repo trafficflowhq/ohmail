@@ -3,7 +3,8 @@ import type { EngineMessage, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -126,7 +127,6 @@ async function mountState(
   } = {},
 ): Promise<{ get: () => StateLike }> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
 
   function Probe(): null {
@@ -136,7 +136,7 @@ async function mountState(
       engine,
       null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      useScreenerText(), opts.suggestions as never,
+      useScreenerWords(), opts.suggestions as never,
       undefined,
       opts.autoUnsubscribe,
     ) as unknown as StateLike;
@@ -148,11 +148,10 @@ async function mountState(
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
+      h(TextProvider, {
         locale: opts.locale ?? "en",
         messages: (opts.locale === "de" ? de : en) as never,
         timeZone: "UTC",
-        now: NOW,
         children: h(Probe),
       }),
     );

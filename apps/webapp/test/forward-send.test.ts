@@ -3,13 +3,12 @@ import { describe, expect, it } from "vitest";
 import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
-import { TODAYS_COMPOSER_WORDS } from "../app/shell/mail-send-text";
+import { COMPOSER_WORDS } from "../../../packages/app/src/mail/ground/writing-words.js";
 
 /**
  * THE FORWARD'S PLAN AND WIRE — the pure halves of the inline forward, pinned key by key.
  *
- * `InlineReply` judges the Send lock with these functions and `AppShell.sendReply`'s forward
- * arm builds the mutation from them; these tests are what keeps that one derivation honest.
+ * The writing ground uses the same forward plan to judge the Send lock and build the mutation.
  * The lane tests pin `sendKeyOf`'s surface argument: a forward is ONE mutation shape sent
  * from TWO surfaces (the compose form and the thread's dock), and the lane is what keeps the
  * dock's "Sending…", its scratch-clear and its settle off the compose form's — see
@@ -45,7 +44,7 @@ describe("forwardSend — the wire, key by key", () => {
     const plan = forwardEnvelopePlan({ to: "a@b.test, ", cc: "", bcc: "" }, []);
     /* The press hands the reader's clock, as the composer's words say it at that moment. */
     setActiveFormatZone("Europe/Zurich");
-    const clock = TODAYS_COMPOSER_WORDS.clock();
+    const clock = COMPOSER_WORDS.clock();
     setActiveFormatZone(null);
     const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan, clock });
     expect(m).toEqual({

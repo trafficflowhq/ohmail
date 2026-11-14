@@ -1,8 +1,12 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { waitFor, within } from "@testing-library/react";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { DesktopGate } from "../src/DesktopGate.js";
+import { CLOUD_URL } from "../src/doors.js";
+import { IntlProvider } from "use-intl";
 
 import en from "../../webapp/messages/en.json";
 
@@ -37,11 +41,26 @@ const shellHost = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Inv
 const REFUSED = { state: "refused", holder: "work-laptop", refusal: "unreadable" };
 const REFUSED_TEXT = en.settings.screening.refusedUnreadable.replace("{name}", "work-laptop");
 
+const mailbox = {
+  id: "mbx-1", address: ["reader", "example.invalid"].join("@"),
+  status: "connected", organizerRole: "reader", organizerState: "held",
+  initialImportCompletedAt: "2026-09-01T08:00:00.000Z",
+};
+
+let door: "hosted" | "standalone";
 beforeEach(() => {
+  door = "hosted";
   shellHost.__TAURI_INTERNALS__ = {
     invoke: async (command, payload) => {
+      if (command === "engine_status") return {
+        state: "serving", mode: door === "hosted" ? "cloud" : "local",
+        cloudUrl: door === "hosted" ? CLOUD_URL : undefined,
+        address: mailbox.address, mailboxId: mailbox.id, credentialState: "ready",
+      };
       if (command !== "engine_request") return null;
       const url = String(payload?.url ?? "");
+      if (url === "/health") return encode(200, '{"signedIn":true}');
+      if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [mailbox] }));
       if (url === "/away-responder") {
         return encode(200, JSON.stringify({
           enabled: false, body: "Back Monday.", startsAt: null, endsAt: null, audience: "screened_in",
@@ -67,6 +86,8 @@ afterEach(async () => {
   root = null;
   hostEl?.remove();
   delete shellHost.__TAURI_INTERNALS__;
+  window.location.hash = "";
+  vi.restoreAllMocks();
 });
 const settle = async (): Promise<void> => {
   await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
@@ -76,42 +97,40 @@ async function mount(node: React.ReactElement): Promise<void> {
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: node }));
+    root!.render(h(IntlProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: node }));
   });
   await settle();
 }
 
+async function pane(section: "away" | "screener" | "signatures") {
+  const name = section === "signatures" ? en.settings.signatures.nav : en.settings[section];
+  return within(hostEl).findByRole("region", { name });
+}
+
+async function mountSettings(section: "away" | "screener") {
+  window.location.hash = `#/settings/${section}`;
+  await mount(h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopGate) }) }));
+}
+
 describe("the desktop's away row", () => {
   it("says the refusal the engine's read carries", async () => {
-    const { AwayResponderRow } = await import("../../webapp/app/shell/AwayResponderRow");
-    const { awayOverBridge } = await import("../src/local-away.js");
-    await mount(h(AwayResponderRow as React.FunctionComponent<{ transport: unknown }>, { transport: awayOverBridge }));
-    expect(hostEl.textContent, "the refusal reached no surface").toContain(REFUSED_TEXT);
+    await mountSettings("away");
+    const away = await pane("away");
+    await waitFor(() => expect(away.textContent, "the refusal reached no surface").toContain(REFUSED_TEXT));
   });
 });
 
-describe.each(["hosted", "standalone"] as const)("the %s door's dial and signature editors", (door) => {
+describe.each(["hosted", "standalone"] as const)("the %s door's dial and signature editors", (mode) => {
   it("say the refusals the consent read carries", async () => {
-    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-    const { DormancyRow } = await import("../../webapp/app/shell/DormancyRow");
-    const { SignaturesRow } = await import("../../webapp/app/shell/SignaturesRow");
-    const wires = await import("../src/local-consent.js");
-    const wire = door === "hosted" ? wires.consentOverBridge : wires.consentOverBridgeStandalone;
-    /* `AppShell`'s own composition of the two rows, and nothing else of it. */
-    function Harness() {
-      const c = useConsentState(true, null, wire);
-      if (!c.known) return null;
-      return h("div", null,
-        h(DormancyRow, { days: c.dormancyDays, scope: c.screeningScope, change: c.dormancyChange, setDormancyDays: c.setDormancyDays }),
-        h("div", { className: "sigs" }, h(SignaturesRow, {
-          mailboxes: [{ id: "mbx-1", address: "one@example.test", organizerRole: "reader" }],
-          signatures: c.signatures, signaturesHtml: c.signaturesHtml, signatureSources: c.signatureSources,
-          changes: c.signatureChanges, setMailboxSignature: c.setMailboxSignature,
-        })));
-    }
-    await mount(h(Harness));
-    const sigs = hostEl.querySelector(".sigs")!;
-    expect(sigs.textContent, "the signature's refusal reached no surface").toContain(REFUSED_TEXT);
-    expect(hostEl.textContent!.split(REFUSED_TEXT).length - 1, "the dial's refusal reached no surface").toBe(2);
+    door = mode;
+    if (mode === "standalone") vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    await mountSettings("screener");
+    const screener = await pane("screener");
+    await waitFor(() => expect(screener.textContent, "the dial's refusal reached no surface").toContain(REFUSED_TEXT));
+
+    const menu = within(hostEl).getByRole("navigation", { name: en.settings.navAria });
+    await act(async () => { within(menu).getByRole("button", { name: en.settings.signatures.nav }).click(); });
+    const signatures = await pane("signatures");
+    await waitFor(() => expect(signatures.textContent, "the signature's refusal reached no surface").toContain(REFUSED_TEXT));
   });
 });

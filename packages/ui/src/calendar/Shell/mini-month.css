@@ -47,6 +47,10 @@
     grid-template-columns: repeat(7, 1fr);
     text-align: center;
   }
+  /* The grid's own parts for a screen reader: the days stand in the grid above them. */
+  .oh-mini-days {
+    display: contents;
+  }
   .oh-mini-wd {
     height: var(--oh-mini-wd);
     color: var(--ink2);
@@ -158,18 +162,77 @@
     --oh-wn-size: 10px;
     right: calc(50% + 17px);
   }
-  /* A widget: small, no marks, a day without anything in the second ink. */
-  .oh-mini[data-size="widget"] {
+  .oh-mini[data-size="phone"][data-compact-days] {
+    --oh-mini-row: var(--cal-phone-month-row);
+    --oh-mini-disc: var(--cal-phone-month-disc);
+  }
+  .oh-mini[data-size="phone"][data-compact-days] .oh-mini-day {
+    grid-template-rows: var(--cal-strip-disc) var(--cal-phone-month-marks);
+    align-content: center;
+    gap: var(--s1);
+  }
+
+  /* In a compact month, a day without anything uses the second ink. */
+  .oh-mini:is([data-size="widget"], [data-size="year"]) {
     --oh-mini-pad: 0;
     --oh-mini-row: 17px;
     --oh-mini-disc: 17px;
     --oh-mini-type: 12px;
     --oh-mini-wd: 17px;
   }
-  .oh-mini[data-size="widget"] .oh-mini-day:not([data-busy], [data-today]) {
+  .oh-mini:is([data-size="widget"], [data-size="year"]) .oh-mini-day:not([data-busy], [data-today]) {
     color: var(--ink2);
   }
-  .oh-mini[data-size="widget"] .oh-mini-day[data-out] {
+  .oh-mini:is([data-size="widget"], [data-size="year"]) .oh-mini-day[data-out] {
     visibility: hidden;
+  }
+  .oh-mini[data-size="year"] {
+    --oh-mini-row: var(--cal-year-row);
+    --oh-mini-disc: var(--cal-year-disc);
+  }
+  :root[data-device="phone"] .oh-mini[data-size="year"] {
+    --oh-mini-row: var(--cal-year-row-phone);
+  }
+}
+
+@layer oh {
+  .oh-mini[data-size="strip"] {
+    --oh-mini-pad: 0 var(--s2) var(--s2);
+    --oh-mini-row: var(--cal-strip-row);
+    --oh-mini-disc: var(--cal-strip-disc);
+  }
+}
+
+@layer oh {
+  .oh-mini-day:has(.oh-mini-run)::before {
+    content: none;
+  }
+  .oh-mini-run {
+    position: absolute;
+    inset: var(--cal-year-run-top) 0 var(--s1);
+    background: color-mix(
+      in oklab,
+      var(--oh-cal-mark, var(--cal-grey)) var(--cal-year-run-wash),
+      transparent
+    );
+    border-top: var(--cal-year-run-line) solid var(--oh-cal-mark, var(--cal-grey));
+  }
+  .oh-mini-run[data-first] {
+    inset-inline-start: 20%;
+    border-start-start-radius: var(--r-sq);
+    border-end-start-radius: var(--r-sq);
+  }
+  .oh-mini-run[data-last] {
+    inset-inline-end: 20%;
+    border-start-end-radius: var(--r-sq);
+    border-end-end-radius: var(--r-sq);
+  }
+  .oh-mini-day:has(.oh-mini-marks) {
+    grid-template-rows: 1fr var(--s2);
+  }
+  .oh-mini-marks {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
   }
 }

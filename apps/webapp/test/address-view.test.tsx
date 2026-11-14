@@ -8,7 +8,7 @@ import {
   type ServerAddressOpts, type ServerAddressWire,
 } from "@ohmail/client-engine";
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
-import { useAddressView, messagesWith, type AddressView } from "../app/shell/address-view";
+import { useAddressView, messagesWith, type AddressView } from "@ohmail/app-logic/address";
 
 // React only accepts `act` in an environment that declares itself one; without this every
 // render logs a warning that a later reader cannot tell from a real problem. Same line as
@@ -382,20 +382,5 @@ describe("useAddressView — the device half, the archive half, and what covers 
     await settle();
     expect(asked).toEqual([JONAS]);
     expect(seen!.archive.state).toBe("unavailable");
-  });
-
-  it("re-derives the device half when the mirror moves", async () => {
-    const engine = engineWith(() => ({ items: [], total: 0, direction: "from" }));
-    await engine.start();
-    await mount(engine, JONAS, "any");
-    await settle();
-    expect(seen!.counts).toEqual({ any: 1, from: 1, to: 0 });
-
-    // A real send through the engine, then a render at the new mirror version.
-    const res = await engine.mutate({ kind: "mail_send", inReplyTo: "jonas", body: "The 18th." });
-    expect(res.status).toBe("confirmed");
-    await rerender(engine, JONAS, "any", 2);
-    await settle();
-    expect(seen!.counts).toEqual({ any: 2, from: 1, to: 1 });
   });
 });

@@ -305,6 +305,11 @@ describe("configuring a key you own", () => {
     // First contact is held at the Screener by RULE, deterministically — the model is not asked
     // and must not be. The suggestion is a separate, explicit request about senders already
     // waiting there, which is the second of this app's two AI features.
+    const consent = await l.client.fetch("/consent/settings", {
+      method: "PATCH", headers: auth(l), body: JSON.stringify({ autoSuggest: true }),
+    });
+    expect(consent.ok).toBe(true);
+
     const res = await l.client.fetch("/screener/suggest", {
       method: "POST",
       headers: auth(l),

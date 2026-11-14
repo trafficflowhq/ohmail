@@ -128,7 +128,7 @@ describe("the phone shell's answers, per setting", () => {
     calendar: has.frame.calendar,
   };
   const DEVICE = {
-    build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true },
+    build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true, desktopDownload: null },
     notifications: has.notifications,
     badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
     address: has.frame.address, window: has.frame.window, appearance: has.frame.appearance,
@@ -146,7 +146,7 @@ describe("the phone shell's answers, per setting", () => {
     ["managed", { session: { state: "live", account: "acct-1", signOut: has.signOut }, capabilities: capabilities("managed", "service", "signOutOnly") }],
     ["selfHosted", { session: { state: "live", account: "acct-1", signOut: has.signOut }, capabilities: capabilities("self", "service", "signOutOnly") }],
     ["desktopHost", { session: { state: NONE, account: null, signOut: has.signOut }, capabilities: capabilities("ownComputer", "computer", "signOutOnly") }],
-    ["standalone", { session: { state: NONE, account: null, signOut: NONE }, capabilities: capabilities("ownComputer", "computer", NONE) }],
+    ["standalone", { session: { state: NONE, account: null, signOut: NONE }, capabilities: { ...capabilities("ownComputer", "computer", NONE), searchBy: "people" } }],
   ];
   for (const [setting, want] of table) {
     it(`answers the whole record on ${setting}`, () => {

@@ -12,14 +12,18 @@ export type NamespaceText = (key: string, values?: Record<string, TranslationVal
 export const PRESS_NAMESPACES = ["ohbox", "screener", "trash", "screening", "session", "shortcuts"] as const;
 export type PressNamespace = (typeof PRESS_NAMESPACES)[number];
 
-/** A root reader: `ns.key` goes to that namespace's reader; a namespace not handed answers nothing. */
-export function pressWords(texts: Readonly<Record<PressNamespace, NamespaceText>>): Translator {
-  const by = texts as Readonly<Record<string, NamespaceText | undefined>>;
+/** A root reader over the namespaces handed: `ns.key` goes to that namespace's reader; another answers nothing. */
+export function wordsOver(texts: Readonly<Record<string, NamespaceText | undefined>>): Translator {
   return (key, values) => {
     const dot = key.indexOf(".");
-    const text = dot > 0 ? by[key.slice(0, dot)] : undefined;
+    const text = dot > 0 ? texts[key.slice(0, dot)] : undefined;
     return text ? text(key.slice(dot + 1), values) : "";
   };
+}
+
+/** The seam's root reader: `ns.key` goes to that namespace's reader; a namespace not handed answers nothing. */
+export function pressWords(texts: Readonly<Record<PressNamespace, NamespaceText>>): Translator {
+  return wordsOver(texts);
 }
 
 /**

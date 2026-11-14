@@ -35,8 +35,6 @@ export const SHEETS = [
   ...sheetsUnder("packages/ui/src"),
   "apps/webapp/app/app.css",
   "apps/webapp/app/zero-layout.css",
-  "apps/webapp/app/shell/today.css",
-  "apps/webapp/app/shell/today-tokens.generated.css",
 ];
 
 /** The page: the frame's markup under the root's attributes and every sheet, plus what a test adds after them. */

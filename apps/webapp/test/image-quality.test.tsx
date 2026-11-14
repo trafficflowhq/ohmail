@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { ComposeAttach } from "../app/components/ComposeAttach";
-import { TodaysScopeProvider } from "../app/shell/todays-scope";
+import { Scoped } from "@ohmail/app/frame";
 import { setActiveCatalog } from "../app/shell/locale";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
@@ -808,7 +808,7 @@ let handed: ComposeAttachment[] = [];
 async function mount(maxTotalBytes: number, locale: "en" | "de" = "en"): Promise<void> {
   handed = [];
   /* Drawn in a shell, as the composer always is: the level is read under the shell's scope. */
-  const view = h(TodaysScopeProvider, { value: "acc-quality" }, h(ComposeAttach as never, {
+  const view = h(Scoped, { scope: "acc-quality" }, h(ComposeAttach as never, {
     attachments: [],
     onChange: (next: ComposeAttachment[]) => {
       handed = next;

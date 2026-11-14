@@ -148,29 +148,9 @@ describe("the census: a surface parked off canvas says what makes it inert", () 
     expect([...new Set(found)].sort()).toEqual(Object.keys(PARKED).sort());
   });
 
-  it("the thread squares' chip, where it stands before it is placed, is no Tab stop, no name and no target", async () => {
-    const { ThreadTip } = await import("../app/shell/ThreadMarks.js");
-    const style = document.createElement("style");
-    style.textContent = `.tm-tip{${ruleOf(read("../app/app.css"), ".tm-tip")}}`;
-    document.head.appendChild(style);
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    roots.push(root);
-    const m = {
-      id: "p1", threadId: "T", subject: "Q3 plan", from: { name: "Lena", address: "lena@example.invalid" },
-      date: "2026-10-22T09:00:00.000Z", unread: true, folder: "INBOX",
-    } as unknown as Parameters<typeof ThreadTip>[0]["m"];
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(ThreadTip, { m, place: "left" }) }));
-    });
-    const chip = document.querySelector<HTMLElement>(".tm-tip")!;
-    expect(chip.textContent, "the chip did not render").toMatch(/^Lena/);
-    expect(chip.getAttribute("aria-hidden"), "the chip is named to assistive tech").toBe("true");
-    expect(stops().filter((s) => chip.contains(s)), "Tab stops inside the chip").toEqual([]);
-    expect(getComputedStyle(chip).pointerEvents, "the chip takes the pointer").toBe("none");
-    style.remove();
-  });
+  // The thread squares' chip case (today's `ThreadMarks` ThreadTip, drawn by no part of the new shell) left with it: the
+  // kit's squares draw no chip (`packages/ui/test/mail/lists.test.tsx`, "ReadSquares"). `.tm-tip` stays in PARKED while
+  // its rule stands in app.css.
 });
 
 /*

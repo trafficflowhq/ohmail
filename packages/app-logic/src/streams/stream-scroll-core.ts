@@ -36,12 +36,16 @@ export interface StreamScrollSeam {
   judging?(): boolean;
   /** The run starts again where the landing rests. */
   restart?(): void;
+  /** The current application landing is displaying its real destination. */
+  settled?(): void;
+  /** The part of the port that contributes to the leave range. */
+  readView?(el: HTMLElement): { top: number; bottom: number };
 }
 
 /** What the core reads of its caller on every use (the hook's latest props). */
 export interface StreamScrollInputs {
   readonly card: StreamCardNames;
-  readonly onCurrentChange: (id: string) => void;
+  readonly onCurrentChange: (id: string, byHand?: boolean) => void;
   readonly pileIndexOf?: (id: string) => number;
   readonly seam?: StreamScrollSeam;
 }
@@ -66,6 +70,7 @@ export class StreamScrollCore {
   inputs: StreamScrollInputs;
   /** Hands counted here when the seam does not count them. */
   ownHands = 0;
+  private handsAtPin = 0;
   cur: string | null = null;
   /** A programmatic jump in flight: its target, and when to stop protecting it. */
   jump: { id: string; until: number } | null = null;
@@ -137,18 +142,33 @@ export class StreamScrollCore {
   }
 
   pin(id: string): void {
+    this.handsAtPin = this.hands();
     this.held = id;
     this.cur = id;
   }
 
   /** Is this card in the port? Unmounted, or a stream with no layout yet, answers no. */
-  inPort(id: string): boolean {
+  inPort(id: string, viewOf: (el: HTMLElement) => { top: number; bottom: number } = cssRect): boolean {
     const el = this.el;
     const c = el ? this.one(el, id) : null;
     if (!el || !c) return false;
-    const root = cssRect(el);
+    const root = viewOf(el);
     const r = cssRect(c);
-    return root.height > 0 && r.bottom > root.top && r.top < root.bottom;
+    return root.bottom > root.top && r.height > 0 && r.bottom > root.top && r.top < root.bottom;
+  }
+
+  /** Whether the stream has settled with part of this card in its readable viewport. */
+  settledInReadView(id: string): boolean {
+    return (
+      !this.seamLanding() &&
+      !this.judging() &&
+      !this.raf &&
+      !this.anchor &&
+      !this.owed &&
+      !this.landing &&
+      this.pendingShift() === 0 &&
+      this.inPort(id, this.inputs.seam?.readView)
+    );
   }
   settleOffScreen(): void {
     for (const [id, cb] of [...this.offScreen]) {
@@ -212,8 +232,8 @@ export class StreamScrollCore {
     }
     const cards = this.all(el);
     if (cards.length === 0) return;
-    const rootRect = cssRect(el);
-    if (rootRect.height <= 0) return; // detached or unlaid-out: keep what we know
+    const rootRect = this.inputs.seam?.readView?.(el) ?? cssRect(el);
+    if (rootRect.bottom <= rootRect.top) return; // detached or unlaid-out: keep what we know
     if (this.pendingShift() !== 0) return; // a frame the anchoring loop has not corrected yet
     const screen = this.screenOf(cards, rootRect);
     if (!screen) return;
@@ -255,9 +275,7 @@ export class StreamScrollCore {
 
   /** A visit starts from nothing: the tracked range empty, the scroller at its top. */
   visitStart(): void {
-    this.range = { newestSeenId: null, bottomVisibleId: null };
-    this.shown = null;
-    this.bridge = false;
+    this.resetRange();
     this.landing = false;
     this.cur = null;
     this.jump = null;
@@ -268,6 +286,14 @@ export class StreamScrollCore {
       this.quiet = true;
       this.own(() => el.scrollTo({ top: 0, behavior: "instant" }));
     }
+  }
+
+  /** The next screen supplies the range for another reading run. */
+  resetRange(): void {
+    this.range = { newestSeenId: null, bottomVisibleId: null };
+    this.shown = null;
+    this.bridge = false;
+    this.endFrom = undefined;
   }
 
   /** The scroll-spy: the current card is the last one at or above the reading line, the last one at the end. */
@@ -304,7 +330,7 @@ export class StreamScrollCore {
     }
     if (id !== this.cur) {
       this.cur = id;
-      this.inputs.onCurrentChange(id);
+      this.inputs.onCurrentChange(id, this.hands() !== this.handsAtPin);
     }
   }
   /** Still travelling to the jump's own aim (clamped as the landing clamps it): true. Landed or expired: cleared. */

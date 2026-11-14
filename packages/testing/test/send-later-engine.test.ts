@@ -1,3 +1,4 @@
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
@@ -278,6 +279,46 @@ describe("the demo world (FixturesAdapter)", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]!.status).toBe("scheduled");
     expect(listed[0]!.sendAt).toBe(SEND_AT);
+  });
+  it("scheduling a saved draft and cancelling keeps one copy of its latest words", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store: new MemoryMirrorStore() });
+    await engine.syncOnce();
+    const send = COMPOSE("mb-demo");
+    const saved = await engine.mutate({
+      kind: "draft_save", draftId: null, mailboxId: send.mailboxId, subject: send.subject,
+      body: "older words", threadId: "original-thread", inReplyToMessageId: null, to: send.to, cc: [], bcc: [],
+    });
+    const id = saved.entityId;
+    if (!id) throw new Error("the saved draft has no id");
+    const html = "<p><strong>the words</strong></p>";
+    const appointed = await engine.mutate({ ...send, html, draftId: id });
+    expect(appointed.status).toBe("confirmed");
+    expect(appointed).not.toHaveProperty("providerMessageId");
+    const rows = () => engine.read().list<EngineDraft>("draft").filter(d => d.subject === send.subject);
+    expect(rows().map(d => [d.id, d.status, d.body, d.html])).toEqual([[id, "scheduled", send.body, html]]);
+    expect(rows()[0]?.threadId).toBe("original-thread");
+    await engine.mutate({ kind: "draft_schedule_cancel", draftId: id });
+    expect(rows().map(d => [d.id, d.status, d.body, d.html])).toEqual([[id, "draft", send.body, html]]);
+  });
+
+  it("scheduling a deleted or stale draft preserves the account's current row", async () => {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store: new MemoryMirrorStore() });
+    await engine.syncOnce();
+    const send = COMPOSE("mb-demo");
+    const saved = await engine.mutate({
+      kind: "draft_save", draftId: null, mailboxId: send.mailboxId, subject: send.subject,
+      body: "current words", threadId: null, inReplyToMessageId: null, to: send.to, cc: [], bcc: [],
+    });
+    const id = saved.entityId;
+    if (!id) throw new Error("the saved draft has no id");
+    const stale = await engine.mutate({ ...send, draftId: id, ifContentRevision: "older-revision" });
+    expect(stale.error?.code).toBe("draft_changed");
+    expect(engine.read().get<EngineDraft>("draft", id)).toMatchObject({ status: "draft", body: "current words" });
+    await engine.mutate({ kind: "draft_discard", draftId: id });
+    const gone = await engine.mutate({ ...send, draftId: id });
+    expect(gone.error?.code).toBe("not_found");
+    expect(engine.read().get("draft", id)).toBeUndefined();
+    expect(scheduledSendsList(engine.read())).toHaveLength(0);
   });
 });
 

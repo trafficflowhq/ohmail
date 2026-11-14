@@ -15,6 +15,7 @@ export * from "./recur/key.js";
 export * from "./recur/series.js";
 export * from "./recur/occurrence.js";
 export * from "./stored/time.js";
+export * from "./stored/delete-audience.js";
 export * from "./stored/event-range.js";
 export * from "./ical/lines.js";
 export * from "./ical/component.js";

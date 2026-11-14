@@ -18,6 +18,9 @@
  * engine that opens no file no file door stands. The pixel switch the ground hands the picture door is the row's own,
  * and a picture's address is minted only while the window may read for its engine's account. A press of Show images
  * made under one scope is never read under another.
+ *
+ * And whether the service is the managed one, as the host answers it: read the same by every piece and pane, so a
+ * person on a server they run themselves is never shown credit prices.
  */
 import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -25,6 +28,8 @@ import { Component, Profiler, useEffect, useState, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
+import { EngineContext } from "@ohmail/app-logic/engine";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { letterPictures, useDoors } from "@ohmail/app-logic/reader";
 import { armDeleteIntent } from "@ohmail/app-logic/press/delete-intents";
@@ -35,12 +40,13 @@ import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import {
   createSyncGate,
   registerSyncGate,
+  SYNC_SETTLED,
   type SyncGate,
   type SyncIdentity,
 } from "@ohmail/app-logic/session/sync-scheduler";
 import type { FramePlaces, PlaceEntry } from "../../src/frame/contract.js";
 import { Frame } from "../../src/frame/Frame.js";
-import { usePress, useRoomHolds } from "../../src/frame/room.js";
+import { usePress, useResurfaceTime, useRoomHolds } from "../../src/frame/room.js";
 import {
   NONE,
   type ConsentWire,
@@ -49,10 +55,12 @@ import {
   type None,
   type ReaderEntry,
 } from "../../src/host/index.js";
-import { ConsentMount, DoorsMount, MailStateMount, PresentedMount } from "../../src/mail/ground/index.js";
+import { ConsentMount } from "../../src/mail/ground/ConsentMount.js";
+import { DoorsMount } from "../../src/mail/ground/DoorsMount.js";
+import { MailStateMount } from "../../src/mail/ground/MailStateMount.js";
+import { PresentedMount } from "../../src/mail/ground/PresentedMount.js";
 import { MailGround } from "../../src/mail/index.js";
 import { TextProvider } from "../../src/text/index.js";
-import { KeymapProvider } from "../../src/keys/index.js";
 import { fakeMail, letter, WORDS, type FakeMail } from "../reader/support/mail.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, type FakeAddress } from "../support/fake-window.js";
@@ -134,12 +142,10 @@ function overTheGround(mail: FakeMail, address: FakeAddress, places: Partial<Fra
     above: MailGround,
     address,
   });
-  /* The key map's registry stands above the frame, as a shell's does: the seam declares its z into it. */
+  /* The frame stands the key map's registry itself, under its scope: the seam declares its z into it. */
   return (
     <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
-      <KeymapProvider>
-        <Frame host={host} />
-      </KeymapProvider>
+      <Frame host={host} />
     </TextProvider>
   );
 }
@@ -221,10 +227,12 @@ describe("one press seam a frame, over the mail ground", () => {
 
 /**
  * WHAT A PLACE READS OF THE GROUND, as words on the page: the row's two picture fields and whether it is known, the
- * partition's own addresses and its History, and the letters the presented mirror holds.
+ * partition's own addresses and its History, the letters the presented mirror holds, and the account's resurface
+ * hour as the frame's room has it.
  */
 function Reads() {
   const row = useConsent();
+  const hour = useResurfaceTime();
   const { ownAddresses, consentView } = usePartition();
   const presented = usePresented();
   const { mailboxes } = useMailState();
@@ -243,6 +251,14 @@ function Reads() {
       <li>{`history: ${history}`}</li>
       <li>{`presented: ${shown}`}</li>
       <li>{`mailboxes: ${mailboxes === null ? "not read" : mailboxes.length}`}</li>
+      <li>
+        {`a letter comes back at ${hour.stored ?? "the reader's own hour"}, and ${hour.store ? "a new hour" : "no hour"} is kept`}
+        {hour.store ? (
+          <button type="button" onClick={() => void hour.store?.("06:30")}>
+            Keep 06:30
+          </button>
+        ) : null}
+      </li>
     </ul>
   );
 }
@@ -250,10 +266,14 @@ const READING: Partial<FramePlaces> = {
   ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: Reads } },
 };
 
-/** A consent wire that counts how often its row is asked for, and answers what the case says (or never). */
-function consentWire(answer: (() => Promise<unknown>) | "never") {
+/**
+ * A consent wire that counts how often its row is asked for, and answers what the case says (or never); with the
+ * writers the case hands it.
+ */
+function consentWire(answer: (() => Promise<unknown>) | "never", writers: Partial<ConsentWire> = {}) {
   const asked = { state: 0 };
   const wire = {
+    ...writers,
     state: () => {
       asked.state += 1;
       return answer === "never" ? new Promise(() => undefined) : answer();
@@ -314,15 +334,32 @@ class Thrown extends Component<{ readonly children: ReactNode }, { readonly said
     return this.state.said === null ? this.props.children : <p>{`thrown: ${this.state.said}`}</p>;
   }
 }
-/** React says every throw of a render on the console as well; these cases read the sentence off the page. */
+/**
+ * React says every throw of a render on the console as well; these cases read the sentence off the page, or, for a
+ * throw in a place's pane, where the frame's boundary reports it (`place-boundary.tsx`): `reported`.
+ */
+const onConsole: unknown[][] = [];
 function quietly<T>(run: () => T): T {
-  const said = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  onConsole.length = 0;
+  const said = vi
+    .spyOn(console, "error")
+    .mockImplementation((...args: unknown[]) => void onConsole.push(args));
   try {
     return run();
   } finally {
     said.mockRestore();
   }
 }
+/** The frame's boundary reported a pane's throw (place and kind only), and React's own report carries this sentence. */
+const reported = (sentence: string): boolean =>
+  onConsole.some(
+    (args) =>
+      args.length === 3 && args[0] === "[view] render failed" && args[1] === "ohbox" && args[2] === "Error",
+  ) &&
+  onConsole.some(
+    (args) =>
+      args[0] !== "[view] render failed" && args.some((a) => a instanceof Error && a.message === sentence),
+  );
 
 describe("what the mail ground stands is under the frame's scope, and never another's", () => {
   it("under a scope the frame refuses, nothing of the ground is mounted and no wire is asked", async () => {
@@ -417,6 +454,59 @@ describe("what the mail ground stands never widens what a host did not answer", 
     ]);
   });
 
+  it("the account's resurface hour is the row's: the room offers it and keeps a new one through the wire; over a host with no wire nothing is stored and nothing kept", async () => {
+    const kept: (string | null)[] = [];
+    const { wire } = consentWire(
+      async () => ({
+        seedConfirmedAt: null,
+        dormancyDays: 45,
+        blockRemoteImagesAt: null,
+        loadTrackingPixelsAt: null,
+        resurfaceTime: "07:00",
+      }),
+      {
+        setResurfaceTime: async (resurfaceTime) => {
+          kept.push(resurfaceTime);
+          return { resurfaceTime };
+        },
+      },
+    );
+    const { unmount } = render(reading({ mail: fakeMail([letter("m1")]), scope: SCOPE, consent: wire }));
+    /* Before the row's answer nothing is stored: the reader's own hour. */
+    expect(screen.getByText(/^a letter comes back at the reader's own hour/)).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByText("a letter comes back at 07:00, and a new hour is kept")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keep 06:30" }));
+    await waitFor(() =>
+      expect(screen.getByText("a letter comes back at 06:30, and a new hour is kept")).toBeTruthy(),
+    );
+    expect(kept).toEqual(["06:30"]);
+    unmount();
+
+    const bare = render(reading({ mail: fakeMail([letter("m1")]), scope: SCOPE }));
+    await settled();
+    expect(
+      screen.getByText("a letter comes back at the reader's own hour, and no hour is kept"),
+    ).toBeTruthy();
+    bare.unmount();
+
+    /* In the demo's invented world the row is never asked, and nothing is kept whatever the host could store. */
+    const invented = fakeMail([letter("m1")]);
+    render(
+      <EngineContext.Provider
+        value={{ engine: invented.engine, demo: true, serverDemo: true, sync: SYNC_SETTLED }}
+      >
+        {reading({ mail: invented, scope: SCOPE, consent: wire })}
+      </EngineContext.Provider>,
+    );
+    await settled();
+    expect(
+      screen.getByText("a letter comes back at the reader's own hour, and no hour is kept"),
+    ).toBeTruthy();
+    expect(kept).toEqual(["06:30"]);
+  });
+
   it("the presented mirror a place reads leaves out what the seam holds back, in the very commit the seam says it", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     try {
@@ -450,9 +540,7 @@ describe("what the mail ground stands never widens what a host did not answer", 
             id="frame"
             onRender={() => void commits.push({ held: line("here: held "), presented: line("presented: ") })}
           >
-            <KeymapProvider>
-              <Frame host={host} />
-            </KeymapProvider>
+            <Frame host={host} />
           </Profiler>
         </TextProvider>,
       );
@@ -509,7 +597,7 @@ describe("a reader of the mail ground outside its provider fails closed", () => 
         reader();
         return <p>read with nothing above</p>;
       });
-      expect(screen.getByText(`thrown: ${sentence}`)).toBeTruthy();
+      expect(reported(sentence), sentence).toBe(true);
       expect(screen.queryByText("read with nothing above")).toBeNull();
       view.unmount();
     }
@@ -618,7 +706,7 @@ describe("the two doors of a letter, mounted by the ground", () => {
 
   it("with no ground above the doors' reader throws its own sentence, and the doors' mount alone the consent row's", () => {
     const none = quietly(() => render(overTheDoors(NONE, NONE, NONE)));
-    expect(screen.getByText("thrown: useDoors: no doors stand above (DoorsContext)")).toBeTruthy();
+    expect(reported("useDoors: no doors stand above (DoorsContext)")).toBe(true);
     none.unmount();
     quietly(() => render(overTheDoors(NONE, NONE, DoorsMount)));
     expect(screen.getByText("thrown: useConsent: no consent row stands above (ConsentContext)")).toBeTruthy();
@@ -806,5 +894,41 @@ describe("the two doors of a letter, mounted by the ground", () => {
       expect(inB.getByText("loaded no, pixels blocked")).toBeTruthy();
       expect({ a: a.record.mock.calls, b: b.record.mock.calls }).toEqual({ a: [["m1"]], b: [] });
     });
+  });
+});
+
+describe("whether the service is the managed one, for everything the ground stands", () => {
+  /** A place that says what it reads, as a price's sentence decides by it. */
+  function Says() {
+    return <p>{useManagedService() ? "read as managed" : "read as not managed"}</p>;
+  }
+  const over = (service: "managed" | "self" | "ownComputer") => {
+    const { host } = fakeHost({
+      engine: fakeMail([letter("m1")]).engine,
+      service,
+      scope: SCOPE,
+      places: { ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: Says } } },
+      above: MailGround,
+      address: fakeAddress("#/ohbox"),
+    });
+    return render(
+      <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+        <Frame host={host} />
+      </TextProvider>,
+    );
+  };
+
+  it("a part under the ground reads not managed over a server a person runs, and managed over the managed service", () => {
+    over("self");
+    expect(
+      screen.getByText("read as not managed"),
+      "a self-hosted person would be shown credit prices",
+    ).toBeTruthy();
+    cleanup();
+    over("ownComputer");
+    expect(screen.getByText("read as not managed")).toBeTruthy();
+    cleanup();
+    over("managed");
+    expect(screen.getByText("read as managed")).toBeTruthy();
   });
 });

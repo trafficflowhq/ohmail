@@ -6,90 +6,78 @@
  * read. The reading is kept for the session and the diagnostic file carries it without a name.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, createTranslator } from "next-intl";
+import { fireEvent, waitFor, within } from "@testing-library/react";
+import { createTranslator } from "next-intl";
 import { readSelfCheck } from "@trafficflow/core/diagnostics";
+import { selfCheckPressSentence, selfCheckSentence } from "@ohmail/app-logic/mailboxes/moved";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
+import { checkMailboxHere, selfChecksThisSession } from "../src/local-self-check.js";
+import { writeDesktopDiagnostics } from "../src/local-diagnostics.js";
+import { cleanInstallPane, encodeDesktopAnswer, mountInstallPane, type DesktopPaneRequest } from "./_install-pane.js";
 
-const FACTS: Array<Record<string, unknown>> = [
-  { id: "m1", address: "ann@example.test", displayName: null, status: "connected" },
-  { id: "m2", address: "old@example.test", displayName: null, status: "disabled" },
+const FACTS = [
+  { id: "m1", address: "ann@example.test", displayName: null, status: "connected", lastSyncAt: "2026-09-27T05:00:00.000Z" },
+  { id: "m2", address: "old@example.test", displayName: null, status: "disabled", lastSyncAt: null },
 ];
-vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
-  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
-    "@ohmail/app-logic/mail-state/mail-state-binding",
-  );
-  return { ...real, useMailboxFacts: () => FACTS, useMailState: () => ({ state: null, refresh: async () => {} }) };
-});
 
-const { MailboxSelfCheck, selfCheckPressSentence, selfCheckSentence } = await import("../../webapp/app/shell/MailboxSelfCheck");
-const { checkMailboxHere, selfChecksThisSession } = await import("../src/local-self-check.js");
-const { MailboxFilings } = await import("../../webapp/app/shell/MailboxFilings");
-const { filingsOverBridge } = await import("../src/local-filings.js");
-const { writeDesktopDiagnostics } = await import("../src/local-diagnostics.js");
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
-const globe = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } };
-
-function framed(status: number, body: unknown): Uint8Array {
-  const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "", h: [["content-type", "application/json"]] }));
-  const bytes = new TextEncoder().encode(JSON.stringify(body));
-  const out = new Uint8Array(4 + meta.length + bytes.length);
-  new DataView(out.buffer).setUint32(0, meta.length, false);
-  out.set(meta, 4);
-  out.set(bytes, 4 + meta.length);
-  return out;
-}
-
-const reading = (folders: unknown[]) => ({ mailboxId: "m1", checkedAt: "2026-09-27T06:00:00.000Z", elapsedMs: 90, verdict: "x", folders });
+const reading = (folders: unknown[]) =>
+  ({ mailboxId: "m1", checkedAt: "2026-09-27T06:00:00.000Z", elapsedMs: 90, verdict: "x", folders });
+type Reply = (request: DesktopPaneRequest) => { status: number; body: unknown };
 let asked: Array<{ method: unknown; url: unknown }> = [];
+let onCheck: Reply;
 
 function engine(status: number, body: unknown): void {
   asked = [];
-  globe.__TAURI_INTERNALS__ = {
-    invoke: (command, payload) => {
-      if (command !== "engine_request") return Promise.reject(new Error(`unexpected ${command}`));
-      asked.push({ method: payload?.method, url: payload?.url });
-      return Promise.resolve(framed(status, body));
+  onCheck = () => ({ status, body });
+}
+
+async function openMailboxes(locale: "en" | "de", options: { filing?: unknown; onFilings?: Reply } = {}): Promise<HTMLElement> {
+  return mountInstallPane({
+    status: {
+      state: "serving", mode: "local", localDoorVersion: 1, credentialState: "ready",
+      mailboxId: FACTS[0]!.id, address: FACTS[0]!.address,
     },
-  };
-}
-
-let root: Root | null = null;
-let el: HTMLDivElement | null = null;
-
-async function render(messages: typeof en | typeof de, locale: string): Promise<HTMLDivElement> {
-  el = document.createElement("div");
-  document.body.appendChild(el);
-  root = createRoot(el);
-  await act(() => {
-    root?.render(h(NextIntlClientProvider, { locale, messages: messages as never, timeZone: "UTC", children: h(MailboxSelfCheck, { check: checkMailboxHere }) }));
+    section: "mailboxes",
+    locale,
+    answer: (request) => {
+      const { method, path, url } = request;
+      if (path === "/mailboxes") {
+        return { body: { items: FACTS.map((row) => row.id === "m1" ? { ...row, filing: options.filing } : row) } };
+      }
+      if (path.endsWith("/self-check")) {
+        asked.push({ method, url });
+        return onCheck(request);
+      }
+      if (path.includes("/filings")) {
+        asked.push({ method, url });
+        return options.onFilings?.(request) ?? { status: 404, body: {} };
+      }
+      if (path === "/local/mailboxes/connections" || path === "/local/search-index") return { body: { items: [] } };
+      if (path.endsWith("/profile-import")) return { status: 404, body: {} };
+      if (path === "/consent") return { body: { dormancyDays: 60, seedConfirmedAt: "2026-09-27T05:00:00.000Z" } };
+      return undefined;
+    },
   });
-  return el;
 }
 
-async function press(node: HTMLDivElement): Promise<void> {
-  const button = node.querySelector("button");
-  if (!button) throw new Error("no button");
-  await act(async () => { button.click(); });
-  for (let i = 0; i < 40 && node.querySelector("button")?.hasAttribute("disabled"); i++) {
-    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-  }
+async function render(locale: "en" | "de"): Promise<HTMLElement> {
+  const pane = await openMailboxes(locale);
+  return waitFor(() => {
+    const node = pane.querySelector<HTMLElement>(".mbx-selfcheck");
+    if (!node) throw new Error("the local Mailboxes screen did not render Self Check");
+    return node;
+  });
 }
 
-afterEach(async () => {
-  if (root) await act(() => { root?.unmount(); });
-  el?.remove();
-  root = null;
-  delete globe.__TAURI_INTERNALS__;
-});
+async function press(node: HTMLElement, locale: "en" | "de" = "en"): Promise<void> {
+  const label = (locale === "de" ? de : en).mailboxes.selfCheckAction;
+  fireEvent.click(within(node).getByRole("button", { name: label }));
+  await waitFor(() => expect(within(node).getByRole("button", { name: label })).toHaveProperty("disabled", false));
+}
+
+afterEach(cleanInstallPane);
 
 describe("Check this mailbox — the desktop's local door", () => {
   it("one row per live mailbox, one GET down the bridge, and the differing folder named with its count", async () => {
@@ -97,7 +85,7 @@ describe("Check this mailbox — the desktop's local door", () => {
       { folder: "INBOX", k: "in_step", server: 4, mirror: 4 },
       { folder: "Archive", k: "server_more", server: 3, mirror: 2 },
     ]));
-    const node = await render(en, "en");
+    const node = await render("en");
     expect(node.querySelectorAll("button")).toHaveLength(1);
     expect(node.textContent).toContain("ann@example.test");
     expect(node.textContent).not.toContain("old@example.test");
@@ -109,22 +97,35 @@ describe("Check this mailbox — the desktop's local door", () => {
 
   it("a clean reading says it is in step, in the window's language", async () => {
     engine(200, reading([{ folder: "INBOX", k: "in_step", server: 4, mirror: 4 }]));
-    const node = await render(de, "de");
-    await press(node);
+    const node = await render("de");
+    await press(node, "de");
     expect(node.textContent).toContain("Stimmt mit deinem Mailserver überein.");
   });
 
   it("an engine that refuses the request says the check could not run, and claims nothing about the mail", async () => {
     engine(500, { error: { message: "boom" } });
-    const node = await render(en, "en");
+    const node = await render("en");
     await press(node);
     expect(node.textContent).toContain("The check could not run. Nothing was changed.");
     expect(node.textContent).not.toContain("In step");
+
+    // A well-formed answer for another row also cannot become this mailbox's reading.
+    onCheck = () => ({
+      status: 200,
+      body: { ...reading([{ folder: "INBOX", k: "in_step", server: 4, mirror: 4 }]), mailboxId: "m2" },
+    });
+    await press(node);
+    expect(node.textContent).toContain("The check could not run. Nothing was changed.");
+    expect(node.textContent).not.toContain("In step");
+    expect(asked).toEqual([
+      { method: "GET", url: "/mailboxes/m1/self-check" },
+      { method: "GET", url: "/mailboxes/m1/self-check" },
+    ]);
   });
 
   it("the session's reading reaches the diagnostic file as classes and counts, never the folder's name", async () => {
     engine(200, reading([{ folder: "Kundenakten Wexford", k: "mirror_more", server: 1, mirror: 3 }]));
-    await checkMailboxHere("m1");
+    await press(await render("en"));
     const kept = selfChecksThisSession();
     expect(Object.keys(kept).sort()).toEqual(["bridge", "m1"]);
     let text = "";
@@ -152,7 +153,8 @@ describe("Check this mailbox — the desktop's local door", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const before = selfChecksThisSession().bridge as { answers: number; json: number };
     expect(before.json).toBe(0);
-    globe.__TAURI_INTERNALS__ = { invoke: async () => Array.from(framed(200, reading([]))) };
+    const frame = encodeDesktopAnswer({ body: reading([]) });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke: async () => Array.from(frame) });
     await checkMailboxHere("m1");
     await checkMailboxHere("m1");
     const after = selfChecksThisSession().bridge as { bridgeTransport: string; answers: number; json: number };
@@ -190,53 +192,40 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
     folder: "ohmail/Screened", count: 2, deferred: 0, stuck: 2, deletes: 0, since: "2026-10-24T04:02:00.000Z",
     through: "2026-10-24T04:06:00.000Z", nextAttemptAt: null, at: "INBOX", reasons: [{ reason: "no_such_folder", count: 2 }],
   }] };
-  function engineBy(answer: (method: string, url: string, body: unknown) => [number, unknown]): void {
+  function engineBy(answer: (method: string, url: string, body: unknown) => [number, unknown]): Reply {
     asked = [];
-    globe.__TAURI_INTERNALS__ = {
-      invoke: (command, payload) => {
-        if (command !== "engine_request") return Promise.reject(new Error(`unexpected ${command}`));
-        asked.push({ method: payload?.method, url: payload?.url });
-        const raw = payload?.body as string | ArrayLike<number> | undefined;
-        const text = typeof raw === "string" ? raw : raw ? new TextDecoder().decode(new Uint8Array(raw)) : "";
-        const body = text === "" ? undefined : JSON.parse(text);
-        const [status, out] = answer(String(payload?.method), String(payload?.url), body);
-        return Promise.resolve(framed(status, out));
-      },
+    return ({ method, url, body }) => {
+      const raw = body as string | ArrayLike<number> | undefined;
+      const text = typeof raw === "string" ? raw : raw ? new TextDecoder().decode(new Uint8Array(raw)) : "";
+      const [status, response] = answer(String(method), String(url), text === "" ? undefined : JSON.parse(text));
+      return { status, body: response };
     };
   }
-  async function renderFilings(): Promise<HTMLDivElement> {
-    el = document.createElement("div");
-    document.body.appendChild(el);
-    root = createRoot(el);
-    await act(() => {
-      root?.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: h(MailboxFilings, { api: filingsOverBridge }) }));
+
+  async function renderFilings(onFilings: Reply): Promise<HTMLElement> {
+    const pane = await openMailboxes("en", { filing: waiting, onFilings });
+    return waitFor(() => {
+      const node = pane.querySelector<HTMLElement>(".mbx-filings");
+      if (!node) throw new Error("the local Mailboxes screen did not render pending filings");
+      within(node).getByRole("button", { name: en.mailboxFilings.retry });
+      return node;
     });
-    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-    return el;
   }
-  const button = (node: HTMLDivElement, label: string) => [...node.querySelectorAll("button")].find((b) => b.textContent === label)!;
-  async function pressed(node: HTMLDivElement, label: string): Promise<void> {
-    await act(async () => { button(node, label).click(); });
-    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-  }
-  afterEach(() => { FACTS[0] = { ...FACTS[0], filing: undefined }; });
 
   it("names the folder, the reason and where the letters are, and both presses go down the bridge", async () => {
-    FACTS[0] = { ...FACTS[0], filing: waiting };
     const posted: unknown[] = [];
-    engineBy((method, url, body) => {
+    const node = await renderFilings(engineBy((method, url, body) => {
       if (method === "GET") return [200, filings];
       posted.push({ url, body });
       return url.endsWith("/retry") ? [202, { reset: 2, skipped: 0 }] : [200, { settled: 2, remaining: 0 }];
-    });
-    const node = await renderFilings();
+    }));
     expect(asked[0]).toEqual({ method: "GET", url: "/mailboxes/m1/filings" });
     expect(node.textContent).toContain("Why: the folder is not there");
     expect(node.textContent).toContain("They are in Ohbox on your mail server.");
-    await pressed(node, "Try again now");
-    expect(node.textContent).toContain("2 messages will be tried again on the next pass.");
-    await pressed(node, "Leave them where they are");
-    expect(node.textContent).toContain("2 messages stay where they are.");
+    fireEvent.click(within(node).getByRole("button", { name: "Try again now" }));
+    await waitFor(() => expect(node.textContent).toContain("2 messages will be tried again on the next pass."));
+    fireEvent.click(within(node).getByRole("button", { name: "Leave them where they are" }));
+    await waitFor(() => expect(node.textContent).toContain("2 messages stay where they are."));
     expect(posted).toEqual([
       { url: "/mailboxes/m1/filings/retry", body: { folder: "ohmail/Screened" } },
       { url: "/mailboxes/m1/filings/leave", body: { folder: "ohmail/Screened", through: "2026-10-24T04:06:00.000Z" } },
@@ -244,17 +233,20 @@ describe("the filings that wait — the desktop's block over the bridge", () => 
   });
 
   it("a 409 says another install organizes it now", async () => {
-    FACTS[0] = { ...FACTS[0], filing: waiting };
-    engineBy((method) => (method === "GET" ? [200, filings] : [409, { error: { code: "conflict", message: "x" } }]));
-    const node = await renderFilings();
-    await pressed(node, "Try again now");
-    expect(node.textContent).toContain("Another install organizes this mailbox now. Nothing was changed.");
+    const node = await renderFilings(engineBy((method) =>
+      method === "GET" ? [200, filings] : [409, { error: { code: "conflict", message: "x" } }],
+    ));
+    fireEvent.click(within(node).getByRole("button", { name: "Try again now" }));
+    await waitFor(() => expect(node.textContent).toContain("Another install organizes this mailbox now. Nothing was changed."));
+    expect(asked.filter(({ method }) => method === "POST")).toEqual([
+      { method: "POST", url: "/mailboxes/m1/filings/retry" },
+    ]);
   });
 
   it("nothing waits: no block and no request", async () => {
-    engineBy(() => [200, filings]);
-    const node = await renderFilings();
-    expect(node.textContent).toBe("");
+    const pane = await openMailboxes("en", { onFilings: engineBy(() => [200, filings]) });
+    await waitFor(() => within(pane).getByRole("button", { name: en.mailboxes.selfCheckAction }));
+    expect(pane.querySelector(".mbx-filings")).toBeNull();
     expect(asked).toEqual([]);
   });
 });

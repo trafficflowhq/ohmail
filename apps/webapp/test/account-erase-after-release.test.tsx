@@ -27,7 +27,8 @@ const rig = vi.hoisted(() => ({ answers: [] as unknown[], presses: 0 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {}, replace: () => {} }) }));
 
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => ({ remaining: [], inventoryComplete: true }),
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));

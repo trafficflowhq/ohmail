@@ -38,6 +38,7 @@ import {
   leaveMailboxFilings, readMailboxFilings, retryMailboxFilings, type MailboxFilingsDTO,
 } from "./mailbox-filings.js";
 import type { KeyProvider } from "./auth/crypto.js";
+import { holdLiveSession } from "./auth/session-lifecycle.js";
 import type { FetchingDTO } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
@@ -572,6 +573,16 @@ export interface ConnectOAuthMailboxInput {
 /** Required for the same reason {@link CreateMailboxOptions}'s is: a credential is tried before it is stored. */
 export interface ConnectOAuthOptions {
   probe: MailboxProbe;
+  /** The stored deadline for a device grant, which also requires its starting session. */
+  deviceGrantExpiresAt?: Date;
+}
+
+/** Rolls back a device connect and lets the poll route return its normal expired result. */
+export class DeviceGrantExpired extends Error {
+  constructor() {
+    super("Microsoft device sign-in expired");
+    this.name = "DeviceGrantExpired";
+  }
 }
 
 /**
@@ -1768,12 +1779,21 @@ export class MailboxService {
     // The access verdict, read BEFORE the transaction: answering it may be a network hop, and a
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
+    const grantDeadline = opts.deviceGrantExpiresAt?.getTime();
+    const assertDeviceGrantDeadline = () => {
+      if (grantDeadline !== undefined && ctx.now().getTime() >= grantDeadline) throw new DeviceGrantExpired();
+    };
 
     // `lock: "update"` for `create`'s reason one method up: the create branch below reaches the
     // allowance gate, which takes `accounts FOR UPDATE`. That strength IS the account row at the
     // head of the mailbox lock order — the order `delete` takes with its erasure fence — so this
     // door takes it once, here, and no second `lockAccountRow` inside.
     const out = await withAccountTx(ctx, async (tx) => {
+      // The provider and probe can outlast the session or the grant.
+      if (grantDeadline !== undefined) {
+        await holdLiveSession(tx, ctx);
+        assertDeviceGrantDeadline();
+      }
       const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(mailboxes)
         .where(and(
           eq(mailboxes.accountId, ctx.accountId),
@@ -1819,6 +1839,7 @@ export class MailboxService {
         ));
 
         const [fresh] = await tx.select().from(mailboxes).where(eq(mailboxes.id, row.id)).limit(1);
+        assertDeviceGrantDeadline();
         return { created: false, row: fresh as MailboxRow };
       }
 
@@ -1842,6 +1863,7 @@ export class MailboxService {
       await this.upsertCredOn(tx, ctx, kp, created!.id, "imap", o.refreshToken, meta, MINTED_HERE);
       // Same hook, same transaction, as `create` — an OAuth connect of a NEW address is a
       // create in every sense that matters here (a reconnect returned above and grants nothing).
+      assertDeviceGrantDeadline();
       return { created: true, row: created as MailboxRow };
     }, { lock: "update" }).catch((err: unknown) => {
       if (isActiveAddressConflict(err)) throw addressTaken();

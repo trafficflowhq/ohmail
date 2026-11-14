@@ -1,7 +1,5 @@
 /**
- * THE ORDER OF THE RESULTS: the taken order, a control that opens the short list of orders, the taken one checked. It stands only while
- * there is a question: no order to choose for no results. It ends the row of filters, which folds by its width (the
- * reference draws it at the end of the Results heading, which takes no control yet: asked of the kit).
+ * The current order beside Results. The menu offers the applicable orders and checks the selected one.
  */
 import { useRef, useState } from "react";
 import { SEARCH_SORTS, type SearchListModel } from "@ohmail/app-logic/search";

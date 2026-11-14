@@ -1,3 +1,4 @@
+import { useDraftLeave } from "../use-draft-leave.js";
 import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
@@ -6,6 +7,7 @@ import {
   isDirty,
   isRichEmpty,
   signatureWrite,
+  signatureConfirmed,
   type RichValue,
   type SignaturesMailbox,
   type SignaturesModel,
@@ -29,7 +31,6 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
   );
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; line: string } | null>(null);
-  const [leaving, setLeaving] = useState<(() => void) | null>(null);
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -39,20 +40,24 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
   }, []);
 
   const { mailboxes } = model;
-  // The hold is taken when a draft appears and released when none is left, whatever the shell hands in between.
-  const hold = useRef(model.holdLeave);
-  hold.current = model.holdLeave;
-  const holding = pending === null && mailboxes.some((mb) => isDirty(drafts[mb.id], mb.stored));
   useEffect(() => {
-    if (!holding) {
-      setLeaving(null);
-      return;
-    }
-    return hold.current((leave) => setLeaving(() => leave));
-  }, [holding]);
+    // A queued change can arrive in a later read. Release just the drafts the effective mailbox rows now confirm.
+    setDrafts((held) => {
+      const confirmed = mailboxes.filter((mb) => held[mb.id] && !isDirty(held[mb.id], mb.stored));
+      if (!confirmed.length) return held;
+      const remaining = { ...held };
+      for (const mb of confirmed) delete remaining[mb.id];
+      return remaining;
+    });
+  }, [mailboxes]);
+  const guard = useDraftLeave(
+    mailboxes.some((mb) => isDirty(drafts[mb.id], mb.stored)),
+    model.holdLeave,
+  );
 
-  const drop = (id: string) =>
+  const drop = (id: string, confirmed?: RichValue) =>
     setDrafts((now) => {
+      if (confirmed && isDirty(now[id], confirmed)) return now;
       const { [id]: _gone, ...rest } = now;
       return rest;
     });
@@ -62,8 +67,8 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
     setFailed(null);
     model
       .write(id, ...signatureWrite(value))
-      .then(() => {
-        if (alive.current) drop(id);
+      .then((echo) => {
+        if (alive.current && signatureConfirmed(id, value, echo)) drop(id, value);
       })
       .catch((error: unknown) => {
         if (alive.current)
@@ -94,17 +99,15 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
         />
       ))}
       <Dialog
-        open={leaving !== null}
-        onClose={() => setLeaving(null)}
+        open={guard.leaving}
+        onClose={guard.keep}
         title={t("signatures.leaveAsk")}
         hot
         confirm={{
           label: t("signatures.revert"),
           onPress: () => {
-            const leave = leaving;
             setDrafts({});
-            setLeaving(null);
-            leave?.();
+            guard.discard();
           },
         }}
         cancel={{ label: t("signatures.leaveKeep") }}

@@ -21,6 +21,7 @@
   --d-sq: calc(220ms * var(--m-time));
   --d-move: calc(260ms * var(--m-time));
   --d-slide: calc(280ms * var(--m-time));
+  --d-product-stagger: calc(40ms * var(--m-time));
   --d-jump: calc(0ms * var(--m-time));
   --d-top: calc(280ms * var(--m-time));
   --d-pull: calc(640ms * var(--m-time));
@@ -55,6 +56,7 @@
   --m-rowout: 0;
   --m-heads: 0;
   --m-echo: 0;
+  --stream-clip-motion-threshold: 2px;
   --x-press: scale(.97);
   --x-press-l: scale(.96);
   --x-pop: scale(.96) translateY(4px);
@@ -64,6 +66,8 @@
   --x-pop-origin-up: 50% 50%;
   --o-pop: 0;
   --x-in: translateY(8px);
+  --x-app-open: scale(.94);
+  --x-app-origin: 50% 55%;
   --x-step: translateY(8px);
   --x-row: translateY(-8px);
   --x-drop: translateY(-.9em) scale(1);
@@ -116,6 +120,7 @@
   --d-out: 150ms;
   --d-leave: 150ms;
   --d-slide: 150ms;
+  --d-product-stagger: 0ms;
   --d-knob: 150ms;
   --d-hush: 150ms;
   --e-arrive: ease;
@@ -141,6 +146,7 @@
   --x-pop-up: none;
   --x-pop-sheet: none;
   --x-in: none;
+  --x-app-open: none;
   --x-step: none;
   --x-row: none;
   --x-drop: none;
@@ -185,6 +191,7 @@
   --d-out: 150ms;
   --d-leave: 150ms;
   --d-slide: 150ms;
+  --d-product-stagger: 0ms;
   --d-knob: 150ms;
   --d-hush: 150ms;
   --e-arrive: ease;
@@ -210,6 +217,7 @@
   --x-pop-up: none;
   --x-pop-sheet: none;
   --x-in: none;
+  --x-app-open: none;
   --x-step: none;
   --x-row: none;
   --x-drop: none;

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SignaturesPane,
+  isDirty,
   signaturesState,
   signatureWrite,
   type SignaturesModel,
@@ -33,8 +34,8 @@ const type = (address: string, text: string) =>
   fireEvent.change(editorOf(address), { target: { value: text } });
 function held() {
   let settle!: (ok: boolean) => void;
-  const promise = new Promise<unknown>((yes, no) => {
-    settle = (ok) => (ok ? yes({}) : no(new Error("refused")));
+  const promise = new Promise<{ signatures: Record<string, string> }>((yes, no) => {
+    settle = (ok) => (ok ? yes({ signatures: { m1: "Mila" } }) : no(new Error("refused")));
   });
   return { promise, settle };
 }
@@ -68,6 +69,49 @@ describe("Signatures", () => {
     expect(editorOf("mila.brunner@work.example").readOnly).toBe(true);
     await act(async () => write.settle(true));
     expect(editorOf("mila@brunner.example").value).toBe("Mila Brunner\nStudio Brunner");
+  });
+
+  it("recognizes the same delivered link and break while retaining changes to the destination or formatting", () => {
+    const draft = {
+      text: "link",
+      html: '<p><a href="https://example.invalid/a" target="_blank" rel="noopener">link</a><br></p>',
+    };
+    const echo = { text: "link", html: '<p><a href="https://example.invalid/a">link</a><br /></p>' };
+    expect(isDirty(draft, echo)).toBe(false);
+    expect(isDirty(draft, { ...echo, html: echo.html.replace("/a", "/b") })).toBe(true);
+    expect(isDirty(draft, { ...echo, html: "<p><strong>link</strong><br /></p>" })).toBe(true);
+  });
+  it("keeps the exact draft and its leave question while the mailbox organizer has only queued the write", async () => {
+    const model = signaturesState();
+    const hold = vi.fn(() => vi.fn());
+    const write = vi.fn().mockResolvedValue({
+      signatures: { m1: model.mailboxes[0]!.stored.text },
+      signatureChanges: { m1: { state: "asked", holder: null, refusal: null } },
+    });
+    const mounted = mount({ ...model, holdLeave: hold, write });
+    type("mila@brunner.example", "Waiting for the other install");
+    await act(async () =>
+      fireEvent.click(within(sheetOf("mila@brunner.example")).getByRole("button", { name: G.save })),
+    );
+    expect(editorOf("mila@brunner.example").value).toBe("Waiting for the other install");
+    expect(hold.mock.results[0]!.value).not.toHaveBeenCalled();
+    expect(
+      within(sheetOf("mila@brunner.example")).getByRole("button", { name: G.save }).hasAttribute("disabled"),
+    ).toBe(false);
+    function update(text: string) {
+      const mailboxes = model.mailboxes.map((mb) =>
+        mb.id === "m1" ? { ...mb, stored: { text, html: "" } } : mb,
+      );
+      mounted.rerender(
+        <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
+          <SignaturesPane model={{ ...model, mailboxes, holdLeave: hold, write }} />
+        </TextProvider>,
+      );
+    }
+    update("Waiting for the other install");
+    expect(hold.mock.results[0]!.value).toHaveBeenCalledTimes(1);
+    update("Newer confirmed words");
+    expect(editorOf("mila@brunner.example").value).toBe("Newer confirmed words");
   });
 
   it("keeps the draft and says a refusal on the mailbox's sheet, in the organizer's words where it refused", async () => {

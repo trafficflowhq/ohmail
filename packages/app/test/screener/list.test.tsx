@@ -271,7 +271,7 @@ describe("what the panel says before the press", () => {
     expect(panel().textContent).toContain("Not applied");
     expect(within(panel()).getAllByRole("button").length).toBeGreaterThan(0);
     fireEvent.click(
-      within(screen.getByRole("listbox", { name: "Waiting for the organizer" })).getByRole("option"),
+      within(screen.getByRole("listbox", { name: "Screener" })).getByRole("option", { name: /^Zed Oak/ }),
     );
     expect(panel().textContent).toContain("Decided — Mac files it on its next pass.");
     expect(within(panel()).queryAllByRole("button")).toEqual([]);
@@ -299,6 +299,7 @@ describe("Mark all spam", () => {
 
   it("says before the yes, and beside Apply, that a sender with one-click unsubscribe is also unsubscribed", () => {
     const told = "also ask to unsubscribe you";
+    const warning = /Later mail goes too, with \d+ unsubscribe requests? and no undo\./;
     const markAllSpam = (() => undefined) as never;
     const world = mountPlace(
       modelOf(asked, {
@@ -311,12 +312,12 @@ describe("Mark all spam", () => {
     );
     expect(screen.getByRole("group", { name: "Act on all waiting senders" }).textContent).toContain(told);
     pressMarkAllSpam();
-    expect(screen.getByRole("dialog").textContent).toContain(told);
+    expect(screen.getByRole("dialog").textContent).toMatch(warning);
     world.view.unmount();
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 3, suggestedCount: 1, markAllSpam }));
     expect(screen.getByRole("group", { name: "Act on all waiting senders" }).textContent).not.toContain(told);
     pressMarkAllSpam();
-    expect(screen.getByRole("dialog").textContent).not.toContain(told);
+    expect(screen.getByRole("dialog").textContent).not.toMatch(warning);
   });
 
   it("says what Spam and Screen out also send on any waiting queue, with no tools beside it", () => {

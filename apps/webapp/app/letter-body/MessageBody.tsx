@@ -7,10 +7,10 @@
  * It leaves with the last of today's views.
  */
 import { MessageBody as LetterBody, type MessageBodyProps } from "@ohmail/letter-body";
-import { useTodaysScope } from "../shell/todays-scope";
+import { useScopeHere } from "@ohmail/app/frame";
 
 export { MAIL_BODY_COPY as COPY } from "@ohmail/letter-body";
 
 export function MessageBody(props: Omit<MessageBodyProps, "owner">) {
-  return <LetterBody {...props} owner={useTodaysScope()} />;
+  return <LetterBody {...props} owner={useScopeHere()} />;
 }

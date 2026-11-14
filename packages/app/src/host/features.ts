@@ -1,5 +1,11 @@
 import type { ComponentType, ReactNode } from "react";
+import type { SenderSuggestion } from "@ohmail/app-logic/screener/screener-suggest";
+import type { ConversationShown } from "@ohmail/app-logic/reader";
+import type { EngineMessage } from "@ohmail/wire";
+import type { MessageClip } from "@ohmail/ui/mail";
 import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
+import type { HeldParts } from "../screener/ports.js";
+import type { ContactScreeningProps } from "../reader/contact/Contact.js";
 import type { None } from "./contract.js";
 
 /**
@@ -27,14 +33,59 @@ export interface FeatureEntry {
   readonly notice?: () => readonly FrameNotice[];
 }
 
+export interface OwnSuggestionProps {
+  readonly senders: string[];
+  readonly absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
+}
+
+export interface ScreenerEntry extends FeatureEntry {
+  /** The unmetered control over a model configured on this computer, sharing the Screener's queue and overlay. */
+  readonly ownSuggest?: (props: OwnSuggestionProps) => ReactNode;
+}
+
 /**
  * The reading column a shell imports (`@ohmail/app/reader`) and hands over: the frame draws `Reading` where a place's
  * panes say `Reading: "reader"`, and never imports it.
  */
 export interface ReaderEntry {
   readonly Reading: ComponentType<PaneProps>;
+  /** The shared header for a folded stream card, with no body or file access. */
+  readonly PreviewHead?: ComponentType<{ message: EngineMessage; hideBodyNotice?: boolean }>;
+  /** The cached markup of a folded card, with remote pictures and reader actions unavailable. */
+  readonly PreviewBody?: ComponentType<{ message: EngineMessage; children: ReactNode }>;
+  readonly Screening?: ComponentType<ContactScreeningProps>;
+  /** The whole letter, with its pictures and files, inside a stream card the person opened. */
+  readonly OpenCard?: ComponentType<{
+    message: EngineMessage;
+    opened: boolean;
+    clip?: MessageClip;
+    conversation?: ConversationShown;
+    scroller?: HTMLElement | null;
+    onEnter?: () => void;
+  }>;
+  /** The same body, pictures and files used to show a held letter. */
+  readonly useHeldParts?: () => HeldParts;
   /** The action panel for one letter, where a list draws a letter in place. */
-  readonly Actions: ComponentType<{ readonly messageId: string }>;
+  readonly Actions: ComponentType<{
+    readonly messageId: string;
+    /** The stream's immediate Delete shortcut follows its keyboard selection. */
+    readonly deleteKeyId?: string;
+    readonly canDeleteKey?: (id: string) => boolean;
+    readonly canAnswerKey?: (id: string) => boolean;
+    readonly keysHere?: boolean;
+    readonly focus?: boolean;
+    readonly showPanel?: boolean;
+    readonly markUnread?: (id: string) => void;
+  }>;
+  /** The writing surface under the selected letter where a place draws its own cards. */
+  readonly useInlineReply?: (
+    keyLetter: string | null,
+    items: readonly EngineMessage[],
+  ) => {
+    readonly messageId: string | null;
+    readonly sheet: ReactNode;
+    readonly conversations: ReadonlyMap<string, ConversationShown>;
+  } | null;
 }
 
 /**
@@ -48,6 +99,7 @@ export interface ReaderEntry {
 export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & {
   /** The places a shell mounts, each the entry it imports or `none` (the frame imports no place). */
   readonly places: FramePlaces;
+  readonly screener: ScreenerEntry | None;
   /** The bodies that stand over the app. */
   readonly stages: FrameStages;
   /** The reading column, or `none`: a place that names it then draws an empty column. */
@@ -56,17 +108,7 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
    * What a shell stands above every pane, once per mounted frame, under the scope: the providers its places read.
    * `none`: nothing stands there (a host with no old shell; the fake host).
    */
-  readonly above:
-    | (ComponentType<{ readonly children: ReactNode }> & {
-        /**
-         * This component hands the frame's room its own press seam (`useRoomHandOver`), so the room mounts none. Said
-         * on the component itself, statically: whose seam a frame presses through is never read off what a child did
-         * in a render. The old shell's composition alone says it. A component that does not say it brings no seam:
-         * the press seam is then the room's own, for the frame's life, and a hand-over there is refused.
-         */
-        readonly handsSeam?: true;
-      })
-    | None;
+  readonly above: ComponentType<{ readonly children: ReactNode }> | None;
   /** What stands over every place (the palette, the key sheet), each the entry it imports or `none`. */
   readonly overs: FrameOvers;
   /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */

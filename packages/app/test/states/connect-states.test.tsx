@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Said } from "@ohmail/app-logic/mailboxes/connect/refusal";
-import { CONNECT_STATES, saidOfState } from "@ohmail/app-logic/mailboxes/connect/states";
+import { CONNECT_STATES, saidOfState } from "../../../app-logic/test/mailboxes/connect/refusal-states.js";
 import { TextProvider, useTextLookup } from "../../src/text/index.js";
 import declared from "../../../../test/compare/declared.json" with { type: "json" };
 import registry from "../../../../test/compare/registry.json" with { type: "json" };

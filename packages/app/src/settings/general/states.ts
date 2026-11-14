@@ -13,6 +13,7 @@ export function generalState(at: { face?: LookFace; scheme?: "light" | "dark" } 
     theme: { value: at.scheme === "dark" ? "dark" : "light", set: still },
     look: { face: at.face ?? "paper", scheme: at.scheme ?? "light", set: still, scope: { governs: "all" } },
     textSize: { value: 100, choices: [90, 100, 110, 125, 150], set: still },
+    subject: { value: "head", set: still },
     imageQuality: { value: "medium", choices: ["low", "medium", "high", "original"], set: still },
     afterVerb: { value: "advance", choices: ["advance", "stay", "close"], set: still },
     images: { blocked: false, fromComputer: false, set: kept },

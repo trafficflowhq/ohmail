@@ -126,6 +126,12 @@
     overflow-wrap: anywhere;
     text-wrap: balance;
   }
+  .oh-ecard-title-input {
+    inline-size: 100%;
+    background: transparent;
+    border: 0;
+    color: inherit;
+  }
   .oh-ecard-head[data-act="edit"] > .oh-ecard-title {
     --oh-ecard-title-room: calc(88px + var(--oh-ecard-beside));
     padding-right: var(--oh-ecard-title-room);
@@ -445,6 +451,8 @@
     z-index: var(--oh-ecard-foot-z);
     display: flex;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--s1);
     margin: var(--oh-ecard-foot-out);
   }
 }

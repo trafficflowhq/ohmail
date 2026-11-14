@@ -479,6 +479,12 @@ export const SCREENER_WAITING_PAGE_ID = "page" satisfies ScreenerWaitingPageDTO[
 
 export const OUTBOX_TYPE = "outbox_entry";
 export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
+export const CALENDAR_OUTBOX_TYPE = "calendar_outbox";
+export const CALENDAR_SETTLEMENT_TYPE = "calendar_settlement";
+
+export function isCalendarQueueType(type: string): boolean {
+  return type === CALENDAR_OUTBOX_TYPE || type === CALENDAR_SETTLEMENT_TYPE;
+}
 /**
  * A routing window's journal, kept in the mirror by a surface with no `localStorage` (the phone):
  * one row per journal key, `{ value }` the jar's string. A press not yet sent derives from
@@ -496,5 +502,5 @@ export const COMPOSE_FILE_TYPE = "compose_file";
 /** The rows the wipe carries — the outbox's two collections, the routing journal and the letters. */
 export function isCarriedLocalType(type: string): boolean {
   return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === ROUTING_JOURNAL_TYPE
-    || type === COMPOSE_LETTER_TYPE || type === COMPOSE_FILE_TYPE;
+    || type === COMPOSE_LETTER_TYPE || type === COMPOSE_FILE_TYPE || isCalendarQueueType(type);
 }

@@ -9,14 +9,28 @@ import { ABOUT_NAMESPACE } from "./namespace.js";
  * among them; the account line appears only where the server said it does not name its answers; the policies only
  * where they govern this install.
  */
-export function AboutPane({ model }: { readonly model: AboutModel }) {
+export function AboutPane(props: { readonly model: AboutModel } | { readonly demo: true }) {
   const t = useText("about");
   const own = useText(ABOUT_NAMESPACE);
+  if ("demo" in props) {
+    return (
+      <SettingsSheet>
+        <SettingNote>{t("p1")}</SettingNote>
+        <SettingNote>{t("p2")}</SettingNote>
+        <SettingNote>{t("keys")}</SettingNote>
+      </SettingsSheet>
+    );
+  }
+  const { model } = props;
   const { mailboxes } = model;
   return (
     <>
       <SettingsSheet
-        wants={mailboxes.kind === "failed" ? { word: own("notRead"), line: mailboxes.said } : undefined}
+        wants={
+          mailboxes.kind === "failed"
+            ? { word: own("notRead"), line: mailboxes.said, alert: true }
+            : undefined
+        }
       >
         <SettingLine label={t("mailboxesLabel")} />
         {mailboxes.kind === "failed" ? null : <SettingNote>{mailboxLine(mailboxes, t)}</SettingNote>}

@@ -5,22 +5,45 @@
  * the server and the first client render draw the product's empty gate, as the signed-in page's do; the provider and
  * the frame mount after hydration.
  */
+import { NO_PANE_PARTS } from "@ohmail/app/mail";
 import { useMemo, useSyncExternalStore } from "react";
-import { NONE } from "@ohmail/app/host";
+import { NONE, type HostDevice } from "@ohmail/app/host";
+import { browserMailParts, MailFrame, useBrowserMail } from "../../shell/browser-mail";
 import { EngineProvider, useEngine } from "../../shell/engine";
-import { TodaysFrame } from "../../shell/TodaysFrame";
-import { NO_TODAYS } from "../../shell/todays-inputs";
-import { useTodaysSupplies } from "../../shell/todays-supplies";
+import { useAppLocale } from "../../shell/LocaleContext";
+import { WebGeneralPane } from "../mailbox/WebGeneralPane";
+import { WebRulesPane } from "../mailbox/WebRulesPane";
+import { WebTagsPane } from "../mailbox/WebTagsPane";
+import { DEMO_ABOUT, DemoNotificationsPane } from "./DemoSettings";
 import { demoHost, type DemoSays } from "./host";
+
+/** The anonymous browser's device choices and sections over its invented mail. */
+const DEMO_MAIL_PARTS = browserMailParts({
+  ...NO_PANE_PARTS,
+  general: WebGeneralPane,
+  notifications: DemoNotificationsPane,
+  rules: WebRulesPane,
+  tags: WebTagsPane,
+  about: DEMO_ABOUT.render,
+});
 
 const noSubscription = () => () => {};
 
-/** The demo's frame over the engine it stands on: every wire, read and feature `none`. */
+/** The demo's frame over the engine it stands on, with the mail ground: without an account. */
 export function DemoFrame({ says }: { says: DemoSays }) {
   const engine = useEngine();
-  const frame = useTodaysSupplies(NONE);
-  const host = useMemo(() => demoHost(engine, frame, says), [engine, frame, says]);
-  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+  const frame = useBrowserMail(NONE, DEMO_MAIL_PARTS);
+  /* The language's controls the page wraps around the demo, as the host contract takes them. */
+  const controls = useAppLocale();
+  const drawnLocale = controls?.locale;
+  const adoptLocale = controls?.adoptLocale;
+  const language = useMemo(
+    (): HostDevice["language"] =>
+      drawnLocale === undefined || adoptLocale === undefined ? NONE : { locale: drawnLocale, adoptLocale },
+    [drawnLocale, adoptLocale],
+  );
+  const host = useMemo(() => demoHost(engine, frame, says, language), [engine, frame, says, language]);
+  return <MailFrame host={host} />;
 }
 
 export function DemoShell({ serverDemo, says }: { serverDemo: boolean; says: DemoSays }) {

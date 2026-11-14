@@ -38,7 +38,8 @@
  */
 
 import type { EngineMessage } from "@ohmail/wire";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useStableCallback } from "../press/stable-callback.js";
 import { FOLDER_OF_VIEW, createSessionBodyDoor, type EntityReader, type SessionBodyHeld } from "@ohmail/client-engine";
 import type { ToastFn } from "../press/report.js";
 import type { Translator } from "../text/translator.js";
@@ -66,7 +67,7 @@ export interface JunkWire {
   dismissRescue(rescueId: string): Promise<unknown>;
   search(q: string): Promise<JunkSearchWire>;
   sweepPreview(): Promise<JunkSweepWire>;
-  sweepRequest(): Promise<JunkSweepWire>;
+  sweepRequest(confirmation: string): Promise<JunkSweepWire>;
   /**
    * A wire's 410 — the row is gone from Junk — must be recognisable above the seam: the
    * browser's client throws `ApiError` with the status, a host wire answers this predicate. Only
@@ -110,7 +111,7 @@ function checkedWire(w: JunkWire): JunkWire {
     list: (opts) => shaped(w.list(opts), page),
     search: (q) => shaped(w.search(q), page),
     sweepPreview: () => shaped(w.sweepPreview(), isPreview),
-    sweepRequest: () => shaped(w.sweepRequest(), isPreview),
+    sweepRequest: (confirmation) => shaped(w.sweepRequest(confirmation), isPreview),
   };
 }
 
@@ -164,7 +165,7 @@ export interface JunkSweepControl {
   phase: "unknown" | "none" | "offer" | "pending" | "done" | "stranded" | "failed";
   preview: JunkSweepWire | null;
   requesting: boolean;
-  request: () => void;
+  request: (confirmation?: string) => void;
   dismiss: () => void;
 }
 
@@ -353,7 +354,7 @@ export function useJunkWindow(
   const onSegment = useRef(active);
   useEffect(() => { onSegment.current = active; }, [active]);
 
-  const fetchFirst = useCallback((keep = false) => {
+  const fetchFirst = useStableCallback((keep = false) => {
     if (!supported) {
       // No server behind this build: the honest resting state, never an eternal spinner. The
       // shell also withholds the control entirely on `supported`, so this is the belt.
@@ -389,13 +390,13 @@ export function useJunkWindow(
         setPhase("failed");
       },
     );
-  }, [supported, wire]);
+  });
 
-  const reload = useCallback(() => {
+  const reload = useStableCallback(() => {
     fetchFirst();
-  }, [fetchFirst]);
+  });
 
-  const loadOlder = useCallback(() => {
+  const loadOlder = useStableCallback(() => {
     if (nextCursor === null || olderLoading) return;
     setOlderLoading(true);
     void wire.list({ cursor: nextCursor }).then(
@@ -429,28 +430,26 @@ export function useJunkWindow(
         toast(t("junkFailed"));
       },
     );
-  }, [nextCursor, olderLoading, toast, t, fetchFirst, wire]);
+  });
 
-  const bodyFor = useCallback(
+  const bodyFor = useStableCallback(
     (item: JunkItemWire): JunkBodyPhase => {
       const held = bodies.get(junkKeyOf(item));
       if (held === undefined) return { phase: "idle" };
       if (held.phase === "settled") return { phase: "ready", text: held.outcome.text };
       return held;
-    },
-    [bodies],
-  );
+    });
 
   // One fetch per session per message, retry-replaces-a-hung-ask, superseded completions
   // dropped — the shared door's contract (see its header; the findings this hook's inline copy
   // carried are recorded there).
-  const openBody = useCallback((item: JunkItemWire, opts: { retry?: boolean } = {}) => {
+  const openBody = useStableCallback((item: JunkItemWire, opts: { retry?: boolean } = {}) => {
     bodyDoor.open(
       junkKeyOf(item),
       () => wire.body(item.mailboxId, item.uid, item.uidValidity),
       opts,
     );
-  }, [bodyDoor, wire]);
+  });
 
   /* ── THE SEARCH-APPEND ─────────────────────────────────────────────────────────────────── */
   const [query, setQueryState] = useState("");
@@ -478,7 +477,7 @@ export function useJunkWindow(
     [items, query],
   );
 
-  const searchServer = useCallback((q?: string) => {
+  const searchServer = useStableCallback((q?: string) => {
     const term = (q ?? query).trim();
     if (term.length === 0 || pendingTerms.current.has(term)) return;
     pendingTerms.current.add(term);
@@ -507,9 +506,9 @@ export function useJunkWindow(
         setSearchPhase("failed");
       },
     );
-  }, [query, wire]);
+  });
 
-  const setQuery = useCallback((q: string) => {
+  const setQuery = useStableCallback((q: string) => {
     setQueryState(q);
     queryRef.current = q;
     // A NEW query clears the screen's answer (hits for the old words under the new filter would
@@ -529,7 +528,7 @@ export function useJunkWindow(
     setSearchBoxes([]);
     setTruncated(false);
     setSearchPhase(term.length === 0 ? "idle" : pendingTerms.current.has(term) ? "searching" : "local");
-  }, []);
+  });
 
   useEffect(() => {
     // The automatic kick — ONLY while the segment is on screen, ONLY from `local` (a failed ask
@@ -558,14 +557,14 @@ export function useJunkWindow(
    * Junk when the answer comes back, so removing the row would be this window claiming a move the
    * server has not made. The next read drops it, because by then it really is gone from Junk.
    */
-  const markQueued = useCallback((key: string) => {
+  const markQueued = useStableCallback((key: string) => {
     const stamp = (i: JunkItemWire): JunkItemWire =>
       junkKeyOf(i) === key ? { ...i, rescue: "queued" as const } : i;
     setItems((cur) => cur.map(stamp));
     setHits((cur) => cur.map(stamp));
-  }, []);
+  });
 
-  const rescue = useCallback((item: JunkItemWire, opts: { allow?: boolean } = {}) => {
+  const rescue = useStableCallback((item: JunkItemWire, opts: { allow?: boolean } = {}) => {
     const key = junkKeyOf(item);
     const allow = opts.allow === true;
     setBusy((cur) => new Set(cur).add(key));
@@ -584,13 +583,13 @@ export function useJunkWindow(
         toast(t("junkRescueFailed"));
       },
     );
-  }, [toast, t, wire, markQueued]);
+  });
 
-  const rescuing = useCallback((item: JunkItemWire) => busy.has(junkKeyOf(item)), [busy]);
+  const rescuing = useStableCallback((item: JunkItemWire) => busy.has(junkKeyOf(item)));
 
   /* A REFUSED COMMAND, CLEARED. The message is still in Junk, so the row stays and only the
      refusal leaves it; the server answers 404 for one another device already cleared. */
-  const dismissRescue = useCallback((item: JunkItemWire) => {
+  const dismissRescue = useStableCallback((item: JunkItemWire) => {
     const key = junkKeyOf(item);
     const id = item.rescueId;
     if (item.rescue !== "refused" || id === undefined) return;
@@ -607,7 +606,7 @@ export function useJunkWindow(
       settle();
       toast(t("junkRescueDismissFailed"));
     });
-  }, [toast, t, wire]);
+  });
 
   /* ── THE ONE-TIME SWEEP OFFER ──────────────────────────────────────────────────────────── */
   const [sweepPhase, setSweepPhase] = useState<JunkSweepControl["phase"]>("unknown");
@@ -623,7 +622,7 @@ export function useJunkWindow(
   /** A press waits for its sweep to finish, then the page is read once: the moved mail is in Junk now. */
   const rereadAfterSweep = useRef(false);
 
-  const absorbPreview = useCallback((pv: JunkSweepWire) => {
+  const absorbPreview = useStableCallback((pv: JunkSweepWire) => {
     setSweepPreview(pv);
     setHeld(pv.held ? { ids: new Set(pv.held.ids), truncated: pv.held.truncated } : null);
     heldKey.current = pv.held ? pv.held.ids.join(",") : null;
@@ -632,22 +631,22 @@ export function useJunkWindow(
       fetchFirst();
     }
     const total = pv.mailboxes.reduce((n, m) => n + m.candidates, 0);
-    if (total === 0) {
+    if (pv.pending) {
+      setSweepPhase("pending");
+    } else if (total === 0) {
       // Genuinely empty — "done" only after a press THIS session, else nothing to say.
-      setSweepPhase(pressed.current ? "done" : "none");
+      setSweepPhase(pressed.current && !pv.held?.ids.length ? "done" : "none");
     } else if (pv.movable === 0) {
       // Candidates remain and none can move: every mailbox holding them has no Junk folder.
       // Not "empty", not an offer — the stranded rows are named and nothing is pressable.
       setSweepPhase("stranded");
-    } else if (pv.pending) {
-      setSweepPhase("pending");
     } else {
       // Offered only when the pile has GROWN past the size it was dismissed at — per account.
-      setSweepPhase(pv.movable > readDismissed(dismissKeyOf(pv)) ? "offer" : "none");
+      setSweepPhase(pv.confirmationRequired || pv.movable > readDismissed(dismissKeyOf(pv)) ? "offer" : "none");
     }
-  }, [fetchFirst]);
+  });
 
-  const readPreview = useCallback(() => {
+  const readPreview = useStableCallback(() => {
     previewAskedAt.current = Date.now();
     previewInFlight.current = true;
     void wire.sweepPreview().then(
@@ -655,7 +654,7 @@ export function useJunkWindow(
       // A failed read makes NO offer: a first one stays `unknown`, a later one keeps what it had.
       () => { previewInFlight.current = false; },
     );
-  }, [wire, absorbPreview]);
+  });
 
   /* ENTRY: on each rising edge of `active`, `warm` or `keep.on`, the page and the preview are read if never
      asked, after a move, or if the last ask is at least the age old and none is out. An edge, never a
@@ -680,7 +679,7 @@ export function useJunkWindow(
 
   /* Page one read again under the reader: rows it did not hold go on top, nothing else changes.
      `onFresh` runs when it added one. */
-  const topUp = useCallback((onFresh: () => void) => {
+  const topUp = useStableCallback((onFresh: () => void) => {
     // A page-one read still out would replace what this adds: the next beat tries again.
     if (!supported || !pageShown.current || listInFlight.current) return;
     const gen = generation.current;
@@ -694,12 +693,12 @@ export function useJunkWindow(
         return [...fresh, ...cur];
       });
     }, () => { /* the next beat or entry reads again */ });
-  }, [supported, wire]);
+  });
 
   /* A MOVE: the next entry reads, whatever the age. After the settle both are read in the background
      for that entry to paint; off the segment the list is replaced, on it a letter entering the pile
      is topped up each beat until it is listed, also across a later move that restarts the settle. */
-  const readAfterMove = useCallback((rising = false) => {
+  const readAfterMove = useStableCallback((rising = false) => {
     moved.current = true;
     if (settleTimer.current !== null) clearTimeout(settleTimer.current);
     const arriving = rising || arrivalPending.current;
@@ -731,7 +730,7 @@ export function useJunkWindow(
       }, JUNK_MOVE_SETTLE_MS);
     };
     beat();
-  }, [fetchFirst, readPreview, supported, topUp]);
+  });
   useEffect(() => { rereadAfterMove.current = () => readAfterMove(); }, [readAfterMove]);
   const pile = keep?.moved ?? 0;
   const lastPile = useRef<number | null>(null);
@@ -758,24 +757,34 @@ export function useJunkWindow(
     return () => clearInterval(timer);
   }, [active, sweepPhase, wire, absorbPreview]);
 
-  const request = useCallback(() => {
-    if (requesting) return;
+  const request = useStableCallback((confirmation?: string) => {
+    if (requesting || !confirmation || confirmation !== sweepPreview?.confirmation) return;
     setRequesting(true);
-    pressed.current = true;
-    rereadAfterSweep.current = true;
-    void wire.sweepRequest().then(
-      (pv) => { setRequesting(false); absorbPreview(pv); },
-      () => { setRequesting(false); rereadAfterSweep.current = false; setSweepPhase("failed"); },
+    void wire.sweepRequest(confirmation).then(
+      (pv) => {
+        pressed.current = true;
+        rereadAfterSweep.current = true;
+        setRequesting(false);
+        absorbPreview(pv);
+      },
+      (err: unknown) => {
+        setRequesting(false);
+        if (wire.codeOf(err) === "stale_junk_sweep") {
+          setSweepPreview(null);
+          setSweepPhase("unknown");
+          readPreview();
+        } else setSweepPhase("failed");
+      },
     );
-  }, [requesting, wire, absorbPreview]);
+  });
 
-  const dismiss = useCallback(() => {
+  const dismiss = useStableCallback(() => {
     // A blocked jar makes the dismissal last the session only, and says so once.
     if (sweepPreview) {
       durableSet(dismissKeyOf(sweepPreview), String(sweepPreview.movable), "junk.dismissed");
     }
     setSweepPhase("none");
-  }, [sweepPreview]);
+  });
 
   return {
     supported,

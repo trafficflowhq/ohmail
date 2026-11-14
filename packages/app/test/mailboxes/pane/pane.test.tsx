@@ -104,6 +104,37 @@ describe("rows open in place", () => {
   });
 });
 
+describe("an opened row says its state with its exact time", () => {
+  const exact = (iso: string): string =>
+    new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(
+      new Date(iso),
+    );
+
+  it("a synced mailbox: when it last synced, to the minute, as a setting's line", async () => {
+    const pane = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [ALLOWED] });
+    drawPane(pane.wire, { opened: "mbx-a" });
+    await settle();
+    const line = screen.getByRole("group", { name: say(M.syncedAgo, { when: "2 minutes ago" }) });
+    expect(line.textContent).toContain(exact("2026-11-16T08:58:00.000Z"));
+  });
+
+  it("a failing mailbox: since when, how often, and the token the server gave, as a setting's line", async () => {
+    const failing = row("mbx-a", A, {
+      status: "error",
+      errorCode: "imap_auth",
+      errorDetail: "ETIMEDOUT",
+      failedAt: "2026-11-16T07:00:00.000Z",
+      retryCount: 3,
+    });
+    const pane = fakePane({ list: [ok([failing])], allowance: [ALLOWED] });
+    drawPane(pane.wire, { opened: "mbx-a" });
+    await settle();
+    const since = say(M.errSince, { when: exact("2026-11-16T07:00:00.000Z") });
+    const value = screen.getByText(`${since} · ${say(M.errAttempts, { count: "3" })} · ETIMEDOUT`);
+    expect(value.closest('[role="group"]')).not.toBeNull();
+  });
+});
+
 describe("connecting goes to the first run's add run", () => {
   it("Connect a mailbox is a button named by mailboxes.connect that opens the add run and calls nothing", async () => {
     const pane = fakePane({ list: [ok([row("mbx-a", A)])], allowance: [ALLOWED] });

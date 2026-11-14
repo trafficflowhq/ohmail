@@ -23,7 +23,7 @@ import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
 import { useStoreTimeline } from "@ohmail/app-logic/session/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
-import { useSenderCheckWords } from "../shell/sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";

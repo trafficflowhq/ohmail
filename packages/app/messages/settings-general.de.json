@@ -4,6 +4,11 @@
     "messages": "Nachrichten",
     "lookChoice": "Aussehen wählen",
     "followsOmarchy": "richtet sich nach Omarchy",
+    "subject": "Betreff",
+    "subjectHead": "Eine Überschrift",
+    "subjectEach": "In jeder Nachricht",
+    "subjectSample": "Glasurbestellung Nr. 2291",
+    "subjectReplySample": "Re: Glasurbestellung Nr. 2291",
     "picture": {
       "title": "Ohbox",
       "first": "Giulia Ferrari",

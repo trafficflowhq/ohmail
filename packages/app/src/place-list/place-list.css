@@ -11,6 +11,9 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.pl-scroll[data-manual-anchor] {
+  overflow-anchor: none;
+}
 /* On a phone the rows lie on one sheet, and the sheet reaches the column's foot however few rows lie on it. */
 .pl-page {
   display: grid;
@@ -25,4 +28,17 @@
   grid-template-columns: minmax(0, 1fr);
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.pl-list[data-scroll-edges],
+.pl-list[data-scroll-edges] > :has(+ .pl-scroll) {
+  position: relative;
+}
+.pl-list[data-scrolled] > :has(+ .pl-scroll)::after,
+.pl-list[data-more-below]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  border-top: 1px solid var(--hair-soft);
+  pointer-events: none;
 }

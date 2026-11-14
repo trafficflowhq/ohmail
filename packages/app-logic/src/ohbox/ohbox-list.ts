@@ -143,6 +143,7 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
     enter,
     selectByUser,
     pressRow,
+    firstRow: order[0] ?? null,
     groupVoices,
     groupSenders: groupSendersOf,
     groupPeople: groupPeopleOf,

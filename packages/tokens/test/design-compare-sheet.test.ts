@@ -248,6 +248,25 @@ describe("the command", () => {
     said.mockRestore();
   });
 
+  it("compares supplemental component values as sheet declarations", () => {
+    const said = quiet();
+    const sheet = dir();
+    for (const name of ["tokens.json", "icons.json"]) writeFileSync(join(sheet, name), "{}");
+    for (const name of ["tokens.css", "motion.css"]) writeFileSync(join(sheet, name), "");
+    const supplement = join(sheet, "components.css");
+    const out = join(sheet, "findings.tsv");
+    const args = ["--sheet", sheet, "--product", root, "--supplement", supplement, "--out", out];
+
+    writeFileSync(supplement, ":root { --sheet-back-height: 41px; }");
+    expect(main(args)).toBe(1);
+    expect(readFileSync(out, "utf8")).toContain("css :root\tsheet-back-height\tdiffers\t40px\t41px");
+
+    writeFileSync(supplement, ":root { --sheet-back-height: 40px; }");
+    expect(main(args)).toBe(1);
+    expect(readFileSync(out, "utf8")).not.toContain("\tsheet-back-height\t");
+    said.mockRestore();
+  });
+
   it("exits 1 on a sheet that differs and writes every finding to --out", () => {
     const said = quiet();
     const sheet = dir();

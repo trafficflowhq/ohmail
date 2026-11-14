@@ -165,6 +165,8 @@ export type AccessVerdict =
   | {
     ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices; trial?: AccessTrial;
     trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer; storageTold?: StorageTold;
+    /** Current permission to use already admitted AI work, independent of remaining balance. */
+    dispatchAiEnabled?: boolean;
   }
   | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
 
@@ -525,9 +527,10 @@ export interface EntitlementsPort {
   /**
    * A fresh read that says when it could not ask: the verdict of an answer, or `"fault"` where
    * `access` would answer the last verdict it knew. For a door that acts irreversibly on the
-   * answer (erasure), where a remembered verdict is not evidence. Never throws on a fault.
+   * answer (erasure), where a remembered verdict is not evidence. A model dispatch also requires
+   * its own new read, begun after the gate is called. Never throws on a fault.
    */
-  accessOrFault(accountId: string): Promise<AccessVerdict | "fault">;
+  accessOrFault(accountId: string, opts?: { forDispatch: true }): Promise<AccessVerdict | "fault">;
   /**
    * How many `access` dials this process made that the program did not answer, ever. A bounded
    * reader reads it before and after a round to stop asking a program that is not answering;
@@ -622,7 +625,7 @@ export type SpendPort = Pick<EntitlementsPort, "spend" | "release">;
  * Narrow for {@link SpendPort}'s reason and one of its own: the sites that read it are refusal
  * paths, and a refusal path holding `spend` could charge while explaining why it will not.
  */
-export type AccessPort = Pick<EntitlementsPort, "access">;
+export type AccessPort = Pick<EntitlementsPort, "access"> & Partial<Pick<EntitlementsPort, "accessOrFault">>;
 
 /** A call site either reaches an entitlements program or is told this host meters nothing. */
 export type SpendComposition = SpendPort | typeof UNMETERED;

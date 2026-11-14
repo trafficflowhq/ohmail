@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { NONE, type ConnectFormInput, type SignInCalls } from "./calls.js";
 import { reasonCodeOf, saidOf, saidOfReturn } from "./refusal.js";
-import { PRESET_OF_SIGN_IN, WAYS_SHUT } from "./sign-in.js";
+import { deviceSignInFailureKey, deviceSignInRefusalCode, PRESET_OF_SIGN_IN, WAYS_SHUT } from "./sign-in.js";
 import type { Answered, CodeCeremony, SignInProvider, SignInReturn, SignInWays } from "./types.js";
 import { NO_ANSWER, type Machine } from "./use-machine.js";
 
@@ -76,20 +76,29 @@ export function useSignInPress(
   const { door, purpose, subject, guard } = input;
   const { held, alive, dispatch } = machine;
   const [signingIn, setSigningIn] = useState(false);
+  const [watchingCode, setWatchingCode] = useState(false);
   const edits = purpose === "edit" || purpose === "reconnect";
-  /* A sign-in by code is listened to only while this form draws it. */
+  /* The Mailboxes list can take over a new sign-in. An inline form only watches one it started itself. */
   const codeDoor =
-    door.signIn !== NONE && door.signIn.code !== NONE && way?.by === "code" ? door.signIn.code : null;
+    watchingCode && door.signIn !== NONE && door.signIn.code !== NONE ? door.signIn.code : null;
   const code: CodeCeremony | null = useSyncExternalStore(
     codeDoor?.live.subscribe ?? nothing.subscribe,
     codeDoor?.live.read ?? nothing.read,
     nothing.read,
   );
 
+  useEffect(() => {
+    if (code?.kind !== "connected" || codeDoor === null || codeDoor.live.read() !== code) return;
+    codeDoor.stop();
+    setWatchingCode(false);
+    input.onDone({ kind: "connected", ...code.connected, created: code.created });
+  }, [code, codeDoor, input]);
+
   const signIn = (): void => {
     const wire = door.signIn;
     const by = way ?? instead;
     if (by === null || wire === NONE || signingIn) return;
+    const device = by.by === "code" && wire.code !== NONE ? wire.code : null;
     dispatch({ kind: "signIn", at: "pressed" });
     const mine = held.current.signIns;
     const wanted = (): boolean => alive.current && held.current.signIns === mine;
@@ -98,9 +107,10 @@ export function useSignInPress(
       let answer: Answered<unknown> = { ok: true, value: "retired" };
       try {
         if (guard && !(await guard.before())) return;
+        if (!wanted()) return;
         answer =
-          by.by === "code" && wire.code !== NONE
-            ? await wire.code.begin(by.provider)
+          device !== null
+            ? await device.begin(by.provider, wanted)
             : await wire.start({
                 provider: by.provider,
                 purpose,
@@ -113,8 +123,23 @@ export function useSignInPress(
         if (alive.current) setSigningIn(false);
       }
       if (!wanted()) return;
-      if (answer.ok)
-        return answer.value === "leaving" ? dispatch({ kind: "signIn", at: "leaving" }) : undefined;
+      if (answer.ok) {
+        if (answer.value === "leaving") dispatch({ kind: "signIn", at: "leaving" });
+        if (answer.value === null) {
+          if (input.onCodeStarted) input.onCodeStarted();
+          else setWatchingCode(true);
+        }
+        return;
+      }
+      if (device !== null) {
+        const code = deviceSignInRefusalCode(answer.refusal.code);
+        dispatch({
+          kind: "said",
+          shown: { said: { ns: "mailboxes", key: deviceSignInFailureKey(code) }, calm: false },
+          reason: code,
+        });
+        return;
+      }
       const context = {
         purpose,
         preset: null,
@@ -132,5 +157,13 @@ export function useSignInPress(
     })();
   };
 
-  return { signingIn, code, signIn, stopCode: () => codeDoor?.stop() };
+  return {
+    signingIn,
+    code,
+    signIn,
+    stopCode: () => {
+      codeDoor?.stop();
+      setWatchingCode(false);
+    },
+  };
 }

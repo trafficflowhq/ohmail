@@ -4,7 +4,7 @@ import {
   pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accounts, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
-  UNMETERED, isMetered, AccountErasedError, type EntitlementsComposition,
+  UNMETERED, isMetered, AccountErasedError, readManagedModelConsent, type EntitlementsComposition,
   type StandDownExport,
 } from "@trafficflow/db";
 import {
@@ -1244,7 +1244,7 @@ export async function startWorkerWithLock(
         : port;
     }
     /** The classifier + gate pair for one mailbox's cycle. */
-    function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits"> {
+    function aiFor(mailboxId: string, accountId: string): Pick<SyncDeps, "classifier" | "credits" | "readModelConsent" | "consentRefunds"> {
       if (!classifierCircuit) return { ...(spend ? { credits: spend } : {}) };
       return {
         // The SAME mailbox id both halves take: `meter` records this mailbox's charge and the
@@ -1253,7 +1253,11 @@ export async function startWorkerWithLock(
         classifier: attributedIngest(classifierCircuit.port(mailboxId), accountId),
         // The metered port is what teaches the circuit which ledger attempt it charged, so a
         // trip can refund the message it just abandoned. See `ai-circuit.ts`.
-        ...(spend ? { credits: classifierCircuit.meter(mailboxId, spend) } : {}),
+        ...(spend ? {
+          credits: classifierCircuit.meter(mailboxId, spend),
+          readModelConsent: () => readManagedModelConsent(binding.forAccount(accountId).db as unknown as Tx, accountId, spend),
+          consentRefunds: obligations,
+        } : {}),
       };
     }
 

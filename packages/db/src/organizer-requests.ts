@@ -246,7 +246,8 @@ export async function listOutstandingForAccount(
     // whose shape does not parse is skipped rather than crashing the whole list, on the same
     // fail-safe direction `validateRequestPayload` takes for the drain's own untrusted read.
     const p = r.payload as { scope?: unknown; match?: unknown } | null;
-    const scope = p?.scope;
+    const scope = p?.scope === "confirmed_sender" ? "sender"
+      : p?.scope === "confirmed_domain" ? "domain" : p?.scope;
     const match = p?.match;
     if ((scope !== "sender" && scope !== "domain") || typeof match !== "string" || match === "") continue;
     const state = r.state === "pending" || r.state === "sent" || r.state === "refused" ? r.state : null;

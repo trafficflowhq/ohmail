@@ -293,3 +293,9 @@
     }
   }
 }
+
+@layer oh {
+  :root[data-device="phone"] .oh-calhead[data-away] .oh-calhead-part[data-part="today"] {
+    display: contents;
+  }
+}

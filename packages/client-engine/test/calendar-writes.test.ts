@@ -3,13 +3,16 @@
  * says the provider has not taken, a selector that tells the two waits apart, and the queue that
  * makes an act durable before it is sent and sends it under one key until our server answers.
  */
-import { describe, expect, it } from "vitest";
-import { IDBFactory } from "fake-indexeddb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import type { CalendarEventAct, CalendarEventRecord, CalendarWriteAnswer, CalendarWriteMark } from "@ohmail/wire";
 import { applyCalendarActs, eventsWithWrites } from "../src/calendar-acts.js";
 import { CALENDAR_OUTBOX_TYPE, CalendarWriteQueue, type CalendarWriteTransport } from "../src/calendar-writes.js";
 import { IndexedDbMirrorStore, MemoryMirrorStore } from "../src/index.js";
 import { MutationRejectedError } from "../src/types.js";
+
+beforeEach(() => vi.stubGlobal("IDBKeyRange", IDBKeyRange));
+afterEach(() => vi.unstubAllGlobals());
 
 const BASE = "2026-11-15T09:00:00.000Z";
 
@@ -98,7 +101,7 @@ describe("the queue on a device", () => {
     const keys = ["key-1"];
     const q1 = new CalendarWriteQueue(first, hung.t, { uuid: () => keys.shift()!, now: () => 1 });
     await q1.press(create("e1"));
-    expect(hung.asked.map((a) => a.key)).toEqual(["key-1"]);
+    await vi.waitFor(() => expect(hung.asked.map((a) => a.key)).toEqual(["key-1"]));
     release();
     await q1.flush();
     // Reloaded: a new store over the same database, a new queue.
@@ -165,4 +168,345 @@ describe("the queue on a device", () => {
     expect(q2.owed().map((r) => r.key)).toEqual(["b-1", "b-2"]);
     expect(busy.asked.filter((a) => a.key === "b-2")).toEqual([]);
   });
+});
+
+it("keeps the delete durable and offline until the Undo window closes", async () => {
+  vi.useFakeTimers();
+  try {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const event = record("e1");
+    await store.applyChanges([{ type: "calendar_event", op: "create", id: event.id, entity: event, seq: 1, updatedAt: BASE }]);
+    const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+    let count = 0;
+    const queue = new CalendarWriteQueue(store, t, { uuid: () => `key-${++count}`, now: Date.now });
+    const act = { kind: "calendar_event_delete", eventId: event.id, base: BASE, scope: { kind: "record" } } as const;
+    const first = await queue.holdDelete(act, 8000);
+    expect(queue.owed()).toHaveLength(1);
+    expect(queue.events()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(asked).toHaveLength(0);
+    expect(await first.undo()).toBe(true);
+    expect(queue.events().map(({ record }) => record.id)).toEqual([event.id]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(asked).toHaveLength(0);
+
+    const second = await queue.holdDelete(act, 8000);
+    await vi.advanceTimersByTimeAsync(8000);
+    await queue.flush();
+    expect(asked.map(({ key }) => key)).toEqual([second.key]);
+    expect(await second.undo()).toBe(false);
+    expect(queue.owed()).toEqual([]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("honors Undo on disk even when another tab already loaded the deletion", async () => {
+  const factory = new IDBFactory();
+  const first = new IndexedDbMirrorStore({ owner: "acct-cal", factory });
+  const second = new IndexedDbMirrorStore({ owner: "acct-cal", factory });
+  const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+  let now = 1;
+  const opts = { uuid: () => "key-1", now: () => now };
+  await first.load();
+  const left = new CalendarWriteQueue(first, t, opts);
+  const stopLeft = left.activate();
+  const right = new CalendarWriteQueue(second, t, opts);
+  try {
+    const act = { kind: "calendar_event_delete", eventId: "e1", base: BASE, scope: { kind: "record" } } as const;
+    const held = await left.holdDelete(act, 8000);
+    await second.load();
+    expect(right.owed().map(({ key }) => key)).toEqual([held.key]);
+    await right.flush();
+    now += 2000;
+    expect(held.remainingMs()).toBe(6000);
+    expect(await held.undo()).toBe(true);
+    now += 8000;
+    await right.flush();
+    expect(asked).toEqual([]);
+    expect(right.owed()).toEqual([]);
+  } finally {
+    stopLeft();
+  }
+});
+
+it("wakes an offline calendar change on reconnect and sends it once under its original key", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const online = new EventTarget();
+  let connected = false;
+  const accepted = vi.fn();
+  const { t } = transport(async (act, key) => {
+    if (!connected)
+      throw new MutationRejectedError("offline", { status: null, code: "network", retryable: true });
+    accepted(act, key);
+    return echo(record(act.eventId), key);
+  });
+  const opts = { uuid: () => "key-1", now: Date.now, online };
+  const queue = new CalendarWriteQueue(store, t, opts);
+  const stop = queue.activate();
+  try {
+    const act: CalendarEventAct = {
+      kind: "calendar_event_delete", eventId: "e1", base: BASE, scope: { kind: "record" },
+      audience: { organizer: null, guests: [record("guest").uid] },
+    };
+    const { key } = await queue.press(act);
+    await queue.flush();
+    expect(queue.deviceActs()).toEqual([{ key, act }]);
+    connected = true;
+    online.dispatchEvent(new Event("online"));
+    online.dispatchEvent(new Event("online"));
+    await vi.waitFor(() => expect(queue.owed()).toEqual([]), { timeout: 250 });
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledWith(act, key);
+  } finally {
+    stop();
+  }
+});
+
+
+it("lets one tab dispatch an expired deletion even when both tabs wake at once", async () => {
+  const factory = new IDBFactory();
+  const first = new IndexedDbMirrorStore({ owner: "acct-cal", factory });
+  const second = new IndexedDbMirrorStore({ owner: "acct-cal", factory });
+  const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+  let now = 1;
+  const opts = { uuid: () => "key-1", now: () => now };
+  const left = new CalendarWriteQueue(first, t, opts);
+  const right = new CalendarWriteQueue(second, t, opts);
+  const stopLeft = left.activate();
+  const stopRight = right.activate();
+  try {
+    await first.load();
+    const act = { kind: "calendar_event_delete", eventId: "e1", base: BASE, scope: { kind: "record" } } as const;
+    const held = await left.holdDelete(act, 8000);
+    await second.load();
+    now += 8000;
+    await Promise.all([left.flush(), right.flush()]);
+    expect(asked.map(({ key }) => key)).toEqual([held.key]);
+    expect(await held.undo()).toBe(false);
+  } finally {
+    stopLeft();
+    stopRight();
+  }
+});
+
+it("aborts an in-flight calendar request when its account leaves and keeps the original act owed", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const send = vi.fn<CalendarWriteTransport["writeCalendar"]>((_act, _key, signal) =>
+    new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+    }));
+  const t = { ...transport(async () => { throw new Error("not asked"); }).t, writeCalendar: send };
+  const queue = new CalendarWriteQueue(store, t, { uuid: () => "key-1", now: Date.now });
+  const stop = queue.activate();
+  const act = update("e1", "Rescheduled");
+  const { key } = await queue.press(act);
+  const inFlight = queue.flush();
+  expect(send).toHaveBeenCalledTimes(1);
+  const signal = send.mock.calls[0]?.[2];
+  stop();
+  await inFlight;
+  expect(signal?.aborted).toBe(true);
+  expect(queue.deviceActs()).toEqual([{ key, act }]);
+});
+
+
+it("backs off temporary calendar refusals and keeps retrying the same press", async () => {
+  vi.useFakeTimers();
+  const store = new MemoryMirrorStore();
+  await store.load();
+  let tries = 0;
+  const { t, asked } = transport(async (act, key) => {
+    if (++tries < 3) throw new MutationRejectedError("temporarily unavailable", { status: 503, retryable: true });
+    return echo(record(act.eventId), key);
+  });
+  const queue = new CalendarWriteQueue(store, t, { uuid: () => "key-1", now: Date.now });
+  const stop = queue.activate();
+  try {
+    const { key } = await queue.press(update("e1", "Rescheduled"));
+    await queue.flush();
+    expect(asked).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(asked).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(asked).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(asked.map((request) => request.key)).toEqual([key, key, key]);
+    expect(queue.owed()).toEqual([]);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
+});
+
+
+it("sends a closed tab's offline change once when the surviving tab reconnects", async () => {
+  const factory = new IDBFactory();
+  const writerStore = new IndexedDbMirrorStore({ owner: "acct-cal", factory, notices: () => null });
+  const survivorStore = new IndexedDbMirrorStore({ owner: "acct-cal", factory, notices: () => null });
+  await writerStore.load();
+  await survivorStore.load();
+  const online = new EventTarget();
+  const offline = transport(async () => {
+    throw new MutationRejectedError("offline", { code: "network", retryable: true });
+  });
+  const accepted = vi.fn(async (act: CalendarEventAct, key: string) => echo(record(act.eventId), key));
+  const surviving = new CalendarWriteQueue(survivorStore, transport(accepted).t, {
+    uuid: () => "survivor", now: Date.now, online,
+  });
+  const writing = new CalendarWriteQueue(writerStore, offline.t, { uuid: () => "original", now: Date.now });
+  const stopSurviving = surviving.activate();
+  const stopWriting = writing.activate();
+  try {
+    const act: CalendarEventAct = {
+      kind: "calendar_event_delete", eventId: "e1", base: BASE, scope: { kind: "record" },
+      audience: { organizer: null, guests: [record("guest").uid] },
+    };
+    const { key } = await writing.press(act);
+    await vi.waitFor(() => expect(offline.asked.map((row) => row.key)).toEqual([key]));
+    await writing.flush();
+    stopWriting();
+    writerStore.close();
+    expect(surviving.owed()).toEqual([]);
+    online.dispatchEvent(new Event("online"));
+    online.dispatchEvent(new Event("online"));
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledTimes(1));
+    await surviving.flush();
+    expect(accepted).toHaveBeenCalledWith(act, key);
+    expect(surviving.owed()).toEqual([]);
+  } finally {
+    stopWriting();
+    stopSurviving();
+    survivorStore.close();
+  }
+});
+
+
+it("follows another tab's queue change, preserving its in-flight claim and clearing the waiting row", async () => {
+  const factory = new IDBFactory();
+  const writerStore = new IndexedDbMirrorStore({ owner: "acct-cal-notice", factory });
+  const readerStore = new IndexedDbMirrorStore({ owner: "acct-cal-notice", factory });
+  await writerStore.load();
+  await readerStore.load();
+  let finish = () => {};
+  const { t, asked } = transport((act, key) => new Promise((resolve) => {
+    finish = () => resolve(echo(record(act.eventId), key));
+  }));
+  const opts = { uuid: () => "shared", now: Date.now };
+  const writer = new CalendarWriteQueue(writerStore, t, opts);
+  const reader = new CalendarWriteQueue(readerStore, t, opts);
+  const stopWriter = writer.activate();
+  const stopReader = reader.activate();
+  try {
+    const { key } = await writer.press(update("e1", "Rescheduled"));
+    await vi.waitFor(() => {
+      expect(asked).toHaveLength(1);
+      expect(reader.owed().map((row) => row.key)).toEqual([key]);
+    });
+    await reader.flush();
+    expect(asked).toHaveLength(1);
+    finish();
+    await vi.waitFor(() => expect(reader.owed()).toEqual([]));
+    expect(asked.map((a) => a.key)).toEqual([key]);
+  } finally {
+    finish();
+    stopWriter();
+    stopReader();
+    await Promise.all([writer.flush(), reader.flush()]);
+    writerStore.close();
+    readerStore.close();
+  }
+});
+
+
+it("retries storing a terminal Calendar refusal without sending the write again", async () => {
+  vi.useFakeTimers();
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const commit = store.commitLocal.bind(store);
+  let refuseCommit = true;
+  const persist = vi.spyOn(store, "commitLocal").mockImplementation(async (puts, deletes) => {
+    if (deletes.length > 0 && refuseCommit) {
+      refuseCommit = false;
+      throw new Error("storage temporarily unavailable");
+    }
+    await commit(puts, deletes);
+  });
+  const { t, asked } = transport(async () => {
+    throw new MutationRejectedError("read only", { code: "calendar_read_only", retryable: false });
+  });
+  const queue = new CalendarWriteQueue(store, t, { uuid: () => "original", now: Date.now });
+  const stop = queue.activate();
+  try {
+    const { key } = await queue.press(update("ev", "A new time"));
+    await queue.flush();
+    expect(queue.owed().map((row) => row.key)).toEqual([key]);
+    expect(queue.result(key)).toBeNull();
+    expect(asked).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(queue.owed()).toEqual([]);
+    expect(queue.result(key)).toEqual({ kind: "refused", word: "calendar_read_only" });
+    expect(asked).toHaveLength(1);
+  } finally {
+    stop();
+    persist.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+
+it("dispatches an expired deletion at the stored deadline even when its commit shortened the Undo window", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  const factory = new IDBFactory();
+  const writerStore = new IndexedDbMirrorStore({ owner: "acct-cal", factory, notices: () => null });
+  const otherStore = new IndexedDbMirrorStore({ owner: "acct-cal", factory, notices: () => null });
+  await writerStore.load();
+  await otherStore.load();
+  const commit = writerStore.commitLocal.bind(writerStore);
+  const delayed = vi.spyOn(writerStore, "commitLocal").mockImplementation(async (puts, deletes) => {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    await commit(puts, deletes);
+  });
+  const sentAt: number[] = [];
+  const writerWire = transport(async (act, key) => echo(record(act.eventId), key));
+  const { t, asked } = transport(async (act, key) => {
+    sentAt.push(Date.now());
+    return echo(record(act.eventId), key);
+  });
+  const opts = { uuid: () => "deletion", now: Date.now };
+  const writer = new CalendarWriteQueue(writerStore, writerWire.t, opts);
+  const other = new CalendarWriteQueue(otherStore, t, opts);
+  const stopWriter = writer.activate();
+  const stopOther = other.activate();
+  try {
+    const pressedAt = Date.now();
+    const waiting = writer.holdDelete({ kind: "calendar_event_delete", eventId: "ev", base: BASE, scope: { kind: "record" } }, 8000);
+    await vi.advanceTimersByTimeAsync(4000);
+    const held = await waiting;
+    expect(held.deadline).toBe(pressedAt + 8000);
+    expect(held.remainingMs()).toBe(4000);
+    await writer.flush();
+    writer.suspend();
+    await other.flush();
+    await vi.advanceTimersByTimeAsync(3999);
+    expect(sentAt).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await held.undo()).toBe(false);
+    await other.flush();
+    await writer.flush();
+    expect(writerWire.asked).toEqual([]);
+    expect(sentAt).toEqual([held.deadline]);
+    expect(asked.map(({ key }) => key)).toEqual([held.key]);
+  } finally {
+    stopWriter();
+    stopOther();
+    delayed.mockRestore();
+    writerStore.close();
+    otherStore.close();
+    vi.useRealTimers();
+  }
 });

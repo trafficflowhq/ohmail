@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyBinding } from "../keys/binding.js";
-import { screenerKeys, type KeySegment, type ScreenerKeyWords } from "./keys.js";
+import { screenerKeys, type KeySegment, type ScreenerKeysInput, type ScreenerKeyWords } from "./keys.js";
 import { firstOf, walk } from "./view-parts.js";
 
 /** What names one row of the Junk window. */
@@ -53,6 +53,8 @@ export interface JunkView<I extends JunkKeyed> {
   readonly full: boolean;
   readonly select: (key: string) => void;
   readonly close: () => void;
+  /** The walk to the next and the previous row, as `j` and `k` take it; null where there is none. */
+  readonly step: ScreenerKeysInput["step"];
   readonly keys: KeyBinding[];
 }
 
@@ -81,6 +83,7 @@ export function useJunkView<I extends JunkKeyed>(input: JunkViewInput<I>): JunkV
     if (ask !== null && now.open !== null) now.openBody(now.open);
   }, [ask]);
   const close = () => setFull(false);
+  const step = walk(keys, openKey, (key) => select(key));
   return {
     openKey,
     open,
@@ -90,10 +93,11 @@ export function useJunkView<I extends JunkKeyed>(input: JunkViewInput<I>): JunkV
       if (oneColumn) setFull(true);
     },
     close,
+    step,
     keys: screenerKeys({
       words: input.words,
       segment: "spam",
-      step: walk(keys, openKey, (key) => select(key)),
+      step,
       decidable: false,
       decide: NO_DECISION,
       suggested: null,

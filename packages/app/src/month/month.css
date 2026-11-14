@@ -24,3 +24,14 @@
   padding: var(--s3) var(--s4);
   color: var(--ink2);
 }
+
+.cal-mo[data-device="phone"] .cal-mo-day {
+  padding-block-end: var(--cal-phone-sheet-foot);
+  background: var(--sheet);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+
+.cal-mo-pick {
+  padding: 0 var(--s2) var(--s2);
+}

@@ -13,14 +13,18 @@ import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { useTranslations, NextIntlClientProvider } from "next-intl";
 import { MemoryMirrorStore, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
 import messages from "../messages/en.json";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+const scheduleAt = (when: string) => scheduleLabel(when, new Date());
 let root: Root | null = null;
 
 function engineOver(reserved: Set<string>, deliveries: string[], pressed: string[] = [], claimed = new Set<string>(), loseFirst = false, store = new MemoryMirrorStore()): OhmailEngine {
@@ -66,11 +70,11 @@ const PARENT = {
 
 async function mount(engine: OhmailEngine, said: string[], settled: string[], message: unknown = MESSAGE, opts?: unknown): Promise<() => Promise<void>> {
   const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let press!: () => Promise<void>;
   const Probe = (): null => {
+    const t = useTranslations() as unknown as Translator;
     const mail = useMailSend(engine as never, null, ((text: string) => { said.push(text); }) as never,
-      useMailSendText(), ((key: string) => { settled.push(key); }) as never);
+      useSendText(t, scheduleAt), ((key: string) => { settled.push(key); }) as never);
     press = async () => { await act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(message, opts); }); };
     return null;
   };

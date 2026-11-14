@@ -3,9 +3,22 @@
  * `notice()` in render (so it may use hooks) and posts the list under the entry's own feed; an entry that goes
  * takes its notices with it.
  */
-import { useEffect } from "react";
-import { FEATURE_NAMES, NONE, type FeatureEntry, type HostFeatures } from "../host/index.js";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
+import {
+  FEATURE_NAMES,
+  NONE,
+  type FeatureEntry,
+  type FeatureName,
+  type HostFeatures,
+} from "../host/index.js";
 import type { NoticeStore } from "./notice-store.js";
+
+/** The ground's pending question takes the host's optional stage notice's place. */
+export const StageNoticeOffer = createContext<ReactNode>(null);
+/** The Ohbox yields the offer while the owed review shows it. */
+export const StageNoticeInReview = createContext(false);
+const featureFeed = (name: FeatureName) => `feature:${name}`;
+export const STAGE_NOTICE_FEED = featureFeed("stageCard");
 
 function EntryNotices({
   entry,
@@ -15,8 +28,9 @@ function EntryNotices({
   notices: NoticeStore;
 }) {
   const said = entry.notice();
-  const feed = `feature:${entry.name}`;
-  useEffect(() => notices.post(feed, said));
+  const offer = useContext(StageNoticeOffer);
+  const feed = featureFeed(entry.name);
+  useEffect(() => notices.post(feed, offer !== null && entry.name === "stageCard" ? [] : said));
   useEffect(() => () => notices.post(feed, []), [notices, feed]);
   return null;
 }

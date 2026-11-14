@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@ohmail/ui/base";
+import { useDraftLeave } from "../use-draft-leave.js";
+import { Button, Dialog } from "@ohmail/ui/base";
 import { SettingArea, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useLocale, useText } from "../../text/index.js";
 import type { ScreenerOhbox } from "./model.js";
@@ -67,6 +68,7 @@ export function OhboxSheet({ ohbox }: { readonly ohbox: ScreenerOhbox }) {
 
 /** The words, owned here once seeded and re-seeded only from what a write confirmed, as the shipped editor holds them. */
 function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly busy: boolean }) {
+  const leaveText = useText("away");
   const t = useText("settings");
   const locale = useLocale();
   const alive = useAlive();
@@ -98,6 +100,7 @@ function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly b
     return v === ohbox.defaultBar.trim() || v === shownDefault.trim();
   };
   const changed = stored === null ? !isDefault(draft) : draft.trim() !== stored.trim();
+  const guard = useDraftLeave(changed && !!ohbox.holdLeave, (ask) => ohbox.holdLeave!(ask));
   const held = pending || busy;
   const toStore = (text: string): string | null => (isDefault(text) || !text.trim() ? null : text.trim());
 
@@ -122,9 +125,26 @@ function OhboxWords({ ohbox, busy }: { readonly ohbox: ScreenerOhbox; readonly b
 
   return (
     <>
+      <Dialog
+        open={guard.leaving}
+        alert
+        keysOn="cancel"
+        onClose={guard.keep}
+        title={leaveText("leaveAsk")}
+        hot
+        confirm={{
+          label: leaveText("leaveDiscard"),
+          onPress: () => {
+            setDraft(stored ?? shownDefault);
+            guard.discard();
+          },
+        }}
+        cancel={{ label: leaveText("leaveKeep") }}
+      />
       <SettingArea
         label={t("screening.barLabel")}
         value={draft}
+        placeholder={shownDefault}
         onChange={held ? undefined : setDraft}
         lines={4}
         refusal={said === "failed" ? t("screening.failed") : undefined}

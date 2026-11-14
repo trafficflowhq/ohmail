@@ -10,7 +10,7 @@ import type { FailedAtGateDTO, ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { APPLY_PILE_ORDER, type ScreenerState, type SpamRow } from "@ohmail/app-logic/screener";
+import { APPLY_PILE_ORDER, NO_RUN, type ScreenerState, type SpamRow } from "@ohmail/app-logic/screener";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
@@ -878,6 +878,7 @@ const engine = {
 
 const suggest: ScreenerSuggest = {
   priced: true,
+  noAdvice: NO_RUN,
   control: {
     available: show === "suggest" ? 1 : waiting.filter((w) => !w.ai).length,
     resuggestable: waiting.filter((w) => w.ai).length,

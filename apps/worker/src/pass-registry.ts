@@ -179,7 +179,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "junk_sweep",
     module: `${W}/junk-sweep.ts`, entry: "junkSweepPass",
     triggers: ["visit", "cli"], cli: ["run-junk-sweep.ts"],
-    cadence: "command-driven: a user press stamps mailboxes.junk_sweep_requested_at; the visit works it off",
+    cadence: "command-driven: a user press records the confirmed sweep in pass_progress; the visit works it off",
     budget: "one bounded keyset window per cycle (JUNK_SWEEP_PER_CYCLE), scan state carried across cycles",
     owns: "the one-time Quarantine→native-Junk migration a mailbox's owner pressed for",
     // This line USED TO SAY the CLI takes the mailbox's own lease, and the CLI did not: it moved mail with

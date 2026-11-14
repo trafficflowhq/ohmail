@@ -3,6 +3,7 @@
   .oh-calside {
     --oh-calside-ring: 0 0 0 var(--ringw) var(--ring);
     --oh-soft: var(--soft-sheet);
+    flex: var(--oh-calside-flex, 0 1 auto);
     position: relative;
     display: flex;
     flex-direction: column;

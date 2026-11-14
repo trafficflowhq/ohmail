@@ -10,6 +10,7 @@
  * server (`applyRetro` → the worker's resumable `ruleRetroPass`), which alone moves a rule's
  * backlog; the client moves mail only where the move IS the instruction. Pure: returns mutations.
  */
+import type { UnsubscribeClaim } from "@ohmail/client-engine";
 import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
@@ -74,6 +75,13 @@ export const DECISION_OF_DEST: Record<ScreeningDest, "yes" | "no"> = {
  * `kind` of the rule the server promotes.
  */
 export type ScreeningScope = "sender" | "domain";
+
+export function screeningOrganizerCopy(organizer: { name: string | null; nobody?: boolean }) {
+  if (organizer.nobody) return { key: "orgNobody" } as const;
+  return organizer.name
+    ? { key: "orgPending", values: { name: organizer.name } } as const
+    : { key: "orgPendingUnnamed" } as const;
+}
 
 /**
  * Whether "also apply it to my existing mail" is on when the sheet opens — it is. The requirement
@@ -500,12 +508,14 @@ export function planScreeningChange(
   scope: ScreeningScope = "sender",
   makeRule = true,
   applyRetro = RETRO_DEFAULT_ON,
+  gate: "decide" | "leave" = "decide",
 ): ScreeningPlan {
   const wanted = FOLDER_OF_VIEW[dest];
   const subject = s.scopes[scope];
   const mutations: PlanMutation[] = [];
   const movedByDecide = new Set<string>();
-  const promoted = subject.waiting && subject.representativeId != null;
+  const representative = gate === "decide" && subject.waiting ? subject.representativeId : null;
+  const promoted = representative !== null;
 
   /**
    * The rule ladder, before the moves — the durable half lands first, so an interrupted sequence leaves a rule with
@@ -530,11 +540,11 @@ export function planScreeningChange(
   }
   mutations.push(...ruleMutations);
 
-  if (subject.waiting && subject.representativeId) {
+  if (representative) {
     const decision = DECISION_OF_DEST[dest];
     mutations.push({
       kind: "screener_decide",
-      senderId: subject.representativeId,
+      senderId: representative,
       decision,
       scope,
       // The past-mail answer travels with the decision, because the rule the decide promotes is
@@ -638,6 +648,8 @@ export interface ScreeningPress {
   /** The rules the step named, as the person saw them. */
   shown: readonly RuleDTO[];
   forecast: PressForecast;
+  /** The sender conflict a domain choice widened, and the disclosure shown for that wider scope. */
+  widenedFrom?: { forecast: PressForecast; unsubscribe: UnsubscribeClaim };
 }
 
 /**

@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 /**
  * MESSAGE-ACTION PARITY WITH THE WEBAPP — derived from the webapp's own source, not from a list
  * maintained here that could quietly drift.
@@ -8,12 +9,20 @@
  * desktop composes the same shell, so it is consistent by construction); this phone's message
  * screen is the one that can drift, and it did.
  *
- * HOW THE VERB LIST IS DERIVED. `apps/webapp/app/shell/MessagePane.tsx` renders the action bar
- * from catalogue keys (`t("actionReply")`, `copy("actionLater", …)`, `tr("action")` for
- * Screening), and `MessageCard.tsx` carries the per-message Forward item (`tm("menuForward")`).
- * The regexes below lift exactly those keys out of the source, so a verb ADDED to the webapp
- * bar turns this suite red on the phone that lacks it — the settings-parity idiom: the webapp
- * file is the source of truth and this file has no list of its own to go stale.
+ * HOW THE VERB LIST IS DERIVED. The web's reference surface is the new reader's action panel
+ * (`packages/app/src/reader/actions/ActionBar.tsx`) and its Resurface chooser (`ResurfaceMenu.tsx`):
+ * re-pointed there by path when the switch to the new shell retired today's reading pane
+ * (`apps/webapp/app/shell/MessagePane.tsx`, `MessageCard.tsx`; share reader-1). The panel names its
+ * verbs from the `reader` catalogue (`t("verb.reply")`, the filing toggles `file("later", …)`, the
+ * read slot's two words) and the message menu's (`tm("menuForward")`, `tm("menuReplyAll")`); the
+ * Web contact menu supplies Screening. The chooser's rows are `t("resurface.now")` and its time field `t("resurface.time")`. The regexes lift
+ * exactly those keys out of the source and name each one as today's bar and the phone's deck name it
+ * (`verb.<x>` is `action<X>`, `resurface.<x>` is `resurface<X>`, `menu<X>` is `action<X>`; the two
+ * the reader's catalogue renamed are in {@link RENAMED}), so a verb ADDED to the web panel turns this
+ * suite red on the phone that lacks it: the settings-parity idiom: the web file is the source of
+ * truth and this file has no list of verbs of its own to go stale. The AI drafter has left the panel
+ * for Write's reply sheet (`packages/app/src/write/draft/Draft.tsx`, `t("draft.verb")`), where the
+ * documented gap's web side is read.
  *
  * WHAT PARITY MEANS HERE, checked per derived key:
  *   1. the phone's copy deck (`src/copy.ts`) HAS the verb;
@@ -30,7 +39,9 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
+import { computeAccessibleName } from "dom-accessibility-api";
 import { Copy } from "../src/copy";
 import { MOVE_TARGETS } from "../src/state/live";
 
@@ -41,35 +52,64 @@ const readMobile = (p: string) => (existsSync(at(p)) ? read(p) : "");
 
 /* ── the reference surface ────────────────────────────────────────────────────────────────── */
 
-const pane = read("../../webapp/app/shell/MessagePane.tsx");
-const card = read("../../webapp/app/shell/MessageCard.tsx");
-const en = JSON.parse(read("../../webapp/messages/en.json")) as {
-  ohbox: Record<string, string>;
-  screening: Record<string, string>;
-  message: Record<string, string>;
-};
+const ACTIONS = "../../../packages/app/src/reader/actions/";
+const panel = read(`${ACTIONS}ActionBar.tsx`);
+/* The chooser's own face: Pick a date's month (`PickDay`, below it in the file) is the picker's, compared nowhere, as today's was not. */
+const chooser = read(`${ACTIONS}ResurfaceMenu.tsx`).split(/\nfunction PickDay\b/)[0]!;
+const verbsOf = read(`${ACTIONS}use-verbs.ts`);
+let screening: string | undefined;
+const replySheet = read("../../../packages/app/src/write/draft/Draft.tsx");
+const en = JSON.parse(read("../../webapp/messages/en.json")) as Record<string, Record<string, unknown>>;
 
-/** The bar's catalogue keys, lifted from the webapp source — see the header. */
-function webappVerbKeys(): Set<string> {
-  const keys = new Set<string>();
-  // `t("actionReply")`, `t("resurfaceNow")`, `t("moveLabel")`, … — the ohbox namespace.
-  for (const m of pane.matchAll(/[^A-Za-z]t\("((?:action|resurface|move)[A-Za-z]+)"\)/g)) {
-    keys.add(m[1]!);
+/** The two keys the reader's catalogue renamed from today's bar, by the name today's bar and the phone's deck give them. */
+const RENAMED: Record<string, string> = {
+  "reader:verb.aside": "actionSetAside",
+  "reader:resurface.cancel": "moveCancel",
+};
+const cap = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+
+/** The panel's keys, lifted from the web source (see the header), each named as the phone names it, with the catalogue path it reads. */
+function webappVerbs(): Map<string, string> {
+  const found = new Map<string, string>();
+  const add = (path: string, name: string) => found.set(RENAMED[path] ?? name, path);
+  // `t("verb.reply")`, `t("verb.move")`, … — the reader namespace, on the panel and the chooser's head.
+  for (const src of [panel, chooser]) {
+    for (const m of src.matchAll(/[^A-Za-z]t\("verb\.([A-Za-z]+)"\)/g)) add(`reader:verb.${m[1]!}`, `action${cap(m[1]!)}`);
   }
-  // `copy("actionLater", "Later")` — the not-yet-in-catalogue shim; same namespace.
-  for (const m of pane.matchAll(/copy\("(action[A-Za-z]+)"/g)) keys.add(m[1]!);
-  // Screening is its own namespace (`tr("action")` — screening.action).
-  if (pane.includes('tr("action")')) keys.add("SCREENING");
-  // Forward lives on the per-message menu (`tm("menuForward")` — message.menuForward).
-  if (card.includes('tm("menuForward")')) keys.add("FORWARD");
-  return keys;
+  // The filing toggles: `file("later", …)`, `file("aside", …)`, each labelled `t(`verb.${id}`)`.
+  for (const m of panel.matchAll(/[^A-Za-z]file\("([A-Za-z]+)"/g)) add(`reader:verb.${m[1]!}`, `action${cap(m[1]!)}`);
+  // The read slot, labelled `t(`verb.${readSlot}`)`: its two words are the slot's type.
+  const slot = verbsOf.match(/readSlot: ((?:"[A-Za-z]+" \| )+)null/);
+  for (const m of (slot?.[1] ?? "").matchAll(/"([A-Za-z]+)"/g)) add(`reader:verb.${m[1]!}`, `action${cap(m[1]!)}`);
+  // The message menu's words on the panel: Forward (a sentinel, as before) and Reply all.
+  for (const m of panel.matchAll(/[^A-Za-z]tm\("menu([A-Za-z]+)"\)/g)) {
+    add(`message:menu${m[1]!}`, m[1] === "Forward" ? "FORWARD" : `action${m[1]!}`);
+  }
+  // The chooser's rows (`{t("resurface.now")}` as a MenuItem's words) and its time field.
+  for (const m of chooser.matchAll(/>\s*\{t\("resurface\.([A-Za-z]+)"\)\}\s*<\/MenuItem>/g)) {
+    add(`reader:resurface.${m[1]!}`, `resurface${cap(m[1]!)}`);
+  }
+  for (const m of chooser.matchAll(/aria-label=\{t\("resurface\.([A-Za-z]+)"\)\}/g)) add(`reader:resurface.${m[1]!}`, `resurface${cap(m[1]!)}`);
+  if (screening !== undefined) found.set("SCREENING", "screening:action");
+  // The AI drafter's verb, in Write's reply sheet.
+  if (replySheet.includes('t("draft.verb")')) add("write:draft.verb", "actionDraftReply");
+  return found;
 }
 
-/** The webapp string a derived key resolves to. */
+/** The bar's catalogue keys, lifted from the web source — see the header. */
+function webappVerbKeys(): Set<string> {
+  return new Set(webappVerbs().keys());
+}
+
+/** The web string a derived key resolves to. */
 function webappLabel(key: string): string | undefined {
-  if (key === "SCREENING") return en.screening.action;
-  if (key === "FORWARD") return en.message.menuForward;
-  return en.ohbox[key];
+  if (key === "SCREENING") return screening;
+  const path = webappVerbs().get(key);
+  if (path === undefined) return undefined;
+  const [ns, dotted] = path.split(":") as [string, string];
+  let at: unknown = en[ns];
+  for (const part of dotted.split(".")) at = (at as Record<string, unknown> | undefined)?.[part];
+  return typeof at === "string" ? at : undefined;
 }
 
 /** The phone's name for a derived key — identity within ohbox; the two foreign namespaces map. */
@@ -123,11 +163,29 @@ const CAPTION_KEYS = new Set(["resurfaceWhen", "moveLabel"]);
 /* ── the suite ────────────────────────────────────────────────────────────────────────────── */
 
 describe("the message screen carries the webapp's verbs", () => {
-  const keys = webappVerbKeys();
+  beforeAll(async () => {
+    const { act, closeMailPage, inboxPage, mountMailPage, prepareMailPage, tick } =
+      await import("../../../test/support/mounted-web-mail.js");
+    await prepareMailPage({ "GET /api/sync": () => inboxPage(1) });
+    try {
+      const page = await mountMailPage();
+      const row = page.getByRole("option", { name: /Subject m1/ });
+      await act(async () => { row.click(); });
+      await tick(0);
+      const reader = within(page.getByRole("region", { name: "Open message" }));
+      const name = String(en.screening!.action);
+      const control = reader.getByRole("button", { name });
+      screening = computeAccessibleName(control);
+      expect(screening).toBe(name);
+    } finally {
+      closeMailPage();
+    }
+  });
 
   it("the derivation is not vacuous — it found the bar", () => {
     // A refactor that renames the call shapes must fail HERE, loudly, not by deriving an empty
     // set that every later assertion trivially passes over.
+    const keys = webappVerbKeys();
     expect(keys.size).toBeGreaterThanOrEqual(15);
     expect(keys.has("actionReply")).toBe(true);
     expect(keys.has("actionMove")).toBe(true);
@@ -135,7 +193,7 @@ describe("the message screen carries the webapp's verbs", () => {
     expect(keys.has("FORWARD")).toBe(true);
   });
 
-  for (const key of [...webappVerbKeys()].sort()) {
+  for (const key of [...webappVerbKeys(), "SCREENING"].sort()) {
     if (GAPS[key]) continue;
     const mk = mobileKey(key);
     it(`${key} — named identically and reachable on the phone (Copy.${mk})`, () => {
@@ -153,6 +211,7 @@ describe("the message screen carries the webapp's verbs", () => {
   }
 
   it("the documented gaps are still honest on both sides", () => {
+    const keys = webappVerbKeys();
     for (const key of Object.keys(GAPS)) {
       // The webapp still carries the verb — otherwise this entry is stale and must go.
       expect(keys.has(key), `${key} left the webapp bar; drop it from GAPS`).toBe(true);

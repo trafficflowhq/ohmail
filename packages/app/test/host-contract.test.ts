@@ -3,6 +3,7 @@ import {
   CANNOT, FEATURE_NAMES, NONE, panesOf,
   type FeatureEntry, type HostContract, type HostFeatures, type HostWires, type Signal,
 } from "../src/host/index.js";
+import { fakeAddress } from "./support/fake-window.js";
 import { NO_OVERS, NO_PLACES, NO_STAGES } from "./support/fake-host.js";
 
 const entry = {} as FeatureEntry;
@@ -27,16 +28,16 @@ const noWire: HostWires = {
 function hostThatCannot(over: Partial<Pick<HostContract, "wires" | "features" | "capabilities">> = {}): HostContract {
   return {
     engine: {} as HostContract["engine"],
-    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, account: null, signOut: NONE, recover: NONE },
+    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, mirrorAccount: null, account: null, accountAddress: null, signOut: NONE, recover: NONE, today: NONE },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
     wires: noWire,
     capabilities: { service: "ownComputer", ...CANNOT },
     features: noFeature,
     device: {
-      build: { surface: "web", version: null, commit: null, mailtoLeaves: true },
+      build: { surface: "web", version: null, commit: null, mailtoLeaves: true, desktopDownload: null },
       notifications: NONE, badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE,
       defaultMail: NONE, textSize: NONE, fold: NONE, liveTheme: NONE,
-      address: { read: () => "", write: () => undefined, subscribe: () => () => undefined },
+      address: fakeAddress(""),
       window: still({ width: 1440, height: 900, pointer: "fine", posture: "flat", reducedMotion: false }),
       appearance: still({ face: "paper", scheme: "light" }),
     },

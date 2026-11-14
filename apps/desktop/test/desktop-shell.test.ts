@@ -413,7 +413,7 @@ describe("tauri.conf.json", () => {
     expect(d["script-src"]).toEqual(["'self'"]);
     expect(d["connect-src"]).toEqual(["'none'"]);
     expect(d["object-src"]).toEqual(["'none'"]);
-    expect(d["frame-src"]).toEqual(["'none'"]);
+    expect(d["frame-src"]).toEqual(["'self'"]);
     // One worker, pdf.js's, a file of the bundle (`src/window-pdfjs.ts`), so a PDF previews in
     // the window as on the web. `'self'` alone: no blob:, no data:, no scheme. The worker reaches
     // nothing because the shell answers its script with `default-src 'none'` (`navigation.rs`).
@@ -446,7 +446,7 @@ describe("tauri.conf.json", () => {
   it("admits blob: for images and for NOTHING else — the preview's widening stays minimal", () => {
     // The regression this pins is directional: the fix for the blank image preview must never
     // creep into a directive where blob: means a document, a script or a worker — those are
-    // the execution shapes `AttachmentPreview`'s header forbids, and `frame-src 'none'` /
+    // the execution shapes `AttachmentPreview`'s header forbids, and the frame and worker origin limits /
     // `object-src 'none'` / `worker-src 'self'` above are load-bearing for it.
     const d = directives(conf.app.security.csp);
     for (const [directive, sources] of Object.entries(d)) {
@@ -3182,6 +3182,42 @@ describe("the UI bundle's build config", () => {
    * resolvers. So the window's program is walked here with those links hidden.
    */
   it("resolves every workspace module the window imports through paths and the alias table, to one file", () => {
+    for (const file of ["src/DesktopFrame.tsx", "src/DesktopAiAccount.tsx", "../paired-page/src/host.ts"]) {
+      expect(read(file), file).not.toMatch(/from ["'][^"']*webapp\/app\/\(product\)\//);
+    }
+    expect(read("src/DesktopAiAccount.tsx")).not.toMatch(/from ["'][^"']*webapp\//);
+    for (const file of ["src/DesktopFrame.tsx", "../paired-page/src/host.ts", "../paired-page/src/HostGate.tsx"]) {
+      expect(read(file), file).not.toMatch(/from ["'][^"']*webapp\/app\/shell\/browser-settings/);
+    }
+    const pairedGate = "../paired-page/src/HostGate.tsx";
+    expect(read(pairedGate), pairedGate).not.toMatch(/from ["'][^"']*\bDesktopLocale(?:\.[^"']+)?["']/);
+    const settings = path.resolve(APP, "../../packages/app/src/settings");
+    const engine = /(?:^|\/)client-engine(?:\/|$)/;
+    for (const file of fs.readdirSync(settings, { recursive: true, encoding: "utf8" })) {
+      if (!/\.tsx?$/.test(file)) continue;
+      const source = ts.createSourceFile(file, fs.readFileSync(path.join(settings, file), "utf8"), ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node) => {
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && engine.test(node.moduleSpecifier.text)) {
+          const clause = node.importClause;
+          const named = clause?.namedBindings;
+          expect(clause?.isTypeOnly || (!clause?.name && named && ts.isNamedImports(named) &&
+            named.elements.length > 0 && named.elements.every((entry) => entry.isTypeOnly)), file).toBe(true);
+        }
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier &&
+          ts.isStringLiteral(node.moduleSpecifier) && engine.test(node.moduleSpecifier.text)) {
+          const named = node.exportClause;
+          expect(node.isTypeOnly || (named && ts.isNamedExports(named) &&
+            named.elements.length > 0 && named.elements.every((entry) => entry.isTypeOnly)), file).toBe(true);
+        }
+        if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+          const imported = node.arguments[0];
+          if (imported && ts.isStringLiteral(imported)) expect(imported.text, file).not.toMatch(engine);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
     const linked = (p: string) => /[\\/]node_modules[\\/]@(?:trafficflow|ohmail)(?:[\\/]|$)/.test(p);
     const workspace = (spec: string) => /^@(?:trafficflow|ohmail)\//.test(spec);
     const parsed = ts.getParsedCommandLineOfConfigFile(path.join(APP, "tsconfig.json"), {}, {
@@ -3362,77 +3398,56 @@ describe("the UI bundle's build config", () => {
     expect(defineBlock).not.toMatch(/LOCAL_ENGINE\s*\?/);
   });
 
-  /**
-   * THE DESKTOP'S SETTINGS PANE IS A NODE THE SHELL HANDS IN, NOT A FLAG THE SHELL READS.
-   *
-   * `SettingsView` is compiled into a browser tab as well as into this app, and every control in
-   * that pane is a call to a native shell the browser tab does not have. So the shared view takes
-   * a node and this app supplies one — the same seam the hosted client uses for its Account and
-   * Security panes. The consequence worth asserting is the structural one: on the web there is no
-   * pane because there is nothing to render, not because a boolean is false.
-   */
+  /** The Desktop section comes from the native entry; the shared Settings code knows only its registration. */
   it("hands the desktop pane in as a node, and names none of it in the shared view", () => {
-    const settings = fs.readFileSync(
-      path.resolve(APP, "../webapp/app/views/SettingsView.tsx"),
-      "utf8",
-    );
-    // The nav entry and the pane are both conditional on the node being supplied. The tab list
-    // lives in `settings-panes.ts` (one source for the nav and the palette); the view answers
-    // from node presence and hands the host's own label through, and the shared list carries it.
-    expect(settings).toMatch(/desktop: desktopSection \? desktopSection\.label : null,/);
-    const panes = fs.readFileSync(
-      path.resolve(APP, "../webapp/app/views/settings-panes.ts"),
-      "utf8",
-    );
-    expect(panes).toMatch(/w\.desktop !== null \? \[\["desktop", w\.desktop\]/);
-    expect(settings).toMatch(/shown === "desktop" \? desktopSection\?\.node : null/);
-    // And the shared file knows nothing about how any of it works.
-    expect(settings).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
+    const frame = read("src/DesktopFrame.tsx");
+    const panes = read("../../packages/app/src/mail/panes.ts");
+    const menu = read("../../packages/app/src/settings/menu.ts");
+    const column = read("../../packages/app/src/settings/PaneColumn.tsx");
+    const web = read("../webapp/app/(product)/mailbox/pane-parts.tsx");
 
-    // The node itself lives here, where the shell is.
-    const pane = read("src/DesktopSettings.tsx");
-    expect(pane).toMatch(/engineLogout/);
+    expect(frame).toMatch(/desktop: DesktopInstallPane/);
+    expect(frame).toMatch(/return <DesktopSettings \{\.\.\.install\} \/>/);
+    expect(frame).toMatch(/browserMailParts\(NATIVE_PANE_PARTS\)/);
+    expect(panes).toMatch(/desktop: NONE/);
+    expect(panes).toMatch(/desktop: parts\.desktop === NONE \? NONE : paneOf\("desktop", \{ Body: parts\.desktop \}\)/);
+    expect(web).toMatch(/export const WEB_PANE_PARTS[^=]*= \{\s*\.\.\.NO_PANE_PARTS/);
+    expect(web).not.toMatch(/\bdesktop:/);
+    expect(menu).toMatch(/if \(pane !== NONE && pane\.listed\(host\)\) listed\.push\(pane\)/);
+    expect(column).toMatch(/const \{ Body \} = pane/);
+    expect(column).toMatch(/<Body plan=\{plan\}/);
+
+    for (const shared of [panes, menu, column]) {
+      expect(shared).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
+    }
+    expect(read("src/DesktopSettings.tsx")).toMatch(/engineLogout/);
   });
 
-  /**
-   * THE SCREENER'S SUGGEST CONTROL IS HANDED IN TOO, AND THE OLD ONE IS GATED ON A SERVER.
-   *
-   * The shared control prices a set of senders on a server before it offers a button, because a
-   * hosted account spends an allowance. This build has no server at all, and for the whole life of
-   * the local-engine artifact that control rendered anyway: it drew a button, and every press came
-   * back "that did not work". A control with nothing behind it, on somebody's real mail.
-   *
-   * Two halves, and both are asserted because either alone is satisfiable while the app is broken.
-   * The shared shell must WITHHOLD its own control where there is no server, and it must render a
-   * host's node when one is handed in — and it must still know nothing about how that node works,
-   * exactly as it knows nothing about the Settings pane's commands.
-   *
-   * Source-level on purpose. The behaviour is driven where it can be driven — the control's own
-   * suite here, and the shared client's own suite over the view that chooses between the two — but
-   * the WIRING between two files in two applications has no single place to render, and deleting it
-   * left every suite in both of them green.
-   */
+  /** The shared suggestion control is fed by a host wire and uses the same sender queue and suggestion overlay. */
   it("hands the Screener's suggest control in, and withholds the hosted one where there is no server", () => {
-    const shell = fs.readFileSync(path.resolve(APP, "../webapp/app/shell/AppShell.tsx"), "utf8");
-    // The hosted control is withheld on the demo, on a host with no API, and on a host that
-    // brought its own. `autoOptIn.supported` is `apiConfigured()`, which is false in this build.
-    expect(shell).toMatch(/demo \|\| !autoOptIn\.supported \|\| screenerSuggest/);
-    // …and the host's node is bound to the same queue and the same overlay.
-    expect(shell).toMatch(/suggestNode=\{/);
-    expect(shell).toMatch(/absorb: suggestions\.absorb/);
+    const frame = read("src/DesktopFrame.tsx");
+    const host = read("src/host-contract.ts");
+    const mount = read("../../packages/app/src/mail/ground/ScreenerMount.tsx");
+    const live = read("../../packages/app-logic/src/screener/live.ts");
+    const tools = read("../../packages/app/src/screener/list/Tools.tsx");
 
-    const view = fs.readFileSync(path.resolve(APP, "../webapp/app/views/ScreenerView.tsx"), "utf8");
-    expect(view).toMatch(/suggestNode \?\? \(suggest \? <SuggestControl control=\{suggest\} subscriptionPane=\{subscriptionPane\} \/> : null\)/);
+    expect(frame).toMatch(/suggest: cloudSuggestWire/);
+    expect(host).toMatch(/suggest: account \? has\.wires\.suggest : NONE/);
+    expect(mount).toMatch(/const suggestWire = host\.wires\.suggest/);
+    expect(live).toMatch(/!demo && suggestControl && suggestWire !== "none" && suggestWire\.configured\(\)/);
+    expect(live).toMatch(/run\.forSenders\(\s*model\.unsuggestedSenders,\s*model\.suggestedSenders,/);
+    expect(live).toMatch(/suggestions: suggestWire === "none" && !ownSuggest \? null : run\.suggestions/);
+    expect(tools).toMatch(/const \{ suggest, ownSuggest \} = useScreenerBeside\(\)/);
+    expect(tools).toMatch(/<Suggest suggest=\{suggest\}/);
 
-    // The shared files name none of it. No bridge, no provider, no local route — the same rule the
-    // Settings pane follows, and the reason a browser tab can compile these files at all.
-    for (const shared of [shell, view]) {
+    for (const shared of [mount, live, tools]) {
       expect(shared).not.toMatch(/local\/ai|bridgeFetch|__TAURI|anthropic|ollama/i);
     }
-
-    // The control itself lives here, where the engine is.
     expect(read("src/local-suggest.tsx")).toMatch(/runSuggest/);
     expect(read("src/local-suggest-run.ts")).toMatch(/\/screener\/suggest/);
+    expect(mount).toMatch(/ownSuggest\?\.\(\{ senders: model\.unsuggestedSenders, absorb \}\)/);
+    expect(tools).toMatch(/ownSuggest \?\? \(suggest !== NONE/);
+    expect(frame, "the window never hands its own suggestion control to the Screener").toMatch(/\bLocalSuggest\b/);
   });
 
   it("keeps the document CSP in step with the webview CSP", () => {

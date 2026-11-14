@@ -3,6 +3,7 @@ import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { MutationRejectedError } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
@@ -10,6 +11,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { composeRowKey } from "@ohmail/app-logic/writing/compose";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { settleFirstPaint } from "./_first-paint.js";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
@@ -32,7 +34,6 @@ let host: HTMLDivElement | null = null;
 let offline = false;
 let sent: EngineMutation[] = [];
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
 const press = async (el: HTMLElement): Promise<void> => { await act(async () => { el.click(); }); };
 const settle = async (n = 8): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
@@ -48,7 +49,7 @@ async function goto(hash: string): Promise<void> {
 }
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { DemoShell } = await import("../app/(product)/demo/DemoShell");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -57,27 +58,21 @@ async function mountShell(): Promise<void> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-09-27T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }) }),
       }),
     }));
   });
   await settle(10);
 }
 
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
 /** A row made through compose — the demo world seeds no drafts. */
 async function makeADraft(): Promise<string> {
   await goto("#/compose");
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Bis Montag");
+  const to = await screen.findByRole("combobox", { name: "To" });
+  fireEvent.change(to, { target: { value: "lena@atelier.example" } });
+  fireEvent.keyDown(to, { key: "Enter" });
+  const subject = screen.getByRole("textbox", { name: "Subject" });
+  fireEvent.change(subject, { target: { value: "Bis Montag" } });
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
   const id = window.localStorage.getItem(composeRowKey(storageOwner()));
@@ -85,38 +80,39 @@ async function makeADraft(): Promise<string> {
   return id!;
 }
 
-const rowOf = (id: string): HTMLElement | null => q<HTMLElement>(`.draft-row[data-id="${id}"]`);
+const rowOf = (id: string): HTMLElement | null => {
+  const list = screen.queryByRole("listbox", { name: "Drafts" });
+  return list ? within(list).queryAllByRole("option", { name: /Bis Montag/ }).find((row) => row.dataset.id === id) ?? null : null;
+};
 
 async function pressDelete(id: string): Promise<void> {
-  await press(q<HTMLButtonElement>(`.draft-row[data-id="${id}"] .draft-discard`)!);
-  await settle(4);
-  const confirm = Array.from(host!.querySelectorAll<HTMLButtonElement>(".draft-confirm button"))
-    .find((b) => (b.textContent ?? "").trim() === messages.drafts.discardConfirm) ?? null;
-  expect(confirm, "the confirm behind Delete did not open").not.toBeNull();
-  await press(confirm!);
+  const row = rowOf(id);
+  expect(row, "the draft is visible before Discard").not.toBeNull();
+  vi.useFakeTimers();
+  try {
+    await press(within(row!.parentElement!).getByRole("button", { name: messages.drafts.discard }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(UNDO_MS); });
+  } finally {
+    vi.useRealTimers();
+  }
   await settle(10);
 }
 
-/**
- * The strip the shell mounts above the views, opened. In the frame the strip is a notice in the one slot, and its
- * Show opens today's list in a dialog: one press, the rows.
- */
 async function stripRows(): Promise<HTMLElement[]> {
-  const rowsNow = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>("[role='dialog'] .unsaved-row"));
-  if (document.querySelector("[role='dialog'] .unsaved") === null) {
-    const label = (messages.sync as unknown as Record<string, string>).unsavedShow;
-    const show = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-      .find((b) => b.closest("[role='dialog']") === null && (b.textContent ?? "").trim() === label);
-    if (!show) return [];
-    await press(show);
-    await settle(5);
+  const show = () => screen.queryByRole("button", { name: messages.sync.unsavedShow })
+    ?? screen.queryByRole("menuitem", { name: new RegExp(messages.sync.unsavedShow) });
+  if (!screen.queryByRole("dialog")) {
+    const more = screen.queryByRole("button", { name: /more notices?/i });
+    if (!show() && more) await press(more);
+    const disclosure = show();
+    if (!disclosure) return [];
+    await press(disclosure);
   }
-  return rowsNow();
+  const dialog = screen.queryByRole("dialog");
+  return dialog ? within(dialog).queryAllByRole("listitem") : [];
 }
 
-const button = (row: HTMLElement, label: string): HTMLButtonElement | null =>
-  Array.from(row.querySelectorAll<HTMLButtonElement>("button"))
-    .find((b) => (b.textContent ?? "").trim() === label) ?? null;
+const button = (row: HTMLElement, label: string) => within(row).queryByRole("button", { name: label });
 
 const discards = (): number => sent.filter((m) => m.kind === "draft_discard").length;
 

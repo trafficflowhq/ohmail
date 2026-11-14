@@ -6,7 +6,7 @@
  */
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fireEvent } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
@@ -24,7 +24,8 @@ let root: Root | null = null;
 /** Another account this browser's owner marker comes to name while the frame stands. */
 const OTHER = "acct_other_2";
 
-const subject = (): HTMLInputElement | null => document.querySelector<HTMLInputElement>('input[aria-label="Subject"]');
+/** The letter's subject field, by its role and name (the place `write` draws it with the kit's envelope). */
+const subject = (): HTMLInputElement | null => screen.queryByRole<HTMLInputElement>("textbox", { name: "Subject" });
 /** Every stored key whose value holds these words. */
 const holding = (words: string): string[] =>
   Object.keys(window.localStorage).filter((k) => (window.localStorage.getItem(k) ?? "").includes(words));

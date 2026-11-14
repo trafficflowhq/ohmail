@@ -184,7 +184,10 @@ export interface ScreenBody {
    * says which.
    */
   dest?: Folder;
-  scope?: "sender" | "domain";   // default "sender"
+  scope?: "sender" | "domain" | "confirmed_sender" | "confirmed_domain";
+  /** Required with a confirmed scope. An older server refuses that scope. */
+  confirmedIds?: readonly string[];
+  unsubscribeIds?: readonly string[];
   /**
    * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Absent is
    * `true`, the contract `POST /rules` already carries; a non-boolean is a 400 rather than a

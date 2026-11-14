@@ -8,6 +8,7 @@ import { ActionPanel, BlankColumn, ReadingHead, Sheet } from "@ohmail/ui/mail";
 import { recipientsOf } from "./words.js";
 import type { PaneProps } from "../frame/contract.js";
 import { useText } from "../text/index.js";
+import { HeldSendAnswers } from "../write/HeldSendAnswers.js";
 
 export function DraftsReading({ route }: PaneProps) {
   const model = useDraftsModel();
@@ -20,25 +21,28 @@ export function DraftsReading({ route }: PaneProps) {
         kind="reading"
         label={subject}
         foot={
-          <ActionPanel
-            label={t("heldActs")}
-            items={[
-              { note: t(heldSentence(open, model.now)), keep: true },
-              {
-                id: "again",
-                label: t("sendAgain"),
-                kind: "ink",
-                rank: 0,
-                onPress: () => model.door.sendAgain(open),
-              },
-              {
-                id: "sent",
-                label: t("heldItWasSent"),
-                onPress: () => model.door.resolve(open.id, "arrived"),
-              },
-              { id: "discard", label: t("discard"), icon: "trash", onPress: () => model.discard(open.id) },
-            ]}
-          />
+          <HeldSendAnswers
+            draftId={open.id}
+            onResolve={model.door.resolve}
+            onSendAgain={() => model.door.sendAgain(open)}
+          >
+            {(again, sent) => (
+              <ActionPanel
+                label={t("heldActs")}
+                items={[
+                  { note: t(heldSentence(open, model.now)), keep: true },
+                  { ...again, kind: "ink", rank: 0 },
+                  sent,
+                  {
+                    id: "discard",
+                    label: t("discard"),
+                    icon: "trash",
+                    onPress: () => model.discard(open.id),
+                  },
+                ]}
+              />
+            )}
+          </HeldSendAnswers>
         }
       >
         <ReadingHead subject={subject} people={[]} names={recipientsOf(open) || t("noRecipient")} />

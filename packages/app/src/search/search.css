@@ -11,21 +11,44 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+
 .sr-below {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
   min-width: 0;
 }
+
 /* A row of filters folds onto a second line where its width ends: no control is cut. */
 .sr-filters {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--s1);
   min-width: 0;
+}
+
+/* On phone the scroller holds a single paper sheet. */
+:root[data-device="phone"] .sr-scroll > :only-child {
+  min-height: 100%;
+  padding-bottom: var(--oh-sheet-foot-room);
 }
 /* A result's slot while its page is owed: the kit's row with no words holds the row's room, so the list does not jump
    when the page lands (a stand-in until the kit draws a row as shape), and nothing in it is seen or reached. */
 .sr-owed {
   visibility: hidden;
+}
+
+/* Keep both refine rows on one line under touch, including when a longer label is selected. */
+:root[data-touch="1"] .sr-list[data-people] .sr-filters {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-block: var(--s1);
+  --search-people-gap: calc(-1 * var(--s1));
+  margin-block: var(--search-people-gap);
+}
+
+:root[data-device="phone"] .sr-resting {
+  padding-top: var(--s1);
 }

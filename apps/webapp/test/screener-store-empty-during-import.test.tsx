@@ -1,12 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { cleanup, within } from "@testing-library/react";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { BESIDE, mountPlace } from "../../../packages/app/test/screener/screener-world";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
@@ -21,7 +19,6 @@ import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // jsdom lays nothing out; the reading pane scrolls its held mail to the top on mount.
@@ -29,7 +26,7 @@ Element.prototype.scrollTo ??= function scrollTo() {};
 
 const NOW = new Date("2026-10-01T09:00:00.000Z");
 const ORGANIZES: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false };
-const NOBODY = en.screener.empty.waiting.title;
+const NOBODY = en.screener.place.empty.waiting;
 
 const sender = (id: string) => ({
   id, from: { name: null, address: `${id}@example.test` }, initial: id[0]!.toUpperCase(), derived: true,
@@ -53,6 +50,8 @@ interface Facts {
 
 function viewState(f: Facts): ScreenerState {
   return {
+    queueSettled: f.settled || (f.queueAnswered ?? f.source === "store"),
+    storeSettled: f.settled,
     waiting: [], waitingCount: f.count, waitingSource: f.source, queueAnswered: f.queueAnswered ?? f.source === "store",
     suggestedCount: 0, suggestedDests: [],
     waitingMore: { available: false, loading: false, failed: false, load: () => {} }, rereadWaiting: () => {},
@@ -66,28 +65,15 @@ function viewState(f: Facts): ScreenerState {
   } as unknown as ScreenerState;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
 async function mount(f: Facts): Promise<HTMLElement> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, {
-        children: h(ScreenerView, {
-          state: viewState(f), segment: "waiting", selection: { waiting: null, screened: null, spam: null },
-          settled: f.settled, owed: f.owed,
-          ...(f.storeImportOpen === undefined ? {} : { storeImportOpen: f.storeImportOpen }),
-          onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-        } as never),
-      }),
-    }));
+  const { view } = mountPlace(viewState(f), {
+    beside: { ...BESIDE, facts: {
+      ...BESIDE.facts, settled: f.settled, owed: f.owed,
+      ...(f.storeImportOpen === undefined ? {} : { storeImportOpen: f.storeImportOpen }),
+    } },
   });
   await settleFirstPaint();
-  return host;
+  return view.container;
 }
 
 /** Past the loading grace: what a person reads once the pane has spoken. */
@@ -97,7 +83,13 @@ async function pastTheGrace(): Promise<void> {
 
 const busy = (el: HTMLElement) => el.querySelector('[aria-busy="true"]') !== null;
 const text = (el: HTMLElement) => el.textContent ?? "";
-const badges = (el: HTMLElement) => [...el.querySelectorAll(".scnt")].map((b) => b.textContent ?? "");
+const badges = (el: HTMLElement) => {
+  const sections = within(el).getByRole("group", { name: en.screener.segAria });
+  return [en.screener.segWaiting, en.screener.segScreened, en.screener.segSpam].map((label) => {
+    const button = within(sections).getByRole("button", { name: new RegExp(`^${label}(?: [0-9]+)?$`) });
+    return button.getAttribute("aria-label")?.slice(label.length).trim() ?? "";
+  });
+};
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -105,10 +97,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => { root?.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
+  cleanup();
   vi.clearAllTimers();
   vi.useRealTimers();
 });
@@ -133,8 +122,10 @@ describe("a store-sourced empty queue during this device's import", () => {
     await pastTheGrace();
     expect(text(el)).not.toContain(NOBODY);
     expect(busy(el)).toBe(true);
+    expect(text(el)).toContain(en.screener.emptyListingTitle);
     expect(text(el)).toContain(en.screener.emptyListing);
-    expect(text(el), "an import was claimed with the account's import closed").not.toContain(en.screener.emptyImporting);
+    expect(text(el), "an import was claimed with the account's import closed").not.toContain(en.screener.emptyImportingTitle);
+    expect(text(el), "an import was claimed with the account's import closed").not.toContain(en.screener.emptyImportingLine);
   });
 
   it("ARM 5b: the same while this device imports", async () => {
@@ -142,6 +133,7 @@ describe("a store-sourced empty queue during this device's import", () => {
     await pastTheGrace();
     expect(text(el)).not.toContain(NOBODY);
     expect(busy(el)).toBe(true);
+    expect(text(el)).toContain(en.screener.emptyListingTitle);
     expect(text(el)).toContain(en.screener.emptyListing);
   });
 
@@ -150,7 +142,8 @@ describe("a store-sourced empty queue during this device's import", () => {
     await pastTheGrace();
     expect(text(el)).not.toContain(NOBODY);
     expect(busy(el)).toBe(true);
-    expect(text(el)).toContain(en.screener.emptyImporting);
+    expect(text(el)).toContain(en.screener.emptyImportingTitle);
+    expect(text(el)).toContain(en.screener.emptyImportingLine);
   });
 });
 
@@ -176,18 +169,21 @@ describe("the readings the store's facts do not change (controls)", () => {
   it("a list no drain has populated is still loading, never importing", async () => {
     const el = await mount({ source: "device", count: 0, settled: false, owed: true });
     await pastTheGrace();
-    expect(text(el)).toContain(en.screener.loading);
-    expect(text(el)).not.toContain(en.screener.emptyImporting);
+    expect(text(el)).toContain(en.screener.place.loading);
+    expect(text(el)).not.toContain(en.screener.emptyImportingTitle);
+    expect(text(el)).not.toContain(en.screener.emptyImportingLine);
   });
 });
 
 describe("a withheld list says why", () => {
   it("ARM 4: past the grace the pending list carries the importing sentence, not 'Loading your mail.'", async () => {
     const el = await mount({ source: "device", count: 0, settled: true, owed: true });
-    expect(text(el), "the sentence spoke inside the grace").not.toContain(en.screener.emptyImporting);
+    expect(text(el), "the sentence spoke inside the grace").not.toContain(en.screener.emptyImportingTitle);
+    expect(text(el), "the sentence spoke inside the grace").not.toContain(en.screener.emptyImportingLine);
     await pastTheGrace();
-    expect(text(el)).toContain(en.screener.emptyImporting);
-    expect(text(el)).not.toContain(en.screener.loading);
+    expect(text(el)).toContain(en.screener.emptyImportingTitle);
+    expect(text(el)).toContain(en.screener.emptyImportingLine);
+    expect(text(el)).not.toContain(en.screener.place.loading);
   });
 });
 
@@ -195,8 +191,7 @@ describe("the tab counts are mailbox numbers, withheld mid-import", () => {
   it("Screened out and Spam state no partial count while mail is owed, and state it once settled", async () => {
     const owed = await mount({ source: "store", count: 0, settled: true, owed: true, storeImportOpen: false, screenedOut: 35, spam: 212 });
     expect(badges(owed), "a partial count was stated as the mailbox's").toEqual(["", "", ""]);
-    await act(async () => { root?.unmount(); });
-    host?.remove();
+    cleanup();
     const done = await mount({ source: "store", count: 0, settled: true, owed: false, storeImportOpen: false, screenedOut: 35, spam: 212 });
     expect(badges(done)).toEqual(["", "35", "212"]);
   });

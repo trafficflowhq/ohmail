@@ -10,6 +10,7 @@ export {
   type HeldInvitationProps,
   type ScreenerBeside,
   type ScreenerSegment,
+  type SubjectRulePartProps,
 } from "./contract.js";
 export type {
   HeldParts,

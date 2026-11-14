@@ -320,9 +320,15 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    for (const view of ["ohbox", "reads", "receipts", "screener"]) {
+    for (const [view, letter] of [
+      ["ohbox", "subject of ohb1"],
+      ["reads", "subject of rd1"],
+      ["receipts", "subject of rc1"],
+      ["screener", "Sender sc1"],
+    ]) {
       await goTo(view);
       const text = container.textContent ?? "";
+      expect(text, `${view} did not show the fixture letter`).toContain(letter);
       expect(text, `${view} said nothing about a failing sync`).toContain(FAILING);
       // No reassurance nobody asked for, and no invented remedy.
       expect(text, `${view} editorialised`).not.toMatch(/try again later|contact|sorry|don't worry/i);

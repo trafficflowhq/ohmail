@@ -1,8 +1,11 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { ccBccOpen } from "../app/shell/RecipientField";
+import { within } from "@testing-library/react";
 import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
+import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
+import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./_write-1-writing.js";
+import { act } from "./_draft-shell.js";
 
 /**
  * CC/BCC WAIT BEHIND THE TOGGLE — one rule, every composer instance.
@@ -21,20 +24,47 @@ import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
  * `compose-composition.test.ts`, the inline forward's in `thread-inline-forward.test.tsx`.
  */
 
+/*
+ * THE ONE DERIVATION, read over Write's new letter (the older tests' sorting): today's export
+ * (`RecipientField.ccBccOpen`) leaves with the switch; the fold is Write's people line's now
+ * (`packages/app/src/write/head/People.tsx`), drawn by the kit's Recipients. The rows a person sees are read by role
+ * and name (the combobox "Cc", "Bcc"), the toggle pressed by its name ("Cc Bcc"), the lines handed as the composition
+ * holds them (`_write-1-writing.tsx`).
+ */
+afterEach(async () => {
+  await unmountWritings();
+  resetComposerForTest();
+});
+/** Whether the Cc and Bcc rows stand on the letter whose lines hold `cc` and `bcc`; `press` presses the toggle first. */
+async function ccBccOpen(cc: string, bcc: string, press: boolean): Promise<boolean> {
+  await unmountWritings();
+  resetComposerForTest();
+  const w: WritingWorld = await mountWriting({ view: true });
+  await act(async () => w.now().onComposeFields({ ...w.now().compose, cc, bcc }));
+  await rounds(2);
+  if (press) {
+    const toggle = within(w.el).getByRole("button", { name: "Cc Bcc" });
+    await act(async () => toggle.click());
+    await rounds(2);
+  }
+  const row = (name: string): boolean => within(w.el).queryByRole("combobox", { name }) !== null;
+  return row("Cc") && row("Bcc");
+}
+
 describe("the one derivation", () => {
-  it("both empty ⇒ collapsed; the toggle reveals; values force open — never closed", () => {
-    expect(ccBccOpen("", "", false)).toBe(false);
-    expect(ccBccOpen("  ", "\n", false), "whitespace is not a recipient").toBe(false);
-    expect(ccBccOpen("", "", true), "the toggle press").toBe(true);
-    expect(ccBccOpen("cc@x.test, ", "", false), "a Cc forces the rows open").toBe(true);
-    expect(ccBccOpen("", "blind@x.test, ", false), "…and so does a Bcc").toBe(true);
+  it("both empty ⇒ collapsed; the toggle reveals; values force open — never closed", async () => {
+    expect(await ccBccOpen("", "", false)).toBe(false);
+    expect(await ccBccOpen("  ", "\n", false), "whitespace is not a recipient").toBe(false);
+    expect(await ccBccOpen("", "", true), "the toggle press").toBe(true);
+    expect(await ccBccOpen("cc@x.test, ", "", false), "a Cc forces the rows open").toBe(true);
+    expect(await ccBccOpen("", "blind@x.test, ", false), "…and so does a Bcc").toBe(true);
   });
 
-  it("a reply-all's prefilled Cc auto-expands: the chip prefill is non-empty by construction", () => {
-    // `InlineReply.expand` seeds `cc: formatRecipientChips(all.cc)`; a surviving reply-all Cc
+  it("a reply-all's prefilled Cc auto-expands: the chip prefill is non-empty by construction", async () => {
+    // A reply-all seeds `cc: formatRecipientChips(all.cc)`; a surviving reply-all Cc
     // therefore always opens the rows, and an EMPTY list stays "" — collapsed.
-    expect(ccBccOpen(formatRecipientChips([{ name: null, address: "cc@x.test" }]), "", false)).toBe(true);
-    expect(ccBccOpen(formatRecipientChips([]), "", false)).toBe(false);
+    expect(await ccBccOpen(formatRecipientChips([{ name: null, address: "cc@x.test" }]), "", false)).toBe(true);
+    expect(await ccBccOpen(formatRecipientChips([]), "", false)).toBe(false);
   });
 });
 

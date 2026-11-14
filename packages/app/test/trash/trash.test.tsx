@@ -11,7 +11,7 @@ import {
   type TrashWindowPageWire,
 } from "@ohmail/app-logic/trash";
 import { TrashAbove, TrashList, TrashReading } from "../../src/trash/index.js";
-import { at, draw, msg, pane, stamp } from "../places/lists-world.js";
+import { at, draw, msg, pane, stamp, walkAt } from "../places/lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
 
 const row = (id: string, restoreTo: string): TrashRowWire =>
@@ -81,6 +81,7 @@ function Trash(props: {
     open: props.went,
     stamp,
     placeOf: (folder) => (folder === "INBOX" ? "Ohbox" : folder),
+    ...walkAt(),
   });
   const p = { ...pane("trash", { open: props.open }), keysHere: props.keys };
   return (

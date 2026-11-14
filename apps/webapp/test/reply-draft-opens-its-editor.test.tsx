@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { settleEditor } from "./_first-paint.js";
+import { within } from "@testing-library/react";
+import { navigate, replySend } from "./_handoff-steps.js";
 import { writeReplyDraft } from "@ohmail/app-logic/writing/mail-send";
 import {
   act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, pressRestart, replyDraft, replySurface, stubDom, unmountAll, waitFor,
   type DraftShell,
 } from "./_draft-shell.js";
 import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import * as writing from "./_writing-shell.js";
 
 /** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
 const OWNER = "acc-reply-draft";
@@ -27,19 +29,26 @@ beforeEach(() => {
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   setStorageOwner(OWNER);
   stubDom();
+  writing.stubAnimate();
 });
 afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 const DRAFT_TEXT = "Thursday works, I will bring the samples";
 
+const atPlace = (s: DraftShell, id: string): boolean =>
+  s.el.querySelector(`[data-rail-id="${id}"] [aria-current="page"]`) !== null;
+async function openListedDraft(s: DraftShell, id: string): Promise<void> {
+  const row = () => s.el.querySelector<HTMLElement>(`[role="option"][data-id="${id}"]`);
+  await waitFor(() => atPlace(s, "drafts") && row() !== null, "the row in Drafts");
+  await press(row(), "open the row in Drafts");
+}
+
 describe("a reply draft opens where it can be finished", () => {
   it("pressing it in Drafts opens the conversation with the draft in the reply editor", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [replyDraft("d1", "m1", DRAFT_TEXT)]);
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "the draft row");
+    await openListedDraft(s, "d1");
 
-    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "the draft's open button");
-
-    await waitFor(() => window.location.hash.startsWith("#/ohbox"), "the conversation's view");
+    await waitFor(() => atPlace(s, "ohbox"), "the conversation's view");
     await waitFor(() => replySurface(s.el) != null, "the reply editor, open on the conversation");
     expect(replySurface(s.el)!.textContent).toContain(DRAFT_TEXT);
     // …and focused, so typing goes on where the draft stopped.
@@ -51,47 +60,35 @@ describe("a reply draft opens where it can be finished", () => {
   it("a draft that is not a reply still opens in Compose (the control)", async () => {
     const plain = { ...replyDraft("d2", "m1", "a new message"), inReplyToMessageId: null, subject: "Plain" };
     const s = await mountShell("#/drafts", [message("m1")], [plain]);
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d2'] .draft-open") != null, "the draft row");
+    await openListedDraft(s, "d2");
 
-    await press(s.el.querySelector(".draft-row[data-id='d2'] .draft-open"), "the draft's open button");
-
-    await waitFor(() => window.location.hash === "#/compose", "the composer");
+    await waitFor(() => window.location.hash === "#/compose" && writing.letterSubject(s.el)?.value === "Plain", "the ordinary draft in Write");
     expect(replySurface(s.el)).toBeNull();
   }, 15_000);
 });
 
 describe("a reply draft discarded in Drafts", () => {
   const unsent = (s: DraftShell): EngineDraft[] => s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft");
-  const key = async (k: string): Promise<void> => {
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
-    await settleEditor();
-  };
   const confirmDiscard = async (s: DraftShell, row: string): Promise<void> => {
-    await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => s.el.querySelector(`.draft-row[data-id="${row}"] .draft-discard`) !== null, "the row in Drafts");
-    await press(s.el.querySelector(`.draft-row[data-id="${row}"] .draft-discard`), "Delete");
-    const confirm = Array.from(s.el.querySelectorAll<HTMLButtonElement>(".draft-confirm button"))
-      .find((b) => (b.textContent ?? "").trim() === (messages.drafts as Record<string, string>).discardConfirm) ?? null;
-    await press(confirm, "confirm");
+    await navigate("#/drafts");
+    const entry = () => s.el.querySelector<HTMLElement>(`.dr-row[data-id="${row}"]`);
+    await waitFor(() => atPlace(s, "drafts") && entry() !== null, "the row in Drafts");
+    await press(within(entry()!).getByRole("button", { name: "Discard" }), "Discard");
+    await waitFor(() => entry() === null, "the discarded row hidden");
+    expect(s.store.isTombstoned("draft", row)).toBe(false);
+    await navigate("#/ohbox");
     await waitFor(() => s.store.isTombstoned("draft", row), "the delete confirmed");
   };
 
   it("Reply afterwards opens empty and writes nothing", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
-    await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
+    await writing.openReplyOn(s);
     await act(async () => { typeInto(replySurface(s.el)!, "A reply I will throw away"); });
     await waitFor(() => unsent(s).some((d) => d.inReplyToMessageId === "m1"), "the reply row", 200);
     const row = unsent(s).find((d) => d.inReplyToMessageId === "m1")!.id;
-    await key("Escape");
+    await writing.key("Escape");
     await confirmDiscard(s, row);
-    await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row again");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
-    await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor again");
+    await writing.openReplyOn(s);
     for (let i = 0; i < 120; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect({ dock: (replySurface(s.el)?.textContent ?? "").includes("throw away"), rows: unsent(s).filter((d) => d.inReplyToMessageId === "m1").length },
       "the discarded reply came back in the editor, or was saved again").toEqual({ dock: false, rows: 0 });
@@ -99,17 +96,12 @@ describe("a reply draft discarded in Drafts", () => {
 
   it("opened from Drafts and edited, then discarded: Reply opens empty and nothing is saved after", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [replyDraft("d1", "m1", DRAFT_TEXT)]);
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "the draft row");
-    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "open it");
+    await openListedDraft(s, "d1");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await act(async () => { typeInto(replySurface(s.el)!, " and more"); });
     await confirmDiscard(s, "d1");
     const before = s.sent.filter((m) => m.kind === "draft_save").length;
-    await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
-    await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor again");
+    await writing.openReplyOn(s);
     for (let i = 0; i < 120; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect({ dock: (replySurface(s.el)?.textContent ?? "").includes("and more"), saves: s.sent.filter((m) => m.kind === "draft_save").length - before },
       "the discarded reply came back in the editor, or was saved again").toEqual({ dock: false, saves: 0 });
@@ -121,16 +113,10 @@ describe("a reply draft deleted on another device while ohmail was closed", () =
   const rounds = async (n: number): Promise<void> => {
     for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
   };
-  const key = async (k: string): Promise<void> => {
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
-    await settleEditor();
-  };
-  const reply = async (s: DraftShell): Promise<void> => {
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
-    await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
-  };
+  /* Open Reply from the Ohbox and read its text and reports through the mounted frame. */
+  const key = writing.key;
+  const replySurface = writing.replyText;
+  const reply = (s: DraftShell): Promise<void> => writing.openReplyOn(s, "m1");
   /** Reply and type; the pause makes the row. `more` is typed after it and the tab dies: never handed to a save. */
   async function writeThenClose(more?: string): Promise<string> {
     const s = await mountShell("#/ohbox", [message("m1")]);
@@ -174,16 +160,10 @@ describe("a reply whose last save went through the offline queue, then deleted o
   const rounds = async (n: number): Promise<void> => {
     for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
   };
-  const key = async (k: string): Promise<void> => {
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
-    await settleEditor();
-  };
-  const reply = async (s: DraftShell): Promise<void> => {
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
-    await key("r");
-    await waitFor(() => replySurface(s.el) != null, "the reply editor");
-  };
+  /* Open Reply from the Ohbox and read its text and reports through the mounted frame. */
+  const key = writing.key;
+  const replySurface = writing.replyText;
+  const reply = (s: DraftShell): Promise<void> => writing.openReplyOn(s, "m1");
   /** The pause makes the row online; `LAST` is typed offline, its pause queued; `land` brings it online. */
   async function writeQueued(land: boolean): Promise<{ s: DraftShell; row: string }> {
     const s = await mountShell("#/ohbox", [message("m1")]);
@@ -276,12 +256,10 @@ describe("a reply draft open here while another device changes it", () => {
   const saves = (s: DraftShell) => s.sent.filter((m) => m.kind === "draft_save") as Array<Extract<EngineMutation, { kind: "draft_save" }>>;
   const sends = (s: DraftShell) => s.sent.filter((m) => m.kind === "mail_send") as Array<Extract<EngineMutation, { kind: "mail_send" }>>;
   const said = (): string => document.body.textContent ?? "";
-  const sendButton = (s: DraftShell): HTMLButtonElement | null => Array.from(s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button"))
-    .find((b) => (b.textContent ?? "").startsWith("Send")) ?? null;
+  const sendButton = (s: DraftShell) => replySend(s.el) ?? null;
   async function openD1(drafts = [replyDraft("d1", "m1", DRAFT_TEXT)]): Promise<DraftShell> {
     const s = await mountShell("#/drafts", [message("m1")], drafts, { versions: true });
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "the draft row");
-    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "open it");
+    await openListedDraft(s, "d1");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     return s;
   }
@@ -349,9 +327,8 @@ describe("a reply draft open here while another device changes it", () => {
     await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
     await waitFor(() => replies(s).some((d) => d.id !== "d1" && d.body?.includes("typed first")), "the first conflict's words kept", 200);
     const first = replies(s).find((d) => d.id !== "d1")!.body;
-    await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "d1 in Drafts");
-    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "open d1 again");
+    await navigate("#/drafts");
+    await openListedDraft(s, "d1");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("Theirs, first"), "their words in the editor", 120);
     await act(async () => { typeInto(replySurface(s.el)!, " and mine"); });
     await rounds(160);
@@ -409,11 +386,15 @@ describe("an inline forward's draft changed on another device", () => {
     s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft" && d.forwardOfMessageId === "m1");
   const saves = (s: DraftShell) => s.sent.filter((m) => m.kind === "draft_save") as Array<Extract<EngineMutation, { kind: "draft_save" }>>;
   const sends = (s: DraftShell) => s.sent.filter((m) => m.kind === "mail_send") as Array<Extract<EngineMutation, { kind: "mail_send" }>>;
-  const said = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+  /* Keep the forward's reports even if they expire before the server answers. */
+  let ear: ReturnType<typeof writing.listen> | null = null;
+  afterEach(() => { ear?.stop(); ear = null; });
+  const said = (): string => (ear?.sayings() ?? [writing.reportSays()]).join(" | ");
   /** The forward's row on the account, then another device's write of it, seen here. */
   async function forwardChangedThere(): Promise<{ s: DraftShell; row: string }> {
     const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { versions: true, parts: true });
-    await fillForward(s, TO, "Have a look");
+    ear = writing.listen();
+    await writing.fillForward(s, TO, "Have a look");
     await waitFor(() => forwards(s).length === 1, "the forward's row", 200);
     const row = forwards(s)[0]!.id;
     await s.editElsewhere(row, { body: "Written on the other device." });
@@ -424,7 +405,7 @@ describe("an inline forward's draft changed on another device", () => {
 
   it("a save over it keeps their version, and the words go to a new forward row, said once", async () => {
     const { s, row } = await forwardChangedThere();
-    await act(async () => { typeInto(forwardDock(s.el)!.querySelector<HTMLElement>(".rte-surface")!, " and the budget"); });
+    await act(async () => { typeInto(writing.forwardText(s.el)!, " and the budget"); });
     await waitFor(() => forwards(s).length === 2, "the words kept as a new forward draft", 200);
     const mine = forwards(s).find((d) => d.id !== row)!;
     expect({
@@ -436,7 +417,7 @@ describe("an inline forward's draft changed on another device", () => {
 
   it("Send over it is refused with the base stated, and the words go to a new forward row", async () => {
     const { s, row } = await forwardChangedThere();
-    await press([...forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").startsWith("Send")) ?? null, "Send");
+    await press(writing.actionIn(s.el, "Send"), "Send");
     await waitFor(() => forwards(s).length === 2, "the words kept as a new forward draft", 200);
     const mine = forwards(s).find((d) => d.id !== row)!;
     expect({

@@ -8,6 +8,7 @@ import {
   ownerCookieValue,
   sessionCookies,
   OWNER_COOKIE,
+  FAMILY_COOKIE,
 } from "../src/cookies.js";
 
 /**
@@ -151,7 +152,8 @@ describe("signing out takes it with the rest", () => {
     const line = cleared.find((c) => c.startsWith(`${OWNER_COOKIE}=`));
     expect(line, "logout does not clear the account marker").toBeDefined();
     expect(line).toBe(`${OWNER_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`);
-    expect(cleared).toHaveLength(5);
+    expect(cleared).toContain(`${FAMILY_COOKIE}=; SameSite=Strict; Secure; Path=/; Max-Age=0`);
+    expect(cleared).toHaveLength(6);
   });
 });
 

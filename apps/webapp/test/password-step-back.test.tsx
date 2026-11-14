@@ -46,7 +46,8 @@ vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   }),
 }));
 
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => ({ remaining: [], inventoryComplete: true }),
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));

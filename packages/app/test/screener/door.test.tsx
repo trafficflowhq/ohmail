@@ -32,7 +32,7 @@ describe("the Screener's place", () => {
     expect(screenerPlace.id).toBe("screener");
     expect(screenerPlace.body).toBe("screener");
     expect(screenerPlace.rail).toMatchObject({
-      group: "main",
+      group: "screener",
       icon: "screener",
       label: "title",
       keyHint: "g s",

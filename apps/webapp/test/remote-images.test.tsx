@@ -7,7 +7,7 @@ import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { COPY, MessageBody, frameCsp, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
-import { AppShell } from "./_todays-shell.js";
+import { MailShell as AppShell } from "./_mail-shell.js";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 import {
@@ -15,12 +15,9 @@ import {
   createProxiedImageQueue,
 } from "../../../packages/letter-body/src/proxied-images";
 import { PROXY_URL_MAX_CHARS as SERVER_URL_MAX } from "@trafficflow/services";
-import { PROXY_URL_MAX_CHARS, type ImageDoor, type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
+import { PROXY_URL_MAX_CHARS, type ImageDoor, type RemoteImagesChrome, useRemoteImages } from "@ohmail/app-logic/reader/remote-images";
 import { apiConfigured } from "../app/api-client";
 import { WEB_IMAGES } from "../app/(product)/mailbox/image-wire";
-import { RemoteImagesRow } from "../app/shell/RemoteImagesRow";
-import { TrackingPixelsRow } from "../app/shell/TrackingPixelsRow";
-import de from "../messages/de.json";
 import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
@@ -651,7 +648,7 @@ describe("a window that is not this account's loads no pictures for it", () => {
    * happen for a picture in somebody's mail.
    */
   it("rewrites to the proxy while identity holds, and to nothing when it does not", async () => {
-    const { imageProxyUrl } = await import("../app/shell/remote-images");
+    const { imageProxyUrl } = await import("@ohmail/app-logic/reader/remote-images");
     const { sanitizeMailHtml } = await import("../../../packages/letter-body/src/MessageBody");
 
     const ORIGIN = "https://mail.example";
@@ -849,92 +846,53 @@ describe("the pane is the consumer, not just the harness", () => {
     const { resolve } = await import("node:path");
     const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
 
-    const pane = read("apps/webapp/app/shell/MessagePane.tsx");
-    expect(pane, "the pane renders a body with no way to load an image").toContain("imageProxy=");
-    expect(pane).toContain("onLoadRemote=");
-    expect(pane).toContain("remoteImages");
+    /* RE-POINTED BY PATH (share reader-1; RULING-NEW-SHELL-FIRST E1: this case is never retired). Today's pane and
+       shell leave with the switch; the same wiring is made now by the reader's letter (`Letter.tsx`, which hands
+       every letter's body its picture inputs), the one term those inputs come from (`letter-seams.ts`
+       `letterPictures`), the reader's parts over the ground's doors (`reader-parts.ts`), and the ground that builds
+       the one picture door of a mounted frame (`DoorsMount.tsx`) from the inputs read off the host and the consent
+       row (`door-inputs.ts`). Each expectation below is the one that stood, read at its new site. */
+    const letter = read("packages/app/src/reader/Letter.tsx");
+    const seams = read("packages/app-logic/src/reader/letter-seams.ts");
+    const pane = letter + seams;
+    expect(pane, "the pane renders a body with no way to load an image").toContain("imageProxy: pictures.proxyFor(id)");
+    expect(pane).toContain("onLoadRemote: () => pictures.consent(id)");
+    expect(letter, "the letter's body is handed no picture inputs").toMatch(/<Body\s+\{\.\.\.letterPictures\(message, [^)]*parts\.pictures/);
 
-    const shell = read("apps/webapp/app/shell/AppShell.tsx");
-    expect(shell, "the chrome would be undefined on the live path only").toContain("useRemoteImages");
-    expect(shell, "the capability is built and then not put in the chrome")
-      .toMatch(/attachments,\s*remoteImages/);
+    const ground = read("packages/app/src/mail/ground/DoorsMount.tsx");
+    const inputs = read("packages/app/src/mail/ground/door-inputs.ts");
+    const parts = read("packages/app/src/mail/reader-parts.ts");
+    expect(ground, "the chrome would be undefined on the live path only").toContain("useRemoteImages(inputs.pictures)");
+    expect(ground, "the capability is built and then not put in the chrome").toMatch(/\(\{\s*files,\s*pictures\s*\}\)/);
+    expect(parts, "the reader's parts do not take the ground's picture door").toMatch(/pictures:\s*pictures \?\? "none"/);
     /* AND THE IDENTITY PREDICATE, which is the third thing this seam has now shipped without.
        `/img` is fetched by the browser from an `<img src>`, so the account boundary in `api()`
        never sees it; the door asks the same question every other direct reader asks. Deleting
        this one argument leaves a window that has stopped syncing still able to load another
        account's pictures — with every unit test green, because they build the hook directly. */
-    expect(shell, "the image door was built without the identity predicate")
-      .toMatch(/useRemoteImages\(\{[\s\S]{0,400}?mayRead:\s*mayReadOlderBody/);
+    expect(inputs, "the image door was built without the identity predicate")
+      .toMatch(/mayRead:\s*\(\)\s*=>\s*syncMayRead\(engine\)/);
 
     /* mail 0048's own half of the same blind spot. The mode is an account setting, so the
        harness above can prove both behaviours while the live path is wired to a constant —
        which is precisely the `fetchBody`/`searchServer` shape this test exists for. Both ends:
-       the shell resolves the mode from the consent hook, and the sibling renderer ors the same
-       `auto` term the pane does (one setting must not produce two answers on one screen). */
-    expect(shell, "the shell passes a hard-coded mode instead of the account's setting")
-      .toMatch(/mode:\s*consent\.blockRemoteImages\s*\?\s*"manual"\s*:\s*"auto"/);
-    // The sibling renderer moved out of `Conversation.tsx` into `MessageCard.tsx` (the expanded
-    // sibling), which is where the same three-term OR now lives. Its `auto` term is the one
-    // default-read function both renderers call (`autoLoadsImages`, mail 0148: a message whose
-    // sender's name claims a company the address is not loads no pictures on open).
-    const card = read("apps/webapp/app/shell/MessageCard.tsx");
-    expect(card, "a sibling message would keep the button the focused one dropped")
-      .toContain("autoLoadsImages(chrome.remoteImages, message) ||");
-    expect(pane, "the pane and the sibling answer the account's setting through one term")
-      .toContain("autoLoadsImages(chrome.remoteImages, message) ||");
+       the ground resolves the mode from the consent row, and every letter of the reader answers it
+       through the one term (one setting must not produce two answers on one screen). */
+    expect(inputs, "the shell passes a hard-coded mode instead of the account's setting")
+      .toMatch(/mode:\s*row\.blockRemoteImages\s*\?\s*"manual"\s*:\s*"auto"/);
+    // The focused letter and its siblings are one component now (`Letter.tsx`), and their `auto` term is the one
+    // default-read function (`autoLoadsImages`, mail 0148: a message whose sender's name claims a company the
+    // address is not loads no pictures on open), ored with what was loaded and what was consented.
+    expect(seams, "a sibling message would keep the button the focused one dropped")
+      .toContain("const auto = presented && autoLoadsImages(pictures, letter);");
+    expect(seams, "the pane and the sibling answer the account's setting through one term")
+      .toContain("remoteLoaded: loadedRemoteContent || auto || pictures.consented(id)");
     /* And the pane's half of the doubly-guarded button. `MessageBody`'s `!remoteLoaded` would
        hide it anyway, which is why this cannot be asserted behaviourally without mutating two
        things at once — so the term is pinned where it is written. A callback handed over for a
        press that can never happen is worth refusing on its own. */
-    expect(pane, "the pane hands over a consent callback nothing can ever press")
-      .toMatch(/!autoLoadsImages\(chrome\.remoteImages, message\)/);
-  });
-});
-
-/* ── WHO FETCHES THE PICTURE, SAID WHERE THE SWITCH IS ─────────────────────────────────── */
-
-describe("the Settings copy names the machine that fetches the pictures", () => {
-  /** Both rows as Settings mounts them, in one language, pictures ON and pixels ON. */
-  async function rows(fromComputer: boolean, locale: "en" | "de"): Promise<string> {
-    await unmount();
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    const noop = async () => true;
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale, messages: (locale === "en" ? messages : de) as never,
-        children: [
-          h(RemoteImagesRow, { key: "i", blocked: false, setBlockRemoteImages: noop, fromComputer }),
-          h(TrackingPixelsRow, { key: "p", blocked: false, setBlockTrackingPixels: noop, fromComputer }),
-        ],
-      }));
-    });
-    return host.textContent ?? "";
-  }
-
-  it("a computer of the reader's own promises no proxy, in either language", async () => {
-    for (const locale of ["en", "de"] as const) {
-      const text = await rows(true, locale);
-      expect(text, `${locale}: the desktop's own door promised a proxy`).not.toMatch(/proxy/i);
-      const cat = locale === "en" ? messages.settings : de.settings;
-      expect(text).toContain(cat.images.microcopyComputer);
-      expect(text).toContain(cat.pixels.offComputer);
-    }
-  });
-
-  it("CONTROL: the Cloud door keeps the proxy sentence it can keep", async () => {
-    const text = await rows(false, "en");
-    expect(text).toContain(messages.settings.images.microcopy);
-    expect(text).toContain(messages.settings.pixels.off);
-  });
-
-  it("pictures ON says mail in the Screener asks first, on either door and in either language", async () => {
-    for (const locale of ["en", "de"] as const) {
-      for (const fromComputer of [false, true]) {
-        expect(await rows(fromComputer, locale), `${locale}, own computer ${fromComputer}`).toMatch(/Screener/);
-      }
-    }
+    expect(seams, "the pane hands over a consent callback nothing can ever press")
+      .toMatch(/\.\.\.\(auto \? \{\} : \{ onLoadRemote:/);
   });
 });
 

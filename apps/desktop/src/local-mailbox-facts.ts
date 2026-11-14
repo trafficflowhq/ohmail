@@ -10,7 +10,7 @@
 
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { retryingBridgeFetch } from "./bridge-fetch.js";
-import { readMailboxFactsVia } from "./mailbox-facts-wire.js";
+import { readMailboxFactsVia, readSearchMailboxTotalVia } from "./mailbox-facts-wire.js";
 
 /**
  * The mailboxes this install opens, for the shared shell's sync line. `counts` rides through to
@@ -19,4 +19,8 @@ import { readMailboxFactsVia } from "./mailbox-facts-wire.js";
  */
 export async function readMailboxFacts(opts: { counts?: boolean } = {}): Promise<MailboxFacts[]> {
   return readMailboxFactsVia(retryingBridgeFetch, opts);
+}
+
+export function readSearchMailboxTotal(): Promise<number | null> {
+  return readSearchMailboxTotalVia(retryingBridgeFetch);
 }

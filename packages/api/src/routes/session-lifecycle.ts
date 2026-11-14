@@ -1,10 +1,10 @@
 import { classifyRefreshFailure, type SessionLifecycle } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
-import { serviceContext } from "../context.js";
-import { clearResumeCookie, clearSessionCookies, jarCookie, sessionCookies } from "../cookies.js";
+import { browserLogoutProofs, serviceContext } from "../context.js";
+import { clearResumeCookie, clearSessionCookies, jarAwaitsBrowserLogout, jarCookie, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
-import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
+import { accountErasedResponse, erasedAccountBearer, EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER, withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
 import { sessionEnded, sessionRefused, withCachePurge } from "../session-end.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
@@ -102,9 +102,8 @@ export const sessionLifecycleRoutes: Route[] = [
     // names the live family — `/auth/logout` sees only the replaced access token and 401s before
     // its handler. Revokes that family and the resolved session's (`enrollmentOk`, so a sign-out
     // during enrollment ends that session too); `{ refreshToken }` in the body is the same arm for a
-    // bearer client. The jar is cleared on the 204 and on the door's own 401, never on a fault: the
-    // retry needs the cookie the fault left in place. A token tells its holder one thing here —
-    // whether it was ever minted (204 in any state, 401 never) — and presenting it ends its family.
+    // bearer client. Revocation leaves the cookie jar alone. A browser holding the cookie lock can
+    // separately clear a pending, verified family after it is revoked.
     // A busy pool answers it fast, as the refresh door's: held past the client's deadline, the
     // sign-out went unconfirmed and the browser was left marked pending (`withSessionAcquireCeiling`).
     method: "POST",
@@ -113,7 +112,28 @@ export const sessionLifecycleRoutes: Route[] = [
     cost: "ceremony",
     options: { public: true, enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
-      let presented = presentedRefreshCookie(parseCookies(req.headers.get("cookie")), deps);
+      const jar = parseCookies(req.headers.get("cookie"));
+      const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER) ?? undefined;
+      const browser = cookieSurface(deps);
+      const markedFamily = browser ? jarCookie(jar, "tf_family") : undefined;
+      if (markedFamily !== undefined && markedFamily !== expectedFamily) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
+      const cookieRefresh = presentedRefreshCookie(jar, deps);
+      const ctx = serviceContext(deps, req);
+      if (req.headers.get("X-Ohmail-Clear-Logout") === "1") {
+        if (!browser || expectedFamily === undefined || !jarAwaitsBrowserLogout(jar)) {
+          throw new ServiceError("session_mismatch", 409, "the browser session changed");
+        }
+        const access = jarCookie(jar, "tf_session");
+        if (!cookieRefresh && !access && markedFamily === expectedFamily) {
+          // This pending family has already lost both credentials. Retire its remaining markers.
+          return sessionEnded(noContent(clearSessionCookies()));
+        }
+        await sessionLifecycle(deps).assertBrowserLogout(expectedFamily, browserLogoutProofs(deps, cookieRefresh, access));
+        return sessionEnded(noContent(clearSessionCookies()));
+      }
+      let presented = cookieRefresh;
       if (presented === undefined) {
         const body = await readBody<{ refreshToken?: unknown }>(req);
         if (body.refreshToken !== undefined && typeof body.refreshToken !== "string") {
@@ -122,16 +142,18 @@ export const sessionLifecycleRoutes: Route[] = [
         presented = body.refreshToken === "" ? undefined : body.refreshToken;
       }
       try {
-        await sessionLifecycle(deps).logout(serviceContext(deps, req), { refreshToken: presented });
+        await sessionLifecycle(deps).logout(ctx, {
+          refreshToken: presented, expectedFamily, browser: cookieRefresh !== undefined,
+          expectedAccount: req.headers.get(EXPECTED_ACCOUNT_HEADER) ?? undefined,
+        });
       } catch (err) {
         if (classifyRefreshFailure(err) !== "session_refused") throw err;
         const refusal = err as ServiceError;
         return sessionEnded(json(
           { error: { code: refusal.code, message: refusal.message } }, refusal.httpStatus,
-          cookieSurface(deps) ? clearSessionCookies() : [],
         ));
       }
-      return sessionEnded(noContent(cookieSurface(deps) ? clearSessionCookies() : []));
+      return sessionEnded(noContent());
     },
   },
   {
@@ -178,10 +200,14 @@ export const sessionLifecycleRoutes: Route[] = [
           // reads as a decision.
           const { tokens } = await sessionLifecycle(deps).refresh(
             serviceContext(deps, req), { refreshToken: cookieRefresh, attemptId },
-            { concurrentGrace: true, surface: "cookie" },
+            {
+              concurrentGrace: true, surface: "cookie",
+              expectedAccount: req.headers.get(EXPECTED_ACCOUNT_HEADER) ?? undefined,
+              expectedFamily: req.headers.get(EXPECTED_FAMILY_HEADER) ?? undefined,
+            },
           );
           // No `tf_owner`: an echo of the request's jar named the account over a Sign out pressed meanwhile.
-          return noContent(sessionCookies(tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, null));
+          return noContent(sessionCookies(tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, null, deps.credentialFamily));
         } catch (err) {
           /*
            * DECIDED BY THE THROWN VALUE'S CLASS. This answered every failure with one coded 401

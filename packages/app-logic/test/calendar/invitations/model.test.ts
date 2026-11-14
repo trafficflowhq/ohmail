@@ -80,6 +80,16 @@ describe("the invitations' groups", () => {
     expect(titles([...g.toAnswer, ...g.changed, ...g.answered])).toEqual(["shown"]);
   });
 
+  it("omits invitations and their count when a calendar shares only busy times", () => {
+    const records = [
+      invitation("waiting", "20261118"),
+      invitation("cancelled", "20261119", { status: "cancelled" }),
+      invitation("answered", "20261120", { myAnswer: "accepted" }),
+    ];
+    const groups = groupsOf(records, [calendarOf({ access: "busy" })]);
+    expect(groups).toEqual({ toAnswer: [], changed: [], answered: [], waiting: 0 });
+  });
+
   it("lists a repeating invitation once, at its first occurrence from today, in date order", () => {
     const g = groupsOf([
       invitation("later", "20261125", { title: "Later" }),

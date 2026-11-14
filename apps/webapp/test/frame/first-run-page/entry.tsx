@@ -16,13 +16,15 @@ import "../../../app/app.css";
 import "../../../app/zero-layout.css";
 
 const NOW = new Date("2026-11-17T09:00:00.000Z");
+const seedReview = new URLSearchParams(window.location.search).has("seed-review");
+const sender = "writer" + "@" + "example.invalid";
 const asked = { organize: 0, complete: 0, ai: [] as boolean[] };
 (window as unknown as { firstRunAsked: typeof asked }).firstRunAsked = asked;
 
 /* The mailbox as `GET /mailboxes` answers it: connected, nobody's organizer yet, nothing agreed. */
-let consentedAt: string | null = null;
+let consentedAt: string | null = seedReview ? NOW.toISOString() : null;
 let importedAt: string | null = null;
-let completedAt: string | null = null;
+let completedAt: string | null = seedReview ? NOW.toISOString() : null;
 const mailbox = (): MailboxFacts => ({
   id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null,
   disabledReason: null, syncBlockedReason: null, syncBlockedSince: null,
@@ -89,7 +91,30 @@ const engine = new OhmailEngine({
 } as never);
 
 document.documentElement.lang = "en";
-void store.load().then(() =>
+void store.load().then(async () => {
+  if (seedReview) {
+    const stamp = NOW.toISOString();
+    await store.applyChanges([
+      {
+        type: "rule", op: "create", id: "r1", seq: 1, updatedAt: stamp,
+        entity: {
+          id: "r1", kind: "sender", match: sender, destination: "INBOX", enabled: true, createdAt: stamp,
+        },
+      },
+      ...["First review fixture", "Second review fixture"].map((subject, index) => {
+        const id = `m${index + 1}`;
+        return {
+          type: "message", op: "create", id, seq: index + 2, updatedAt: stamp,
+          entity: {
+            id, subject, accountId: "a1", mailboxId: "mb1", threadId: id, folder: "INBOX",
+            from: { address: sender, name: "Fixture writer" }, to: [], cc: [], date: stamp,
+            unread: false, labels: [], snippet: "Fixture message", updatedAt: stamp,
+          },
+        };
+      }),
+    ] as never);
+  }
+
   createRoot(document.getElementById("app")!).render(
     <Providers>
       <LocaleShell initialLocale="en" initialMessages={en}>
@@ -101,5 +126,5 @@ void store.load().then(() =>
         />
       </LocaleShell>
     </Providers>,
-  ),
-);
+  );
+});

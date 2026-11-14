@@ -77,7 +77,7 @@ export function SearchPersonRow({ model, beside }: { model: SearchListModel; bes
   const take = (p: AddressBookEntry, dir: SearchPerson["dir"]) =>
     model.setPerson({ address: p.address, name: p.name === "" ? null : p.name, dir });
   return (
-    <div className="sr-filters" role="group" aria-label={t("person")}>
+    <div className="sr-filters" data-filter-row="" role="group" aria-label={t("person")}>
       <PeopleMenu word={t("facetFrom")} people={listed} pick={(p) => take(p, "from")} />
       <PeopleMenu word={t("to")} people={listed} pick={(p) => take(p, "to")} />
     </div>

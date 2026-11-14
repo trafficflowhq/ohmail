@@ -1,3 +1,4 @@
+import { bridgeFetch } from "../../../test/support/desktop-bridge-fixtures.js";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,10 +11,10 @@ import { AI_STORE_FILE } from "../src/ai-provider.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
-import { readAiStatus, saveAiSettings } from "../../desktop/src/local-ai.js";
+import { readAiStatus, saveAiSettings } from "../../../test/support/desktop-bridge-fixtures.js";
 import {
   hydrateSuggestions, runSuggest, CHUNK, type SuggestionRow,
-} from "../../desktop/src/local-suggest-run.js";
+} from "../../../test/support/desktop-bridge-fixtures.js";
 
 /**
  * THE WINDOW'S OWN CODE AGAINST THE REAL ENGINE — the join neither side's suite covered.
@@ -243,6 +244,12 @@ describe("the desktop window's own modules, against the engine they ship beside"
     ).toBe(false);
 
     /* ── 4 · and the window's own loop asks about them ──────────────────────────────────────── */
+    const consent = await bridgeFetch("/consent/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoSuggest: true }),
+    });
+    expect(consent.ok).toBe(true);
     const landed: SuggestionRow[] = [];
     const ticks: Array<[number, number]> = [];
     const out = await runSuggest({

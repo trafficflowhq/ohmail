@@ -13,6 +13,8 @@ export interface ComposerMark {
   icon?: IconName;
   /** The mark holds where the caret is. */
   pressed?: boolean;
+  /** This control opens a dialog and reports whether it is open. */
+  dialogExpanded?: boolean;
   disabled?: boolean;
   /** A press hands the mark's own element: what the mark opens (a link's card) comes out of it. */
   onPress?: (anchor: HTMLElement) => void;
@@ -44,7 +46,9 @@ export function ComposerMarks({ label, groups }: ComposerMarksProps) {
               className="oh-control oh-composer-mark"
               aria-label={mark.label}
               title={mark.title ?? mark.label}
-              aria-pressed={mark.pressed ?? false}
+              aria-pressed={mark.dialogExpanded === undefined ? (mark.pressed ?? false) : undefined}
+              aria-haspopup={mark.dialogExpanded === undefined ? undefined : "dialog"}
+              aria-expanded={mark.dialogExpanded}
               disabled={mark.disabled}
               onClick={(event) => mark.onPress?.(event.currentTarget)}
             >

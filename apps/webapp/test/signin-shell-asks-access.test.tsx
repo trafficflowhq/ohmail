@@ -9,10 +9,11 @@
  * before the wire. Driven here as the app navigates it: the `/login` read, the second factor
  * through the real client, then the real `CloudShell` in the same module state.
  */
+import { within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ACCOUNT, coded401, installConfirmEnv, messages, mountCloudShell, refresh204, scriptRefresh,
-  scriptSession, sessionFull, teardownConfirmEnv, tick,
+  scriptSession, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 import { resetSessionTruthForTests, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 
@@ -25,10 +26,9 @@ const METERED_OPEN = { metered: true, access: "open", canAddMailbox: true, mailb
 let accessReads = 0;
 
 beforeEach(async () => {
-  // Settings is a lazy view; loaded here so a fake-timer tick is not racing a module transform.
-  await import("../app/views/SettingsView");
   resetSessionTruthForTests();
   installConfirmEnv();
+  await warmCloudShell();
   const { bindApiOwner, forgetAccess } = await import("../app/api-client");
   bindApiOwner(null);
   forgetAccess();
@@ -59,7 +59,9 @@ afterEach(async () => {
 });
 
 const navLabels = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-settings .set-nav button")].map((b) => b.textContent ?? "");
+  within(within(el).getByRole("navigation", { name: messages.settings.navAria }))
+    .getAllByRole("button")
+    .map((button) => button.getAttribute("aria-label") ?? button.textContent ?? "");
 
 describe("the first screen after a sign-in", () => {
   it("reads the account's access and lists Subscription, with no reload", async () => {

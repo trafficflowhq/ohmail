@@ -46,6 +46,29 @@ export function codeElsewhere(preset: string | null, ways: SignInWays, runsCode:
   return !ways[provider].redirect && ways[provider].device && !runsCode;
 }
 
+const DEVICE_FAILURE_KEYS = {
+  oauth_device_unconfigured: "device_unconfigured",
+  oauth_device_state_invalid: "device_state_invalid",
+  upstream_unavailable: "device_start_unavailable",
+  forbidden: "device_not_allowed",
+  oauth_no_refresh_token: "device_no_refresh_token",
+  oauth_no_address: "device_no_address",
+} as const;
+
+/** The device flow carries only refusal codes this client can interpret. */
+export function deviceSignInRefusalCode(code: unknown): keyof typeof DEVICE_FAILURE_KEYS | null {
+  return typeof code === "string" && Object.hasOwn(DEVICE_FAILURE_KEYS, code)
+    ? (code as keyof typeof DEVICE_FAILURE_KEYS)
+    : null;
+}
+
+/** Device failures can echo the code somebody is meant to type at Microsoft. Use catalogue copy only. */
+export function deviceSignInFailureKey(code: unknown, retrying = false): string {
+  const known = deviceSignInRefusalCode(code);
+  if (retrying && (known === null || known === "upstream_unavailable")) return "device_poll_retry";
+  return known === null ? "oauth_consent_failed" : DEVICE_FAILURE_KEYS[known];
+}
+
 /** The floor under a poll of a sign-in by code. The server's own pace is never undercut. */
 export const POLL_FLOOR_MS = 5_000;
 

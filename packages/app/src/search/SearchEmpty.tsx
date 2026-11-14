@@ -1,8 +1,6 @@
 /**
- * SEARCH WITH NO RESULTS says one true thing, and how large its claim is depends on which pass has answered: the
- * verdict stands under it, so an empty list while the whole mailbox is still searched never reads as an empty
- * mailbox. "Nothing matched" stands only where the verdict says no count; while the device is still indexing, its own
- * title outranks it. An address is offered its own view; the provider's Junk folder, which no pass reaches, is said.
+ * Search shows its confirmed scope below the rows. An empty result uses that same verdict,
+ * with a temporary title while the device is still reading and a local title when no store answered.
  */
 import type { SearchListModel } from "@ohmail/app-logic/search";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
@@ -21,7 +19,7 @@ export function SearchEmpty({
 }: {
   model: SearchListModel;
   beside: SearchBeside;
-  /** What was searched, where it was not the whole mailbox counted. */
+  /** What was searched and the count it confirmed. */
   lines: readonly SaidLine[];
 }) {
   const t = useText("search");
@@ -34,11 +32,7 @@ export function SearchEmpty({
       </>
     );
   }
-  const title = model.indexing
-    ? t("stillReading")
-    : model.settledEmpty || model.nothingMatched
-      ? t("nothingMatched")
-      : null;
+  const title = model.indexing ? t("stillReading") : model.settledEmpty ? t("nothingMatched") : null;
   const junk = beside.junk;
   /* The pass that does not exist: nothing here ever searched the provider's Junk folder. */
   const junkSaid =

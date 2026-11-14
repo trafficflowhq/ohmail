@@ -12,13 +12,13 @@ import { useRefusalSentence } from "../refusal-sentence";
 import { webStepUp } from "./web-step-up";
 
 /** The web's step-up door, its refusals said in the reader's language: what a door's page hands its dialog. */
-export function useWebStepUp(): StepUpDoor {
+export function useWebStepUp(expectedOwner?: string | null): StepUpDoor {
   const say = useRefusalSentence();
-  return useMemo(() => webStepUp(say), [say]);
+  return useMemo(() => webStepUp(say, expectedOwner), [say, expectedOwner]);
 }
 
-export function StepUp(props: StepUpProps & { line?: string }) {
-  const door = useWebStepUp();
+export function StepUp({ expectedOwner, ...props }: StepUpProps & { line?: string; expectedOwner?: string | null }) {
+  const door = useWebStepUp(expectedOwner);
   return (
     <DoorText>
       <StepUpDialog door={door} {...props} />

@@ -8,6 +8,7 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { IMPORT_END_IDLE_MS } from "@ohmail/app-logic/mail-state/mail-state";
 import { FACTS_POLL_MS } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import messages from "../messages/en.json";
+import { typeSearch } from "./search-registered-fixture";
 
 /** The rail's importing sentence, as the frame's notice says the same state. */
 const SYNCING = messages.frame.connection.firstSync.title;
@@ -33,13 +34,7 @@ function searchAnswer(): Response {
 }
 
 async function typeQuery(el: HTMLElement, value: string): Promise<void> {
-  const input = el.querySelector<HTMLInputElement>(".view-search input");
-  expect(input, "the search box").not.toBeNull();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input!, value);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await act(async () => { typeSearch(el, value); });
   await tick(1_000);
 }
 

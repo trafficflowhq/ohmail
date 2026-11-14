@@ -98,6 +98,10 @@ export interface SendRequestBody {
  */
 export interface SendAnswer {
   status: "sent" | "unverified" | "failed" | "in_flight" | "queued";
+  /** The draft the reservation delivered, including on a replay under its original key. */
+  sentDraftId?: string;
+  /** On a settled replay, the draft was still sent at this account sequence. The replay emitted no change. */
+  sentDraftThrough?: number;
   providerMessageId?: string | null;
   message?: string;
   /** The send this key already held: this press delivered nothing new. */
@@ -328,9 +332,10 @@ export interface Routes {
   "GET /drafts/:id": { params: Id; body: never; answer: DraftDTO };
   "PUT /drafts/:id": { params: Id; body: PatchDraftBody & { ifContentRevision?: string }; answer: DraftDTO };
   "DELETE /drafts/:id": { params: Id; body: never; answer: null };
+  "DELETE /drafts/:id/conditional": { params: Id; body: never; answer: null };
   /** A draft written from the person's own words, stored and never sent; 202 with the stored row's id. */
   "POST /drafts/from-text": { params: None; body: DraftFromTextBody; answer: DraftWrittenAnswer };
-  "POST /drafts/:id/resolve": { params: Id; body: { outcome: SendResolution }; answer: DraftDTO };
+  "POST /drafts/:id/resolve": { params: Id; body: { outcome: SendResolution; ifUpdatedAt?: string }; answer: DraftDTO };
   "POST /drafts/:id/schedule": { params: Id; body: { sendAt: ISODateTime }; answer: DraftDTO };
   "DELETE /drafts/:id/schedule": { params: Id; body: never; answer: DraftDTO };
   "POST /drafts/:id/schedule-with-files": {

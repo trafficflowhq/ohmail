@@ -224,10 +224,10 @@ describe("the phone says the unsubscribe before Screen out or Spam is pressed", 
     expect(detail).toMatch(/Copy\.decideUnsub\(claim, target, row\.scope === "domain"\)/);
     expect(detail).toMatch(/testID="decide-unsub"/);
     const sheet = source("src/ui/MessageActions.tsx");
-    expect(sheet).toContain("w.actions.screeningUnsubClaim(m.id, scope)");
+    expect(sheet).toContain("w.actions.screeningUnsubClaim(m.id, choice)");
     expect(sheet).toMatch(/testID="screening-unsub"/);
-    expect(Copy.decideUnsub("sends", LIST, false)).toBe(`Screen out and Spam also send ${LIST} a one-click unsubscribe request, and ask again for their later mail that offers one.`);
-    expect(Copy.decideUnsub("may_send", PLAIN, false)).toBe(`Where ${PLAIN} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`);
+    expect(Copy.decideUnsub("sends", LIST, false)).toBe(`Screen out and Spam also send ${LIST} a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`);
+    expect(Copy.decideUnsub("may_send", PLAIN, false)).toBe(`Where ${PLAIN} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you for the waiting mail. Sent requests cannot be taken back.`);
     expect(DE.decideUnsub("sends", LIST, false)).toContain("Ein-Klick-Abmeldung");
   });
 });
@@ -240,13 +240,14 @@ describe("the press, and how far its Undo reaches", () => {
     dispatch: async (ms) => { await Promise.all(ms.map((m) => s.engine.mutate(m).catch(() => null))); },
   });
 
-  it("held: the toast says Undo stops the request, and Undo inside the window sends nothing", async () => {
+  it("filing-only: Undo inside the window sends nothing", async () => {
     const s = await scene();
     try {
       hold(s, 60_000);
       expect(await s.actions.decide(s.row(LIST), "screened", false, "sender", s.waiting)).toBe(true);
       const t = s.said.at(-1)!;
-      expect(t.text).toContain("Undo also stops their one-click unsubscribe request");
+      expect(t.text).not.toContain("unsubscribe");
+      expect(t.undo).toBeDefined();
       t.undo!();
       await new Promise((r) => setTimeout(r, 200));
       expect(s.decides()).toHaveLength(0);
@@ -264,23 +265,29 @@ describe("the press, and how far its Undo reaches", () => {
     } finally { s.close(); }
   });
 
-  it("held for a sender whose held letters offer none: the toast still says the sender-level condition", async () => {
+  it("held for a sender whose held letters offer none: the toast reports filing only", async () => {
     const s = await scene();
     try {
       hold(s, 60_000);
       expect(await s.actions.decide(s.row(PLAIN), "screened", false, "sender", s.waiting)).toBe(true);
-      expect(s.said.at(-1)!.text).toContain("Where they offer one-click unsubscribe, ohmail asks to unsubscribe you once Undo is gone, and again for their later mail");
+      expect(s.said.at(-1)!.text).not.toContain("unsubscribe");
       expect(s.said.at(-1)!.undo, "positive control: the press was held with Undo").toBeDefined();
     } finally { s.close(); }
   });
 
-  it("no window to hold it: the request is said as gone, and the decide is sent once", async () => {
+  it("the warned press sends the named grant once, without an Undo window", async () => {
     const s = await scene();
     try {
-      expect(await s.actions.decide(s.row(LIST), "screened", false, "sender", s.waiting)).toBe(true);
+      hold(s, 60_000);
+      const row = s.row(LIST);
+      const ids = s.actions.unsubscribeIdsOf(row, s.waiting, "sender");
+      expect(ids).not.toEqual([]);
+      expect(await s.actions.decide(row, "screened", false, "sender", s.waiting, ids)).toBe(true);
       await until(() => s.decides().length >= 1);
       expect(s.decides()).toHaveLength(1);
-      expect(s.said.map((x) => x.text).join(" | ")).toContain("ohmail is sending them a one-click unsubscribe request, which cannot be taken back, and asks again for their later mail");
+      expect(JSON.parse(s.decides()[0]!.body)).toMatchObject({ unsubscribeIds: ids });
+      expect(s.said.at(-1)?.undo).toBeUndefined();
+      expect(s.said.map((x) => x.text).join(" | ")).toContain("ohmail is sending a one-click unsubscribe request for the waiting mail");
     } finally { s.close(); }
   });
 });

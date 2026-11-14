@@ -6,7 +6,7 @@ import ts from "typescript";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  learningSignals, sourceFor, workflowProposals, workflows,
+  accounts, UNMETERED_ACCESS, learningSignals, sourceFor, workflowProposals, workflows,
   type SpendAction, type SpendOutcome, type SpendPort, type Tx,
 } from "@trafficflow/db";
 import {
@@ -573,4 +573,23 @@ describe("one door: the propose claim is handed back in a `finally`", () => {
     expect(readTheDoor(oneDoor, "subject"))
       .toEqual({ tries: 1, hasFinally: true, inTry: 0, inCatch: 0, inFinally: 1 });
   });
+});
+
+it("does not send or charge a metered proposal while the account's AI setting is Off", async () => {
+  const db = await makeTestDb();
+  const accountId = randomUUID();
+  await db.insert(accounts).values({ id: accountId, name: "proposal account", aiEnabled: false });
+  await seedSignals(db, accountId, "sender@example.invalid", "ohmail/News", 4);
+  const credits = claimingGate();
+  let calls = 0;
+  await proposalGeneratePass(db as unknown as Tx, {
+    accountId, credits,
+    access: {
+      access: async () => ({ ...UNMETERED_ACCESS }),
+      accessOrFault: async () => ({ ...UNMETERED_ACCESS }),
+    },
+    port: { async propose() { calls++; return []; } },
+  }, NOW);
+  expect(calls).toBe(0);
+  expect(credits.spends).toEqual([]);
 });

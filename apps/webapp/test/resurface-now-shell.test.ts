@@ -8,6 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { barVerb, menuItem } from "./ohbox/_finders.js";
 
 /**
  * "RESURFACE NOW", DRIVEN THROUGH THE SHELL.
@@ -59,7 +60,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -83,6 +84,10 @@ const key = async (k: string): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   });
+  /* The new Ohbox names the walked-to or opened letter in the address, and jsdom says a hash change in a task of its
+     own, which this file's fake clock holds until it runs. */
+  await act(async () => { vi.advanceTimersByTime(1); });
+  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 };
 
 const click = async (el: Element | null | undefined): Promise<void> => {
@@ -92,10 +97,12 @@ const click = async (el: Element | null | undefined): Promise<void> => {
   });
 };
 
-/** An action-bar control by the START of its label — labels carry keycaps. */
-const barButton = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith(label));
+/**
+ * A control of the open letter's action panel by its name (today's `.abar` button by its label's start); "Now" is the
+ * Resurface menu's answer, drawn over the page.
+ */
+const barButton = (label: string): HTMLElement | undefined =>
+  (label === "Now" ? menuItem(label) : barVerb(host!, label)) ?? undefined;
 
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 

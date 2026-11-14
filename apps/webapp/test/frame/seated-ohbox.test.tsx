@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 /**
- * THE SEATED OHBOX OVER THE REAL OLD SHELL, as every web host hands it: the Ohbox's own place of the frame, its letter
+ * THE SEATED OHBOX OVER THE MAIL SHELL, as every web host hands it: the Ohbox's own place of the frame, its letter
  * in the frame's reading column, fed by the composition that stands above the panes.
  *
  * - ONE READER: a row opened at 1440 and at 390 wide stands in one region, the frame's; today's sheet is not in the
@@ -11,8 +11,8 @@
  *   begun at the Ohbox leaves no sheet open at History.
  * - THE CARD AND THE RIBBON STAND ONCE: over the list at the Ohbox, in the stage at News; and while the seed review is
  *   owed it stands at the Ohbox's address with the rail around it and no row of the list.
- * - ONE SURFACE A REPORT: a delete at the Ohbox is said in the frame's slot, one at News in today's capsule, `z` takes
- *   back the newest, and the walk between them ends no Undo.
+ * - ONE SURFACE A REPORT: a delete at the Ohbox and a filing at History use the frame's slot.
+ *   `z` takes back the newest, and the walk between them ends no Undo.
  * - A TAG THAT DOES NOT EXIST ends at the Ohbox's address, in place, and no list is drawn under the tag's.
  * - THE KEYBOARD: Enter on a row puts it in the reading column and Escape back on that row; a verb that takes the open
  *   row opens the next. On one column `j` and `k` move the cursor row in the list, which stays drawn: no letter is
@@ -20,13 +20,17 @@
  * - ROWS PICKED: `a`, `e`, `b`, `m`, `d`, ⌫ and ⌦ act on the picked set and never on the open letter, whichever row
  *   the walk started from and whichever letter is shown.
  */
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
-import { createElement as h, type ReactNode } from "react";
+import { createElement as h } from "react";
 import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NONE } from "@ohmail/app/host";
+import { NONE, type FeatureEntry } from "@ohmail/app/host";
+import { DEMO_NOTICE } from "../../app/(product)/demo/notice";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
@@ -37,7 +41,7 @@ import {
   type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
-import { act, consentTransport, msg, NOW, S, setup, storeWith, teardown, waitFor } from "../_view-shell";
+import { act, consentTransport, msg, NOW, S, setup, storeWith, teardown, tombstone, waitFor } from "../_view-shell";
 import { stubThreadLayout } from "../fixtures/thread-layout";
 
 const seen = vi.hoisted(() => ({
@@ -47,8 +51,9 @@ const seen = vi.hoisted(() => ({
   held: [] as string[],
 }));
 
-vi.mock("@ohmail/app/ohbox", async (load) => {
-  const real = await load<typeof import("@ohmail/app/ohbox")>();
+/* What the Ohbox's own seat stands above its columns, by the file the seat itself reads it from. */
+vi.mock("../../../../packages/app/src/ohbox/OhboxAbove", async (load) => {
+  const real = await load<typeof import("../../../../packages/app/src/ohbox/OhboxAbove")>();
   const React = await import("react");
   const { useFrame } = await import("@ohmail/app/frame");
   return {
@@ -64,8 +69,9 @@ vi.mock("@ohmail/app/ohbox", async (load) => {
   };
 });
 
-vi.mock("../../app/shell/attachments", async (load) => {
-  const real = await load<typeof import("../../app/shell/attachments")>();
+/* The one file door, where the mail ground mounts it. */
+vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
   return {
     ...real,
     useMessageAttachments: (...args: Parameters<typeof real.useMessageAttachments>) => {
@@ -97,15 +103,16 @@ interface Seated {
   readonly sent: EngineMutation[];
   /** Every letter whose text the mirror asked the server for. */
   readonly asked: string[];
+  readonly changeScope: (scope: string) => Promise<void>;
 }
 
-/** The real old shell over a memory mirror, at the address named. */
+/** The mail shell over a memory mirror, at the address named. */
 async function seat(o: {
   letters: EngineMessage[];
   hash: string;
   consent?: ConsentTransport | typeof NONE;
   demo?: boolean;
-  stageCard?: ReactNode;
+  stageNotice?: NonNullable<FeatureEntry["notice"]>;
   roster?: MailboxFacts[];
 }): Promise<Seated> {
   const store: MirrorStore = await storeWith(o.letters);
@@ -143,24 +150,25 @@ async function seat(o: {
   S.store = store;
   S.engine = engine;
   window.location.hash = o.hash;
-  const { AppShell } = await import("../_todays-shell.js");
+  const { MailShell } = await import("../_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   S.roots.push(root);
-  await act(async () => {
+  const draw = (scope?: string) => act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages: en, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, { children: h(ToastHost, {
-        children: h(AppShell as never, {
-          demo: o.demo === true, engine, consentTransport: o.consent ?? consentTransport,
-          mailboxFacts: async () => o.roster ?? ROSTER, ...(o.stageCard ? { stageCard: o.stageCard } : {}),
+        children: h(MailShell as never, {
+          scope, demo: o.demo === true, engine, consentTransport: o.consent ?? consentTransport,
+          mailboxFacts: async () => o.roster ?? ROSTER, stageNotice: o.stageNotice,
         } as never),
       }) }),
     } as never));
   });
-  return { sent, asked };
+  await draw();
+  return { sent, asked, changeScope: draw };
 }
 
 const width = { w: 0, h: 0 };
@@ -215,8 +223,9 @@ const letterShown = (id: string): boolean =>
   readers().length === 1 && within(reader()).queryByRole("heading", { name: `Subject ${id}` }) !== null;
 /** Today's sheet over the app, in the document at all. */
 const todaysSheet = (): HTMLElement | null => screen.queryByRole("dialog", { name: en.reader.pane, hidden: true });
-/** The seated Ohbox is on screen: the frame draws its reading column. */
-const atTheOhbox = (): boolean => screen.queryByRole("region", { name: "Reading" }) !== null;
+/** The Ohbox's Messages region and History's own list distinguish the two places. */
+const atTheOhbox = (): boolean => screen.queryByRole("region", { name: "Messages" }) !== null;
+const atHistory = (): boolean => screen.queryByRole("listbox", { name: "History" }) !== null;
 const editors = (): HTMLElement[] => screen.queryAllByRole("textbox", { name: "Reply body", hidden: true });
 /** The two surfaces a report can stand on, by their hosts' own boxes (no role tells them apart). */
 const inTheFramesSlot = (): string => document.querySelector(".fr-report")?.textContent ?? "";
@@ -319,7 +328,7 @@ describe("one reply editor", () => {
     expect(reader().contains(editors()[0]!), "the editor stands in the frame's reading column").toBe(true);
 
     await visit("#/history");
-    await waitFor(() => !atTheOhbox(), "History");
+    await waitFor(atHistory, "History");
     await rounds(8);
     expect(editors().length, "at History no more than one editor is mounted").toBeLessThanOrEqual(1);
 
@@ -341,7 +350,7 @@ describe("one reply editor", () => {
     expect(readers(), "one reader").toHaveLength(1);
 
     await visit("#/history");
-    await waitFor(() => !atTheOhbox(), "History");
+    await waitFor(atHistory, "History");
     await rounds(12);
     expect(todaysSheet(), "today's sheet at History, with nothing opened there").toBeNull();
   }, 30_000);
@@ -349,61 +358,92 @@ describe("one reply editor", () => {
 
 describe("the stage's card and the demo's ribbon stand once", () => {
   const CARD = "The host's one card";
-  const cards = (): HTMLElement[] => screen.queryAllByText(CARD);
+  const useHostNotice: NonNullable<FeatureEntry["notice"]> = () => [{ kind: "mailLinks", title: CARD }];
+  const useHostAndDemoNotices: NonNullable<FeatureEntry["notice"]> = () => [
+    ...useHostNotice(), ...DEMO_NOTICE.notice(),
+  ];
+  const cards = (): HTMLElement[] => screen.queryAllByRole("status", { hidden: true })
+    .filter((status) => status.textContent === CARD);
   const ribbons = (): HTMLElement[] => screen.queryAllByRole("button", { name: en.ribbon.dismiss, hidden: true });
   const overTheList = (el: HTMLElement): boolean => el.closest('section[aria-label="Messages"]') !== null;
 
   it("over the list at the Ohbox, in the stage at News", async () => {
-    sized(1440, 900);
-    await seat({ letters: [msg("m1")], hash: "#/ohbox", demo: true, stageCard: h("p", null, CARD) });
-    await waitFor(() => atTheOhbox() && cards().length > 0 && ribbons().length > 0, "the card and the ribbon at the Ohbox");
-    expect({ cards: cards().length, ribbons: ribbons().length }, "each once at the Ohbox").toEqual({ cards: 1, ribbons: 1 });
-    expect({ card: overTheList(cards()[0]!), ribbon: overTheList(ribbons()[0]!) }, "both over the list").toEqual({
+    sized(800, 900);
+    await seat({ letters: [msg("m1")], hash: "#/ohbox", demo: true, stageNotice: useHostAndDemoNotices });
+    async function capture() {
+      const ribbon = ribbons();
+      const ribbonOverList = ribbon[0] !== undefined && overTheList(ribbon[0]);
+      await press(screen.getByRole("button", { name: /more notice/i }), "show the other notices");
+      await press(screen.getByRole("menuitem", { name: CARD }), "show the host card");
+      const card = cards();
+      const cardOverList = card[0] !== undefined && overTheList(card[0]);
+      await press(screen.getByRole("button", { name: /more notice/i }), "show the other notices");
+      await press(screen.getByRole("menuitem", { name: /^demo\b/i }), "show the demo ribbon");
+      return { counts: { cards: card.length, ribbons: ribbon.length }, placement: { card: cardOverList, ribbon: ribbonOverList } };
+    }
+    await waitFor(() => atTheOhbox() && ribbons().length > 0, "the demo ribbon over the Ohbox");
+    const ohbox = await capture();
+    expect(ohbox.counts, "each once at the Ohbox").toEqual({ cards: 1, ribbons: 1 });
+    expect(ohbox.placement, "both over the list").toEqual({
       card: true, ribbon: true,
     });
 
+    // The upright rail seats the slot over the list. At desktop width News keeps it outside the list.
+    await act(async () => {
+      sized(1440, 900);
+      window.dispatchEvent(new Event("resize"));
+    });
     await visit("#/reads");
-    await waitFor(() => !atTheOhbox() && cards().length > 0, "News with the card");
-    expect({ cards: cards().length, ribbons: ribbons().length }, "each once at News").toEqual({ cards: 1, ribbons: 1 });
-    expect({ card: overTheList(cards()[0]!), ribbon: overTheList(ribbons()[0]!) }, "both in the stage").toEqual({
+    await waitFor(() => screen.queryByRole("region", { name: "News" }) !== null && ribbons().length > 0,
+      "News with the demo ribbon");
+    const news = await capture();
+    expect(news.counts, "each once at News").toEqual({ cards: 1, ribbons: 1 });
+    expect(news.placement, "both in the stage").toEqual({
       card: false, ribbon: false,
     });
   }, 30_000);
 
   it("while the seed review is owed it stands at the Ohbox's address, the rail around it, and no row of the list", async () => {
+    // esbuild and Chromium must run in Node, outside this file's jsdom environment.
+    await promisify(execFile)(process.execPath, [
+      join(process.cwd(), "apps/webapp/test/frame/first-run-page/seed-visibility.mjs"),
+    ], { timeout: 55_000 });
+  }, 60_000);
+
+  it("the host card stands once above the seed review", async () => {
     sized(1440, 900);
     const unseeded = {
       ...consentTransport,
       state: async () => ({ ...(await consentTransport.state()), seedConfirmedAt: null }),
     } as unknown as ConsentTransport;
-    await seat({ letters: [msg("m1"), msg("m2")], hash: "#/ohbox", consent: unseeded, stageCard: h("p", null, CARD) });
+    await seat({ letters: [msg("m1"), msg("m2")], hash: "#/ohbox", consent: unseeded, stageNotice: useHostNotice });
     await waitFor(() => screen.queryByRole("button", { name: en.seed.later }) !== null, "the seed review");
     await rounds(8);
-    expect(window.location.hash, "the address is the Ohbox's").toBe("#/ohbox");
-    expect(rows(), "no row of the list is mounted").toEqual([]);
-    expect(atTheOhbox(), "the seated place's columns are not drawn under the review").toBe(false);
-    expect(screen.queryByRole("navigation", { name: "Main" }), "the rail stands around it").not.toBeNull();
     expect(cards(), "the card stands once, above the review").toHaveLength(1);
+    const stage = within(screen.getByRole("dialog", { name: en.frame.landmark.stage }));
+    expect(stage.getAllByRole("status").filter((status) => status.textContent === CARD)).toHaveLength(1);
+    expect(cards()[0]!.compareDocumentPosition(stage.getByRole("button", { name: en.seed.later })) &
+      Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }, 30_000);
 });
 
 describe("one surface a report", () => {
-  it("a delete at the Ohbox is said in the frame's slot, a filing at History in the capsule, z takes back the newest, and the walk ends no Undo", async () => {
+  it("a delete at the Ohbox is said in the frame's slot, a filing at History uses the same slot, z takes back the newest, and the walk ends no Undo", async () => {
     sized(1440, 900);
     const s = await seat({ letters: [msg("m1"), msg("m2")], hash: "#/ohbox/m/m1" });
     await waitFor(() => letterShown("m1"), "m1 open");
     await act(async () => { row("m1").focus(); });
     await key("Backspace");
     await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastDeleted), "the delete said in the frame's slot");
-    expect(inTheCapsule(), "nothing in today's capsule").not.toContain(en.ohbox.toastDeleted);
+    expect(inTheCapsule(), "no second report surface").not.toContain(en.ohbox.toastDeleted);
     expect(deletes(s), "the delete is held for its window: nothing left yet").toEqual([]);
 
     await visit("#/history");
-    /* History shows its first letter at once, in today's own reading column: the region named Open message there. */
-    await waitFor(() => !atTheOhbox() && readers().length === 1 && within(reader()).queryByRole("button", { name: /^Park/ }) !== null, "History, its first letter shown");
-    await press(within(reader()).getByRole("button", { name: /^Park/ }), "Park on today's bar");
-    await waitFor(() => inTheCapsule().includes(en.ohbox.toastAside), "the filing said in today's capsule");
-    expect(inTheFramesSlot(), "and not in the frame's slot").not.toContain(en.ohbox.toastAside);
+    /* History opens its first letter in the shared reading column. */
+    await waitFor(() => atHistory() && readers().length === 1 && within(reader()).queryByRole("button", { name: /^Park/ }) !== null, "History, its first letter shown");
+    await press(within(reader()).getByRole("button", { name: /^Park/ }), "Park the open letter");
+    await waitFor(() => inTheFramesSlot().includes(en.ohbox.toastAside), "the filing said in the same report slot");
+    expect(inTheCapsule(), "no second report surface").not.toContain(en.ohbox.toastAside);
     const filings = s.sent.length;
 
     await key("z");
@@ -495,12 +535,16 @@ describe("under 700 wide a menu is a sheet, and closing it gives the keyboard ba
 
     await press(row("m1"), "the row of m1");
     await waitFor(() => letterShown("m1"), "m1 over the list");
+    const readingSheet = screen.getByRole("dialog");
+    expect(readingSheet.contains(reader())).toBe(true);
+    expect(menus()).toEqual([readingSheet]);
     const more = (): HTMLElement => within(reader()).getByRole("button", { name: "More" });
     await act(async () => { more().focus(); });
     await press(more(), "More on the panel");
-    await waitFor(() => menus().length === 1, "More as a sheet");
+    await waitFor(() => screen.queryByRole("menu", { name: "More" }) !== null, "More as a sheet");
+    expect(menus()).toEqual([screen.getByRole("menu", { name: "More" }), readingSheet]);
     await typed("Escape");
-    await waitFor(() => menus().length === 0, "Escape closed it");
+    await waitFor(() => menus().length === 1 && menus()[0] === readingSheet, "Escape closed only More");
     await rounds(4);
     expect(letterShown("m1"), "the letter stays over the list: one Escape closes one thing").toBe(true);
     expect(document.activeElement, "the keyboard is back on More").toBe(more());
@@ -728,7 +772,7 @@ describe("the keyboard at the seated Ohbox", () => {
     await key("e");
     await waitFor(() => cursorOn() === first, "the first press put the cursor on the first row");
     await waitFor(() => inTheFramesSlot().includes(said), "and said so in the frame's slot");
-    expect(inTheCapsule(), "nothing in today's capsule").not.toContain(said);
+    expect(inTheCapsule(), "no second report surface").not.toContain(said);
     await rounds(4);
     expect(s.sent.filter((m) => m.kind === "triage_set"), "the first press filed nothing").toEqual([]);
 
@@ -751,7 +795,7 @@ describe("the keyboard at the seated Ohbox", () => {
     await waitFor(() => screen.queryByRole("dialog", { name: "More" }) === null, "the rail stands at the side once the window is wide");
     await act(async () => { row("m1").focus(); });
     await key("h");
-    const rail = screen.getByRole("navigation", { name: "Main" });
+    const rail = screen.getByRole("navigation", { name: "Places" });
     await waitFor(() => rail.contains(document.activeElement), "h walked into the rail");
     await key("Escape");
     await waitFor(() => !rail.contains(document.activeElement), "Escape left the rail");
@@ -880,10 +924,14 @@ describe("a verb that takes the open row follows the stored choice", () => {
 
 describe("the composer, closed, gives the keyboard back to the list it left", () => {
   /** `c` leaves the Ohbox for the composer, and Escape comes back to a list drawn again. */
-  async function composeAndBack(n: number): Promise<void> {
+  async function openComposer(): Promise<void> {
     await typed("c");
     await waitFor(() => window.location.hash.startsWith("#/compose"), "c reached the composer");
     await rounds(6);
+  }
+  async function composeAndBack(n: number, whileWriting?: () => Promise<void>): Promise<void> {
+    await openComposer();
+    await whileWriting?.();
     await typed("Escape");
     await waitFor(() => window.location.hash.startsWith("#/ohbox") && rows().length === n, "Escape came back to the Ohbox");
     await rounds(12);
@@ -919,6 +967,91 @@ describe("the composer, closed, gives the keyboard back to the list it left", ()
     expect(document.activeElement, "the premise: the row holds the keyboard").toBe(row(third));
     await composeAndBack(4);
     expect(keyboardOn(), "after the composer closed the keyboard is on the row it left").toBe(`option ${row(third).getAttribute("aria-label")}`);
+  }, 30_000);
+
+  async function threeRows(): Promise<Seated> {
+    sized(1440, 900);
+    const host = await seat({ letters: [msg("m1"), msg("m2"), msg("m3")], hash: "#/ohbox" });
+    await waitFor(() => rows().length === 3, "the seated list");
+    return host;
+  }
+
+  it("returns to the focused row when a different letter is open", async () => {
+    await threeRows();
+    const [open, origin] = order();
+    await press(row(open!), "the first row");
+    await waitFor(() => openId() === open, "its letter open");
+    await act(async () => { row(origin!).focus(); });
+    await composeAndBack(3);
+    expect(document.activeElement).toBe(row(origin!));
+  }, 30_000);
+
+  it("returns to the next row when the original row disappears while writing", async () => {
+    await threeRows();
+    const [, origin, next] = order();
+    await act(async () => { row(origin!).focus(); });
+    await composeAndBack(2, () => tombstone(origin!));
+    expect(document.activeElement).toBe(row(next!));
+  }, 30_000);
+
+  it("returns from the letter's foot to the row that opened it", async () => {
+    await threeRows();
+    const origin = order()[1]!;
+    await act(async () => { row(origin).focus(); });
+    await composeAndBack(3, async () => {
+      const discard = screen.getByRole("button", { name: "Discard" });
+      await act(async () => { discard.focus(); });
+      expect(document.activeElement).toBe(discard);
+    });
+    expect(document.activeElement).toBe(row(origin));
+  }, 30_000);
+
+  it("preserves a deliberate move from the letter to the rail", async () => {
+    await threeRows();
+    await act(async () => { rows()[1]!.focus(); });
+    await openComposer();
+    const rail = screen.getByRole("navigation", { name: "Places" });
+    const control = within(rail).getAllByRole("button")[0]!;
+    await act(async () => { control.focus(); });
+    expect(document.activeElement).toBe(control);
+    await visit("#/ohbox");
+    await waitFor(() => rows().length === 3, "the list returned");
+    await rounds(12);
+    expect(document.activeElement).toBe(control);
+  }, 30_000);
+
+  it("leaves the originating row behind when the host switches accounts", async () => {
+    const host = await threeRows();
+    const origin = order()[1]!;
+    await act(async () => { row(origin).focus(); });
+    await openComposer();
+    await act(async () => {
+      window.location.hash = "#/ohbox";
+      await host.changeScope("other-account");
+    });
+    await waitFor(() => rows().length === 3, "the next account has the same message ids");
+    await rounds(12);
+    expect(document.activeElement).not.toBe(row(origin));
+  }, 30_000);
+
+  it("leaves the keyboard in a host dialog that stays open as the letter closes", async () => {
+    await threeRows();
+    await act(async () => { rows()[1]!.focus(); });
+    await openComposer();
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const close = dialog.appendChild(document.createElement("button"));
+    close.textContent = "Close";
+    document.body.append(dialog);
+    try {
+      await visit("#/ohbox");
+      await waitFor(() => rows().length === 3, "the list returned under the dialog");
+      await rounds(12);
+      expect(document.activeElement).toBe(close);
+    } finally {
+      dialog.remove();
+    }
   }, 30_000);
 
   it("from a control of the list's head with a letter open: on the cursor's row", async () => {

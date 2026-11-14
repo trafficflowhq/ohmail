@@ -329,6 +329,7 @@ export {
   ruleTwins,
   twinWinner,
   oneRowPerKey,
+  ruleKeyOf,
   heldRuleId,
   heldRuleKey,
   type TwinPress,
@@ -397,6 +398,7 @@ export {
   clock,
   dateClock,
   fullDateTime,
+  longDateStamp,
   messageStamp,
   shownDateOf,
   weekdayClock,
@@ -567,7 +569,7 @@ export { forwardOffered, forwardPress, type ForwardAsk, type ForwardPress } from
 // Undo semantics — every verb's undo class, and the wire's own reversal for the "inverse" kinds.
 export { feedLineUndo, inverseMutations, undoInOrder, UNDO_CLASS, type UndoClass, type UndoSubject } from "./undo.js";
 // One chunk size for a read pressed over a set and for its Undo (the route caps a PATCH at 200 ids).
-export { MARK_SEEN_CHUNK, chunkMarkSeen } from "./mark-seen-chunk.js";
+export { MARK_SEEN_CHUNK, chunkMarkSeen, narrowRead } from "./mark-seen-chunk.js";
 // The thread-read rule both readers share: when a message in an entered conversation turns read.
 export {
   EVIDENCE_WINDOW_MS, THREAD_READ_FADE_MS, THREAD_READ_HOLD_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createThreadRead,
@@ -664,7 +666,7 @@ export {
 } from "./adapters/http-adapter.js";
 // The calendar's connect door as a setup reaches it: the six calls (the adapter is one), and the
 // ways an answer names as this build knows them.
-export { CALENDAR_WAYS, calendarWaysOf, type CalendarConnectTransport } from "./calendar-connect.js";
+export { CALENDAR_WAYS, calendarWaysOf, type CalendarConnectTransport, type CalendarSetupAdapter, type CalendarSetupTransport } from "./calendar-connect.js";
 export type { WireCall } from "./adapters/route-path.js";
 
 // The retrying read transport: one wrapper over the client's idempotent GETs, shared by the
@@ -837,6 +839,7 @@ export {
   PART_REASK_DELAYS_MS,
   type KeptAsNewDraft,
 } from "./engine.js";
+export { deleteIntentKey } from "./engine/trash.js";
 /** One mailbox's byte asks in line: never more at once than the API's per-mailbox door admits. */
 export { PART_FETCHES_PER_MAILBOX, BUSY_PATIENCE_MS } from "./part-lane.js";
 

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AddressBookEntry } from "@ohmail/client-engine";
-import { letter, page, search, settle, type Asked, type StoreFn, wideWindow } from "./search-world.js";
+import { DESKTOP, letter, page, search, settle, type Asked, type StoreFn, wideWindow } from "./search-world.js";
 
 /**
  * A PERSON FIRST, THEN THE FILTERS, where the host's server takes them: a person typed or picked stands in the field
@@ -256,6 +256,38 @@ describe("the filters beside the words", () => {
     expect(pages(world.asked).at(-1)?.opts.filters).toEqual({ folder: "Archive" });
   });
 
+  it("keeps a typed folder's leaf on the device and asks the store for the selected path", async () => {
+    const first = letter({ id: "first-sample", subject: "Glaze sample", folder: "Winter/Samples" });
+    const second = letter({ id: "second-sample", subject: "Glaze sample", folder: "Summer/Samples" });
+    const outside = letter({ id: "outside", subject: "Glaze sample" });
+    const facets = {
+      folder: { "Winter/Samples": 1, "Summer/Samples": 1, INBOX: 1 },
+      sender: [],
+      hasAttachments: { true: 0, false: 3 },
+      unread: { true: 0, false: 3 },
+    };
+    let answer!: (value: Awaited<ReturnType<StoreFn>>) => void;
+    const narrowed = new Promise<Awaited<ReturnType<StoreFn>>>((resolve) => { answer = resolve; });
+    const world = await search([first, second, outside], {
+      searchBy: "people",
+      store: (q, opts) => opts.filters?.folder
+        ? narrowed
+        : page([first, second, outside], { facets })(q, opts),
+    });
+    await type("glaze");
+    await settle();
+    await press("Place");
+    const choices = within(screen.getByRole("menu", { name: "Place" })).getAllByRole("menuitem", { name: /Samples/ });
+    await act(async () => { fireEvent.click(choices[0]!); });
+    await settle(200);
+    expect(results().map((li) => li.getAttribute("data-hit")).sort()).toEqual([first.id, second.id].sort());
+    expect(choices.map((choice) => choice.textContent)).toEqual(["Winter/Samples1", "Summer/Samples1"]);
+    const asked = pages(world.asked).at(-1)!;
+    expect(asked.opts.filters).toEqual({ folder: first.folder });
+    await act(async () => { answer(await page([first])(asked.q, asked.opts)); });
+    expect(results().map((li) => li.getAttribute("data-hit"))).toEqual([first.id]);
+  });
+
   it("a date window asks for the days it spans, and a press takes it off", async () => {
     const world = await search([BEN], { store: page([BEN]), side: people, searchBy: "people" });
     await type("kiln");
@@ -285,4 +317,122 @@ describe("a host whose server takes words only", () => {
     expect(pages(world.asked).map((a) => a.opts.filters)).toEqual([undefined]);
     expect(pages(world.asked).map((a) => a.q)).toEqual(["from:ben"]);
   });
+});
+
+describe.each(["desktop", "phone"] as const)("resting Search on %s", (device) => {
+  const plan = device === "phone"
+    ? { ...DESKTOP, device, size: "compact", pointer: "coarse", columns: 1 } as const
+    : DESKTOP;
+
+  it("exposes Place and Has attachment before asking, and either can start a search", async () => {
+    const filed = letter({ id: "filed", subject: "Fired samples", folder: "Archive", file: true });
+    const world = await search([BEN, filed], { plan, searchBy: "people", store: page([filed]) });
+    const group = within(screen.getByRole("group", { name: "Refine" }));
+    expect(group.getAllByRole("button").map((button) => button.textContent?.trim()))
+      .toEqual(["Place", "Has attachment", "Unread", "Date"]);
+    expect(world.asked).toEqual([]);
+    await press("Place");
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: "Archive" }));
+    });
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({ q: "", opts: { filters: { folder: "Archive" } } });
+    await press("Has attachment");
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({
+      q: "", opts: { filters: { folder: "Archive", hasAttachments: true } },
+    });
+    await press("Archive");
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({ q: "", opts: { filters: { hasAttachments: true } } });
+    expect(screen.getByRole("button", { name: "Has attachment", pressed: true })).not.toBeNull();
+  });
+
+  it("shows the first five people, expands with All, and replaces the resting view when selected", async () => {
+    const others = Array.from({ length: 4 }, (_, i) => ({
+      name: `Contact ${i + 1}`, address: `contact${i + 1}@example.invalid`, count: i + 1, lastAt: 0,
+      evidence: "they_wrote" as const,
+    }));
+    const reply = { ...BEN, id: "reply", to: [{ name: "Nadja Lehner", address: NADJA.from.address }] };
+    const contacts = others.map((p, i) => letter({
+      id: `contact-${i}`, subject: "Samples", from: p.name, address: p.address,
+    }));
+    const world = await search([NADJA, reply, ...contacts], {
+      plan, searchBy: "people", store: page([NADJA]), side: { people: () => [...BOOK, ...others] },
+    });
+    const list = within(screen.getByRole("list", { name: "People" }));
+    expect(list.getAllByRole("button")).toHaveLength(5);
+    const first = list.getAllByRole("button")[0];
+    expect(first?.textContent).toContain("Nadja Lehner");
+    expect(first?.textContent).toContain("1 from · 1 to");
+    await press("All");
+    expect(list.getAllByRole("button")).toHaveLength(6);
+    await press("Fewer");
+    expect(list.getAllByRole("button")).toHaveLength(5);
+    await press(/^Nadja Lehner/);
+    await settle();
+    expect(pages(world.asked).at(-1)).toMatchObject({ q: "", opts: { filters: { party: NADJA.from.address } } });
+    expect(screen.queryByRole("heading", { name: /^People/ })).toBeNull();
+  });
+
+  it("prints the supplied mailbox total at rest and removes it while a filter is answering", async () => {
+    const total = 4567;
+    const caption = `${total.toLocaleString("en")} messages`;
+    const world = await search([BEN], {
+      plan, searchBy: "people", store: page([]), readMailboxTotal: async () => total, side: people,
+    });
+    expect(screen.getByText(caption)).not.toBeNull();
+    expect(world.asked).toEqual([]);
+    await press("Unread");
+    expect(screen.queryByText(caption)).toBeNull();
+    expect(screen.queryByRole("heading", { name: /^People/ })).toBeNull();
+  });
+});
+
+it("keeps the refine controls while a query waits and after both kinds of answer", async () => {
+  const archived = letter({ id: "archived", subject: "Glaze dates", folder: "Archive" });
+  const facets = {
+    folder: {}, sender: [], hasAttachments: { true: 0, false: 0 }, unread: { true: 0, false: 0 },
+  };
+  const world = await search([archived], {
+    searchBy: "people",
+    store: (q, opts) => page(q === "glaze" ? [archived] : [], { facets, ms: 19 })(q, opts),
+  });
+  const refine = () => within(screen.getByRole("group", { name: "Refine" }));
+  const checkControls = () => expect(refine().getAllByRole("button").map((button) => button.textContent))
+    .toEqual(["Place", "Has attachment", "Unread", "Date"]);
+
+  await type("nothing");
+  expect(world.asked).toEqual([]);
+  checkControls();
+  expect(screen.queryByRole("button", { name: /^Sorted by/ })).toBeNull();
+  await settle();
+  checkControls();
+  expect(screen.queryByRole("button", { name: /^Sorted by/ })).toBeNull();
+  await press("Place");
+  expect(within(screen.getByRole("menu", { name: "Place" })).getByRole("menuitem", { name: "Archive" })).toBeTruthy();
+  await press("Place");
+
+  await type("glaze");
+  await settle();
+  checkControls();
+  const heading = screen.getByRole("heading", { name: /^Results/ });
+  await act(async () => {
+    fireEvent.click(within(heading.parentElement!).getByRole("button", { name: /^Sorted by/ }));
+  });
+  await act(async () => {
+    fireEvent.click(within(screen.getByRole("menu", { name: "Sort by" })).getByRole("menuitemradio", { name: "Newest first" }));
+  });
+  await settle(100);
+  expect(pages(world.asked).at(-1)?.opts.sort).toBe("date_desc");
+});
+
+it("prints the measured time after an attachment-only search", async () => {
+  const filed = letter({ id: "filed-sample", subject: "Glaze dates", file: true });
+  await search([filed], { searchBy: "people", store: page([filed]) });
+  const field = within(box().parentElement!);
+  expect(field.queryByText(/^\d+ ms$/)).toBeNull();
+  await press("Has attachment");
+  await settle();
+  expect(field.getByText(/^[1-9]\d* ms$/)).toBeTruthy();
 });

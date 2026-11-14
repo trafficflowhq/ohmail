@@ -1,6 +1,6 @@
 import { sql, eq, and } from "drizzle-orm";
 import {
-  type OrganizerRole, mailboxes, type Tx, messages, folderState, junkSweepCandidateWhere,
+  type OrganizerRole, mailboxes, type Tx, messages, folderState, readJunkSweepCommand, clearJunkSweepCommand, retireLegacyJunkSweep,
 } from "@trafficflow/db";
 import { providerAuthservIds } from "@trafficflow/core";
 import { storedFoldersOf, recordSpecialFolders, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -11,7 +11,7 @@ import { profileProducerVersion } from "../build-version.js";
 import { type SyncDeps, UNLABELLED_BUILD } from "@ohmail/organizer/sync";
 import { shrinkMetaOnRefusal } from "@ohmail/organizer/request-drain";
 import {
-  type SweepScanState, SWEEP_SCAN_START, sweepStateForPress, junkSweepPass, adoptSweepWindow,
+  type SweepScanState, SWEEP_SCAN_START, sweepStateForPress, junkSweepPass, adoptSweepWindow, confirmedJunkSweepWhere,
 } from "../junk-sweep.js";
 import { DeadLetterLedger, isDatabaseFault } from "@ohmail/organizer/dead-letter";
 import { KnownSetCache } from "@ohmail/organizer/known-set";
@@ -298,6 +298,12 @@ export function attachSection(scope: WorkerScope): void {
         const attachedAdapter: MailboxAdapter = adapter;
         /** The sweep's scan state for THIS attachment — see the `junkSweep.run` note below. */
         let sweepScan: SweepScanState = SWEEP_SCAN_START;
+        let sweepCommand: Awaited<ReturnType<typeof readJunkSweepCommand>> = null;
+        const clearSweep = async (id: string) => {
+          if (sweepCommand?.id === id) {
+            await clearJunkSweepCommand(own.db as unknown as Tx, mb.accountId, mb.mailboxId, sweepCommand.cursor);
+          }
+        };
         const deps: Omit<SyncDeps, "writeAuthority"> = {
           repo: own.repo, adapter, accountId: mb.accountId, mailboxId: mb.mailboxId,
           // Mail 0083. THE ATTACH-TIME ROLE, and it is the field's floor rather than its whole
@@ -373,37 +379,28 @@ export function attachSection(scope: WorkerScope): void {
           // compare-the-text discipline), so a press landing mid-sweep is served next cycle.
           junkSweep: {
             requested: async () => {
-              const [row] = await own.db
-                .select({
-                  at: sql<string | null>`${mailboxes.junkSweepRequestedAt}::text`,
-                  off: mailboxes.foldersDisabledAt,
-                })
-                .from(mailboxes)
-                .where(eq(mailboxes.id, mb.mailboxId))
-                .limit(1);
-              if (!row || row.at === null) return null;
-              if (row.off !== null) {
-                // Switched off under "Use folders" since the press (§17): an opted-out mailbox
-                // performs no move on the feature's account. The stale stamp is retired here
-                // — at its observed value — so the offer does not read "queued" for ever.
-                await own.db.update(mailboxes)
-                  .set({ junkSweepRequestedAt: null })
-                  .where(and(
-                    eq(mailboxes.id, mb.mailboxId),
-                    sql`${mailboxes.junkSweepRequestedAt} = ${row.at}::timestamptz`,
-                  ));
-                scope.log.info("junk_sweep_command_dropped", {
-                  mailboxId: mb.mailboxId, accountId: mb.accountId,
-                  reason: "the mailbox was switched off under Use folders after the press; nothing moves",
-                });
-                return null;
+              const db = own.db as unknown as Tx;
+              sweepCommand = await readJunkSweepCommand(db, mb.accountId, mb.mailboxId);
+              const [box] = await db.select({
+                foldersDisabledAt: mailboxes.foldersDisabledAt, status: mailboxes.status, junk: mailboxes.junkFolder,
+                legacy: mailboxes.junkSweepRequestedAt,
+              }).from(mailboxes).where(and(eq(mailboxes.accountId, mb.accountId), eq(mailboxes.id, mb.mailboxId)));
+              if (box?.legacy != null) {
+                const stamp = box.legacy;
+                await db.transaction((tx) => retireLegacyJunkSweep(tx, mb.accountId, mb.mailboxId, stamp));
               }
-              return row.at;
+              if (!sweepCommand) return null;
+              if (!box || box.foldersDisabledAt !== null || box.status === "disabled" || box.junk !== sweepCommand.folder) {
+                await clearSweep(sweepCommand.id);
+                sweepCommand = null;
+              }
+              return sweepCommand?.id ?? null;
             },
             run: async (hooks) => {
               // ONE PRESS, ONE SCAN STATE — the reset is a named decision in `junk-sweep.ts`
               // rather than a conditional here, because a decision spelled inline in this file is
               // one nothing can assert. See `SweepScanState.command`.
+              if (!sweepCommand || sweepCommand.id !== hooks.command) throw new Error("Junk sweep command changed");
               sweepScan = sweepStateForPress(sweepScan, hooks.command);
               const fencedRepo = new Proxy(own.repo, {
                 get: (target, key, receiver) =>
@@ -422,7 +419,7 @@ export function attachSection(scope: WorkerScope): void {
                 db: own.db as unknown as Tx, repo: fencedRepo, adapter: attachedAdapter,
                 accountId: mb.accountId, mailboxId: mb.mailboxId, execute: true,
                 writeAuthority: hooks.writeAuthority,
-                limit: JUNK_SWEEP_PER_CYCLE,
+                confirmed: sweepCommand, limit: JUNK_SWEEP_PER_CYCLE,
                 ...(sweepScan.after !== null ? { afterId: sweepScan.after } : {}),
               });
               const adopted = adoptSweepWindow(sweepScan, {
@@ -454,17 +451,10 @@ export function attachSection(scope: WorkerScope): void {
                 .select({ n: sql<number>`count(*)::int` })
                 .from(messages)
                 .innerJoin(folderState, eq(folderState.messageId, messages.id))
-                .where(junkSweepCandidateWhere(mb.accountId, mb.mailboxId));
+                .where(confirmedJunkSweepWhere(mb.accountId, mb.mailboxId, sweepCommand?.ids ?? []));
               return Number(row?.n ?? 0);
             },
-            clear: async (observed) => {
-              await own.db.update(mailboxes)
-                .set({ junkSweepRequestedAt: null })
-                .where(and(
-                  eq(mailboxes.id, mb.mailboxId),
-                  sql`${mailboxes.junkSweepRequestedAt} = ${observed}::timestamptz`,
-                ));
-            },
+            clear: clearSweep,
           },
         };
 

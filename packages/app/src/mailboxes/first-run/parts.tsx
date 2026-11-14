@@ -1,9 +1,10 @@
 /**
- * THE STAGE'S SMALL PARTS, composed from the kit: the page's sentence that ends in the dot, how far the run is, the
- * foot's verbs and the two confirms in place. No look of their own; their placement is `placement.css`.
+ * THE STAGE'S SMALL PARTS, composed from the kit: how far the run is, the foot's verbs and the two questions, which
+ * are the kit's dialog. A page's sentence is the kit's `Sentence` handed whole. No look of their own; their placement
+ * is `placement.css`.
  */
 import type { ReactNode } from "react";
-import { Button, Dot, EndDot, Sentence } from "@ohmail/ui/base";
+import { Button, Dialog, StepDots } from "@ohmail/ui/base";
 import type { OnboardingDoor } from "@ohmail/app-logic/doors/onboarding";
 import type { Said as SaidLine } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import type { FirstRun } from "@ohmail/app-logic/mailboxes/first-run/use-first-run";
@@ -20,28 +21,7 @@ export interface StepProps {
   readonly slots: FirstRunSlots;
   /** The connect form's wire: the host's `wires.connect`. */
   readonly connect: ConnectWire | None;
-}
-
-/**
- * A page's one sentence, ending in the dot: `hot` while something waits on the person, `ink` once it is done. The
- * catalogue's sentence keeps its own punctuation: a closing full stop becomes the dot, one that ends on a word gets
- * one, one that ends on any other mark is said as it stands.
- */
-export function Said({
-  text,
-  dot = "hot",
-  id,
-}: {
-  text: string;
-  dot?: "hot" | "ink";
-  id?: string;
-}): ReactNode {
-  const words = text.endsWith(".") ? text.slice(0, -1) : text;
-  return (
-    <Sentence size="xl" level={1} {...(id === undefined ? {} : { id })}>
-      {/[\p{L}\p{N}]$/u.test(words) ? <EndDot kind={dot}>{words}</EndDot> : text}
-    </Sentence>
-  );
+  readonly onCodeStarted?: () => void;
 }
 
 /**
@@ -57,24 +37,16 @@ export function wordsOf(said: SaidLine, say: Say): string {
     : say(`${said.ns}.${said.key}`, said.values ? { ...said.values } : undefined);
 }
 
-/** How far the run is: its phases, the one it is in, and the step named once for a narrow window. */
+/** How far the run is: the kit's dots, a dot a phase, said as one sentence ("Step 2 of 5, Mailbox"). */
 export function Progress({ run, say }: { run: FirstRun; say: Say }): ReactNode {
   const { rail, railAt } = run.cursor;
-  const label = (id: string): string => say(`onboarding.rail_${id}`);
+  const phase = say(`onboarding.rail_${rail[railAt]?.id ?? "mailbox"}`);
   return (
-    <div className="mbx-run-progress">
-      <ol className="mbx-run-rail" aria-label={say("onboarding.rail_mailbox")}>
-        {rail.map((r, i) => (
-          <li key={r.id} className="mbx-run-phase" aria-current={i === railAt ? "step" : undefined}>
-            <Dot kind={i < railAt ? "ink" : i === railAt ? "hot" : "todo"} />
-            <span>{label(r.id)}</span>
-          </li>
-        ))}
-      </ol>
-      <p className="mbx-run-at" aria-hidden="true">
-        {`${railAt + 1} / ${rail.length} · ${label(rail[railAt]?.id ?? "mailbox")}`}
-      </p>
-    </div>
+    <StepDots
+      label={say("onboarding.railSaid", { n: railAt + 1, total: rail.length, phase })}
+      steps={rail.length}
+      at={railAt}
+    />
   );
 }
 
@@ -118,7 +90,10 @@ export function Foot(p: {
   );
 }
 
-/** A STEP'S BODY IS A FORM so ↵ submits it: every screen has exactly one forward verb, and it is this one. */
+/**
+ * A STEP'S BODY IS A FORM so ↵ submits it: every screen has exactly one forward verb, and it is this one. No step's
+ * verb runs while a write is on its way or while a question stands over the step.
+ */
 export function StepForm({
   run,
   submit,
@@ -131,9 +106,10 @@ export function StepForm({
   return (
     <form
       className="mbx-run-step"
+      tabIndex={-1}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!run.writes.busy) submit();
+        if (!run.writes.busy && run.confirm === null) submit();
       }}
     >
       {children}
@@ -150,47 +126,58 @@ export function Next({ label, disabled }: { label: string; disabled?: boolean })
   );
 }
 
-/** Both destructive verbs confirm IN PLACE. Nothing agreed is not "what you agreed to stays agreed". */
+/**
+ * Both destructive verbs ask first, as the kit's dialog: the question by its name, what it does in one line, the
+ * answer that does it, Forget where the door can forget, and Back. Asked, it takes the keys on its first answer that
+ * can be pressed and keeps them; Escape and Back take it back, and the keys go back to where the person was. Keyed
+ * by the question, so one that gives way to the other is asked anew. Nothing agreed is not "what you agreed to stays
+ * agreed".
+ */
 export function Confirms({ run, say }: { run: FirstRun; say: Say }): ReactNode {
   const busy = run.writes.busy;
-  const mb = run.facts.mailbox;
-  if (run.confirm === "cancel")
+  const back = { label: say("onboarding.back"), keyHint: "Esc" };
+  const takeBack = (): void => {
+    if (run.confirm === "restart") run.gated.withdraw("forget");
+    run.setConfirm(null);
+  };
+  if (run.confirm === "cancel") {
+    const mb = run.facts.mailbox;
     return (
-      <div className="mbx-run-confirm" role="group" aria-label={say("onboarding.cancel")}>
-        <p>
-          {say(
-            mb && !mb.organizeConsentedAt ? "onboarding.cancelWhatNothingAgreed" : "onboarding.cancelWhat",
-          )}
-        </p>
-        <div className="mbx-run-acts">
-          <Button kind="ink" disabled={busy} onPress={run.acts.close}>
-            {say("onboarding.cancelConfirm")}
-          </Button>
-          <Button kind="quiet" onPress={() => run.setConfirm(null)}>
-            {say("onboarding.back")}
-          </Button>
-        </div>
-      </div>
+      <Dialog
+        key="cancel"
+        open
+        onClose={takeBack}
+        title={say("onboarding.cancel")}
+        hot
+        line={say(
+          mb && !mb.organizeConsentedAt ? "onboarding.cancelWhatNothingAgreed" : "onboarding.cancelWhat",
+        )}
+        confirm={{
+          label: say("onboarding.cancelConfirm"),
+          onPress: run.acts.close,
+          disabled: busy,
+          keyHint: "↵",
+        }}
+        cancel={back}
+      />
     );
+  }
   if (run.confirm !== "restart") return null;
   const problem = run.forgetRefused ? run.writes.problem : null;
   return (
-    <div className="mbx-run-confirm" role="group" aria-label={say("onboarding.restart")}>
-      <p>{say("onboarding.restartWhat")}</p>
-      {problem ? <p role="alert">{wordsOf(problem, say)}</p> : null}
-      <div className="mbx-run-acts">
-        <Button kind="ink" disabled={busy} onPress={run.acts.keep}>
-          {say("onboarding.restartKeep")}
-        </Button>
-        {run.mailbox !== null && run.acts.canForget ? (
-          <Button kind="quiet" disabled={busy} onPress={run.acts.forget}>
-            {say("onboarding.restartForget")}
-          </Button>
-        ) : null}
-        <Button kind="quiet" onPress={() => run.setConfirm(null)}>
-          {say("onboarding.back")}
-        </Button>
-      </div>
-    </div>
+    <Dialog
+      key="restart"
+      open
+      onClose={takeBack}
+      title={say("onboarding.restart")}
+      hot
+      line={say("onboarding.restartWhat")}
+      confirm={{ label: say("onboarding.restartKeep"), onPress: run.acts.keep, disabled: busy, keyHint: "↵" }}
+      {...(run.mailbox !== null && run.acts.canForget
+        ? { second: { label: say("onboarding.restartForget"), onPress: run.acts.forget, disabled: busy } }
+        : {})}
+      {...(problem ? { said: { line: wordsOf(problem, say), refused: true } } : {})}
+      cancel={back}
+    />
   );
 }

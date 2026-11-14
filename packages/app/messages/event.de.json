@@ -1,5 +1,8 @@
 {
   "event": {
+    "undoDelete": "Rückgängig",
+    "deleteUndone": "Termin wiederhergestellt",
+    "undoLate": "Zu spät zum Rückgängigmachen",
     "waiting": {
       "device": "Von diesem Gerät noch nicht gesendet",
       "provider": "Wartet auf den Kalender"
@@ -19,6 +22,7 @@
       "unknown": "Die Änderung wurde nicht gespeichert."
     },
     "refusal": {
+      "changed": "Der Termin wurde geändert. Öffne ihn erneut, um die aktuelle Version zu sehen.",
       "off": "Der Kalender ist für diesen Account ausgeschaltet.",
       "readOnly": "Dieser Kalender kann angesehen, aber nicht geändert werden.",
       "full": "Zu viele Änderungen warten. Bitte gleich noch einmal versuchen.",
@@ -31,6 +35,7 @@
       "unknown": "Die Änderung wurde nicht gespeichert."
     },
     "taken": {
+      "deleteAudience": "Termin entfernt. Absage für {guests}.",
       "create": "Termin hinzugefügt",
       "update": "Änderung gespeichert",
       "delete": "Termin entfernt",

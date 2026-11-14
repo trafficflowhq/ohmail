@@ -19,6 +19,7 @@ import {
   clockOf,
   dayHead,
   hourLabels,
+  otherHourLabels,
   isoOfDay,
   nowIn,
   pillChip,
@@ -37,6 +38,7 @@ import type {
 } from "../calendar/view.js";
 import type { LayoutPlan } from "../frame/contract.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
+import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { useLocale, useText } from "../text/index.js";
 import "./week.css";
 
@@ -61,6 +63,7 @@ export function weekLayout(
 export function WeekView(props: CalendarViewProps) {
   const t = useText("week");
   const locale = useLocale();
+  const swipe = useCalendarSwipe(props.stepDay);
   const { anchor, settings, plan, clock, openId } = props;
   const all = useMemo(() => weekSpan(anchor, settings), [anchor, settings]);
   const { one, crease, dense } = weekLayout(plan, props.panel);
@@ -69,6 +72,7 @@ export function WeekView(props: CalendarViewProps) {
     hours: settings.hours,
     hourDefault: plan.device === "phone" ? 56 : 60,
     room: plan,
+    focusMinute: props.cursor,
     spanKey: isoOfDay(days[0]!),
     openId,
     openTop: () => model.days.flatMap((d) => d.blocks).find((b) => b.item.id === openId)?.top ?? null,
@@ -107,6 +111,8 @@ export function WeekView(props: CalendarViewProps) {
     ...dayHead(d.day, locale),
     id: d.id,
     today: d.today,
+    cursor:
+      props.cursor != null && sameDay(d.day, anchor) ? { minutes: props.cursor, length: 60 } : undefined,
     picked: d.picked,
     above: capsule(d, "above"),
     below: capsule(d, "below"),
@@ -118,26 +124,12 @@ export function WeekView(props: CalendarViewProps) {
         dense={dense}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
+        onPointerDown={props.onDrag ? (event) => props.onDrag?.(b.item.id, event) : undefined}
       />
     )),
   }));
 
-  const lane = model.lane.pills.map((p) => {
-    const chip = pillChip(p, p.item.id === openId);
-    return (
-      <EventChip
-        key={p.item.id}
-        size="pill"
-        {...chip}
-        label={t("chipAllDay", { title: p.item.title })}
-        style={{
-          gridColumn: `${dayColumn(chip.first, crease)} / ${dayColumn(chip.last, crease) + 1}`,
-          gridRow: chip.row + 1,
-        }}
-        onPress={() => open(p.item)}
-      />
-    );
-  });
+  const lane = weekPills(model.lane.pills, crease, props, t);
 
   return (
     <section className="cw-week" aria-label={t("hours")}>
@@ -155,9 +147,22 @@ export function WeekView(props: CalendarViewProps) {
       <TimeGrid
         days={kitDays}
         heads={!one}
-        allDay={<AllDayRow label={t("allDay")}>{lane}</AllDayRow>}
+        allDay={
+          <AllDayRow label={t("allDay")} targets={kitDays.map((day) => day.id)} crease={crease}>
+            {lane}
+          </AllDayRow>
+        }
+        {...(props.dragPreview ? { dragPreview: props.dragPreview } : {})}
         firstHour={0}
         hourLabels={hourLabels(0, 24)}
+        secondAxis={
+          settings.secondZone
+            ? {
+                label: settings.secondZone,
+                hours: otherHourLabels(anchor, clock.zone, settings.secondZone, clock.zones),
+              }
+            : undefined
+        }
         hourHeight={hours.hourPx}
         now={
           model.now === null ? undefined : { minutes: model.now.minutes, label: clockOf(model.now.minutes) }
@@ -169,10 +174,36 @@ export function WeekView(props: CalendarViewProps) {
           if (day !== undefined) props.onDay(day);
         }}
         scrollRef={hours.ref}
+        scrollGestures={swipe}
         onScroll={hours.onScroll}
       />
     </section>
   );
+}
+
+function weekPills(
+  pills: ReturnType<typeof useTimeGrid<CalendarEventView>>["lane"]["pills"],
+  crease: number,
+  props: CalendarViewProps,
+  t: ReturnType<typeof useText>,
+) {
+  return pills.map((p) => {
+    const chip = pillChip(p, p.item.id === props.openId);
+    return (
+      <EventChip
+        key={p.item.id}
+        size="pill"
+        {...chip}
+        label={t("chipAllDay", { title: p.item.title })}
+        style={{
+          gridColumn: `${dayColumn(chip.first, crease)} / ${dayColumn(chip.last, crease) + 1}`,
+          gridRow: chip.row + 1,
+        }}
+        onPress={() => props.onOpen(p.item.ref)}
+        onPointerDown={props.onDrag ? (event) => props.onDrag?.(p.item.id, event) : undefined}
+      />
+    );
+  });
 }
 
 export const weekView: CalendarView = {

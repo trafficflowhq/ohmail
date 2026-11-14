@@ -6,7 +6,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { render, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { EntityReader } from "@ohmail/client-engine";
+import type { EntityReader, OhmailEngine } from "@ohmail/client-engine";
 import {
   ListMeetingContext,
   PresentedMirrorContext,
@@ -14,10 +14,10 @@ import {
   type ListMeeting,
   type ThreadReadWiring,
 } from "@ohmail/app-logic/reading";
+import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys";
 import type { PictureSeam } from "@ohmail/app-logic/reader";
 import { Frame } from "../../../src/frame/Frame.js";
 import type { LayoutPlan, PaneProps, PlaceEntry } from "../../../src/frame/contract.js";
-import { KeymapProvider } from "../../../src/keys/index.js";
 import {
   readerEntry,
   type LetterProps,
@@ -105,6 +105,17 @@ export const READER_PLACE: PlaceEntry = {
   panes: { kind: "columns", List, Reading: "reader" },
 };
 
+/**
+ * The place that writes, as every host that shows mail hands one: where an answer leads when the shell hands the
+ * reader no reply of its own. A host that hands none has no such place, and the walk there ends at the Ohbox.
+ */
+export const WRITE_PLACE: PlaceEntry = {
+  id: "write",
+  body: "write",
+  rail: null,
+  panes: { kind: "wide", Wide: () => <p>the place that writes</p> },
+};
+
 export interface MountReader {
   readonly letters: readonly EngineMessage[];
   readonly open: string | null;
@@ -147,7 +158,7 @@ export function mountReader(o: MountReader) {
     engine: mail.engine,
     service: "self",
     scope: "acct-1",
-    places: { ohbox: READER_PLACE },
+    places: { ohbox: READER_PLACE, write: WRITE_PLACE },
     reader: readerEntry(parts),
     window: fakeWindow(o.size ?? "desktop"),
     address,
@@ -155,25 +166,41 @@ export function mountReader(o: MountReader) {
   });
   const lang = o.lang ?? "en";
   const presented = o.presented === undefined ? (raw: EntityReader) => raw : o.presented;
-  const frame = (
-    <PresentedMirrorContext.Provider value={presented === null ? null : presented(mail.engine.read())}>
-      <Frame host={made.host} />
-    </PresentedMirrorContext.Provider>
-  );
-  /* The key map's registry stands above the frame, as a shell's does: the column declares its keys into it. */
-  const view = render(
-    <TextProvider locale={lang} messages={o.words ?? WORDS[lang]} timeZone="Europe/Zurich">
-      <KeymapProvider>
-        {o.meeting === undefined ? (
-          frame
-        ) : (
-          <ListMeetingContext.Provider value={o.meeting}>{frame}</ListMeetingContext.Provider>
-        )}
-        {o.children}
-      </KeymapProvider>
-    </TextProvider>,
-  );
-  return { ...made, mail, view, handed: double.handed, parts };
+  const draw = (engine: OhmailEngine, shown: OhmailEngine) => {
+    const frame = (
+      <PresentedMirrorContext.Provider value={presented === null ? null : presented(shown.read())}>
+        <Frame host={{ ...made.host, engine }} />
+      </PresentedMirrorContext.Provider>
+    );
+    /* The key map's registry stands above the frame, as the frame stands its own (`Frame.tsx` `OwnKeys`): the column
+       declares its keys into it, and a case's children beside the frame read the same table. */
+    return (
+      <TextProvider locale={lang} messages={o.words ?? WORDS[lang]} timeZone="Europe/Zurich">
+        <Registry>
+          {o.meeting === undefined ? (
+            frame
+          ) : (
+            <ListMeetingContext.Provider value={o.meeting}>{frame}</ListMeetingContext.Provider>
+          )}
+          {o.children}
+        </Registry>
+      </TextProvider>
+    );
+  };
+  const view = render(draw(made.host.engine, mail.engine));
+  return {
+    ...made,
+    mail,
+    view,
+    handed: double.handed,
+    parts,
+    replaceEngine: (engine: OhmailEngine) => view.rerender(draw(engine, engine)),
+  };
+}
+
+/** The keyboard registry, stood as the frame stands it when none stands above it. */
+function Registry({ children }: { readonly children: ReactNode }) {
+  return <KeymapContext.Provider value={useKeymapStore()}>{children}</KeymapContext.Provider>;
 }
 
 export type { LayoutPlan, PictureSeam, ReaderFiles };

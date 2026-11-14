@@ -5,23 +5,35 @@
  * last put itself, and one that moved from there is the person's (1.0.11's rule, `heldAnchored`). A sender of one
  * letter opens at the column's top.
  *
- * The line the letter lands on is the column's top: the sentence over the letters scrolls with them. Once the kit's
- * reading head that takes a sentence stays over the column (ask KS10), the letter lands under it, as 1.0.11's under
- * its bar.
+ * The reading sheet reserves room for its stationary head above the scrollport. The newest letter lands at the
+ * scrollport's top, with the same breathing room it has when its body grows.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cssRect } from "@ohmail/app-logic/geometry";
-import { heldAnchored, heldAnchorTop } from "@ohmail/app-logic/lists/held-window";
+import { heldAnchored, heldAnchorTop, useHeldWindow } from "@ohmail/app-logic/lists/held-window";
+import { afterPaint } from "@ohmail/app-logic/lists/visit";
 import { heldMark } from "../held/HeldLetter.js";
 
 /**
  * `opened` names the open sender (its section and id): a new one is put on its newest letter. `newest` is that
  * letter's id, null where the sender holds one letter or none. The ref is the reading sheet's scroller.
  */
-export function useNewestFirst(opened: string, newest: string | null) {
+export function useNewestFirst(
+  opened: string,
+  newest: string | null,
+  count: number,
+  openingAt?: number,
+  keepBrowserOffset = false,
+) {
   const scroller = useRef<HTMLDivElement | null>(null);
   /* Where the column last put itself; null while it holds no letter. */
   const at = useRef<number | null>(null);
+  const [painted, setPainted] = useState<string | null>(null);
+  const ready = painted === opened;
+  useEffect(() => {
+    if (ready) return;
+    return afterPaint(scroller.current, () => startTransition(() => setPainted(opened)));
+  }, [opened, ready]);
   const target = useRef(newest);
   target.current = newest;
   const place = useCallback(() => {
@@ -35,17 +47,20 @@ export function useNewestFirst(opened: string, newest: string | null) {
   }, []);
   useLayoutEffect(() => {
     at.current = null;
-    place();
-  }, [opened, place]);
-  useEffect(() => {
-    const el = scroller.current;
-    if (el === null || typeof ResizeObserver !== "function") return;
-    const watch = new ResizeObserver(() => {
-      if (heldAnchored(at.current, el.scrollTop)) place();
-    });
-    watch.observe(el);
-    for (const part of el.children) watch.observe(part);
-    return () => watch.disconnect();
-  }, [opened, place]);
-  return scroller;
+    if (!keepBrowserOffset) place();
+  }, [opened, place, keepBrowserOffset]);
+  useLayoutEffect(() => {
+    if (ready && scroller.current && heldAnchored(at.current, scroller.current.scrollTop)) place();
+  }, [ready, place]);
+  const window = useHeldWindow({
+    count,
+    resetKey: opened,
+    read: () => scroller.current,
+    anchoredAt: at,
+    reanchor: place,
+    cardSelector: ".sc-held-letters > article",
+    openingAt,
+    ready,
+  });
+  return { scroller, ready, ...window };
 }

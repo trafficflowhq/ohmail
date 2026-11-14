@@ -10,11 +10,12 @@ import { NoticeSlot, type NoticeAct, type SlotNotice } from "@ohmail/ui/base";
 import { ListLine } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import { Claimed } from "../asks/Claimed.js";
-import { useScreener } from "../contract.js";
+import { useScreener, useScreenerBeside } from "../contract.js";
 
 export function Notices({ view }: { view: ScreenerView }) {
   const t = useText("screener");
-  const { heldRelease: held, impersonationFiled: claimed } = useScreener();
+  const { windowNotice } = useScreenerBeside();
+  const { heldRelease: held, impersonationFiled: claimed, unscreened } = useScreener();
   const [front, setFront] = useState<string | undefined>(undefined);
   const [open, setOpen] = useState(false);
   if (view.segment !== "waiting") return null;
@@ -57,6 +58,33 @@ export function Notices({ view }: { view: ScreenerView }) {
         ? t(claimed.said === "failed" ? "impersonationFailed" : "impersonationRequested")
         : undefined,
       acts: [review, ok],
+    });
+  }
+  if (windowNotice) {
+    const { state, holderName } = windowNotice;
+    const key = state === "unread" ? "unread" : "unstated";
+    notices.push({
+      id: "screening-window",
+      rank: 2,
+      title: t("place.windowNotice.title"),
+      line:
+        holderName === null
+          ? t(`place.windowNotice.${key}Unknown`)
+          : t(`place.windowNotice.${key}`, { holder: holderName }),
+    });
+  }
+  if (unscreened) {
+    notices.push({
+      id: "undecided",
+      rank: 3,
+      title: t(unscreened.atLeast ? "unscreenedLeadAtLeast" : "unscreenedLead", { count: unscreened.total }),
+      acts: [
+        {
+          label: t("unscreenedAll", { count: unscreened.total }),
+          onPress: () => unscreened.screen(),
+          busy: unscreened.screening,
+        },
+      ],
     });
   }
   if (notices.length === 0) return null;

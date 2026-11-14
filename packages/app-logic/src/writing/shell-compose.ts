@@ -17,12 +17,13 @@ import type {
   EngineMessage,
   EngineMutation,
 } from "@ohmail/wire";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import {
   addressBook,
   draftBodyKnown,
   forwardPress,
   forwardSubject,
+  isProtectedMessage,
   pressVerdict,
   replySubject,
   intentOf,
@@ -77,7 +78,7 @@ import {
 } from "./compose-from.js";
 import type { ConsentState } from "../consent/consent-state.js";
 import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply.js";
-import { dropCopy, handleOf, twins } from "./draft-creates.js";
+import { dropCopy, handleOf, landedOf, twins } from "./draft-creates.js";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave.js";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send.js";
 import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files.js";
@@ -119,9 +120,9 @@ import type { MailboxFacts } from "../mail-state/mail-state.js";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text.js";
 import { documentHidden } from "../session/document-hidden.js";
 import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "../doors/app-update.js";
-import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordsNaming } from "./send-lock.js";
+import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLock, sendRecordNames, sendRecordsNaming } from "./send-lock.js";
 import { setComposeDoor } from "./compose-door.js";
-import { releaseSendAndDone } from "./send-release.js";
+import { releaseSendAndDone, type FilingStep } from "./send-release.js";
 import type {
   ComposerPlace,
   ComposerWords,
@@ -138,6 +139,7 @@ import {
 } from "./signature.js";
 import { useStableCallback } from "../press/stable-callback.js";
 import { UNDO_MS } from "../press/index.js";
+import { draftChanged, type DiscardResult, type WithdrawResult } from "../drafts/door.js";
 import type { StorageScope } from "../storage/scope.js";
 import type { Translator } from "../text/translator.js";
 import { noteReplyPress } from "./sent-reveal.js";
@@ -145,6 +147,8 @@ import type { OhboxReplyDone } from "../ohbox/index.js";
 
 /** How long a Not sent notice stands; a second ending inside it widens it to a count. */
 const NOT_SENT_TOAST_MS = 8000;
+/** An off-screen recovery should still be readable when the person returns to Compose. */
+const KEPT_DRAFT_TOAST_MS = 8000;
 
 /**
  * WHETHER A DRAFT MAY BE OPENED YET — a named unit for the reason `makeHydrateBody` is.
@@ -231,11 +235,15 @@ export interface ShellComposeInput {
   draftReplyWire: DraftReplyWire | "none";
   /** Only `view`, and only so the autosave knows whether the compose form is on screen. */
   route: { readonly view: string };
+  /** Where the host is now. A send may settle after the address changes and before Write unmounts. */
+  isComposeVisible?: () => boolean;
   /**
    * The host's way to one of the composer's places: the compose form, Drafts, the Ohbox. `open: null`: a send has
    * left the compose form, and its list is arrived at with no letter open.
    */
   go: (to: ComposerPlace, how?: { readonly open: null }) => void;
+  /** Whether the frame has a Drafts list. Without it, each failed send needs its own way back. */
+  draftsAvailable?: boolean;
   /**
    * A reply, a forward or a drafted reply stands under this letter now. The host shows the letter where its reply
    * would otherwise stand unseen (a layout of one column, where the reading column is the open letter), and does
@@ -267,10 +275,10 @@ export interface ShellComposeInput {
   setFrValues: Dispatch<SetStateAction<Record<string, RichValue>>>;
   /** The mirror as the views see it — Send + Done reads the source's section from it at the press. */
   presented: EntityReader;
-  /** The row's own Done door, with no sentence of its own — `resurface_done` dispatches the same way. */
-  mutateAndReport: (m: EngineMutation, sentence: string | null) => Promise<boolean>;
+  /** Silently dispatch one filing step, keeping its receipt if the outbox will retry it. */
+  mutateAndReport: (m: EngineMutation, sentence: null) => Promise<FilingStep>;
   /** The one sentence a Send + Done press earns, with the way back. */
-  toastWithUndo: (sentence: string, inverses: EngineMutation[]) => void;
+  toastWithUndo: (sentence: string, inverses: EngineMutation[] | (() => EngineMutation[])) => void;
   /** The host's mailto: click, or nothing. Required fields: an absent one selects no branch. */
   mailtoDraft: ComposePrefill | null | undefined;
   onMailtoDraftSeeded: (() => void) | undefined;
@@ -287,13 +295,20 @@ export interface ShellComposeInput {
 export type ShellCompose = ReturnType<typeof useShellCompose>;
 
 export function useShellCompose({
-  engine, reader, t, words, toast, draftReplyWire, route, go, showLetter, openWithReply, consent, facts, mailboxes,
+  engine, reader, t, words, toast, draftReplyWire, route, isComposeVisible, go, draftsAvailable = true, showLetter, openWithReply, consent, facts, mailboxes,
   drafts, ownAddresses, fallbackMailboxId, replyTo, setReplyTo, fr, setFr, setFrDone, setFrValues,
-  mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
+  mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport: dispatchFiling, toastWithUndo, mayHandOffFor, scope,
 }: ShellComposeInput) {
+  // Draft replies can outlive this frame. A replaced engine gets a new owner even in the same account.
+  const draftFrame = useRef<{ readonly engine: OhmailEngine; readonly scope: StorageScope } | null>(null);
+  useLayoutEffect(() => {
+    draftFrame.current = { engine, scope };
+    return () => { draftFrame.current = null; };
+  }, [engine, scope]);
   /** The route as it is now, for an ending that arrives after the person moved on. */
   const routeViewRef = useRef(route.view);
   routeViewRef.current = route.view;
+  const composeVisible = useStableCallback((): boolean => isComposeVisible?.() ?? routeViewRef.current === "compose");
   /**
    * Whether the open editor answers EVERYONE on the message (reply all). Set by every open —
    * `openReply(id, all)` — and read only while `replyTo` is non-null, so a stale `true` after
@@ -668,8 +683,13 @@ export function useShellCompose({
     };
     // The forward's own lane: its scratch, or the account's forward row for this message.
     const resume = (): void => resumeLane(replyDraftKey("forward", messageId), open, false);
-    if (!press.fetch) { resume(); return; }
-    void engine.hydrateBody(messageId, { urgent: true }).catch(() => undefined).then(resume);
+    if (!press.fetch || isProtectedMessage(m)) { resume(); return; }
+    const owner = draftFrame.current;
+    void engine.readBodyOffMirror(messageId).then(() => {
+      if (draftFrame.current === owner && routeViewRef.current === route.view && !engine.messageIsGone(messageId)) {
+        resume();
+      }
+    });
   });
 
   /** The person answered the ask: the dock shows the editor, and the send carries the confirmation. */
@@ -1407,6 +1427,10 @@ export function useShellCompose({
         openDraft(own, m?.attachments);
         return true;
       }
+      if (!draftsAvailable && left !== undefined && row === undefined && autosave.draftId !== left.rowId) {
+        toast(t("drafts.bodyUnavailable"));
+        return false;
+      }
       if (row === undefined || autosave.draftId === row.id) {
         go("compose");
         return true;
@@ -1475,7 +1499,16 @@ export function useShellCompose({
     if (lanes.size > 1) {
       toast(t("compose.notSentMany", { count: lanes.size }), {
         action: t("compose.notSentOpen"),
-        onAction: () => { lastSaid.current = null; go("drafts"); },
+        onAction: () => {
+          if (draftsAvailable) {
+            lastSaid.current = null;
+            go("drafts");
+            return;
+          }
+          // The other failures still have their own Open in the notice slot.
+          const latest = list[list.length - 1]!;
+          if (openNotSent(latest.lane, latest.left)) lastSaid.current = null;
+        },
         duration: NOT_SENT_TOAST_MS,
       });
       return;
@@ -1562,16 +1595,18 @@ export function useShellCompose({
     const intent = detail?.andDone;
     if (intent === undefined || !accepted) return false;
     const why = detail?.copy ? sentCopySay(detail.copy, words.scheduleLabel) : null;
-    /* The release read NOW, from the Ohbox as presented — and the row's own Done door
-       dispatches it, so a refused step is said in the same words. Nothing to release
-       answers `false`, and the send's ordinary sentence is said instead. */
+    const releasingBy = draftFrame.current;
+    if (releasingBy?.engine !== engine || releasingBy.scope !== scope) return false;
     return releaseSendAndDone({
       presented,
       intent,
-      dispatch: (mu) => mutateAndReport(mu, null),
-      say: (undo) => toastWithUndo(
-        why ? `${t("reply.toastSentAndDone")} ${t(why.key, why.values)}` : t("reply.toastSentAndDone"), undo,
-      ),
+      dispatch: async (mu) => draftFrame.current === releasingBy && await dispatchFiling(mu, null),
+      say: (undo, complete, takeUndo) => {
+        if (draftFrame.current !== releasingBy) return;
+        const filing = t(complete ? "reply.toastSentAndDone" : "reply.toastSentFilingIncomplete");
+        const take = () => draftFrame.current === releasingBy ? takeUndo() : [];
+        toastWithUndo(why ? `${filing} ${t(why.key, why.values)}` : filing, undo.length > 0 ? take : undo);
+      },
     });
   });
 
@@ -1588,6 +1623,10 @@ export function useShellCompose({
   const mailSend = useMailSend(
     engine, scope, toast, useSendText(t, words.scheduleLabel), onSendSettled, onSendOutcome,
     (key) => (key === COMPOSE_SEND_KEY ? composeEpochRef.current() : null),
+    !draftsAvailable,
+  );
+  const showSend = useStableCallback((lane: string, seen?: () => boolean) =>
+    mailSend.showing(lane, seen ?? (lane === COMPOSE_SEND_KEY ? composeVisible : undefined)),
   );
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
@@ -2131,10 +2170,12 @@ export function useShellCompose({
        a fact rather than a toast. */
     // A fork off screen is said by a toast; on screen the composer's own alert says it.
     onForked: (kept) => {
-      if (routeViewRef.current !== "compose") toast(t(kept ? "compose.changedElsewhere" : "compose.changedElsewhereUnsaved"));
+      if (!composeVisible()) {
+        toast(t(kept ? "compose.changedElsewhere" : "compose.changedElsewhereUnsaved"));
+      }
     },
     onKeptAsNew: () => { toast(t("compose.keptAsNewElsewhere")); },
-    onKeptSent: () => { toast(t("compose.sentElsewhereMovedToDrafts")); },
+    onKeptSent: () => { toast(t("compose.sentElsewhereMovedToDrafts"), { duration: KEPT_DRAFT_TOAST_MS }); },
     onCleared: (toList) => {
       setCompose(EMPTY_COMPOSE);
       // A send that finished after the person moved on (the hand-off) leaves them where they are.
@@ -2306,11 +2347,12 @@ export function useShellCompose({
    * about `null` and got `free` — while the row the previous press created sat at
    * `unverified` and the Drafts list said so. This is the only name that surface has for it.
    *
-   * `status !== "draft"` because an ordinary draft cannot be held, and `draftsList` is the same
-   * reading the Drafts door shows, so the two doors cannot disagree about which row is held.
+   * A stale sending row whose own delivery was confirmed belongs to the previous reply.
+   * A new local record still holds it while the next attempt waits for an answer.
    */
   const heldReplyRow = useStableCallback((messageId: string): string | null =>
-    drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft")?.id ?? null);
+    drafts.find((d) => d.inReplyToMessageId === messageId && d.status !== "draft"
+      && (!engine.confirmedReplyDraft?.(d) || sendRecordNames(messageId, d.id, null, scope)))?.id ?? null);
   const draftRepliesHere = useStableCallback(
     (d: EngineDraft): boolean =>
       d.inReplyToMessageId != null && reader.get<EngineMessage>("message", d.inReplyToMessageId) != null,
@@ -2324,11 +2366,17 @@ export function useShellCompose({
    * does not open and the row says so; a refusal is the only honest arm, because every other one presents a message
    * as shorter than it is.
    */
-  const openDraft = useStableCallback((d: EngineDraft, files?: ComposeAttachment[]) => {
+  const openDraft = useStableCallback((d: EngineDraft, files?: ComposeAttachment[], stillCurrent?: () => boolean) => {
+    const openedBy = draftFrame.current;
+    if (openedBy?.engine !== engine || openedBy.scope !== scope) return;
     void openDraftDecision(d, {
       readDraftBody: (id) => engine.readDraftBody(id),
-      openWithBody: (row, body) => { openDraftWithBody(row, body, files); },
-      unavailable: () => { toast(t("drafts.bodyUnavailable")); },
+      openWithBody: (row, body) => {
+        if (draftFrame.current === openedBy && (stillCurrent?.() ?? true)) openDraftWithBody(row, body, files, stillCurrent);
+      },
+      unavailable: () => {
+        if (draftFrame.current === openedBy && (stillCurrent?.() ?? true)) toast(t("drafts.bodyUnavailable"));
+      },
     });
   });
   /**
@@ -2338,7 +2386,9 @@ export function useShellCompose({
    * left this row, when the door holds that press ({@link openNotSent}); no row stores them.
    */
   const openDraftWithBody = useStableCallback(
-    (d: EngineDraft, body: string, pressed?: ComposeAttachment[]) => {
+    (d: EngineDraft, body: string, pressed?: ComposeAttachment[], stillCurrent?: () => boolean) => {
+      const openedBy = draftFrame.current;
+      if (openedBy?.engine !== engine || openedBy.scope !== scope) return;
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
@@ -2572,6 +2622,7 @@ export function useShellCompose({
          the row they are bound to opens with them on screen, and another row is not opened over them. */
       if (!waiting && !parked && reopenWouldOverwrite(composeRef.current, seeded)) {
         void autosave.flush().then(() => {
+          if (draftFrame.current !== openedBy || stillCurrent?.() === false) return;
           if (autosave.holdsOnScreen()) openSeeded();
           else if (readComposeRow(scope) === d.id) { composeSeeded.current = true; go("compose"); }
           else toast(t("drafts.reopenBlockedUnsaved"));
@@ -2628,81 +2679,57 @@ export function useShellCompose({
       });
     },
   );
-  /**
-   * A PERSON ANSWERS FOR A SEND WE COULD NOT CONFIRM: The one sanctioned exit from the hold, and the reason a held
-   * row is no longer a dead end. It asks `holdOf` NOTHING, deliberately: every other write site in this shell asks
-   * the predicate because it is about to change a message somebody may already have received, and this one is the
-   * opposite — it is how the reader tells us WHICH of those two worlds we are in. Gating it on the hold would make
-   * the hold unliftable, which is the defect. No toast on success. The row itself is the answer: it either leaves the
-   * list (`arrived`) or turns into an ordinary draft with Discard live (`not_arrived`), and saying so in a toast as
-   * well would be narrating what the reader can see. A refusal is reported, because that is the case where the screen
-   * does NOT change.
-   */
-  /** Rows this session has already released the durable record for — see the latch below. */
-  const resolvedRows = useRef<Set<string>>(new Set<string>());
-  const resolveHeldSend = useStableCallback(
-    (draftId: string, outcome: "arrived" | "not_arrived") => {
-      void engine.mutate({ kind: "draft_resolve", draftId, outcome }).then((res) => {
-        // A newer answer about this row replaced this one: it owns the sentence.
-        if (res.status === "superseded") return;
-        if (res.status !== "confirmed") {
-          /* A resolve that did not land leaves the row held; the overlay has already rolled back,
-             so the note above it still reads "not confirmed" and the verbs are still there. The
-             server refuses a send that may STILL BE RUNNING by name, and that refusal gets its own
-             sentence: "it failed" and "not yet" are different things to be told. */
-          toast(t(res.error?.code === "send_still_running"
-            ? "drafts.resolveStillRunning"
-            : "drafts.resolveFailed"));
-          return;
-        }
-        /* THE DURABLE RECORD IS SPENT, AND IT LEAVES BY THE ONE DOOR. The server has answered for
-           this row, so the jar entry that was holding the message must go — through the same
-           `releaseSendLockForRow` the settled compose uses, never a second release path. Without
-           it `holdOf` went on answering `parked` from the record and the row a person had just
-           resolved was still undiscardable on this browser. The SESSION is passed only for the row
-           this compose is holding — `discardDraft`'s rule, for its reason. */
-        if (resolvedRows.current.has(draftId)) return;
-        /* THE LATCH, and it is load-bearing: a second confirm for this row arriving late (a
-           double-tap, a replayed verb) would release whatever record names the row AT THAT MOMENT
-           — and by then a fresh send of the recovered text may have minted one. Freeing a key a
-           request is still carrying is how the next press mints a second one. Released once. */
-        resolvedRows.current.add(draftId);
-        const heldRow = readComposeRow(scope);
-        releaseSendLockForRow(
-          COMPOSE_SEND_KEY, draftId,
-          heldRow !== null && heldRow === draftId ? composeSessionId(scope) : null,
-          sendLockOwed(engine), scope,
-        );
+  // A delayed answer can settle only the keys held when the person pressed the action.
+  const captureDraftSendRelease = useStableCallback((draftId: string, session: string | null) => {
+    const records = sendRecordsNaming(COMPOSE_SEND_KEY, draftId, session, scope);
+    return () => {
+      const owed = sendLockOwed(engine);
+      for (const { key, fp } of records) releaseSendLock(COMPOSE_SEND_KEY, fp, owed, scope, key);
+    };
+  });
+  const answeringDrafts = useRef(new WeakMap<OhmailEngine, Set<string>>());
+  const answerHeldDraft = useStableCallback(async (shown: EngineDraft, outcome: "arrived" | "not_arrived", reopen = false) => {
+    const answeredBy = draftFrame.current;
+    if (answeredBy?.engine !== engine || answeredBy.scope !== scope) return;
+    const { id: draftId } = shown;
+    const starting = engine.confirmedDraft(draftId);
+    if (starting !== shown || starting.status === "sent" || starting.status === "scheduled") return;
+    let answering = answeringDrafts.current.get(engine);
+    if (!answering) answeringDrafts.current.set(engine, answering = new Set());
+    if (answering.has(draftId) || [...engine.pendingMutations(), ...engine.inFlightMutations()].some(
+      ({ mutation }) => mutation.kind === "draft_resolve" && mutation.draftId === draftId,
+    )) return;
+
+    const session = readComposeRow(scope) === draftId ? composeSessionId(scope) : null;
+    const release = captureDraftSendRelease(draftId, session);
+    answering.add(draftId);
+    try {
+      const res = await engine.mutate({ kind: "draft_resolve", draftId, outcome, ifUpdatedAt: starting.updatedAt }, {
+        onSettled: (result) => { if (result.status === "confirmed") release(); },
       });
-    },
-  );
-  /**
-   * SEND THE WORDS AGAIN, from the Drafts list: the server's answer `not_arrived` frees the row to
-   * an ordinary draft (the ledger records the attempt as failed), the durable record is released,
-   * and only then does the message open — in front of the person, with Send live. Never a blind
-   * re-send from a list: sending stays a decision taken while looking at the message. A refusal
-   * leaves the row held and says so; the open is not attempted on a row the server did not free.
-   */
-  const sendAgain = useStableCallback((d: EngineDraft) => {
-    void engine.mutate({ kind: "draft_resolve", draftId: d.id, outcome: "not_arrived" }).then((res) => {
-      if (res.status === "superseded") return;
       if (res.status !== "confirmed") {
-        toast(t(res.error?.code === "send_still_running"
+        if (res.status !== "superseded" && draftFrame.current === answeredBy) toast(t(res.error?.code === "send_still_running"
           ? "drafts.resolveStillRunning"
           : "drafts.resolveFailed"));
         return;
       }
-      if (!resolvedRows.current.has(d.id)) {
-        resolvedRows.current.add(d.id);
-        const heldRow = readComposeRow(scope);
-        releaseSendLockForRow(
-          COMPOSE_SEND_KEY, d.id,
-          heldRow !== null && heldRow === d.id ? composeSessionId(scope) : null,
-          sendLockOwed(engine), scope,
-        );
-      }
-      openDraft({ ...d, status: "draft", sendError: null, sendAt: null });
-    });
+      if (!reopen || draftFrame.current !== answeredBy) return;
+      const current = engine.confirmedDraft(draftId);
+      if (!current || current === starting || current.status !== "draft") return;
+      const stillCurrent = () => engine.confirmedDraft(draftId) === current
+        && engine.read().get<EngineDraft>("draft", draftId) === current
+        && !sendRecordsNaming(COMPOSE_SEND_KEY, draftId, session, scope).some((record) => record.unverified);
+      if (stillCurrent()) openDraft(current, undefined, stillCurrent);
+    } finally {
+      answering.delete(draftId);
+    }
+  });
+  const resolveHeldSend = useCallback((draftId: string, outcome: "arrived" | "not_arrived") => {
+    const shown = drafts.find((d) => d.id === draftId);
+    if (shown) void answerHeldDraft(shown, outcome);
+  }, [drafts, answerHeldDraft]);
+  const sendAgain = useStableCallback((d: EngineDraft) => {
+    void answerHeldDraft(d, "not_arrived", true);
   });
   /**
    * ── WHERE A LANE'S REPLY HAS GOT TO, THE ROW INCLUDED ───────────────────────────────────
@@ -2728,157 +2755,185 @@ export function useShellCompose({
    * a value left standing can only be re-read by another press, which carries its own stamp.
    */
   const [discardRefusal, setDiscardRefusal] = useState<DiscardRefusal | null>(null);
-  /**
-   * Empty the composer and every reply lane bound to this row, with their stored copies. `create`:
-   * the row's first save is still on its way, and the editors that claim it end with it.
-   */
-  const emptyEditorsOf = useStableCallback((draftId: string, heldRow: string | null, create: string | null = null) => {
+  /** Capture the editors bound to this row before withdrawing its first save removes their claim. */
+  const discardEditorsOf = useStableCallback((draftId: string, heldRow: string | null, row?: EngineDraft, create: string | null = null) => {
     const composer = create !== null ? autosave.holdsCreate(create) : releaseDraftIdRef.current === draftId || heldRow === draftId;
-    if (composer) {
-      // A create ends with its message: taken back, or dropped when it lands.
-      if (create !== null) void autosave.discard();
-      else releaseBindingRef.current();
-      setCompose(EMPTY_COMPOSE);
-      clearComposeDraft(scope);
-      setComposeCloseRefusal(null);
-    }
-    const row = engine.read().get<EngineDraft>("draft", draftId) ?? null;
-    const lanes = new Set<string>();
-    for (const [lane, seed] of replySeedDrafts.current) if (seed === draftId) lanes.add(lane);
-    for (const [lane, held] of replyRows.current) if (held.row === draftId) lanes.add(lane);
+    const epoch = composer ? autosave.epochNow() : null;
+    const lanes = new Map<string, number>();
+    const remember = (lane: string) => lanes.set(lane, replyAutosave.bindingOf(lane));
+    for (const [lane, seed] of replySeedDrafts.current) if (seed === draftId) remember(lane);
+    for (const [lane, held] of replyRows.current) if (held.row === draftId) remember(lane);
     for (const lane of [row?.inReplyToMessageId, row?.forwardOfMessageId ? inlineForwardKey(row.forwardOfMessageId) : null]) {
-      if (lane && readReplyMeta(lane, scope).row?.id === draftId) lanes.add(lane);
-      if (lane && create !== null && replyAutosave.owns(lane, create)) lanes.add(lane);
+      if (lane && (readReplyMeta(lane, scope).row?.id === draftId || (create !== null && replyAutosave.owns(lane, create)))) remember(lane);
     }
-    for (const lane of lanes) {
-      replySeedDrafts.current.delete(lane);
-      replyRows.current.delete(lane);
-      replyAutosave.forget(lane);
-      clearReplyLane(lane, scope);
-      setReplyTo((cur) => (cur !== null && (replyModeRef.current === "forward" ? inlineForwardKey(cur) : cur) === lane ? null : cur));
+    return (withdrawn = false) => {
+      if (epoch !== null && autosave.epochNow() === epoch) {
+        if (withdrawn) void autosave.discard();
+        else releaseBindingRef.current();
+        setCompose(EMPTY_COMPOSE);
+        clearComposeDraft(scope);
+        setComposeCloseRefusal(null);
+      }
+      for (const [lane, binding] of lanes) {
+        if (replyAutosave.bindingOf(lane) !== binding) continue;
+        replySeedDrafts.current.delete(lane);
+        replyRows.current.delete(lane);
+        replyAutosave.forget(lane);
+        clearReplyLane(lane, scope);
+        setReplyTo((cur) => (cur !== null && (replyModeRef.current === "forward" ? inlineForwardKey(cur) : cur) === lane ? null : cur));
+      }
+    };
+  });
+  const discardHandle = useStableCallback((listed: string, original?: EngineDraft) => {
+    const row = engine.read().get<EngineDraft>("draft", listed) ?? original;
+    return row === undefined ? null : handleOf(engine, row);
+  });
+  const decideDraftDiscard = useStableCallback((listed: string) => {
+    const handle = discardHandle(listed);
+    const draftId = handle?.kind === "row" ? handle.id : listed;
+    const heldRow = readComposeRow(scope);
+    const decision = discardDecision(holdOf(engine, {
+      lane: COMPOSE_SEND_KEY, draftId, session: heldRow === draftId ? composeSessionId(scope) : null,
+    }, scope));
+    return decision.kind === "refuse" ? decision : { kind: "go" } as const;
+  });
+
+  const waitingForDiscard = useStableCallback((listed: string) => {
+    const handle = discardHandle(listed);
+    const draftId = handle?.kind === "row" ? handle.id : listed;
+    return (engine.waitingSends?.() ?? []).filter(w => w.draftId === draftId || (w.draftId === null && w.paintId === listed));
+  });
+  const withdrawDraftWaiting = useStableCallback(async (listed: string): Promise<WithdrawResult> => {
+    const waiting = waitingForDiscard(listed);
+    if (!waiting.length) return "none";
+    for (const w of waiting) {
+      const said = await mailSend.withdrawKey(w.key);
+      if (said === "already_sent") return "already_sent";
+      if (said !== "close") return "unknown";
+    }
+    return waiting.every(w => w.draftId === null) ? "placeholder-withdrawn" : "withdrawn";
+  });
+
+  /** The same final check and delete for an editor's immediate Discard and a list's expiring Undo. */
+  const discardDraftRow = useStableCallback(async (
+    listed: string, original?: EngineDraft, guardRevision = false,
+  ): Promise<DiscardResult> => {
+    if (guardRevision && !original) return { kind: "refused", refusal: undefined };
+    const discardingBy = draftFrame.current;
+    const current = engine.read().get<EngineDraft>("draft", listed);
+    const shown = guardRevision ? original : undefined;
+    if (shown && current && draftChanged(shown, current)) return { kind: "changed" };
+    const listedRow = current ?? original;
+    const handle = listedRow ? handleOf(engine, listedRow) : null;
+    let draftId = handle?.kind === "row" ? handle.id : listed;
+    let clearCreateEditors: ((withdrawn?: boolean) => void) | undefined;
+    if (handle?.kind === "create") {
+      const initial = decideDraftDiscard(listed);
+      if (initial.kind === "refuse") return { kind: "blocked", why: initial.why };
+      if (waitingForDiscard(listed).length) return { kind: "blocked", why: "still-sending" };
+
+      clearCreateEditors = discardEditorsOf(listed, readComposeRow(scope), listedRow, handle.key);
+      const answer = await engine.withdrawQueued?.(handle.key);
+      if (answer === "withdrawn") {
+        if (!shown || draftFrame.current === discardingBy) clearCreateEditors(true);
+        return { kind: "applied" };
+      }
+      // The optimistic ID never goes on the wire. A first save already in flight owns
+      // the server ID, even if no local editor still owns the save.
+      const made = answer === "on_the_wire"
+        ? await engine.settledDraftCreate(handle.key)
+        : landedOf(engine, handle.key)?.id;
+      if (!made) return { kind: "refused", refusal: undefined };
+      draftId = made;
+    }
+    if (shown && draftFrame.current !== discardingBy) return { kind: "silent" };
+    const row = engine.read().get<EngineDraft>("draft", draftId);
+    // A first save can land during Undo. Its original revision belongs to the press, even if
+    // a later save now owns the server row.
+    const revision = shown?.pendingCreate === undefined
+      ? shown?.contentRevision
+      : landedOf(engine, shown.pendingCreate)?.revision;
+    if (shown?.pendingCreate !== undefined && (!revision || row?.contentRevision !== revision)) {
+      return { kind: "changed" };
+    }
+    const version = revision ? { ifContentRevision: revision } : shown ? { ifUpdatedAt: shown.updatedAt } : {};
+    // A send may have started while a create was finishing. Check the actual row at deletion.
+    const decision = decideDraftDiscard(draftId);
+    if (decision.kind === "refuse") return { kind: "blocked", why: decision.why };
+    if (waitingForDiscard(draftId).length) return { kind: "blocked", why: "still-sending" };
+    const heldRow = readComposeRow(scope);
+    const session = heldRow === draftId ? composeSessionId(scope) : null;
+    const clearEditors = discardEditorsOf(draftId, heldRow, row);
+    if (!shown) clearEditors();
+    ownDraftDiscard(draftId, true);
+    let queued = false;
+    try {
+      const release = captureDraftSendRelease(draftId, session);
+      const confirmed = () => {
+        if (!shown || draftFrame.current === discardingBy) {
+          if (shown) clearEditors();
+          clearCreateEditors?.();
+        }
+        release();
+        writeReplyMeta(`draft:${draftId}`, {}, scope);
+      };
+      const res = await engine.mutate({ kind: "draft_discard", draftId, ...version }, {
+        onSettled: (result) => {
+          if (!queued || !shown) return;
+          ownDraftDiscard(draftId, false);
+          if (result.status === "confirmed") confirmed();
+          if (draftFrame.current !== discardingBy) return;
+          if (result.error?.code === "draft_changed") {
+            void engine.syncOnce().catch(() => undefined);
+            toast(t("drafts.discardChanged"));
+          } else if (result.error?.code === "discard_unsupported") {
+            toast(t("drafts.discardUnsupported"));
+          }
+        },
+      });
+      queued = res.status === "queued";
+      if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
+        return { kind: "blocked", why: "still-sending" };
+      }
+      if (res.error?.code === "draft_changed") {
+        if (shown && draftFrame.current !== discardingBy) return { kind: "silent" };
+        void engine.syncOnce().catch(() => undefined);
+        return { kind: "changed" };
+      }
+      if (res.status === "confirmed") confirmed();
+      return pressVerdict(res);
+    } finally {
+      if (!queued) ownDraftDiscard(draftId, false);
     }
   });
-  const discardDraft = useStableCallback(
-    (listed: string) => {
-      /* A ROW WHOSE FIRST SAVE IS STILL ON ITS WAY has a local id the server never held: the create
-         is taken back, and every editor claiming it ends with it. One that already landed is its row. */
-      const shown = engine.read().get<EngineDraft>("draft", listed);
-      const handle = shown !== undefined ? handleOf(engine, shown) : null;
-      if (handle?.kind === "create") {
-        emptyEditorsOf(listed, readComposeRow(scope), handle.key);
-        if (typeof engine.withdrawQueued === "function") void engine.withdrawQueued(handle.key).catch(() => undefined);
+
+  const discardDraft = useStableCallback(async (listed: string) => {
+    // With no waiting send the editors must empty during this press, before discardReply checks the binding.
+    try {
+      const withdrawn = waitingForDiscard(listed).length ? await withdrawDraftWaiting(listed) : "none";
+      if (withdrawn === "already_sent" || withdrawn === "unknown") {
+        setDiscardRefusal({ draftId: listed, why: withdrawn === "already_sent" ? "still-sending" : "cancel-unknown", at: Date.now() });
         return;
       }
-      const draftId = handle?.kind === "row" ? handle.id : listed;
-      const discardRow = (withdrew: boolean): void => {
-        /**
-         * THE LIST'S DELETE ASKS THE HOLD, AND THE SERVER DECIDES. `discardDecision` keeps two refusals
-         * on this side — a row still `sending`, a jar this browser cannot read — each rendered in the
-         * row. Every other hold goes to the wire: the server admits the discard of an `unverified` row
-         * and refuses a running send by name (409 `send_recorded`), which comes back as the same
-         * rendered sentence. THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING —
-         * `openDraft`'s rule: passing it unconditionally would park every draft behind one send.
-         */
-        const heldRow = readComposeRow(scope);
-        const hold = holdOf(engine, {
-          lane: COMPOSE_SEND_KEY,
-          draftId,
-          session: heldRow !== null && heldRow === draftId ? composeSessionId(scope) : null,
-        }, scope);
-        const decision = discardDecision(hold);
-        if (decision.kind === "refuse") {
-          setDiscardRefusal({ draftId, why: decision.why, at: Date.now() });
+      if (withdrawn === "placeholder-withdrawn") { toast(t("drafts.discardedNotSent")); return; }
+      const v = await discardDraftRow(listed);
+      switch (v.kind) {
+        case "blocked": setDiscardRefusal({ draftId: listed, why: v.why, at: Date.now() }); return;
+        case "changed": toast(t("drafts.discardChanged")); return;
+        case "refused": {
+          const reason = v.refusal?.message?.trim();
+          toast(reason ? t("drafts.discardRefused", { reason }) : t("drafts.discardRefusedUnnamed"));
           return;
         }
-        /* DISCARD DISCARDS: every editor holding this row is emptied before the request goes, its
-           stored copy too, or the words come back on the next Compose, Reply or reload. A refusal
-           below leaves the row in Drafts, where it can be opened again. */
-        // Read before the emptying spends the session, for the release once the server answers.
-        const session = heldRow !== null && heldRow === draftId ? composeSessionId(scope) : null;
-        emptyEditorsOf(draftId, heldRow);
-        // THIS PAGE'S OWN DELETE: its tombstone may land before the answer lets go of the editor.
-        ownDraftDiscard(draftId, true);
-        let queued = false;
-        void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
-          queued = res.status === "queued";
-          if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
-            // A send still running, said by the server under its row lock: the row stays, and says why.
-            setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() });
-            return;
-          }
-          /**
-           * EVERY OTHER ENDING SAYS WHY, AND THE SWITCH IS TOTAL. `if (res.status !== "confirmed") return;`
-           * stood here and swallowed three of the four endings while the engine had already put the row
-           * back with the rejection's own sentence on the result for this surface to say. The `never` arm
-           * is the point: a fourth answer cannot be added without this site being made to answer for it.
-           * It switches on the VERDICT, because `pressVerdict` is the one place the statuses are read.
-           */
-          const v = pressVerdict(res);
-          switch (v.kind) {
-            case "refused": {
-              /* The engine dropped the overlay and the row is back (`engine.ts` — "the local effect rolls
-                 back VISIBLY, once"). The server's sentence is quoted, `scheduleFailedNote`'s treatment:
-                 `conflict` names cancelling the schedule, and a 403/500 names itself. */
-              const reason = v.refusal?.message?.trim();
-              toast(reason
-                ? t("drafts.discardRefused", { reason })
-                : t("drafts.discardRefusedUnnamed"));
-              return;
-            }
-            case "queued":
-              /* `retry`: the overlay is KEPT and the verb replays under the same key, so the row is gone
-                 here and not there. `organizer`: the optimistic paint went back, so the row is on screen
-                 and the request is recorded for whichever install organizes this mailbox. Told as
-                 "not yet" either way, never as done. */
-              toast(v.wait === "organizer" ? t("drafts.discardAwaitingOrganizer") : t("drafts.discardQueued"));
-              return;
-            case "applied":
-              if (withdrew) toast(t("drafts.discardedNotSent"));
-              break;
-            case "silent":
-              // A newer press about this draft owns the sentence.
-              return;
-            default: {
-              /* The gate is the BINDING, evaluated by `tsc`: a fourth `PressVerdict` makes this line
-                 a type error at this site. The toast is only the belt for a build that got past it,
-                 and it is the most conservative of the sentences rather than one nobody can reach —
-                 a state the product cannot enter is a state no guard can be watched fail in. */
-              const unhandled: never = v;
-              void unhandled;
-              toast(t("drafts.discardRefusedUnnamed"));
-              return;
-            }
-          }
-          // The row's life ends; the block state keyed to it goes with it — and so does the durable
-          // record this browser held for it: the server has answered for the row, so the jar entry
-          // leaves by the one door, once (`resolveHeldSend`'s latch, for its reason).
-          if (!resolvedRows.current.has(draftId)) {
-            resolvedRows.current.add(draftId);
-            releaseSendLockForRow(COMPOSE_SEND_KEY, draftId, session, sendLockOwed(engine), scope);
-          }
-          writeReplyMeta(`draft:${draftId}`, {}, scope);
-        }).then(() => {
-          // Forgotten once the answer above has been handled; a queued delete is still this page's.
-          if (!queued) ownDraftDiscard(draftId, false);
-        });
-      };
-      /* A SEND WAITING ON THIS ROW IS CANCELLED FIRST: a row deleted under it left the send to fail on its
-         next try. On its way, or a Cancel nobody could confirm, nothing is deleted. */
-      const waiting = (typeof engine.waitingSends === "function" ? engine.waitingSends() : [])
-        .filter((w) => w.draftId === draftId || (w.draftId === null && w.paintId === listed));
-      if (waiting.length === 0) { discardRow(false); return; }
-      void (async () => {
-        for (const w of waiting) {
-          const said = await mailSend.withdrawKey(w.key);
-          if (said === "already_sent") { setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() }); return; }
-          if (said !== "close") { setDiscardRefusal({ draftId, why: "cancel-unknown", at: Date.now() }); return; }
-        }
-        // A send with no row of its own: nothing is left to delete.
-        if (waiting.every((w) => w.draftId === null)) { toast(t("drafts.discardedNotSent")); return; }
-        discardRow(true);
-      })();
-    },
-  );
+        case "queued": toast(t(v.wait === "organizer" ? "drafts.discardAwaitingOrganizer" : "drafts.discardQueued")); return;
+        case "applied": if (withdrawn === "withdrawn") toast(t("drafts.discardedNotSent")); return;
+        case "silent": return;
+        default: { const unhandled: never = v; return unhandled; }
+      }
+    } catch {
+      toast(t("drafts.discardRefusedUnnamed"));
+    }
+  });
   /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
      of creating a second one — the whole point of one draft from first keystroke to delivery. */
   /* THE ORIGINAL'S FILES ON A COMPOSED FORWARD — the form's own list, else the bound row's, so another
@@ -3071,7 +3126,8 @@ export function useShellCompose({
       if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {}, scope);
       void autosave.discard();
       if (keeps !== null) toast(t(keeps === "held" ? "compose.discardHeld" : "compose.discardUnknown"));
-      else if (undo && worthSaving(snapshot)) {
+      // A letter holding only a file is a loss too (today's question named it): offered back like one with words.
+      else if (undo && (worthSaving(snapshot) || (snapshot.attachments?.length ?? 0) > 0)) {
         const back = (): void => {
           const may = mayReplace(snapshot);
           const open = (): void => {
@@ -3096,7 +3152,7 @@ export function useShellCompose({
   /**
    * THE REPLY'S DISCARD, with its Undo. The open lane is read whole first. A lane with a row goes through
    * `discardDraft` (its holds and refusals stand; a refusal keeps the lane and offers nothing back); a lane with words
-   * alone is forgotten as `emptyEditorsOf` forgets one. Undo opens the reply again and puts each part back through the
+   * alone is forgotten as `discardEditorsOf` forgets one. Undo opens the reply again and puts each part back through the
    * composition's own setters; the reply's autosave then keeps them as a new row. A send on its way is never discarded.
    */
   const discardReply = useStableCallback(() => {
@@ -3290,12 +3346,14 @@ export function useShellCompose({
   );
 
   return {
+    drafts,
     cancelCompose,
     discardKeepsCompose,
     cancelSchedule,
     closeCompose,
     closeReply,
     compose,
+    composeEpochNow: autosave.epochNow,
     composeHeldBySend,
     composeResumed,
     composeWaitNote: sendCarriesThis ? waitNote : null,
@@ -3305,6 +3363,9 @@ export function useShellCompose({
     composeFrom,
     discardCompose,
     discardDraft,
+    decideDraftDiscard,
+    withdrawDraftWaiting,
+    discardDraftRow,
     discardReply,
     notSentRows,
     draftRepliesHere,
@@ -3315,6 +3376,7 @@ export function useShellCompose({
     discardRefusal,
     sendAgain,
     mailSend,
+    showSend,
     onComposeFields,
     onReplyBody,
     onReplySig,

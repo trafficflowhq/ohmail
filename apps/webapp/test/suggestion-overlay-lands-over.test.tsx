@@ -2,10 +2,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { useSuggestText } from "../app/shell/suggest-text";
+import { TextProvider, useText } from "@ohmail/app/text";
 import en from "../messages/en.json";
-import type { ScreenerSuggestions, SenderSuggestion, SuggestWire } from "../app/shell/screener-suggest";
+import type { ScreenerSuggestions, SenderSuggestion, SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * AN OVERLAY ENTRY NAMES THE MIRROR SUGGESTION IT LANDED OVER (SUGGESTION-GAIN-READ-COVERS-QUEUE-
@@ -36,17 +35,17 @@ const wire: SuggestWire = {
 } as unknown as SuggestWire;
 
 async function mount(mirror?: (address: string) => string | null): Promise<() => ScreenerSuggestions> {
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
   let s: ScreenerSuggestions | null = null;
   function Probe(): null {
-    s = useScreenerSuggestions({ text: useSuggestText(), active: false, toast: (() => {}) as never, wire, ...(mirror ? { mirrorSuggestionOf: mirror } : {}) });
+    s = useScreenerSuggestions({ text: { screener: useText("screener"), aiRefusal: useText("aiRefusal") }, active: false, toast: (() => {}) as never, wire, ...(mirror ? { mirrorSuggestionOf: mirror } : {}) });
     return null;
   }
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", children: h(Probe) }));
+    root!.render(h(TextProvider, { locale: "en", messages: en, timeZone: "UTC", children: h(Probe) }));
   });
   return () => s!;
 }

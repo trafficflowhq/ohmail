@@ -1,6 +1,6 @@
 /**
  * THE AWAY RESPONDER IN THE DESKTOP WINDOW — the transport and nothing else; the control is the
- * shared client's (`app/shell/AwayResponderRow.tsx`), and the Cloud client is a refusing stub,
+ * shared Settings pane's, and the Cloud client is a refusing stub,
  * so requests go down the pipe to the engine on this machine. One wire serves BOTH doors:
  * hosted forwards `/away-responder` to the account; standalone answers it from the local
  * database and `runAwayResponderPass` (`@trafficflow/services`) acts on it — the sidecar's
@@ -11,7 +11,7 @@
 
 import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { AwayTransport } from "../../webapp/app/shell/AwayResponderRow";
+import type { AwayWire } from "@ohmail/app/host";
 
 /**
  * The hosted route, addressed root-relative like every path in this window. Exported because
@@ -70,4 +70,4 @@ export const awayOverBridge = {
         body: JSON.stringify(next satisfies AwayBody & OnlyNamesOf<typeof next, AwayBody>),
       }),
     ),
-} satisfies AwayTransport;
+} satisfies AwayWire;

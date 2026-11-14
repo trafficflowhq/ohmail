@@ -220,6 +220,8 @@ export interface OhboxListModel {
   groupPeople: (g: OhboxRowGroup) => OhboxPerson[];
   stepUp: OhboxStep;
   stepDown: OhboxStep;
+  /** The letter the list's first row opens on, or none: where a first press places the cursor. */
+  firstRow: string | null;
   keys: KeyBinding[];
   zone: {
     list: { up: OhboxStep; down: OhboxStep; followId: string | null };

@@ -14,6 +14,11 @@ import {
   plainDate,
   readCalendar,
   recurrenceKeyString,
+  recurrenceKeyOf,
+  zonesOf,
+  type DeleteMember,
+  deleteAudienceOf,
+  sameDeleteAudience,
   sameName,
   seriesOf,
   timeProperty,
@@ -27,6 +32,7 @@ import {
   type Wall,
   type ZoneSource,
 } from "@ohmail/cal-core";
+import type { ProofPlace } from "./repeat-shapes.js";
 
 const DAY_MS = 86_400_000;
 
@@ -419,6 +425,33 @@ export function spelledAs(p: Property, name: string): boolean {
   return head.startsWith(name) && !/^[A-Z0-9-]/.test(head.slice(name.length));
 }
 
+/** A whole-day personal series whose metadata can be changed under each of the three scopes. */
+export function personalSeriesOf(text: string | null): boolean {
+  if (text === null) return false;
+  const read = readCalendar(text, DEFAULT_LIMITS);
+  if (!read.ok || read.dropped.length || read.calendar.events.length !== 1) return false;
+  const [event] = read.calendar.events;
+  if (
+    !event ||
+    event.recurrenceId ||
+    event.status === "CANCELLED" ||
+    event.start?.kind !== "date" ||
+    event.end?.kind !== "date"
+  )
+    return false;
+  if (
+    event.rules.length !== 1 ||
+    !event.rules[0]?.rule ||
+    !/^FREQ=(DAILY|WEEKLY)(;(COUNT=[1-9]\d*|UNTIL=\d{8}))?$/.test(event.rules[0].text)
+  )
+    return false;
+  return !event.component.properties.some((p) =>
+    ["ATTENDEE", "ORGANIZER", "EXRULE", "RDATE", "EXDATE", "RECURRENCE-ID"].some((name) =>
+      spelledAs(p, name),
+    ),
+  );
+}
+
 /** Is this line one the calendar core's reader takes under `name` (its name that word in any case, and nothing else)? */
 const readAs = (p: Property, name: string): boolean => p.name !== "" && p.name.toUpperCase() === name;
 
@@ -497,4 +530,89 @@ export function isDayOf(
     zones,
   );
   return near.occurrences.some((o) => recurrenceKeyString(o.key) === key);
+}
+
+/** The full CalDAV object, including changed dates that are outside the device's sync span. */
+export function seriesDeleteMembers(
+  text: string | null,
+  platform: ZoneSource,
+  repeating = true,
+): readonly DeleteMember[] | null {
+  if (text === null) return null;
+  const read = readCalendar(text, DEFAULT_LIMITS);
+  if (!read.ok || read.dropped.length) return null;
+  const { events } = read.calendar;
+  const masters = events.filter((event) => event.recurrenceId === null);
+  const master = masters[0];
+  if (
+    masters.length !== 1 ||
+    !master?.uid ||
+    (repeating
+      ? master.rules.length !== 1 || !master.rules[0]?.rule
+      : events.length !== 1 ||
+        master.rules.length > 0 ||
+        master.added.length > 0 ||
+        master.excluded.length > 0) ||
+    organizerShown(events) === ""
+  )
+    return null;
+  const zones = zonesOf(read.calendar, platform);
+  const result: DeleteMember[] = [];
+  const seen = new Set<number>();
+  for (const event of events) {
+    if (event.uid !== master.uid) return null;
+    const organizer = event.organizer?.email?.trim().toLowerCase() ?? null;
+    const lines = event.component.properties.filter((p) => spelledAs(p, "ATTENDEE"));
+    const guests = event.attendees.flatMap(({ email, name }) =>
+      email?.trim() ? [{ address: email.trim().toLowerCase(), name }] : [],
+    );
+    if (guests.length !== lines.length || (guests.length > 0 && !organizer)) return null;
+    let at = null;
+    if (event.recurrenceId) {
+      const key = recurrenceKeyString(recurrenceKeyOf(event.recurrenceId, zones));
+      at = Number(key);
+      if (!/^-?\d+$/.test(key) || !Number.isSafeInteger(at) || seen.has(at)) return null;
+      seen.add(at);
+    }
+    result.push({ at, range: event.thisAndFuture, organizer, guests });
+  }
+  return result;
+}
+
+/** Resolve the same version's audience for both the queue and the writer. */
+export function confirmedDeleteAudience(
+  place: ProofPlace | null,
+  event: {
+    readonly original: string | null;
+    readonly organizer: string | null;
+    readonly deleteGuests?: DeleteMember["guests"];
+  },
+  repeating: boolean,
+  scope: Parameters<typeof deleteAudienceOf>[1],
+  expected: Parameters<typeof sameDeleteAudience>[0] | undefined,
+  platform: ZoneSource,
+) {
+  const members = place?.startsWith("caldav:")
+    ? seriesDeleteMembers(event.original, platform, repeating)
+    : cloudDeleteMembers(place, event, repeating, scope);
+  const actual = members && deleteAudienceOf(members, scope)?.audience;
+  if (!actual) return null;
+  const confirmed =
+    expected === undefined ? actual.guests.length === 0 : sameDeleteAudience(actual, expected);
+  return confirmed ? actual : null;
+}
+
+function cloudDeleteMembers(
+  place: ProofPlace | null,
+  event: { readonly organizer: string | null; readonly deleteGuests?: DeleteMember["guests"] },
+  repeating: boolean,
+  scope: Parameters<typeof deleteAudienceOf>[1],
+): readonly DeleteMember[] | null {
+  const { deleteGuests } = event;
+  if ((place !== "google" && place !== "microsoft") || repeating || scope.kind !== "record" || !deleteGuests)
+    return null;
+  const organizer = event.organizer?.trim().toLowerCase() ?? null;
+  const guests = deleteGuests.map((guest) => ({ ...guest, address: guest.address.trim().toLowerCase() }));
+  if (organizer === "" || guests.some((guest) => !guest.address)) return null;
+  return [{ at: null, range: false, organizer, guests }];
 }

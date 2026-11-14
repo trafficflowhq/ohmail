@@ -1462,6 +1462,35 @@ impl ShellPaths {
     }
 }
 
+/// The version the window saw for an installed standalone door. The config and the engine
+/// identity stay in this process; a window receives only the version number.
+#[derive(Default)]
+struct ObservedLocalDoor {
+    version: u32,
+    door: Option<(Config, std::sync::Weak<Engine>)>,
+}
+
+impl ObservedLocalDoor {
+    fn matches(&self, config: Option<&Config>, engine: &Arc<Engine>) -> bool {
+        self.door.as_ref().is_some_and(|(seen, running)| {
+            Some(seen) == config && running.ptr_eq(&Arc::downgrade(engine))
+        })
+    }
+
+    fn observe(&mut self, config: Option<&Config>, engine: &Arc<Engine>) -> Option<u32> {
+        let Some(local @ Config::Local(_)) = config else {
+            self.door = None;
+            return None;
+        };
+        if !self.matches(Some(local), engine) {
+            self.door = None;
+            self.version = self.version.checked_add(1)?;
+            self.door = Some((local.clone(), Arc::downgrade(engine)));
+        }
+        Some(self.version)
+    }
+}
+
 /// The app's engine, its configuration, and the two actions that change either.
 pub struct Shell {
     paths: ShellPaths,
@@ -1483,6 +1512,7 @@ pub struct Shell {
     /// pressed on and refuses if it moved. Nothing takes it while holding another of this struct's
     /// locks, which is what keeps the order trivial.
     door: Mutex<()>,
+    observed_local: Mutex<ObservedLocalDoor>,
     /// How far this app is through leaving.
     ///
     /// ── WHY A QUIT NO LONGER RUNS ON THE THREAD THAT DRAWS ──────────────────────────────────
@@ -1672,6 +1702,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -1686,6 +1717,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -1779,6 +1811,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(host),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -2633,9 +2666,22 @@ impl Shell {
     /// [`LOGOUT_UNCHANGED`], because host mode must not stand down for a sign-out that did not
     /// happen.
     fn logout_of(&self, pressed: Option<Config>) -> Result<serde_json::Value, String> {
+        self.logout_matching(pressed, None)
+    }
+
+    fn logout_matching(
+        &self,
+        pressed: Option<Config>,
+        expected_local_door: Option<u32>,
+    ) -> Result<serde_json::Value, String> {
         let _door = self.door.lock().expect("shell door");
         let config = self.paths.config();
-        if config != pressed {
+        let changed = expected_local_door.is_some_and(|version| {
+            let engine = self.engine();
+            let seen = self.observed_local.lock().expect("observed local door");
+            seen.version != version || !seen.matches(config.as_ref(), &engine)
+        });
+        if config != pressed || changed {
             return Err(format!(
                 "{LOGOUT_UNCHANGED}The door this install comes in by changed while you were \
                  signing out, so nothing was cleared and you have NOT been signed out. Check which \
@@ -2814,9 +2860,19 @@ impl Shell {
 
     /// What the window renders. See [`status_json`]; this adds the facts only the shell holds.
     pub fn status(&self) -> serde_json::Value {
-        let mut out = status_json(&self.engine());
+        let engine = self.engine();
+        let mut out = status_json(&engine);
         if let Some(object) = out.as_object_mut() {
-            match self.paths.config() {
+            let config = self.paths.config();
+            let version = self
+                .observed_local
+                .lock()
+                .expect("observed local door")
+                .observe(config.as_ref(), &engine);
+            if let Some(version) = version {
+                object.insert("localDoorVersion".into(), version.into());
+            }
+            match config {
                 Some(config) => door_fields(object, &config),
                 // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
                 // loading" would spin for ever on a fresh install, which is exactly the state that
@@ -5236,8 +5292,12 @@ fn engine_logout<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
+    expected_local_door: Option<u32>,
 ) -> Result<serde_json::Value, String> {
-    let outcome = shell.logout();
+    let outcome = match expected_local_door {
+        Some(version) => shell.logout_matching(shell.paths.config(), Some(version)),
+        None => shell.logout(),
+    };
     // ── THE STAND-DOWN FOLLOWS THE ENGINE, NOT THE SUCCESS ──────────────────────────────────
     //
     // Only a PRE-STOP refusal leaves the install untouched, and only that one may skip the

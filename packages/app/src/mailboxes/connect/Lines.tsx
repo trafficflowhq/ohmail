@@ -98,7 +98,7 @@ export function Acts({ d }: { d: Drawn }): ReactNode {
       </Button>
       {words.test && d.door.probe !== NONE ? (
         <Button kind="two" disabled={off} onPress={form.test}>
-          {busy === "test"
+          {busy === "test" && !form.state.moved
             ? say(words.test.waiting, { host: form.hosts.imap })
             : say(form.state.tested !== null ? words.test.again : words.test.press)}
         </Button>

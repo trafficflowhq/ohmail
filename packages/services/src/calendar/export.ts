@@ -1,8 +1,7 @@
 /**
  * THE CALENDAR'S PART OF THE ACCOUNT'S EXPORT: what a person configured, to carry elsewhere. One
  * declared map says, for every calendar table, which columns the document carries; every other
- * column is never carried, for the reason the map gives. The builder reads only what the map
- * carries. Events are not carried at all: the provider holds them, as the mailbox holds the mail,
+ * column is never carried, for the reason the map gives. Events are not carried at all: the provider holds them, as the mailbox holds the mail,
  * so the document counts them and nothing more. No sign-in, token, provider's id, original text
  * or id of ours is ever in it.
  */
@@ -12,6 +11,7 @@ import {
   calAlarms, calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites,
 } from "@trafficflow/db/mail";
 import type { CalendarTableName } from "@trafficflow/db/calendar";
+import { zoneForAvailability } from "./availability.js";
 import type { Db } from "../context.js";
 
 export type ExportAnswer =
@@ -31,7 +31,7 @@ export const CALENDAR_EXPORT: Readonly<Record<CalendarTableName, ExportAnswer>> 
   cal_calendars: {
     carries: ["name", "color", "access", "shown", "time_zone"],
     rest: "the provider's id of the calendar (a shared one's is its owner's address, a CalDAV one a path with a user "
-      + "name), its sync token and fetch tag, the window read and the poll's stamps",
+      + "name), its sync token and fetch tag, the private key for availability identities, the window read and the poll's stamps",
   },
   cal_alarms: {
     carries: ["minutes_before", "method"],
@@ -84,7 +84,7 @@ export async function calendarExport(db: Db, accountId: string): Promise<Calenda
 
   const calendars = connections.length === 0 ? [] : await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
-    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone,
+    access: calCalendars.access, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
   }).from(calCalendars).where(eq(calCalendars.accountId, accountId)).orderBy(asc(calCalendars.name), asc(calCalendars.id));
   const alerts = calendars.length === 0 ? [] : await db.select({
     calendarId: calAlarms.calendarId, minutesBefore: calAlarms.minutesBefore, method: calAlarms.method,
@@ -114,7 +114,8 @@ export async function calendarExport(db: Db, accountId: string): Promise<Calenda
       principal: c.provider === "ics" ? null : c.principal,
       mailbox: c.mailboxId === null ? null : addresses.get(c.mailboxId) ?? null,
       calendars: calendars.filter((k) => k.connectionId === c.id).map((k) => ({
-        name: k.name, color: k.color, access: k.access, shown: k.shown, timeZone: k.timeZone,
+        name: k.name, color: k.color, access: k.access, shown: k.shown,
+        timeZone: k.access === "busy" && k.timeZone !== null ? zoneForAvailability(k.timeZone, k.availabilityKey) : k.timeZone,
         newEvents: s?.newEventsCalendarId === k.id,
         defaultAlerts: alerts.filter((a) => a.calendarId === k.id).map((a) => ({ minutesBefore: a.minutesBefore, method: a.method })),
       })),

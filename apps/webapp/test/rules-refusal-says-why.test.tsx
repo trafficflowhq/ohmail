@@ -1,7 +1,11 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import { cloneElement, type ReactElement } from "react";
+import { mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import type { TodaysShellProps } from "./_mail-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  act, answerSyncWith, goTo, installShellEnv, ISO, mailbox, mountShell, teardownShellEnv, textOf, tick,
+  act, answerSyncWith, goTo, installShellEnv, ISO, liveAccountResponse, mailbox, mountShell, teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
@@ -18,11 +22,14 @@ const WHY = en.ohbox.whyRefused;
 type Door = "refuse" | "revoke";
 
 /** Route `DELETE /rules/:id` to the named door; everything else goes to the harness. */
-function rulesDoor(door: Door): void {
+function rulesDoor(door: Door, onRevoked: () => void): void {
   const base = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     if (/\/rules\/[^/?]+$/.test(String(input)) && init?.method === "DELETE") {
-      if (door === "revoke") return new Response(null, { status: 204 });
+      if (door === "revoke") {
+        onRevoked();
+        return liveAccountResponse(new Response(null, { status: 204, headers: { "x-sync-seq": "2" } }));
+      }
       return new Response(JSON.stringify({
         error: {
           code: "organized_elsewhere", message: "another install is organizing this mailbox",
@@ -35,7 +42,7 @@ function rulesDoor(door: Door): void {
 }
 
 function button(el: HTMLElement, label: string): HTMLButtonElement {
-  const all = [...el.querySelectorAll<HTMLButtonElement>("button")].filter((b) => b.textContent?.trim() === label);
+  const all = within(el).getAllByRole<HTMLButtonElement>("button", { name: label });
   expect(all.length, `exactly one "${label}" button`).toBe(1);
   return all[0]!;
 }
@@ -62,9 +69,20 @@ const oneRule = (): Response => new Response(JSON.stringify({
 }), { status: 200, headers: { "content-type": "application/json" } });
 
 async function rulesPane(facts: MailboxFacts[], door: Door): Promise<HTMLElement> {
-  answerSyncWith(oneRule);
-  rulesDoor(door);
-  const el = await mountShell(facts);
+  let revoked = false;
+  answerSyncWith(() => revoked ? Response.json({
+    changes: {
+      creates: [], updates: [], moves: [],
+      deletes: [{ type: "rule", op: "delete", id: "rule_lena", seq: 2, updatedAt: ISO, entity: null }],
+    },
+    cursor: "c2", hasMore: false, serverTime: ISO,
+  }) : oneRule());
+  rulesDoor(door, () => { revoked = true; });
+  const { WebRulesPane } = await import("../app/(product)/mailbox/WebRulesPane");
+  const settings = mailSettings({ ...NO_PANE_PARTS, rules: WebRulesPane });
+  const el = await mountShell(facts, {
+    wrap: (shell) => cloneElement(shell as ReactElement<TodaysShellProps>, { places: { settings } }),
+  });
   await tick(50);
   await goTo("settings");
   await tick(10);
@@ -103,7 +121,7 @@ describe("the Rules pane on a reader says so before the press", () => {
     const el = await rulesPane(released(), "refuse");
     expect(textOf(el)).toContain(WHY.nobody);
     expect(button(el, R.revoke).disabled, "Revoke offered where it cannot land").toBe(true);
-    expect(button(el, R.change).disabled).toBe(true);
+    expect(within(el).getByRole<HTMLButtonElement>("button", { name: /^Files into / }).disabled).toBe(true);
   });
 
   it("a holder that stopped organizing: the pane says nothing organizes it, not to update that machine", async () => {
@@ -127,9 +145,9 @@ describe("a refused revoke renders its reason at the press, and it stays", () =>
   it("409 no_organizer: the lead, the reason and the way out, still there after a toast would have gone", async () => {
     const el = await rulesPane(organizer(), "refuse");
     await press(el, R.revoke);
-    await press(el, R.revokeConfirm);
+    await press(within(document.body).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm);
     await tick(3_000);
-    const alert = el.querySelector(".rules-refusal[role='alert']");
+    const alert = within(el).queryAllByRole("alert").find((line) => line.textContent?.includes(R.toastRevokeFailed));
     expect(alert?.textContent ?? "", "the refusal said nothing that stayed").toContain(R.toastRevokeFailed);
     expect(alert?.textContent ?? "", "the refusal named no reason").toContain(WHY.nobody);
     expect(textOf(el), "the rule is still listed").toContain("lena@atelier.example");
@@ -138,9 +156,10 @@ describe("a refused revoke renders its reason at the press, and it stays", () =>
   it("control — the organizer's revoke: the rule is gone, no refusal on the pane", async () => {
     const el = await rulesPane(organizer(), "revoke");
     await press(el, R.revoke);
-    await press(el, R.revokeConfirm);
-    expect(textOf(el)).toContain(R.toastRevoked);
-    expect(el.querySelector(".rules-refusal")).toBeNull();
-    expect(el.querySelector(".rules-locked")).toBeNull();
+    await press(within(document.body).getByRole("dialog", { name: R.revokeConfirm }), R.revokeConfirm);
+    await tick(100);
+    expect(textOf(document.body)).toContain(R.toastRevoked);
+    expect(within(el).queryAllByRole("alert").find((line) => line.textContent?.includes(R.toastRevokeFailed)) ?? null).toBeNull();
+    expect(within(el).queryByText(WHY.nobody)).toBeNull();
   });
 });

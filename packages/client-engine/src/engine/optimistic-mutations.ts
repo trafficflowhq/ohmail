@@ -44,11 +44,26 @@ import {
   OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_UNREACHABLE_CEILING_MS,
 } from "./options.js";
 import {
-  type AbandonedMutation, andDoneOf, byAtN, explicitRead, isCreatedRow, isPersistedOutboxEntry, NO_QUEUED,
+  type AbandonedMutation, andDoneOf, byAtN, explicitRead, filingMutation, isCreatedRow, isPersistedOutboxEntry, NO_QUEUED,
   NO_WAITING, OUTBOX_ENTRY_VERSION, OUTBOX_EXPIRED_MESSAGE, outboxEntryOf, pastCreateDedupe,
   type PersistedOutboxEntry, persistedWired, pressAgeOf, type QueuedChange, readLeftBy, retiresAbandoned,
   supersedeKey, targetOf, type WaitingSend, WITHDRAW_UNCONFIRMED_SENTENCE, withdrawnResult, worseWithdraw,
 } from "./outbox-record.js";
+
+interface MutateOptions {
+  key?: string;
+  andDone?: SendAndDonePlan;
+  /** Called once, after the outbox write committed and before the dispatch; never on a refused write. */
+  onDurable?: () => void;
+  /** An actual settled attempt, including a retry. Never called merely because a write queued. */
+  onSettled?: (result: MutationResult, mutation: EngineMutation) => void;
+}
+
+interface DispatchOptions {
+  deferReconcile?: boolean;
+  onReconcileDeferred?: (mode: "await" | "background") => void;
+  unsubscribeIds?: readonly string[];
+}
 
 export abstract class EngineOptimisticMutations extends EngineAttachments {
   // ── optimistic mutations ─────────────────────────────────────────────────
@@ -197,11 +212,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    */
   async mutate(
     m: EngineMutation,
-    opts: {
-      key?: string; andDone?: SendAndDonePlan;
-      /** Called once, after the outbox write committed and before the dispatch; never on a refused write. */
-      onDurable?: () => void;
-    } = {},
+    opts: MutateOptions = {},
   ): Promise<MutationResult> {
     this.noteFiling(m);
     const result = await this.mutateOnce(m, opts);
@@ -248,7 +259,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
   }
 
   protected async mutateOnce(
-    m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan; onDurable?: () => void },
+    m: EngineMutation, opts: MutateOptions,
   ): Promise<MutationResult> {
     const enriched = this.enrich(m);
     const id = this.uuid();
@@ -315,9 +326,10 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
      * So a send whose durable record was refused is rolled back and says so; the composer still holds the text.
      */
     // A press under a key whose send just confirmed sends the row that send made, never a second one.
-    const confirmedRow = enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key) : undefined;
+    const confirmedRow = enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key)?.saved : undefined;
     const pending: PendingMutation = {
-      id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
+      id, key, mutation: filingMutation(enriched), at: this.now().getTime(), n: this.outboxSeq++,
+      ...(opts.onSettled ? { onSettled: opts.onSettled } : {}),
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
       ...(superseded.createAttempted ? { createAttempted: true } : {}),
       ...(superseded.createdRow !== undefined ? { createdRow: superseded.createdRow }
@@ -331,7 +343,10 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     // So does a read: a newer read or unread on its letters reaches it here (`readsTaken`).
     if (enriched.kind === "mark_seen" || enriched.kind === "feed_mark_seen") this.freshReads.add(pending);
     try {
-      return await this.dispatchFresh(pending, superseded, settleMarks, opts, awaitsHold);
+      return await this.dispatchFresh(
+        pending, superseded, settleMarks, opts, awaitsHold,
+        enriched.kind === "screener_decide" ? enriched.unsubscribeIds : undefined,
+      );
     } finally {
       if (this.awaitingTurn.get(key) === pending) this.awaitingTurn.delete(key);
       this.freshReads.delete(pending);
@@ -341,7 +356,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
   /** {@link mutateOnce} past the paint: the outbox write, then the wire. */
   protected async dispatchFresh(
     pending: PendingMutation, superseded: SupersedeEffect, settleMarks: () => void,
-    opts: { key?: string; andDone?: SendAndDonePlan; onDurable?: () => void }, awaitsHold: boolean,
+    opts: MutateOptions, awaitsHold: boolean, unsubscribeIds?: readonly string[],
   ): Promise<MutationResult> {
     const { id, key, mutation: enriched } = pending;
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
@@ -450,7 +465,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
       // Deadline-bounded like every other road. A timeout leaves the attempt owning its entry
       // and arms the hold; the verb is answered `queued` rather than left on a hung request.
-      const out = await this.outboxGate(() => this.dispatchOnLane(pending));
+      const out = await this.outboxGate(() => this.dispatchOnLane(pending, unsubscribeIds));
       if (out.held) {
         if (!awaitsHold) return queued();
         continue; // the create re-reads the hold at the top and waits it out off the chain
@@ -542,7 +557,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    * batch queue behind itself, a deadlock a nested-flag cannot fix.
    */
   protected async dispatchOnLane(
-    p: PendingMutation,
+    p: PendingMutation, unsubscribeIds?: readonly string[],
   ): Promise<{
     result: MutationResult | null;
     timedOut: boolean;
@@ -557,6 +572,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     const { result, timedOut } = await this.dispatchWithDeadline(p, {
       deferReconcile: true,
       onReconcileDeferred: (mode) => { owed = mode; },
+      unsubscribeIds,
     });
     return { result, timedOut, held: false, owed };
   }
@@ -621,7 +637,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
   protected async dispatchWithDeadline(
     p: PendingMutation,
-    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
+    opts: DispatchOptions = {},
   ): Promise<{ result: MutationResult | null; timedOut: boolean }> {
     // NO SEPARATE "ACTIVE" DEFERRED. Every caller of this method reaches it through
     // {@link outboxGate}, and the chain does not release the next one until this returns — so
@@ -635,8 +651,16 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
      * come back and re-queue itself. The entry is removed when the ATTEMPT settles.
      */
     const attempt = this.dispatch(p, opts);
+    if (p.mutation.kind === "draft_save" && p.mutation.draftId === null) p.createAttempt = attempt;
     this.inFlight.set(p.id, p);
-    void attempt.then(() => this.inFlight.delete(p.id), () => this.inFlight.delete(p.id));
+    void attempt.then((result) => {
+      this.inFlight.delete(p.id);
+      if (result.status !== "queued" && p.onSettled) {
+        const notify = p.onSettled;
+        delete p.onSettled;
+        try { notify(result, p.mutation); } catch { /* the attempt's receipt stands */ }
+      }
+    }, () => this.inFlight.delete(p.id));
     let timer: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     const raced = await Promise.race([
@@ -1052,7 +1076,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     if (pastCreateDedupe(e, this.now().getTime())) return refuse(e, "outbox_expired", OUTBOX_EXPIRED_MESSAGE);
 
     const p: PendingMutation = {
-      id: e.id, key: e.key, mutation: e.mutation, at: e.at, n: e.n,
+      id: e.id, key: e.key, mutation: filingMutation(e.mutation), at: e.at, n: e.n,
       restored: true, attempts: 0,
       // Try again on a record whose create went out unread is still not a second create.
       ...(e.createAttempted === true ? { createAttempted: true } : {}),
@@ -1542,16 +1566,37 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    */
   protected async dispatch(
     p: PendingMutation,
-    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
+    opts: DispatchOptions = {},
   ): Promise<MutationResult> {
     const r = await this.dispatchOnce(p, opts);
     this.noteKeptRow(p.key, r);
-    if (p.mutation.kind === "mail_send" && r.status === "confirmed" && p.createdRow !== undefined) {
+    if (p.mutation.kind === "mail_send" && r.status === "confirmed" && (p.createdRow || r.sentDraftId)) {
+      const prior = this.confirmedRows.get(p.key);
+      const through = r.seq ?? r.sentDraftThrough;
+      const delivered = r.sentDraftId && through !== undefined && Number.isSafeInteger(through) && through > 0
+        ? { id: r.sentDraftId, seq: through } : prior?.delivered;
       this.confirmedRows.delete(p.key);
-      this.confirmedRows.set(p.key, p.createdRow);
+      this.confirmedRows.set(p.key, { saved: p.createdRow ?? prior?.saved, delivered });
       if (this.confirmedRows.size > 64) this.confirmedRows.delete(this.confirmedRows.keys().next().value!);
     }
     return p.mutation.kind === "mail_send" ? await this.oneSpeaker(p, r) : r;
+  }
+
+  /** The draft in the mirror without any optimistic edits or resolution. */
+  confirmedDraft(id: string): EngineDraft | undefined {
+    return this.store.get<EngineDraft>("draft", id);
+  }
+
+  /** Only the sending version of the delivered row is stale. An optimistic retry or a later
+   * server version on the same id has its own outcome. The record belongs to this engine's account. */
+  confirmedReplyDraft(draft: EngineDraft): boolean {
+    if (draft.status !== "sending") return false;
+    const row = this.store.record("draft", draft.id);
+    if (!row || row.entity !== draft || row.seq <= 0) return false;
+    for (const { delivered } of this.confirmedRows.values()) {
+      if (delivered?.id === draft.id && row.seq <= delivered.seq) return true;
+    }
+    return false;
   }
 
   /** Queued edits kept as new drafts this session — see {@link KeptAsNewDraft}. Newest last. */
@@ -1566,7 +1611,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    */
   protected async keepAsNewDraft(
     p: PendingMutation, from: string, rejection: MutationRejectedError,
-    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void },
+    opts: DispatchOptions,
   ): Promise<MutationResult> {
     const { ifContentRevision: _stated, ...words } = p.mutation as Extract<EngineMutation, { kind: "draft_save" }>;
     // What an edit leaves to its row (the sender, the thread, the forwarded message) comes from it.
@@ -1685,7 +1730,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
 
   protected async dispatchOnce(
     p: PendingMutation,
-    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
+    opts: DispatchOptions = {},
   ): Promise<MutationResult> {
     /* THE READ A PERSON'S PRESS TOOK LETTERS FROM while it waited, read here for the
        withdrawal's reason below: only the rest goes, and nothing when none is left. */
@@ -1742,7 +1787,10 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
          not send it beside a newer change, or after a Discard. A send is never ended and carries
          no signal: only its barrier goes, and this attempt settles on its own request's answer. */
       const stop = p.mutation.kind === "mail_send" ? null : abortControllerOrNull();
-      const call = this.adapter.mutate(p.mutation, {
+      const filing = filingMutation(p.mutation);
+      const request = filing.kind === "screener_decide" && opts.unsubscribeIds?.length
+        ? { ...filing, unsubscribeIds: opts.unsubscribeIds } : filing;
+      const call = this.adapter.mutate(request, {
         idempotencyKey: p.key,
         ...pressAgeOf(p.mutation, p.at, this.now().getTime()),
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
@@ -1947,6 +1995,8 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       // rolled-back one has no answer from the organizer to report.
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
+        ...(outcome.sentDraftId ? { sentDraftId: outcome.sentDraftId } : {}),
+        ...(outcome.sentDraftThrough === undefined ? {} : { sentDraftThrough: outcome.sentDraftThrough }),
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
         ...(outcome.revision ? { revision: outcome.revision } : {}),
         ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
@@ -2439,6 +2489,16 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    */
   inFlightMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan; confirmed?: true }> {
     return [...this.inFlight.values()];
+  }
+
+  /** The canonical row of a first save already on the wire, if that attempt actually confirmed. */
+  async settledDraftCreate(key: string): Promise<string | null> {
+    for (const p of this.inFlight.values()) {
+      if (p.key !== key || !p.createAttempt) continue;
+      const result = await p.createAttempt;
+      return result.status === "confirmed" ? result.entityId ?? null : null;
+    }
+    return this.createdDraftOf(key)?.id ?? null;
   }
 
   /**

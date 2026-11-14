@@ -1,4 +1,4 @@
-import type { CSSProperties, KeyboardEvent } from "react";
+import { Fragment, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "../../icons/Icon.js";
 import { RailEntry } from "../Shell/RailEntry.js";
 import "./folder-fold.css";
@@ -7,6 +7,11 @@ import { hintedName } from "./FolderShelf.js";
 export interface FoldFolder {
   id: string;
   name: string;
+  busy?: boolean;
+  title?: string;
+  after?: ReactNode;
+  menu?: boolean;
+  menuButton?: ReactNode;
   /**
    * What tells it from another folder of the same name, small after the name: the folder above it, else its
    * mailbox; for a hit of the find line, its way. Without a `label` it is said with the name, and with the count
@@ -33,6 +38,7 @@ export interface FolderFoldProps {
   /** Each mailbox's folders as they stand now, branches opened or shut, the best match first while a name is typed. */
   groups: readonly {
     mailbox?: string;
+    form?: ReactNode;
     folders: readonly FoldFolder[];
     /** The last line of a mailbox: New folder. */
     add?: { label: string; onPress?: () => void };
@@ -82,46 +88,51 @@ export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu
           <div key={group.mailbox ?? g} className="oh-folderfold-group">
             {group.mailbox ? <p className="oh-text oh-folderfold-mailbox">{group.mailbox}</p> : null}
             {group.folders.map((folder) => (
-              <div
-                key={folder.id}
-                className="oh-folderfold-row"
-                style={
-                  folder.depth ? ({ "--oh-folderfold-depth": folder.depth } as CSSProperties) : undefined
-                }
-              >
-                {folder.branch ? (
-                  <button
-                    type="button"
-                    className="oh-control oh-folderfold-branch"
-                    aria-expanded={folder.branch.expanded}
-                    aria-label={folder.branch.label}
-                    tabIndex={-1}
-                    onClick={() => onBranch?.(folder.id)}
-                  >
-                    <Icon name="down" size={16} />
-                  </button>
-                ) : null}
-                <RailEntry
-                  kind="sub"
-                  icon="folder"
-                  count={folder.count}
-                  hint={folder.hint}
-                  label={folder.label ?? hintedName(folder)}
-                  title={folder.name}
-                  current={folder.current}
-                  drop={folder.drop}
-                  onPress={() => onOpen?.(folder.id)}
-                  onMenu={onMenu ? (at) => onMenu(folder.id, at) : undefined}
+              <Fragment key={folder.id}>
+                <div
+                  className="oh-folderfold-row"
+                  style={
+                    folder.depth ? ({ "--oh-folderfold-depth": folder.depth } as CSSProperties) : undefined
+                  }
                 >
-                  {folder.name}
-                </RailEntry>
-              </div>
+                  {folder.branch ? (
+                    <button
+                      type="button"
+                      className="oh-control oh-folderfold-branch"
+                      aria-expanded={folder.branch.expanded}
+                      aria-label={folder.branch.label}
+                      tabIndex={-1}
+                      onClick={() => onBranch?.(folder.id)}
+                    >
+                      <Icon name="down" size={16} />
+                    </button>
+                  ) : null}
+                  <RailEntry
+                    kind="sub"
+                    icon="folder"
+                    count={folder.count}
+                    hint={folder.hint}
+                    label={folder.label ?? hintedName(folder)}
+                    title={folder.title ?? folder.name}
+                    busy={folder.busy}
+                    current={folder.current}
+                    drop={folder.drop}
+                    onPress={() => onOpen?.(folder.id)}
+                    onMenu={onMenu && folder.menu !== false ? (at) => onMenu(folder.id, at) : undefined}
+                  >
+                    {folder.name}
+                  </RailEntry>
+                  {folder.menuButton}
+                </div>
+                {folder.after}
+              </Fragment>
             ))}
-            {group.add ? (
-              <RailEntry kind="sub" icon="plus" quiet onPress={group.add.onPress}>
-                {group.add.label}
-              </RailEntry>
-            ) : null}
+            {group.form ??
+              (group.add ? (
+                <RailEntry kind="sub" icon="plus" quiet onPress={group.add.onPress}>
+                  {group.add.label}
+                </RailEntry>
+              ) : null)}
           </div>
         ))}
         {none && !first ? <p className="oh-text oh-folderfold-none">{none}</p> : null}

@@ -2,3 +2,63 @@
 .st-item {
   display: block;
 }
+
+.st-pile-note {
+  display: grid;
+  gap: var(--s2);
+  justify-items: start;
+  padding: var(--s2) var(--s3) var(--s3) var(--flush);
+}
+
+.st-filing-chip {
+  container: stream-filing / inline-size;
+  padding: var(--s2) var(--s3) var(--s2) var(--flush);
+}
+
+@container stream-filing (inline-size < 340px) {
+  .st-filing-chip [data-chip="ai"] {
+    box-sizing: border-box;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    row-gap: var(--s1);
+    border-radius: var(--r-sheet);
+  }
+
+  .st-filing-chip [data-chip="ai"] > [aria-hidden="true"] {
+    display: none;
+  }
+
+  .st-filing-label {
+    flex: 1 0 100%;
+    min-inline-size: 0;
+  }
+}
+
+/* Keep the card gap in its cached height when a card becomes part of a spacer. */
+.st-window {
+  display: flex;
+  flex-direction: column;
+}
+
+.st-window-card {
+  margin-block-end: var(--gap);
+}
+
+.st-window-card:last-child {
+  margin-block-end: 0;
+}
+
+.st-window .st-item {
+  container: stream-card / inline-size;
+}
+
+.st-read-rule {
+  margin: 0;
+  padding: var(--s2) var(--s3) var(--s3) var(--flush);
+  color: var(--ink2);
+}
+
+.st-receipt-amount {
+  float: inline-end;
+  margin-inline-start: var(--s4);
+}

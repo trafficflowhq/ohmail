@@ -13,6 +13,7 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "useCalendar": "ohcal verwenden",
       "add": "Kalender-Account hinzufügen",
       "none": "Kein Kalender-Account",
       "noneShort": "Keiner",
@@ -37,7 +38,8 @@
       "removeAsk": "{name} entfernen?",
       "rename": "Hier umbenennen",
       "nameHere": "Name hier",
-      "save": "Sichern"
+      "save": "Sichern",
+      "title": "Kalenderkonten"
     },
     "view": {
       "newEvents": "Neue Termine kommen in",
@@ -49,13 +51,26 @@
       "hours": "Stunden im Blick",
       "from": "Von",
       "to": "Bis",
+      "hourRange": "{from} – {to}",
+      "summary": "Woche · Montag",
+      "scheduleSummary": "{hours} · {calendar}",
+      "hourEarlier": "Eine Stunde früher",
+      "hourLater": "Eine Stunde später",
       "endOfDay": "Mitternacht",
       "time": "Zeit",
       "zone": "Zeitzone",
       "zoneNote": "Folgt diesem Gerät.",
       "secondZone": "Zweite Zeitzone",
       "noSecondZone": "Keine",
-      "findZone": "Zeitzone finden"
+      "findZone": "Zeitzone finden",
+      "title": "Ansicht"
+    },
+    "group": "Kalender",
+    "close": "Einstellungen schließen",
+    "mail": {
+      "title": "Mail und Kalender",
+      "fromMail": "Aus Mail",
+      "open": "Öffnen"
     }
   }
 }

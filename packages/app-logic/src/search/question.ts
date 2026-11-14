@@ -97,7 +97,7 @@ export function useQuestion(searchBy: SearchBy, pressed: Pressed): Question {
     const both = { ...storeFiltersOf(pressed), ...filtersOf(narrowing, searchBy) };
     return Object.keys(both).length === 0 ? undefined : both;
   }, [pressed, narrowing, searchBy]);
-  const isNarrowed = narrowed(narrowing);
+  const isNarrowed = narrowed(narrowing) || (searchBy === "people" && pressed.length > 0);
   return {
     narrowing,
     storeFilters,

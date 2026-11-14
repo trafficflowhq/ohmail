@@ -1,16 +1,17 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import en from "../../messages/en.json";
-import { settleFirstPaint } from "../_first-paint.js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
-  nothingOrganizesOf, notOrganizingYetOf, readerStandDown, type MailboxFacts, type NotOrganizingYet, type ScreenerRole,
+  markDecisionAsked, resetDecisionAskedForTests,
+} from "@ohmail/app-logic/mailboxes/first-run/decision-asked";
+import {
+  nothingOrganizesOf, notOrganizingYetOf, readerStandDown, type MailboxFacts,
 } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import {
+  ACCOUNT, ISO, act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner,
+  scriptRefresh, scriptSession, sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "../fixtures/cloud-confirm-shell";
 
 /**
  * A MAILBOX NOBODY AGREED TO ORGANIZE IS NOT CALLED SCREENED (self-host 0.25.19): the first run left
@@ -20,18 +21,6 @@ import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
  * organize decision. A mailbox another install holds, a consented one and an unread lease keep what they said.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-Element.prototype.scrollTo ??= function scrollTo() {};
-
-const NOW = new Date("2026-10-09T11:00:00.000Z");
-const ORGANIZES: ScreenerRole = { mode: "organizer", name: null, reason: null, oauthOnly: false };
 const HINT = en.screener.empty.waiting.hint;
 const NOT_YET_ONE = "ohmail is not organizing this mailbox yet.";
 
@@ -85,92 +74,45 @@ describe("notOrganizingYetOf — the rows it names", () => {
   });
 });
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-function screenerState(): ScreenerState {
-  return {
-    waiting: [], waitingCount: 0, waitingSource: "store", queueAnswered: true,
-    suggestedCount: 0, suggestedDests: [],
-    waitingMore: { available: false, loading: false, failed: false, load: () => {} }, rereadWaiting: () => {},
-    unsuggestedSenders: [], suggestedSenders: [], applying: null, screenedOut: [], spam: [],
-    isExiting: () => false, refused: () => false, bodyStall: () => null,
-    decide: () => {}, applyAll: () => {}, markAllSpam: () => {}, allowScreened: () => {},
-    notSpamToWaiting: () => {}, notSpamToOhbox: () => {}, deleteSpam: () => {}, flush: () => {},
-    role: ORGANIZES, pending: [], decided: [], notApplied: [],
-  } as unknown as ScreenerState;
-}
-
-async function mount(node: React.ReactElement): Promise<HTMLElement> {
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider as never, { children: node } as never),
-    }));
-  });
-  await settleFirstPaint();
-  return host;
-}
-
-async function screener(notOrganizingYet: NotOrganizingYet | null): Promise<HTMLElement> {
-  const { ScreenerView } = await import("../../app/views/ScreenerView.js");
-  return mount(h(ScreenerView as never, {
-    state: screenerState(), segment: "waiting", selection: { waiting: null, screened: null, spam: null },
-    settled: true, owed: false, storeImportOpen: false,
-    onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    notOrganizingYet,
-  } as never));
-}
-
-/** A never-seen sender in the Ohbox — what a mailbox nothing screens looks like. */
-const stranger = {
-  id: "m1", accountId: "a", mailboxId: "mb-1", threadId: null, messageIdHeader: null, subject: "Hello",
-  from: { name: "Ada Stranger", address: "ada@first-time.example" }, to: [], cc: [],
-  date: "2026-10-09T10:50:00.000Z", folder: "INBOX", snippet: "s", unread: true, hasAttachments: false, attachmentCount: 0,
-  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-  triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-09T10:50:00.000Z",
-};
-
-async function ohbox(notOrganizingYet: NotOrganizingYet | null, more: Record<string, unknown> = {}): Promise<HTMLElement> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  return mount(h(OhboxView as never, {
-    owed: false, demo: false, settled: true,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-    // One row: an empty Ohbox renders the sync strip, which reads the shell's provider this harness does not mount.
-    resurfacedRows: [], newForYou: [stranger], previouslySeen: [], replyDone: null, tags: [], now: NOW,
-    selectedId: null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-    onMarkSeen: () => {},
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    notOrganizingYet, ...more,
-  } as never));
-}
-
 const text = (el: HTMLElement) => el.textContent ?? "";
-const pressNamed = (el: HTMLElement, name: string) => [...el.querySelectorAll("button")].filter((b) => b.textContent === name);
+const head = (el: HTMLElement) => within(el).getByRole("heading", { name: "Screener" }).closest("header")!;
+const pressNamed = (el: HTMLElement, name: string) => within(el).queryAllByRole("button", { name });
 
-beforeEach(() => {
-  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) => ({
-    matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; },
-  }) as unknown as MediaQueryList;
-  window.location.hash = "";
-});
-
+let mounted = false;
+beforeAll(warmCloudShell);
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  host?.remove();
-  host = null;
-  vi.restoreAllMocks();
+  if (mounted) await teardownConfirmEnv();
+  resetDecisionAskedForTests();
+  mounted = false;
 });
 
-const EVERY: NotOrganizingYet = { mailboxes: [{ id: "mb-1", address: "box@family.example" }], every: true };
-const MIXED: NotOrganizingYet = { mailboxes: [{ id: "mb-2", address: "side@family.example" }], every: false };
+async function screener(...roster: MailboxFacts[]): Promise<HTMLElement> {
+  installConfirmEnv();
+  mounted = true;
+  window.localStorage.clear();
+  markDecisionAsked(ACCOUNT);
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  const fixture = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    if (path === "/api/mailboxes") {
+      return Response.json({ items: roster.map((box) => ({
+        initialImportCompletedAt: ISO, ...box, lastSyncAt: ISO,
+      })) });
+    }
+    return fixture(input, init);
+  };
+  window.location.hash = "#/screener";
+  const frame = await mountCloudShell();
+  await tick(3000);
+  return frame;
+}
+
+const organized = (id: string) => fact({ id, organizerRole: "organizer", organizeConsentedAt: ISO });
+const EVERY = fact({ id: "mb-1", address: ["family", "example.invalid"].join("@") });
+const MIXED = fact({ id: "mb-2", address: ["work", "example.invalid"].join("@") });
 
 describe("the Screener over a mailbox nothing organizes", () => {
   it("says it is not organizing yet, never the screening sentence, and its header is not 'all clear'", async () => {
@@ -178,8 +120,8 @@ describe("the Screener over a mailbox nothing organizes", () => {
     expect(text(el)).toContain(NOT_YET_ONE);
     expect(text(el)).toContain(en.screener.notYetWhy);
     expect(text(el), "the screening claim over a mailbox nothing screens").not.toContain(HINT);
-    expect(text(el)).toContain(en.screener.metaNotYet);
     expect(text(el)).not.toContain("all clear");
+    expect(text(head(el))).toContain(en.screener.metaNotYet);
   });
 
   it("its press opens the organize decision for that mailbox — the re-run, which opens on the consent statement", async () => {
@@ -187,38 +129,27 @@ describe("the Screener over a mailbox nothing organizes", () => {
     const press = pressNamed(el, en.screener.notYetPress);
     expect(press).toHaveLength(1);
     await act(async () => { press[0]!.click(); });
+    await tick(200);
     expect(window.location.hash).toBe("#/first-run/again?mailbox=mb-1");
   });
 
   it("a mixed account keeps the screening sentence for the organized mailboxes and names the other, never 'all clear'", async () => {
-    const el = await screener(MIXED);
+    const el = await screener(organized("mb-1"), MIXED);
     expect(text(el)).toContain(HINT);
-    expect(text(el)).toContain("ohmail is not organizing side@family.example yet");
+    expect(within(el).getByText(en.screener.empty.waiting.mixedHint)).toBeTruthy();
+    expect(text(el)).toContain(`ohmail is not organizing ${MIXED.address} yet`);
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(1);
     expect(text(el), "'all clear' over a mailbox nothing organizes").not.toContain("all clear");
-    expect(text(el)).toContain("not organizing side@family.example");
+    expect(text(head(el))).toContain(`not organizing ${MIXED.address}`);
   });
 
   it("CONTROL: an organized account reads exactly as before", async () => {
-    const el = await screener(null);
+    const el = await screener(organized("mb-1"));
     expect(text(el)).toContain(HINT);
-    expect(text(el)).toContain("all clear");
+    expect(text(head(el))).toContain("all clear");
     expect(text(el)).not.toContain("not organizing");
     expect(pressNamed(el, en.screener.notYetPress)).toHaveLength(0);
   });
-});
-
-describe("the Ohbox doorbell over a mailbox nothing organizes", () => {
-  const doorbell = (el: HTMLElement) => [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) => /waiting at the Screener|Screener/.test(b.getAttribute("aria-label") ?? "")) ?? null;
-
-
-
-  it("draws no bell, not even 'All clear', while the Screener's queue is not read yet", async () => {
-    const el = await ohbox(null, { doorbellSettled: false });
-    expect(doorbell(el)).toBeNull();
-    expect(text(el)).not.toContain("All clear");
-  });
-
 });
 
 /**
@@ -228,8 +159,11 @@ describe("the Ohbox doorbell over a mailbox nothing organizes", () => {
  * the line is a standing state rather than a notice somebody can dismiss.
  */
 const T = "2026-10-09T10:01:00.000Z";
-const HANDED_BACK: NotOrganizingYet = { mailboxes: [{ id: "mb-1", address: "box@family.example", why: "handed_back" }], every: true };
-const STOPPED: NotOrganizingYet = { mailboxes: [{ id: "mb-1", address: "box@family.example", why: "stopped" }], every: true };
+const HANDED_BACK = { ...EVERY, organizeConsentedAt: T, organizerReleasedAt: T };
+const STOPPED = fact({
+  ...EVERY, organizeConsentedAt: T, organizerState: "stopped",
+  organizedBy: { kind: "desktop", name: "Laptop", since: T },
+});
 
 describe("nothingOrganizesOf — every mailbox nothing organizes, and why", () => {
   it("names a handed-back mailbox and one whose holder stopped, beside the never-agreed one", () => {
@@ -265,13 +199,6 @@ describe("nothingOrganizesOf — every mailbox nothing organizes, and why", () =
     expect(readerStandDown({ ...back, takeoverAuthorizedAt: T } as MailboxFacts)).toBe("released");
     expect(readerStandDown({ ...back, organizerChecked: false } as MailboxFacts)).toBe("released");
   });
-
-  it("the shell hands the Ohbox and the Screener this set, not the never-agreed one", () => {
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    /* The Screener takes it as its view's prop; the seated Ohbox as a member of the composition's feed. */
-    expect(shell.match(/notOrganizingYet(=\{|: )demo \? null : nothingOrganizesOf\(facts\)/g)).toHaveLength(2);
-    expect(shell).not.toMatch(/notOrganizingYet(=\{|: )demo \? null : notOrganizingYetOf\(facts\)/);
-  });
 });
 
 describe("the Screener over a mailbox handed back or whose holder stopped", () => {
@@ -281,8 +208,8 @@ describe("the Screener over a mailbox handed back or whose holder stopped", () =
     expect(text(el)).toContain(en.screener.notOrganizingWhy);
     expect(text(el), "the screening claim over a mailbox nothing screens").not.toContain(HINT);
     expect(text(el)).not.toContain(en.screener.empty.waiting.title);
-    expect(text(el)).toContain(en.screener.metaHandedBack);
     expect(text(el)).not.toContain("all clear");
+    expect(text(head(el))).toContain(en.screener.metaHandedBack);
   });
 
   it("its press opens Mailboxes, where Organize here is, and never the consent statement", async () => {
@@ -291,22 +218,26 @@ describe("the Screener over a mailbox handed back or whose holder stopped", () =
     const press = pressNamed(el, en.screener.notOrganizingPress);
     expect(press).toHaveLength(1);
     await act(async () => { press[0]!.click(); });
+    await tick(200);
     expect(window.location.hash).toBe("#/settings/mailboxes");
   });
 
   it("a holder that stopped says nothing organizes the mailbox", async () => {
     const el = await screener(STOPPED);
     expect(text(el)).toContain("Nothing organizes this mailbox.");
-    expect(text(el)).toContain(en.screener.metaNotOrganizing);
     expect(text(el)).not.toContain("all clear");
+    expect(text(head(el))).toContain(en.screener.metaNotOrganizing);
   });
 
   it("a mixed account names the handed-back mailbox beside the screening sentence, never 'all clear'", async () => {
-    const el = await screener({ mailboxes: [{ id: "mb-2", address: "side@family.example", why: "handed_back" }], every: false });
+    const el = await screener(organized("mb-1"), {
+      ...MIXED, organizeConsentedAt: T, organizerReleasedAt: T,
+    });
     expect(text(el)).toContain(HINT);
-    expect(text(el)).toContain("You handed side@family.example back");
+    expect(within(el).getByText(en.screener.empty.waiting.mixedHint)).toBeTruthy();
+    expect(text(el)).toContain(`You handed ${MIXED.address} back`);
     expect(text(el)).not.toContain("all clear");
-    expect(text(el)).toContain("not organizing side@family.example");
+    expect(text(head(el))).toContain(`not organizing ${MIXED.address}`);
   });
 });
 

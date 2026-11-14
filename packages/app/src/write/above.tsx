@@ -58,10 +58,14 @@ export function usePublishVerbs(verbs: readonly PanelVerb[]): void {
 }
 
 export function useWriting(): Writing {
-  const writing = useContext(WritingContext);
+  const writing = useWritingIfMounted();
   if (writing === null)
     throw new Error("a part of write was drawn with no composition above it (WriteAbove)");
   return writing;
+}
+
+export function useWritingIfMounted(): Writing | null {
+  return useContext(WritingContext);
 }
 
 export function useWriteBeside(): WriteBeside {

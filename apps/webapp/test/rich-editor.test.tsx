@@ -4,16 +4,13 @@ import { resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
 import { DOMParser as SchemaParser, Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { undoDepth } from "@tiptap/pm/history";
 import { getText, getTextSerializersFromSchema } from "@tiptap/react";
 import { htmlToPlainText } from "@trafficflow/core/mail";
-import { RichEditor } from "../app/shell/RichEditor";
+import { WRITE_WORDS, linkCard, mountWriteEditor, type MountedEditor } from "./_write-1-editor";
 import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { pasteInto } from "./fixtures/rich-editor-driver";
 
@@ -54,72 +51,20 @@ beforeAll(() => {
 });
 
 let host: HTMLElement | null = null;
-let root: Root | null = null;
+let mounted: MountedEditor | null = null;
 
-interface Mounted {
-  emitted: RichValue[];
-  readonly value: RichValue;
-  editor: () => Editor;
-  surface: () => HTMLElement;
-  buttons: () => HTMLButtonElement[];
-  button: (label: string) => HTMLButtonElement;
-  /** Flips the mid-send lock, the way Compose does while a send is in flight. */
-  setEditable: (editable: boolean) => void;
-  /** Hands the editor a new value from outside, the way a restored draft arrives. */
-  setValue: (value: RichValue) => void;
-}
+type Mounted = MountedEditor;
 
-/** Mounts the editor and hands back a live view of the last value it emitted. */
+/** Mounts Write's editor (as Write mounts it: `_write-1-editor.tsx`) and hands back a live view of its value. */
 function mount(initial: RichValue = EMPTY_RICH): Mounted {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  const emitted: RichValue[] = [];
-  let current = initial;
-  let instance: Editor | null = null;
-  let lock: ((editable: boolean) => void) | null = null;
-  let replace: ((value: RichValue) => void) | null = null;
-
-  function Harness() {
-    const [v, setV] = React.useState<RichValue>(initial);
-    const [editable, setEditable] = React.useState(true);
-    current = v;
-    lock = setEditable;
-    replace = setV;
-    return (
-      <NextIntlClientProvider locale="en" messages={messages as never}>
-        <RichEditor
-          value={v}
-          onChange={(next) => { emitted.push(next); setV(next); }}
-          ariaLabel="Reply"
-          editable={editable}
-          editorRef={(e) => { if (e) instance = e; }}
-        />
-      </NextIntlClientProvider>
-    );
-  }
-
-  root = createRoot(host);
-  act(() => { root!.render(<Harness />); });
-  return {
-    emitted,
-    get value() { return current; },
-    setEditable: (editable: boolean) => act(() => lock?.(editable)),
-    setValue: (value: RichValue) => act(() => replace?.(value)),
-    editor: () => {
-      if (!instance) throw new Error("the editor never reported itself through editorRef");
-      return instance;
-    },
-    surface: () => host!.querySelector<HTMLElement>(".rte-surface")!,
-    buttons: () => [...host!.querySelectorAll<HTMLButtonElement>(".rte-b")],
-    button: (label: string) =>
-      host!.querySelector<HTMLButtonElement>(`.rte-b[aria-label="${label}"]`)!,
-  };
+  mounted = mountWriteEditor(initial, "Reply");
+  host = mounted.host;
+  return mounted;
 }
 
 afterEach(() => {
-  act(() => { root?.unmount(); });
-  root = null;
-  host?.remove();
+  mounted?.unmount();
+  mounted = null;
   host = null;
   vi.restoreAllMocks();
 });
@@ -207,7 +152,7 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
   it("is a TEXT BOX to a reader, found by role and named by the caller's label", () => {
     mount();
     const body = byRole(host!, "textbox", "Reply");
-    expect(body.classList.contains("rte-surface")).toBe(true);
+    expect(body.classList.contains("ProseMirror"), "the role is not on the editing surface itself").toBe(true);
     expect(body.getAttribute("contenteditable")).toBe("true");
   });
 
@@ -236,40 +181,42 @@ describe("the body says WHAT IT IS, not only what it is called", () => {
      * Read from the sources rather than listed here: a new surface that mounts the editor is
      * covered the day it lands, which a hand-kept list is not.
      */
-    const roots = ["app/views/ComposeView.tsx", "app/shell/InlineReply.tsx", "app/shell/AppShell.tsx",
-      "app/shell/SignatureBlock.tsx", "app/shell/SignaturesRow.tsx"];
+    /* Re-pointed by path (the older tests' sorting, section D (3)): the call sites are Write's, which mounts its
+       editor as `<Editor ... label={...}>` in the letter and in the reply; the words are Write's catalogue. */
+    const roots = ["packages/app/src/write/Letter.tsx", "packages/app/src/write/Reply.tsx"];
     const sites: string[] = [];
     for (const rel of roots) {
-      const src = readFileSync(resolve(__dirname, "..", rel), "utf8");
-      for (const m of src.matchAll(/<RichEditor\b([\s\S]*?)\/?>/g)) {
+      const src = readFileSync(resolve(__dirname, "..", "..", "..", rel), "utf8");
+      for (const m of src.matchAll(/<Editor\b([\s\S]*?)\/?>/g)) {
         const props = m[1];
-        const label = /ariaLabel=\{([^}]*)\}/.exec(props);
-        expect(label, `${rel}: a <RichEditor> with no ariaLabel`).not.toBeNull();
-        expect(label![1].trim(), `${rel}: an empty ariaLabel`).not.toBe('""');
+        const label = /label=\{([^}]*)\}/.exec(props);
+        expect(label, `${rel}: an <Editor> with no label`).not.toBeNull();
+        expect(label![1].trim(), `${rel}: an empty label`).not.toBe('""');
         sites.push(`${rel}: ${label![1].trim()}`);
       }
     }
-    expect(sites.length, "no call site was found at all — the census read nothing").toBeGreaterThanOrEqual(6);
+    expect(sites.length, "no call site was found at all — the census read nothing").toBeGreaterThanOrEqual(roots.length);
 
     /* The two the composer surfaces use, in both catalogues, non-empty and not each other: the
        compose body and the inline reply are different bodies and a reader hearing the same name
        for both cannot tell which one the caret is in. */
-    const de = JSON.parse(readFileSync(resolve(__dirname, "..", "messages", "de.json"), "utf8")) as
-      Record<string, Record<string, string>>;
-    const en = messages as unknown as Record<string, Record<string, string>>;
-    for (const cat of [en, de]) {
-      expect(cat.compose.editorAria?.trim()).toBeTruthy();
-      expect(cat.reply.editorAria?.trim()).toBeTruthy();
-      expect(cat.compose.editorAria).not.toBe(cat.reply.editorAria);
+    const read = (lang: string) =>
+      (JSON.parse(readFileSync(resolve(__dirname, "..", "..", "..", "packages", "app", "messages", `write.${lang}.json`), "utf8")) as
+        { write: { text?: string; reply: { text?: string } } }).write;
+    for (const cat of [read("en"), read("de")]) {
+      expect(cat.text?.trim()).toBeTruthy();
+      expect(cat.reply.text?.trim()).toBeTruthy();
+      expect(cat.text).not.toBe(cat.reply.text);
     }
   });
 });
 
 describe("the toolbar is the grammar, and the grammar is small", () => {
-  it("offers exactly eight controls, in a fixed order", () => {
+  it("offers exactly nine controls, in the kit's fixed order", () => {
+    /* Re-pointed to Write's strip as the switch ruled the row: the kit's nine, underline among them. */
     const ed = mount();
     expect(ed.buttons().map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Bold", "Italic", "Strikethrough", "Code", "Link", "Bulleted list", "Numbered list", "Quote",
+      "Bold", "Italic", "Underline", "Strikethrough", "Link", "Numbered list", "Bulleted list", "Quote", "Code",
     ]);
   });
 
@@ -377,11 +324,27 @@ describe("links — select, make, edit, unlink (the popover)", () => {
    * UNCONTROLLED (read on Apply), so a test writes `.value` directly — no synthetic change
    * events, which jsdom + React would need the native-setter dance for.
    */
-  const pop = () => host!.querySelector<HTMLElement>(".rte-linkpop");
-  const urlInput = () => host!.querySelector<HTMLInputElement>(".rte-linkpop-url")!;
-  const applyBtn = () => host!.querySelector<HTMLButtonElement>(".rte-linkpop-apply")!;
-  const removeBtn = () => host!.querySelector<HTMLButtonElement>(".rte-linkpop-remove");
-  const applyValue = (v: string) => act(() => { urlInput().value = v; applyBtn().click(); });
+  /* Write's link card, found by its role and name ("Link"), its field by its label, its presses by their names. */
+  const pop = () => linkCard();
+  const urlInput = () => {
+    const input = [...(pop()?.querySelectorAll<HTMLInputElement>("input") ?? [])][0];
+    if (!input) throw new Error("the link card holds no address field");
+    return input;
+  };
+  const pressNamed = (name: string) =>
+    [...(pop()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.trim() === name) ?? null;
+  const applyBtn = () => pressNamed(WRITE_WORDS.link.apply)!;
+  const removeBtn = () => pressNamed(WRITE_WORDS.link.remove);
+  /* The field is the kit's controlled one: the value is typed the way React hears it, then Apply is pressed. */
+  const typeValue = (v: string) => {
+    const input = urlInput();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const applyValue = (v: string) => { act(() => { typeValue(v); }); act(() => { applyBtn().click(); }); };
+  /* The visible refusal: the card's field says the fix and is marked invalid. */
+  const refusal = () =>
+    pop()?.textContent?.includes(WRITE_WORDS.link.refused) && urlInput().getAttribute("aria-invalid") === "true" ? pop() : null;
 
   it("the Link button opens the popover, and Apply links the selection", () => {
     const ed = mount({ text: "the quote", html: "<p>the quote</p>" });
@@ -506,7 +469,7 @@ describe("links — select, make, edit, unlink (the popover)", () => {
     });
     applyValue("javascript:alert(1)");
     expect(pop(), "the popover closed around a refused destination").not.toBeNull();
-    expect(host!.querySelector(".rte-linkpop-err"), "no visible refusal").not.toBeNull();
+    expect(refusal(), "no visible refusal").not.toBeNull();
     expect(ed.editor().getHTML()).not.toContain("<a");
     expect(ed.editor().getHTML()).not.toContain("javascript");
   });
@@ -528,7 +491,7 @@ describe("links — select, make, edit, unlink (the popover)", () => {
     });
     applyValue("ftp://a.example/file");
     expect(pop(), "the popover closed around a refused destination").not.toBeNull();
-    expect(host!.querySelector(".rte-linkpop-err"), "no visible refusal").not.toBeNull();
+    expect(refusal(), "no visible refusal").not.toBeNull();
     expect(ed.editor().getHTML()).not.toContain("<a");
   });
 
@@ -566,44 +529,6 @@ describe("the Link control wears the chain-link glyph (owner-specified)", () => 
     // arrow this replaces must be gone.
     expect(svg!.querySelectorAll("path").length, "the chain-link is two halves").toBe(2);
     expect(btn.textContent).not.toContain("↗");
-  });
-});
-
-describe("the link popover is themed by tokens, positioned under the bar", () => {
-  // Read the way the flex-chain suite reads its geometry: the stylesheet is the claim.
-  const appCss = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-  const ruleBody = (sel: string): string | null => {
-    const m = new RegExp(`(?:^|[};])\\s*${sel}\\s*\\{([^{}]*)\\}`, "m").exec(appCss);
-    return m ? m[1] : null;
-  };
-
-  it("hangs off the bar's own box", () => {
-    const bar = ruleBody("\\.rte-bar");
-    expect(bar, "no bare .rte-bar rule").not.toBeNull();
-    expect(bar, "the popover has nothing to anchor to").toMatch(/position:\s*relative/);
-    const popRule = ruleBody("\\.rte-linkpop");
-    expect(popRule, "no .rte-linkpop rule").not.toBeNull();
-    expect(popRule).toMatch(/position:\s*absolute/);
-    expect(popRule).toMatch(/z-index:\s*var\(--z-pal\)/);
-  });
-
-  it("is painted with theme tokens, no literal colours — both themes from one rule", () => {
-    const popRule = ruleBody("\\.rte-linkpop")!;
-    expect(popRule).toMatch(/background:\s*var\(--float\)/);
-    expect(popRule).not.toMatch(/#[0-9a-fA-F]{3}/);
-    /* The URL field is the shared text field (`TextField`, `packages/ui`): its ink, ground and
-       edge come from `text-field.css`, and the rule left here only places it in the popover's
-       row. So the token claim is made against the file that now paints it. */
-    const input = ruleBody("\\.rte-linkpop-url");
-    expect(input, "no .rte-linkpop-url rule").not.toBeNull();
-    expect(input).not.toMatch(/#[0-9a-fA-F]{3}/);
-    const field = readFileSync(
-      resolve(__dirname, "..", "..", "..", "packages", "ui", "src", "primitives", "text-field.css"), "utf8");
-    const tf = /\n\.tf\{[^}]*\}/.exec(field.replace(/\/\*[\s\S]*?\*\//g, ""))?.[0] ?? "";
-    expect(tf, "no .tf rule — the field is painted by nothing").not.toBe("");
-    expect(tf).toMatch(/color:var\(--ink\)/);
-    expect(tf).not.toMatch(/#[0-9a-fA-F]{3}/);
   });
 });
 
@@ -1138,81 +1063,6 @@ describe("Enter leaves a block the way every editor leaves one", () => {
   });
 });
 
-describe("the editable surface FILLS its frame — the compose click dead zone (R10-2)", () => {
-  /**
-   * THE HALF A DOM CAN ANSWER, AND THE HALF IT CANNOT — said plainly because the difference is
-   * the whole value of this block.
-   *
-   * jsdom lays nothing out, so "a click 180px below the last line puts the caret in the
-   * message" is not assertable here and is verified in a browser. What IS assertable is the
-   * thing that was broken: the CHAIN. `EditorContent` renders a wrapper div and appends
-   * ProseMirror's contenteditable inside it; that wrapper was unclassed and had no flex, so the
-   * surface stayed one line tall inside a 220px box and everything below it was inert. So this
-   * pins the two facts the fix consists of — the class is on the wrapper (DOM), and the three
-   * rules that pass the height down exist (stylesheet, read the way
-   * `empty-explainer-gutter.test.ts` reads its geometry).
-   *
-   * MUTATION WATCH: drop `className="rte-body"` from `EditorContent` and the first case goes
-   * red; delete the `.rte-body` rule or either flex declaration from `.rte-surface` and the
-   * others do.
-   */
-  const appCss = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
-
-  /** Body of the first top-level rule whose selector list starts with `sel`. */
-  const ruleBody = (sel: string): string | null => {
-    const m = new RegExp(`(?:^|[};])\\s*${sel}\\s*\\{([^{}]*)\\}`, "m").exec(appCss);
-    return m ? m[1] : null;
-  };
-
-  it("puts the surface inside a CLASSED wrapper, so the stylesheet has something to name", () => {
-    const ed = mount();
-    const surface = ed.surface();
-    const body = surface.parentElement;
-    expect(body, "the surface has no wrapper at all").not.toBeNull();
-    expect(body!.className.split(/\s+/)).toContain("rte-body");
-    // …and that wrapper really is the flex child of `.rte`, not some deeper node — the whole
-    // defect was a link in the middle of the chain that nothing styled.
-    expect(body!.parentElement!.className.split(/\s+/)).toContain("rte");
-  });
-
-  it("declares the flex column on all three links of the chain", () => {
-    for (const [sel, name] of [["\\.rte", ".rte"], ["\\.rte-body", ".rte-body"]] as const) {
-      const rule = ruleBody(sel);
-      expect(rule, `no bare ${name} rule in app.css`).not.toBeNull();
-      expect(rule, `${name} stopped being a flex column`).toMatch(/display:\s*flex/);
-      expect(rule).toMatch(/flex-direction:\s*column/);
-    }
-    const body = ruleBody("\\.rte-body")!;
-    expect(body, ".rte-body no longer takes the box's slack").toMatch(/flex:\s*1 1 auto/);
-    expect(body, ".rte-body's auto min-height would force the column open").toMatch(/min-height:\s*0/);
-  });
-
-  it("makes the surface itself take the wrapper's height, with no floor of its own", () => {
-    const surface = ruleBody("\\.rte-surface");
-    expect(surface, "no bare `.rte-surface` rule in app.css").not.toBeNull();
-    expect(surface, "the surface stopped filling its wrapper").toMatch(/flex:\s*1 1 auto/);
-    /**
-     * AND NO `min-height` — the half that was measured rather than reasoned about.
-     *
-     * A `min-height: 0` here looks free: every surface declares its own floor in a more
-     * specific rule, and specificity decides it in a browser. jsdom's `getComputedStyle` takes
-     * the LAST declaration instead, and `reply-ergonomics.test.ts` reads that floor through it —
-     * so adding this line put `expected '0' to be '240px'` on somebody else's guard while the
-     * shipped page was fine. It was never needed: `flex-grow` is what fills the wrapper.
-     */
-    expect(surface, "a floor on the shared rule outranks a surface's own in jsdom's cascade")
-      .not.toMatch(/min-height:/);
-  });
-
-  it("keeps compose's 220px floor, which is what the dead zone was 200px of", () => {
-    const compose = ruleBody("\\.compose-editor");
-    expect(compose, "no `.compose-editor` rule in app.css").not.toBeNull();
-    expect(compose).toMatch(/min-height:\s*220px/);
-    expect(compose).toMatch(/flex:\s*1 1 auto/);
-  });
-});
-
 describe("what leaves the editor", () => {
   it("keeps the ESCAPEASPARAGRAPHS IDENTITY — an unformatted note still has no markup", () => {
     /**
@@ -1235,8 +1085,8 @@ describe("what leaves the editor", () => {
       act(() => { ed.editor().commands.insertContent("!"); });
       expect(ed.value.html, `a plain note reported markup: ${JSON.stringify(plain)}`).toBe("");
       expect(ed.value.text).toContain(plain.split("\n")[0]);
-      act(() => { root?.unmount(); });
-      root = null;
+      ed.unmount();
+      mounted = null;
     }
   });
 

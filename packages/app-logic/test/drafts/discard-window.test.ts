@@ -10,6 +10,8 @@ import type { UndoToastOptions } from "@ohmail/app-logic/press/undo-door";
 const WORDS: DiscardWords = {
   discarded: "Discarded",
   undo: "Undo",
+  changed: "This draft changed and was kept.",
+  unsupported: "This server cannot safely discard this draft yet",
   notSent: "Discarded, not sent",
   refused: (reason) => (reason ? `Refused: ${reason}` : "Refused"),
   queued: (wait) => `Queued ${wait}`,
@@ -62,7 +64,7 @@ function world(): World {
 
 function mount(w: World) {
   return renderHook(() =>
-    useDiscardWindow(w.door, (message, options) => w.said.push({ message, options }), WORDS),
+    useDiscardWindow(w.door, (message, options) => w.said.push({ message, options }), WORDS, []),
   );
 }
 

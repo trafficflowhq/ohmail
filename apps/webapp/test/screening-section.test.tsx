@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 
 /**
@@ -81,27 +80,20 @@ const flush = async (): Promise<void> => {
 };
 
 async function mount(): Promise<void> {
-  const { ScreeningSection } = await import("../app/shell/ScreeningSection.js");
+  const { screeningSettingsFrame } = await import("./fixtures/screening-settings.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(ThemeProvider, { storageKey: null, children: h(ScreeningSection) }),
-      }),
-    );
+    root!.render(h(screeningSettingsFrame(), { locale: "en", messages }));
   });
   await flush();
 }
 
 const textarea = (): HTMLTextAreaElement =>
-  host!.querySelector(".set-screening-textarea") as HTMLTextAreaElement;
+  within(host!).getByRole<HTMLTextAreaElement>("textbox", { name: messages.settings.screening.barLabel });
 const buttonNamed = (label: string): HTMLButtonElement | undefined =>
-  Array.from(host!.querySelectorAll("button")).find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
+  within(host!).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
 
 /** Type into the controlled textarea the way React reads it — set the value, then dispatch input. */
 async function typeInto(el: HTMLTextAreaElement, value: string): Promise<void> {
@@ -173,7 +165,7 @@ describe("no switch lets a first-time sender in", () => {
     const text = host!.textContent ?? "";
     expect(text).not.toContain("File obvious bulk out of my Screener");
     expect(text).not.toContain("Deterministic rules only");
-    const switches = [...host!.querySelectorAll('button[role="switch"]')].map((b) => b.getAttribute("aria-label"));
+    const switches = within(host!).getAllByRole("switch").map((b) => b.getAttribute("aria-label"));
     expect(switches).toEqual([messages.settings.screening.postureTitle, messages.settings.screening.impersonationTitle]);
     expect(patchBodies).toEqual([]);
   });
@@ -182,8 +174,9 @@ describe("no switch lets a first-time sender in", () => {
 /* FILE IMPERSONATIONS TO SPAM (owner, 2026-11-09): on by default, turned off and on in place, and
    absent against a server that does not know it. */
 describe("the impersonation filing switch", () => {
-  const sw = (): HTMLButtonElement | undefined => [...host!.querySelectorAll<HTMLButtonElement>('button[role="switch"]')]
-    .find((b) => b.getAttribute("aria-label") === messages.settings.screening.impersonationTitle);
+  const sw = (): HTMLButtonElement | undefined => within(host!).queryByRole<HTMLButtonElement>("switch", {
+    name: messages.settings.screening.impersonationTitle,
+  }) ?? undefined;
 
   it("shows the stored value, writes only its own key, and says what off means", async () => {
     stored.impersonationFiling = true;

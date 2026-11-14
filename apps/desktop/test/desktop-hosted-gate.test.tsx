@@ -201,7 +201,7 @@ async function signIn(el: HTMLElement): Promise<void> {
   });
 }
 
-/** The mail app's unmistakable text — the rail's Ohbox entry only `AppShell` renders. */
+/** The mail app's unmistakable text — the rail's Ohbox entry, which only the mounted mail app (the frame) draws. */
 const mounted = (el: HTMLElement): boolean => (el.textContent ?? "").includes("Ohbox");
 const signInSurface = (el: HTMLElement): boolean =>
   (el.textContent ?? "").includes("Sign in to ohmail Cloud");
@@ -270,7 +270,7 @@ describe("the hosted auth gate", () => {
     // A FRESH ask happened, its answer is pre-auth, and the mail app stayed withheld.
     expect(shell.healthAsks(), "no fresh /health was asked after the sign-in")
       .toBeGreaterThan(asksBeforeSignIn);
-    expect(mounted(el), "AppShell mounted on a stale auth answer").toBe(false);
+    expect(mounted(el), "the mail app mounted on a stale auth answer").toBe(false);
     expect(signInSurface(el)).toBe(true);
   });
 

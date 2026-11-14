@@ -1,8 +1,8 @@
-import { Button } from "@ohmail/ui/base";
+import { useRef } from "react";
 import { SettingsHead, Sheet } from "@ohmail/ui/mail";
 import type { LayoutPlan } from "../frame/contract.js";
 import { useText } from "../text/index.js";
-import type { PaneSummary, SettingsPane } from "./contract.js";
+import type { PaneSheet, PaneSummary, SettingsPane } from "./contract.js";
 import { usePaneName } from "./label.js";
 
 export interface PaneColumnProps {
@@ -21,24 +21,27 @@ function Column({
   summary,
 }: PaneColumnProps & { readonly summary: PaneSummary | null }) {
   const t = useText("settings");
-  const name = usePaneName();
+  const name = usePaneName()(pane);
   const { Body } = pane;
-  return (
+  const scroller = useRef<HTMLDivElement>(null);
+  const sheet: PaneSheet = (body, foot) => (
     <Sheet
       kind="reading"
+      foot={foot}
       label={t("title")}
+      scrollLabel={name}
+      scroller={scroller}
       focused={keysHere}
-      top={
-        back ? (
-          <Button kind="quiet" icon="back" onPress={back}>
-            {t("back")}
-          </Button>
-        ) : undefined
-      }
-      head={<SettingsHead title={name(pane)} hot={summary?.hot} count={summary?.count} />}
+      back={back ? { word: t("title"), label: t("back"), onPress: back } : undefined}
+      head={<SettingsHead title={name} hot={summary?.hot} count={summary?.count} />}
     >
-      <Body plan={plan} keysHere={keysHere} />
+      {body}
     </Sheet>
+  );
+  return pane.hasFoot ? (
+    <Body plan={plan} keysHere={keysHere} scroller={scroller} sheet={sheet} />
+  ) : (
+    sheet(<Body plan={plan} keysHere={keysHere} scroller={scroller} />)
   );
 }
 
@@ -53,7 +56,7 @@ function SummedColumn(
 export function PaneColumn(props: PaneColumnProps) {
   const { useSummary } = props.pane;
   return useSummary ? (
-    <SummedColumn {...props} useSummary={useSummary} />
+    <SummedColumn key={props.pane.id} {...props} useSummary={useSummary} />
   ) : (
     <Column {...props} summary={null} />
   );

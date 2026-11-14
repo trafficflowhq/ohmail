@@ -63,6 +63,7 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
   const t = useText("write");
   const w = useWriting();
   const beside = useWriteBeside();
+  const draftReply = useText("draftReply");
   const { control, pending, resolve, noCredits } = w.draftReplyChrome;
   const here = control.messageId === messageId;
   const drafting = here && control.phase === "running";
@@ -104,9 +105,11 @@ export function useDraftOffer(messageId: string): DraftOffer | null {
     control: (
       <DraftControl
         label={label}
-        title={title}
+        title={beside.metered || drafting || waiting ? title : draftReply("offerBodyUnmetered")}
         cost={cost}
         busy={drafting || waiting}
+        /* Another letter's draft is being written: this one cannot be pressed until it lands, and says so. */
+        disabled={waiting}
         onPress={() => (ownWords ? fromText(messageId, madeOf, made) : control.press(messageId, made))}
       />
     ),
@@ -143,15 +146,15 @@ export function useLetterDraftOffer(): DraftOffer | null {
   const priced = beside.metered && noCredits !== true;
   const set = (next: RichValue): void => w.onComposeFields({ ...compose, body: next.text, html: next.html });
   if (!control.offered || letter === "none" || Boolean(compose.forwardOf)) return null;
-  const label = drafting
+  const fromText = !drafting && !waiting && !untouched;
+  const word = drafting
     ? t("draft.running")
     : waiting
       ? t("draft.waiting")
       : untouched
         ? t("draft.again")
-        : words
-          ? t("draft.fromText")
-          : t("draft.letterVerb");
+        : t("draft.fromText");
+  const label = fromText && !words ? t("draft.letterVerb") : word;
   const cost = priced && words ? t("draft.cost", { cost: control.cost }) : undefined;
   const press = (): void => {
     if (!words) {
@@ -173,7 +176,9 @@ export function useLetterDraftOffer(): DraftOffer | null {
     control: (
       <DraftControl
         label={label}
-        title={cost === undefined || waiting ? label : t("draft.fromTextTitle", { cost: control.cost })}
+        word={word}
+        short={fromText ? t("draft.fromTextShort") : undefined}
+        title={cost === undefined || waiting ? word : t("draft.fromTextTitle", { cost: control.cost })}
         cost={cost}
         idle={!words}
         busy={drafting || waiting}

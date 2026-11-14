@@ -479,7 +479,9 @@ describe("the per-call usage hook — one call's report, handed to that call's c
     };
     await classifier.classify(input, hook("classify"));
     await classifier.screen!(input, hook("screen"));
-    await askScreeningQuestion(classifier, { fromAddress: "a@b.example", subject: "Hi", snippet: "hello" }, hook("ask"));
+    await askScreeningQuestion(classifier, { fromAddress: "a@b.example", subject: "Hi", snippet: "hello" }, {
+      ...hook("ask"), beforeDispatch: async () => undefined,
+    });
     await makeSonnetDrafter(client).draft({
       incoming: { subject: "q", from: "c@acme.example", snippet: "s" },
       context: { kbEntries: [], threadMessages: [] },
@@ -635,4 +637,52 @@ describe("assertAnthropicKey — a wrong secret must fail the DEPLOYMENT, not th
       if (wrong !== "") expect(err!.message).not.toContain(wrong);    // never the secret
     }
   });
+});
+
+it("does not follow redirects on guarded requests", async () => {
+  const { fetch, calls } = fakeFetch([fail(307, {}, { location: "https://elsewhere.invalid/submit" })]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toBeInstanceOf(AnthropicApiError);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.init.redirect).toBe("error");
+});
+
+it.each([
+  { body: { error: { type: "invalid_request_error", message: "Private draft excerpt" } }, type: "invalid_request_error" },
+  { body: { error: { type: "Private draft excerpt", message: "Private draft excerpt" } }, type: null },
+  { body: "Private draft excerpt", type: null },
+])("guarded errors retain only fixed diagnostics ($type)", async ({ body, type }) => {
+  const { fetch } = fakeFetch([fail(400, body, { "request-id": "Private draft excerpt" })]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toMatchObject({
+    name: "AnthropicApiError", status: 400, errorType: type, requestId: null,
+    message: "The model provider rejected the request.",
+  });
+});
+
+it("reports a guarded unreadable success without the response fragment", async () => {
+  const { fetch } = fakeFetch([fail(200, "Private draft excerpt")]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toMatchObject({
+    name: "AnthropicApiError", status: 200,
+    message: "The model provider returned an unreadable response.",
+  });
+});
+
+it("reports a guarded transport failure without storing its cause", async () => {
+  const client = makeAnthropicClient({
+    apiKey: KEY, maxRetries: 0,
+    fetchImpl: async () => { throw new Error("Private draft excerpt"); },
+  });
+  const err = await client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  }).catch((error: unknown) => error);
+  expect(err).toBeInstanceOf(AnthropicTransportError);
+  expect(err).toMatchObject({ message: "The model provider could not be reached.", cause: undefined });
 });

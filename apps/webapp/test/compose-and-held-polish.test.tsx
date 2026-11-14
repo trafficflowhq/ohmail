@@ -2,14 +2,14 @@
 /**
  * TWO PHONE-WIDTH DECISIONS THAT LIVE IN COMPONENTS, NOT STYLESHEETS (DESIGN-FOLD-WIDTHS §7).
  *
- *  · under 300px of To input the placeholder is the bare example address; the long hint was
- *    sliced mid-letter against Cc/Bcc at every phone width. `ComposeView` measures the input; with
- *    no measurement (no ResizeObserver, no layout) the long hint stays.
+ *  · Write's recipient field is labelled To, accepts multiple recipients and shows no
+ *    placeholder at narrow or wide widths, including before layout is measured.
  *  · "Original", the dark toggle, is a header control: a host that passes `adaptSlot` gets the
  *    toggle there, in flow beside its date, and the body's bar no longer carries it. The held
  *    Screener card is that host. The geometry of the slot is measured in
  *    `settings-polish-geometry.test.tsx`; this reads where the toggle is mounted.
  */
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -69,7 +69,7 @@ function stubResizeObserver(): void {
 }
 
 async function mountCompose(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -77,7 +77,7 @@ async function mountCompose(): Promise<void> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }),
+      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(MailShell, { demo: true }) }) }),
     }));
   });
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
@@ -89,34 +89,44 @@ async function mountCompose(): Promise<void> {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
+const toInput = (): HTMLInputElement =>
+  within(within(host!).getByRole("region", { name: "New message" }))
+    .getByRole("combobox", { name: "To" }) as HTMLInputElement;
+
 /** Give the To input a laid-out width and let the observers read it. */
 async function toWidth(px: number): Promise<string> {
-  const input = host!.querySelector<HTMLInputElement>("#compose-to")!;
+  const input = toInput();
   input.getBoundingClientRect = () => ({ width: px, height: 30, top: 0, left: 0, right: px, bottom: 30, x: 0, y: 0, toJSON: () => ({}) });
   await act(async () => { for (const f of [...observers]) f(); });
   return input.placeholder;
 }
 
 describe("the To placeholder fits its field", () => {
-  it("under 300px the bare example address; from 300px the full hint", async () => {
+  it("narrow and wide fields omit the hint and accept multiple recipients", async () => {
     stubResizeObserver();
     await mountCompose();
-    expect(await toWidth(250), "a 250px field still carries the long hint").toBe(messages.compose.toPlaceholderShort);
-    expect(await toWidth(299)).toBe(messages.compose.toPlaceholderShort);
-    expect(await toWidth(300)).toBe(messages.compose.toPlaceholder);
-    expect(await toWidth(480)).toBe(messages.compose.toPlaceholder);
+    for (const width of [250, 299, 300, 480]) {
+      expect(await toWidth(width), "placeholder at " + width + "px").toBe("");
+    }
+    const input = toInput();
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "ada@example.invalid, lin@example.invalid, " } });
+    });
+    const letter = within(within(host!).getByRole("region", { name: "New message" }));
+    expect(letter.getByRole("button", { name: "Remove ada@example.invalid" })).toBeTruthy();
+    expect(letter.getByRole("button", { name: "Remove lin@example.invalid" })).toBeTruthy();
   });
 
-  it("with no measurement the long hint stands — nothing is assumed", async () => {
+  it("without a measurement the labelled To field has no hint", async () => {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = undefined;
     await mountCompose();
-    expect(host!.querySelector<HTMLInputElement>("#compose-to")!.placeholder).toBe(messages.compose.toPlaceholder);
+    expect(toInput().placeholder).toBe("");
   });
 
-  it("a zero reading is not a width: the long hint stays", async () => {
+  it("a zero measurement leaves the labelled To field without a hint", async () => {
     stubResizeObserver();
     await mountCompose();
-    expect(await toWidth(0)).toBe(messages.compose.toPlaceholder);
+    expect(await toWidth(0)).toBe("");
   });
 
   it("the short hint is the address alone in both catalogues", async () => {
@@ -171,13 +181,20 @@ describe("the dark toggle stands in the host's header when the host offers a slo
 
   it("the mailbox row's verbs are ONE item of its state column", async () => {
     /* The geometry file measures the shape over this markup; this holds that the component renders it. */
-    const { readFileSync, existsSync } = await import("node:fs");
-    const rel = "app/(product)/mailbox/MailboxSection.tsx";
-    const src = readFileSync(existsSync(`apps/webapp/${rel}`) ? `apps/webapp/${rel}` : rel, "utf8");
-    const verbs = /<span className="mbx-verbs">([\s\S]*?)<\/span>\s*\)\}\s*<\/div>/.exec(src)?.[1] ?? "";
-    expect(verbs, "the verbs are not wrapped in .mbx-verbs").not.toBe("");
-    expect(verbs).toContain('t("syncNow")');
-    expect(verbs).toContain('t("remove")');
+    /* Re-pointed by path (the older tests' sorting): Settings' Mailboxes pane is the new pane's
+       (`packages/app/src/mailboxes/pane/RowLines.tsx`); today's `MailboxSection.tsx` leaves with the pane's finish.
+       The row's verbs are one item of its lines there: the acts' box that holds Sync now holds Remove. */
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("packages/app/src/mailboxes/pane/RowLines.tsx", "utf8");
+    /* Each box from its opening line to its own closing line, at the opening's indentation. */
+    const boxes = [...src.matchAll(/\n( *)<div className="mbx-pane-acts">/g)].map((m) => {
+      const from = m.index! + m[0].length;
+      return src.slice(from, src.indexOf(`\n${m[1]}</div>`, from));
+    });
+    const verbs = boxes.find((b) => b.includes('say({ key: "syncNow" })')) ?? "";
+    expect(verbs, "the verbs are not one box of the row's lines").not.toBe("");
+    expect(verbs).toContain('say({ key: "syncNow" })');
+    expect(verbs).toContain('say({ key: "remove" })');
   });
 
   it("the held Screener card passes its header slot", async () => {

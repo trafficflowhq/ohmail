@@ -10,6 +10,7 @@
  */
 
 import { csrfToken as readCsrfToken } from "./csrf";
+import { readSessionFamily, EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER } from "./signed-out-signal";
 import {
   REFRESH_ENDPOINT, isRecoverable, jarMark, mayRefreshFor, otherTabRenewalSettled, refreshInFlight, refreshSettled,
   resumeSession, retryAfterMsOf, sessionMints, withSessionCookieLock,
@@ -36,6 +37,13 @@ import { clientDeclaration } from "./shell/client-declaration";
 import { RELOAD_REMEDY, noticeServerAnswered, noticeUpdateAnswer, updateAnswerSentence } from "./shell/update-answer";
 import { updateAnswerOf } from "@ohmail/client-engine";
 import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading, OnlyNamesOf, RequestOf } from "@ohmail/wire";
+import type {
+  ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
+
+export type {
+  ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportCountsWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
 
 /**
  * A SENTENCE THIS CLIENT WRITES ITSELF, in the reader's language: the `session` catalogue's
@@ -49,6 +57,7 @@ function said(key: string, english: string): string {
 
 /** The `/api` prefix the same-origin rewrite serves, or `null` on a build with no API armed. */
 export const API_BASE: string | null = process.env.NEXT_PUBLIC_API_BASE ?? null;
+const CLEAR_LOGOUT_HEADER = "X-Ohmail-Clear-Logout";
 
 /**
  * THE SIGN-OUT DOOR, ASKED AT ITS BARE PATH — the refresh's own rule (`session-refresh.ts`).
@@ -130,6 +139,8 @@ export interface ApiWire {
 /** The one network failure that is not a refusal: we never reached the server. */
 export const OFFLINE_CODE = "network_unreachable";
 
+const SUGGESTION_PATH = "/screener/suggest";
+
 interface RequestOptions {
   // `PUT` joined the union for `/away-responder`, the one endpoint in the contract whose write is a
   // FULL REPLACE rather than a partial update. The verb is part of that meaning, so it is spelled
@@ -140,6 +151,11 @@ interface RequestOptions {
   /** Extra headers (`Idempotency-Key`). `Content-Type` and CSRF are handled here. */
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /** The live grant that authorized this quote or suggestion. Checked after transport waits. */
+  maySendSuggestion?: () => boolean;
+  /** The confirmed account whose pane supplied this request. */
+  expectedOwner?: string | null;
+  expectedFamily?: string;
   /**
    * The front door asked for this, and nobody else may (see
    * {@link apiOwnerHolds}): a request marked `ceremony` is exempt from the
@@ -265,8 +281,21 @@ let binding: OwnerBinding = { kind: "public" };
  * classifier that reads it (`session-outcome.ts`). `null` returns it to `public`, which is what a
  * server-CONFIRMED sign-out does.
  */
-export function bindApiOwner(accountId: string | null): void {
+let boundFamily: string | null = null;
+
+export function bindApiOwner(accountId: string | null, familyId = readSessionFamily()): void {
+  boundFamily = accountId === null ? null : familyId;
   binding = accountId === null ? { kind: "public" } : { kind: "bound", owner: accountId };
+}
+
+export function boundApiFamily(owner: string): string | null {
+  return boundApiOwner() === owner ? boundFamily : null;
+}
+
+function sessionFamilyHolds(family: string | null): boolean {
+  const current = readSessionFamily();
+  // A tab confirmed against a pre-upgrade cookie jar can first see the marker on renewal.
+  return current === null || current === family;
 }
 
 /**
@@ -350,7 +379,8 @@ export function apiOwnerVerdict(
   if (marker.kind === "absent") return "absent";
   if (marker.kind === "signed-out") return "signed-out";
   const expected = binding.owner;
-  return expected === null || marker.id === expected ? "holds" : "mismatch";
+  return (expected === null || marker.id === expected)
+    && (binding.kind !== "bound" || sessionFamilyHolds(boundFamily)) ? "holds" : "mismatch";
 }
 
 /**
@@ -540,6 +570,7 @@ let writesSent = 0;
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  if (opts.expectedOwner === null) throw ownerRefusal("absent");
   // THE RESUME LANE (`shell/resume-lane.ts`), before every wait and question below: a read it held
   // asks them all after its wait. Its slot is given back at the first answer, not after a retry.
   const entry = webLane.enter({
@@ -595,9 +626,19 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     ...(opts.ceremony === true ? { ceremony: true } : {}),
     ...(opts.signingOutOf !== undefined ? { signingOutOf: opts.signingOutOf } : {}),
   };
+  const whose = (boundary: typeof held): OwnerVerdict => {
+    const verdict = apiOwnerVerdict(path, boundary);
+    if (verdict === "holds" && opts.expectedFamily !== undefined && !sessionFamilyHolds(opts.expectedFamily)) {
+      return "mismatch";
+    }
+    if (verdict === "holds" && opts.expectedOwner !== undefined && boundApiOwner() !== opts.expectedOwner) {
+      return "mismatch";
+    }
+    return verdict;
+  };
   /** Refuse with the sentence this state has earned — see {@link ownerRefusal}. */
   const mustHold = (): void => {
-    const verdict = apiOwnerVerdict(path, held);
+    const verdict = whose(held);
     if (verdict !== "holds") throw ownerRefusal(verdict);
   };
   // BEFORE the request and AGAIN after it. The first stops a call being made under somebody
@@ -632,7 +673,7 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
    * has lost the name of the account": no wipe, no receipt.
    */
   const answerHolds = (): void => {
-    const verdict = apiOwnerVerdict(path, held);
+    const verdict = whose(held);
     if (verdict === "absent" && (CLEARS_ONLY as readonly string[]).includes(path)) return;
     if (verdict !== "holds") throw ownerRefusal(verdict);
   };
@@ -640,13 +681,16 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
   if (writesSessionCookies(path)) {
     return withSessionCookieLock(async () => {
       // The caller's own question, asked once the wait is over: the jar may have changed hands in it.
+      if (opts.expectedOwner !== undefined || opts.expectedFamily !== undefined) mustHold();
       if (opts.mayProceed !== undefined && !opts.mayProceed()) throw ownerRefusal("mismatch");
       const seen: { account?: string | null } = {};
       const answer = await hearing<T>(path, opts, seen, ticket);
       answerHolds();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
-    }, path === SIGN_OUT_PATH ? { waitMs: SIGN_OUT_LOCK_WAIT_MS, unlockedAfterWait: true } : {});
+    }, path === SIGN_OUT_PATH ? {
+      waitMs: SIGN_OUT_LOCK_WAIT_MS, unlockedAfterWait: true,
+    } : {});
   }
 
   const mintsAtSend = sessionMints();
@@ -677,14 +721,20 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     // Renewed since this left (`sessionMints`; another tab's past the jar it left on, `staleJar`): the new
     // jar is the remedy, not another rotation. The same question rides into the lock: its wait is long
     // enough for another account to sign in.
-    const whose = (): OwnerVerdict => apiOwnerVerdict(path, opts.ceremony === true ? { ceremony: true } : {});
+    const retryOwner = (): OwnerVerdict => whose(opts.ceremony === true ? { ceremony: true } : {});
     const resumed = sessionMints() !== mintsAtSend
-      ? "resumed" : await resumeSession({ mayProceed: () => whose() === "holds", staleJar: jarAtSend });
+      ? "resumed" : await resumeSession({
+        mayProceed: () => retryOwner() === "holds", staleJar: jarAtSend,
+        expectedFamily: opts.expectedFamily,
+        expectedAccount: opts.expectedFamily === undefined ? undefined : opts.expectedOwner ?? undefined,
+      });
     if (resumed === "unavailable") throw sessionUncheckedError();
-    if (resumed !== "resumed") throw whose() === "mismatch" ? ownerRefusal("mismatch") : err;
+    if (resumed !== "resumed") throw retryOwner() === "mismatch" ? ownerRefusal("mismatch") : err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
     // retry: a refresh that landed as a different account must not be retried as this one.
     mustHold();
+    // A new suggestion attempt belongs to its caller, which can check the current grant.
+    if (path === SUGGESTION_PATH && opts.method === "POST") throw err;
     // A second failure is the real answer: the caller sees the refused request, not a loop.
     const seenAgain: { account?: string | null } = {};
     const retried = await hearing<T>(path, opts, seenAgain);
@@ -773,9 +823,13 @@ function refusedForAnotherAccount(first: Response, path: string, press: boolean)
  * ONCE more, unchanged but for the renewed jar's CSRF token — the same `Idempotency-Key`, so the
  * server reads one press. A refused renewal or a second refusal is the answer the caller sees.
  */
-async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
+async function sessionTransport(url: string, init?: RequestInit, owner?: string | null): Promise<Response> {
   const path = apiPathOf(url);
   const press = isPress(init);
+  // Anonymous routes and storage uploads have no account answer.
+  const expected = path !== null && !OWNER_FREE_EXACT.some((p) => path === p)
+    && !OWNER_FREE_PREFIXES.some((p) => path.startsWith(p)) ? owner ?? null : null;
+  const family = expected === null ? null : boundApiFamily(expected) ?? readSessionFamily();
   // The resume lane, as `api()` enters it; off the API base nothing enters. A read it held is
   // a request that waited: the identity questions below are asked again. The retry after a
   // renewal is not admitted again.
@@ -785,7 +839,7 @@ async function sessionTransport(url: string, init?: RequestInit): Promise<Respon
   });
   const ticket = entry instanceof Promise ? await entry : entry;
   try {
-    return await transported(url, init, path, press, ticket);
+    return await transported(url, init, path, press, ticket, expected, family);
   } finally {
     ticket?.done(false);
   }
@@ -793,7 +847,23 @@ async function sessionTransport(url: string, init?: RequestInit): Promise<Respon
 
 async function transported(
   url: string, init: RequestInit | undefined, path: string | null, press: boolean, ticket: LaneTicket | null,
+  expected: string | null, family: string | null,
 ): Promise<Response> {
+  const holds = () => path !== null && apiOwnerHolds(path)
+    && (expected === null || (readOwner() === expected && sessionFamilyHolds(family)));
+  const checked = (res: Response): Response => {
+    const seen = res.headers.get(OWNER_HEADER);
+    if (expected === null || (seen === expected && holds()) || (!res.ok && seen === null)) return res;
+    void res.body?.cancel().catch(() => undefined);
+    if (press) return keptPressResponse("switched");
+    throw responseNotOurs();
+  };
+  if (expected !== null) {
+    const headers = new Headers(init?.headers);
+    headers.set(EXPECTED_ACCOUNT_HEADER, expected);
+    if (family !== null) headers.set(EXPECTED_FAMILY_HEADER, family);
+    init = { ...init, headers };
+  }
   const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
   // `api()`'s wait for a renewal in flight, this tab's or another's; a request that waited carries
   // the renewed jar's token. Another tab's wait that ended on a jar naming no account (a sign-out
@@ -813,15 +883,19 @@ async function transported(
     if (!sessionMayAsk() && !healablePath(path, false)) {
       return press && sessionEnded() ? keptPressResponse("ended") : sessionEndedResponse();
     }
-    if (!apiOwnerHolds(path)) {
+    if (!holds()) {
       return press && apiOwnerVerdict(path) === "mismatch" ? keptPressResponse("switched") : renewalUnavailableResponse();
     }
+  }
+  if (expected !== null && !holds()) {
+    if (press) return keptPressResponse("switched");
+    throw ownerRefusal("mismatch");
   }
   const mintsAtSend = sessionMints();
   const jarAtSend = jarMark();
   let first: Response;
   try {
-    first = await fetch(url, waited ? withFreshCsrf(init) : init);
+    first = checked(await fetch(url, waited ? withFreshCsrf(init) : init));
   } catch (err) {
     ticket?.done(false);
     throw err;
@@ -830,10 +904,12 @@ async function transported(
   if (!renews || path === null) return first;
   if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
   // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
-  if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
+  if (!holds()) return refusedForAnotherAccount(first, path, press);
   // Asked again inside the lock, as `api()` asks: another account can sign in while it waits.
   const resumed = sessionMints() !== mintsAtSend
-    ? "resumed" : await resumeSession({ mayProceed: () => apiOwnerHolds(path), staleJar: jarAtSend });
+    ? "resumed" : await resumeSession({
+      mayProceed: holds, staleJar: jarAtSend, expectedAccount: expected ?? undefined, expectedFamily: family ?? undefined,
+    });
   if (resumed === "unavailable") {
     void first.body?.cancel().catch(() => undefined);
     return renewalUnavailableResponse();
@@ -844,12 +920,13 @@ async function transported(
     void first.body?.cancel().catch(() => undefined);
     return keptPressResponse("ended");
   }
-  if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
+  if (!holds()) return refusedForAnotherAccount(first, path, press);
+  if (path === SUGGESTION_PATH && (init?.method ?? "GET").toUpperCase() === "POST") return first;
   void first.body?.cancel().catch(() => undefined);
   // A caller that gave up meanwhile (the outbox ends a write at its ceiling) is sent nothing more,
   // whatever the fetch below does with an aborted signal.
   if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
-  return fetch(url, withFreshCsrf(init));
+  return checked(await fetch(url, withFreshCsrf(init)));
 }
 
 registerSessionTransport(sessionTransport);
@@ -876,11 +953,8 @@ async function refusalCodeOf(res: Response): Promise<string | undefined> {
 function withFreshCsrf(init?: RequestInit): RequestInit | undefined {
   const token = csrfToken();
   if ((init?.method ?? "GET").toUpperCase() === "GET" || token === null) return init;
-  const headers: Record<string, string> = {};
-  for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
-    if (k.toLowerCase() !== "x-csrf-token") headers[k] = v;
-  }
-  headers["x-csrf-token"] = token;
+  const headers = new Headers(init?.headers);
+  headers.set("x-csrf-token", token);
   return { ...init, headers };
 }
 
@@ -1016,6 +1090,9 @@ async function attempt<T>(
   // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts` — and
   // names this build (`shell/client-declaration.ts`).
   const headers: Record<string, string> = { ...ERASED_DECLARATION, ...opts.headers, ...clientDeclaration() };
+  const expected = opts.expectedOwner ?? opts.signingOutOf;
+  if (expected !== undefined) headers[EXPECTED_ACCOUNT_HEADER] = expected;
+  if (opts.expectedFamily !== undefined) headers[EXPECTED_FAMILY_HEADER] = opts.expectedFamily;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET") {
     const csrf = csrfToken();
@@ -1025,6 +1102,9 @@ async function attempt<T>(
   // The door's request leaves now: a press that armed `pagehide` for it has nothing left to send.
   if (path === SIGN_OUT_PATH) disarmLogoutOnLeave();
   let res: Response;
+  if (path === SUGGESTION_PATH && method === "POST" && opts.maySendSuggestion?.() === false) {
+    throw new ApiError(0, "suggestion_consent_unavailable", "Suggestion consent is unavailable.", undefined, { coded: false });
+  }
   try {
     res = await fetch(path === SIGN_OUT_PATH ? path : `${API_BASE}${path}`, {
       method,
@@ -1033,7 +1113,8 @@ async function attempt<T>(
       signal: opts.signal,
       cache: "no-store",
       // The sign-out's requests: the browser finishes them for a tab closed at the press.
-      keepalive: path === SIGN_OUT_PATH || opts.signingOutOf !== undefined,
+      keepalive: (path === SIGN_OUT_PATH && opts.headers?.[CLEAR_LOGOUT_HEADER] === undefined)
+        || opts.signingOutOf !== undefined,
     });
   } catch {
     ticket?.done(false);
@@ -1653,8 +1734,8 @@ export const auth = {
    * ordinary shell read of the signed-in person's email, account id and enrolled factors, and is
    * owner-bound like the rest of the account surface. See {@link RequestOptions.ceremony}.
    */
-  session: async (opts: { signal?: AbortSignal; ceremony?: boolean } = {}) => {
-    const answer = await api<{ user: SessionUser; scope: "full" | "enrollment"; reuseSweeps?: ReuseSweep[] }>(
+  session: async (opts: { signal?: AbortSignal; ceremony?: boolean; expectedOwner?: string | null } = {}) => {
+    const answer = await api<{ user: SessionUser; scope: "full" | "enrollment"; familyId?: string; reuseSweeps?: ReuseSweep[] }>(
       "/auth/session", opts,
     );
     publishReuseSweeps(answer);
@@ -1672,24 +1753,40 @@ export const auth = {
    * renewal in another tab whose answer never arrived. No body, the refresh request's own shape.
    * `mayProceed` is asked inside the cookie lock before the request leaves (see `RequestOptions`).
    */
-  logout: async (opts: { mayProceed?: () => boolean } = {}): Promise<void> => {
+  logout: async (opts: { mayProceed?: () => boolean; expectedFamily?: string; expectedAccount?: string } = {}): Promise<void> => {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), SIGN_OUT_DEADLINE_MS);
     try {
-      return await api<void>(SIGN_OUT_PATH, { method: "POST", signal: deadline.signal, mayProceed: opts.mayProceed });
+      const { expectedAccount, ...guard } = opts;
+      return await api<void>(SIGN_OUT_PATH, {
+        method: "POST", signal: deadline.signal, ...guard,
+        ...(expectedAccount === undefined ? {} : { headers: { [EXPECTED_ACCOUNT_HEADER]: expectedAccount } }),
+      });
     } finally {
       clearTimeout(timer);
     }
   },
+
+  /** Called while sign-out holds the cross-tab cookie lock. */
+  clearLogoutCookies: (expectedFamily: string) => attempt<void>(SIGN_OUT_PATH, {
+    method: "POST", expectedFamily, headers: { [CLEAR_LOGOUT_HEADER]: "1" },
+    signal: AbortSignal.timeout(SIGN_OUT_DEADLINE_MS),
+  }),
 
   /**
    * A Sign out press's door request leaves after the wake revoke and the cookie lock, and no page load
    * follows a tab closed before that: such a page sends it from `pagehide` (outside the lock, kept alive,
    * unread). The press's only: the finisher's door waits for `mayProceed`.
    */
-  armLogoutOnLeave: (): void => {
+  armLogoutOnLeave: (expectedFamily?: string, mayProceed?: () => boolean, expectedAccount?: string): void => {
     disarmLogoutOnLeave();
-    logoutOnLeave = () => { void attempt<void>(SIGN_OUT_PATH, { method: "POST" }).catch(() => undefined); };
+    logoutOnLeave = () => {
+      if (mayProceed?.() === false || (expectedFamily !== undefined && !sessionFamilyHolds(expectedFamily))) return;
+      void attempt<void>(SIGN_OUT_PATH, {
+        method: "POST", expectedFamily,
+        ...(expectedAccount === undefined ? {} : { headers: { [EXPECTED_ACCOUNT_HEADER]: expectedAccount } }),
+      }).catch(() => undefined);
+    };
     globalThis.window?.addEventListener("pagehide", logoutOnLeave);
   },
 
@@ -1710,13 +1807,13 @@ export const auth = {
       "/auth/2fa/webauthn/register/verify", { method: "POST", body: b },
     ),
 
-  totpEnroll: () => api<{ secret: string; otpauthUrl: string }>("/auth/2fa/totp/enroll", {
-    method: "POST", body: {},
+  totpEnroll: (expectedOwner?: string | null) => api<{ secret: string; otpauthUrl: string }>("/auth/2fa/totp/enroll", {
+    expectedOwner, method: "POST", body: {},
   }),
 
-  totpActivate: (b: { code: string }) =>
+  totpActivate: (b: { code: string }, expectedOwner?: string | null) =>
     api<{ twofaEnrolled: SessionUser["twofaEnrolled"]; session?: AuthenticatedSession }>(
-      "/auth/2fa/totp/activate", { method: "POST", body: b },
+      "/auth/2fa/totp/activate", { expectedOwner, method: "POST", body: b },
     ),
 
   /**
@@ -1724,7 +1821,7 @@ export const auth = {
    * two are independent — which is what makes "passkey first, then codes" a structural
    * order rather than client discipline. Calling this before a factor lands 403s.
    */
-  recoveryCodes: () => api<{ codes: string[] }>("/auth/2fa/recovery-codes", { method: "POST", body: {} }),
+  recoveryCodes: (expectedOwner?: string | null) => api<{ codes: string[] }>("/auth/2fa/recovery-codes", { expectedOwner, method: "POST", body: {} }),
 
   /**
    * Remove the authenticator. `DELETE /auth/2fa/totp` shipped with the rest of the 2FA surface and had NO
@@ -1736,7 +1833,7 @@ export const auth = {
    * to remove the last surviving factor, so the UI's decision to hide the button unless a
    * passkey remains is a courtesy, not the enforcement.
    */
-  totpRemove: () => api<void>("/auth/2fa/totp", { method: "DELETE" }),
+  totpRemove: (expectedOwner?: string | null) => api<void>("/auth/2fa/totp", { expectedOwner, method: "DELETE" }),
 
   /**
    * Change the password. Step-up gated at the route and in the service; a wrong current password
@@ -1789,20 +1886,20 @@ export const auth = {
   // about the session changes except that step-up-gated verbs work again for five minutes.
   // A pane catches `step_up_required`, runs one of these, and retries its own verb.
 
-  stepUpTotp: (b: { code: string }) =>
-    api<{ ok: true }>("/auth/step-up/totp", { method: "POST", body: b }),
+  stepUpTotp: (b: { code: string }, expectedOwner?: string | null) =>
+    api<{ ok: true }>("/auth/step-up/totp", { expectedOwner, method: "POST", body: b }),
 
-  stepUpWebauthnOptions: () =>
+  stepUpWebauthnOptions: (expectedOwner?: string | null) =>
     api<{ options: PublicKeyCredentialRequestOptionsJSON }>("/auth/step-up/webauthn/options", {
-      method: "POST", body: {},
+      expectedOwner, method: "POST", body: {},
     }),
 
-  stepUpWebauthnVerify: (b: { credential: unknown }) =>
-    api<{ ok: true }>("/auth/step-up/webauthn/verify", { method: "POST", body: b }),
+  stepUpWebauthnVerify: (b: { credential: unknown }, expectedOwner?: string | null) =>
+    api<{ ok: true }>("/auth/step-up/webauthn/verify", { expectedOwner, method: "POST", body: b }),
 
   /** One recovery code, spent: for somebody whose authenticator is gone. */
-  stepUpRecoveryCode: (b: { code: string }) =>
-    api<{ ok: true; remainingCodes: number }>("/auth/step-up/recovery-code", { method: "POST", body: b }),
+  stepUpRecoveryCode: (b: { code: string }, expectedOwner?: string | null) =>
+    api<{ ok: true; remainingCodes: number }>("/auth/step-up/recovery-code", { expectedOwner, method: "POST", body: b }),
 
   /**
    * The native authorize ceremony, both halves. The read describes what is about to be
@@ -1889,9 +1986,9 @@ export const pair = {
    * `ttlSeconds` is sent, so the server's own invite default (seven days) applies — the pane's
    * copy states that lifetime, and deriving both from one place is what keeps the sentence true.
    */
-  mint: (b: { label?: string }) =>
+  mint: (b: { label?: string }, expectedOwner?: string | null) =>
     api<{ id: string; token: string; grant: "invite"; label: string; expiresAt: string }>(
-      "/pair", { method: "POST", body: { grant: "invite", ...(b.label ? { label: b.label } : {}) } },
+      "/pair", { expectedOwner, method: "POST", body: { grant: "invite", ...(b.label ? { label: b.label } : {}) } },
     ),
 
   /**
@@ -1902,20 +1999,20 @@ export const pair = {
    * is sent, so the server's device-pair default (five minutes) applies — the pane's copy
    * states that lifetime, and deriving both from one place keeps the sentence true.
    */
-  mintDevice: (b: { label?: string }) =>
+  mintDevice: (b: { label?: string }, expectedOwner?: string | null) =>
     api<{ id: string; token: string; grant: "device-pair"; label: string; expiresAt: string }>(
-      "/pair", { method: "POST", body: { grant: "device-pair", ...(b.label ? { label: b.label } : {}) } },
+      "/pair", { expectedOwner, method: "POST", body: { grant: "device-pair", ...(b.label ? { label: b.label } : {}) } },
     ),
 
   /** The caller's own pairing tokens, newest first — metadata only, see {@link PairingTokenDTO}. */
-  list: () => api<{ items: PairingTokenDTO[] }>("/pair"),
+  list: (expectedOwner?: string | null) => api<{ items: PairingTokenDTO[] }>("/pair", { expectedOwner }),
 
   /**
    * Take back one live token. Step-up gated like the mint — but 404 for every miss (spent,
    * expired, someone else's), which the pane treats as "already gone" rather than an error:
    * the row it names is leaving the list either way.
    */
-  revoke: (id: string) => api<void>(`/pair/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  revoke: (id: string, expectedOwner?: string | null) => api<void>(`/pair/${encodeURIComponent(id)}`, { expectedOwner, method: "DELETE" }),
 
   /**
    * `POST /pair/redeem` with the `invite` grant: a pairing token in, an email-bound invite code out — the client's
@@ -1968,14 +2065,14 @@ export interface DeviceDTO {
 
 export const devices = {
   /** The caller's own live sessions, newest first. */
-  list: () => api<{ items: DeviceDTO[] }>("/devices"),
+  list: (expectedOwner?: string | null) => api<{ items: DeviceDTO[] }>("/devices", { expectedOwner }),
 
   /**
    * Revoke a device's sessions — the take-back that makes offering a pairing QR safe at all.
    * Step-up gated (`DELETE /devices/:id`); the pane answers a 403 `step_up_required` with the
    * inline re-verification prompt rather than a dead end.
    */
-  revoke: (id: string) => api<void>(`/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  revoke: (id: string, expectedOwner?: string | null) => api<void>(`/devices/${encodeURIComponent(id)}`, { expectedOwner, method: "DELETE" }),
 
   /**
    * Sign out every OTHER plain web session in one act — the collapsed group's verb. The
@@ -1983,8 +2080,8 @@ export const devices = {
    * family, never a paired device) and answers how many it revoked. Step-up gated like every
    * other credential revocation.
    */
-  revokeWebSessions: () =>
-    api<{ revoked: number }>("/devices/revoke-web-sessions", { method: "POST", body: {} }),
+  revokeWebSessions: (expectedOwner?: string | null) =>
+    api<{ revoked: number }>("/devices/revoke-web-sessions", { expectedOwner, method: "POST", body: {} }),
 };
 
 // ── Mailboxes ────────────────────────────────────────────────────────────────────────────
@@ -2031,8 +2128,8 @@ export const mailboxes = {
    * the DTO and why a renderer must read it with a `typeof === "number"` guard rather than treating an absent field
    * as zero.
    */
-  list: (opts: { counts?: boolean } = {}) =>
-    api<{ items: MailboxDTO[] }>(opts.counts ? "/mailboxes?counts=1" : "/mailboxes"),
+  list: (opts: { counts?: boolean } = {}, expectedOwner?: string) =>
+    api<{ items: MailboxDTO[] }>(opts.counts ? "/mailboxes?counts=1" : "/mailboxes", { expectedOwner }),
   /**
    * Ask the worker to re-scan this mailbox from scratch. 202 — it clears each folder's
    * CONDSTORE cursor and the worker picks it up on its next cycle, so nothing is synced by
@@ -2258,11 +2355,11 @@ export const mailboxes = {
    * answer for the race where an operator unsets the variable mid-ceremony, and its sentence names the variable, as
    * the server's sentences always do.
    */
-  deviceOAuthStart: () =>
+  deviceOAuthStart: (opts: Pick<RequestOptions, "expectedOwner" | "expectedFamily" | "signal"> = {}) =>
     api<{
       state: string; userCode: string; verificationUri: string;
       expiresAt: string; intervalMs: number;
-    }>("/mailboxes/oauth/microsoft/device/start", { method: "POST", body: {} }),
+    }>("/mailboxes/oauth/microsoft/device/start", { ...opts, method: "POST", body: {} }),
 
   /**
    * ONE POLL. Called repeatedly at the cadence the SERVER states, never at one this client picks. `retryAfterMs` is
@@ -2274,7 +2371,7 @@ export const mailboxes = {
    * and `expired` are terminal and not errors — somebody said no, or ran out of time; `granted` carries the stored
    * mailbox.
    */
-  deviceOAuthPoll: (b: { state: string }) =>
+  deviceOAuthPoll: (b: { state: string }, opts: Pick<RequestOptions, "expectedOwner" | "expectedFamily" | "signal"> = {}) =>
     api<{
       status: "pending" | "declined" | "expired" | "granted";
       retryAfterMs?: number;
@@ -2283,7 +2380,7 @@ export const mailboxes = {
       verificationUri?: string;
       mailbox?: MailboxDTO;
       created?: boolean;
-    }>("/mailboxes/oauth/microsoft/device/poll", { method: "POST", body: b }),
+    }>("/mailboxes/oauth/microsoft/device/poll", { ...opts, method: "POST", body: b }),
 
   /**
    * FINISH it — the SAME-SITE half, and the reason the ceremony is three steps rather than two. `tf_session` is
@@ -2355,114 +2452,22 @@ export type MailboxRelease =
 
 // ── Saved settings found on a mailbox (the portable organizer profile) ───────────────────
 
-/** What a found settings document holds, in the units the confirm card speaks. */
-export interface ProfileImportCountsWire {
-  screener: number;
-  rules: number;
-  notifyRules: number;
-  tags: number;
-  awayResponder: boolean;
-  /** The copy carries a signature; absent from an older server. On a result: it is this mailbox's now. */
-  signature?: boolean;
-  /**
-   * An offer's: the copy's signature replaces a different one on this mailbox, named by this receipt.
-   * The card says so, and Import sends it back; without it the one on the mailbox stays.
-   */
-  signatureReplaces?: string;
-  /** A result's: the copy carried a signature, and the different one on this mailbox stayed. */
-  signatureKept?: boolean;
-  /** An offer's: the rule removals the copy records, absent when none (or from an older server). */
-  removedRules?: number;
-}
-
-/**
- * `GET /mailboxes/:id/profile-import` — is there a settings document waiting on this mailbox?
- *
- * `none` is the resting answer and the cheap one: the server reads its own durable record and
- * dials nothing, which is what lets the shell ask once per mailbox per tab. `found` carries the
- * counts of the document AS IT IS NOW plus its `fingerprint` — the receipt the confirm sends
- * back, so what gets applied is exactly what was shown. `newer` means a later ohmail wrote it;
- * nothing is offered, because a partial import would silently drop what this build cannot read.
- */
-export type ProfileImportCandidateWire = ProfileImportQuestionWire & {
-  /** Whether the mailbox keeps this ohmail's settings copy, as its organizer last recorded it; absent when never refused. */
-  copy?: { kept: boolean; code: string | null };
-};
-
-type ProfileImportQuestionWire =
-  | { state: "none" }
-  | {
-    state: "found";
-    fingerprint: string;
-    updatedAt: string;
-    producer: { kind: string; version: string };
-    counts: ProfileImportCountsWire;
-  }
-  | { state: "newer"; v: number }
-  /**
-   * Answered "Not now" and still standing in the mailbox, which this install does not overwrite.
-   * Settings shows it with two presses, {@link profileImport.apply} and
-   * {@link profileImport.replace}; the card never offers it again. Counts as detected.
-   */
-  | {
-    state: "declined";
-    fingerprint: string;
-    updatedAt: string;
-    producer: { kind: string; version: string };
-    counts: ProfileImportCountsWire;
-  }
-  /**
-   * The document holds more entries in one of its lists than the server will apply in a single
-   * transaction, so nothing is offered — the same answer `newer` gives, for a different reason.
-   *
-   * Declared so the wire contract is complete; the card reads it as NO OFFER through `asOffer`'s
-   * tolerant reader, which is already the correct behaviour — nothing is claimed and nothing is
-   * shown. A dedicated message naming the list and the limit would be better and is a separate
-   * change to the card, not to this type.
-   */
-  | { state: "too_large"; fingerprint: string; list: string; count: number; max: number };
-
-export interface ProfileImportAppliedWire {
-  imported: ProfileImportCountsWire;
-  /** Document rules the server's own validation refused — imported minus these arrived. */
-  skippedRules: number;
-  /** Rules here the copy records as removed there, removed here too; absent from an older server. */
-  retiredRules?: number;
-  seq: number | null;
-}
-
-/**
- * `POST …/profile-import` answered 202: the read did not fit the request, and the mailbox's
- * organizer finishes the import. `reason` is `slow` or `unreachable` when this press found out,
- * absent when the same press was already waiting. Ask {@link profileImport.status} after.
- */
-export interface ProfileImportPendingWire {
-  state: "importing";
-  fingerprint: string;
-  reason?: "slow" | "unreachable";
-}
-
-/** `GET …/profile-import/status` — where a handed-over press stands. Never dials. */
-export type ProfileImportStatusWire =
-  | { state: "importing"; fingerprint: string }
-  | { state: "imported"; imported: ProfileImportCountsWire | null; skippedRules: number; retiredRules?: number }
-  | { state: "refused"; reason: string; message: string };
-
 /** The header the import status read carries its fingerprint in (`packages/api`'s route reads it first). */
 const PROFILE_FINGERPRINT_HEADER = "x-ohmail-profile-fingerprint";
 
 export const profileImport = {
-  candidate: (mailboxId: string) =>
-    api<ProfileImportCandidateWire>(`/mailboxes/${mailboxId}/profile-import`),
+  candidate: (mailboxId: string, expectedOwner?: string) =>
+    api<ProfileImportCandidateWire>(`/mailboxes/${mailboxId}/profile-import`, { expectedOwner }),
   /**
    * Apply, on explicit confirmation only. The server re-reads the mailbox and refuses
    * (409 `profile_changed`) if the document no longer matches the fingerprint the user saw.
    * `signatureReplaces` is the offer's receipt, sent only when the card said the copy's signature
    * replaces the one on this mailbox.
    */
-  apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string) =>
+  apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string, expectedOwner?: string) =>
     api<ProfileImportAppliedWire | ProfileImportPendingWire>(`/mailboxes/${mailboxId}/profile-import`, {
-      method: "POST", body: signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces },
+      method: "POST", expectedOwner,
+      body: signatureReplaces === undefined ? { fingerprint } : { fingerprint, signatureReplaces },
     }),
   /**
    * Where a press answered 202 stands; asked on the settings doorbell until it is terminal. The
@@ -2470,13 +2475,13 @@ export const profileImport = {
    * server reads only the query and refuses the bare path `validation_failed`, so it is asked once
    * more that way.
    */
-  status: async (mailboxId: string, fingerprint: string): Promise<ProfileImportStatusWire> => {
+  status: async (mailboxId: string, fingerprint: string, expectedOwner?: string): Promise<ProfileImportStatusWire> => {
     const path = `/mailboxes/${mailboxId}/profile-import/status`;
     try {
-      return await api<ProfileImportStatusWire>(path, { headers: { [PROFILE_FINGERPRINT_HEADER]: fingerprint } });
+      return await api<ProfileImportStatusWire>(path, { expectedOwner, headers: { [PROFILE_FINGERPRINT_HEADER]: fingerprint } });
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 400 && err.code === "validation_failed")) throw err;
-      return api<ProfileImportStatusWire>(`${path}?fingerprint=${encodeURIComponent(fingerprint)}`);
+      return api<ProfileImportStatusWire>(`${path}?fingerprint=${encodeURIComponent(fingerprint)}`, { expectedOwner });
     }
   },
   /**
@@ -2484,17 +2489,17 @@ export const profileImport = {
    * and inert: nothing is applied and nothing in the mailbox is touched. A `newer` notice is
    * dismissed by the refused version instead, since there is no readable content to name.
    */
-  decline: (mailboxId: string, subject: { fingerprint?: string; v?: number }) =>
+  decline: (mailboxId: string, subject: { fingerprint?: string; v?: number }, expectedOwner?: string) =>
     api<{ dismissed: boolean }>(`/mailboxes/${mailboxId}/profile-import/decline`, {
-      method: "POST", body: subject,
+      method: "POST", body: subject, expectedOwner,
     }),
   /**
    * "Save this ohmail's settings to the mailbox": the organizer overwrites the named document at
    * its next flush. Applies nothing and never dials.
    */
-  replace: (mailboxId: string, fingerprint: string) =>
+  replace: (mailboxId: string, fingerprint: string, expectedOwner?: string) =>
     api<{ replaced: boolean }>(`/mailboxes/${mailboxId}/profile-import/replace`, {
-      method: "POST", body: { fingerprint },
+      method: "POST", body: { fingerprint }, expectedOwner,
     }),
 };
 
@@ -2584,41 +2589,22 @@ export interface ErasureResult {
 
 /** `GET`/`PATCH /account/ai` — the managed-AI switch, stored on `accounts.ai_enabled`. */
 export const aiSettings = {
-  get: () => api<{ aiEnabled: boolean }>("/account/ai"),
-  set: (aiEnabled: boolean) =>
-    api<{ aiEnabled: boolean }>("/account/ai", { method: "PATCH", body: { aiEnabled } }),
+  get: (expectedOwner?: string) => api<{ aiEnabled: boolean }>("/account/ai", { expectedOwner }),
+  set: (aiEnabled: boolean, expectedOwner?: string) =>
+    api<{ aiEnabled: boolean }>("/account/ai", { method: "PATCH", body: { aiEnabled }, expectedOwner }),
 };
 
 /** The wire shape of `GET/PATCH /account/screening` — the editable Ohbox preference. */
-export interface ScreeningPreferenceWire {
-  /** The stored posture, or `null` while the account has never set one (reads as lenient). */
-  ohboxPolicy: "people_only" | "people_and_replied" | null;
-  /** The stored bar text, or `null` while the account has never set one (show `defaultBar`). */
-  ohboxBar: string | null;
-  /** The product-default bar, for the textarea placeholder when `ohboxBar` is null. */
-  defaultBar: string;
-  /**
-   * Whether ohmail files a held letter that impersonates a company to Spam on its own, with no AI;
-   * on by default. Absent from an older server, which files none: read as `undefined`.
-   */
-  impersonationFiling?: boolean;
-  /** Present when the save was sent to the install that organizes, and nothing was written here. */
-  pending?: true;
-  /** On a reader: where this install's last Screening change went. */
-  change?: TravelledChangeWire;
-}
+export type ScreeningPreferenceWire = import("@ohmail/app/host").Payloads.ScreeningPreference;
 
 /**
  * `GET`/`PATCH /account/screening` — "what deserves my Ohbox". The PATCH sends only the axes the
  * caller changed: an omitted key is left untouched, an explicit `null` reverts that axis to default.
  */
 export const screeningSettings = {
-  get: () => api<ScreeningPreferenceWire>("/account/screening"),
-  set: (body: {
-    ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
-    ohboxBar?: string | null;
-    impersonationFiling?: boolean;
-  }) => api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body }),
+  get: (expectedOwner?: string) => api<ScreeningPreferenceWire>("/account/screening", { expectedOwner }),
+  set: (body: import("@ohmail/app/host").Payloads.ScreeningChange, expectedOwner?: string) =>
+    api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body, expectedOwner }),
 };
 
 /** One message the Screener filed on its own, still where it put it (`GET /screener/auto-filed`). */
@@ -2647,13 +2633,13 @@ export interface AutoFiledWire {
  */
 export const screenerAutoFiled = {
   // A body that is not a page is no filing: an older server answers 404, never a list to render.
-  get: async (): Promise<AutoFiledWire> => {
-    const w = await api<Partial<AutoFiledWire> | null>("/screener/auto-filed");
+  get: async (expectedOwner?: string): Promise<AutoFiledWire> => {
+    const w = await api<Partial<AutoFiledWire> | null>("/screener/auto-filed", { expectedOwner });
     return { items: Array.isArray(w?.items) ? w.items : [], more: w?.more === true };
   },
-  undo: (messageIds: readonly string[]) =>
+  undo: (messageIds: readonly string[], expectedOwner?: string) =>
     api<{ putBack: string[]; requested: string[] }>("/screener/auto-filed/undo", {
-      method: "POST", body: { messageIds: [...messageIds] },
+      method: "POST", body: { messageIds: [...messageIds] }, expectedOwner,
     }),
 };
 
@@ -2885,15 +2871,15 @@ export const push = {
    * Idempotent by intent: a 404 means the row is already gone, which is the desired state.
    * `signingOutOf`: the sign-out press's pass for its own row (`RequestOptions`).
    */
-  unsubscribe: (id: string, opts: { signingOutOf?: string } = {}) =>
+  unsubscribe: (id: string, opts: { signingOutOf?: string; expectedFamily?: string } = {}) =>
     api<void>(`/push/subscriptions/${encodeURIComponent(id)}`, {
       method: "DELETE",
-      ...(opts.signingOutOf !== undefined ? { signingOutOf: opts.signingOutOf } : {}),
+      ...opts,
     }),
 };
 
 export const consent = {
-  state: () => api<ConsentStateWire>("/consent"),
+  state: (expectedOwner?: string) => api<ConsentStateWire>("/consent", { expectedOwner }),
   /**
    * TURN AUTO-SUGGEST ON OR OFF. The only account setting this client can write. `enabled` is sent as a real boolean
    * because the route refuses anything else — an absent or non-boolean field is a 400 rather than a silent opt-out,
@@ -2901,19 +2887,21 @@ export const consent = {
    * a flag to the same value twice is the same state, and the only thing a replay moves is the recorded instant. The
    * response echoes what the DATABASE holds, so the caller updates from that rather than from what it asked for.
    */
-  setAutoSuggest: (enabled: boolean) =>
+  setAutoSuggest: (enabled: boolean, expectedOwner?: string) =>
     api<{ autoSuggestAt: string | null; autoActAt?: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { autoSuggest: enabled },
+      expectedOwner,
     }),
   /**
    * TURN THE ACT ON SUGGESTIONS ON OR OFF. ON needs auto-suggest; the route refuses it
    * 400 `auto_suggest_required` otherwise. The echo is what the database holds.
    */
-  setAutoAct: (enabled: boolean) =>
+  setAutoAct: (enabled: boolean, expectedOwner?: string) =>
     api<{ autoActAt: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { autoAct: enabled },
+      expectedOwner,
     }),
   /**
    * SET THE DORMANCY WINDOW — the cutline dial, on the SAME route as {@link consent.setAutoSuggest} with
@@ -2931,11 +2919,12 @@ export const consent = {
    * window (a null store reads back as the default). The caller updates its hook from that echo, which is what
    * re-partitions the open tab.
    */
-  setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time") =>
+  setDormancyDays: (days: number | null | undefined, scope?: "window" | "all_time", expectedOwner?: string) =>
     api<{
       dormancyDays?: number; screeningScope?: "window" | "all_time"; dormancyChange?: TravelledChangeWire;
     }>("/consent/settings", {
       method: "PATCH",
+      expectedOwner,
       body: {
         // FIELD-PRESENT ⇒ ACTED ON, so an unnamed half must not appear on the wire at all: a
         // `dormancyDays: undefined` would serialise away, but naming it explicitly is what
@@ -2958,14 +2947,16 @@ export const consent = {
    * nothing and writes nothing into the mailbox; the response echoes what the DATABASE holds,
    * and the caller updates from that rather than from what it asked for.
    */
-  setFoldersEnabled: (enabled: boolean) =>
+  setFoldersEnabled: (enabled: boolean, expectedOwner?: string) =>
     api<{ foldersEnabledAt: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { foldersEnabled: enabled },
     }),
   /** Per-mailbox "Use folders" (FOLDERS-SPEC.md §17) — the echo is the WHOLE exceptions map. */
-  setMailboxFoldersEnabled: (mailboxId: string, enabled: boolean) =>
+  setMailboxFoldersEnabled: (mailboxId: string, enabled: boolean, expectedOwner?: string) =>
     api<{ folderMailboxesOff: Record<string, string> }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { folderMailboxes: { [mailboxId]: enabled } },
     }),
@@ -2979,7 +2970,7 @@ export const consent = {
    * a placeholder — it is the absence of the other shape.
    */
   setMailboxSignature: (
-    mailboxId: string, signature: string | null, signatureHtml?: string | null,
+    mailboxId: string, signature: string | null, signatureHtml?: string | null, expectedOwner?: string,
   ) =>
     api<{
       signatures: Record<string, string>;
@@ -2987,13 +2978,15 @@ export const consent = {
       signatureSources?: Record<string, "organizer" | "local">;
       signatureChanges?: Record<string, TravelledChangeWire>;
     }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: signatureHtml !== undefined
         ? { signaturesHtml: { [mailboxId]: signatureHtml } }
         : { signatures: { [mailboxId]: signature } },
     }),
-  setBlockRemoteImages: (blocked: boolean) =>
+  setBlockRemoteImages: (blocked: boolean, expectedOwner?: string) =>
     api<{ blockRemoteImagesAt: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { blockRemoteImages: blocked },
     }),
@@ -3016,8 +3009,9 @@ export const consent = {
    * true` clears the stored opt-out; `false` stores it. The response echoes `loadTrackingPixelsAt`
    * — the instant pixels were allowed, `null` while they are blocked.
    */
-  setBlockTrackingPixels: (blocked: boolean) =>
+  setBlockTrackingPixels: (blocked: boolean, expectedOwner?: string) =>
     api<{ loadTrackingPixelsAt: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { blockTrackingPixels: blocked },
     }),
@@ -3030,10 +3024,11 @@ export const consent = {
    * route refuses anything that is not a real boolean, so a malformed body is a 400 rather than a silently cleared
    * opt-out.
    */
-  setBlockAutoUnsubscribe: (blocked: boolean) =>
+  setBlockAutoUnsubscribe: (blocked: boolean, expectedOwner?: string) =>
     api<{ blockAutoUnsubscribeAt: string | null }>("/consent/settings", {
       method: "PATCH",
       body: { blockAutoUnsubscribe: blocked },
+      expectedOwner,
     }),
   /**
    * SET THE INTERFACE LANGUAGE — the fourth knob on the same route (field-present ⇒ acted-on). Resolves to the STORED
@@ -3044,8 +3039,9 @@ export const consent = {
    * legal argument and means "back to the default"; it is NOT the same as omitting the field, which would leave the
    * stored value untouched.
    */
-  setLocale: (locale: string | null) =>
+  setLocale: (locale: string | null, expectedOwner?: string) =>
     api<{ locale: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { locale },
     }).then((r) => r.locale),
@@ -3055,8 +3051,9 @@ export const consent = {
    * collapsed to null — it is what overrides a Linux device's ohmarchy detection); `null`
    * drops the account-wide choice and every device resolves its own default again.
    */
-  setThemeFace: (themeFace: string | null) =>
+  setThemeFace: (themeFace: string | null, expectedOwner?: string) =>
     api<{ themeFace: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { themeFace },
     }).then((r) => r.themeFace),
@@ -3066,24 +3063,26 @@ export const consent = {
    * is a legal argument rather than the same thing as omitting the field. The echo is what the
    * caller applies: a refused write must not leave a chooser showing an hour nothing stored.
    */
-  setResurfaceTime: (resurfaceTime: string | null) =>
+  setResurfaceTime: (resurfaceTime: string | null, expectedOwner?: string) =>
     api<{ resurfaceTime: string | null }>("/consent/settings", {
+      expectedOwner,
       method: "PATCH",
       body: { resurfaceTime },
     }).then((r) => r.resurfaceTime),
   /** The review list. Reads, and writes nothing — the list is an offer. */
-  seedReview: () => api<SeedReviewWire>("/consent/seed"),
+  seedReview: (expectedOwner?: string) => api<SeedReviewWire>("/consent/seed", { expectedOwner }),
   /**
    * THE CONSENT EVENT. One press, one key: the server refuses a second confirm outright
    * (409), so an `Idempotency-Key` is what separates "the user clicked twice" from "the
    * first response never arrived".
    */
-  confirmSeed: (addresses: string[], opts: { idempotencyKey?: string } = {}) =>
+  confirmSeed: (addresses: string[], opts: { idempotencyKey?: string } = {}, expectedOwner?: string) =>
     api<{ rulesCreated: number; contactsCreated: number; declined: number; skipped: number }>(
       "/consent/seed",
       {
         method: "POST",
         body: { addresses },
+        expectedOwner,
         ...(opts.idempotencyKey ? { headers: { "Idempotency-Key": opts.idempotencyKey } } : {}),
       },
     ),
@@ -3115,13 +3114,20 @@ export interface AwayResponderWire {
 }
 export type AwayResponderSaveWire = AwayResponderSaveReading;
 
+/** Reads and saves Away settings over the host transport. */
+export interface AwayTransport {
+  state: () => Promise<AwayResponderWire>;
+  /** Answers {@link AwayResponderSaveWire}: the row, plus `pending` when the edit had to travel. */
+  save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
+}
+
 type AwayRequest = RequestOf<"PUT /away-responder">;
 
 export const away = {
-  state: () => api<AwayRead>("/away-responder"),
-  save: (next: AwayResponderEdit) => {
+  state: (expectedOwner?: string) => api<AwayRead>("/away-responder", { expectedOwner }),
+  save: (next: AwayResponderEdit, expectedOwner?: string) => {
     const body: AwayRequest & OnlyNamesOf<typeof next, AwayRequest> = next;
-    return api<AnswerOf<"PUT /away-responder">>("/away-responder", { method: "PUT", body });
+    return api<AnswerOf<"PUT /away-responder">>("/away-responder", { method: "PUT", body, expectedOwner });
   },
 };
 
@@ -3389,18 +3395,18 @@ export const account = {
    * storage add-on. Step-up gated: a 403 `step_up_required` is the caller's to answer with the
    * factor and ask once more. `null` only for a 404 (no such page here), as `manageLink`.
    */
-  manageLinkChange: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
+  manageLinkChange: async (opts?: { lang?: "de" | "en" }, expectedOwner?: string | null): Promise<{ url: string } | null> => {
     try {
       const body = opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {};
-      return await api<{ url: string }>("/account/manage-link/change", { method: "POST", body });
+      return await api<{ url: string }>("/account/manage-link/change", { method: "POST", body, expectedOwner });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;
       throw err;
     }
   },
   /** `PATCH /account/storage` — put a storage card away, or turn the storage mails off or on. */
-  storage: (body: { dismiss: "near" | "full" | "drop" } | { mail: boolean }) =>
-    api<unknown>("/account/storage", { method: "PATCH", body }),
+  storage: (body: { dismiss: "near" | "full" | "drop" } | { mail: boolean }, expectedOwner?: string | null) =>
+    api<unknown>("/account/storage", { method: "PATCH", body, expectedOwner }),
 };
 
 /**
@@ -3553,12 +3559,12 @@ export interface ScreenerSuggestWire {
 
 export const screener = {
   /** One page of the held queue, with whatever suggestions are already on record. `cost: read`. */
-  list: (opts: { limit?: number; cursor?: string } = {}) => {
+  list: (opts: { limit?: number; cursor?: string } = {}, expectedOwner?: string) => {
     const q = new URLSearchParams();
     if (opts.limit != null) q.set("limit", String(opts.limit));
     if (opts.cursor) q.set("cursor", opts.cursor);
     const qs = q.toString();
-    return api<ScreenerWirePage>(`/screener${qs ? `?${qs}` : ""}`);
+    return api<ScreenerWirePage>(`/screener${qs ? `?${qs}` : ""}`, { expectedOwner });
   },
 
   /**
@@ -3571,10 +3577,13 @@ export const screener = {
    */
   suggest: (
     senders: string[],
-    opts: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean } = {},
+    opts: { dryRun?: boolean; idempotencyKey?: string; maxCredits?: number; automatic?: boolean; maySend?: () => boolean } = {},
+    expectedOwner?: string,
   ) =>
-    api<ScreenerSuggestWire>("/screener/suggest", {
+    api<ScreenerSuggestWire>(SUGGESTION_PATH, {
       method: "POST",
+      expectedOwner,
+      maySendSuggestion: opts.maySend,
       // `maxCredits` is the ceiling the CONFIRM carries — the figure this client showed beside the
       // button. Never on a dry run: a price check has nothing to bound. `automatic` rides both: an
       // unpressed batch is priced and bought under the automatic rule.
@@ -3637,7 +3646,8 @@ export const screener = {
   junkSweepPreview: () => api<JunkSweepWire>("/screener/junk/sweep"),
 
   /** The PRESS: records the sweep for the worker to execute; answers the preview it leaves. */
-  junkSweepRequest: () => api<JunkSweepWire>("/screener/junk/sweep", { method: "POST" }),
+  junkSweepRequest: (confirmation: string) =>
+    api<JunkSweepWire>("/screener/junk/sweep", { method: "POST", headers: { "If-Match": `"${confirmation}"` } }),
 };
 
 export interface JunkRescueWire {
@@ -3668,6 +3678,8 @@ export interface JunkSweepWire {
   /** Candidates across the mailboxes that CAN move — the offer's number. */
   movable: number;
   pending: boolean;
+  confirmationRequired?: boolean;
+  confirmation?: string;
   /** Mirror letters held in ohmail/Quarantine, newest first; absent from an older server. */
   held?: { ids: string[]; truncated: boolean };
 }

@@ -57,6 +57,23 @@
     overflow-wrap: anywhere;
   }
 
+  .oh-message-heading[data-preview] {
+    display: flow-root;
+  }
+
+  .oh-message-heading[data-preview] > .oh-message-amount {
+    float: inline-end;
+    margin-inline-start: var(--s4);
+  }
+
+  .oh-message-amount {
+    margin-bottom: var(--s2);
+    font-size: var(--t-title);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-message-lh-subject);
+    white-space: nowrap;
+  }
+
   .oh-message-body {
     max-width: var(--measure);
     font-size: var(--t-read);
@@ -81,6 +98,13 @@
   .oh-message-clip[data-shut] {
     max-height: calc(var(--oh-message-clip-lines) * var(--lh-read) * var(--t-read));
     mask-image: linear-gradient(to bottom, var(--ink) calc(100% - var(--oh-message-clip-fade)), transparent);
+  }
+
+  .oh-message-clip[data-shut][data-pending] {
+    min-block-size: min(
+      var(--stream-preview-reserve),
+      calc((var(--oh-message-clip-lines) - 1) * var(--lh-read) * var(--t-read))
+    );
   }
 
   .oh-message-clip[data-shut][data-fits] {
@@ -123,4 +147,12 @@
   :root[data-face="ohmarchy"][data-touch="0"] .oh-message {
     padding-top: var(--oh-message-top);
   }
+}
+
+[data-stream-item] .oh-message {
+  transition: box-shadow var(--d-pop) var(--e-std);
+}
+
+[data-stream-item][data-held] .oh-message {
+  box-shadow: var(--float);
 }

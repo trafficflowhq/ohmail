@@ -242,6 +242,12 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
     const sync = await sidecar.handleHost!(req("GET", "/sync", { bearer: tokens.accessToken }));
     expect(sync.status).toBe(200);
     expect(sync.headers.getSetCookie()).toEqual([]);
+    const snapshot = await sidecar.handleHost!(req("GET", "/sync/snapshot", { bearer: tokens.accessToken }));
+    expect(snapshot.status).toBe(200);
+    expect(snapshot.headers.get("x-ohmail-mirror-account")).toBe(sidecar.world.accountId);
+    const unpaired = await sidecar.handleHost!(req("GET", "/sync/snapshot"));
+    expect(unpaired.status).toBe(401);
+    expect(unpaired.headers.get("x-ohmail-mirror-account")).toBeNull();
 
     // 4. …and its session lives by the shared lifecycle: the refresh rotates, cookie-free.
     const rotated = await sidecar.handleHost!(req("POST", "/auth/refresh",

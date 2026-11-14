@@ -20,8 +20,8 @@ const SKIP = new Set(["node_modules", "dist", ".next", ".expo", "coverage", "src
 
 /** The importers that stand, each with what it takes and why. */
 const DEMO_ARM: Record<string, string> = {
-  "apps/webapp/app/shell/engine-config.ts": "FixturesAdapter: the engine the demo runs on, chosen before any account is read",
-  "apps/webapp/app/shell/AppShell.tsx": "DEMO_NOW: the demo's fixed clock, so its dates read the same every day",
+  "apps/webapp/app/shell/engine-config.ts": "FixturesAdapter and DEMO_NOW: the demo engine and its fixed clock",
+  "apps/webapp/app/(product)/demo/DemoSettings.tsx": "NotificationSettingsFixture: the type of the demo settings snapshot",
 };
 /** The one manifest that may declare it: the app that carries the demo. */
 const DECLARED_BY = ["apps/webapp"];

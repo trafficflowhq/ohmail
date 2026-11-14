@@ -2,8 +2,7 @@
    field at its rows' left edge, what is typed lines up with the names under it. */
 @layer oh {
   .oh-findfield {
-    --oh-findfield-sign: 20px;
-    --oh-findfield-gap: calc((var(--gutter) - var(--oh-findfield-sign)) / 2);
+    --oh-findfield-gap: calc((var(--gutter) - var(--find-icon)) / 2);
     --oh-findfield-ring: var(--oh-ring-btn);
 
     display: flex;
@@ -12,6 +11,7 @@
     gap: var(--oh-findfield-gap);
     box-sizing: border-box;
     min-width: 0;
+    min-height: var(--h-l);
     height: var(--h-l);
     padding: 0 var(--s3) 0 var(--oh-findfield-gap);
     border-radius: var(--r-row);
@@ -27,6 +27,8 @@
 
   .oh-findfield > .oh-icon {
     flex: none;
+    width: var(--find-icon);
+    height: var(--find-icon);
   }
 
   .oh-findfield-input {
@@ -65,6 +67,7 @@
     min-width: 0;
     height: 1lh;
     font-size: var(--t-meta);
+    font-weight: var(--w-text);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -97,19 +100,16 @@
   }
 
   .oh-findfield-chip {
-    --oh-findfield-chip-in: 0 6px 0 4px;
-    --oh-findfield-chip-gap: 6px;
-    --oh-findfield-chip-max: 56%;
     --oh-findfield-chip-off: 0.7;
 
     display: inline-flex;
     flex: 0 1 auto;
     align-items: center;
-    gap: var(--oh-findfield-chip-gap);
+    gap: var(--find-chip-spacing);
     min-width: 0;
-    max-width: var(--oh-findfield-chip-max);
+    max-width: var(--find-chip-max);
     height: var(--h-s);
-    padding: var(--oh-findfield-chip-in);
+    padding: 0 var(--find-chip-spacing) 0 var(--s1);
     border-radius: var(--r-pill);
     background: var(--pick);
     box-shadow: var(--oh-ring-pick);
@@ -148,9 +148,7 @@
 
   /* Under a finger the chip is lower than the smallest control, and with it the time gives way to the words. */
   :root[data-touch="1"] .oh-findfield-chip {
-    --oh-findfield-chip-h: 32px;
-
-    height: var(--oh-findfield-chip-h);
+    height: var(--find-chip-touch-h);
   }
 
   :root[data-touch="1"] .oh-findfield[data-chip] > .oh-findfield-took {
@@ -160,4 +158,16 @@
   :root[data-face="ohmarchy"] .oh-findfield-chip {
     border-radius: 0;
   }
+}
+
+[data-filter-stack] > .oh-findfield + :is([data-filter-row], .oh-seg) {
+  margin-top: var(--s1);
+}
+
+:root[data-touch="1"]
+  [data-filter-list][data-people]
+  [data-filter-stack]
+  > .oh-findfield
+  + [data-filter-row] {
+  margin-top: 0;
 }

@@ -211,6 +211,7 @@ describe("the model settings this install holds", () => {
 });
 
 describe("the Screener's suggest control on a standalone install", () => {
+  const permission = { known: true, grant: () => 1 };
   const senders = (n: number): string[] => Array.from({ length: n }, (_, i) => `s${i}@example.test`);
 
   /** An engine that serves the stored-queue read and answers every suggest with one verdict each. */
@@ -238,7 +239,7 @@ describe("the Screener's suggest control on a standalone install", () => {
     // hosted client's automatic batch is gated on a server this build does not have, and nothing
     // here replaces it. Mutate `start()` into an effect and this goes red.
     const { asked } = answering();
-    await render(h(LocalSuggest, { senders: senders(12), absorb: () => {}, ai: READY, onConfigure: () => {} }));
+    await render(h(LocalSuggest, { permission, senders: senders(12), absorb: () => {}, ai: READY, onConfigure: () => {} }));
     expect(asked.filter((a) => a.url === "/screener/suggest")).toEqual([]);
   });
 
@@ -246,7 +247,7 @@ describe("the Screener's suggest control on a standalone install", () => {
     const { asked } = answering();
     let opened = 0;
     const el = await render(
-      h(LocalSuggest, { senders: senders(3), absorb: () => {}, ai: UNSET, onConfigure: () => { opened++; } }),
+      h(LocalSuggest, { permission, senders: senders(3), absorb: () => {}, ai: UNSET, onConfigure: () => { opened++; } }),
     );
     expect(el.textContent).toMatch(/There is none on this install yet/);
     // NOT A DEAD CONTROL: the one button present goes somewhere, and it is not a purchase.
@@ -259,7 +260,7 @@ describe("the Screener's suggest control on a standalone install", () => {
 
   it("names no price, no credit and no ladder", async () => {
     answering();
-    const el = await render(h(LocalSuggest, { senders: senders(12), absorb: () => {}, ai: READY, onConfigure: () => {} }));
+    const el = await render(h(LocalSuggest, { permission, senders: senders(12), absorb: () => {}, ai: READY, onConfigure: () => {} }));
     const text = el.textContent ?? "";
     expect(text).toMatch(/Suggest for 12 senders/);
     expect(text).toMatch(/Uses the model you set up/);
@@ -273,6 +274,7 @@ describe("the Screener's suggest control on a standalone install", () => {
     const landed: string[] = [];
     const el = await render(
       h(LocalSuggest, {
+        permission,
         senders: senders(12),
         absorb: (rows: Array<{ address: string }>) => { landed.push(...rows.map((r) => r.address)); },
         ai: READY,
@@ -294,7 +296,7 @@ describe("the Screener's suggest control on a standalone install", () => {
   it("asks about no more senders in one press than the endpoint accepts in one request", async () => {
     const { asked } = answering();
     const el = await render(
-      h(LocalSuggest, { senders: senders(140), absorb: () => {}, ai: READY, onConfigure: () => {} }),
+      h(LocalSuggest, { permission, senders: senders(140), absorb: () => {}, ai: READY, onConfigure: () => {} }),
     );
     // The label states the bound before the press, so nobody is surprised by what it covered.
     expect(el.textContent).toMatch(/Suggest for 50 senders/);
@@ -317,7 +319,7 @@ describe("the Screener's suggest control on a standalone install", () => {
       };
     });
     const el = await render(
-      h(LocalSuggest, { senders: senders(3), absorb: () => {}, ai: READY, onConfigure: () => {} }),
+      h(LocalSuggest, { permission, senders: senders(3), absorb: () => {}, ai: READY, onConfigure: () => {} }),
     );
     await act(async () => { buttonSaying(el, /Suggest for/)!.click(); });
     for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 2)); });

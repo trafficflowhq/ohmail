@@ -13,7 +13,7 @@ import type { Tx } from "./change-log.js";
  *   requested_at  somebody asked for the pass (only a pass that is armed carries it)
  *   started_at    when the walk the cursor belongs to began; NULL exactly when the cursor is
  *   done_at       the pass finished; written LAST, because claiming it first makes a crash permanent
- *   cursor        the id of the last row of the last COMMITTED page, as text; NULL = from the start
+ *   cursor        the pass-specific position or request parameters; NULL = no position or parameters
  *
  * NO ROW MEANS EVERY MARK IS EMPTY: the pass never ran for that subject. A reader treats an absent
  * row, a NULL mark and a failed read alike as "not done", the only default that can still repair.
@@ -24,6 +24,8 @@ import type { Tx } from "./change-log.js";
  * delete an account's or a mailbox's rows.
  */
 export const PASS_NAMES = [
+  /** Per mailbox: the organizer's confirmed Quarantine-to-Junk request. */
+  "junk_sweep",
   /** Per mailbox: the once-per-mailbox inbox-shaping pass at connect ran. */
   "kickstart",
   /** Per mailbox: the one-time re-evaluation of mail the sensitivity override misrouted. */

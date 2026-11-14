@@ -40,7 +40,7 @@ import { usePileNames } from "../shell/decision-copy";
 import { placeLabel } from "../shell/format";
 import { activeFormatZone } from "../shell/locale";
 import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "@ohmail/app-logic/press/sender-screening";
-import { pileOf } from "../shell/rule-past-mail";
+import { pileOf } from "@ohmail/app-logic/press/rule-past-mail";
 import { displayRuleMatch } from "@ohmail/app-logic/text/idn";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "@ohmail/app-logic/press/organizer-refusal";

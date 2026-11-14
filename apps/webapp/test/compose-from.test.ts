@@ -876,12 +876,79 @@ async function mountShell(facts: MailboxFacts[] | null): Promise<HTMLElement> {
   return host;
 }
 
-const fromControl = (): HTMLElement | null =>
-  host!.querySelector<HTMLElement>("#compose-from");
+/*
+ * WRITE's FROM LINE, as a person finds it (re-pointed from today's `#compose-from` select by the older tests'
+ * sorting, share write-1): the line labelled "From" in the letter on screen; its chooser the button named
+ * "From <address>: choose another address" (two sendable mailboxes or more), else the address as words; the
+ * choices the chooser's menu items. What today's select held as its VALUE (the mailbox id) is read as the id of
+ * the address on screen, from the facts the cases mount: `fromValue()`.
+ */
+const ADDRESS_ID = new Map<string, string>([
+  ["mila@lichtgrat.example", "lichtgrat"],
+  ["hello@milabrunner.example", "milabrunner"],
+  ["mila@wolkenmail.example", "wolke"],
+  ["one@example.test", "mbx-1"],
+]);
+const ID_ADDRESS = new Map([...ADDRESS_ID].map(([address, id]) => [id, address] as const));
 
-const optionsOnScreen = (): { value: string; text: string }[] =>
-  [...host!.querySelectorAll<HTMLOptionElement>("#compose-from option")]
-    .map((o) => ({ value: o.value, text: o.textContent ?? "" }));
+/** The sentence beside the address where Write says it switched or substituted (Write's own words). */
+const SAID = [/^Switched to match the recipient's domain$/, /is disconnected, so this message sends from the address above\.$/];
+const isState = (el: Element): boolean => SAID.some((re) => re.test((el.textContent ?? "").trim()));
+
+/** The From line of the letter on screen: the element its "From" label stands in. */
+const fromLine = (): HTMLElement | null =>
+  [...host!.querySelectorAll<HTMLElement>("b")].find((el) => el.textContent === "From")?.parentElement ?? null;
+/** The chooser, by its name: present only where there is a choice. */
+const fromChooser = (): HTMLButtonElement | null =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+    /^From .+: choose another address$/.test(b.getAttribute("aria-label") ?? "")) ?? null;
+/** What the From line says the letter goes from: the chooser, or the address as words (`null`: no From line). */
+const fromControl = (): HTMLElement | null => {
+  const chooser = fromChooser();
+  if (chooser) return chooser;
+  const line = fromLine();
+  if (!line) return null;
+  return ([...line.children] as HTMLElement[]).find((el) => el.tagName !== "B" && !isState(el)) ?? null;
+};
+/** The mailbox the From line names, by its id. */
+const fromValue = (): string | null => {
+  const shown = (fromControl()?.textContent ?? "").trim();
+  return ADDRESS_ID.get(shown) ?? shown;
+};
+const fromState = (): HTMLElement | null =>
+  ([...(fromLine()?.children ?? [])] as HTMLElement[]).find((el) => isState(el)) ?? null;
+
+const menuItems = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]')];
+/** The chooser's menu, opened, read and closed again: each choice's id and the words it shows. */
+async function optionsOnScreen(): Promise<{ value: string; text: string }[]> {
+  const chooser = fromChooser();
+  if (!chooser) return [];
+  await act(async () => { chooser.click(); });
+  const items = menuItems().map((o) => ({ value: ADDRESS_ID.get((o.textContent ?? "").trim()) ?? "", text: o.textContent ?? "" }));
+  await act(async () => {
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  return items;
+}
+/** A pick, the way a person makes it: the chooser pressed, then the address pressed in its menu. */
+async function pickFrom(id: string): Promise<void> {
+  const chooser = fromChooser();
+  if (!chooser) throw new Error("no From chooser to pick from");
+  await act(async () => { chooser.click(); });
+  const item = menuItems().find((o) => (o.textContent ?? "").trim() === ID_ADDRESS.get(id));
+  if (!item) throw new Error(`the From menu offers no ${id}`);
+  await act(async () => { item.click(); });
+}
+
+/** A text box, a field or a press by its name. */
+const named = <T extends HTMLElement>(selector: string, name: string): T | null =>
+  [...host!.querySelectorAll<T>(selector)].find((el) => el.getAttribute("aria-label") === name) ?? null;
+/** A press by its name, inside the toolbar of that name ("Send or discard" under a letter, "Actions" under a reply). */
+const pressIn = (bar: string, name: string): HTMLButtonElement =>
+  [...(named<HTMLElement>('[role="toolbar"]', bar)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((b) => buttonLabel(b) === name)!;
 
 /**
  * `#/compose`, the way the `c` shortcut and the rail button both reach it (`routing.ts` → `go`).
@@ -906,12 +973,10 @@ async function setValue(el: HTMLElement, proto: object, value: string, event: st
 }
 
 /** The editable surface of the compose editor — `.compose-editor` is the frame around it. */
-const composeEditor = (): HTMLElement =>
-  host!.querySelector<HTMLElement>(".compose-editor .rte-surface")!;
+const composeEditor = (): HTMLElement => named<HTMLElement>('[role="textbox"]', "Message")!;
 
 /** The open reply editor's surface. */
-const replyEditor = (): HTMLElement =>
-  host!.querySelector<HTMLElement>(".reply-editor .rte-surface")!;
+const replyEditor = (): HTMLElement => named<HTMLElement>('[role="textbox"]', "Reply body")!;
 
 /** Put text into a rich editor — see `fixtures/rich-editor-driver.ts` for why not `value`. */
 async function typeRich(el: HTMLElement, text: string): Promise<void> {
@@ -925,25 +990,13 @@ describe("ACCEPTANCE: compose says which address it is sending from", () => {
 
     const control = fromControl();
     expect(control, "compose rendered no From control at all").not.toBeNull();
-    expect(control!.tagName).toBe("SELECT");
+    expect(control!.getAttribute("aria-haspopup"), "the From line offers no choice").toBe("menu");
     expect(
-      (control as HTMLSelectElement).value,
+      fromValue(),
       "compose picked the mailbox of the newest message instead of the oldest connected one",
     ).toBe(MILABRUNNER);
     // …and the address is legible, not only the id.
     expect(host!.textContent).toContain("hello@milabrunner.example");
-  });
-
-  it("puts MAILBOX IDS in the control and addresses only in the text", async () => {
-    await mountShell(TWO_CONNECTED);
-    await goCompose();
-
-    const opts = optionsOnScreen();
-    expect(opts.map((o) => o.value).sort()).toEqual([LICHTGRAT, MILABRUNNER]);
-    for (const o of opts) {
-      expect(o.value, `the selector's value is an address (${o.value})`).not.toContain("@");
-      expect(o.text, "the option shows an id instead of an address").toContain("@");
-    }
   });
 
   it("offers no control and states the address as text when there is one mailbox", async () => {
@@ -952,7 +1005,7 @@ describe("ACCEPTANCE: compose says which address it is sending from", () => {
 
     const control = fromControl();
     expect(control, "the single address was not stated at all").not.toBeNull();
-    expect(control!.tagName, "a one-option select is a choice nobody has").not.toBe("SELECT");
+    expect(control!.getAttribute("aria-haspopup"), "a one-option select is a choice nobody has").toBeNull();
     expect(control!.textContent).toBe("mila@lichtgrat.example");
   });
 
@@ -973,11 +1026,10 @@ describe("ACCEPTANCE: compose says which address it is sending from", () => {
     await goCompose();
 
     expect(fromControl()!.textContent, "the install's own address was not stated").toBe("one@example.test");
-    const to = host!.querySelector<HTMLInputElement>("#compose-to")!;
+    const to = named<HTMLInputElement>("input", "To")!;
     await setValue(to, window.HTMLInputElement.prototype, "someone@example.test", "input");
     await typeRich(composeEditor(), "Hallo.");
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
-      .find((b) => buttonLabel(b) === "Send")!;
+    const send = pressIn("Send or discard", "Send");
     await act(async () => { send.click(); });
 
     const sent = dispatched.filter((m) => m.kind === "mail_send");
@@ -997,20 +1049,19 @@ describe("ACCEPTANCE: compose says which address it is sending from", () => {
 
     // One sendable mailbox left ⇒ static text, and it is the connected one.
     expect(fromControl()!.textContent).toBe("mila@lichtgrat.example");
-    expect(optionsOnScreen()).toEqual([]);
+    expect(await optionsOnScreen()).toEqual([]);
   });
 
   it("sends from the mailbox on screen — the id, never the address", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
 
-    await setValue(fromControl()!, window.HTMLSelectElement.prototype, LICHTGRAT, "change");
-    const to = host!.querySelector<HTMLInputElement>("#compose-to")!;
+    await pickFrom(LICHTGRAT);
+    const to = named<HTMLInputElement>("input", "To")!;
     await setValue(to, window.HTMLInputElement.prototype, "someone@example.test", "input");
     await typeRich(composeEditor(), "Hallo.");
 
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
-      .find((b) => buttonLabel(b) === "Send")!;
+    const send = pressIn("Send or discard", "Send");
     expect(send.disabled, "Send stayed locked with a recipient, a body and a mailbox").toBe(false);
     await act(async () => { send.click(); });
 
@@ -1029,9 +1080,9 @@ describe("ACCEPTANCE: the pick survives closing and reopening the draft", () => 
 
     // A draft: a pick AND the text it belongs to. A pick on an empty form is not a draft and
     // deliberately stores nothing — see `writeComposeDraft`.
-    await setValue(fromControl()!, window.HTMLSelectElement.prototype, LICHTGRAT, "change");
+    await pickFrom(LICHTGRAT);
     await typeRich(composeEditor(), "Halb fertig.");
-    expect((fromControl() as HTMLSelectElement).value).toBe(LICHTGRAT);
+    expect(fromValue()).toBe(LICHTGRAT);
 
     // CLOSE. A full unmount and remount, which is the reload — the React state that holds the
     // form across a route change is gone, so only the scratch buffer can answer.
@@ -1048,7 +1099,7 @@ describe("ACCEPTANCE: the pick survives closing and reopening the draft", () => 
     expect(composeEditor().textContent, "the draft text did not survive the reopen")
       .toContain("Halb fertig.");
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "reopening the draft silently reverted the sender to the derived default",
     ).toBe(LICHTGRAT);
   });
@@ -1058,7 +1109,7 @@ describe("ACCEPTANCE: a reopened draft whose mailbox is gone says where it will 
   it("names the disconnected address on screen, and Send carries the substitute", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
-    await setValue(fromControl()!, window.HTMLSelectElement.prototype, LICHTGRAT, "change");
+    await pickFrom(LICHTGRAT);
     await typeRich(composeEditor(), "Halb fertig.");
     for (const root of roots) await act(async () => { root.unmount(); });
     roots = [];
@@ -1073,20 +1124,40 @@ describe("ACCEPTANCE: a reopened draft whose mailbox is gone says where it will 
       fact({ id: "wolke", address: "mila@wolkenmail.example", createdAt: "2026-05-01T00:00:00.000Z" }),
     ]);
     await goCompose();
-    expect((fromControl() as HTMLSelectElement).value).toBe(MILABRUNNER);
-    const hint = host!.querySelector<HTMLElement>(".compose-from-hint[role='status']");
+    expect(fromValue()).toBe(MILABRUNNER);
+    const hint = fromState();
     expect(hint, "the sender changed and nothing said so").not.toBeNull();
     expect(hint!.textContent).toContain("mila@lichtgrat.example");
 
-    const to = host!.querySelector<HTMLInputElement>("#compose-to")!;
+    const to = named<HTMLInputElement>("input", "To")!;
     await setValue(to, window.HTMLInputElement.prototype, "someone@example.test", "input");
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
-      .find((b) => buttonLabel(b) === "Send")!;
+    const send = pressIn("Send or discard", "Send");
     await act(async () => { send.click(); });
     const sent = dispatched.filter((m) => m.kind === "mail_send");
     expect(sent).toHaveLength(1);
     expect((sent[0] as { mailboxId?: string }).mailboxId, "Send did not carry the substitute it named")
       .toBe(MILABRUNNER);
+  });
+
+  // A screen reader hears the sender change through the status.
+  it("says the substitution as a status a screen reader hears", async () => {
+    await mountShell(TWO_CONNECTED);
+    await goCompose();
+    await pickFrom(LICHTGRAT);
+    await typeRich(composeEditor(), "Halb fertig.");
+    for (const root of roots) await act(async () => { root.unmount(); });
+    roots = [];
+    host?.remove();
+    host = null;
+    await mountShell([
+      { ...TWO_CONNECTED[0]!, status: "disabled" },
+      TWO_CONNECTED[1]!,
+      fact({ id: "wolke", address: "mila@wolkenmail.example", createdAt: "2026-05-01T00:00:00.000Z" }),
+    ]);
+    await goCompose();
+    const hint = fromState()?.getAttribute("role") === "status" ? fromState() : null;
+    expect(hint, "the sender changed and nothing said so").not.toBeNull();
+    expect(hint!.textContent).toContain("mila@lichtgrat.example");
   });
 });
 
@@ -1098,8 +1169,12 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   });
 };
 
-const replyFrom = (): HTMLElement | null => host!.querySelector<HTMLElement>(".reply-from");
-const replySub = (): HTMLElement | null => host!.querySelector<HTMLElement>(".reply-from-sub");
+/** The reply's From line, and the sentence that says a substitution (Write's words). */
+const replyFrom = (): HTMLElement | null => fromLine();
+const replySub = (): HTMLElement | null => {
+  const said = fromState();
+  return said && /is disconnected/.test(said.textContent ?? "") ? said : null;
+};
 
 /**
  * Put the cursor on the first Ohbox row — what `r` needs something to reply TO.
@@ -1123,8 +1198,7 @@ describe("ACCEPTANCE: a reply says which address is answering", () => {
     expect(replySub(), "claimed a substitution that did not happen").toBeNull();
 
     await typeRich(replyEditor(), "Passt.");
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".reply-actions button")]
-      .find((b) => buttonLabel(b) === "Send")!;
+    const send = pressIn("Actions", "Send");
     await act(async () => { send.click(); });
 
     const sent = dispatched.filter((m) => m.kind === "mail_send");
@@ -1159,8 +1233,7 @@ describe("ACCEPTANCE: a reply says which address is answering", () => {
       "a disconnected mailbox blocked the reply instead of substituting",
     ).toBe("true");
     await typeRich(box, "Passt.");
-    const send = [...host!.querySelectorAll<HTMLButtonElement>(".reply-actions button")]
-      .find((b) => buttonLabel(b) === "Send")!;
+    const send = pressIn("Actions", "Send");
     expect(send.disabled, "Send was locked on a reply the product offered to substitute").toBe(false);
     await act(async () => { send.click(); });
 
@@ -1180,7 +1253,7 @@ describe("ACCEPTANCE: a reply says which address is answering", () => {
     await mountShell(null);
     await openFirstMessage();
     await key("r");
-    expect(host!.querySelector(".reply-editor"), "the reply editor did not open").not.toBeNull();
+    expect(named('[role="textbox"]', "Reply body"), "the reply editor did not open").not.toBeNull();
     expect(replyFrom(), "claimed a From with no mailbox facts behind it").toBeNull();
   });
 });
@@ -1191,13 +1264,11 @@ describe("ACCEPTANCE: a reply says which address is answering", () => {
  *  collapsed head the From control lives in the `.reply-from` caption, and once the head is
  *  opened for editing it stands as the recipients stack's own first row (`.reply-from-row`,
  *  `reply-panel.test.tsx`). Same control, same id, same wire — one of the two places. */
-const replyFromSelect = (): HTMLSelectElement | null =>
-  host!.querySelector<HTMLSelectElement>(".reply-from select, .reply-from-row select");
+const replyFromSelect = (): HTMLButtonElement | null => fromChooser();
 
 /** The Send button in the open reply editor. */
 const replySend = (): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".reply-actions button")]
-    .find((b) => buttonLabel(b) === "Send")!;
+  pressIn("Actions", "Send");
 
 /**
  * A REPLY LETS YOU CHOOSE WHICH ADDRESS ANSWERS (overturning an earlier ruling that
@@ -1214,16 +1285,16 @@ describe("ACCEPTANCE: a reply lets you choose which address answers (R9-7)", () 
 
     const select = replyFromSelect();
     expect(select, "no From selector with two mailboxes to choose from").not.toBeNull();
-    expect(select!.tagName).toBe("SELECT");
+    expect(select!.getAttribute("aria-haspopup")).toBe("menu");
     // A native <select> is in the tab order and driven from the keyboard by construction — not a
     // div-with-onClick. `disabled` is the only thing that would remove it, and it is not set.
     expect(select!.disabled).toBe(false);
     // Named by an associated label, so a screen reader hears "From".
     expect(
-      host!.querySelector(`.reply-from label[for="${select!.id}"]`),
+      select!.getAttribute("aria-label"),
       "the From selector has no associated label",
-    ).not.toBeNull();
-    const values = [...select!.options].map((o) => o.value);
+    ).toMatch(/^From /);
+    const values = (await optionsOnScreen()).map((o) => o.value);
     expect(values).toContain(LICHTGRAT);
     expect(values).toContain(MILABRUNNER);
   });
@@ -1233,10 +1304,10 @@ describe("ACCEPTANCE: a reply lets you choose which address answers (R9-7)", () 
     await openFirstMessage();
     await key("r");
     // Untouched, the mailbox the message arrived in leads and nothing is announced.
-    expect(replyFromSelect()!.value).toBe(LICHTGRAT);
+    expect(fromValue()).toBe(LICHTGRAT);
     expect(replySub(), "an untouched reply announced a substitution").toBeNull();
 
-    await setValue(replyFromSelect()!, HTMLSelectElement.prototype, MILABRUNNER, "change");
+    await pickFrom(MILABRUNNER);
     await typeRich(replyEditor(), "Passt.");
     await act(async () => { replySend().click(); });
 
@@ -1264,7 +1335,7 @@ describe("ACCEPTANCE: a reply lets you choose which address answers (R9-7)", () 
     const select = replyFromSelect();
     expect(select, "no selector where two sendable addresses exist").not.toBeNull();
 
-    await setValue(select!, HTMLSelectElement.prototype, "wolke", "change");
+    await pickFrom("wolke");
     expect(replySub(), "the notice survived an explicit pick").toBeNull();
 
     await typeRich(replyEditor(), "Passt.");
@@ -1277,15 +1348,15 @@ describe("ACCEPTANCE: a reply lets you choose which address answers (R9-7)", () 
     await mountShell(TWO_CONNECTED);
     await openFirstMessage();
     await key("r");
-    await setValue(replyFromSelect()!, HTMLSelectElement.prototype, MILABRUNNER, "change");
-    expect(replyFromSelect()!.value).toBe(MILABRUNNER);
+    await pickFrom(MILABRUNNER);
+    expect(fromValue()).toBe(MILABRUNNER);
 
     await key("Escape"); // close — nulls replyTo, which resets the pick
     await key("j");      // move to another message
     await key("r");      // a fresh reply
 
     expect(
-      replyFromSelect()!.value,
+      fromValue(),
       "a From pick rode from one message's reply to another's",
     ).toBe(LICHTGRAT);
   });
@@ -1294,18 +1365,20 @@ describe("ACCEPTANCE: a reply lets you choose which address answers (R9-7)", () 
 /* ── the domain match, on the shipped surface ─────────────────────────────────────────── */
 
 /** The recipient field on the compose form — the one the user types the address into. */
-const composeTo = (): HTMLInputElement => host!.querySelector<HTMLInputElement>("#compose-to")!;
+const composeTo = (): HTMLInputElement => named<HTMLInputElement>("input", "To")!;
 
 /** The line that says the sender moved. Absent is the assertion in half the cases below. */
-const matchHint = (): HTMLElement | null => host!.querySelector<HTMLElement>(".compose-from-hint");
+const matchHint = (): HTMLElement | null => {
+  const said = fromState();
+  return said && /^Switched/.test((said.textContent ?? "").trim()) ? said : null;
+};
 
 /** Type a recipient the way the field receives one — the input holds the wire text. */
 const addressTo = (line: string): Promise<void> =>
   setValue(composeTo(), window.HTMLInputElement.prototype, line, "input");
 
 const composeSend = (): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
-    .find((b) => buttonLabel(b) === "Send")!;
+  pressIn("Send or discard", "Send");
 
 /**
  * WRITING TO A DOMAIN YOU OWN AN ADDRESS ON (gap R10-4) — on the surface, because that is where
@@ -1322,19 +1395,28 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
   it("moves the sender to the matching address and says that it did", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
-    expect((fromControl() as HTMLSelectElement).value, "the derived default is not the older mailbox")
+    expect(fromValue(), "the derived default is not the older mailbox")
       .toBe(MILABRUNNER);
     expect(matchHint(), "announced a match before anything was addressed").toBeNull();
 
     await addressTo("piet@lichtgrat.example");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "the message to lichtgrat.example still leaves from the other business's address",
     ).toBe(LICHTGRAT);
     const hint = matchHint();
     expect(hint, "the sender changed under the user with nothing on screen").not.toBeNull();
     expect(hint!.textContent).toBe("Switched to match the recipient's domain");
+  });
+
+  // The control describes the line about its sender.
+  it("the switch's sentence describes the From control it is about", async () => {
+    await mountShell(TWO_CONNECTED);
+    await goCompose();
+    await addressTo("piet@lichtgrat.example");
+    const hint = matchHint();
+    expect(hint, "the sender changed under the user with nothing on screen").not.toBeNull();
     // The line is attached to the control it is about, so it is not visual-only.
     expect(fromControl()!.getAttribute("aria-describedby")).toBe(hint!.id);
   });
@@ -1371,12 +1453,12 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
   it("an explicit pick suppresses it for that draft", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
-    await setValue(fromControl()!, window.HTMLSelectElement.prototype, LICHTGRAT, "change");
+    await pickFrom(LICHTGRAT);
     // A recipient at the OTHER own domain — the one the rule would otherwise switch to.
     await addressTo("jan@milabrunner.example");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "the recipient's domain overruled the address the user chose",
     ).toBe(LICHTGRAT);
     expect(matchHint(), "announced a switch over an explicit pick").toBeNull();
@@ -1388,7 +1470,7 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
     await addressTo("piet@lichtgrat.example, jan@milabrunner.example");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "an ambiguous recipient set still moved the sender",
     ).toBe(MILABRUNNER);
     expect(matchHint()).toBeNull();
@@ -1415,18 +1497,18 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
     await mountShell(TWO_CONNECTED);
     await openFirstMessage();
     await key("r");
-    expect(replyFromSelect()!.value).toBe(LICHTGRAT);
+    expect(fromValue()).toBe(LICHTGRAT);
 
     // Open the editable envelope and address it at the account's OTHER domain.
-    const head = host!.querySelector<HTMLButtonElement>(".reply-head-btn");
+    const head = named<HTMLButtonElement>("button", "Change recipients");
     expect(head, "the reply's recipients cannot be edited at all").not.toBeNull();
     await act(async () => { head!.click(); });
-    const to = host!.querySelector<HTMLInputElement>(".reply-rcpt input.rcp-input");
+    const to = named<HTMLInputElement>("input", "To");
     expect(to, "the reply recipient row did not open").not.toBeNull();
     await setValue(to!, window.HTMLInputElement.prototype, "jan@milabrunner.example", "input");
 
     expect(
-      replyFromSelect()!.value,
+      fromValue(),
       "a reply changed the address it answers from because of who it is addressed to",
     ).toBe(LICHTGRAT);
     expect(matchHint(), "the compose hint appeared inside a reply").toBeNull();
@@ -1450,12 +1532,12 @@ describe("ACCEPTANCE: composing to one of your OWN addresses leaves the sender a
   it("keeps the address Compose opened on, and says nothing", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
-    expect((fromControl() as HTMLSelectElement).value).toBe(MILABRUNNER);
+    expect(fromValue()).toBe(MILABRUNNER);
 
     await addressTo("mila@lichtgrat.example");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "a note to the account's own address moved the sender onto it",
     ).toBe(MILABRUNNER);
     expect(matchHint(), "announced a switch on a message addressed to the sender").toBeNull();
@@ -1465,7 +1547,7 @@ describe("ACCEPTANCE: composing to one of your OWN addresses leaves the sender a
     await mountShell(TWO_CONNECTED);
     await goCompose();
     await addressTo("  Mila@Lichtgrat.Example  ");
-    expect((fromControl() as HTMLSelectElement).value).toBe(MILABRUNNER);
+    expect(fromValue()).toBe(MILABRUNNER);
     expect(matchHint()).toBeNull();
   });
 
@@ -1477,7 +1559,7 @@ describe("ACCEPTANCE: composing to one of your OWN addresses leaves the sender a
     await addressTo("mila@lichtgrat.example, piet@lichtgrat.example");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "the account's own address on the To line silenced the rule for the correspondent too",
     ).toBe(LICHTGRAT);
     expect(matchHint(), "switched without saying so").not.toBeNull();
@@ -1509,15 +1591,15 @@ describe("ACCEPTANCE: composing to one of your OWN addresses leaves the sender a
   it("never moves the sender for a Cc recipient, own or otherwise", async () => {
     await mountShell(TWO_CONNECTED);
     await goCompose();
-    const ccToggle = host!.querySelector<HTMLButtonElement>('button[aria-controls="compose-cc compose-bcc"]');
+    const ccToggle = [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Cc Bcc") ?? null;
     expect(ccToggle, "the Cc row cannot be opened").not.toBeNull();
     await act(async () => { ccToggle!.click(); });
-    const cc = host!.querySelector<HTMLInputElement>("#compose-cc");
+    const cc = named<HTMLInputElement>("input", "Cc");
     expect(cc, "the Cc field did not render").not.toBeNull();
     await setValue(cc!, window.HTMLInputElement.prototype, "piet@lichtgrat.example", "input");
 
     expect(
-      (fromControl() as HTMLSelectElement).value,
+      fromValue(),
       "a Cc recipient decided which identity is writing",
     ).toBe(MILABRUNNER);
     expect(matchHint()).toBeNull();

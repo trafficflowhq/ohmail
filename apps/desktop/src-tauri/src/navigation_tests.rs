@@ -114,6 +114,10 @@ fn the_guard_reads_dev_url_through_the_debug_flag_and_lock_passes_the_builds_own
 
 /// The policy left on one response the app served, after the non-document rule ran.
 fn policy_after(content_type: Option<&str>, policy: Option<&str>) -> Option<String> {
+    policy_after_at("/", content_type, policy)
+}
+
+fn policy_after_at(path: &str, content_type: Option<&str>, policy: Option<&str>) -> Option<String> {
     let mut builder = Response::builder();
     if let Some(value) = content_type {
         builder = builder.header(header::CONTENT_TYPE, value);
@@ -122,7 +126,8 @@ fn policy_after(content_type: Option<&str>, policy: Option<&str>) -> Option<Stri
         builder = builder.header(header::CONTENT_SECURITY_POLICY, value);
     }
     let mut response = builder.body(Cow::Borrowed(&b"x"[..])).expect("a response");
-    confine_non_documents(Request::new(Vec::new()), &mut response);
+    let request = Request::builder().uri(path).body(Vec::new()).expect("a request");
+    confine_non_documents(request, &mut response);
     let all: Vec<String> = response
         .headers()
         .get_all(header::CONTENT_SECURITY_POLICY)
@@ -131,6 +136,17 @@ fn policy_after(content_type: Option<&str>, policy: Option<&str>) -> Option<Stri
         .collect();
     assert!(all.len() <= 1, "two policies on one response: {all:?}");
     all.into_iter().next()
+}
+
+#[test]
+fn the_pdf_frame_is_the_only_document_given_the_sealed_policy() {
+    let window = "default-src 'self'; worker-src 'self'";
+    let sealed = policy_after_at("/pdf-preview.html", Some("text/html"), Some(window)).unwrap();
+    assert_eq!(sealed, PDF_FRAME_CSP);
+    assert!(sealed.contains("sandbox allow-scripts"));
+    assert!(sealed.contains("connect-src 'none'"));
+    assert!(!sealed.contains("allow-same-origin"));
+    assert_eq!(policy_after_at("/index.html", Some("text/html"), Some(window)).as_deref(), Some(window));
 }
 
 #[test]

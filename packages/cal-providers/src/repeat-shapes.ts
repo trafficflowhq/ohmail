@@ -10,12 +10,14 @@ import {
   expandSeries,
   instant,
   momentOrUtc,
+  MS_PER_DAY,
   newEventComponent,
   seriesOf,
   type EventTime,
   type RRule,
   type ZoneSource,
 } from "@ohmail/cal-core";
+import { endedRule } from "./series.js";
 import type { ProviderWord } from "./port.js";
 
 /** The repeats a person can make, as the proof names them. */
@@ -421,4 +423,21 @@ export function seriesProven(
 ): boolean {
   const shape = repeatShapeAt(rule, start, zones, nowMs);
   return shape !== null && rowOf(place, proven).includes(shape);
+}
+
+/** A proved series can only offer the remove scopes its writer implements. */
+export function repeatDeleteScopes(
+  place: ProofPlace | null,
+  rule: RRule,
+  first: EventTime,
+  zones: ZoneSource,
+  nowMs: number,
+  proven: ProvenRepeats = PROVEN_REPEATS,
+): readonly ("record" | "occurrence" | "following")[] {
+  if (!seriesProven(place, rule, first, zones, nowMs, proven)) return [];
+  if (!place?.startsWith("caldav:")) return ["record"];
+  const ended = endedRule(rule, first, momentOrUtc(first, zones) + MS_PER_DAY, zones);
+  return ended && repeatProven(place, ended, proven)
+    ? ["record", "occurrence", "following"]
+    : ["record", "occurrence"];
 }

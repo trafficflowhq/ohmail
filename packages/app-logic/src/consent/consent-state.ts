@@ -7,14 +7,17 @@
  * queue briefly the wrong length. The boot applies the device's CACHED last answer first (`boot-cache.ts` — the
  * three partition inputs, nothing that authorises anything): a partition that waited for the fetch presented the
  * raw piles for the whole round trip, resurrecting already-decided Screener senders on every reload. A failure
- * shows nobody an error — the default is the product default, or the cache — but while no answer is known the
- * read is asked again on {@link CONSENT_RETRY_MS}, and each failure is handed to the host's `readFailed`.
+ * leaves the default or cached window in place and is reported to the host's `readFailed`.
+ * Reconnects and settings changes can request a fresh read. The bridge can also retry a cold read
+ * because its host may reconnect without this window receiving an online event.
  */
 
+import { browserOnlineNow, subscribeBrowserNetwork } from "../session/browser-online.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DORMANCY_DAYS, readScreeningByMailbox, type MailboxScreening, type ScreeningSource,
 } from "@ohmail/client-engine";
+import { isSuggestionConsentTimestamp } from "@trafficflow/core/suggestion-consent";
 import type { ConsentStateWire } from "./consent-wire.js";
 import { readBootCache, writeBootCache } from "../session/boot-cache.js";
 import { normalizeLocale, type AppLocale } from "../text/locale.js";
@@ -32,6 +35,15 @@ import type { TravelledChangeWire } from "./travelled-change.js";
  * second answer to "is auto-suggest on", and the direction that costs money is where they disagree. Methods are
  * shaped like `api-client`'s own `consent` object, which the web's host hands in; there is no default.
  */
+export { DEFAULT_DORMANCY_DAYS };
+
+export interface SignatureEcho {
+  signatures: Record<string, string>;
+  signaturesHtml?: Record<string, string>;
+  signatureSources?: Record<string, "organizer" | "local">;
+  signatureChanges?: Record<string, TravelledChangeWire>;
+}
+
 export interface ConsentTransport {
   /**
    * Can the server behind this wire STORE the folders flag — the transport's half of the answer.
@@ -42,8 +54,14 @@ export interface ConsentTransport {
    * here would select the branch that draws the dead pane.
    */
   foldersStorable: boolean;
-  state: () => Promise<ConsentStateWire>;
-  setAutoSuggest: (enabled: boolean) => Promise<{ autoSuggestAt: string | null; autoActAt?: string | null }>;
+  /** A consent row on this computer remains reachable without internet. */
+  suggestionNeedsNetwork?: boolean;
+  /** The host can reconnect without delivering an online event to this window. */
+  retryColdRead?: boolean;
+  state: (relayGrant?: string | null) => Promise<ConsentStateWire & { relaySuggestionGrant?: string | null }>;
+  setAutoSuggest: (enabled: boolean) => Promise<{
+    autoSuggestAt: string | null; autoActAt?: string | null; relaySuggestionGrant?: string | null;
+  }>;
   /**
    * The act on suggestions — OPTIONAL for `setThemeFace`'s reason: a door built before
    * it keeps compiling, and without it the switch is not drawn.
@@ -80,12 +98,7 @@ export interface ConsentTransport {
    */
   setMailboxSignature: (
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
-  ) => Promise<{
-    signatures: Record<string, string>;
-    signaturesHtml?: Record<string, string>;
-    signatureSources?: Record<string, "organizer" | "local">;
-    signatureChanges?: Record<string, TravelledChangeWire>;
-  }>;
+  ) => Promise<SignatureEcho>;
   /**
    * The account-wide appearance face (mail 0082) — OPTIONAL, unlike every method above, because
    * the desktop's hosted-door transport predates it and must keep compiling; a host that does
@@ -104,7 +117,7 @@ export interface ConsentTransport {
   /**
    * TOLD OF EVERY FAILED `state()` READ — OPTIONAL, a host with a log of its own supplies it (the
    * desktop's engine log). The report is closed and content-free: the status or the thrown class,
-   * never a body. A sink that throws or rejects is ignored; the retry does not depend on it.
+   * never a body. A sink that throws or rejects is ignored.
    */
   readFailed?: (report: ConsentReadFailure) => void | Promise<void>;
 }
@@ -121,13 +134,7 @@ export interface ConsentReadFailure {
   errorClass?: string;
 }
 
-/**
- * WHEN AN UNANSWERED READ IS ASKED AGAIN — after the failure, while no answer (live or cached) is
- * known: 2 s, 10 s, 60 s, then every five minutes. The tail stands in for the mirror's reconnect,
- * which a window on the paired door cannot see (its own drains are local): one failed forward
- * marks the engine offline and every forwarded read answers 503 until its next good pull.
- */
-export const CONSENT_RETRY_MS: readonly number[] = [2_000, 10_000, 60_000, 300_000];
+const COLD_CONSENT_RETRY_MS = [2_000, 10_000, 60_000, 300_000] as const;
 
 /** Thrown inside the read for a 2xx body with no numeric window, so one arm reports every failure. */
 const NO_WINDOW = Object.freeze({ noWindow: true });
@@ -176,6 +183,8 @@ export interface ConsentState {
    * know" to "buy something".
    */
   autoSuggest: boolean;
+  /** The live row answered this preference. The mail window cache carries no suggestion consent. */
+  suggestionConsentKnown: boolean;
   /**
    * WHEN it was turned on, for the settings row that says so. Null whenever it is off.
    *
@@ -203,6 +212,8 @@ export interface ConsentState {
    * false.
    */
   blockRemoteImages: boolean;
+  /** The live account supplied its remote image choice. */
+  remoteImagesKnown: boolean;
   /** When they opted out, for the settings row that says so. Null whenever images load. */
   blockRemoteImagesAt: string | null;
   /**
@@ -216,6 +227,8 @@ export interface ConsentState {
    * instant moves it to false.
    */
   blockTrackingPixels: boolean;
+  /** The live account supplied its tracking pixel choice. */
+  trackingPixelsKnown: boolean;
   /** When they asked pixels to load, for the settings row that says so. Null while blocked. */
   loadTrackingPixelsAt: string | null;
   /**
@@ -400,6 +413,7 @@ const RESTING: ConsentState = {
   // baseline is an assertion that somebody finished screening. See {@link ConsentState.screeningBaselineAt}.
   screeningBaselineAt: null,
   autoSuggest: false,
+  suggestionConsentKnown: false,
   autoSuggestAt: null,
   autoAct: false,
   autoActAt: null,
@@ -408,11 +422,13 @@ const RESTING: ConsentState = {
   // resting value is the non-default one, because the failure it guards against is loading a
   // sender's content for somebody who asked us not to.
   blockRemoteImages: true,
+  remoteImagesKnown: false,
   blockRemoteImagesAt: null,
   // BLOCKED AT REST — the product default AND the protective posture at once, so unlike the pair
   // above there is no tension here: a tab that does not know refuses a beacon, which is what
   // every account that never opened the setting is doing anyway.
   blockTrackingPixels: true,
+  trackingPixelsKnown: false,
   loadTrackingPixelsAt: null,
   // ON AT REST, which is the PRODUCT DEFAULT and not the contrarian value the line above is. See
   // {@link ConsentState.autoUnsubscribe}: this flag decides whether a consequence is stated, never
@@ -606,6 +622,10 @@ export function useConsentState(
    * failure the caller has to be able to tell the user about.
    */
   setAutoSuggest: (enabled: boolean) => Promise<boolean>;
+  canChangeSuggestions: (requireAutomatic?: boolean) => boolean;
+  suggestionGrant: number;
+  relaySuggestionGrant: string | null;
+  readSuggestionGrant: (requireAutomatic?: boolean) => number | null;
   /**
    * Flip the act on suggestions; resolves to what the database holds and rethrows a
    * refusal. Null where the wire cannot write it.
@@ -669,6 +689,7 @@ export function useConsentState(
    * server-confirmed text only — and rethrows on refusal so the pane can say the write did
    * not land.
    */
+  saveMailboxSignature: ConsentTransport["setMailboxSignature"];
   setMailboxSignature: (
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
   ) => Promise<Record<string, string>>;
@@ -729,49 +750,61 @@ export function useConsentState(
    * hook's own lifetime.
    */
   const era = useRef(0);
-  /**
-   * THE RETRY — `known` mirrors whether an answer (live or cached) is in state; while it is not, a
-   * failed or discarded read arms ONE timer on {@link CONSENT_RETRY_MS}. `failures` numbers the
-   * reports since the last answer. The era cleanup clears the timer with the era.
-   */
-  const knownRef = useRef(false);
-  const failures = useRef(0);
-  const retryStep = useRef(0);
-  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fetchRef = useRef<(() => Promise<void>) | null>(null);
-
-  const askAgain = useCallback((): void => {
-    if (knownRef.current || retryTimer.current !== null) return;
-    const delay = CONSENT_RETRY_MS[Math.min(retryStep.current, CONSENT_RETRY_MS.length - 1)];
-    retryStep.current += 1;
-    const eraAt = era.current;
-    retryTimer.current = setTimeout(() => {
-      retryTimer.current = null;
-      if (era.current === eraAt) void fetchRef.current?.();
-    }, delay);
+  const suggestionRead = useRef({ seq: 0, known: false, automatic: false, grant: 0, relayGrant: null as string | null });
+  const suggestionWrite = useRef<number | null>(null);
+  const suggestionReachable = useCallback(() => {
+    const wire = link.current;
+    return wire !== "none" && (wire.suggestionNeedsNetwork === false || browserOnlineNow());
   }, []);
-
-  const fetchLive = useCallback(async (): Promise<void> => {
+  const canChangeSuggestions = useCallback((requireAutomatic = false) =>
+    suggestionRead.current.known && (!requireAutomatic || suggestionRead.current.automatic) && suggestionReachable(),
+  [suggestionReachable]);
+  const readSuggestionGrant = useCallback((requireAutomatic = false) =>
+    canChangeSuggestions(requireAutomatic) ? suggestionRead.current.grant : null, [canChangeSuggestions]);
+  const forgetSuggestionConsent = useCallback((seq: number) => {
+    const previous = suggestionRead.current;
+    if (seq <= previous.seq) return;
+    suggestionRead.current = { seq, known: false, automatic: false, grant: previous.grant + Number(previous.known), relayGrant: null };
+    setState((prev) => prev.suggestionConsentKnown ? {
+      ...prev, suggestionConsentKnown: false, autoSuggest: false, autoSuggestAt: null, autoAct: false, autoActAt: null,
+    } : prev);
+  }, []);
+  const failures = useRef(0);
+  const liveWindow = useRef(false);
+  const retry = useRef({ step: 0, timer: null as ReturnType<typeof setTimeout> | null });
+  const fetchLive = useCallback(async function readLive(): Promise<void> {
     const at = writeEpoch.current;
     const eraAt = era.current;
     const mine = ++readSeq.current;
+    const pendingSuggestionWrite = suggestionWrite.current;
+    const relayGrantAtRead = suggestionRead.current.relayGrant;
     let failure: ConsentReadFailure;
     try {
-        const wire: ConsentStateWire = await wireOf(link).state();
-        // A write from this tab outranks every read in flight; a newer applied read outranks an
-        // older one arriving late; and a read outliving the hook's active era — deactivated,
-        // unmounted — is nobody's answer. Issuance alone supersedes nothing — see the refs above.
+        const wire = await wireOf(link).state(relayGrantAtRead);
         if (era.current !== eraAt) return;
-        if (writeEpoch.current !== at || mine <= appliedSeq.current) { askAgain(); return; }
-        // KNOWN MEANS THE SERVER ANSWERED THIS QUESTION, not that a request returned 200.
-        //
-        // The window is the one field that cannot be absent from a real answer — the route
-        // substitutes the product default rather than ever sending null — so its presence and
-        // its type ARE the check. A body without one (a stale deployment, a rewriting proxy) is
-        // a FAILED read: reported and asked again, and the partition stays `rulesOnly`.
-        if (typeof wire.dormancyDays !== "number" || !Number.isFinite(wire.dormancyDays)) {
-          throw NO_WINDOW;
+        const windowKnown = typeof wire.dormancyDays === "number" && Number.isFinite(wire.dormancyDays);
+        const automatic = isSuggestionConsentTimestamp(wire.autoSuggestAt);
+        const known = windowKnown && suggestionReachable() && (wire.autoSuggestAt === null || automatic);
+        const mayApply = writeEpoch.current === at && mine > appliedSeq.current;
+        const previous = suggestionRead.current;
+        // A refusal or Off answer can withdraw consent even when the general Settings echo wins.
+        // An On read that crossed a suggestion write never re-arms it.
+        if (!known) {
+          forgetSuggestionConsent(mine);
+        } else if (mine > previous.seq && (!automatic ||
+          (mayApply && pendingSuggestionWrite === null && suggestionWrite.current === null))) {
+          const relayGrant = typeof wire.relaySuggestionGrant === "string" ? wire.relaySuggestionGrant : null;
+          const turnedOff = previous.automatic && !automatic;
+          const revoked = previous.known && (turnedOff || previous.relayGrant !== relayGrant);
+          suggestionRead.current = { seq: mine, known: true, automatic, grant: previous.grant + Number(revoked), relayGrant };
+          if (turnedOff && !mayApply) {
+            setState((prev) => ({ ...prev, autoSuggest: false, autoSuggestAt: null, autoAct: false, autoActAt: null }));
+          }
         }
+        if (!mayApply) return;
+        if (!windowKnown) throw NO_WINDOW;
+        const suggestionConsentKnown = suggestionRead.current.known;
+        const autoSuggest = suggestionConsentKnown && suggestionRead.current.automatic;
         setState({
           // Normalised: absent and null both mean "nobody has answered the review yet".
           seedConfirmedAt: wire.seedConfirmedAt ?? null,
@@ -782,16 +815,12 @@ export function useConsentState(
           // may be turned into an instant. This is the SAME read that carries `dormancyDays`, so
           // the two halves of the cutoff can never come from different fetches.
           screeningBaselineAt: wire.screeningBaselineAt ?? null,
-          // `== null` covers BOTH null (off) and undefined (an API from before mail 0040).
-          // Written as one comparison because the two are the same answer to the only question
-          // asked of this field, and splitting them would invite a branch where one of them
-          // becomes true.
-          autoSuggest: wire.autoSuggestAt != null,
-          // Normalised to null so `undefined` (an API from before mail 0040) cannot reach a view.
-          autoSuggestAt: wire.autoSuggestAt ?? null,
+          suggestionConsentKnown,
+          autoSuggest,
+          autoSuggestAt: autoSuggest ? wire.autoSuggestAt ?? null : null,
           // Presence decides whether the door has the switch; the value, whether it is on.
-          autoAct: wire.autoActAt != null,
-          autoActAt: wire.autoActAt ?? null,
+          autoAct: autoSuggest && wire.autoActAt != null,
+          autoActAt: autoSuggest ? wire.autoActAt ?? null : null,
           autoActStorable: "autoActAt" in wire,
           // `=== undefined` and NOT `== null`, which is the opposite of the line four above it and
           // is the whole point. `null` means the server read the row and found no opt-out ⇒ images
@@ -802,6 +831,7 @@ export function useConsentState(
             ? true
             : wire.blockRemoteImagesAt !== null,
           blockRemoteImagesAt: wire.blockRemoteImagesAt ?? null,
+          remoteImagesKnown: wire.blockRemoteImagesAt !== undefined,
           // `== null` — BOTH null and undefined — and deliberately NOT the `=== undefined` split the
           // images field above needs. There the two answers differ because only one of them may
           // load a sender's content. Here they are the same answer: a server that found no opt-out
@@ -809,6 +839,7 @@ export function useConsentState(
           // posture, so a garbled or elderly wire can only ever refuse a beacon, never fetch one.
           blockTrackingPixels: wire.loadTrackingPixelsAt == null,
           loadTrackingPixelsAt: wire.loadTrackingPixelsAt ?? null,
+          trackingPixelsKnown: wire.loadTrackingPixelsAt !== undefined,
           // `== null` — BOTH null and undefined — which is the line four above's shape and NOT the
           // one directly above it, and the difference is deliberate in both places. For images the
           // two are different answers because only one of them may load a sender's content. Here
@@ -883,9 +914,10 @@ export function useConsentState(
           foldersStorable: "foldersEnabledAt" in wire,
         });
         appliedSeq.current = mine;
-        knownRef.current = true;
+        liveWindow.current = true;
         failures.current = 0;
-        retryStep.current = 0;
+        if (retry.current.timer !== null) clearTimeout(retry.current.timer);
+        retry.current = { step: 0, timer: null };
         // The next boot paints from THIS answer. Written after the state (never instead of
         // it), from the same normalised values, under the same account id the read used —
         // and only the three fields `ConsentBootCache` names, which is the authorisation
@@ -905,6 +937,7 @@ export function useConsentState(
         return;
       } catch (err) {
         if (era.current !== eraAt) return;
+        forgetSuggestionConsent(mine);
         failures.current += 1;
         failure = err === NO_WINDOW
           ? { attempt: failures.current, reason: "shape" }
@@ -914,9 +947,17 @@ export function useConsentState(
       if (sink) {
         try { void Promise.resolve(sink(failure)).catch(() => undefined); } catch { /* a courtesy */ }
       }
-      askAgain();
-  }, [askAgain]);
-  fetchRef.current = fetchLive;
+      const wire = link.current;
+      if (wire !== "none" && wire.retryColdRead && !liveWindow.current && bootCache.current === null &&
+        retry.current.timer === null) {
+        const delay = COLD_CONSENT_RETRY_MS[retry.current.step]!;
+        retry.current.step = Math.min(retry.current.step + 1, COLD_CONSENT_RETRY_MS.length - 1);
+        retry.current.timer = setTimeout(() => {
+          retry.current.timer = null;
+          if (era.current === eraAt && !liveWindow.current && bootCache.current === null) void readLive();
+        }, delay);
+      }
+  }, [forgetSuggestionConsent, suggestionReachable]);
 
   useEffect(() => {
     if (!active || !reachable) {
@@ -932,13 +973,15 @@ export function useConsentState(
        */
       if (active && !reachable) {
         bootCache.current = null;
-        knownRef.current = false;
+        suggestionRead.current.grant += Number(suggestionRead.current.known);
+        suggestionRead.current.known = false;
+        suggestionRead.current.relayGrant = null;
         setState(RESTING);
       }
       return;
     }
     failures.current = 0;
-    retryStep.current = 0;
+    liveWindow.current = false;
     /**
      * The device's last answer, first — synchronously, before the fetch is issued, so the live
      * answer can only land on top of the cache, never under it. Keyed by the scope this mount was
@@ -953,7 +996,6 @@ export function useConsentState(
       const cached = readBootCache(CONSENT_BOOT_SCOPE, keptFor, acceptConsentCache);
       if (cached !== null) {
         bootCache.current = cached;
-        knownRef.current = true;
         setState((prev) =>
           prev.known
             ? prev
@@ -969,17 +1011,27 @@ export function useConsentState(
         );
       }
     }
+    const reconnect = () => { void fetchLive(); };
     void fetchLive();
+    const offline = () => {
+      if (!suggestionReachable()) forgetSuggestionConsent(++readSeq.current);
+    };
+    const stopListening = subscribeBrowserNetwork(reconnect, offline);
     // The cleanup closes this era: a response landing after deactivation or unmount applies
     // nothing — see `era` above.
     return () => {
       era.current += 1;
-      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
-      retryTimer.current = null;
+      if (retry.current.timer !== null) clearTimeout(retry.current.timer);
+      retry.current = { step: 0, timer: null };
+      suggestionWrite.current = null;
+      suggestionRead.current.grant += Number(suggestionRead.current.known);
+      suggestionRead.current.known = false;
+      suggestionRead.current.relayGrant = null;
+      stopListening();
     };
     // The fetch itself lives in `fetchLive` below so the settings-stamp effect can share it —
     // one implementation of "read the live answer and apply it under the guards".
-  }, [active, reachable, fetchLive]);
+  }, [active, reachable, fetchLive, forgetSuggestionConsent, suggestionReachable]);
 
 
   /**
@@ -1088,31 +1140,56 @@ export function useConsentState(
     transport !== "none" && typeof transport.setResurfaceTime === "function" ? writeResurfaceTime : null;
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
-    // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
-    // request, so a re-ask racing this write is discarded whatever it answers.
+    const wire = wireOf(link);
+    if (!canChangeSuggestions()) throw new Error("Suggestion consent is unreadable");
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await wireOf(link).setAutoSuggest(enabled);
-    const on = res.autoSuggestAt != null;
-    // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
-    // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
-    // that was refused — the two must move together or not at all.
-    // OFF withdraws the act on suggestions too; the echo says so.
-    const actOff = "autoActAt" in res ? { autoAct: false, autoActAt: null } : {};
-    applyEcho(at, (prev) => ({
-      ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt ?? null, ...actOff,
-    }));
-    return on;
-  }, [applyEcho]);
+    const mine = ++readSeq.current;
+    suggestionWrite.current = mine;
+    if (!enabled) {
+      const current = suggestionRead.current;
+      if (current.automatic || current.relayGrant !== null) current.grant++;
+      current.automatic = false;
+      current.relayGrant = null;
+      setState((prev) => ({ ...prev, autoSuggest: false, autoSuggestAt: null, autoAct: false, autoActAt: null }));
+    }
+    const grant = suggestionRead.current.grant;
+    try {
+      const res = await wire.setAutoSuggest(enabled);
+      const on = isSuggestionConsentTimestamp(res.autoSuggestAt);
+      if (era.current === at && suggestionWrite.current === mine) {
+        const current = suggestionRead.current;
+        if (!on && res.autoSuggestAt !== null) {
+          forgetSuggestionConsent(mine);
+          throw new Error("Suggestion consent is unreadable");
+        }
+        // An echo from a write that crossed a newer read or a withdrawal cannot re-arm work.
+        if (mine > current.seq && current.known && current.grant === grant) {
+          const relayGrant = typeof res.relaySuggestionGrant === "string" ? res.relaySuggestionGrant : null;
+          const revoked = (current.automatic && !on) || current.relayGrant !== relayGrant;
+          suggestionRead.current = { seq: mine, known: true, automatic: on, grant: current.grant + Number(revoked), relayGrant };
+          const actOff = !on || "autoActAt" in res ? { autoAct: false, autoActAt: null } : {};
+          applyEcho(at, (prev) => ({
+            ...prev, autoSuggest: on, autoSuggestAt: res.autoSuggestAt, ...actOff,
+          }));
+        }
+      }
+      return on;
+    } finally {
+      if (suggestionWrite.current === mine) suggestionWrite.current = null;
+    }
+  }, [applyEcho, canChangeSuggestions, forgetSuggestionConsent]);
 
   const writeAutoAct = useCallback(async (enabled: boolean): Promise<boolean> => {
+    const wire = wireOf(link);
+    if (!canChangeSuggestions()) throw new Error("Suggestion consent is unreadable");
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await wireOf(link).setAutoAct!(enabled);
+    const res = await wire.setAutoAct!(enabled);
     const on = res.autoActAt != null;
     applyEcho(at, (prev) => ({ ...prev, autoAct: on, autoActAt: res.autoActAt ?? null }));
     return on;
-  }, [applyEcho]);
+  }, [applyEcho, canChangeSuggestions]);
   // Null when the wire cannot write it — the switch is then not drawn.
   const setAutoAct =
     transport !== "none" && typeof transport.setAutoAct === "function" ? writeAutoAct : null;
@@ -1223,10 +1300,10 @@ export function useConsentState(
       return off;
     }, [applyEcho]);
 
-  const setMailboxSignature = useCallback(
+  const saveMailboxSignature = useCallback(
     async (
       mailboxId: string, signature: string | null, signatureHtml?: string | null,
-    ): Promise<Record<string, string>> => {
+    ): Promise<SignatureEcho> => {
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
       const at = era.current;
@@ -1245,8 +1322,14 @@ export function useConsentState(
         signatureChanges: res.signatureChanges ?? {},
         signaturesKnown: true,
       }));
-      return map;
+      return res;
     }, [applyEcho]);
+
+  const setMailboxSignature = useCallback(
+    async (id: string, text: string | null, html?: string | null) =>
+      (await saveMailboxSignature(id, text, html)).signatures ?? {},
+    [saveMailboxSignature],
+  );
 
   const setBlockAutoUnsubscribe = useCallback(async (blocked: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
@@ -1287,6 +1370,10 @@ export function useConsentState(
     setThemeFace,
     setResurfaceTime,
     setAutoSuggest,
+    canChangeSuggestions,
+    suggestionGrant: suggestionRead.current.grant,
+    relaySuggestionGrant: suggestionRead.current.relayGrant,
+    readSuggestionGrant,
     setAutoAct,
     setDormancyDays,
     setBlockRemoteImages,
@@ -1295,5 +1382,6 @@ export function useConsentState(
     setFoldersEnabled,
     setMailboxFoldersEnabled,
     setMailboxSignature,
+    saveMailboxSignature,
   };
 }

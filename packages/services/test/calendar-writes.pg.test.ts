@@ -75,6 +75,13 @@ const create = (w: World, over: Partial<CalendarEventFields> = {}, eventId: stri
 const update = (w: World, change: Partial<CalendarEventFields>, base = w.updatedAt, after?: string): CalendarEventAct =>
   ({ kind: "calendar_event_update", eventId: w.eventId, base, ...(after === undefined ? {} : { after }), scope: { kind: "record" }, change });
 
+const weeklyOriginal = (start: string, end: string, rule: string, changed: readonly string[] = []) => [
+  "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN",
+  "BEGIN:VEVENT", "UID:weekly@example.test", "DTSTAMP:20261101T000000Z",
+  `DTSTART;TZID=Europe/Zurich:${start}`, `DTEND;TZID=Europe/Zurich:${end}`, `RRULE:${rule}`,
+  "END:VEVENT", ...changed, "END:VCALENDAR", "",
+].join("\r\n");
+
 const refusal = async (p: Promise<unknown>): Promise<string> => {
   try {
     await p;
@@ -231,7 +238,12 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt }).then((r) => r[0]!);
     // A series in a shape its server was proven to keep: Wednesdays at 10:00 in Zurich (09:00 UTC).
     const zurich = { startKind: "zoned", startLocal: "20261118T100000", startZone: "Europe/Zurich", endKind: "zoned", endLocal: "20261118T110000", endZone: "Europe/Zurich" };
-    const series = await stored({ repeatRule: "FREQ=WEEKLY", endsAt: null, ...zurich });
+    const original = weeklyOriginal("20261118T100000", "20261118T110000", "FREQ=WEEKLY", [
+      "BEGIN:VEVENT", "UID:weekly@example.test", "DTSTAMP:20261101T000000Z",
+      "RECURRENCE-ID;TZID=Europe/Zurich:20261125T100000", "DTSTART:20261125T140000Z", "DTEND:20261125T150000Z",
+      "END:VEVENT",
+    ]);
+    const series = await stored({ repeatRule: "FREQ=WEEKLY", endsAt: null, original, ...zurich });
     const day = await stored({
       recurrenceId: "20261125T090000Z", occurrenceAt: new Date("2026-11-25T09:00:00Z"), title: "Weekly kiln, moved",
       startLocal: "20261125T140000Z", endLocal: "20261125T150000Z", startsAt: new Date("2026-11-25T14:00:00Z"), endsAt: new Date("2026-11-25T15:00:00Z"),
@@ -268,6 +280,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
       accountId: w.accountId, calendarId: w.calendarId, providerId: `https://dav.example.test/cal/${w.accountId.slice(0, 6)}/weekly.ics`, versionTag: '"w1"',
       uid: "weekly@example.test", title: "Weekly kiln", startKind: "zoned", startLocal: "20261123T090000", startZone: "Europe/Zurich",
       endKind: "zoned", endLocal: "20261123T100000", endZone: "Europe/Zurich", startsAt: new Date("2026-11-23T08:00:00Z"), endsAt: null, repeatRule: "FREQ=WEEKLY;BYDAY=MO",
+      original: weeklyOriginal("20261123T090000", "20261123T100000", "FREQ=WEEKLY;BYDAY=MO"),
     }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
     const on = (e: { id: string; updatedAt: Date | string }) => ({ eventId: e.id, base: typeof e.updatedAt === "string" ? e.updatedAt : e.updatedAt.toISOString() });
     const day = String(Date.UTC(2026, 11, 7, 8));
@@ -304,6 +317,32 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
   const DEC_14 = String(Date.UTC(2026, 11, 14, 8));
   const following = (series: { id: string; updatedAt: Date }, newEventId: string, change: Partial<CalendarEventFields>, base = series.updatedAt.toISOString()): CalendarEventAct =>
     ({ kind: "calendar_event_update", eventId: series.id, base, scope: { kind: "following", at: DEC_14, newEventId }, change });
+
+  it("shows scopes only on a proven personal series and keeps that condition on both parts of a split", async () => {
+    const w = await world({ provider: "caldav" });
+    const original = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT", "UID:term",
+      "DTSTAMP:20261101T000000Z", "DTSTART;VALUE=DATE:20261116", "DTEND;VALUE=DATE:20261117",
+      "RRULE:FREQ=WEEKLY;COUNT=5", "SUMMARY:Kiln check", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+    const series = await weekly(w, { uid: "term", original, startKind: "date", endKind: "date", startZone: null, endZone: null,
+      startLocal: "20261116", endLocal: "20261117", startsAt: new Date("2026-11-16T00:00:00Z"), repeatRule: "FREQ=WEEKLY;COUNT=5" });
+    const c = ctx(w.accountId);
+    const visible = async () => (await CALENDAR_BUILDERS.calendar_event(c.db, w.accountId, [series.id])).get(series.id)?.personalSeries;
+    expect(await visible()).toBeUndefined();
+    await db.update(calConnections).set({ serverUrl: BENCH_CALDAV_PLACE.replace("caldav:", "http://") }).where(eq(calConnections.id, w.connectionId));
+    expect(await visible()).toBe(true);
+    const at = String(Date.UTC(2026, 10, 30));
+    const act = { kind: "calendar_event_update", eventId: series.id, base: series.updatedAt.toISOString(),
+      scope: { kind: "following", at, newEventId: randomUUID() }, change: { notes: "New time for firing" }, personalSeries: true };
+    expect((await record(c, "split", act)).answer.write?.state).toBe("pending");
+    const rows = await rowsOf(w.accountId);
+    expect(rows.map((row) => row.payload)).toMatchObject([
+      { act, part: { n: 1 } }, { part: { n: 2, from: { eventId: series.id, at, personalSeries: true } } },
+    ]);
+    await db.update(calEvents).set({ original: original.replace("END:VEVENT", "ATTENDEE:urn:uuid:aa\r\nEND:VEVENT") }).where(eq(calEvents.id, series.id));
+    expect(await visible()).toBeUndefined();
+    expect(await refusal(record(c, "another", act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toHaveLength(2);
+  });
 
   it("records a press on a day and the days after it as two rows: the series' end, then the new series under the device's id, standing as wanted", async () => {
     const w = await world({ provider: "caldav" });

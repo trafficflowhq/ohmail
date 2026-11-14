@@ -4,7 +4,13 @@
  * the one list (`SearchSlot`), and the model the behaviour hands back (`SearchListModel`). No markup.
  */
 import type { RefObject } from "react";
-import type { OhmailEngine, SearchHit, ServerSearchFacets, ServerSearchSort } from "@ohmail/client-engine";
+import type {
+  AddressBookEntry,
+  OhmailEngine,
+  SearchHit,
+  ServerSearchFacets,
+  ServerSearchSort,
+} from "@ohmail/client-engine";
 import type { StorageScope } from "../storage/scope.js";
 import type { Translator } from "../text/translator.js";
 
@@ -13,6 +19,13 @@ export interface SearchPerson {
   readonly address: string;
   readonly name: string | null;
   readonly dir: "any" | "from" | "to";
+}
+
+/** A person on the resting screen, with counts from the messages this device holds. */
+export interface RestingSearchPerson {
+  readonly person: AddressBookEntry;
+  readonly from: number;
+  readonly to: number;
 }
 
 /** A day window, both ends inclusive, as the person picked it (`YYYY-MM-DD`); either end may stand open. */
@@ -57,7 +70,7 @@ export type SearchSlot =
 
 /** A pressed facet: the store's own key for it (a folder path, a sender's address), or files. */
 export type SearchFacetPick =
-  | { readonly group: "folder"; readonly key: string; readonly raw: string | null }
+  | { readonly group: "folder"; readonly key: string; readonly raw: string | null; readonly exactPath?: true }
   | { readonly group: "from"; readonly key: string; readonly raw: string | null }
   | { readonly group: "refine" };
 
@@ -95,6 +108,8 @@ export interface SearchListInput {
    * and sent. A host that holds no hello answers `words`.
    */
   readonly searchBy: "people" | "words";
+  readonly people?: () => readonly AddressBookEntry[];
+  readonly readMailboxTotal?: () => Promise<number | null>;
 }
 
 /** The model `useSearchList` hands back: everything the markup reads, and every act it can ask for. */
@@ -134,6 +149,11 @@ export interface SearchListModel {
   readonly partsSaid: boolean;
   readonly cursor: number;
   readonly facets: readonly SearchFacetGroup[];
+  /** An empty field with no filter set. */
+  readonly resting: boolean;
+  readonly restingPeople: readonly RestingSearchPerson[];
+  /** Whole History count from the host, or null while unknown. */
+  readonly mailboxTotal: number | null;
   readonly filtered: boolean;
   pick(facet: SearchFacetPick): void;
   /** Ask the store again (the verdict's retry). */

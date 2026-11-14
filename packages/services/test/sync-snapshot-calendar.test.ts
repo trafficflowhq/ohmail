@@ -1,10 +1,11 @@
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, mailboxes } from "@trafficflow/db";
-import { calCalendars, calConnections, calEvents, calSuggestions } from "@trafficflow/db/mail";
-import { calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
-import type { CalendarWindow, SnapshotResponse, SyncChange } from "@ohmail/wire";
+import { accounts, mailboxes, recordChange } from "@trafficflow/db";
+import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSuggestions, calWrites } from "@trafficflow/db/mail";
+import { calendarExport, calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
+import type { CalendarEventRecord, CalendarWindow, SnapshotResponse, SyncChange } from "@ohmail/wire";
 import { SyncService, ServiceError, dbFor, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS, type ServiceContext } from "../src/index.js";
 import { CALENDAR_SPAN_CASES, heldBySpan, type CalendarSpan } from "@ohmail/testing/calendar-span-twin";
 
@@ -89,6 +90,105 @@ describe("the calendar's phase follows the mail's", () => {
     expect(calendar.changes.map((c) => c.id)).toEqual([w.connectionId, w.calendarId, suggestion, e]);
     for (const p of pages) for (const c of p.changes) expect(c.seq).toBe(mail.asOfSeq);
     expect(calendar.calendarWindow).toEqual(calendarFeed.window);
+  });
+
+  it("projects only times and recurrence from a calendar that now grants availability alone", async () => {
+    const w = await world();
+    const master = await event(w.db, w, { startsAt: NOW, endsAt: null });
+    const other = await event(w.db, w, { startsAt: day(1), endsAt: day(1.1), occurrenceAt: day(1) });
+    const details = {
+      uid: "private-series@example.invalid", title: "Private appointment", notes: "Private notes",
+      place: "Private room", callLink: "https://room.example.invalid/meeting",
+      organizer: "owner@example.invalid", organizerName: "Private organizer", myAnswer: "accepted", private: true,
+    };
+    for (const id of [master, other]) await w.db.update(calEvents).set(details).where(eq(calEvents.id, id));
+    await w.db.insert(calAttendees).values({ accountId: w.accountId, eventId: master, address: "guest@example.invalid" });
+    await w.db.insert(calAlarms).values({ accountId: w.accountId, eventId: master, minutesBefore: 15, method: "notice" });
+    await w.db.insert(calWrites).values({
+      accountId: w.accountId, eventId: master, calendarId: w.calendarId, idempotencyKey: "private-key",
+      op: "update", payload: {}, state: "pending",
+    });
+    await w.db.update(calEvents).set({
+      repeatRule: "FREQ=DAILY\nX-PRIVATE=Private custom recurrence",
+      addedDates: [{ kind: "date", value: "20260806", source: "Private stored extension" }],
+    }).where(eq(calEvents.id, master));
+    const projection = async () => (await walk(w.ctx, served)).flatMap((page) =>
+      page.changes.filter((row) => row.type === "calendar_event").map((row) => row.entity as CalendarEventRecord));
+    const full = (await projection()).find((row) => row.id === master)!;
+    expect(full).toMatchObject({ uid: details.uid, title: details.title, notes: details.notes, place: details.place,
+      callLink: details.callLink, organizer: { address: details.organizer }, myAnswer: "accepted",
+      invitees: [{ address: "guest@example.invalid" }], alarms: [{ minutesBefore: 15 }], writes: [{ key: "private-key" }] });
+    await w.db.update(calCalendars).set({ access: "busy" }).where(eq(calCalendars.id, w.calendarId));
+    const limited = await projection();
+    expect(limited.map((row) => row.id).sort()).toEqual([master, other].sort());
+    const series = limited.find((row) => row.id === master)!;
+    const exception = limited.find((row) => row.id === other)!;
+    expect(series).toMatchObject({ title: "", notes: null, place: null, callLink: null, organizer: null, myAnswer: null,
+      private: false, invitees: [], alarms: [], writes: [], start: full.start, repeat: { rules: ["FREQ=DAILY"], added: [{ kind: "date", value: "20260806" }] }, startsAt: full.startsAt });
+    expect(series).not.toHaveProperty("personalSeries");
+    expect(series.uid).not.toBe(details.uid);
+    expect(exception.uid).toBe(series.uid);
+    expect(exception.occurrenceAt).toBe(day(1).toISOString());
+    expect(JSON.stringify(limited)).not.toMatch(/Private|private-|example\.invalid/);
+    // A delta carrying just an exception must use its master's same opaque identity.
+    await w.db.transaction((tx) => recordChange(tx as never, { accountId: w.accountId, entityType: "calendar_event", entityId: other, op: "update" }));
+    const delta = await svc.getChanges(w.ctx, { since: "0", ...served });
+    const echoed = [...delta.changes.creates, ...delta.changes.updates].find((row) => row.id === other);
+    expect(echoed?.entity).toEqual(exception);
+    await w.db.update(calCalendars).set({ access: "reader" }).where(eq(calCalendars.id, w.calendarId));
+    expect((await projection()).find((row) => row.id === master)).toEqual(full);
+  });
+
+  it("keeps an exception with the same busy series when the master arrives later", async () => {
+    const w = await world();
+    await w.db.update(calCalendars).set({ access: "busy" }).where(eq(calCalendars.id, w.calendarId));
+    const one = async (id: string) => (await calendarFeed.build(w.ctx.db, w.accountId, "calendar_event", [id])).get(id)!;
+    const uid = "same-provider-series";
+    const changed = await event(w.db, w, { startsAt: day(1.1), endsAt: day(1.2), occurrenceAt: day(1) });
+    await w.db.update(calEvents).set({ uid, recurrenceId: String(day(1).getTime()) }).where(eq(calEvents.id, changed));
+    const first = await one(changed);
+    const master = await event(w.db, w, { startsAt: NOW, endsAt: null });
+    await w.db.update(calEvents).set({ uid }).where(eq(calEvents.id, master));
+    expect((await one(master)).uid).toBe(first.uid);
+    expect(first.uid).not.toBe(uid);
+    await w.db.delete(calEvents).where(eq(calEvents.id, master));
+    expect(await one(changed)).toEqual(first);
+  });
+
+  it("keeps busy time zones usable while discarding provider text from dates and occurrence keys", async () => {
+    const w = await world();
+    const master = await event(w.db, w, { startsAt: NOW, endsAt: null });
+    const other = await event(w.db, w, { startsAt: day(1.1), endsAt: day(1.2), occurrenceAt: day(1) });
+    const known = "/mozilla.org/Private provider/Europe/Zurich";
+    const unknown = "Private custom zone";
+    await w.db.update(calCalendars).set({ access: "busy", timeZone: known }).where(eq(calCalendars.id, w.calendarId));
+    await w.db.update(calEvents).set({
+      uid: "series", startKind: "zoned", startLocal: "20260727T140000", startZone: known,
+      endKind: "zoned", endLocal: "20260727T150000", endZone: known,
+      excludedDates: [{ kind: "zoned", value: "20260728T140000", zone: unknown, original: "Private original" }],
+      addedDates: [{ kind: "zoned", value: "20260729T140000", zone: unknown }, null],
+    }).where(eq(calEvents.id, master));
+    await w.db.update(calEvents).set({
+      uid: "series", recurrenceId: unknown + "|20260728T1400|false", startKind: "zoned", startLocal: "20260728T143000", startZone: unknown,
+    }).where(eq(calEvents.id, other));
+    const pages = await walk(w.ctx, served);
+    const changes = pages.flatMap((page) => page.changes);
+    const series = changes.find((row) => row.id === master)!.entity as CalendarEventRecord;
+    const exception = changes.find((row) => row.id === other)!.entity as CalendarEventRecord;
+    const zone = series.repeat?.excluded[0]?.zone;
+    expect(series.start).toEqual({ kind: "zoned", value: "20260727T140000", zone: "Europe/Zurich" });
+    expect(series.end).toEqual({ kind: "zoned", value: "20260727T150000", zone: "Europe/Zurich" });
+    expect(zone).toMatch(/^Unresolved\/[a-f0-9]+$/);
+    expect(series.repeat?.added).toEqual([{ kind: "zoned", value: "20260729T140000", zone }]);
+    expect(exception).toMatchObject({ uid: series.uid, recurrenceId: zone + "|20260728T1400|false", start: { zone } });
+    expect(changes.find((row) => row.id === w.calendarId)?.entity).toMatchObject({ timeZone: "Europe/Zurich" });
+    expect(JSON.stringify(changes)).not.toContain("Private");
+    const exported = () => calendarExport(w.ctx.db, w.accountId);
+    expect((await exported())?.connections[0]?.calendars[0]?.timeZone).toBe("Europe/Zurich");
+    await w.db.update(calCalendars).set({ timeZone: unknown }).where(eq(calCalendars.id, w.calendarId));
+    expect((await exported())?.connections[0]?.calendars[0]?.timeZone).toBe(zone);
+    await w.db.update(calCalendars).set({ access: "reader" }).where(eq(calCalendars.id, w.calendarId));
+    expect((await exported())?.connections[0]?.calendars[0]?.timeZone).toBe(unknown);
   });
 
   it("where none is kept, byte for byte the mail's, whatever the request names and the account's row says", async () => {

@@ -11,7 +11,7 @@
  * answers 404: `calendarWays()` names no way there.
  */
 import type {
-  Assert, CalendarConnectBody, CalendarConnectionRecord, CalendarPatchBody, CalendarRecord, CalendarSignInBody, CalendarWay, Complete,
+  Assert, CalendarConnectBody, CalendarConnectionRecord, CalendarPatchBody, CalendarRecord, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWay, Complete,
 } from "@ohmail/wire";
 
 /** Every way this build knows, whether or not a server offers it. */
@@ -58,4 +58,13 @@ export interface CalendarConnectTransport {
   signInCalendarAgain(connectionId: string, signIn: CalendarSignInBody): Promise<{ readonly connection: CalendarConnectionRecord; readonly seq: number | null }>;
   /** `PATCH /calendar/calendars/:id`. `seq` is `null` when nothing changed. */
   setCalendar(calendarId: string, patch: CalendarPatchBody): Promise<{ readonly calendar: CalendarRecord; readonly seq: number | null }>;
+}
+
+/** The connection and settings capabilities a host can hand to the calendar. */
+export type CalendarSetupTransport = Omit<CalendarConnectTransport, "calendarConnections"> & {
+  saveCalendarSettings?(body: CalendarSettingsBody): Promise<CalendarSettingsWire>;
+};
+
+export interface CalendarSetupAdapter {
+  calendarSetupTransport(): CalendarSetupTransport | null;
 }

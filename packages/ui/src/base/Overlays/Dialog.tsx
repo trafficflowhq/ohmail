@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useId, type KeyboardEvent, type ReactNode } from "react";
 import { RefusalLine } from "../Feedback/RefusalLine.js";
 import { Button } from "../Primitives/Button.js";
@@ -10,6 +11,8 @@ import { Overlay } from "./Overlay.js";
 export interface DialogProps {
   open: boolean;
   onClose: () => void;
+  /** A decision that must be made before the requested action can continue. */
+  alert?: boolean;
   /** The question, as a sentence. It ends in the dot. */
   title: string;
   /** Hot while the sentence holds something still to be decided. */
@@ -18,6 +21,8 @@ export interface DialogProps {
   product?: "mail" | "cal";
   /** At most one line under it. */
   line?: string;
+  /** Use the line as the dialog description and announce changes to it. */
+  announceLine?: boolean;
   /** `delete`: Enter confirms wherever the keys are. */
   kind?: "delete";
   /**
@@ -65,6 +70,7 @@ export function Dialog(props: DialogProps) {
     hot,
     product,
     line,
+    announceLine,
     kind,
     keysOn,
     confirm,
@@ -77,6 +83,7 @@ export function Dialog(props: DialogProps) {
     under,
   } = props;
   const name = useId();
+  const description = line && announceLine ? `${name}-line` : undefined;
   /* What a press came to is said when it appears: by a change inside a region that stands. */
   const held = useSaidOnArrival(Boolean(props.open && props.said && !props.said.refused)) ? true : undefined;
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -85,12 +92,16 @@ export function Dialog(props: DialogProps) {
     confirm.onPress();
     return true;
   };
-  return (
+  const dialog = (
     <Overlay
       open={open}
       onClose={onClose}
-      labelledBy={name}
+      role={props.alert ? "alertdialog" : "dialog"}
+      label={props.alert ? title : undefined}
+      labelledBy={props.alert ? undefined : name}
+      describedBy={description}
       className={list ? "oh-dialog oh-dialog-listed" : "oh-dialog"}
+      scrimMotion="backdrop"
       onKey={keys}
       first={keysOn === "cancel" ? wayOut : undefined}
     >
@@ -99,7 +110,11 @@ export function Dialog(props: DialogProps) {
           {title}
         </EndDot>
       </Sentence>
-      {line ? <p className="oh-text oh-dialog-line">{line}</p> : null}
+      {line ? (
+        <p id={description} className="oh-text oh-dialog-line" role={announceLine ? "status" : undefined}>
+          {line}
+        </p>
+      ) : null}
       {children ? (
         <div className="oh-dialog-body" role={list ? "list" : undefined}>
           {children}
@@ -141,4 +156,8 @@ export function Dialog(props: DialogProps) {
       {under ? <div className="oh-dialog-under">{under}</div> : null}
     </Overlay>
   );
+  // An interrupting question must receive clicks above every column, including its opener's siblings.
+  return props.alert && open && typeof document !== "undefined"
+    ? createPortal(dialog, document.body)
+    : dialog;
 }

@@ -7,9 +7,8 @@
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import type { RefObject } from "react";
 import {
-  isSharedDomain,
   PILE_KEY,
-  refused,
+  PILE_VERB_KEY,
   suggestionWords,
   type DecisionScope,
   type ScreenerView,
@@ -17,7 +16,8 @@ import {
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { Button, Dot, Menu, MenuItem, Sentence as KitSentence, Slot, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
-import { useScreener } from "../contract.js";
+import { useNoAdvice, useScreener } from "../contract.js";
+import { unsubscribeDisclosure } from "./unsubscribe-disclosure.js";
 
 const chunkText = (chunks: unknown): string =>
   (Array.isArray(chunks) ? chunks : [chunks]).filter((c) => typeof c === "string").join("");
@@ -29,7 +29,9 @@ export function whoOf(sender: ScreenerSenderDTO): string {
 export function Sentence({
   view,
   sender,
-  decided,
+  choosing,
+  shared,
+  scope,
   slotAt,
   cardAt,
   scopeAt,
@@ -37,25 +39,22 @@ export function Sentence({
 }: {
   view: ScreenerView;
   sender: ScreenerSenderDTO;
-  /** Decided here and waiting for the organizer: the place is said, and no longer a choice. */
-  decided: boolean;
+  choosing: boolean;
+  shared: boolean;
+  scope: DecisionScope;
   slotAt: RefObject<HTMLButtonElement | null>;
   cardAt: RefObject<HTMLButtonElement | null>;
   scopeAt: RefObject<HTMLButtonElement | null>;
   onCard: () => void;
 }) {
   const t = useText("screener");
-  const model = useScreener();
-  const words = suggestionWords(sender);
-  const choosing = view.segment === "waiting" && !decided && !refused(model.role);
+  const words = suggestionWords(sender, useNoAdvice());
   const place =
     view.segment !== "waiting"
       ? t(view.segment === "screened" ? "pileScreened" : "pileSpam")
       : words.dest === null
         ? t("place.nowhere")
         : t(PILE_KEY[words.dest]);
-  const shared = isSharedDomain(sender.from.address);
-  const scope: DecisionScope = shared ? "sender" : view.scopeOf(sender);
   /* What ohmail measured, said as facts beside the sentence: a claimed company, how sure the advice is. */
   const facts = [
     ...(sender.checked?.reason === "impersonation"
@@ -105,14 +104,13 @@ export function Sentence({
           <Tag key={fact}>{fact}</Tag>
         ))}
       </p>
-      <Lines view={view} sender={sender} choosing={choosing} scope={scope} shared={shared} />
       <ScopeMenu view={view} sender={sender} scope={scope} anchor={scopeAt} />
     </div>
   );
 }
 
 /** The lines under the sentence, each said before the press. */
-function Lines({
+export function DecisionLines({
   view,
   sender,
   choosing,
@@ -126,19 +124,25 @@ function Lines({
   shared: boolean;
 }) {
   const t = useText("screener");
+  const rules = useText("rules");
   const model = useScreener();
-  const words = suggestionWords(sender);
+  const words = suggestionWords(sender, useNoAdvice());
   const reach = choosing && scope === "domain" ? model.reachOf(sender, scope) : null;
-  const claim = choosing ? model.unsubClaimOf(sender, scope) : "none";
+  const unsubscribe = choosing
+    ? unsubscribeDisclosure(t, sender.from.address, scope, model.unsubClaimOf(sender, scope))
+    : null;
   return (
     <>
       {(view.segment === "waiting" ? words.lines : []).map((line) => (
         <p key={line.key} className="oh-text">
           {line.key === "aiActRefused"
-            ? t("aiActRefused", { accept: t("rowAccept") })
+            ? t("aiActRefused", { accept: t(words.dest === null ? "rowAccept" : PILE_VERB_KEY[words.dest]) })
             : t(line.key, line.values as Record<string, string | number> | undefined)}
         </p>
       ))}
+      {view.segment === "waiting" && sender.inertRule ? (
+        <p className="oh-text">{rules("sharedProviderInert", { domain: sender.inertRule.domain })}</p>
+      ) : null}
       {reach !== null && reach.others.length > 0 ? (
         <p className="oh-text">
           {t("domainAlsoFiles", {
@@ -148,15 +152,12 @@ function Lines({
         </p>
       ) : null}
       {choosing && sender.checked?.claimsOnly && (shared || scope === "sender") ? (
-        <p className="oh-text">{t("listClaimScreenOut", { brand: sender.checked.brand })}</p>
+        <>
+          <p className="oh-text">{t("listClaimDecision", { brand: sender.checked.brand })}</p>
+          <p className="oh-text">{t("barRuleListClaim", { target: displayAddress(sender.from.address) })}</p>
+        </>
       ) : null}
-      {claim !== "none" ? (
-        <p className="oh-text">
-          {scope === "domain"
-            ? t("barUnsubDomain", { claim, domain: displayDomainLabel(sender.from.address) })
-            : t("barUnsub", { claim, who: displayAddress(sender.from.address) })}
-        </p>
-      ) : null}
+      {unsubscribe ? <p className="oh-text">{unsubscribe}</p> : null}
     </>
   );
 }

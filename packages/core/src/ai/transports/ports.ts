@@ -1,3 +1,4 @@
+import type { AiCallOptions } from "../../ai-call-report.js";
 import type { ClassifierInput, ClassifierPort } from "../../classifier-port.js";
 import type { DraftInput, DraftPort } from "../../draft-port.js";
 import { ollamaTransport } from "./ai-ollama.js";
@@ -9,15 +10,15 @@ import type { AiProviderEnv } from "./provider-env.js";
 /**
  * A transport as the two ports a host takes. `screen` is optional on `ClassifierPort` and a port
  * without it still compiles while the Screener falls back to `classify` — so this one is held to
- * `Required<ClassifierPort>`. The per-call usage hook is not forwarded: these providers only run
+ * `Required<ClassifierPort>`. The transports use their own usage hook: they only run
  * where nothing meters (the worker refuses them when it does), and the port contract allows it.
  */
 export function portsOf(t: AiTransport): { classifier: Required<ClassifierPort>; drafter: DraftPort } {
   const classifier = {
-    classify: (input: ClassifierInput) => t.classify(input),
-    screen: (input: ClassifierInput) => t.screen(input),
+    classify: (input: ClassifierInput, call?: AiCallOptions) => t.classify(input, call),
+    screen: (input: ClassifierInput, call?: AiCallOptions) => t.screen(input, call),
   } satisfies Required<ClassifierPort>;
-  return { classifier, drafter: { draft: (input: DraftInput) => t.draft(input) } };
+  return { classifier, drafter: { draft: (input: DraftInput, call?: AiCallOptions) => t.draft(input, call) } };
 }
 
 /** The transport a resolved non-Anthropic choice names; Anthropic keeps the hosted client. */

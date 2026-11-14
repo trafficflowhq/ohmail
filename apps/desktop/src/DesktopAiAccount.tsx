@@ -9,8 +9,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
-import { SettingsNote, SettingsRow, SettingsSection, Switch } from "@ohmail/ui";
+import { useText } from "@ohmail/app/text";
+import { AiPane } from "@ohmail/app/settings/ai";
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { useWindowReturn } from "./window-return.js";
@@ -23,33 +23,64 @@ import { useWindowReturn } from "./window-return.js";
  */
 export const ACCOUNT_AI_PATH = "/account/ai";
 
+const online = () => typeof navigator === "undefined" || navigator.onLine !== false;
+
 export function DesktopAiAccount() {
-  const t = useTranslations("settings");
+  const t = useText("settings");
   /** `null` = not answered. Drawn, not pressable — never a guessed position. See the web twin. */
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const writing = useRef(false);
-  const load = useCallback((quiet: boolean) => {
+  const revision = useRef(0);
+  const load = useCallback(() => {
+    if (!online()) {
+      revision.current++;
+      setEnabled(null);
+      setProblem(t("aiUnreadable"));
+      return;
+    }
+    if (writing.current) return;
+    const at = ++revision.current;
+    const current = () => alive.current && revision.current === at;
     void (async () => {
       try {
         const res = await bridgeFetch(ACCOUNT_AI_PATH);
-        if (!alive.current || (quiet && writing.current)) return;
-        if (!res.ok) { if (!quiet) setProblem(t("aiUnreadable")); return; }
+        if (!current()) return;
+        if (!res.ok) throw new Error("AI setting unreadable");
         const body = (await res.json()) as { aiEnabled?: unknown };
-        if (alive.current && !(quiet && writing.current) && typeof body.aiEnabled === "boolean") setEnabled(body.aiEnabled);
+        if (!current()) return;
+        if (typeof body.aiEnabled !== "boolean") throw new Error("Missing AI setting");
+        setEnabled(body.aiEnabled);
+        setProblem(null);
       } catch {
-        if (alive.current && !quiet) setProblem(t("aiUnreadable"));
+        if (current()) {
+          setEnabled(null);
+          setProblem(t("aiUnreadable"));
+        }
       }
     })();
   }, [t]);
-  useEffect(() => { load(false); }, [load]);
-  /* A switch flipped on another device reaches the open pane; a failed re-read says nothing new. */
-  useWindowReturn(useCallback(() => load(true), [load]));
+  useEffect(() => {
+    load();
+    window.addEventListener("online", load);
+    window.addEventListener("offline", load);
+    return () => {
+      window.removeEventListener("online", load);
+      window.removeEventListener("offline", load);
+    };
+  }, [load]);
+  useWindowReturn(load);
 
   const toggle = useCallback((next: boolean) => {
+    if (enabled === null || writing.current || !online()) return;
+    const at = ++revision.current;
+    const current = () => alive.current && revision.current === at && online();
     setProblem(null);
     const previous = enabled;
     setEnabled(next);
@@ -61,37 +92,24 @@ export function DesktopAiAccount() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ aiEnabled: next }),
         });
-        if (!alive.current) return;
-        if (!res.ok) { setEnabled(previous); setProblem(t("aiUnreadable")); return; }
+        if (!current()) return;
+        if (!res.ok) throw new Error("AI setting refused");
         const body = (await res.json()) as { aiEnabled?: unknown };
         // The SERVER's answer wins — it is what every AI call site will read.
-        if (alive.current && typeof body.aiEnabled === "boolean") setEnabled(body.aiEnabled);
+        if (!current()) return;
+        if (typeof body.aiEnabled !== "boolean") throw new Error("Missing AI setting");
+        setEnabled(body.aiEnabled);
       } catch {
-        if (!alive.current) return;
+        if (!current()) return;
         setEnabled(previous);
         setProblem(t("aiUnreadable"));
       } finally {
         writing.current = false;
+        // A connection break invalidates the write's echo. Reconcile after the request settles.
+        if (alive.current && (revision.current !== at || !online())) load();
       }
     })();
-  }, [enabled, t]);
+  }, [enabled, load, t]);
 
-  return (
-    <SettingsSection>
-      {problem ? <p className="join-error" role="alert">{problem}</p> : null}
-      <SettingsRow
-        label={t("aiLabel")}
-        description={t("aiSub")}
-        control={
-          <Switch
-            checked={enabled === true}
-            disabled={enabled === null}
-            onChange={toggle}
-            ariaLabel={t("aiLabel")}
-          />
-        }
-      />
-      <SettingsNote icon="spark">{t("aiOffNote")}</SettingsNote>
-    </SettingsSection>
-  );
+  return <AiPane model={{ enabled, problem, noModel: false, toggle }} noModelSaid="" />;
 }

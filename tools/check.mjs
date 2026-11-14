@@ -3,6 +3,7 @@
 // the formatter and the checks around the typed contracts. tools/README.md says how to use it.
 //
 //   node tools/check.mjs --base <rev>     everything (the older tests' checklist too), and the baseline against <rev>'s
+//   node tools/check.mjs --host-shell [--base <rev>]  every host entry against the retained shell files
 //   node tools/check.mjs --controls       every rule refuses its planted violation, in a copy of HEAD
 //   node tools/check.mjs --by-task        the baseline's counts per task
 //   node tools/check.mjs --retirement [--base <rev>] | --references | --coverage   one part alone
@@ -27,7 +28,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { shellAdaptersAdded } from "./eslint-plugin-ohmail/index.mjs";
 import {
   compareWithBase,
   compareWithTree,
@@ -58,6 +58,7 @@ import {
   readState,
 } from "./lib/old-tests.mjs";
 import { readOldTestsTree } from "./lib/old-tests-tree.mjs";
+import { checkHostShellImports } from "./lib/reach.mjs";
 import { checkReferences, explicitTypechecks } from "./lib/references.mjs";
 import { checkRetirement, isSuiteTest, parseRetirement, readingTests } from "./lib/retirement.mjs";
 import { checkTable } from "./lib/table.mjs";
@@ -185,21 +186,15 @@ async function staleDoors(root) {
 
 /** A file `ohmail/owner-lookup` lists stands in the tree; one that is gone leaves the list (the rule never reads it). */
 function staleReaders(root) {
-  const {
-    readers = [],
-    todaysScopeReaders = { files: [] },
-    markerNameSpellers = { files: [] },
-  } = JSON.parse(read(root, "tools/owner-readers.json"));
+  const { readers = [], markerNameSpellers = { files: [] } } = JSON.parse(
+    read(root, "tools/owner-readers.json"),
+  );
   const refusals = [];
   for (const entry of readers) {
     if (!entry.id || !entry.reason || !entry.files?.length)
       refusals.push(`owner readers: ${entry.id ?? "an entry"} needs an id, a reason and its files`);
   }
-  const listed = [
-    ...readers.flatMap((entry) => entry.files ?? []),
-    ...todaysScopeReaders.files,
-    ...markerNameSpellers.files,
-  ];
+  const listed = [...readers.flatMap((entry) => entry.files ?? []), ...markerNameSpellers.files];
   for (const file of listed) {
     if (!existsSync(path.join(root, file)))
       refusals.push(`owner readers: ${file} is not in the tree; a file that is gone leaves the list`);
@@ -281,11 +276,7 @@ function retirement(root, files, base) {
   ];
 }
 
-/**
- * tools/old-tests.tsv and tools/never-red.tsv against the tree, and, with a base, against the base's two lists:
- * tools/README.md, "The older tests".
- */
-function oldTests(root, files, flags, base = flags.get("base")?.[0]) {
+function sourceTree(root, files) {
   const present = new Set(files);
   const texts = new Map();
   const textOf = (rel) => {
@@ -298,7 +289,26 @@ function oldTests(root, files, flags, base = flags.get("base")?.[0]) {
       .filter((rel) => /^(apps|packages)\/[^/]+\/package\.json$/.test(rel))
       .map((rel) => [path.posix.dirname(rel), JSON.parse(textOf(rel))]),
   );
-  const tree = readOldTestsTree({ files, textOf, manifests });
+  return { files, textOf, manifests };
+}
+
+function hostShell(root, files, base) {
+  const list = "tools/retained-shell.txt";
+  const entries = (text) => text.split(/\r?\n/).filter(Boolean);
+  const before = base ? showAt(root, base, list) : null;
+  return checkHostShellImports(
+    sourceTree(root, files),
+    entries(read(root, list)),
+    before === null ? undefined : entries(before),
+  );
+}
+
+/**
+ * tools/old-tests.tsv and tools/never-red.tsv against the tree, and, with a base, against the base's two lists:
+ * tools/README.md, "The older tests".
+ */
+function oldTests(root, files, flags, base = flags.get("base")?.[0]) {
+  const tree = readOldTestsTree(sourceTree(root, files));
   if (flags.has("scope")) {
     for (const file of [...tree.scope].sort()) say(file);
     return tree.refusals;
@@ -365,20 +375,6 @@ function baseBaseline(root, base) {
   }
 }
 
-/** The old shell's side of the frame only shrinks: what tools/shell-adapters.json names that the base's did not. */
-function shellAdaptersGrew(root, base) {
-  const filesOf = (text) => JSON.parse(text).files;
-  let before;
-  try {
-    before = filesOf(git(root, "show", `${base}:tools/shell-adapters.json`));
-  } catch {
-    return []; // the base is older than the list: there is nothing yet to grow against
-  }
-  return shellAdaptersAdded(filesOf(read(root, "tools/shell-adapters.json")), before).map(
-    (name) => `shell adapters: ${name} was added to tools/shell-adapters.json; the list only shrinks`,
-  );
-}
-
 async function everything(root, flags) {
   const base = flags.get("base")?.[0];
   if (process.env.CI === "true" && !base)
@@ -407,7 +403,7 @@ async function everything(root, flags) {
       "format: .prettierignore is not what tools/new-tree.txt renders; run node tools/check.mjs --write-prettierignore",
     );
   }
-  refusals.push(...references(root), ...retirement(root, files, base));
+  refusals.push(...references(root), ...retirement(root, files, base), ...hostShell(root, files, base));
   // The older tests' checklist: from here on a WAITS row for a place a host's entry mounts is refused on every pull request.
   refusals.push(...oldTests(root, files, new Map(), base));
   // "Checked by a tool" is said of a rule only with the record of its planted violation.
@@ -422,7 +418,6 @@ async function everything(root, flags) {
       refusals.push(...compareWithBase(baseline.rows, before));
       for (const line of rulingLines(baseline.rows, before)) say(`baseline: ${line}`);
     } else say(`baseline: ${base} has no tools/baseline.tsv; nothing to grow against`);
-    refusals.push(...shellAdaptersGrew(root, base));
   }
 
   say(`rules active: ${covered.active.length} (${covered.active.join(", ")})`);
@@ -514,6 +509,7 @@ async function main() {
     );
   }
   if (flags.has("retirement")) return retirement(root, treeFiles(root), flags.get("base")?.[0]);
+  if (flags.has("host-shell")) return hostShell(root, treeFiles(root), flags.get("base")?.[0]);
   if (flags.has("old-tests")) return oldTests(root, treeFiles(root), flags);
   if (flags.has("references")) return references(root);
   if (flags.has("coverage")) {

@@ -146,8 +146,15 @@ describe("reconcileWakeRegistration", () => {
     window.localStorage.clear();
     installFakeCaches();
     installPermission("granted");
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, write: () => Promise<void>) => write() },
+    });
   });
-  afterEach(() => { vi.resetModules(); });
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "locks");
+    vi.resetModules();
+  });
 
   it("a returning reader gets the row back AND the worker's permission to draw", async () => {
     /*

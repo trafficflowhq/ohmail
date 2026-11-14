@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { NO_RUN } from "@ohmail/app-logic/screener";
 import type { ScreenerBeside, ScreenerSuggestControl } from "../../src/screener/index.js";
 import { BESIDE, modelOf, mountPlace, sender, type Asked } from "./screener-world.js";
 
@@ -232,13 +233,13 @@ describe("the queue's tools", () => {
 
   it("Suggest shows the price before anything is bought, and buys on the confirm alone", () => {
     const calls: string[] = [];
-    const control = {
+    const control: ScreenerSuggestControl = {
       available: 2,
       resuggestable: 0,
       pool: 2,
       sizes: [2],
       size: 2,
-      phase: "closed" as const,
+      phase: "closed",
       quote: null,
       notice: null,
       progress: null,
@@ -248,9 +249,9 @@ describe("the queue's tools", () => {
       confirm: () => calls.push("confirm"),
       cancel: () => calls.push("cancel"),
     };
-    const beside = (over: object): ScreenerBeside => ({
+    const beside = (over: Partial<ScreenerSuggestControl>): ScreenerBeside => ({
       ...BESIDE,
-      suggest: { priced: true, control: { ...control, ...over } as ScreenerSuggestControl },
+      suggest: { priced: true, control: { ...control, ...over }, noAdvice: NO_RUN },
     });
     const world = mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2 }), { beside: beside({}) });
     fireEvent.click(screen.getByRole("button", { name: "Suggest…" }));
@@ -285,13 +286,13 @@ describe("the queue's tools", () => {
 
   it("Suggest is offered to a reader that may not decide: advice moves no mail", () => {
     const role = { mode: "blocked", name: null, reason: "no_organizer", oauthOnly: false } as never;
-    const control = {
+    const control: ScreenerSuggestControl = {
       available: 2,
       resuggestable: 0,
       pool: 2,
       sizes: [2],
       size: 2,
-      phase: "closed" as const,
+      phase: "closed",
       quote: null,
       notice: null,
       progress: null,
@@ -302,7 +303,7 @@ describe("the queue's tools", () => {
       cancel: () => undefined,
     };
     mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 2, role }), {
-      beside: { ...BESIDE, suggest: { priced: true, control: control as ScreenerSuggestControl } },
+      beside: { ...BESIDE, suggest: { priced: true, control, noAdvice: NO_RUN } },
     });
     expect(screen.getByRole("button", { name: "Suggest…" })).toBeTruthy();
   });

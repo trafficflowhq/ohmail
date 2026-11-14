@@ -19,10 +19,15 @@ async function announcedKey(target: Locator): Promise<string> {
 
 export const ACTS = {
   press: { id: "press", web: (target) => target.click() },
-  /** Fill a box, once, and see that it holds what was typed. Words a box drops are a fault, never typed again, and never printed. */
+  /**
+   * Fill a box, once, and see that it holds what was typed. Words a box drops are a fault, never typed again, and never
+   * printed. The person is in the box before the first letter, as a person is: the box left (a recipient line that
+   * takes its words as it is left) has answered first, not in the same instant as the first letter typed here.
+   */
   type: {
     id: "type",
     web: async (target, _page, value = "") => {
+      await target.focus();
       await target.fill(value);
       const holds = await target.inputValue();
       // The count, never the words: what a journey types can be a password, and the message goes into a public log.

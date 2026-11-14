@@ -8,9 +8,16 @@ import {
   clock,
   dateClock,
   fullDateTime,
+  isOwnOutbound,
+  messageStamp,
+  shownDateOf,
   VIEW_OF_FOLDER,
   weekdayClock,
+  weekdayDateClock,
+  zonedDayNumber,
+  zonedFields,
 } from "@ohmail/client-engine";
+import type { EngineMessage } from "@ohmail/wire";
 
 export interface StampWords {
   /** "yesterday {time}" in the reader's language. */
@@ -37,6 +44,13 @@ const yearOf = (at: Date, zone: string, locale: string): string =>
 /** The day and the month of the rule's dated form ("4 Nov"): its `dateClock` with the clock's part left off. */
 const dayMonthOf = (at: Date, zone: string, locale: string, time: string): string =>
   dateClock(at, zone, locale).slice(0, -(time.length + 2));
+
+/** The instant on the letter's stamp, using arrival when a copy has no sort instant. */
+export function letterStampInstant(
+  message: Pick<EngineMessage, "date" | "sortAt" | "arrivedAt">,
+): string | null {
+  return shownDateOf({ date: message.date, sortAt: message.sortAt ?? message.arrivedAt });
+}
 
 /**
  * The head's stamp: `when` as it stands, `full` for its title and its pressed face, `short` for a narrow head (the
@@ -72,6 +86,39 @@ export function headStamp(
     full,
     short,
   };
+}
+
+/** The brief date beside the sender on a conversation square's tip. */
+export function squareStamp(
+  message: EngineMessage,
+  now: Date,
+  zone: string,
+  locale: string,
+  words: StampWords & { today: (time: string) => string },
+): string {
+  const iso = letterStampInstant(message);
+  if (iso === null) return "";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const ago = zonedDayNumber(now, zone) - zonedDayNumber(at, zone);
+  if (ago === 0) return words.today(clock(at, zone));
+  if (ago === 1) return words.yesterday(clock(at, zone));
+  return zonedFields(at, zone).year === zonedFields(now, zone).year
+    ? weekdayDateClock(at, zone, locale)
+    : fullDateTime(at, zone, locale);
+}
+
+/** The responder's time belongs to the original letter. An unreadable time leaves the fact alone. */
+export function awayAnswerStamp(
+  message: EngineMessage,
+  now: Date,
+  zone: string,
+  locale: string,
+): { when: string; full: string } | null {
+  const date = message.awayRepliedAt;
+  if (!date || message.autoReplyByUs || isOwnOutbound(message)) return null;
+  const when = messageStamp({ date }, now, zone, locale);
+  return { when, full: when ? fullDateTime(new Date(date), zone, locale) : "" };
 }
 
 /** The place a letter's folder is shown in (`ohbox`, `reads`, …), or null for a folder no place shows. */

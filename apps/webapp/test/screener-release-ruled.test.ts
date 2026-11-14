@@ -3,6 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
+import {
+  releaseScreenerRow,
+  screenerReport as toastText,
+  screenerRowIds as rowIds,
+  selectScreenerRow as selectRow,
+} from "./fixtures/live-screener";
 
 /**
  * RELEASING A SENDER A RULE IS HOLDING — the rule is the thing that has to change.
@@ -203,29 +209,6 @@ function installWorld(): void {
   }) as unknown as typeof globalThis.fetch;
 }
 
-const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
-
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
-
-function pressDecide(c: HTMLElement, label: string): void {
-  const btns = [...c.querySelectorAll<HTMLButtonElement>(".decide .d-btns button")];
-  const hit = btns.filter((b) => (b.textContent ?? "").trim().startsWith(label));
-  if (hit.length !== 1) {
-    throw new Error(
-      `expected exactly one "${label}" control, found ${hit.length}; the strip offered `
-      + (btns.map((b) => `"${(b.textContent ?? "").trim()}"`).join(", ") || "(none)"),
-    );
-  }
-  hit[0]!.click();
-}
-
-async function selectRow(c: HTMLElement, id: string): Promise<void> {
-  const row = c.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
-  if (!row) throw new Error(`no row ${id}; the list held ${rowIds(c).join(", ") || "(none)"}`);
-  row.click();
-  await tick(0);
-}
 
 /**
  * The production shape, verbatim: the sender's NEWEST mail ("WG: Herbstaktion") physically in the
@@ -269,9 +252,7 @@ describe("releasing a sender a RULE holds in Spam", () => {
     expect(rowIds(c), "the rule-held sender did not present in Spam").toContain(REP);
 
     await selectRow(c, REP);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     // The rule change waits out the Undo offer, and is written when it closes.
@@ -301,9 +282,7 @@ describe("releasing a sender a RULE holds in Spam", () => {
   it("'Not spam → Screener' deletes the rule — back to Waiting means undecided", async () => {
     const c = await openSegment("spam");
     await selectRow(c, REP);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Screener");
+    releaseScreenerRow(c, "waiting");
     await tick(200);
 
     // The rule change waits out the Undo offer, and is written when it closes.
@@ -323,9 +302,7 @@ describe("releasing a sender a RULE holds in Spam", () => {
     w.refuseRulePatch = true;
     const c = await openSegment("spam");
     await selectRow(c, REP);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     // The rule change waits out the Undo offer, and is written when it closes.
@@ -350,9 +327,7 @@ describe("the release's Undo offer and its moves", () => {
     w.moveDelayMs = 3000;
     const c = await openSegment("spam");
     await selectRow(c, REP);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(3200);
     expect(toastText(), "no Undo offer once the move landed").toContain("Undo");
     // Past the press's own window but inside the offer's: the rule change is still held.
@@ -366,9 +341,7 @@ describe("the release's Undo offer and its moves", () => {
     w.refuseMove = true;
     const c = await openSegment("spam");
     await selectRow(c, REP);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
     expect(toastText(), "no toast reported the refusal").toContain("could not be saved");
     expect(toastText(), "an Undo was offered over a release that did not happen").not.toContain("Undo");
@@ -394,9 +367,7 @@ describe("releasing a sender a RULE holds in Screened out", () => {
     expect(rowIds(c), "the rule-held sender did not present in Screened out").toContain("s-rep");
 
     await selectRow(c, "s-rep");
-    pressDecide(c, "Allow");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     // The rule change waits out the Undo offer, and is written when it closes.

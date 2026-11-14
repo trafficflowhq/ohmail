@@ -3,11 +3,26 @@
  * the Screener stands in, and the two contexts its panes read. Nothing here draws; it compiles with no pane present,
  * so the calendar's link and the failure states build on it first.
  */
+import type { AutoOptInControl } from "@ohmail/app-logic/screener/screener-suggest";
 import type { UnsubscribeResult } from "@ohmail/wire";
-import { createContext, useContext, useSyncExternalStore, type ComponentType } from "react";
+import {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  type ComponentType,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import type { NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerFacts, ScreenerState, ScreenerView } from "@ohmail/app-logic/screener";
-import type { None } from "../host/index.js";
+import {
+  NO_RUN,
+  type NoAdvice,
+  type ScreenerFacts,
+  type screeningDegrade,
+  type ScreenerState,
+  type ScreenerView,
+} from "@ohmail/app-logic/screener";
+import { NONE, type None } from "../host/index.js";
 import type { HeldParts, ScreenerJunk, ScreenerSuggest } from "./ports.js";
 
 /** The three sections. With a Junk port handed, the third draws the provider's Junk folder instead of Spam. */
@@ -24,6 +39,22 @@ export interface HeldInvitationProps {
   readonly messageId: string;
 }
 
+/** The host’s editor and its sender-card action. */
+export interface SubjectRulePartProps {
+  readonly messageId: string;
+  readonly senderAddress: string;
+  readonly anchor: RefObject<Element | null>;
+  readonly eligible: boolean;
+  readonly cardOpen: boolean;
+  readonly domainScope: boolean;
+  readonly auditOpen: boolean;
+  readonly onAudit: () => void;
+  readonly open: boolean;
+  readonly onOpen: () => void;
+  readonly onClose: () => void;
+  readonly children: (action?: ReactNode) => ReactNode;
+}
+
 /**
  * WHAT A SHELL HANDS BESIDE THE MODEL. Every key is required: `none` is an answer, never a default. Keys arrive with
  * the pane that first reads them.
@@ -31,10 +62,15 @@ export interface HeldInvitationProps {
 export interface ScreenerBeside {
   /** The parts a held letter is drawn with, the same object the shell hands the reader; `none` draws its text. */
   readonly letters: HeldParts | None;
+  /** Why the Screener is showing the whole folder while a mailbox's screening settings are unknown. */
+  readonly windowNotice?: NonNullable<ReturnType<typeof screeningDegrade>>;
   /** The mail server's own Junk, read live; with it the third section is Junk, with `none` it is Spam. */
   readonly junk: ScreenerJunk | None;
   /** The suggestion run; `none` draws no control and spends nothing. */
   readonly suggest: ScreenerSuggest | None;
+  readonly ownSuggest?: ReactNode;
+  /** The same running queue prices the next automatic batch shown in Settings. */
+  readonly autoOptIn?: AutoOptInControl | null;
   /**
    * The one-click unsubscribe of a kept-out sender's letter, sent by the server on the person's press; `none` offers
    * no press. A refusal comes back as a throw carrying its code.
@@ -44,6 +80,7 @@ export interface ScreenerBeside {
   readonly mailboxWord: (mailboxId: string, form?: "short") => string | null;
   /** The calendar's part for an invitation held in Waiting; `none` draws nothing in its place. */
   readonly invitation: ComponentType<HeldInvitationProps> | None;
+  readonly subjectRule?: ComponentType<SubjectRulePartProps>;
   /** What the mail state knows: whether the queue may be called empty yet, and the mailboxes nothing organizes. */
   readonly facts: ScreenerFacts & { readonly notOrganizingYet: NotOrganizingYet | null };
   /** The frame's one undo door: true where it took something back. */
@@ -70,14 +107,16 @@ export interface ScreenerAboveValue {
 }
 
 /** One value, written by the list and read by the reading column, with nothing drawn again on the list's side. */
+type ListView = ScreenerView & { readonly quarantine?: boolean };
+
 export interface ViewCell {
-  read(): ScreenerView | null;
-  write(view: ScreenerView | null): void;
+  read(): ListView | null;
+  write(view: ListView | null): void;
   subscribe(listener: () => void): () => void;
 }
 
 export function viewCell(): ViewCell {
-  let value: ScreenerView | null = null;
+  let value: ListView | null = null;
   const listeners = new Set<() => void>();
   return {
     read: () => value,
@@ -112,8 +151,17 @@ export function useScreenerBeside(): ScreenerBeside {
   return useAbove().beside;
 }
 
+/**
+ * What the suggestion run knows about senders it has no advice for (a standing refusal, who it is buying for now);
+ * `NO_RUN` where no run stands: nothing refuses and nothing is coming.
+ */
+export function useNoAdvice(): NoAdvice {
+  const { suggest } = useAbove().beside;
+  return suggest === NONE ? NO_RUN : suggest.noAdvice;
+}
+
 /** The list's view as the reading column reads it: null while no list stands. */
-export function useListView(): ScreenerView | null {
+export function useListView(): ListView | null {
   const { cell } = useAbove();
   return useSyncExternalStore(cell.subscribe, cell.read, cell.read);
 }

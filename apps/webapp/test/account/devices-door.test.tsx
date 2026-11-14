@@ -16,8 +16,15 @@ import {
   type Server,
 } from "./account-harness";
 import { hello, qr, scanned, watchClipboard, Words } from "./devices-support";
-import { DevicesPane, useDevices } from "../../../../packages/app/src/account/devices/index.js";
-import { ApiError, devices as devicesApi, pair } from "../../app/api-client";
+import { DevicesPane } from "../../../../packages/app/src/account/devices/DevicesPane.js";
+import { useDevices } from "../../../../packages/app/src/account/devices/use-devices.js";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick,
+} from "../fixtures/cloud-confirm-shell";
+import { ApiError, bindApiOwner, devices as devicesApi, pair } from "../../app/api-client";
 import { devicesDoor, useDevicesDoor } from "../../app/(product)/mailbox/devices-door";
 
 /**
@@ -89,6 +96,7 @@ let flavor = "managed";
 let server: Server;
 let written: ReturnType<typeof catchConsole>;
 let clipboard: ReturnType<typeof watchClipboard>;
+let mounted = false;
 const slot = { asked: null as GatedAsk | null };
 /** The factor's dialog, stood in for: its ceremony is the doors' own. What is held here is what the pane asks. */
 const factor: FactorSlot = (ask) => {
@@ -114,7 +122,15 @@ beforeEach(() => {
     [BULK]: () => json({ revoked: 2 }),
   });
 });
-afterEach(() => {
+afterEach(async () => {
+  if (mounted) {
+    await teardownConfirmEnv();
+    bindApiOwner(null);
+    mounted = false;
+    window.history.replaceState(null, "", "/");
+    resetSessionTruthForTests();
+    resetStorageOwnerForTest();
+  }
   cleanup();
   server.restore();
   written.restore();
@@ -136,13 +152,34 @@ async function opened(lang: "en" | "de" = "en") {
   await settle();
   return view;
 }
+async function openMountedDevices() {
+  const deviceFetch = globalThis.fetch;
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
+  installConfirmEnv();
+  mounted = true;
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  const shellFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const { pathname } = new URL(String(input), window.location.origin);
+    return pathname === "/api/devices" || pathname === "/api/pair" || pathname === "/api/hello"
+      ? deviceFetch(input, init)
+      : shellFetch(input, init);
+  };
+  window.location.hash = "#/settings/devices";
+  await mountCloudShell();
+  await tick(2500);
+}
+
 const said = (words: string): boolean => (document.body.textContent ?? "").includes(words);
 const dialog = () => screen.getByRole("dialog");
 const press = async (name: string, inside: HTMLElement = document.body) => {
   await act(async () => {
     fireEvent.click(within(inside).getByRole("button", { name }));
   });
-  await settle();
+  await (mounted ? tick(0) : settle());
 };
 const typeName = (name: string) =>
   act(async () => {
@@ -343,7 +380,7 @@ describe("opening the pane", () => {
 describe("the pairing link, made once", () => {
   it("one request with the grant and the name; the picture, the printed link and the clipboard are one link, on the API's origin", async () => {
     server.answer(MINT, minted("pt-9", "Ben"));
-    await opened();
+    await openMountedDevices();
     await typeName("  Ben ");
     await press(en.devices.addAction);
     expect(server.on(MINT).map((sent) => sent.body)).toEqual([{ grant: "device-pair", label: "Ben" }]);

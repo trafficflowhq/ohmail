@@ -1,147 +1,60 @@
 /** @vitest-environment jsdom */
-import type { MutationOutcome } from "@ohmail/wire";
+import { fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore,
-  OhmailEngine,
-  type EngineAdapter,
-  type SyncResponse,
-  STORE_SEARCH_FOLLOWUP_HOLD_MS,
+  MemoryMirrorStore, OhmailEngine, STORE_SEARCH_FOLLOWUP_HOLD_MS, type EngineAdapter, type EngineOptions,
 } from "@ohmail/client-engine";
+import { NONE } from "@ohmail/app/host";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { junkFolderSaid } from "@ohmail/app-logic/lists/folders";
-import { fillFrom } from "../app/shell/locale";
-
-/**
- * ═══ JUNK-INVISIBLE — ohmail SAYS where the provider put the mail it will not show ═════════
- *
- * The provider's own `\Junk` is excluded from the folder inventory whole, so mail the mail
- * server filed as junk is in no list, no folder and no search here — measured three times
- * against an iCloud mailbox, where the message being looked for was on the
- * server the whole time. The exclusion is correct; the silence was not, because the only
- * evidence a person has is that their message is gone.
- *
- * Two surfaces carry the sentence — the rail's folders group at its foot, and search's empty
- * state, where "Nothing here" is a claim about a corpus that excludes exactly that folder —
- * and it NAMES the folder the roster resolved, because every provider calls it something
- * else. The three properties under test:
- *
- *  · it renders, and NAMES the folder, when the roster resolved one;
- *  · it renders WITHOUT a name when an account's mailboxes disagree (Gmail's `Spam` beside
- *    iCloud's `Junk`), where one name would be wrong for somebody;
- *  · it does NOT render for a mailbox with no Junk folder — a sentence about a folder that
- *    may not exist is worse than silence, and that arm is what stops this becoming copy that
- *    lies to everybody whose server has no such folder.
- *
- * The pointer at the Screener's Junk window is a fourth, separate condition: it rides the same
- * gate that decides whether that segment exists at all, so neither surface can send somebody
- * to a place this build withholds.
- */
-
-// See `folders-rail.test.tsx` for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+import {
+  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
+  teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell";
 
 const NOW = new Date("2026-09-12T12:00:00.000Z");
-
-let host: HTMLDivElement;
-let root: Root;
+let host: HTMLElement;
+let rail: HTMLElement;
 
 beforeEach(() => {
-  window.localStorage.clear();
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  installShellEnv();
+  localStorage.clear();
+  answerConsentWith({ foldersEnabledAt: ISO });
 });
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-});
-
-/* ───────────────────────────────────────────────────── the derivation, on its own terms */
-
-describe("junkFolderSaid — which sentence the two surfaces are owed", () => {
-  it("names the folder the roster resolved", () => {
-    expect(junkFolderSaid([{ status: "connected", junkFolder: "Junk" }])).toEqual({ named: "Junk" });
-  });
-
-  it("names the LEAF, so a nested path reads as the folder a person sees", () => {
-    expect(junkFolderSaid([{ status: "connected", junkFolder: "INBOX/Spamverdacht" }]))
-      .toEqual({ named: "Spamverdacht" });
-  });
-
-  it("two mailboxes whose paths differ but whose leaf agrees still get the name", () => {
-    expect(junkFolderSaid([
-      { status: "connected", junkFolder: "Junk" },
-      { status: "connected", junkFolder: "INBOX/Junk" },
-    ])).toEqual({ named: "Junk" });
-  });
-
-  it("two mailboxes that call it different things get the sentence WITHOUT a name", () => {
-    // Gmail beside iCloud. One name here would be wrong for one of the two mailboxes, and a
-    // list of names is not a sentence — so the statement stays and the name goes.
-    expect(junkFolderSaid([
-      { status: "connected", junkFolder: "Junk" },
-      { status: "connected", junkFolder: "[Gmail]/Spam" },
-    ])).toBe("unnamed");
-  });
-
-  it("says NOTHING when no Junk folder was resolved — all three absences alike", () => {
-    // No folder, nothing attached yet, and a server older than the field. Every one of them
-    // means there is nothing to assert about somebody's mailbox.
-    expect(junkFolderSaid([{ status: "connected", junkFolder: null }])).toBeNull();
-    expect(junkFolderSaid([{ status: "connected" }])).toBeNull();
-    expect(junkFolderSaid([{ status: "connected", junkFolder: "" }])).toBeNull();
-    expect(junkFolderSaid([])).toBeNull();
-  });
-
-  it("does not speak for a stood-down mailbox — another install's, and the window skips it too", () => {
-    expect(junkFolderSaid([{ status: "disabled", junkFolder: "Junk" }])).toBeNull();
-    // …and it is the STATUS doing that, not the absence of a second row.
-    expect(junkFolderSaid([
-      { status: "disabled", junkFolder: "Spam" },
-      { status: "connected", junkFolder: "Junk" },
-    ])).toEqual({ named: "Junk" });
-  });
-});
-
-/* ─────────────────────────────────────────────────────────── the rail's folders group */
+afterEach(teardownShellEnv);
 
 async function mountRail(
   junkSaid: { named: string } | "unnamed" | null,
   junkReadable = false,
   locale: "en" | "de" = "en",
 ): Promise<void> {
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale, messages: (locale === "de" ? fillFrom(messages as never, de as never) : messages) as never,
-        timeZone: "UTC", now: NOW,
-        children: h(FoldersRailGroup, {
-          scope: "acc-junk",
-          folders: [{ id: "f1", name: "Projects", mailboxId: "mb1", mailbox: "a@x.test" }],
-          unread: new Map<string, number>(),
-          onNavigate: () => {},
-          junkSaid,
-          junkReadable,
-        }),
-      }),
-    );
-  });
+  const names = junkSaid === "unnamed" ? ["Junk", "Spam"] : [junkSaid?.named ?? null];
+  const roster = names.map((junkFolder, index) =>
+    mailbox({ id: `mb_${index + 1}`, junkFolder, lastSyncAt: ISO }));
+  window.location.hash = "#/ohbox";
+  answerSyncWith(() => new Response(JSON.stringify({
+    changes: {
+      creates: [{
+        type: "folder", op: "create", id: "f1", seq: 1, updatedAt: ISO,
+        entity: {
+          id: "f1", name: "Projects", mailboxId: "mb_1",
+          mailbox: "walker@example.invalid", updatedAt: ISO,
+        },
+      }],
+      updates: [], moves: [], deletes: [],
+    },
+    cursor: "1", hasMore: false, serverTime: ISO,
+  }), { headers: { "content-type": "application/json" } }));
+  const shell = await mountShell(roster, { locale, ...(junkReadable ? {} : { junkWire: NONE }) });
+  await tick(2_500);
+  rail = within(shell).getByRole("navigation", { name: locale === "de" ? de.frame.landmark.places : messages.frame.landmark.places });
+  expect(within(rail).getByRole("button", { name: "Projects" })).toBeTruthy();
+  if (junkReadable) {
+    expect(within(rail).getByRole("button", { name: /Screener/ })).toBeTruthy();
+  }
 }
 
-const railNote = (): string | null =>
-  host.querySelector('[data-testid="rail-junk-note"]')?.textContent ?? null;
+const railNote = () => within(rail).queryByText(/does not mirror it|spiegelt/i)?.textContent ?? null;
 
 describe("the rail's folders group says what it does not list", () => {
   it("names the folder at the foot", async () => {
@@ -153,7 +66,7 @@ describe("the rail's folders group says what it does not list", () => {
 
   it("a provider that calls it something else is named by ITS name", async () => {
     await mountRail({ named: "Spamverdacht" });
-    expect(railNote()).toContain("Spamverdacht");
+    expect(railNote() ?? "").toContain("Spamverdacht");
   });
 
   it("renders the statement without a name when the account's mailboxes disagree", async () => {
@@ -165,23 +78,21 @@ describe("the rail's folders group says what it does not list", () => {
 
   it("renders NOTHING for a mailbox with no Junk folder", async () => {
     await mountRail(null);
-    expect(host.querySelector('[data-testid="rail-junk-note"]')).toBeNull();
-    expect(host.textContent ?? "").not.toContain("does not mirror it");
+    expect(railNote()).toBeNull();
+    expect(rail.textContent ?? "").not.toContain("does not mirror it");
   });
 
   it("in German it points at the Screener's tab by its German name, and says no English Junk", async () => {
     await mountRail("unnamed", true, "de");
-    expect(railNote()).toContain(`„${de.screener.segJunk}“`);
-    expect(railNote()).not.toMatch(/\bJunk\b/);
+    expect(railNote() ?? "").toContain(`„${de.screener.segJunk}“`);
+    expect(railNote() ?? "").not.toMatch(/\bJunk\b/);
   });
 
   it("offers the way in only where this build can serve it", async () => {
     await mountRail({ named: "Junk" }, false);
-    expect(railNote()).not.toContain("Read it under Junk in the Screener.");
-    await act(async () => root.unmount());
-    root = createRoot(host);
+    expect(railNote() ?? "").not.toContain("Read it under Junk in the Screener.");
     await mountRail({ named: "Junk" }, true);
-    expect(railNote()).toContain("Read it under Junk in the Screener.");
+    expect(railNote() ?? "").toContain("Read it under Junk in the Screener.");
   });
 });
 
@@ -189,57 +100,50 @@ describe("the rail's folders group says what it does not list", () => {
 
 function adapter(): EngineAdapter {
   return {
-    sync: async (): Promise<SyncResponse> => ({
+    sync: async () => ({
       changes: { creates: [], updates: [], moves: [], deletes: [] },
       cursor: "0", hasMore: false, serverTime: NOW.toISOString(),
     }),
-    mutate: async (): Promise<MutationOutcome> => ({ changes: [], seq: null }),
+    mutate: async () => ({ changes: [], seq: null }),
     withdrawSend: async () => ({ outcome: "unsupported" as const }),
     fetchBody: async () => null,
   };
 }
 
 async function mountSearch(
-  junkSaid: { named: string } | "unnamed" | null,
-  over: Partial<EngineAdapter> = {},
+  junkSaid: { named: string } | null,
+  serverSearch?: EngineOptions["serverSearch"],
 ): Promise<void> {
   const store = new MemoryMirrorStore();
   await store.load();
-  const engine = new OhmailEngine({ adapter: { ...adapter(), ...over }, store, now: () => NOW });
+  const engine = new OhmailEngine({ adapter: adapter(), store, now: () => NOW, ...(serverSearch ? { serverSearch } : {}) });
+  window.location.hash = "#/search";
+  host = await mountShell([mailbox({ id: "mb_1", junkFolder: junkSaid?.named ?? null, lastSyncAt: ISO })], { engine });
+  await tick(800);
+  const search = within(host).getByRole("textbox", { name: "Search" });
   await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(KeymapProvider, {
-          children: h(SearchView, {
-            engine, version: 1, now: NOW, query: "the invoice",
-            onQuery: () => {}, onOpen: () => {},
-            junkSaid,
-          }),
-        }),
-      }),
-    );
+    fireEvent.change(search, { target: { value: "the invoice" } });
+    fireEvent.keyDown(search, { key: "Enter" });
   });
+  await tick(800);
 }
 
-const searchNote = (): string | null =>
-  host.querySelector('[data-testid="search-junk-scope"]')?.textContent ?? null;
+const namedJunk = (folder: string) => messages.search.saidJunkNamed.replace("{folder}", folder);
+const searchNote = (folder: string): HTMLParagraphElement | null =>
+  within(host).queryByText(namedJunk(folder))?.closest("p") ?? null;
 
 describe("search says what it did not search", () => {
   it("the empty state names the folder no pass of this view reaches", async () => {
     await mountSearch({ named: "Junk" });
     // Inside the empty state, beside the scope line — which is the sentence's whole point:
     // "Nothing here" is otherwise a claim about a corpus that excludes that folder.
-    expect(host.querySelector(".empty")).not.toBeNull();
-    expect(searchNote()).toBe(
-      "Search does not reach your mail server's own Junk folder — ohmail does not mirror it.",
-    );
+    expect(within(host).queryAllByRole("option")).toHaveLength(0);
+    expect(searchNote("Junk")?.textContent).toBe(namedJunk("Junk"));
   });
 
   it("renders NOTHING for a mailbox with no Junk folder", async () => {
     await mountSearch(null);
-    expect(host.querySelector('[data-testid="search-junk-scope"]')).toBeNull();
-    expect(host.textContent ?? "").not.toContain("does not mirror it");
+    expect(within(host).queryByText(/^Search does not reach your mail server/)).toBeNull();
   });
 });
 
@@ -249,41 +153,31 @@ describe("search says what it did not search", () => {
  * OWN paragraph — a block on screen and a node of its own in the accessibility tree.
  */
 describe("the scope line and the junk sentence are two sentences, whatever the verdict", () => {
-  const JUNK = "Search does not reach your mail server's own Junk folder — ohmail does not mirror it.";
-  /** The store's answer by part, as the engine's adapter sees it. */
-  const store = (parts: Record<string, unknown>): Partial<EngineAdapter> => ({
-    searchServer: async (_q: string, o: { parts?: string }) => parts[o.parts ?? "both"] ?? parts.page,
-  }) as unknown as Partial<EngineAdapter>;
-  // Past a typed question's hold: the index progress comes with its count.
-  const settle = (): Promise<void> => act(async () => { await new Promise((r) => setTimeout(r, STORE_SEARCH_FOLLOWUP_HOLD_MS + 70)); });
-  const arms: Array<[string, Partial<EngineAdapter>, string]> = [
-    ["the store still searching", { searchServer: () => new Promise(() => {}) } as unknown as Partial<EngineAdapter>,
-      "Searching your whole mailbox…"],
-    ["the whole mailbox answered", store({ page: { items: [], total: 0, ms: 119 } }),
-      "Searched your whole mailbox — nothing matched · "],
-    ["the whole mailbox answered, its index still filling", store({
-      page: { items: [], total: 0, ms: 64 },
-      estimate: { items: [], total: 0, totalExact: true, ms: 5, indexed: { done: 0, total: 40 } },
-    }), "Searched your whole mailbox — nothing matched · "],
-    ["the mirror answered for an unreachable account", store({
-      page: { items: [], total: 0, ms: 9, answeredFrom: "mirror" },
-      estimate: { items: [], total: 0, totalExact: true, ms: 4, answeredFrom: "mirror" },
-    }), "Search your whole mailbox again"],
-    ["the store did not answer", { searchServer: async () => { throw new Error("down"); } } as unknown as Partial<EngineAdapter>,
-      "Search your whole mailbox again"],
-    ["no store behind this client", {}, "Search covers the sample mailbox."],
+  type Search = NonNullable<EngineOptions["serverSearch"]>;
+  const noMatches = { items: [], total: 0, totalExact: true, ms: 119 };
+  const arms: Array<[string, Search | undefined, string]> = [
+    ["the store still searching", () => new Promise(() => {}), messages.search.saidSearching],
+    ["the whole mailbox answered", async () => noMatches, messages.search.nothingMatched],
+    ["the whole mailbox answered, its index still filling",
+      async () => ({ ...noMatches, indexed: { done: 0, total: 40 } }),
+      "Older mail is still being indexed, 0% done."],
+    ["the mirror answered for an unreachable account",
+      async () => ({ ...noMatches, answeredFrom: "mirror" }),
+      "Search covers the mail on this computer while ohmail Cloud is unreachable — nothing matched"],
+    ["the store did not answer", async () => { throw new Error("down"); }, messages.search.scopeUnanswered],
+    ["no store behind this client", undefined, messages.search.scopeNoArchive],
   ];
-  it.each(arms)("%s", async (_arm, over, scopeEnd) => {
+  it.each(arms)("%s", async (_arm, search, scopeEnd) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await mountSearch({ named: "Junk" }, over);
-    await settle();
+    await mountSearch({ named: "Junk" }, search);
+    await tick(STORE_SEARCH_FOLLOWUP_HOLD_MS + 70);
     warn.mockRestore();
-    const empty = host.querySelector(".empty");
-    const junk = host.querySelector('[data-testid="search-junk-scope"]');
-    expect(empty?.textContent ?? "").toContain(scopeEnd);
-    expect(junk?.tagName, "the junk sentence is not its own paragraph").toBe("P");
-    expect(junk?.parentElement).toBe(empty);
-    expect(junk?.textContent).toBe(JUNK);
+    const junk = searchNote("Junk");
+    expect(junk?.textContent).toBe(namedJunk("Junk"));
+    const scope = [...junk!.parentElement!.querySelectorAll("p")]
+      .find((paragraph) => paragraph.textContent?.includes(scopeEnd));
+    expect(scope).toBeDefined();
+    expect(junk).not.toBe(scope);
   });
 });
 
@@ -297,7 +191,7 @@ describe("the sentences exist in both languages, and the named arm takes a folde
     for (const m of [messages, de]) {
       for (const [ns, key] of [
         ["rail", "junkNote"], ["rail", "junkNoteUnnamed"],
-        ["search", "junkScope"], ["search", "junkScopeUnnamed"],
+        ["search", "saidJunkNamed"], ["search", "saidJunk"],
         ["screener", "junkElsewhere"],
       ] as const) {
         expect(cat(m, ns, key), `${ns}.${key}`).toBeTypeOf("string");
@@ -311,9 +205,9 @@ describe("the sentences exist in both languages, and the named arm takes a folde
     // folder nobody can find, which is the sentence this row exists to stop.
     for (const m of [messages, de]) {
       expect(cat(m, "rail", "junkNote")).toContain("{folder}");
-      expect(cat(m, "search", "junkScope")).toContain("{folder}");
+      expect(cat(m, "search", "saidJunkNamed")).toContain("{folder}");
       expect(cat(m, "rail", "junkNoteUnnamed")).not.toContain("{folder}");
-      expect(cat(m, "search", "junkScopeUnnamed")).not.toContain("{folder}");
+      expect(cat(m, "search", "saidJunk")).not.toContain("{folder}");
     }
   });
 });

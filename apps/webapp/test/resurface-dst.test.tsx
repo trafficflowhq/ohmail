@@ -1,43 +1,39 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
+import { act, cleanup, screen, within } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { dayAtIn, nextWeekAtIn, resurfaceHorizonsIn, tomorrowAtIn } from "@ohmail/app-logic/reader";
+import { composedLocalInput, sendLaterMornings, todayEvening } from "@ohmail/app-logic/text/format";
 import { setActiveFormatZone } from "../app/shell/locale";
 import {
   WALL_CLOCK_CASES, WALL_CLOCK_ZONE, askedTime,
 } from "../../../test/support/wall-clock-days.js";
-import { settleFirstPaint } from "./_first-paint.js";
+import { mountPanel, press, pressVerb, type PanelMount } from "./_reader-1-panel.js";
+import { mountShell, press as pressReal, stubDom, unmountAll } from "./_draft-shell.js";
+import { typeInto } from "./fixtures/rich-editor-driver.js";
 
 /**
  * ═══ AN APPOINTMENT SURVIVES THE CLOCK CHANGE ════════════════════════════════════════════
  *
- * Two surfaces book a wall clock somebody chose — the resurface strip (part one) and send
- * later (part two) — and there is ONE composition under both, asserted against the shared
- * table at `test/support/wall-clock-days.ts` that the phone's suite reads too.
+ * Two surfaces book a wall clock somebody chose — the reader's Resurface menu (part one) and send
+ * later (part two) — and each composes through ONE function, asserted against the shared table at
+ * `test/support/wall-clock-days.ts` that the phone's suite reads too.
  *
- * The invariant: the time the strip SAYS and the time it BOOKS are the same wall clock, on
- * every night of the year — including the two a chosen hour cannot simply be written onto.
- * On the spring night 02:30 does not exist (01:59:59 → 03:00:00), and in autumn it happens
- * twice. Both are reachable the moment the hour is the reader's to choose.
+ * The invariant: the time the menu SAYS and the time it BOOKS are the same wall clock, on every
+ * night of the year — including the two a chosen hour cannot simply be written onto. On the spring
+ * night 02:30 does not exist (01:59:59 → 03:00:00), and in autumn it happens twice. Both are
+ * reachable the moment the hour is the reader's to choose.
  *
- * Measured through the rendered strip, never through the arithmetic: the label is read BEFORE
- * the press, the dispatched instant is read back in the reader's zone AFTER it, and the two
- * have to agree. Red before the fix on the spring arm (label 02:30, booked 03:30) and on the
- * autumn arm (the second occurrence, an hour later than the first).
+ * Measured through the rendered menu of the new reader (its panel's Resurface, the account's hour
+ * handed above the panes as the mail ground hands it), never through the arithmetic: the hour an
+ * item states is read BEFORE the press, the dispatched instant is read back in the reader's zone
+ * AFTER it, and the two have to agree. The reader's zone is the platform's, so the file runs where
+ * the reader is: Zurich.
  *
  * "Next week" has no arm LANDING on either night, and cannot have one: no zone in the tz database
  * changes its clocks on a Monday between 2026 and 2030 (measured over every `supportedValuesOf`
  * zone). What it owes instead is that it composes the same way — the equality arm below — and that
  * its day is counted in the reader's calendar across a change, which is the late-evening arm.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ZONE = WALL_CLOCK_ZONE;
 /** The night the clocks go forward: 2027-03-28, 02:00 → 03:00. The base is the evening before. */
@@ -61,101 +57,78 @@ function wallTime(iso: string): string {
   return wallClock(iso).slice(-5);
 }
 
-const MESSAGE: Record<string, unknown> = {
-  id: "m1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-  subject: "subj", from: { name: "Andi", address: "andi@ex.example" }, to: [], cc: [],
-  date: "2026-03-28T09:00:00.000Z", folder: "INBOX", snippet: "snip",
-  unread: false, hasAttachments: false, attachmentCount: 0,
-  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-  triage: null, labels: [], remoteContent: "none", updatedAt: "2026-03-28T09:00:00.000Z",
-};
-
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-let log: string[] = [];
-let mountedNow: Date = PLAIN_EVE;
-
-async function unmount(): Promise<void> {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+/** The one hour a menu item or a day states (it states exactly one, or it promises nothing). */
+function hourStated(el: Element): string | null {
+  const hours = (el.textContent ?? "").match(/(?<!\d)\d\d:\d\d(?!\d)/g) ?? [];
+  expect(hours.length, `"${el.textContent}" states more than one hour`).toBeLessThanOrEqual(1);
+  return hours[0] ?? null;
 }
 
-/** The bar alone, through the chrome — the seam the shell supplies the stored time on. */
+let mount: PanelMount | null = null;
+let mountedNow: Date = PLAIN_EVE;
+let zoneBefore: string | undefined;
+
+/** The open letter's panel, at `now`, with the account's stored hour handed to the room. */
 async function mountBar(now: Date, stored: string): Promise<void> {
-  await unmount();
+  cleanup();
   mountedNow = now;
   vi.setSystemTime(now);
-  const { MessageActionBar } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  const chrome: Record<string, unknown> = {
-    ownAddresses: [],
-    replyTo: null,
-    replyBody: { text: "", html: "" },
-    onReplyBody: () => {},
-    closeReply: () => {},
-    sendReply: () => {},
-    replySendState: () => ({ phase: "idle" }),
-    openSenderMenu: () => {},
-    conversationOf: () => [],
-    bodyOf: (m: Record<string, unknown>) => ({
-      text: m.snippet as string, state: "snippet", html: null,
-      loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
-    }),
-    hydrateBody: () => {},
-    hydrateThread: () => {},
-    resurfaceTime: stored,
-    onResurfaceTime: (hhmm: string) => log.push(`remember:${hhmm}`),
-  };
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: ZONE, now,
-        children: h(MessageChromeProvider as never, {
-          value: chrome,
-          children: h(MessageActionBar as never, {
-            message: MESSAGE, now, onAction: (a: string) => log.push(a),
-          } as never),
-        } as never),
-      }),
-    );
-  });
+  mount = mountPanel({}, { resurface: stored });
+  await act(async () => {});
 }
+const log = (): string[] => mount!.actions;
 
-const byText = (text: string): HTMLElement => {
-  const found = [...host!.querySelectorAll("button")]
-    .filter((b) => (b.textContent ?? "").trim().startsWith(text));
-  expect(found, `expected exactly one button starting "${text}"`).toHaveLength(1);
-  return found[0] as HTMLElement;
+const resurfaceMenu = (): HTMLElement => screen.getByRole("menu", { name: "Resurface" });
+/** The one item of the open menu whose name starts `text`. */
+const item = (text: string): HTMLElement => {
+  const found = screen.getAllByRole("menuitem").filter((b) => (b.textContent ?? "").trim().startsWith(text));
+  expect(found, `expected exactly one item starting "${text}"`).toHaveLength(1);
+  return found[0]!;
 };
 async function openStrip(): Promise<void> {
-  await act(async () => { byText("Resurface").click(); });
+  await pressVerb("Resurface");
 }
-/** Open the strip, read what the horizon SAYS, press it, hand back what it BOOKED. */
-async function choose(horizon: string): Promise<{ said: string; iso: string; panel: string }> {
+async function openPicker(): Promise<void> {
   await openStrip();
-  const said = byText(horizon).getAttribute("aria-label") ?? "";
-  const panel = host!.querySelector(".abar-panel")?.textContent ?? "";
-  await act(async () => { byText(horizon).click(); });
-  const dispatched = log.find((l) => l.startsWith("resurface:"));
+  await press(item("Pick a date"));
+}
+/** The picker's day, by its date as the kit names a day (`Sun 25 Oct 2026, …`). */
+const dayCell = (named: string): HTMLElement =>
+  within(screen.getByRole("menu", { name: "Pick a date" })).getByRole("button", {
+    name: new RegExp(`^${named},`),
+  });
+/** Open the menu, read the hour the horizon SAYS, press it, hand back what it BOOKED. */
+async function choose(horizon: string): Promise<{ said: string | null; iso: string; panel: string }> {
+  await openStrip();
+  const said = hourStated(item(horizon));
+  const panel = resurfaceMenu().textContent ?? "";
+  const before = log().length;
+  await press(item(horizon));
+  const dispatched = log().slice(before).find((l) => l.startsWith("resurface:"));
   expect(dispatched, "no dated resurface was dispatched").toBeDefined();
   return { said, iso: dispatched!.slice("resurface:".length), panel };
 }
 
-beforeEach(() => {
-  vi.useFakeTimers({ now: PLAIN_EVE });
-  setActiveFormatZone(ZONE);
-  log = [];
+beforeAll(() => {
+  zoneBefore = process.env.TZ;
+  process.env.TZ = ZONE;
+});
+afterAll(() => {
+  if (zoneBefore === undefined) delete process.env.TZ;
+  else process.env.TZ = zoneBefore;
 });
 
-afterEach(async () => {
-  await unmount();
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"], now: PLAIN_EVE });
+  setActiveFormatZone(ZONE);
+});
+
+afterEach(() => {
+  cleanup();
+  mount = null;
   setActiveFormatZone(null);
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("after midnight, Tomorrow is the coming morning (00:28 on a Sunday)", () => {
@@ -168,7 +141,7 @@ describe("after midnight, Tomorrow is the coming morning (00:28 on a Sunday)", (
     await mountBar(AUTUMN_SMALL_HOURS, "09:00");
     const { said, iso } = await choose("Tomorrow");
     expect(iso).toBe("2026-10-25T08:00:00.000Z");
-    expect(said).toBe("Tomorrow, 09:00");
+    expect(said).toBe("09:00");
   });
 
   it("…and across the spring change", async () => {
@@ -179,45 +152,40 @@ describe("after midnight, Tomorrow is the coming morning (00:28 on a Sunday)", (
 
   it("the picker lets today be chosen while today's hour is still ahead", async () => {
     await mountBar(AUTUMN_SMALL_HOURS, "09:00");
-    await openStrip();
-    await act(async () => { byText("Pick a date").click(); });
-    const today = host!.querySelector('[data-day="2026-10-25"]');
-    expect(today?.getAttribute("aria-disabled"), "today is blocked at 00:28").toBeNull();
-    await act(async () => { (today as HTMLElement).click(); });
-    expect(log).toContain("resurface:2026-10-25T08:00:00.000Z");
+    await openPicker();
+    const today = dayCell("Sun 25 Oct 2026");
+    expect(today.hasAttribute("disabled"), "today is blocked at 00:28").toBe(false);
+    await press(today);
+    expect(log()).toContain("resurface:2026-10-25T08:00:00.000Z");
   });
 
   it("in the day, a later hour unlocks today and a passed one keeps it closed", async () => {
     for (const [stored, open] of [["18:00", true], ["09:00", false]] as const) {
       await mountBar(PLAIN_EVE, stored);
-      await openStrip();
-      await act(async () => { byText("Pick a date").click(); });
-      const today = host!.querySelector('[data-day="2026-08-11"]');
-      expect(today?.getAttribute("aria-disabled") == null, `today at ${stored}`).toBe(open);
+      await openPicker();
+      const today = dayCell("Tue 11 Aug 2026");
+      expect(!today.hasAttribute("disabled"), `today at ${stored}`).toBe(open);
     }
   });
 
   it("on a Sunday in the day, Tomorrow and Next week are one Monday, offered once", async () => {
     await mountBar(new Date("2026-10-25T10:00:00.000Z"), "09:00");
     await openStrip();
-    const labels = [...host!.querySelectorAll(".abar-panel button")].map((b) => (b.textContent ?? "").trim());
+    const labels = within(resurfaceMenu()).getAllByRole("menuitem").map((b) => (b.textContent ?? "").trim());
     expect(labels.filter((l) => l.startsWith("Next week"))).toEqual([]);
-    await act(async () => { byText("Tomorrow").click(); });
-    expect(log).toContain("resurface:2026-10-26T08:00:00.000Z");
-    const { resurfaceHorizons } = await import("../app/shell/format.js");
-    expect(resurfaceHorizons(new Date("2026-10-25T04:01:00.000Z"), "09:00").nextWeek).toBeNull();
-    expect(resurfaceHorizons(new Date("2026-10-25T21:30:00.000Z"), "09:00").nextWeek).toBeNull();
+    await press(item("Tomorrow"));
+    expect(log()).toContain("resurface:2026-10-26T08:00:00.000Z");
+    expect(resurfaceHorizonsIn(new Date("2026-10-25T04:01:00.000Z"), "09:00", ZONE).nextWeek).toBeNull();
+    expect(resurfaceHorizonsIn(new Date("2026-10-25T21:30:00.000Z"), "09:00", ZONE).nextWeek).toBeNull();
   });
 
   it("at 00:28 on that Sunday both are offered: this morning and Monday", async () => {
     await mountBar(AUTUMN_SMALL_HOURS, "09:00");
     expect((await choose("Next week")).iso).toBe("2026-10-26T08:00:00.000Z");
-    log = [];
     expect((await choose("Tomorrow")).iso).toBe("2026-10-25T08:00:00.000Z");
   });
 
-  it("send later offers this morning, and never the same instant twice", async () => {
-    const { sendLaterMornings } = await import("../app/shell/format.js");
+  it("send later offers this morning, and never the same instant twice", () => {
     expect(sendLaterMornings(AUTUMN_SMALL_HOURS)).toEqual({
       tomorrow: "2026-10-25T08:00:00.000Z", monday: "2026-10-26T08:00:00.000Z",
     });
@@ -233,16 +201,16 @@ describe("a resurface across a clock change", () => {
     await mountBar(PLAIN_EVE, "14:30");
     const { said, iso } = await choose("Tomorrow");
     expect(wallClock(iso)).toBe("12/08/2026, 14:30");
-    expect(said).toBe(`Tomorrow, ${wallTime(iso)}`);
+    expect(said).toBe(wallTime(iso));
   });
 
   it("says the hour it books when the clocks skip the one that was chosen", async () => {
     // 02:30 does not exist on 28 March 2027 in Zurich. The booking is the first instant after
-    // the missing hour — 03:30 — and the strip has to say 03:30 BEFORE the press, not 02:30.
+    // the missing hour — 03:30 — and the menu has to say 03:30 BEFORE the press, not 02:30.
     await mountBar(SPRING_EVE, "02:30");
     const { said, iso } = await choose("Tomorrow");
     expect(wallClock(iso)).toBe("28/03/2027, 03:30");
-    expect(said, "the strip promised an hour it did not book").toBe(`Tomorrow, ${wallTime(iso)}`);
+    expect(said, "the menu promised an hour it did not book").toBe(wallTime(iso));
   });
 
   it("takes the FIRST of the two when the chosen hour comes round twice", async () => {
@@ -252,7 +220,7 @@ describe("a resurface across a clock change", () => {
     const { said, iso } = await choose("Tomorrow");
     expect(iso).toBe("2026-10-25T00:30:00.000Z");
     expect(wallClock(iso)).toBe("25/10/2026, 02:30");
-    expect(said).toBe(`Tomorrow, ${wallTime(iso)}`);
+    expect(said).toBe(wallTime(iso));
   });
 
   it("counts the day in the reader's calendar, not in milliseconds", async () => {
@@ -263,7 +231,7 @@ describe("a resurface across a clock change", () => {
     await mountBar(lateEve, "02:30");
     const { said, iso } = await choose("Tomorrow");
     expect(wallClock(iso)).toBe("28/03/2027, 03:30");
-    expect(said).toBe(`Tomorrow, ${wallTime(iso)}`);
+    expect(said).toBe(wallTime(iso));
   });
 
   it("counts NEXT WEEK's day in the calendar too — both horizons, one arithmetic", async () => {
@@ -272,15 +240,16 @@ describe("a resurface across a clock change", () => {
     await mountBar(new Date("2027-03-27T22:30:00.000Z"), "02:30");
     const { said, iso } = await choose("Next week");
     expect(wallClock(iso)).toBe("29/03/2027, 02:30");
-    expect(said).toBe(`Next week, ${wallTime(iso)}`);
+    expect(said).toBe(wallTime(iso));
   });
 
   it("says on screen which time it will book, before anything is pressed", async () => {
     await mountBar(SPRING_EVE, "02:30");
     await openStrip();
-    const panel = host!.querySelector(".abar-panel")?.textContent ?? "";
-    expect(panel, "the strip resolved the hour silently")
-      .toContain("Tomorrow lands at 03:30 — the clocks skip 02:30 that night.");
+    const panel = resurfaceMenu().textContent ?? "";
+    /* The sentence as the reader's catalogue words it (`reader.resurface.skip`: a colon where today's had a dash). */
+    expect(panel, "the menu resolved the hour silently")
+      .toContain("Tomorrow lands at 03:30: the clocks skip 02:30 that night.");
   });
 
   it("says nothing extra on the nights that book the hour that was asked for", async () => {
@@ -290,57 +259,52 @@ describe("a resurface across a clock change", () => {
     for (const eve of [AUTUMN_EVE, PLAIN_EVE]) {
       await mountBar(eve, "02:30");
       await openStrip();
-      const panel = host!.querySelector(".abar-panel")?.textContent ?? "";
+      const panel = resurfaceMenu().textContent ?? "";
       expect(panel, `a sentence appeared for ${eve.toISOString()}`).not.toContain("the clocks skip");
     }
   });
 
-  it("composes a PICKED date through the same function — the rule is not the horizon's", async () => {
-    const { dayAt, nextWeekAt, tomorrowAt } = await import("../app/shell/format.js");
-    // The date picker's own path (`pick(dayAt(day, resurfaceAt))`), the two buttons' paths, and
-    // the account's 09:00 default: one composition, four callers, one answer per night.
-    expect(dayAt("2027-03-28", "02:30")).toEqual({
+  it("composes a PICKED date through the same function — the rule is not the horizon's", () => {
+    // The day picker's own path (`dayAtIn(day, at, zone)` at the press), the two items' paths, and
+    // the product's 09:00 default: one composition, four callers, one answer per night.
+    expect(dayAtIn("2027-03-28", "02:30", ZONE)).toEqual({
       iso: "2027-03-28T01:30:00.000Z", time: "03:30", verdict: "shifted_forward",
     });
-    expect(dayAt("2026-10-25", "02:30")).toEqual({
+    expect(dayAtIn("2026-10-25", "02:30", ZONE)).toEqual({
       iso: "2026-10-25T00:30:00.000Z", time: "02:30", verdict: "first_of_two",
     });
     // ONE composition, not three that agree today: each horizon is its own day handed to the
     // same function, so a horizon and the picked day it names are the SAME value, verdict and all.
-    expect(tomorrowAt(SPRING_EVE, "02:30")).toEqual(dayAt("2027-03-28", "02:30"));
-    expect(nextWeekAt(SPRING_EVE, "02:30")).toEqual(dayAt("2027-03-29", "02:30"));
-    expect(nextWeekAt(SPRING_EVE, "02:30").verdict).toBe("exact");
-    expect(dayAt("2027-03-28", null)).toEqual({
+    expect(tomorrowAtIn(SPRING_EVE, "02:30", ZONE)).toEqual(dayAtIn("2027-03-28", "02:30", ZONE));
+    expect(nextWeekAtIn(SPRING_EVE, "02:30", ZONE)).toEqual(dayAtIn("2027-03-29", "02:30", ZONE));
+    expect(nextWeekAtIn(SPRING_EVE, "02:30", ZONE).verdict).toBe("exact");
+    expect(dayAtIn("2027-03-28", null, ZONE)).toEqual({
       iso: "2027-03-28T07:00:00.000Z", time: "09:00", verdict: "exact",
     });
   });
 
   it("the picker's days each state the hour they would book", async () => {
-    /* THE DAY PICKER, NOT THE HORIZON BUTTONS. Before this the popover's cells named a date and
+    /* THE DAY PICKER, NOT THE HORIZON ITEMS. Before this the popover's cells named a date and
        nothing else, so the only hour on screen was the one in the field — 02:30, which no day on
-       the 28th can book. Each cell now carries the composition for its OWN day: the 28th says
-       03:30, the 29th says 02:30, and the two are the same asked hour. */
+       the 28th can book. Each cell carries the composition for its OWN day: the 28th says 03:30,
+       the 29th says 02:30, and the two are the same asked hour. (The day as the kit names one.) */
     await mountBar(SPRING_EVE, "02:30");
-    await openStrip();
-    await act(async () => { byText("Pick a date").click(); });
-    const cell = (day: string): string =>
-      host!.querySelector(`[data-day="${day}"]`)?.getAttribute("aria-label") ?? "";
-    expect(cell("2027-03-28"), "the skipped morning named no hour").toBe(
-      "Sunday, March 28, 2027, 03:30",
-    );
-    expect(cell("2027-03-29")).toBe("Monday, March 29, 2027, 02:30");
+    await openPicker();
+    const cell = (named: string): string => dayCell(named).getAttribute("aria-label") ?? "";
+    expect(cell("Sun 28 Mar 2027"), "the skipped morning named no hour").toBe("Sun 28 Mar 2027, 03:30");
+    expect(cell("Mon 29 Mar 2027")).toBe("Mon 29 Mar 2027, 02:30");
     // The hour is the CELL's, not the field's: a day that books 03:30 may not say 02:30.
-    expect(cell("2027-03-28")).not.toContain("02:30");
+    expect(cell("Sun 28 Mar 2027")).not.toContain("02:30");
   });
 
   it("the picker's trigger promises no hour, because it names no day", async () => {
     await mountBar(SPRING_EVE, "02:30");
     await openStrip();
     /* It read "Pick a date, 02:30" and there was no day it could have booked that at. The two
-       buttons beside it still carry their hour — they name a day, so the hour is a fact. */
-    expect(byText("Pick a date").getAttribute("aria-label") ?? "Pick a date")
-      .not.toContain("02:30");
-    expect(byText("Tomorrow").getAttribute("aria-label")).toBe("Tomorrow, 03:30");
+       items beside it still carry their hour — they name a day, so the hour is a fact. */
+    expect(item("Pick a date").textContent).not.toContain("02:30");
+    expect(hourStated(item("Pick a date"))).toBeNull();
+    expect(hourStated(item("Tomorrow"))).toBe("03:30");
   });
 
   it("holds for Next week too — the horizon is not the rule", async () => {
@@ -349,7 +313,7 @@ describe("a resurface across a clock change", () => {
     await mountBar(SPRING_EVE, "02:30");
     const { said, iso } = await choose("Next week");
     expect(wallClock(iso)).toBe("29/03/2027, 02:30");
-    expect(said).toBe(`Next week, ${wallTime(iso)}`);
+    expect(said).toBe(wallTime(iso));
     expect(mountedNow.toISOString()).toBe("2027-03-27T10:00:00.000Z");
   });
 });
@@ -362,12 +326,12 @@ describe("a resurface across a clock change", () => {
    at the FUNCTION — the hour is its parameter, not the list. The field beside them takes any
    hour at all, which makes it the one appointment in the product that reaches the two nights
    today, and it was answering with `zonedInstant`: the LAST of two on the autumn night, an
-   hour after the reader's clock first reads what they typed.
+   hour after the reader's clock first reads what they typed. (Write's later port composes with
+   these, `@ohmail/app-logic/writing/writing-of.ts`.)
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
 describe("send later composes the wall clock the same way", () => {
-  it("answers the shared table on every case — the same table the phone's suite reads", async () => {
-    const { composedLocalInput, dayAt } = await import("../app/shell/format.js");
+  it("answers the shared table on every case — the same table the phone's suite reads", () => {
     for (const c of WALL_CLOCK_CASES) {
       const typed = `${c.day}T${askedTime(c)}`;
       const custom = composedLocalInput(typed);
@@ -377,14 +341,13 @@ describe("send later composes the wall clock the same way", () => {
       expect(custom!.verdict, c.name).toBe(c.verdict);
       /* ONE COMPOSITION, TWO DOORS: the resurface day and the typed clock are the same
          function on the same fields, so they cannot answer one night differently. */
-      expect(dayAt(c.day, askedTime(c)), c.name).toEqual({
+      expect(dayAtIn(c.day, askedTime(c), ZONE), c.name).toEqual({
         iso: c.iso, time: c.time, verdict: c.verdict,
       });
     }
   });
 
-  it("takes the FIRST of two when the typed hour comes round twice", async () => {
-    const { composedLocalInput } = await import("../app/shell/format.js");
+  it("takes the FIRST of two when the typed hour comes round twice", () => {
     // It answered 01:30Z — 02:30 CET, the second one. A chosen clock comes round when the
     // reader's clock FIRST reads it; the raw door's last-of-two rule is for closing windows.
     const at = composedLocalInput("2026-10-25T02:30")!;
@@ -393,8 +356,7 @@ describe("send later composes the wall clock the same way", () => {
     expect(at.verdict).toBe("first_of_two");
   });
 
-  it("once the first of the two has passed, the repeated hour is the second", async () => {
-    const { composedLocalInput } = await import("../app/shell/format.js");
+  it("once the first of the two has passed, the repeated hour is the second", () => {
     // 02:55 CET, the second 02:55 of the night: 02:58 is three minutes ahead, not an hour behind.
     const at = composedLocalInput("2026-10-25T02:58", new Date("2026-10-25T01:55:00.000Z"))!;
     expect(at.instant.toISOString()).toBe("2026-10-25T01:58:00.000Z");
@@ -402,8 +364,7 @@ describe("send later composes the wall clock the same way", () => {
       .toBe("2026-10-25T00:58:00.000Z");
   });
 
-  it("the evening preset is a composition too, verdict and all", async () => {
-    const { todayEvening } = await import("../app/shell/format.js");
+  it("the evening preset is a composition too, verdict and all", () => {
     const evening = todayEvening(SPRING_EVE);
     expect(evening.instant.toISOString()).toBe("2027-03-27T17:00:00.000Z");
     expect(evening.verdict).toBe("exact");
@@ -414,38 +375,30 @@ describe("send later composes the wall clock the same way", () => {
 describe("the send-later field says which hour it will send at", () => {
   /* REAL TIMERS AND THE REAL CLOCK HERE. The composer's body is ProseMirror, which mounts on a
      timer a fake clock never advances, and this describe does not need a pinned "now": the
-     sentence is about the clock somebody TYPED, and 2027 is ahead of any day this runs on. */
+     sentence is about the clock somebody TYPED, and 2027 is ahead of any day this runs on.
+     The whole new shell, through its test door (`_draft-shell.ts`'s `mountShell`: the web's
+     `MailShell`, the frame over the mail ground), parked on Write (`#/compose`), the letter made
+     sendable and Send later's card open: its day and its time are two fields of the kit, and what
+     the card says about the typed clock is the time field's line. */
   beforeEach(() => {
     vi.useRealTimers();
-    window.location.hash = "";
-    try { window.localStorage.clear(); } catch { /* storage blocked; the shell still boots */ }
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({
-        matches: false, media: query, onchange: null,
-        addEventListener: () => {}, removeEventListener: () => {},
-        addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
-      }),
-    });
-    (globalThis as Record<string, unknown>).CSS = { escape: (x: string) => x };
-    const el = Element.prototype as unknown as Record<string, () => void>;
-    el.scrollIntoView = () => {};
-    el.scrollTo = () => {};
-    (globalThis as Record<string, unknown>).IntersectionObserver = class {
-      observe(): void {} unobserve(): void {} disconnect(): void {}
-      takeRecords(): [] { return []; }
-    };
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    stubDom();
   });
-  afterEach(() => {
-    delete (globalThis as Record<string, unknown>).IntersectionObserver;
-    delete (globalThis as Record<string, unknown>).CSS;
-    vi.restoreAllMocks();
+  afterEach(async () => {
+    await unmountAll();
   });
 
   const drain = async (n = 8): Promise<void> => {
     for (let i = 0; i < n; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   };
+  /** Poll until `ready()`, draining React between attempts; bounded by real time, never a tick count. */
+  async function waitFor(ready: () => boolean, why: string, ms = 10_000): Promise<void> {
+    const deadline = Date.now() + ms;
+    while (!ready()) {
+      if (Date.now() > deadline) throw new Error(why);
+      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    }
+  }
   const nativeValue = async (el: HTMLInputElement, value: string): Promise<void> => {
     /* The setter off the ELEMENT's own prototype: the global one refuses this instance under
        jsdom here ("not a valid instance of HTMLInputElement"). */
@@ -455,51 +408,34 @@ describe("the send-later field says which hour it will send at", () => {
       el.dispatchEvent(new Event("input", { bubbles: true }));
     });
   };
+  const card = (): HTMLElement => screen.getByRole("dialog", { name: "Send later" });
+  const field = (name: string): HTMLInputElement => within(card()).getByLabelText(name) as HTMLInputElement;
 
-  /** The shipped client on the fixture world, parked on compose with a SENDABLE message and the
-   *  picker open — send later wears the same lock as Send, so nothing less opens it. */
+  /** The shipped client, parked on Write with a SENDABLE message and the card open — send later
+   *  wears the same lock as Send, so nothing less opens it. */
   async function openSendLater(): Promise<void> {
-    await unmount();
-    const { AppShell } = await import("./_todays-shell.js");
-    const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-    const { typeInto } = await import("./fixtures/rich-editor-driver.js");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: ZONE, now: new Date(),
-        children: h(ThemeProvider as never, {
-          storageKey: null,
-          children: h(ToastHost as never, { children: h(AppShell as never, { demo: true }) } as never),
-        } as never),
-      }));
-    });
-    for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
-    await act(async () => {
-      window.location.hash = "#/compose";
-      window.dispatchEvent(new HashChangeEvent("hashchange"));
-    });
-    await settleFirstPaint();
-    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
-    await nativeValue(host!.querySelector<HTMLInputElement>("#compose-to")!, "ada@fake.test");
-    let surface: HTMLElement | null = null;
-    for (let i = 0; i < 40 && !surface; i += 1) {
-      const el = host!.querySelector<HTMLElement>(".compose-editor .rte-surface")
-        ?? host!.querySelector<HTMLElement>(".compose-editor [contenteditable=true]");
-      if (el && (el as unknown as { editor?: unknown }).editor) surface = el;
-      else await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
-    }
-    if (!surface) throw new Error("the compose editor never mounted a ProseMirror handle");
-    await act(async () => { typeInto(surface!, "Tomorrow works."); });
+    await mountShell("#/compose", []);
+    await waitFor(() => document.querySelector('input[aria-label="To"]') !== null, "Write never drew its To field");
+    await nativeValue(document.querySelector<HTMLInputElement>('input[aria-label="To"]')!, "ada@fake.test");
+    const surface = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[contenteditable=true][aria-label="Message"]');
+    await waitFor(
+      () => !!(surface() as unknown as { editor?: unknown } | null)?.editor,
+      "the compose editor never mounted a ProseMirror handle",
+    );
+    await act(async () => { typeInto(surface()!, "Tomorrow works."); });
     await drain(4);
-    await act(async () => { host!.querySelector<HTMLButtonElement>(".send-later-toggle")!.click(); });
+    const later = (): HTMLButtonElement => screen.getByRole("button", { name: "Send later" }) as HTMLButtonElement;
+    await waitFor(() => !later().disabled, "Send later stayed locked on a sendable letter");
+    await pressReal(later(), "Send later");
   }
 
-  /** Type a wall clock into the field, and hand back every note the picker is showing. */
+  /** Type a wall clock into the card's day and time, and hand back everything the card is saying. */
   async function typeWhen(value: string): Promise<string> {
-    await nativeValue(host!.querySelector<HTMLInputElement>("#compose-send-at")!, value);
-    return [...host!.querySelectorAll(".send-note")].map((n) => n.textContent ?? "").join(" | ");
+    const [day, time] = value.split("T");
+    await nativeValue(field("Date"), day!);
+    await nativeValue(field("Time"), time!);
+    return card().textContent ?? "";
   }
 
   it("names the hour it will book when the typed one is skipped", async () => {
@@ -512,11 +448,11 @@ describe("the send-later field says which hour it will send at", () => {
     // Only Date is faked: the editor mounts on timers a fake clock would never advance.
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-25T01:55:00.000Z") });
     await openSendLater();
-    expect(host!.querySelector<HTMLInputElement>("#compose-send-at")!.min).toBe("2026-10-25T02:58");
+    /* The earliest time the card offers (today's field's `min`, the card's seeded day and time). */
+    expect(`${field("Date").value}T${field("Time").value}`).toBe("2026-10-25T02:58");
     expect(await typeWhen("2026-10-25T02:58")).not.toContain("That time has passed");
-    const confirm = [...host!.querySelectorAll<HTMLButtonElement>(".send-later-custom button")]
-      .find((b) => b.textContent?.startsWith(messages.compose.sendLaterConfirm));
-    expect(confirm?.disabled).toBe(false);
+    const confirm = within(card()).getByRole("button", { name: "Schedule send" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
   });
 
   it("says nothing on the repeated hour or an ordinary one", async () => {

@@ -1,91 +1,85 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, getByRole, screen, within } from "@testing-library/react";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick, ISO,
+} from "./fixtures/cloud-confirm-shell";
+import { bindApiOwner, type MailboxDTO } from "../app/api-client";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
 
-import { SettingsView } from "../app/views/SettingsView";
-import { SignaturesRow } from "../app/shell/SignaturesRow";
-import { go, goSettings, useHashRoute } from "../app/shell/routing";
-
-/**
- * SETTINGS-SIGNATURE-DRAFT-DROPPED-ON-LEAVE. An edited signature is a draft until its Save, and
- * leaving the pane unmounted the editor: the words were dropped without a question. Through the
- * real settings view, the real row and the shell's hash routing: a leave with an edit asks
- * (Keep editing stays, Discard leaves without a write), a Back press is held too, the tab close
- * asks, and with nothing edited nothing asks.
- */
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
+/** The current Settings pane holds the editor until a save confirms it, or a leave discards it. */
 const S = messages.settings.signatures;
-
-let host: HTMLDivElement;
-let root: Root;
-let writes: Array<[string, string | null, string | null | undefined]>;
-
-const settle = async (): Promise<void> => {
-  for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+const ADDRESS = "one@example.test";
+const mailbox: MailboxDTO = {
+  id: "mb-one", address: ADDRESS, provider: "imap", organizerRole: "organizer",
+  status: "connected", displayName: null, createdAt: ISO, lastSyncAt: ISO,
+  initialImportCompletedAt: ISO, organizeConsentedAt: ISO,
 };
-
-function Shell() {
-  const route = useHashRoute();
-  if (route.view !== "settings") return h("p", { className: "elsewhere" }, route.view);
-  return h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {},
-    pane: route.settingsPane ?? undefined,
-    onSelectPane: goSettings,
-    screeningSection: h("p", null, "posture"),
-    signaturesSection: h(SignaturesRow, {
-      mailboxes: [{ id: "mb-one", address: "one@example.test" }],
-      signatures: { "mb-one": "Anna" }, signaturesHtml: {}, signatureSources: {},
-      setMailboxSignature: async (id, text, html) => { writes.push([id, text, html]); return {}; },
-    }),
-  });
-}
+let host: HTMLElement;
+let writes: unknown[];
 
 async function mount(): Promise<void> {
   writes = [];
-  window.history.replaceState(null, "", "/mailbox#/settings/signatures");
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(ThemeProvider, null, h(ToastHost, null, h(Shell))),
-    }));
-  });
-  await settle();
+  installConfirmEnv();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  rememberOwner();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const { pathname } = new URL(String(input), window.location.origin);
+    if (pathname === "/api/mailboxes") return Response.json({ items: [mailbox] });
+    if (pathname === "/api/consent") return Response.json({
+      dormancyDays: 90, screeningScope: "window", seedConfirmedAt: ISO, screeningResetAt: null,
+      counts: { decidedSenders: 0, activeUndecidedSenders: 0, dormantUndecidedSenders: 0 },
+      signatures: { [mailbox.id]: "Anna" },
+    });
+    if (pathname === "/api/account/screening") {
+      return Response.json({ ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Mail from people I know." });
+    }
+    if (pathname === "/api/consent/settings" && init?.method === "PATCH") {
+      const patch = JSON.parse(String(init.body));
+      writes.push(patch);
+      return Response.json({
+        signatures: patch.signatures ?? { [mailbox.id]: "Anna — on leave" },
+        signaturesHtml: patch.signaturesHtml ?? {},
+      });
+    }
+    return fetch(input, init);
+  };
+  window.history.replaceState(null, "", "#/settings/signatures");
+  host = await mountCloudShell();
+  await tick(2500);
   await settleEditor();
 }
 
-/** Types through the editor's own command (jsdom gives ProseMirror no input events). */
+const sheet = () => getByRole(host, "heading", { name: ADDRESS }).closest<HTMLElement>('[data-kind="plain"]')!;
+const editor = () => getByRole(sheet(), "textbox", { name: `Signature: ${ADDRESS}` });
 const type = async (words: string): Promise<void> => {
-  const dom = host.querySelector(".sig-settings-editor .ProseMirror") as unknown as {
+  const { editor: rich } = editor() as HTMLElement & {
     editor?: { commands: { focus: (at: string) => void; insertContent: (s: string) => void } };
-  } | null;
-  if (!dom?.editor) throw new Error("the signature editor did not mount");
-  await act(async () => { dom.editor!.commands.focus("end"); dom.editor!.commands.insertContent(words); });
-  await settle();
+  };
+  if (!rich) throw new Error("the signature editor did not mount");
+  await act(() => { rich.commands.focus("end"); rich.commands.insertContent(words); });
+  await tick(0);
 };
-const buttons = (label: string): HTMLButtonElement[] =>
-  [...host.querySelectorAll("button")].filter((b) => b.textContent?.trim() === label) as HTMLButtonElement[];
 const press = async (el: Element): Promise<void> => {
-  await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await settle();
+  await act(() => { fireEvent.click(el); });
+  await tick(100);
 };
-const question = (): Element | null => host.querySelector("[role=alertdialog]");
-const onSettings = (): boolean => host.querySelector(".elsewhere") === null;
+const goOhbox = () => press(getByRole(host, "button", { name: "Ohbox" }));
+const question = () => screen.queryByRole("alertdialog", { name: S.leaveAsk }) ??
+  screen.queryByRole("dialog", { name: S.leaveAsk });
+const onSettings = () => screen.queryByRole("heading", { name: ADDRESS }) !== null;
 
-beforeEach(() => { window.history.replaceState(null, "", "/mailbox"); });
 afterEach(async () => {
-  await act(() => root.unmount());
-  host.remove();
+  await teardownConfirmEnv();
+  bindApiOwner(null);
+  resetSessionTruthForTests();
+  resetStorageOwnerForTest();
   window.history.replaceState(null, "", "/");
 });
 
@@ -93,19 +87,17 @@ describe("leaving Signatures with an edited signature asks", () => {
   it("the rail's verb is held: Keep editing stays with the words, Discard leaves unsaved", async () => {
     await mount();
     await type(" — on leave");
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings(), "the pane was left and the draft dropped").toBe(true);
     expect(window.location.hash).toBe("#/settings/signatures");
-    expect(question()?.getAttribute("aria-label")).toBe(S.leaveAsk);
+    expect(question()).not.toBeNull();
 
-    await press(buttons(S.leaveKeep)[0]!);
+    await press(within(question()!).getByRole("button", { name: S.leaveKeep }));
     expect(question()).toBeNull();
-    expect(host.querySelector(".sig-settings-editor")?.textContent).toContain("on leave");
+    expect(editor().textContent).toContain("on leave");
 
-    await act(async () => { go("ohbox"); });
-    await settle();
-    await press(question()!.querySelector("button")!);
+    await goOhbox();
+    await press(within(question()!).getByRole("button", { name: S.revert }));
     expect(onSettings()).toBe(false);
     expect(window.location.hash).toBe("#/ohbox");
     expect(writes).toHaveLength(0);
@@ -115,7 +107,7 @@ describe("leaving Signatures with an edited signature asks", () => {
     await mount();
     await type(" — on leave");
     await act(async () => { window.location.hash = "#/screener"; });
-    await settle();
+    await tick(100);
     expect(onSettings()).toBe(true);
     expect(window.location.hash).toBe("#/settings/signatures");
     expect(question()).not.toBeNull();
@@ -131,15 +123,14 @@ describe("leaving Signatures with an edited signature asks", () => {
     expect(unload()).toBe(false);
     await type(" — on leave");
     expect(unload()).toBe(true);
-    await press(buttons(S.save)[0]!);
+    await press(getByRole(sheet(), "button", { name: S.save }));
     expect(writes).toHaveLength(1);
     expect(unload()).toBe(false);
   });
 
   it("CONTROL: with nothing edited, leaving goes without a question", async () => {
     await mount();
-    await act(async () => { go("ohbox"); });
-    await settle();
+    await goOhbox();
     expect(onSettings()).toBe(false);
     expect(question()).toBeNull();
   });

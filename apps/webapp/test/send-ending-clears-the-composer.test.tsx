@@ -59,7 +59,8 @@ async function world() {
 /** The compose surface as the shell wires it: useMailSend + useComposeAutosave + settleCompose. */
 async function surface(engine: OhmailEngine) {
   const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  /* The send machine's words as the mail ground hands them (today's `app/shell/mail-send-text` leaves). */
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
   const { readComposeDraft, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
   const initial = readComposeDraft(null);

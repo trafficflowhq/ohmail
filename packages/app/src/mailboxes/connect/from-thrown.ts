@@ -5,6 +5,7 @@
  * refusal, and an id is minted only from the answer.
  */
 import type { FirstRunMailboxInput, FirstRunProbeOk } from "@ohmail/app-logic/doors/first-run-host";
+import { testWithLocalWait } from "@ohmail/app-logic/doors/local-server-host";
 import { echoes, reveal, type Secret } from "@ohmail/app-logic/mailboxes/connect/secret";
 import { mailboxIdOfAnswer } from "@ohmail/app-logic/mailboxes/connect/mailbox-id";
 import { refusalOfThrown } from "@ohmail/app-logic/mailboxes/connect/thrown";
@@ -14,7 +15,8 @@ import type {
   ConnectProbed,
   Connected,
 } from "@ohmail/app-logic/mailboxes/connect/types";
-import { NONE, type ConnectWire, type None } from "../../host/index.js";
+import { NONE, type None } from "../../host/contract.js";
+import type { ConnectWire } from "../../host/wires.js";
 
 /** The first-run verbs this adapter takes: each resolves on success and throws on every refusal. */
 export interface ThrowingFirstRun {
@@ -52,7 +54,7 @@ function inputOf(input: ConnectInput): FirstRunMailboxInput {
     address: input.address,
     provider: input.provider,
     imap: { ...imap, pass: reveal(pass) },
-    ...(input.smtp ? { smtp: opened(input.smtp) } : {}),
+    ...(input.smtp?.host.trim() ? { smtp: opened(input.smtp) } : {}),
   };
 }
 
@@ -72,7 +74,11 @@ export function connectWireOver(
 ): ConnectWire & { probe: Exclude<ConnectWire["probe"], None> } {
   const discover = old.discover;
   return {
-    probe: (input) => answered(async () => probedOf(await old.probe(inputOf(input))), input.imap.pass),
+    probe: (input) =>
+      answered(async () => {
+        const probe = () => old.probe(inputOf(input));
+        return probedOf(await (old.localServerWait ? testWithLocalWait(input.imap.host, probe) : probe()));
+      }, input.imap.pass),
     /* The mode is the caller's, stated: `seed` reconfigures the install, `add` writes a row beside it. */
     connect: (input, mode) =>
       answered(async (): Promise<Connected> => {
@@ -87,5 +93,6 @@ export function connectWireOver(
       discover === undefined ? NONE : (domain, signal) => discover({ domain }, signal).catch(() => null),
     signIn: NONE,
     localServerWait: old.localServerWait === true,
+    incomingOnly: true,
   };
 }

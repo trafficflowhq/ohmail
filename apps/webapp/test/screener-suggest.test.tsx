@@ -1,22 +1,29 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { useSuggestText } from "../app/shell/suggest-text";
+import { TextFromIntl } from "../app/shell/LocaleContext";
+import { useText } from "@ohmail/app/text";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useScreenerWords } from "../../../packages/app/src/screener/words";
 import {
   OhmailEngine,
   MemoryMirrorStore,
   mutationEffects,
-  senderKey,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
+import type { WebWords } from "../app/(product)/mailbox/web-supplies";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import type { SuggestBatchControl } from "../app/shell/screener-suggest";
+import type { SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import { answerConsentWith, goTo, installShellEnv, mailbox, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
+import { screenerReport, screenerRowIds, selectScreenerRow } from "./fixtures/live-screener";
 
 /**
  * BUYING SUGGESTIONS FOR THE SCREENER — the trigger, its price, and its bounds.
@@ -42,6 +49,21 @@ import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const h = React.createElement;
+
+/** Standalone model controls read the same catalogue as the registered frame. */
+function ModelWords({ children, now = NOW }: { children: React.ReactNode; now?: Date }) {
+  return h(NextIntlClientProvider, {
+    locale: "en", messages, timeZone: "UTC", now,
+    children: h(TextFromIntl, { children }),
+  });
+}
+
+function useSuggestText() {
+  return {
+    screener: useText("screener") as unknown as Translator,
+    aiRefusal: useText("aiRefusal") as unknown as Translator,
+  };
+}
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -56,6 +78,7 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
   })) as never;
 
 const NOW = new Date("2026-08-02T12:00:00.000Z");
+const ACCOUNT = "acct";
 let seq = 0;
 
 /** A held message from `from`, dated so the queue order is decided by the test, not by luck. */
@@ -96,7 +119,8 @@ interface Recorded {
 let calls: Recorded[] = [];
 let sent: EngineMutation[] = [];
 let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
+let mountedFrame = false;
 
 /** What `POST /screener/suggest` answers next. A function so a test can vary it per call. */
 let suggestReply: (body: { senders: string[]; dryRun?: boolean; maxCredits?: number }, n: number) => Response;
@@ -110,11 +134,14 @@ const json = (v: unknown, status = 200) =>
 const refusal = (status: number, code: string, message: string) =>
   json({ error: { code, message } }, status);
 
-function installFetch(): void {
+function installFetch(other?: typeof fetch): void {
   let suggestCalls = 0;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : String(input);
     const path = url.replace(/^\/api/, "");
+    if (other && !path.startsWith("/screener") && !path.startsWith("/account/access")) {
+      return other(input, init);
+    }
     const raw = typeof init?.body === "string" ? (JSON.parse(init.body) as Recorded["body"]) : null;
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push({
@@ -184,87 +211,76 @@ async function engineWith(
 }
 
 interface Mounted {
-  /** The senders the state would offer to buy for, in queue order. */
-  unsuggested: () => string[];
   suggestedCount: () => number;
   applyAll: () => void;
 }
 
-/**
- * Mount the REAL view over the REAL hooks — nothing about the purchase is faked but the
- * server. `active` mirrors what `AppShell` passes: the Screener is on screen.
- */
-async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}): Promise<Mounted> {
-  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-  const { useScreenerText } = await import("../app/shell/screener-text.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-
-  /**
-   * The LIVE state, re-captured every render.
-   *
-   * The accessors returned below read this at call time rather than closing over one
-   * render's value — the first version of this harness returned `{ suggestedCount: () =>
-   * state.suggestedCount }` built during the first render, so it went on reporting 0 after a
-   * purchase had painted the chips on screen. A harness that reads a stale snapshot fails in
-   * the direction that looks exactly like a product bug.
-   */
-  let live: {
-    unsuggestedSenders: string[];
-    suggestedCount: number;
-    applyAll: (scopeOf: () => "sender") => void;
-  } | null = null;
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const suggestions = useScreenerSuggestions({
-      text: useSuggestText(),
-      wire: CLOUD_WIRE,
-      active: opts.active ?? true,
-      toast: (() => {}) as never,
-    });
-    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    live = state;
-    return h(ScreenerView, {
-      state,
-      suggest: suggestions.forSenders(state.unsuggestedSenders, [], 0, state.queueSettled),
-      segment: "waiting",
-      settled: true,
-      owed: false,
-      selection: sel as never,
-      onSelect: (seg: string, id: string | null) => setSel((m) => ({ ...m, [seg]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {},
-      full: false,
-      onFull: () => {},
-    } as never);
+/** The registered Web frame owns the route, the quote controls, and the decision lifecycle. */
+async function mountView(
+  engine: OhmailEngine,
+  opts: { active?: boolean; ownerCookie?: boolean } = {},
+): Promise<Mounted> {
+  installShellEnv();
+  mountedFrame = true;
+  vi.setSystemTime(NOW);
+  answerConsentWith({ autoSuggestAt: null, blockAutoUnsubscribeAt: NOW.toISOString() });
+  installFetch(globalThis.fetch);
+  const { bindApiOwner } = await import("../app/api-client.js");
+  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  const { MailFrame, useBrowserMail } = await import("../app/shell/browser-mail.js");
+  const { THEME_DOOR } = await import("../app/shell/face-mirror.js");
+  const { EngineProvider, useEngine } = await import("../app/shell/engine.js");
+  const { useWebHost, webRecover } = await import("../app/(product)/mailbox/web-supplies.js");
+  const { WEB_MAIL_PARTS } = await import("../app/(product)/mailbox/mail-parts.js");
+  setStorageOwner(ACCOUNT);
+  document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
+  bindApiOwner(ACCOUNT);
+  const gate = createSyncGate(ACCOUNT);
+  gate.confirm(ACCOUNT);
+  registerSyncGate(engine, gate);
+  const words: WebWords = {
+    server: { pairing: false, remoteImages: false, searchPeople: false },
+    invites: false,
+    subscriptionPage: false,
+    withdrawManage: () => {},
+    storageBlock: false,
+    account: ACCOUNT,
+    firstRun: undefined,
+    mailboxFacts: async () => [mailbox({ lastSyncAt: NOW.toISOString() })],
+    resolve: async () => ({ kind: "owner", accountId: ACCOUNT }),
+    confirmed: bindApiOwner,
+  };
+  function WebScreener() {
+    const engine = useEngine();
+    const frame = useBrowserMail(webRecover, WEB_MAIL_PARTS);
+    return h(MailFrame, { host: useWebHost(engine, words, frame) });
   }
-
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
+    root!.render(h(NextIntlClientProvider, {
+      locale: "en",
+      messages,
+      timeZone: "UTC",
+      now: NOW,
+      children: h(ThemeProvider, {
+        storage: THEME_DOOR,
+        children: h(ToastHost, { children: h(EngineProvider, { engine, demo: false, children: h(WebScreener) }) }),
       }),
-    );
+    }));
   });
-  await flush();
-  await settleFirstPaint();
+  if (opts.active !== false) await goTo("screener");
+  await tick(0);
+  if (opts.ownerCookie === false) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  const apply = () => within(host!).queryByRole("button", { name: /^Apply [0-9]+ — / });
   return {
-    unsuggested: () => live!.unsuggestedSenders,
-    suggestedCount: () => live!.suggestedCount,
-    applyAll: () => live!.applyAll(() => "sender"),
+    suggestedCount: () => Number(apply()?.textContent?.trim().match(/^Apply ([0-9]+) — /)?.[1] ?? 0),
+    applyAll: () => {
+      const button = apply();
+      if (!button) throw new Error("No Apply action on the Screener");
+      button.click();
+    },
   };
 }
 
@@ -314,6 +330,31 @@ async function pressConfirm(): Promise<void> {
 }
 
 const text = () => host?.textContent ?? "";
+const suggestionSizes = () =>
+  within(within(document.body).getByRole("group", { name: messages.screener.suggest.aria }))
+    .getAllByRole("button")
+    .map((button) => button.textContent?.trim());
+
+/** A stored suggestion, as the server returns it on the next visit to the queue. */
+function storedSuggestions(rows: EngineMessage[], destinations: Folder[]) {
+  listReply = () => json({
+    items: rows.map((m, i) => ({
+      id: m.id,
+      messageId: m.id,
+      sender: m.from,
+      subject: m.subject,
+      snippet: m.snippet,
+      receivedAt: m.date,
+      aiSuggestion: {
+        decision: destinations[i] === "INBOX" ? "yes" : "no",
+        destination: destinations[i],
+        confidence: 0.9,
+        rationale: `because ${m.from.address}`,
+      },
+    })),
+    nextCursor: null,
+  });
+}
 
 beforeEach(() => {
   calls = [];
@@ -342,6 +383,14 @@ beforeEach(() => {
 
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
+  if (mountedFrame) {
+    await teardownShellEnv();
+    const { bindApiOwner } = await import("../app/api-client.js");
+    bindApiOwner(null);
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    resetStorageOwnerForTest();
+    mountedFrame = false;
+  }
   host?.remove();
   root = null;
   host = null;
@@ -518,7 +567,7 @@ describe("the batch is bounded, and it is a PREFIX of the queue rather than a sa
     // offered: two buttons that both buy 12 would be two labels for one act.
     await mountView(await engineWith(MANY));
     await press("Suggest…");
-    const sizes = [...document.querySelectorAll(".scn-sg-size")].map((b) => b.textContent?.trim());
+    const sizes = suggestionSizes();
     expect(sizes).toEqual(["10", "all 12"]);
   });
 
@@ -529,7 +578,7 @@ describe("the batch is bounded, and it is a PREFIX of the queue rather than a sa
     listReply = () => json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 5 } });
     await mountView(await engineWith(MANY));
     await press("Suggest…");
-    const sizes = [...document.querySelectorAll(".scn-sg-size")].map((b) => b.textContent?.trim());
+    const sizes = suggestionSizes();
     expect(sizes).toEqual(["10", "all 12"]);
     await pressConfirm();
     // 12 senders, cap 5 ⇒ three requests of 5, 5 and 2 — never one of 12, never one over the cap.
@@ -570,6 +619,7 @@ describe("the batch is bounded, and it is a PREFIX of the queue rather than a sa
 describe("what a bought suggestion does to the surface", () => {
   it("attaches to the ROW and to the FOCUSED preview — both, from real server data", async () => {
     const mounted = await mountView(await engineWith(MANY));
+    await selectScreenerRow(host!, "m00");
     expect(mounted.suggestedCount()).toBe(0);
     // Before: the preview says so rather than staying silent.
     expect(text()).toContain("No suggestion yet for this sender");
@@ -579,14 +629,16 @@ describe("what a bought suggestion does to the surface", () => {
 
     expect(mounted.suggestedCount()).toBe(12);
     // The DETAIL: the selected sender's suggestion, its confidence and its reason.
-    expect(text()).toContain("AI suggests");
+    expect(text()).toContain("s11@ex.example goes to Ohbox");
+    expect(text()).toContain("90% sure");
     expect(text()).toContain("because s11@ex.example");
     expect(text()).not.toContain("No suggestion yet for this sender");
     // The LIST: the chip on the row carries the destination it would file to. `s00` was
     // answered `yes` and `s01` `no`, so both labels are on screen at once.
-    const chips = [...document.querySelectorAll(".row")].map((r) => r.textContent ?? "");
+    const rows = within(host!).getByRole("listbox", { name: messages.screener.title });
+    const chips = within(rows).getAllByRole("option").map((r) => r.textContent ?? "");
     expect(chips.some((c) => c.includes("Ohbox"))).toBe(true);
-    expect(chips.some((c) => c.includes("Screened out"))).toBe(true);
+    expect(chips.some((c) => c.includes("Screen out"))).toBe(true);
   });
 
   it("brings back 'Apply all', which was hidden only because nothing had been bought", async () => {
@@ -611,13 +663,16 @@ describe("what a bought suggestion does to the surface", () => {
         suggestable: { senders: [], credits: 0, maxPerRequest: 50 },
       });
     const mounted = await mountView(await engineWith(MANY));
+    await selectScreenerRow(host!, "m00");
     expect(mounted.suggestedCount()).toBe(1);
     expect(text()).toContain("known good");
     // And nothing was bought to learn it.
     expect(purchases()).toHaveLength(0);
     // The sender that already has one is NOT in the next batch.
-    expect(mounted.unsuggested()).not.toContain("s11@ex.example");
-    expect(mounted.unsuggested()).toHaveLength(11);
+    await press("Suggest…");
+    const unsuggested = dryRuns()[0]?.body?.senders;
+    expect(unsuggested).not.toContain("s11@ex.example");
+    expect(unsuggested).toHaveLength(11);
   });
 });
 
@@ -780,50 +835,7 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
     msg("m03", "junk@ex.example", 20),
   ];
 
-  const overlayOf = (of: Record<string, string>): ReadonlyMap<string, unknown> =>
-    new Map(
-      Object.entries(of).map(([address, dest]) => [
-        senderKey(address),
-        { dest, confidence: 0.9, rationale: `because ${address}` },
-      ]),
-    );
-
-  /**
-   * The REAL state hook with no view over it.
-   *
-   * These assertions are about what the bulk DISPATCHES, not about what a button says — the
-   * label is `screener-chips.test.tsx`'s subject — so a probe is both smaller and harder to
-   * satisfy accidentally than a mounted view.
-   */
-  async function probe(
-    engine: OhmailEngine,
-    suggestions: ReadonlyMap<string, unknown>,
-    toasts: string[] = [],
-  ): Promise<() => ScreenerState> {
-    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
-    let live: ScreenerState | null = null;
-    function Probe(): null {
-      const [v, setV] = React.useState(0);
-      React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      live = useScreenerState(
-        engine, null, v,
-        ((m: string) => { toasts.push(m); }) as never,
-        useScreenerText(), suggestions as never,
-      );
-      return null;
-    }
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(
-        h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }),
-      );
-    });
-    await settleFirstPaint();
-    return () => live!;
-  }
+  const PILES: Folder[] = ["INBOX", "ohmail/News", "ohmail/Screened", "ohmail/Quarantine"];
 
   /** Walk every staggered decision, its undo window and its commit off the fake clock. */
   async function drain(rows: number): Promise<void> {
@@ -841,21 +853,18 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
     vi.useFakeTimers();
     try {
       const engine = await engineWith(MIXED);
-      const latest = await probe(engine, overlayOf({
-        "keep@ex.example": "ohbox",
-        "reads@ex.example": "reads",
-        "out@ex.example": "screened",
-        "junk@ex.example": "spam",
-      }));
+      storedSuggestions(MIXED, PILES);
+      const mounted = await mountView(engine);
 
       // Premise: four waiting senders, four suggestions. A green over a smaller queue than this
       // would say nothing about the case that was reported.
-      expect(latest().waitingCount).toBe(4);
-      expect(latest().suggestedCount, "a spam verdict was not counted as appliable").toBe(4);
+      expect(screenerRowIds(host!)).toHaveLength(4);
+      expect(mounted.suggestedCount(), "a spam verdict was not counted as appliable").toBe(4);
       // …and the button's own pile list names spam, or it would promise four and deliver three.
-      expect(latest().suggestedDests).toEqual(["ohbox", "reads", "screened", "spam"]);
+      expect(within(host!).getByRole("button", { name: "Apply 4 — Ohbox, News, Screened out & Spam" }))
+        .toBeTruthy();
 
-      await act(async () => { latest().applyAll(() => "sender"); });
+      await act(async () => { mounted.applyAll(); });
       await drain(4);
 
       // ONE DECIDE PER SENDER, each carrying its own suggestion's destination.
@@ -865,8 +874,8 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
 
       // NO RESIDUE. The reported symptom is precisely a non-empty queue after a press that said
       // it would empty it, so the queue's own count is the assertion that matters most here.
-      expect(latest().waitingCount, "the queue still holds rows the apply named").toBe(0);
-      expect(latest().suggestedCount).toBe(0);
+      expect(screenerRowIds(host!), "the queue still holds rows the apply named").toHaveLength(0);
+      expect(mounted.suggestedCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -877,18 +886,17 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
     try {
       const world = [msg("m00", "junka@ex.example", 23), msg("m01", "junkb@ex.example", 22)];
       const engine = await engineWith(world);
-      const latest = await probe(engine, overlayOf({
-        "junka@ex.example": "spam",
-        "junkb@ex.example": "spam",
-      }));
+      storedSuggestions(world, ["ohmail/Quarantine", "ohmail/Quarantine"]);
+      const mounted = await mountView(engine);
 
       // A MANUAL press first, on one of the two — the shape the bulk has to match.
-      const manualRow = latest().waiting.find((x) => x.from.address === "junkb@ex.example")!;
-      await act(async () => { latest().decide(manualRow, "spam", { read: false, scope: "sender" }); });
+      await selectScreenerRow(host!, "m01");
+      const panel = within(host!).getByRole("toolbar", { name: messages.screener.place.panel });
+      await act(async () => { within(panel).getByRole("button", { name: /^Spam\b/ }).click(); });
       await drain(1);
 
       // …then the bulk, which now has only the other one left to act on.
-      await act(async () => { latest().applyAll(() => "sender"); });
+      await act(async () => { mounted.applyAll(); });
       await drain(1);
 
       const [manual, bulk] = decides();
@@ -897,7 +905,9 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
       // Spam rides the NO branch with an explicit destination — `{decision:"yes", dest:"spam"}` is
       // the one pairing the server refuses outright, and a bulk that reached it would 400 on every
       // row. Comparing the two mutations whole is what keeps the bulk from growing its own path.
-      expect({ ...bulk, senderId: "«sender»" }).toEqual({ ...manual, senderId: "«sender»" });
+      expect(bulk?.confirmedIds).toEqual(["m00"]);
+      expect(manual?.confirmedIds).toEqual(["m01"]);
+      expect(bulk).toEqual({ ...manual, senderId: "m00", confirmedIds: ["m00"] });
       expect(bulk?.decision).toBe("no");
       expect(bulk?.dest).toBe("spam");
     } finally {
@@ -908,33 +918,28 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
   it("keeps going when one row's write is refused, and leaves only that row waiting", async () => {
     vi.useFakeTimers();
     try {
-      const toasts: string[] = [];
       // The SPAM row is the one the server refuses, because that is the row the reported bug
       // stopped at: a run that aborts there is indistinguishable from the old exclusion.
       const engine = await engineWith(
         MIXED,
         (m) => m.kind === "screener_decide" && m.senderId === "m03",
       );
-      const latest = await probe(engine, overlayOf({
-        "keep@ex.example": "ohbox",
-        "reads@ex.example": "reads",
-        "out@ex.example": "screened",
-        "junk@ex.example": "spam",
-      }), toasts);
+      storedSuggestions(MIXED, PILES);
+      const mounted = await mountView(engine);
 
-      await act(async () => { latest().applyAll(() => "sender"); });
+      await act(async () => { mounted.applyAll(); });
+      await tick(4 * 240 + 160);
+      expect(text()).not.toContain("Applying ");
+      expect(screenerReport()).toContain("4 decided");
       await drain(4);
 
       // EVERY row was dispatched — the refusal is a failure of one write, not of the run.
       expect(decides().map((m) => m.senderId).sort()).toEqual(["m00", "m01", "m02", "m03"]);
       // The three the server took are gone from the queue; the one it refused is still there, and
       // still carries its suggestion, so the next press can try it again.
-      expect(latest().waitingCount, "a refused row took the others with it").toBe(1);
-      expect(latest().waiting[0]!.from.address).toBe("junk@ex.example");
-      expect(latest().suggestedCount).toBe(1);
-      // The run ENDED: the progress bar is down and the summary counted every row it walked.
-      expect(latest().applying).toBeNull();
-      expect(toasts.at(-1)).toContain("4 decided");
+      expect(screenerRowIds(host!), "a refused row took the others with it").toEqual(["m03"]);
+      expect(within(host!).getByRole("option", { name: /junk@ex\.example/ })).toBeTruthy();
+      expect(mounted.suggestedCount()).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -986,30 +991,23 @@ describe("honest states", () => {
     // English line about a cookie was painted under a comment promising whatever the SERVER
     // said. The gate refuses here for the state the reported browser was in: a live session with
     // no `tf_owner` marker.
-    const { bindApiOwner } = await import("../app/api-client.js");
     document.cookie = "tf_owner=; Path=/; Max-Age=0";
-    bindApiOwner("acct_A");
-    try {
-      await mountView(await engineWith(MANY));
-      await press("Suggest…");
-      expect(text()).toContain(messages.screener.suggest.refusedOwnerAbsent);
-      // Not the raw sentence, and not a generic failure that names nothing.
-      expect(text()).not.toContain("This browser has lost the name");
-      expect(text()).not.toContain(messages.screener.suggest.failed);
-      // It never reached the wire, which is what makes it a CLIENT refusal.
-      expect(dryRuns()).toHaveLength(0);
-      expect(purchases()).toHaveLength(0);
-    } finally {
-      bindApiOwner(null);
-    }
+    await mountView(await engineWith(MANY), { ownerCookie: false });
+    await press("Suggest…");
+    expect(text()).toContain(messages.screener.suggest.refusedOwnerAbsent);
+    // Not the raw sentence, and not a generic failure that names nothing.
+    expect(text()).not.toContain("This browser has lost the name");
+    expect(text()).not.toContain(messages.screener.suggest.failed);
+    // It never reached the wire, which is what makes it a CLIENT refusal.
+    expect(dryRuns()).toHaveLength(0);
+    expect(purchases()).toHaveLength(0);
   });
 
   it("a run that stopped part-way is not reported as a clean success", async () => {
     let toasted = "";
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     suggestReply = (body) =>
       json({
         dryRun: body.dryRun === true, requested: body.senders.length,
@@ -1031,7 +1029,7 @@ describe("honest states", () => {
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1039,9 +1037,7 @@ describe("honest states", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe),
-      }));
+      root!.render(h(ModelWords, { children: h(Probe) }));
     });
     await settleFirstPaint();
     await flush();
@@ -1063,10 +1059,9 @@ describe("honest states", () => {
      self-hosted server charges nothing, and "no credits used" was vocabulary it does not have. */
   it("on an unmetered host the done line counts suggestions and names no credits", async () => {
     let toasted = "";
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
     suggestReply = (body) =>
       json({
@@ -1084,7 +1079,7 @@ describe("honest states", () => {
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1092,8 +1087,7 @@ describe("honest states", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
+      root!.render(h(ModelWords, {
         children: h(ManagedServiceContext.Provider, { value: false, children: h(Probe) }),
       }));
     });
@@ -1151,7 +1145,7 @@ describe("the Screener asks for nothing until it is looked at", () => {
  */
 describe("the size ladder — 50 / 100 / 200 / 400 are offered under a large ceiling", () => {
   it("adds 100 / 200 / 400 above the small watchable sizes, always ending at the ceiling", async () => {
-    const { batchSizes } = await import("../app/shell/screener-suggest.js");
+    const { batchSizes } = await import("@ohmail/app-logic/screener/screener-suggest");
     // A queue larger than the ceiling: every offered size below the ceiling, then the ceiling.
     // This is the user-visible acceptance — the control offers 50, 100, 200 and 400.
     expect(batchSizes(500, 400)).toEqual([10, 25, 50, 100, 200, 400]);
@@ -1185,10 +1179,9 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     suggestedCount: () => number;
     toasted: () => string;
   }> {
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let toasted = "";
     let control: SuggestBatchControl | null = null;
@@ -1197,7 +1190,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       live = st;
       return null;
@@ -1206,7 +1199,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
+      root!.render(h(ModelWords, { children: h(Probe) }));
     });
     await flush();
     await settleFirstPaint();
@@ -1346,10 +1339,10 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     expect(p.suggestedCount()).toBe(5);
     expect(p.control().phase).toBe("running");
 
-    // A CONCURRENT PRESS: cancel bumps `io.current.run`, so the in-flight loop is now stale.
-    await act(async () => { p.control().cancel(); });
+    // A newer price invalidates the now-stale run. Closing the running menu is ignored.
+    await act(async () => { p.control().open(); });
 
-    // Chunk 2 answers AFTER the cancel. It must paint nothing and buy no further chunk.
+    // Chunk 2 answers AFTER the newer price. It must paint nothing and buy no further chunk.
     await resolveNext(isBuy, { dryRun: false, requested: 5, quoted: 5, quotedCredits: 5, charged: 5, suggestions: rows(5, 10), skipped: [] });
 
     // (c) Chunk 2's five did NOT merge — still 5. (Mutation: drop the post-await `run` check ⇒ 10.)
@@ -1376,7 +1369,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
  */
 describe("SUGGEST-CHUNK — the request size is the latency budget, not the 413 cap", () => {
   it("chunks a large batch at SUGGEST_CHUNK_SIZE even when the server cap is far higher (50)", async () => {
-    const { SUGGEST_CHUNK_SIZE } = await import("../app/shell/screener-suggest.js");
+    const { SUGGEST_CHUNK_SIZE } = await import("@ohmail/app-logic/screener/screener-suggest");
     // The production cap, verbatim. Nothing here shrinks the request but the client's own budget.
     listReply = () =>
       json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
@@ -1412,7 +1405,7 @@ describe("SUGGEST-CHUNK — the request size is the latency budget, not the 413 
    * killed by the deadline, with a partly debited purchase and no response.
    */
   it("an OLD server (no `recommendedPerRequest`) keeps the conservative fallback", async () => {
-    const { SUGGEST_CHUNK_SIZE } = await import("../app/shell/screener-suggest.js");
+    const { SUGGEST_CHUNK_SIZE } = await import("@ohmail/app-logic/screener/screener-suggest");
     // Exactly what the previous deployment sends: the cap, and nothing about lanes.
     listReply = () =>
       json({ items: [], nextCursor: null, suggestable: { senders: [], credits: 0, maxPerRequest: 50 } });
@@ -1506,16 +1499,15 @@ describe("SCR-SUGGEST-FLAKE — the auto batch must not cancel a manual purchase
     const isDry = (p: Pending) => p.path.startsWith("/screener/suggest") && p.body?.dryRun === true;
     const isBuy = (p: Pending, n: number) => p.path.startsWith("/screener/suggest") && p.body?.dryRun !== true && p.body?.senders?.length === n;
 
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let toasted = "";
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, autoSuggest: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1523,7 +1515,7 @@ describe("SCR-SUGGEST-FLAKE — the auto batch must not cancel a manual purchase
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
+      root!.render(h(ModelWords, { children: h(Probe) }));
     });
     await settleFirstPaint();
     await flush();
@@ -1597,17 +1589,16 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
 
   /** The same probe the chunk tests use, minus the toast. */
   async function mountControl(): Promise<{ control: () => SuggestBatchControl }> {
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: (() => {}) as never });
-      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1615,7 +1606,7 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
+      root!.render(h(ModelWords, { children: h(Probe) }));
     });
     await flush();
     await settleFirstPaint();
@@ -1712,53 +1703,37 @@ describe("APPLY-PROGRESS — a staged bulk publishes how far it has got", () => 
   it("counts rows as their decisions actually fire, then clears with the summary", async () => {
     vi.useFakeTimers();
     try {
-      const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-      const { useScreenerText } = await import("../app/shell/screener-text.js");
       const { COMMIT_MS } = await import("@ohmail/app-logic/screener/screener-state");
-      const engine = await engineWith(MANY.slice(0, 3));
-      // Three senders, every one carrying a suggestion, so `applyAll` acts on all three.
-      const overlay = new Map(
-        MANY.slice(0, 3).map((m) => [m.from.address, { dest: "reads" as const, confidence: 0.9, rationale: "r" }]),
-      );
-      let live: { applying: { done: number; total: number } | null; applyAll: (f: () => "sender") => void } | null = null;
-      function Probe(): null {
-        const [v, setV] = React.useState(0);
-        React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-        live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), overlay as never);
-        return null;
-      }
-      host = document.createElement("div");
-      document.body.appendChild(host);
-      root = createRoot(host);
-      await act(async () => {
-        root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
-      });
-      await settleFirstPaint();
+      const rows = MANY.slice(0, 3);
+      storedSuggestions(rows, ["ohmail/News", "ohmail/News", "ohmail/News"]);
+      const mounted = await mountView(await engineWith(rows));
 
       // Nothing running.
-      expect(live!.applying).toBeNull();
+      expect(text()).not.toContain("Applying ");
 
-      await act(async () => { live!.applyAll(() => "sender"); });
+      await act(async () => { mounted.applyAll(); });
       // PUBLISHED IN THE SAME FRAME AS THE PRESS. The first row's timer has not fired yet, so a
       // field written only inside those timers reads null here — which is a blank quarter-second
       // on a control the user has just pressed.
-      expect(live!.applying).toEqual({ done: 0, total: 3 });
+      expect(text()).toContain("Applying 0 of 3…");
 
       // Row 1 fires at 0 ms, row 2 at 240, row 3 at 480; the summary at 3×240 + 160.
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-      expect(live!.applying).toEqual({ done: 1, total: 3 });
+      expect(text()).toContain("Applying 1 of 3…");
       await act(async () => { await vi.advanceTimersByTimeAsync(240); });
-      expect(live!.applying).toEqual({ done: 2, total: 3 });
+      expect(text()).toContain("Applying 2 of 3…");
       await act(async () => { await vi.advanceTimersByTimeAsync(240); });
-      expect(live!.applying).toEqual({ done: 3, total: 3 });
+      expect(text()).toContain("Applying 3 of 3…");
 
       // …and the summary timer clears it. A full bar beside "3 decided" is two surfaces
       // disagreeing about whether the work is over.
       await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-      expect(live!.applying).toBeNull();
+      expect(text()).not.toContain("Applying ");
+      expect(screenerReport()).toContain("3 decided");
 
       // Drain the commit timers so nothing is left pending on the fake clock.
       await act(async () => { await vi.advanceTimersByTimeAsync(COMMIT_MS + 100); });
+      expect(sent.filter((m) => m.kind === "screener_decide").map((m) => m.senderId)).toEqual(["m00", "m01", "m02"]);
     } finally {
       vi.useRealTimers();
     }
@@ -1795,10 +1770,9 @@ describe("APPLY-PROGRESS — a staged bulk publishes how far it has got", () => 
 describe("CREDITS-LEFT — repeated from the server, never derived", () => {
   async function runOnce(reply: (n: number) => Record<string, unknown>): Promise<string> {
     let toasted = "";
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
     let n = 0;
     suggestReply = (body) => {
       if (body.dryRun) {
@@ -1822,7 +1796,7 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerWords(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1830,7 +1804,7 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
+      root!.render(h(ModelWords, { children: h(Probe) }));
     });
     await settleFirstPaint();
     await flush();
@@ -1903,8 +1877,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
     force: () => Promise<void>;
   }> {
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
-    const { useScreenerText } = await import("../app/shell/screener-text.js");
-    const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
     const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const store = new MemoryMirrorStore();
     await store.load();
@@ -1934,7 +1907,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
       forceRender = () => setV((x) => x + 1);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const suggestions = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: (() => {}) as never });
-      live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
+      live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerWords(), suggestions.suggestions);
       // The gain signal rides `forSenders`, exactly as `AppShell` binds it at every render.
       suggestions.forSenders(live.unsuggestedSenders, [], 0, live.queueSettled);
       return null;
@@ -1943,10 +1916,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date(),
-        children: h(Probe),
-      }));
+      root!.render(h(ModelWords, { now: new Date(), children: h(Probe) }));
     });
     for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
     await settleFirstPaint();

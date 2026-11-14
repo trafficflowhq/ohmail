@@ -550,7 +550,7 @@ export class DraftsService {
    * arriving second cannot reopen the first. With no OPEN attempt left the LEDGER names the state
    * and not the person — a recorded `sent` is a fact, and a verb must never overwrite one.
    */
-  async resolve(ctx: ServiceContext, id: string, outcome: SendResolution): Promise<DraftMutation> {
+  async resolve(ctx: ServiceContext, id: string, outcome: SendResolution, ifUpdatedAt?: string): Promise<DraftMutation> {
     if (outcome !== "arrived" && outcome !== "not_arrived") {
       throw new ServiceError(
         "validation_failed", 400, "outcome must be 'arrived' or 'not_arrived'",
@@ -561,10 +561,19 @@ export class DraftsService {
     const seq = await asTx(ctx).transaction(async (tx) => {
       // The draft first — see the header: this is the row a concurrent reservation takes
       // `FOR KEY SHARE` on, and `FOR UPDATE` is the mode that conflicts with it.
-      const [row] = await dialect(ctx.db).forUpdate(tx.select({ status: drafts.status }).from(drafts)
+      const [row] = await dialect(ctx.db).forUpdate(tx.select({ status: drafts.status, updatedAt: drafts.updatedAt }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
       if (!row) throw new ServiceError("not_found", 404, "draft not found");
+      const publish = () => recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
+      });
+
+      // A delayed answer must not settle a newer attempt. If already resolved, return the current row.
+      if (ifUpdatedAt !== undefined && row.updatedAt.getTime() !== Date.parse(ifUpdatedAt)) {
+        if (row.status === "draft" || row.status === "sent") return publish();
+        throw new ServiceError("draft_changed", 409, "the held draft changed before it could be resolved");
+      }
 
       // EVERY attempt whose outcome is still open — not one of them. Read AFTER the draft lock,
       // so a concurrent `reserve` is either seen here or blocked until this commits.
@@ -641,9 +650,7 @@ export class DraftsService {
       // The `change_log` row is emitted whether or not this call was the one that moved the row:
       // the caller is entitled to a seq it can drain against (`ScheduleService.cancel`'s
       // idempotent arm does exactly this).
-      return recordChange(tx, {
-        accountId: ctx.accountId, entityType: "draft", entityId: id, op: "update", meta: null,
-      });
+      return publish();
     });
 
     /**
@@ -663,7 +670,11 @@ export class DraftsService {
     return this.finish(ctx, id, seq);
   }
 
-  async remove(ctx: ServiceContext, id: string): Promise<{ seq: number }> {
+  async remove(
+    ctx: ServiceContext,
+    id: string,
+    { ifContentRevision, ifUpdatedAt }: { ifContentRevision?: string; ifUpdatedAt?: number } = {},
+  ): Promise<{ seq: number }> {
     const seq = await asTx(ctx).transaction(async (tx) => {
       /**
        * ONLY A SEND STILL RUNNING HOLDS THE DRAFT. `pending` may be on the wire and is refused by
@@ -675,9 +686,15 @@ export class DraftsService {
        * below with the way forward.
        */
       const [held] = await dialect(ctx.db).forUpdate(
-        tx.select({ status: drafts.status, sendKey: drafts.sendKey }).from(drafts)
+        tx.select().from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
           .limit(1));
+      if (held && (
+        (ifContentRevision !== undefined && draftContentRevision(held) !== ifContentRevision) ||
+        (ifUpdatedAt !== undefined && held.updatedAt.getTime() !== ifUpdatedAt)
+      )) {
+        throw new ServiceError("draft_changed", 409, "this draft changed and was kept");
+      }
       if (held && held.status !== "scheduled" && held.sendKey === null) {
         const open = await tx.select({ id: outboundSends.id, status: outboundSends.status }).from(outboundSends)
           .where(and(

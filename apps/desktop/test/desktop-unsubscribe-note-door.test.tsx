@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
+import { within } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
@@ -127,16 +128,20 @@ async function screenerNote(status: EngineStatus, locale: Locale): Promise<strin
       </IntlProvider>,
     );
   });
-  const title = CATALOGUES[locale].settings.autoUnsub.title;
-  const row = (): HTMLElement | undefined =>
-    [...el!.querySelectorAll<HTMLElement>(".set-row")].find((r) => r.querySelector("b")?.textContent === title);
+  const words = CATALOGUES[locale].settings;
+  const row = (): HTMLElement | null => {
+    const pane = within(el!).queryByRole("region", { name: words.screener });
+    if (!pane) return null;
+    const group = within(pane).queryByRole("group", { name: words.autoUnsub.title });
+    return group && within(group).queryByRole("switch", { name: words.autoUnsub.title }) ? group : null;
+  };
   const t0 = Date.now();
   while (!row()) {
-    if (Date.now() - t0 > 15_000) throw new Error(`no auto-unsubscribe switch on the pane; it read: ${(el.textContent ?? "").slice(0, 300)}`);
+    if (Date.now() - t0 > 15_000) throw new Error("The Screener Settings pane has no automatic unsubscribe switch");
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   }
-  const note = row()!.nextElementSibling;
-  expect(note?.classList.contains("set-note-inline"), "the switch's note is not under its row").toBe(true);
+  const note = row()!.nextElementSibling?.nextElementSibling;
+  expect(note?.tagName, "the switch's note is not under its row").toBe("P");
   return note!.textContent ?? "";
 }
 

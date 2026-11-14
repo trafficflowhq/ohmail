@@ -9,7 +9,7 @@ export interface CalendarRailProps {
   label: string;
   /** The way between the two products. It stands first. */
   switcher?: ReactNode;
-  newEvent: { label: string; keyHint?: string; onPress?: () => void };
+  newEvent?: { label: string; keyHint?: string; onPress?: () => void };
   /** The mini month. */
   mini: ReactNode;
   /** Invitations and From mail: the rail's entries. */
@@ -22,7 +22,11 @@ export interface CalendarRailProps {
     open: boolean;
     onToggle?: () => void;
     /** The accounts, each with its calendars; the kinds of mail that draw on the calendar follow as rows of the same kind. */
-    accounts: readonly { name: string; calendars: readonly (CalendarRowProps & { id: string })[] }[];
+    accounts: readonly {
+      id?: string;
+      name: string;
+      calendars: readonly (CalendarRowProps & { id: string })[];
+    }[];
   };
   /** What follows the calendars: Settings. */
   below?: ReactNode;
@@ -53,11 +57,13 @@ export function CalendarRail({
   const head = (
     <>
       {switcher}
-      <div className="oh-calrail-new">
-        <Button kind="two" icon="plus" keyHint={newEvent.keyHint} onPress={newEvent.onPress}>
-          {newEvent.label}
-        </Button>
-      </div>
+      {newEvent ? (
+        <div className="oh-calrail-new">
+          <Button kind="two" icon="plus" keyHint={newEvent.keyHint} onPress={newEvent.onPress}>
+            {newEvent.label}
+          </Button>
+        </div>
+      ) : null}
     </>
   );
   const groups: ReactNode[] = [
@@ -76,7 +82,7 @@ export function CalendarRail({
       {calendars.open
         ? calendars.accounts.map((account, n) => (
             <div
-              key={account.name}
+              key={account.id ?? account.name}
               className="oh-calrail-account"
               role="group"
               aria-labelledby={`${id}-${n}`}

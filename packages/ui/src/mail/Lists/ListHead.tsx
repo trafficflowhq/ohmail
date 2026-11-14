@@ -26,8 +26,10 @@ export interface ListHeadProps {
   title: string;
   /** Something there is open: the title ends in the hot dot. */
   hot?: boolean;
+  lead?: ReactNode;
   /** The list's own tools, at the line's end: at most one loud thing, the doorbell. */
   aside?: ReactNode;
+  asideClassName?: string;
   /** The way to a place that lives inside a tree. Its title is then content and may take two lines. */
   way?: Way;
   /**
@@ -61,7 +63,18 @@ function fitWay(line: HTMLElement): void {
 }
 
 /** Where you are, and the list's own tools. */
-export function ListHead({ title, hot, aside, way, below, meta, count, sections }: ListHeadProps) {
+export function ListHead({
+  title,
+  hot,
+  lead,
+  aside,
+  asideClassName,
+  way,
+  below,
+  meta,
+  count,
+  sections,
+}: ListHeadProps) {
   const line = useRef<HTMLParagraphElement>(null);
   useLayoutEffect(() => {
     const el = line.current;
@@ -75,13 +88,14 @@ export function ListHead({ title, hot, aside, way, below, meta, count, sections 
 
   return (
     <header className="oh-listhead" data-way={way ? "" : undefined} data-sections={sections ? "" : undefined}>
+      {lead}
       <h1 className="oh-text oh-display oh-listhead-title">
         {title}
         <Dot kind={hot ? "hot" : "ink"} />
       </h1>
       {sections ? <div className="oh-listhead-sections">{sections}</div> : null}
       {!sections || count || aside ? (
-        <div className="oh-listhead-aside">
+        <div className={asideClassName ? `oh-listhead-aside ${asideClassName}` : "oh-listhead-aside"}>
           {count ? <span className="oh-listhead-count">{count}</span> : null}
           {aside}
         </div>

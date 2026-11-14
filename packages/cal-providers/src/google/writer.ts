@@ -39,7 +39,7 @@ import {
   type HttpResponse,
   type Precondition,
 } from "../request/index.js";
-import { alreadyHolds } from "../write-compare.js";
+import { alreadyHolds, sameAudience } from "../write-compare.js";
 import { convertEvent } from "./convert.js";
 import { GOOGLE_CALENDAR_BASE } from "./hosts.js";
 import { googleAuthorization } from "./reader.js";
@@ -208,13 +208,17 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     target: WriteTarget,
     signal: AbortSignal,
   ): Promise<Precondition | Refusal> {
-    if (sendableTag(target.version)) return { kind: "unchanged", tag: target.version };
+    if (!target.audience && sendableTag(target.version)) return { kind: "unchanged", tag: target.version };
     const now = await read(token, events, id, signal);
     if ("ok" in now) return now;
     if (now.status !== 200) return refusalOf(now, "event_gone");
     const held = itemOf(now);
     if (held === null || held.item === null || held.item.kind !== "upsert") return refused("version_unknown");
     if (held.item.version !== target.version) return refused("version_stale");
+    if (target.audience) {
+      if (held.item.audienceIncomplete || !sameAudience(target.audience, held.item.event))
+        return refused("version_stale");
+    }
     const tag = typeof held.raw.etag === "string" ? held.raw.etag : "";
     return sendableTag(tag) ? { kind: "unchanged", tag } : refused("version_unknown");
   }

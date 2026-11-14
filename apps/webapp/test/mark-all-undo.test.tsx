@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { headCount } from "./ohbox/_finders";
+import { headCount, reportPress, reportSays, seatedList } from "./ohbox/_finders";
 
 /**
  * TRI-F13 — "MARK ALL READ" IS REVERSIBLE.
@@ -68,7 +68,7 @@ afterEach(async () => {
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -120,15 +120,17 @@ describe("TRI-F13 — mark all read answers with an undo", () => {
     // (`selectors.ts#parkedMessageIds`), and this line counts what the Ohbox lists.
     expect(meta()).toContain("3 unread");
 
-    const button = (container.querySelector<HTMLButtonElement>(".mark-all-read") ?? [...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
+    /* The seated Ohbox's own Mark all read, by its name (today's `.mark-all-read`, `.view-ohbox button`). */
+    const button = ([...(seatedList(document)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
     expect(button, "no mark-all-read affordance").not.toBeNull();
     await act(async () => button!.click());
     await waitFor(() => meta().includes("0 unread"), "everything read");
 
-    // The toast carries the undo — the product's true-undo pattern, not a confirm dialog.
-    const undo = document.querySelector<HTMLButtonElement>(".toast .toast-act");
+    // The toast carries the undo — the product's true-undo pattern, not a confirm dialog. At the seated Ohbox the
+    // answer is said in the frame's report, its Undo the report's press.
+    const undo = reportPress();
     expect(undo, "the mark-all toast offers no Undo").not.toBeNull();
-    expect(document.querySelector(".toast")?.textContent).toContain("read");
+    expect(reportSays()).toContain("read");
 
     await act(async () => undo!.click());
     // Back to the three the Ohbox holds — the undo restores exactly the rows the press flipped,

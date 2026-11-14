@@ -3,19 +3,18 @@
  * new events go, the week's numbers, the day's hours, a second time zone. The device's own zone is said as the one
  * zone source names it. What the account's settings do not carry yet is not drawn.
  */
-import { useMemo } from "react";
 import { clockTime, readerZones, type CalendarSettingsWire } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf, writableOf, type CalendarSettingsBody } from "@ohmail/app-logic/calendar/setup";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useReport } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
-import type { PaneBodyProps } from "../../settings/contract.js";
+import type { PaneBodyProps, PaneSummary } from "../../settings/contract.js";
 import { useLocale, useText, useTimeZone } from "../../text/index.js";
 import { useCalendarMirror, useSetupPort } from "../../calsetup/index.js";
 import { useCalendarSettings } from "../settings-read.js";
 import { Choice, type ChoiceItem } from "./Choice.js";
+import { Hours } from "./Hours.js";
 
-const DAY = 24 * 60;
 /** The zones the platform names and this device can place a time in, read once. */
 let known: readonly string[] | null = null;
 function knownZones(): readonly string[] {
@@ -27,22 +26,34 @@ function knownZones(): readonly string[] {
 }
 const zoneName = (zone: string) => zone.replaceAll("_", " ");
 
-export function ViewPane(_: PaneBodyProps) {
+export function useViewSummary(): PaneSummary | null {
   const t = useText("calsettings");
   const locale = useLocale();
+  const mirror = useCalendarMirror();
+  const { said } = useCalendarSettings(null, "none");
+  if (said === null || mirror === null) return null;
+  const calendar = newEventsCalendarOf(
+    said.newEventsCalendarId,
+    writableOf(mirror.calendars, mirror.connections),
+  );
+  const hours = t("view.hourRange", {
+    from: clockTime(said.dayFromMinute ?? 0, locale),
+    to:
+      said.dayToMinute === null || said.dayToMinute === 1440 ? "24:00" : clockTime(said.dayToMinute, locale),
+  });
+  return {
+    value: t("view.summary"),
+    detail: calendar ? t("view.scheduleSummary", { hours, calendar: calendar.name }) : hours,
+  };
+}
+
+export function ViewPane(_: PaneBodyProps) {
+  const t = useText("calsettings");
   const zone = useTimeZone();
   const report = useReport();
   const mirror = useCalendarMirror();
   const given = useSetupPort();
   const { said, save } = useCalendarSettings(mirror?.port ?? null, given === NONE ? "none" : given);
-  const hours = useMemo(
-    () =>
-      Array.from({ length: 25 }, (_, h) => ({
-        key: String(h * 60),
-        label: h === 24 ? t("view.endOfDay") : clockTime(h * 60, locale),
-      })),
-    [locale, t],
-  );
   if (mirror === null) {
     return (
       <SettingsSheet>
@@ -56,10 +67,6 @@ export function ViewPane(_: PaneBodyProps) {
       : (body: CalendarSettingsBody) => void save(body).then((done) => done || report(t("notSaved")));
   const writable = writableOf(mirror.calendars, mirror.connections);
   const chosen = said ? newEventsCalendarOf(said.newEventsCalendarId, writable) : null;
-  const from = said?.dayFromMinute ?? 0;
-  const to = said?.dayToMinute ?? DAY;
-  const hour = (m: number) =>
-    hours.find((h) => h.key === String(m)) ?? { key: String(m), label: clockTime(m, locale) };
   const none: ChoiceItem = { key: "", label: t("view.noSecondZone") };
   const zones = [
     none,
@@ -86,18 +93,7 @@ export function ViewPane(_: PaneBodyProps) {
         <WeekNumbers said={said} saving={saving} />
       </SettingsSheet>
       <SettingsSheet title={t("view.hours")}>
-        <Choice
-          label={t("view.from")}
-          value={said ? hour(from) : null}
-          items={hours.filter((h) => Number(h.key) < to)}
-          onPick={saving && ((m) => saving(dayOf(Number(m), to)))}
-        />
-        <Choice
-          label={t("view.to")}
-          value={said ? hour(to) : null}
-          items={hours.filter((h) => Number(h.key) > from)}
-          onPick={saving && ((m) => saving(dayOf(from, Number(m))))}
-        />
+        <Hours said={said} save={save} />
       </SettingsSheet>
       <SettingsSheet title={t("view.time")}>
         <SettingLine label={t("view.zone")} value={zoneName(zone)} />
@@ -118,13 +114,6 @@ export function ViewPane(_: PaneBodyProps) {
       </SettingsSheet>
     </>
   );
-}
-
-/** The whole day is said as neither hour: our server keeps both or neither. */
-function dayOf(from: number, to: number): CalendarSettingsBody {
-  return from === 0 && to === DAY
-    ? { dayFromMinute: null, dayToMinute: null }
-    : { dayFromMinute: from, dayToMinute: to };
 }
 
 function WeekNumbers({

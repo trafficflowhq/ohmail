@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { Gloss } from "@ohmail/ui";
 import { Button, Menu, MenuItem, Seg, Slot } from "@ohmail/ui/base";
 import { SettingArea, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText, type Text } from "../../text/index.js";
@@ -31,8 +32,8 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
   const t = useText("away");
   const own = useText(AWAY_NAMESPACE);
   const settings = useText("settings");
+  const pilesNoteId = useId();
   const { saved, draft, pending } = model.state;
-
   if (!saved || !draft) {
     return model.state.unreachable ? (
       <SettingsSheet wants={{ word: own("notRead"), line: t("unreachable") }} />
@@ -95,7 +96,12 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
         />
       </SettingLine>
       <SettingNote>{draft.audience === "everyone" ? t("everyoneNote") : t("screenedInNote")}</SettingNote>
-      <SettingLine label={t("pilesLabel")} narrow="under">
+      <SettingLine
+        label={t("pilesLabel")}
+        narrow="under"
+        describedBy={pilesNoteId}
+        info={<Gloss text={t("never")} placement="chip" />}
+      >
         {model.piles.map((choice) => (
           <Button
             key={choice.pile}
@@ -115,8 +121,7 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
       {model.piles.some((c) => c.audienceLocked) ? (
         <SettingNote>{`${t("pileScreener")}: ${t("pileScreenerNote")}`}</SettingNote>
       ) : null}
-      <SettingNote>{t("pilesNote")}</SettingNote>
-      <SettingNote>{t("never")}</SettingNote>
+      <SettingNote id={pilesNoteId}>{t("pilesNote")}</SettingNote>
       <SettingLine label={t("untilLabel")} narrow="under">
         <Slot label={t("untilPick")} onPress={(event) => model.pickEnd(event.currentTarget)}>
           {model.endsSaid.draft ?? t("untilNone")}
@@ -135,11 +140,7 @@ export function AwayPane({ model, rules }: { readonly model: AwayModel; readonly
         </SettingNote>
       ) : null}
       <AwayRate throttle={draft.throttle} set={(throttle) => model.edit({ throttle })} />
-      {model.runsOn === "thisComputer" ? (
-        <SettingNote>{t("localNote")}</SettingNote>
-      ) : typeof model.runsOn === "object" ? (
-        <SettingNote>{t("hostNote", { host: model.runsOn.host })}</SettingNote>
-      ) : null}
+      {whereAwayRuns(model.runsOn, t)}
       <Button kind="ink" size="s" disabled={pending} onPress={() => model.save()}>
         {saveWord}
       </Button>
@@ -220,4 +221,12 @@ function outcomeSaid(outcome: AwayOutcome, storedOn: boolean, t: Text, settings:
         : settings(unreadable ? "screening.refusedUnreadableUnknown" : "screening.refusedOtherUnknown");
     }
   }
+}
+
+function whereAwayRuns(runsOn: AwayModel["runsOn"], t: Text) {
+  return runsOn === "thisComputer" ? (
+    <SettingNote>{t("localNote")}</SettingNote>
+  ) : typeof runsOn === "object" ? (
+    <SettingNote>{t("hostNote", { host: runsOn.host })}</SettingNote>
+  ) : null;
 }

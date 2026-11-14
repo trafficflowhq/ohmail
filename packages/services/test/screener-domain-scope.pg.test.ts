@@ -207,7 +207,7 @@ describe.skipIf(!PG_UP)("domain scope — the bulk write, on real Postgres", () 
         async onScreenOut(_c, ids) { seen.push(...ids); return { considered: ids.length }; },
       },
     });
-    await svc.decide(ctx(w.accountId), w.atDomain[0]!, { decision: "no", scope: "domain" });
+    await svc.decide(ctx(w.accountId), w.atDomain[0]!, { decision: "no", scope: "domain", unsubscribeIds: w.atDomain });
 
     expect(new Set(seen)).toEqual(new Set(w.atDomain));
     expect(seen).toHaveLength(24);

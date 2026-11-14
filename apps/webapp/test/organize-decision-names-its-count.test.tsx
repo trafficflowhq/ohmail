@@ -1,14 +1,13 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach, vi } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
+import { act, cleanup } from "@testing-library/react";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
-import { KeymapProvider } from "@ohmail/app/keys";
-import type { FirstRunDecisionCount, FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunDecisionCount } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow, FirstRunVerbs } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * THE AGREE SCREEN NAMES WHAT AGREEING SCREENS. "How far back" says how many letters
@@ -17,12 +16,15 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  * 1,000 too; a walk stopped at its bound says "more than". Controls: a door with no count names none
  * and asks for no screening of older mail; a takeover asks for none either. While the import is open
  * a lost connection is said in plain words, and its return once.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`) over a ground the case moves (`_first-run-stage.tsx`),
+ * its words the stage's catalogue; the count line is the window step's status line; a choice is a radio by its
+ * name; the shell binding behind the stage is a place's own binding under the frame's keys. Every expectation is
+ * as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const NOBODY: OnboardingMailbox = {
   organizerRole: "reader", organizedBy: null, organizerState: null,
@@ -33,58 +35,42 @@ const LIVE: OnboardingMailbox = {
   organizerState: "held", organizerEventAt: "2026-09-26T08:17:50.000Z",
 };
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
+
+/** The row the ground hands: the account's id and address beside exactly the case's facts. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow =>
+  ({ id: id("mb-1"), address: "me@example.invalid", ...mailbox }) as FirstRunRow;
 
 async function mount(
   first: OnboardingMailbox,
   count: ((s: { dormancyDays?: number; scope?: string }) => FirstRunDecisionCount) | null,
-  { behind, raw, ai = "unset" }: { behind?: () => void; raw?: FirstRunHost["countDecision"]; ai?: OnboardingFacts["ai"] } = {},
+  { behind, raw, ai = "unset" }: { behind?: () => void; raw?: FirstRunVerbs["countDecision"]; ai?: OnboardingAi } = {},
 ) {
-  const facts: OnboardingFacts = {
-    door: "selfhost", mailbox: first, account: { onboardingCompletedAt: null }, ai, queuedSenders: 0,
-  };
   const asked: Array<{ dormancyDays?: number; scope?: string }> = [];
   const organizedWith: Array<Record<string, unknown>> = [];
-  const host: FirstRunHost = {
-    door: "selfhost", ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async (_id, body) => { organizedWith.push(body as Record<string, unknown>); return "stored"; },
-    ...(count ? { countDecision: async (_id: string, s: { dormancyDays?: number; scope?: string }) => { asked.push(s); return count(s); } } : {}),
-    ...(raw ? { countDecision: raw } : {}),
-    complete: async () => { /* stamped */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
   /** A shell binding behind the stage — `g s`, the press measured on the rig. */
   const Behind = () => {
     useKeyBindings(React.useMemo(() => [{ chord: "g s", group: "navigate" as const, label: "Screener", run: () => behind?.() }], []));
     return null;
   };
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
+  const st = await mountStage({
+    rows: [rowOf(first)],
+    door: "selfhost",
+    behind: () => <Behind />,
+    verbs: {
+      ai,
+      organize: async (_id: unknown, body: unknown) => { organizedWith.push(body as Record<string, unknown>); return "stored"; },
+      ...(count ? { countDecision: async (_id: unknown, s: { dormancyDays?: number; scope?: string }) => { asked.push(s); return count(s); } } : {}),
+      ...(raw ? { countDecision: raw } : {}),
+      complete: async () => { /* stamped */ },
+    } as never,
+  });
+  const el = st.el;
   /** The shell's render, again with a newer read of the mailbox. */
-  const render = async (mailbox: OnboardingMailbox): Promise<void> => {
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(KeymapProvider, { children: [
-          h(Behind, { key: "b" }),
-          h(FirstRun, {
-            key: "s", host, facts: { ...facts, mailbox }, onRefresh: () => { /* re-read */ }, onLeave: () => { /* left */ },
-            pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
-          }),
-        ] }),
-      }));
-    });
-  };
-  await render(first);
+  const render = async (mailbox: OnboardingMailbox): Promise<void> => { await st.move([rowOf(mailbox)]); };
   const flush = async () => { await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); }); };
   const button = (label: string) =>
     [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label)) as HTMLButtonElement | undefined;
@@ -94,15 +80,16 @@ async function mount(
     await act(async () => { b.click(); });
     await flush();
   };
+  /** The step's own form: the one its level-1 sentence stands in. */
+  const step = () => el.querySelector("h1")?.closest("form") ?? null;
   return {
     el, asked, organizedWith, press, flush, render,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
-    countLine: () => (el.querySelector(".ob-agree-count")?.textContent ?? "").trim(),
+    heading: st.heading,
+    countLine: () => (step()?.querySelector("[role=status]")?.textContent ?? "").trim(),
     choose: async (label: string) => {
-      const r = [...el.querySelectorAll("label")].find((l) => (l.textContent ?? "").includes(label));
-      const input = r?.querySelector("input") ?? null;
-      if (!input) throw new Error(`no choice ${label}`);
-      await act(async () => { (input as HTMLInputElement).click(); });
+      const radio = [...el.querySelectorAll<HTMLElement>("[role=radio]")].find((r) => (r.textContent ?? "").includes(label));
+      if (!radio) throw new Error(`no choice ${label}`);
+      await act(async () => { radio.click(); });
       await flush();
     },
     key: async (k: string) => {
@@ -188,7 +175,7 @@ describe("How far back names what agreeing screens", () => {
       let reads = 0;
       let inFlight = 0;
       let most = 0;
-      const slow: FirstRunHost["countDecision"] = () => {
+      const slow: FirstRunVerbs["countDecision"] = () => {
         reads++;
         inFlight++;
         most = Math.max(most, inFlight);

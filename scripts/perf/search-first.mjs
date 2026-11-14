@@ -22,6 +22,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { main, openPage, stats } from "./speed-check.mjs";
 
+const RESULT_ROW = 'section.fr-list [role="listitem"][data-hit]';
 const BOX = '.view-search input[type="text"], input[aria-label="Search"]';
 
 /** One arm: `reps` fresh pages, five questions each. Every question is in `searches`; one with no row has `ms: null`. */
@@ -36,12 +37,16 @@ export async function runSearches({ dist, engine, viewport, messages, bodyMs = 0
     bootMs = Math.max(bootMs, visit.bootMs);
     const words = await page.evaluate(() => window.__speed.words);
     const ask = async (phase, q) => {
-      const wait = visit.arm("hits", null);
+      const wait = visit.arm("hits", RESULT_ROW);
       await page.waitForTimeout(30);
       await page.keyboard.insertText(q);
       /* A question with no row says what the box held, so a lost input is told from a search with no answer. */
-      const read = (await wait) ?? { ms: null, why: `no result row came on screen for "${q}" (the box held "${await page.locator(BOX).first().inputValue().catch(() => "?")}")` };
-      const rows = await page.locator(".view-search [data-hit]").count();
+      const painted = await wait;
+      const rows = await page.locator(RESULT_ROW).count();
+      const read = painted !== null && rows > 0 ? painted : {
+        ms: null,
+        why: `no result row came on screen and stayed mounted for "${q}" (the box held "${await page.locator(BOX).first().inputValue().catch(() => "?")}")`,
+      };
       searches.push({ rep: r, phase, q, rows, ...read });
     };
     await page.keyboard.press("/");
@@ -50,9 +55,11 @@ export async function runSearches({ dist, engine, viewport, messages, bodyMs = 0
     for (const q of [words.rare, words.sender, words.two, words.common]) {
       await page.waitForTimeout(400);
       await page.fill(BOX, "");
-      await page.waitForSelector(".view-search [data-hit]", { state: "detached", timeout: 10000 }).catch(() => {});
+      const cleared = await page.waitForSelector(RESULT_ROW, { state: "detached", timeout: 10000 })
+        .then(() => true, () => false);
       await page.waitForTimeout(250);
-      await ask("later", q);
+      if (cleared) await ask("later", q);
+      else searches.push({ rep: r, phase: "later", q, rows: 0, ms: null, why: "the previous result rows did not clear" });
     }
     const v = await page.evaluate(() => window.__speed.vitals());
     if (r === reps - 1) uiVitals = { searchP50Ms: v.searchP50Ms ?? null, searchP95Ms: v.searchP95Ms ?? null, searchCount: v.searchCount ?? null };
@@ -64,15 +71,17 @@ export async function runSearches({ dist, engine, viewport, messages, bodyMs = 0
 
 /** The run as the verdict reads it: the worse p95 of the first and the later questions, `null` unless every one was read. */
 export function summarizeSearches(run) {
-  const ms = (rows) => rows.map((s) => s.ms).filter((v) => typeof v === "number");
-  const missed = run.searches.filter((s) => typeof s.ms !== "number");
-  const first = stats(ms(run.searches.filter((s) => s.phase === "first")));
-  const later = stats(ms(run.searches.filter((s) => s.phase === "later")));
+  const wasRead = (s) => Number.isFinite(s.ms) && s.rows > 0;
+  const ms = (phase) => run.searches.filter((s) => s.phase === phase && wasRead(s)).map((s) => s.ms);
+  const missed = run.searches.filter((s) => !wasRead(s));
+  const first = stats(ms("first"));
+  const later = stats(ms("later"));
   const read = missed.length === 0 && first.n > 0 && later.n > 0;
   const readingMs = read ? Math.max(first.p95Ms, later.p95Ms) : null;
+  const why = missed[0]?.why ?? (missed[0]?.rows === 0 ? "no result row stayed mounted" : "no paint reading");
   const what = read
     ? `first search p95 ${first.p95Ms} ms (median ${first.medianMs}, ${first.n} asked) · later p95 ${later.p95Ms} ms (median ${later.medianMs}, ${later.n} asked)`
-    : (missed.length > 0 ? `${missed.length} of ${run.searches.length} questions were not read (${missed[0].why})` : "no question was asked");
+    : (missed.length > 0 ? `${missed.length} of ${run.searches.length} questions were not read (${why})` : "no question was asked");
   const detail = [
     `  first     median ${first.medianMs ?? "-"} ms · p95 ${first.p95Ms ?? "-"} ms · max ${first.maxMs ?? "-"} ms · ${first.n} questions`,
     `  later     median ${later.medianMs ?? "-"} ms · p95 ${later.p95Ms ?? "-"} ms · max ${later.maxMs ?? "-"} ms · ${later.n} questions`,

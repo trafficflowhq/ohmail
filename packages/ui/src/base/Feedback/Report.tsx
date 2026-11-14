@@ -76,6 +76,7 @@ export function Report(props: ReportProps) {
       ref={el}
       className="oh-report"
       role="status"
+      aria-label={held ? undefined : children}
       data-kind={props.kind}
       data-leaving={leaving ? "" : undefined}
     >

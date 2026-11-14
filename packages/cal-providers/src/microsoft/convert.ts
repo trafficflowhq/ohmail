@@ -42,6 +42,7 @@ import {
 } from "@ohmail/cal-core";
 import { addressOf, callLinkOf, filled, instantOfRfc3339, isRecord, leftOut, MAX_PROVIDER_ID_CHARS, pathSegment, type Json, type Left } from "../json-answers.js";
 import type { ChangeItem, LeftReason } from "../port.js";
+import { incompleteAudience } from "../write-compare.js";
 
 type Upsert = Extract<ChangeItem, { kind: "upsert" }>;
 
@@ -329,7 +330,11 @@ function upsertOf(raw: Json, id: string, shape: Shape, nowMs: number): Upsert | 
   if (cls !== null) more.push({ name: "CLASS", params: [], value: cls });
   // The entity tag is the precondition a change is made against; the change key is what it is made of.
   const version = filled(raw["@odata.etag"]) ?? filled(raw.changeKey) ?? "";
-  return { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event: eventOf({ ...made, properties: [...made.properties, ...more] }), text: null };
+  const event = eventOf({ ...made, properties: [...made.properties, ...more] });
+  return {
+    kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null,
+    ...(incompleteAudience(raw, event) && { audienceIncomplete: true }),
+  };
 }
 
 /** One record of a calendar view. A day of a series is not an event yet: it is put with its series first. */

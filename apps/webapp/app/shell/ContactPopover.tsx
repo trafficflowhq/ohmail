@@ -14,7 +14,7 @@ import { useRef } from "react";
 import { useTranslations } from "next-intl";
 import { displayAddress, displayAddressee } from "@ohmail/app-logic/text/idn";
 import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
-import { useOverlayClamp } from "./overlay-clamp";
+import { useOverlayClamp } from "../screening/overlay-clamp";
 import { goAddress } from "./routing";
 
 export interface ContactPopoverState {

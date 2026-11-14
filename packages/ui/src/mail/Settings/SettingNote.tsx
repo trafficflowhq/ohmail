@@ -6,6 +6,7 @@ import "./setting-note.css";
 export type SettingNotePart = string | { strong: string };
 
 export interface SettingNoteProps {
+  id?: string;
   /**
    * What needs saying once under the line it is about: one or two short sentences. In parts where the sentence
    * leans on some of its words: the app hands the catalogue's sentence as it marks it.
@@ -25,20 +26,21 @@ export interface SettingNoteProps {
 }
 
 /** A note on a sheet of settings: the second ink, under the line it is about, at a reading measure. */
-export function SettingNote({ children, warn, busy, said }: SettingNoteProps) {
+export function SettingNote({ id, children, warn, busy, said }: SettingNoteProps) {
   const parts = typeof children === "string" ? [children] : children;
   const live = Boolean(warn || busy || said);
   /* Said when it appears: by a change inside the region once it stands, never by arriving full. */
   const held = useSaidOnArrival(live);
   return (
     <p
+      id={id}
       className="oh-text oh-settingnote"
       data-warn={warn ? "" : undefined}
       /* It never calls itself busy: that would ask a screen reader to wait with it. */
       role={live ? "status" : undefined}
     >
       {warn ? <Icon name="warn" size={18} /> : null}
-      <span aria-hidden={held ? true : undefined}>
+      <span className="oh-settingnote-copy" aria-hidden={held ? true : undefined}>
         {parts.map((part, at) =>
           typeof part === "string" ? (
             part

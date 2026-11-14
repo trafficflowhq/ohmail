@@ -10,8 +10,8 @@
  */
 
 import { bridgeFetch } from "./bridge-fetch.js";
-import type { SenderSuggestion, SuggestSkipShown } from "../../webapp/app/shell/screener-suggest.js";
-import { toSuggestion, toSkips, batchSizes } from "../../webapp/app/shell/screener-suggest.js";
+import type { SenderSuggestion, SuggestSkipShown } from "@ohmail/app-logic/screener/screener-suggest";
+import { toSuggestion, toSkips, batchSizes } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * HOW MANY SENDERS ONE REQUEST CARRIES.

@@ -9,7 +9,10 @@ import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
 import { MutationRejectedError, OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 
@@ -72,10 +75,9 @@ const reply = (body: string) => ({
 type Released = Array<{ lane: string; source: string }>;
 async function mount(engine: OhmailEngine, released: Released = [], said: string[] = []): Promise<{ press: (body: string, to?: string, andDone?: boolean) => Promise<void>; phase: () => string; code: () => string | null }> {
   const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let api!: { press: (body: string, to?: string, andDone?: boolean) => Promise<void>; phase: () => string; code: () => string | null };
   const Probe = (): null => {
-    const mail = useMailSend(engine as never, null, ((text: string) => { said.push(text); }) as never, useMailSendText(), (() => {}) as never,
+    const mail = useMailSend(engine as never, null, ((text: string) => { said.push(text); }) as never, useSendText(useTranslations() as unknown as Translator, scheduleLabel), (() => {}) as never,
       ((lane: string, _m: unknown, _ok: boolean, _p: unknown, detail?: { andDone?: { source: string } }) => {
         if (detail?.andDone) released.push({ lane, source: detail.andDone.source });
         return false;

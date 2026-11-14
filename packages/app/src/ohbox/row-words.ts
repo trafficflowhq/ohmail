@@ -79,8 +79,9 @@ export function spokenOf(parts: {
   unread: string | null;
   marks: string | null;
   file: string | null;
+  identity?: string;
 }): string {
-  return [parts.when ?? null, parts.unread, parts.marks, parts.file]
+  return [parts.when ?? null, parts.unread, parts.marks, parts.file, parts.identity ?? null]
     .filter((p): p is string => p !== null && p !== "")
     .join(" · ");
 }

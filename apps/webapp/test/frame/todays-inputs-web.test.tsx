@@ -1,14 +1,17 @@
 /** @vitest-environment jsdom */
 /**
- * THE WEB'S REAL HOST, READ BACK BY THE ADAPTER: what today's views are handed on the managed build and the self-hosted
+ * THE WEB'S REAL HOST, READ BACK MEMBER BY MEMBER: what the web's host hands on the managed build and the self-hosted
  * one equals what `CloudShell` handed the old shell, input by input. Each hosted wire is the shared file's own object:
- * the one the views fell back to when the old door was handed nothing.
+ * the one the views fell back to when the old door was handed nothing. The old inputs' names are read off the host
+ * contract here (`readBack`), as the old shell's adapter (`app/shell/todays-inputs.ts`, which leaves with the old
+ * shell) read them: no part of today's shell is between the host and what this file asserts.
  */
 import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
-import { NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
+import { NONE, type FeatureEntry, type FrameSupplies, type HostContract, type None } from "@ohmail/app/host";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { ServerHello } from "../../app/hello";
 import messages from "../../messages/en.json";
 
@@ -43,6 +46,60 @@ const frame = {
 } as FrameSupplies;
 const engine = named<HostContract["engine"]>("engine");
 
+/** A member the host hands, or undefined where it hands `none`: the old inputs' one word for "not handed". */
+const of = <T,>(member: T | None): T | undefined => (member === NONE ? undefined : (member as T));
+const entry = (feature: FeatureEntry | None) => (feature === NONE ? undefined : feature.render());
+
+/**
+ * THE OLD INPUTS' NAMES, READ OFF THE CONTRACT: each name is the member the old shell's adapter read it from, by the
+ * same rule (a `none` reads undefined; a capability reads the word the old prop said). Nothing of the old shell is run.
+ */
+function readBack(host: HostContract) {
+  const { capabilities: can, features, reads, device, wires } = host;
+  const away = can.awayRunsOn;
+  const ceiling = can.sendCeiling;
+  const build = device.build;
+  return {
+    managedService: can.service === "managed",
+    mailboxFacts: of(reads.mailboxes),
+    mirrorFreshness: of(reads.copyAge),
+    sendSurfaceMaxTotalBytes: ceiling === "strict" ? undefined : ceiling === "mailbox" ? null : ceiling,
+    accountSection: entry(features.account),
+    mailboxSection: entry(features.mailboxes),
+    billingSection: entry(features.subscription),
+    storageSection: entry(features.storage),
+    liveBodyWire: of(wires.liveBody),
+    invitesSection: entry(features.invites),
+    aboutSection: entry(features.about),
+    support: features.help === NONE ? undefined : {
+      surface: build.surface, version: build.version, commit: build.commit, accountId: host.session.account,
+      mailtoLeaves: build.mailtoLeaves,
+    },
+    desktopSection: entry(features.desktop),
+    devicesSection: entry(features.devices),
+    notificationHost: of(device.notifications),
+    screeningSection: entry(features.screener),
+    actRulesUnmarked: !can.rulesMarked,
+    /* Today's own node, which no host hands: the old adapter read it from today's nodes, never from the host. */
+    screenerSuggest: undefined,
+    awayTransport: of(wires.away),
+    awayIsLocal: away === "thisComputer",
+    awayOnHost: typeof away === "object" ? away.host : undefined,
+    profileImportTransport: of(wires.profileImport),
+    /* The consent wire is the shared file's own object, its folders flag with it (the old adapter's reading). */
+    consentTransport: of(wires.consent) as ConsentTransport | undefined,
+    imageWire: of(wires.images),
+    imagesFromComputer: can.unsubscribeFrom === "computer",
+    olderBodyWire: of(wires.olderBody),
+    junkWire: of(wires.junk),
+    trashWire: of(wires.trash),
+    suggestWire: of(wires.suggest),
+    draftReplyWire: of(wires.draftReply),
+    firstRun: of(wires.firstRun),
+    onUnread: of(device.badge),
+  };
+}
+
 async function inputsOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
   return (await hostOf(selfHost, server)).read;
 }
@@ -52,14 +109,13 @@ async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages:
   flavor.selfHost = selfHost;
   vi.resetModules();
   const { useWebHost } = await import("../../app/(product)/mailbox/web-supplies");
-  const { todaysInputs, NO_TODAYS } = await import("../../app/shell/todays-inputs");
   const mailboxFacts = async () => [];
   const words = {
     server, invites: selfHost, subscriptionPage: !selfHost, withdrawManage: () => undefined, storageBlock: !selfHost,
     account: "acct-1", firstRun: undefined, mailboxFacts, resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
   };
   const { result } = renderHook(() => useWebHost(engine, words, frame), { wrapper: Words });
-  return { host: result.current, read: { inputs: todaysInputs(result.current, NO_TODAYS), mailboxFacts } };
+  return { host: result.current, read: { inputs: readBack(result.current), mailboxFacts } };
 }
 
 describe("the web's host, read back as today's inputs", () => {
@@ -198,14 +254,13 @@ async function pageAsking(hellos: Array<ServerHello | null>) {
   vi.resetModules();
   const { useServerWords } = await import("../../app/server-words");
   const { useWebHost } = await import("../../app/(product)/mailbox/web-supplies");
-  const { todaysInputs, NO_TODAYS } = await import("../../app/shell/todays-inputs");
   const { WEB_IMAGES } = await import("../../app/(product)/mailbox/image-wire");
   const words = {
     invites: false, subscriptionPage: true, withdrawManage: () => undefined, storageBlock: true,
     account: "acct-1", firstRun: undefined, mailboxFacts: async () => [], resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
   };
   const page = renderHook(() => useWebHost(engine, { ...words, server: useServerWords(false) }, frame), { wrapper: Words });
-  return { page, wire: () => todaysInputs(page.result.current, NO_TODAYS).imageWire, WEB_IMAGES };
+  return { page, wire: () => readBack(page.result.current).imageWire, WEB_IMAGES };
 }
 
 describe("the server's first word on pictures, when the page's first ask got no answer", () => {

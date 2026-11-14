@@ -26,3 +26,5 @@ export {
   type AccountState,
   type CalendarAccount,
 } from "./accounts.js";
+
+export { calendarSetupPortOf } from "./port-of.js";

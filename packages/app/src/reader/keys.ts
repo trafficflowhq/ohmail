@@ -33,7 +33,7 @@ export function useReaderKeys(on: boolean, now: { verbs: Verbs; visit: ListVisit
   const t = useText("reader");
   const { verbs, visit } = now;
   const read: KeyBinding = {
-    chord: "u",
+    chord: verbs.readSlot === "markRead" ? "shift+i" : "u",
     group: "message",
     label: t(`verb.${verbs.readSlot ?? "markUnread"}`),
     when: outsideText,
@@ -43,13 +43,98 @@ export function useReaderKeys(on: boolean, now: { verbs: Verbs; visit: ListVisit
 }
 
 /** The panel's menus a key opens as their buttons open them. */
-export type PanelMenu = "resurface" | "move" | "more";
+export type PanelMenu = "resurface" | "move" | "more" | "cardDelete" | "screening" | "tag";
+export const REPLY_KEY = "r";
+export const FORWARD_KEY = "shift+f";
 
 /** The open letter, its verbs and its panel's menus; null where nothing is open. */
 export interface LetterKeyDoors {
   readonly letter: EngineMessage;
   readonly verbs: Verbs;
   readonly menu: (which: PanelMenu) => void;
+  readonly canAnswerKey?: (id: string) => boolean;
+  readonly screeningLabel?: string;
+  readonly tagLabel?: string;
+}
+
+export type DeleteKeyTarget = Pick<LetterKeyDoors, "letter" | "verbs"> & {
+  readonly canDeleteKey?: (id: string) => boolean;
+};
+
+function trashKeys(t: Text, open: DeleteKeyTarget | null): KeyBinding[] {
+  return deleteKeyBindings({
+    focused: open?.letter ?? null,
+    label: t("key.deleteKey"),
+    canDelete: open !== null,
+    run: (message) => {
+      if (open && open.canDeleteKey?.(message.id) !== false) open.verbs.act("delete");
+    },
+  });
+}
+
+/** A second deliberate letter is its own press, including when focus sits on a menu item. */
+export function isCardDeleteKey(e: KeyboardEvent): boolean {
+  return (
+    e.key === "d" &&
+    !e.repeat &&
+    !e.isComposing &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    !e.shiftKey &&
+    outsideText(e)
+  );
+}
+
+/** The embedded panel shares the reader's answer, Move and Delete bindings. */
+export function useCardKeys(
+  on: boolean,
+  open: LetterKeyDoors | null,
+  deleteTarget: DeleteKeyTarget | null,
+  showPanel: boolean,
+): void {
+  const t = useText("reader");
+  const keys: KeyBinding[] =
+    on && open !== null
+      ? [
+          ...(showPanel ? answerKeys(t, open) : []),
+          {
+            chord: "m",
+            group: "message",
+            label: t("key.move"),
+            when: outsideText,
+            disabled: open.verbs.moves.length === 0,
+            run: () => open.menu("move"),
+          },
+          {
+            chord: "d",
+            group: "message",
+            label: t("key.deleteAsk"),
+            when: isCardDeleteKey,
+            run: () => open.menu("cardDelete"),
+          },
+          ...trashKeys(t, deleteTarget),
+        ]
+      : [];
+  useOptionalKeyBindings(keys, "global");
+}
+
+function answerKeys(t: Text, open: LetterKeyDoors | null): KeyBinding[] {
+  const answer = (chord: string, label: string, action: MessageAction): KeyBinding => ({
+    chord,
+    group: "message",
+    label: t(label),
+    when: outsideText,
+    run: () => {
+      if (open && open.canAnswerKey?.(open.letter.id) !== false) open.verbs.act(action);
+    },
+    ...(open === null ? { disabled: true, disabledReason: "no_cursor" } : {}),
+  });
+  return [
+    answer(REPLY_KEY, "key.reply", "reply"),
+    answer("shift+r", "key.replyAll", open?.verbs.replyAll ? "reply_all" : "reply"),
+    answer(FORWARD_KEY, "key.forward", "forward"),
+  ];
 }
 
 /**
@@ -80,24 +165,18 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
     ...resting,
     ...more,
   });
-  const all = open?.verbs.replyAll === true ? "reply_all" : "reply";
   const booked = open?.letter.triage?.state === "bubbled_up";
   return [
-    verb("r", ts("key.reply"), act("reply")),
-    verb("shift+r", ts("key.replyAll"), act(all)),
-    verb("shift+f", ts("key.forward"), act("forward")),
+    ...answerKeys(ts, open),
     verb("a", ts("key.answerLater"), act("later")),
     verb("e", ts("key.park"), act("aside")),
     verb("b", ts("key.resurface"), booked ? show("resurface") : act("resurface")),
+    ...(open?.tagLabel ? [verb("t", open.tagLabel, show("tag"))] : []),
+    ...(open?.screeningLabel ? [verb("s", open.screeningLabel, show("screening"))] : []),
     verb("m", ts("key.move"), show("move"), open === null ? {} : { disabled: open.verbs.moves.length === 0 }),
     /* A held key is one press: auto-repeat never walks the ask. */
-    verb("d", ts("key.deleteAsk"), show("more"), { when: (e) => !e.repeat && outsideText(e) }),
-    ...deleteKeyBindings({
-      focused: open?.letter ?? null,
-      label: ts("key.deleteKey"),
-      canDelete: open !== null,
-      run: () => open?.verbs.act("delete"),
-    }),
+    verb("d", ts("key.deleteAsk"), show("cardDelete"), { when: isCardDeleteKey }),
+    ...trashKeys(ts, open),
   ];
 }
 

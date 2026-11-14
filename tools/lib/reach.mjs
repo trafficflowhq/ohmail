@@ -173,3 +173,27 @@ export function makeGraph(resolve, textOf) {
   };
   return { edgesOf, closure };
 }
+
+/** Check each host's runtime imports against the shell helpers the application still uses. */
+export function checkHostShellImports({ files, textOf, manifests }, retained, before = retained) {
+  const allowed = new Set(retained);
+  const previous = new Set(before);
+  const refusals = [];
+  for (const file of allowed) {
+    if (!file.startsWith("apps/webapp/app/shell/"))
+      refusals.push(`host shell: invalid retained file ${file}`);
+    if (!previous.has(file)) refusals.push(`host shell: ${file} was added to the retained list`);
+  }
+  const graph = makeGraph(makeResolver(new Set(files), manifests), textOf);
+  for (const entry of hostEntries(files)) {
+    for (const file of graph.closure([entry])) {
+      if (
+        file.startsWith("apps/webapp/app/views/") ||
+        (file.startsWith("apps/webapp/app/shell/") && !allowed.has(file))
+      ) {
+        refusals.push(`host shell: ${entry} reaches ${file}`);
+      }
+    }
+  }
+  return refusals;
+}

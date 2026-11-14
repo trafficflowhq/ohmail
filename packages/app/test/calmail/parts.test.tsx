@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventRecord } from "@ohmail/app-logic/calendar";
 import calmailEn from "../../messages/calmail.en.json" with { type: "json" };
 import { ComingUp, TodayBeside } from "../../src/calmail/index.js";
+import { Blank } from "../../src/reader/blank/Blank.js";
 import type { PlaceEntry } from "../../src/frame/contract.js";
 import type { Messages } from "../../src/text/index.js";
 import {
@@ -121,6 +122,24 @@ describe("the calendar inside mail", () => {
     expect(within(today).getByText("Supplier call")).toBeTruthy();
     fireEvent.click(within(today).getByText("Glaze test"));
     expect(address.writes.at(-1)?.next).toMatch(/#\/cal\/week\/2026-11-16\/e\/ev-now/);
+  });
+
+  it("opens today's appointment from the empty Ohbox reader but leaves other mail places quiet", () => {
+    const emptyReader: PlaceEntry["panes"] = { kind: "wide", Wide: Blank };
+    const places = {
+      ohbox: { ...ohbox, panes: emptyReader },
+      search: { ...ohbox, id: "search" as const, panes: emptyReader },
+    };
+    const words = { ...WORDS, reader: { blank: { none: "Nothing open" } } };
+    const page = mountFrame("#/ohbox", world(), NONE, { places, words });
+    const today = screen.getByRole("group", { name: /Today/ });
+    expect(screen.getByRole("paragraph").textContent).toBe("Nothing open");
+    fireEvent.click(within(today).getByRole("button", { name: /Glaze test/ }));
+    expect(page.address.writes.at(-1)?.next).toMatch(/#\/cal\/week\/2026-11-16\/e\/ev-now/);
+    page.unmount();
+    mountFrame("#/search", world(), NONE, { places, words });
+    expect(screen.getByRole("paragraph").textContent).toBe("Nothing open");
+    expect(screen.queryByRole("group", { name: /Today/ })).toBeNull();
   });
 
   it("lists what comes up with one person, with what waits for an answer", () => {

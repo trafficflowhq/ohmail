@@ -245,19 +245,28 @@ describe("the suggestions, acting on them, and unsubscribing", () => {
     const set = vi.fn(() => Promise.resolve());
     const cancel = vi.fn();
     const suggest = { ...STATES.rest.model.suggest!, open, set, cancel };
-    drawn(<ScreenerPane model={only({ suggest })} />);
+    const pane = (phase: typeof suggest.phase, priced = false) => (
+      <ScreenerPane model={only({ suggest: { ...suggest, phase, priced } })} />
+    );
+    const view = drawn(pane("closed"));
     fireEvent.click(screen.getByRole("switch", { name: SUGGEST.title }));
+    expect(open).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: said("en", "screener", "suggest.autoQuoteApprove") }));
     expect(open).toHaveBeenCalledTimes(1);
     expect(set).not.toHaveBeenCalled();
-    cleanup();
-    drawn(<ScreenerPane model={only({ suggest: { ...suggest, phase: "pricing" } })} />);
+
+    view.rerender(pane("pricing"));
     expect(isOff(screen.getByRole("button", { name: SUGGEST.turnOn }))).toBe(true);
-    cleanup();
-    drawn(<ScreenerPane model={only({ suggest: { ...suggest, phase: "ready", priced: true } })} />);
+    expect(set).not.toHaveBeenCalled();
+
+    const resetsBeforeAccept = cancel.mock.calls.length;
+    view.rerender(pane("ready", true));
     fireEvent.click(screen.getByRole("button", { name: SUGGEST.turnOn }));
     await settle();
     expect(set.mock.calls).toEqual([[true]]);
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledTimes(resetsBeforeAccept + 1);
   });
 
   it("turns off at once, with no confirm between a person and the brake", async () => {
@@ -337,4 +346,29 @@ describe("the registered states", () => {
     expect(STATES.nottaken.model.ohbox?.note).toMatchObject({ kind: "refused", refusal: "other" });
     expect(STATES.noScreening.model.ohbox).toBeNull();
   });
+});
+
+it("keeps edited Ohbox words until the person chooses to discard them", async () => {
+  let ask: ((leave: () => void) => void) | undefined;
+  const holdLeave = (question: (leave: () => void) => void) => {
+    ask = question;
+    return () => {
+      ask = undefined;
+    };
+  };
+  const next = vi.fn();
+  drawn(<ScreenerPane model={only({ ohbox: ohbox({ holdLeave }) })} />);
+  const field = screen.getByRole<HTMLTextAreaElement>("textbox");
+  const stored = field.value;
+  fireEvent.change(field, { target: { value: "Words still being written" } });
+  expect(ask).toBeTypeOf("function");
+  act(() => ask!(next));
+  fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(next).not.toHaveBeenCalled();
+  expect(field.value).toBe("Words still being written");
+  act(() => ask!(next));
+  fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+  expect(next).toHaveBeenCalledOnce();
+  expect(field.value).toBe(stored);
+  expect(ask).toBeUndefined();
 });

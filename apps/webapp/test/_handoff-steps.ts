@@ -4,74 +4,65 @@
  * press put on the wire.
  */
 import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation } from "@ohmail/wire";
+import { within } from "@testing-library/react";
 import { expect } from "vitest";
 import type { SyncChange } from "@ohmail/client-engine";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { act, press, replySurface, waitFor, type DraftShell } from "./_draft-shell.js";
+import { act, messageRow, press, replySurface, waitFor, type DraftShell } from "./_draft-shell.js";
+import { letter as letterEditor, letterSubject, openRegion } from "./_writing-shell.js";
 import en from "../messages/en.json";
+
+export { letterEditor };
 
 export const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
 export const discards = (s: DraftShell): string[] => s.sent
   .filter((m): m is Extract<EngineMutation, { kind: "draft_discard" }> => m.kind === "draft_discard")
   .map((m) => m.draftId);
 
-/**
- * TODAY'S SENDING LIST, REACHED AS A PERSON REACHES IT NOW. The rail's foot line became the frame's one notice: its
- * "Open" (Show) opens today's unchanged list in a dialog, which closes itself when the list empties. Every read below
- * opens it first where the notice stands and the list is not open, so the cases read the same list they always read.
- */
-/** The list was opened by a glance (below), not for a press: the glance puts it away again once it has read it. */
-let glanced = false;
-function showSendingList(): Element | null {
-  const open = document.querySelector(".rail-sync.sending-line");
-  if (open) return open;
-  const show = [...document.querySelectorAll<HTMLButtonElement>("[role='status'][data-place] button")]
-    .find((b) => b.textContent === en.sendingLine.open);
-  /* Drawn before this returns, as a person's press is: the reads below are synchronous. */
-  if (show) void act(() => { show.click(); });
-  return document.querySelector(".rail-sync.sending-line");
+/** The frame puts send notices in the rail on a wide window and over the list on a narrow one. */
+export const slotNotices = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('.fr-railnotice [role="status"], .fr-noticebar [role="status"]')];
+
+/** Read the notice titles behind More, restoring a closed menu after a glance. */
+function otherNotices(peekBehind: boolean): string[] {
+  const more = document.querySelector<HTMLButtonElement>(
+    '.fr-railnotice button[aria-haspopup="menu"], .fr-noticebar button[aria-haspopup="menu"]',
+  );
+  if (more === null) return [];
+  const name = more.getAttribute("aria-label") ?? "";
+  const glance = peekBehind && more.getAttribute("aria-expanded") !== "true";
+  if (glance) void act(() => { more.click(); });
+  const titles = [...document.querySelectorAll<HTMLElement>(
+    `[role="menu"][aria-label="${name}"] [role^="menuitem"]`,
+  )].map((notice) => notice.textContent ?? "");
+  if (glance) void act(() => { more.click(); });
+  return titles;
 }
-/** Today's sending list, opened for a press on one of its rows' buttons, and left open for it. */
-export function sendingList(): Element | null {
-  glanced = false;
-  return showSendingList();
-}
-/** Read today's sending list as a glance does: opened where only the notice stood, and put away again. */
-export function readSendingList<T>(read: (list: Element | null) => T): T {
-  if (!document.querySelector(".rail-sync.sending-line")) glanced = true;
-  const list = showSendingList();
-  const out = read(list);
-  if (glanced && list) {
-    glanced = false;
-    const hide = [...(list.closest("[role='dialog']")?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
-      .find((b) => b.textContent === en.sync.unsavedHide);
-    if (hide) void act(() => { hide.click(); });
-  }
-  return out;
-}
-/** Every row today's sending list holds, as one string. */
-export const footLine = (): string => readSendingList((list) => list?.textContent ?? "");
+
+export const noticeRows = (peekBehind = true): string[] =>
+  [...slotNotices().map((notice) => notice.textContent ?? ""), ...otherNotices(peekBehind)];
+export const footLine = (peekBehind = true): string => noticeRows(peekBehind).join(" | ");
 export const toasts = (): string =>
-  [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
-/** A button of today's sending list, by its label. */
+  [...document.querySelectorAll('.fr-report [role="status"]')].map((notice) => notice.textContent ?? "").join(" | ");
 export const footButton = (label: string): HTMLButtonElement | null =>
-  [...(sendingList()?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])].find((b) => b.textContent === label) ?? null;
+  slotNotices().flatMap((notice) => [...notice.querySelectorAll<HTMLButtonElement>("button")])
+    .find((button) => (button.textContent ?? "").trim() === label) ?? null;
 
 /** The rail's Compose: the frame's rail, which today's views feed. */
 export const railCompose = (): HTMLButtonElement | null =>
   [...document.querySelectorAll<HTMLButtonElement>("nav button")].find((b) => (b.textContent ?? "").trim().startsWith(en.rail.compose)) ?? null;
 
 export const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-    .find((b) => /^(Send|Sending|Sent)/.test((b.textContent ?? "").trim()) && !/later/i.test(b.textContent ?? ""));
-export const composeLine = (el: HTMLElement): string => el.querySelector(".view-compose .send-status")?.textContent ?? "";
-export const composeSubject = (el: HTMLElement): string | null =>
-  el.querySelector<HTMLInputElement>("#compose-subject")?.value ?? null;
+  [...(letterEditor(el)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find(button => /^(?:Send|Sending|Sent)$/.test(button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
+export const composeSubject = (el: HTMLElement): string | null => letterSubject(el)?.value ?? null;
+export const composeLine = (el: HTMLElement): string =>
+  [...(letterEditor(el)?.querySelectorAll('[role="status"]') ?? [])].map(line => line.textContent).join(" | ");
 export const replySend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
-export const dock = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".read-col .reply, .reader .reply");
+  [...(openRegion(el)?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find(button => /^(?:Send|Sending|Sent)$/.test(button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
+export const dock = (el: HTMLElement): HTMLElement | null => replySurface(el) ? openRegion(el) : null;
 
 /** Hold the next `mail_send` on the wire; the returned function lets it answer. */
 export const holdTheWire = (s: DraftShell): (() => void) => {
@@ -108,8 +99,8 @@ export async function key(k: string, init: KeyboardEventInit = {}): Promise<void
 
 /** Open a Drafts row into its editor (the composer, or a reply's dock), from `#/drafts`. */
 export async function openDraftRow(s: DraftShell, id: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`) != null, `${id} in Drafts`);
-  await press(s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`), `open ${id}`);
+  await waitFor(() => s.el.querySelector(`[role=option][data-id='${id}']`) != null, `${id} in Drafts`);
+  await press(s.el.querySelector(`[role=option][data-id='${id}']`), `open ${id}`);
 }
 /** …and wait for the composer to hold it. */
 export async function composerOn(s: DraftShell, id: string, subject: string): Promise<void> {
@@ -119,8 +110,8 @@ export async function composerOn(s: DraftShell, id: string, subject: string): Pr
 
 /** Select a row in the Ohbox and open its dock with `k` (r, R, F). */
 export async function dockOn(s: DraftShell, id: string, k = "r", shiftKey = false): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, `the row ${id}`);
-  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `the row ${id}`);
+  await waitFor(() => messageRow(s.el, id) !== null, `the row ${id}`);
+  await press(messageRow(s.el, id), `the row ${id}`);
   await key(k, shiftKey ? { shiftKey: true } : {});
   await waitFor(() => replySurface(s.el) != null, `the dock on ${id}`);
 }
@@ -152,8 +143,10 @@ export async function pickFrom(el: HTMLElement, mailboxId: string): Promise<void
 }
 /** Attach a small file through the editor's own Attach input inside `scope`. */
 export async function attach(scope: HTMLElement, name: string): Promise<void> {
-  const input = scope.querySelector<HTMLInputElement>('.compose-attach input[type="file"]');
-  expect(input, "the editor offers Attach").not.toBeNull();
+  const button = within(scope).getByRole<HTMLButtonElement>("button", { name: /^Attach files/ });
+  expect(button.disabled).toBe(false);
+  const input = button.parentElement?.querySelector<HTMLInputElement>('input[type="file"]');
+  expect(input, "Attach opens a file picker").toBeTruthy();
   const file = new File([new Uint8Array(512)], name, { type: "text/plain" });
   Object.defineProperty(input!, "files", { value: [file], configurable: true });
   await act(async () => { input!.dispatchEvent(new Event("change", { bubbles: true })); });

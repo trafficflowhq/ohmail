@@ -1,12 +1,12 @@
 /** @vitest-environment jsdom */
-import type { EngineMessage } from "@ohmail/wire";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import * as streams from "@ohmail/app-logic/streams";
+import { message as shellMessage, mountShell, stubDom, unmountAll } from "./_draft-shell.js";
+import { STREAM_HOLD_QUIET_MS, useStreamScroll, type StreamScroll } from "@ohmail/app-logic/streams";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { HOLD_QUIET_MS, StreamCardToggled, StreamShell, type StreamHandle } from "../app/shell/StreamShell";
-import { StreamCardMemo } from "../app/shell/StreamCardMemo";
+import { issue, mountStreamFrame } from "../../../packages/app/test/streams/registered-world.js";
 
 /**
  * A CARD THE READER OPENS MID-SCROLL MOVES NOTHING ABOVE IT — its own top included.
@@ -77,21 +77,24 @@ async function mountStream(scrollTop0: number, heights: Record<string, number>) 
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
-  let toggled: (sid: string, open: boolean) => void = () => {};
-  function Probe() {
-    toggled = React.useContext(StreamCardToggled);
-    return null;
-  }
   const ids = ["c1", "c2", "c3", "c4"];
-  const handle = React.createRef<StreamHandle>();
+  const children = ids.map((sid) => h("div", { className: "scast", "data-sid": sid, key: sid }));
+  let scroll: StreamScroll;
+  function StreamProbe() {
+    const [scroller, attach] = React.useState<HTMLDivElement | null>(null);
+    scroll = useStreamScroll({
+      scroller,
+      cursor: null,
+      contentKey: ids,
+      card: { attr: "data-sid", base: "scast", pending: "pend" },
+      onCurrentChange: () => {},
+    });
+    return h("div", { ref: attach, role: "region", "aria-label": "stream" }, children);
+  }
   await act(async () => {
-    root.render(h(StreamShell, {
-      ref: handle,
-      ariaLabel: "stream", onCurrentChange: () => {}, onSeen: () => {}, contentKey: 1,
-      children: [h(Probe, { key: "probe" }), ...ids.map((sid) => h("div", { className: "scast", "data-sid": sid, key: sid }))],
-    }));
+    root.render(h(StreamProbe));
   });
-  const el = container.querySelector<HTMLElement>(".stream")!;
+  const el = container.querySelector<HTMLElement>('[aria-label="stream"]')!;
   let scrollTop = scrollTop0;
   const scrollTos: number[] = [];
   const topOf = (sid: string) => ids.slice(0, ids.indexOf(sid)).reduce((y, s) => y + heights[s]!, 0);
@@ -106,7 +109,7 @@ async function mountStream(scrollTop0: number, heights: Record<string, number>) 
   const card = (sid: string) => cards.find((c) => c.dataset.sid === sid)!;
   return {
     scrollTos,
-    handle,
+    scrollControl: () => scroll,
     /** The reader's own scroll. */
     async scroll(top: number) {
       await act(async () => { scrollTop = top; el.dispatchEvent(new Event("scroll")); });
@@ -116,7 +119,7 @@ async function mountStream(scrollTop0: number, heights: Record<string, number>) 
     top: (sid: string) => card(sid).getBoundingClientRect().top,
     /** The press: the stream is told first, then the card changes height and says so in the DOM. */
     async press(sid: string, open: boolean, height: number, cls = open ? "scast open" : "scast") {
-      await act(async () => { toggled(sid, open); });
+      await act(async () => { scroll.toggled(sid, open); });
       await act(async () => {
         heights[sid] = height;
         card(sid).setAttribute("class", cls);
@@ -176,8 +179,8 @@ describe("a card opened while it straddles the port's top edge", () => {
     // body lands and the card grows: that growth is still the open's, so it goes below.
     const s = await mountStream(2100, { c1: 2000, c2: 300, c3: 300, c4: 300 });
     await s.press("c2", true, 400, "scast pend open");
-    await s.change("c2", 400, "scast pend open", HOLD_QUIET_MS * 2);
-    await s.change("c2", 1400, "scast viewer open", HOLD_QUIET_MS * 2);
+    await s.change("c2", 400, "scast pend open", STREAM_HOLD_QUIET_MS * 2);
+    await s.change("c2", 1400, "scast viewer open", STREAM_HOLD_QUIET_MS * 2);
     expect(s.top("c2"), "the late body grew the card below its top").toBe(-100);
     expect(s.scrollTos).toEqual([]);
   });
@@ -193,51 +196,49 @@ describe("a card opened while it straddles the port's top edge", () => {
 
 /* ── THE WIRING: the card tells the stream BEFORE it changes ─────────────────────────────── */
 
-const ISO = "2026-08-04T09:00:00.000Z";
-const message = {
-  id: "m1", accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-  subject: "subject", from: { name: "Sender", address: "s@x.invalid" }, to: [], cc: [], date: ISO,
-  folder: "INBOX", snippet: "snippet", unread: false, hasAttachments: false, attachmentCount: 0,
-  sensitivity: {}, triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
-} as unknown as EngineMessage;
-
-describe("StreamCardMemo tells the stream first", () => {
+describe("a mounted stream card tells the stream first", () => {
   it("calls the stream's witness from the press, while the card is still closed, then the view", async () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    roots.push(root);
+    localStorage.clear();
+    stubDom();
+    onTestFinished(unmountAll);
     const calls: string[] = [];
-    const witness = (sid: string, open: boolean) => {
-      const open0 = container.querySelector(".scast")!.classList.contains("open");
-      calls.push(`stream ${sid} ${open} (card open before: ${open0})`);
-    };
-    const onToggle = (id: string, open: boolean) => { calls.push(`view ${id} ${open}`); };
-    await act(async () => {
-      const card = h(StreamCardMemo, {
-        m: message, now: new Date(ISO), current: false, expanded: false, viewer: true, unread: false,
-        bodyText: "Two lines.\nOf text.", bodyState: "snippet", bodyHtml: null, bodyLoadedRemote: false,
-        loadingLabel: "l", failedLabel: "f", withheldKey: "withheld", onReask: () => {},
-        onSelect: () => {}, onToggle,
-      });
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date(ISO),
-        children: h(StreamCardToggled.Provider, { value: witness }, card),
-      }));
+    const useStreamModel = streams.useStreamModel;
+    let scroll: StreamScroll | undefined;
+    vi.spyOn(streams, "useStreamModel").mockImplementation(() => {
+      const model = useStreamModel();
+      scroll = model.scroll;
+      return {
+        ...model,
+        open(id) {
+          calls.push(`view ${id} true`);
+          model.open(id);
+        },
+      };
     });
-    await act(async () => { container.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
+    const { el } = await mountShell("#/reads", [
+      shellMessage("m1", { folder: "ohmail/News" }),
+    ]);
+    expect(scroll).toBeDefined();
+    const reading = within(el).getByRole("region", { name: "News stream" });
+    const toggle = within(reading).getByRole("button", { name: "Expand" });
+    const toggled = scroll!.toggled;
+    vi.spyOn(scroll!, "toggled").mockImplementation((id, open) => {
+      calls.push(`stream ${id} ${open} (card open before: ${toggle.getAttribute("aria-expanded")})`);
+      toggled(id, open);
+    });
+    fireEvent.click(toggle);
     expect(calls).toEqual(["stream m1 true (card open before: false)", "view m1 true"]);
-    expect(container.querySelector(".scast")!.classList.contains("open")).toBe(true);
+    expect(within(reading).getByRole("button", { name: "Collapse" }).getAttribute("aria-expanded")).toBe("true");
   });
 });
 
 describe("the stream answers where a card is — what the verb bar waits on", () => {
   it("onScreen reads the port, and whenOffScreen fires once, on the scroll that takes the card out", async () => {
     const s = await mountStream(2100, { c1: 2000, c2: 300, c3: 300, c4: 300 });
-    expect(s.handle.current!.onScreen("c2"), "straddling the top edge is on screen").toBe(true);
-    expect(s.handle.current!.onScreen("c1"), "wholly above is not").toBe(false);
+    expect(s.scrollControl().onScreen("c2"), "straddling the top edge is on screen").toBe(true);
+    expect(s.scrollControl().onScreen("c1"), "wholly above is not").toBe(false);
     let fired = 0;
-    s.handle.current!.whenOffScreen("c2", () => { fired++; });
+    s.scrollControl().whenOffScreen("c2", () => { fired++; });
     await s.scroll(2250);
     expect(fired, "still 50px of it in the port").toBe(0);
     await s.scroll(2400);
@@ -250,12 +251,12 @@ describe("the stream answers where a card is — what the verb bar waits on", ()
 /* ── AN ANSWERED LETTER KEEPS ITS END ABOVE THE DOCK (`reveal`) ──────────────────────────────── */
 
 describe("a letter answered in place that grows after its reveal", () => {
-  let observers: { cb: () => void; on: Set<Element> }[] = [];
+  let observers: { cb: (entries: ResizeObserverEntry[]) => void; on: Set<Element> }[] = [];
   beforeEach(() => {
     observers = [];
     (globalThis as Record<string, unknown>).ResizeObserver = class {
-      o: { cb: () => void; on: Set<Element> };
-      constructor(cb: () => void) { this.o = { cb, on: new Set() }; observers.push(this.o); }
+      o: { cb: (entries: ResizeObserverEntry[]) => void; on: Set<Element> };
+      constructor(cb: (entries: ResizeObserverEntry[]) => void) { this.o = { cb, on: new Set() }; observers.push(this.o); }
       observe(e: Element): void { this.o.on.add(e); }
       unobserve(e: Element): void { this.o.on.delete(e); }
       disconnect(): void { this.o.on.clear(); }
@@ -263,24 +264,77 @@ describe("a letter answered in place that grows after its reveal", () => {
   });
   afterEach(() => { delete (globalThis as Record<string, unknown>).ResizeObserver; });
 
-  /** c2 sits at the port's top; the editor opens (900px) and the stream reveals its end. */
   async function answered() {
-    const heights = { c1: 2000, c2: 300, c3: 300, c4: 300 };
-    const s = await mountStream(2000, heights);
-    const c2 = document.querySelector<HTMLElement>('.scast[data-sid="c2"]')!;
-    const dock = document.createElement("div");
-    dock.className = "reply-dock";
-    await s.change("c2", 900, "scast in-place", 0);
-    c2.appendChild(dock);
-    await act(async () => { s.handle.current!.reveal("c2"); });
+    const heights = [2000, 300, 300, 300, 1800];
+    const letters = heights.map((_, i) => issue(`c${i + 1}`, 20 - i));
+    mountStreamFrame({ at: "#/reads/m/c2", withReply: true, letters });
+    onTestFinished(cleanup);
+    const reading = screen.getByRole("region", { name: "News stream" });
+    const el = reading.matches("[data-reading-scroll]") ? reading
+      : reading.querySelector<HTMLElement>("[data-reading-scroll]")!;
+    const cards = [...el.querySelectorAll<HTMLElement>("[data-stream-item]")];
+    expect(cards).toHaveLength(heights.length);
+    const above = (i: number) => heights.slice(0, i).reduce((sum, h) => sum + h, 0);
+    el.scrollTop = 2000;
+    el.getBoundingClientRect = () => rect(0, 600);
+    Object.defineProperty(el, "clientHeight", { value: 600 });
+    Object.defineProperty(el, "scrollHeight", { get: () => above(heights.length) });
+    const scrollTos: number[] = [];
+    el.scrollTo = (options?: ScrollToOptions | number, y?: number) => {
+      const top = (typeof options === "number" ? y : options?.top) ?? el.scrollTop;
+      scrollTos.push(top);
+      el.scrollTop = top;
+    };
+    cards.forEach((card, i) => {
+      const measure = () => rect(above(i) - el.scrollTop, heights[i]!);
+      card.getBoundingClientRect = measure;
+      card.parentElement!.getBoundingClientRect = measure;
+    });
+    await drainFrames(12);
+    await act(async () => {
+      el.scrollTop = 2000;
+      fireEvent.scroll(el);
+    });
     await drainFrames(2);
-    /** The letter grows on its own (its frame sizing itself, the editor's lines): the observer says so. */
+    const top = (id: string) => cards.find((card) => card.dataset.streamItem === id)!.getBoundingClientRect().top;
+    expect(top("c2")).toBe(0);
+    const actions = await screen.findByRole("toolbar", { name: "Actions" });
+    await act(async () => {
+      heights[1] = 900;
+      fireEvent.click(within(actions).getByRole("button", { name: "Reply" }));
+    });
+    await drainFrames(4);
+    const dock = within(el).getByRole("textbox", { name: "Reply body" });
+    expect(top("c3"), "the reveal put the end at the foot").toBe(600);
     const grow = async (height: number) => {
-      heights.c2 = height;
-      await act(async () => { for (const o of observers) if (o.on.has(c2)) o.cb(); });
+      heights[1] = height;
+      await act(async () => {
+        const changed = [cards[1]!, cards[1]!.parentElement!];
+        for (const observer of observers) {
+          const entries = changed.filter((target) => observer.on.has(target)).map((target) => {
+            const contentRect = target.getBoundingClientRect();
+            const size = { blockSize: contentRect.height, inlineSize: contentRect.width };
+            return { target, contentRect, borderBoxSize: [size], contentBoxSize: [size], devicePixelContentBoxSize: [size] };
+          });
+          if (entries.length > 0) observer.cb(entries);
+        }
+      });
       await drainFrames(4);
     };
-    return { ...s, grow, dock };
+    const scroll = async (position: number) => {
+      await act(async () => {
+        fireEvent.wheel(el, { deltaY: position - el.scrollTop });
+        el.scrollTop = position;
+        fireEvent.scroll(el);
+      });
+      await drainFrames(2);
+    };
+    const close = async () => {
+      await act(async () => { fireEvent.keyDown(dock, { key: "Escape" }); });
+      await drainFrames(4);
+      expect(within(el).queryByRole("textbox", { name: "Reply body" })).toBeNull();
+    };
+    return { top, scrollTos, grow, scroll, close };
   }
 
   it("follows the growth, so the end meets the port's foot and nothing hides behind the dock", async () => {
@@ -304,7 +358,7 @@ describe("a letter answered in place that grows after its reveal", () => {
 
   it("stops once the dock has closed", async () => {
     const s = await answered();
-    s.dock.remove();
+    await s.close();
     const writes = s.scrollTos.length;
     await s.grow(1100);
     expect(s.scrollTos.length).toBe(writes);

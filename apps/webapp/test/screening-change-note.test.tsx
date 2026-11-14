@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
 
 /**
@@ -69,23 +68,20 @@ const poll = async (): Promise<void> => {
 };
 
 async function mount(): Promise<void> {
-  const { ScreeningSection } = await import("../app/shell/ScreeningSection.js");
+  const { screeningSettingsFrame } = await import("./fixtures/screening-settings.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(ThemeProvider, { storageKey: null, children: h(ScreeningSection) }),
-    }));
+    root!.render(h(screeningSettingsFrame(), { locale: "en", messages }));
   });
   await flush();
 }
 
 const text = (): string => host!.textContent ?? "";
 const posture = (): HTMLButtonElement =>
-  host!.querySelector(`button[role="switch"][aria-label="${S.postureTitle}"]`) as HTMLButtonElement;
-const textarea = (): HTMLTextAreaElement => host!.querySelector(".set-screening-textarea") as HTMLTextAreaElement;
+  within(host!).getByRole<HTMLButtonElement>("switch", { name: S.postureTitle });
+const textarea = (): HTMLTextAreaElement => within(host!).getByRole<HTMLTextAreaElement>("textbox", { name: messages.settings.screening.barLabel });
 const buttonNamed = (label: string): HTMLButtonElement =>
   Array.from(host!.querySelectorAll("button")).find((b) => (b.textContent ?? "").trim() === label) as HTMLButtonElement;
 async function typeInto(el: HTMLTextAreaElement, value: string): Promise<void> {

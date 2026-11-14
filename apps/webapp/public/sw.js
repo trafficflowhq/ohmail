@@ -62,6 +62,8 @@
 /** Where the page leaves the words and the switch state. Never the network, never the payload. */
 const NOTIFY_CACHE = "ohmail-notify-v1";
 const NOTIFY_STATE_URL = "/__ohmail_notify_state";
+const NOTIFY_STATE_LOCK = "ohmail-notify-state"; // Also held by the page while changing this cache.
+const NOTIFY_LOCK_WAIT_MS = 4_000;
 /** The longest title or body this worker draws, in characters; a longer one draws nothing. */
 const WORDS_MAX = 120;
 
@@ -94,6 +96,36 @@ async function aWindowIsVisible() {
   return all.some((c) => c.visibilityState === "visible");
 }
 
+async function drawStoredNotice() {
+  let timer;
+  try {
+    const locks = self.navigator && self.navigator.locks;
+    if (!locks) return false;
+    const budget = new AbortController();
+    timer = setTimeout(() => budget.abort(), NOTIFY_LOCK_WAIT_MS);
+    // A window may be revoking a write that was still in flight when its session ended.
+    // Wait briefly, then read the final state. Do not draw if this context cannot share the lock.
+    return await locks.request(NOTIFY_STATE_LOCK, { signal: budget.signal }, async () => {
+      clearTimeout(timer);
+      const state = await notifyState();
+      if (state === null || await aWindowIsVisible()) return false;
+      await self.registration.showNotification(state.title, {
+        body: state.body,
+        // Ten wakes while the laptop is shut collapse into one notice instead of stacking.
+        tag: "ohmail-new-mail",
+        renotify: false,
+        // The click target comes from the worker's own scope.
+        data: { scope: self.registration.scope },
+      });
+      return true;
+    });
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
     const clientsOpen = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
@@ -106,18 +138,14 @@ self.addEventListener("push", (event) => {
     }
 
     // No window looking. Draw the app's own fixed words, if the app said to.
-    const state = await notifyState();
-    if (state === null) return;
-    await self.registration.showNotification(state.title, {
-      body: state.body,
-      // A single tag, so ten wakes while the laptop is shut collapse into one notice rather
-      // than stacking ten identical ones.
-      tag: "ohmail-new-mail",
-      renotify: false,
-      // No `data` from anywhere but here: the click handler below derives its target from the
-      // worker's own scope, never from anything that arrived over the network.
-      data: { scope: self.registration.scope },
-    });
+    if (!(await drawStoredNotice())) {
+      // A window can come back during the wait. Let it handle the wake as it normally would.
+      const nowOpen = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      if (nowOpen.some((c) => c.visibilityState === "visible")) {
+        for (const c of nowOpen) c.postMessage({ type: "ohmail:wake" });
+      }
+      return;
+    }
     // Background windows that exist but are not visible still get the nudge, so the moment one
     // is brought forward it is already current.
     for (const c of clientsOpen) c.postMessage({ type: "ohmail:wake" });

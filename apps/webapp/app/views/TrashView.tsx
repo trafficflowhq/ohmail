@@ -28,7 +28,7 @@ import {
   avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
   senderName, tagsOfMessage,
 } from "../shell/format";
-import { useSenderCheckWords } from "../shell/sender-check";
+import { useSenderCheckWords } from "../screening/sender-check";
 import { displayAddressee, displayAddressUnder } from "@ohmail/app-logic/text/idn";
 import { BodyText } from "@ohmail/letter-body";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";

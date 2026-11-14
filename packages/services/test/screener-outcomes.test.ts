@@ -6,7 +6,7 @@ import { accounts, routingDecisions } from "@trafficflow/db";
 import type { LedgerTx, Tx } from "@trafficflow/db";
 import type { ClassifierPort, ClassifierInput, ClassifierResult, Destination } from "@trafficflow/core";
 import { ScreenerService } from "../src/index.js";
-import { makeCtx, seedMessage, FakeAdapter } from "./helpers.js";
+import { makeSuggestionCtx, seedMessage, FakeAdapter } from "./helpers.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
 
 /**
@@ -32,7 +32,7 @@ class FixedClassifier implements ClassifierPort {
 
 /** An account and a RECORDING spend port — the same shape `screener-ai.test.ts` builds. */
 async function billable() {
-  const w = await makeCtx(NOW);
+  const w = await makeSuggestionCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener" });
   return { ...w, credits: fakeSpendPort() };
 }

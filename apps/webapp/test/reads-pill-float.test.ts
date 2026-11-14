@@ -21,6 +21,13 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ActionPanel } from "@ohmail/ui/mail";
+import { entryCss } from "../../../packages/ui/test/compare/harness.js";
+import { launch } from "../../../test/compare/render.mjs";
 
 /** Comments stripped: this file's subject is what the stylesheet DECLARES, and every rule here
     is documented in prose that quotes the declaration it is about. */
@@ -29,7 +36,7 @@ const css = (rel: string): string =>
 const stream = (): string => css("../../../packages/ui/src/composites/stream.css");
 const toast = (): string => css("../../../packages/ui/src/primitives/toast.css");
 const app = (): string => css("../app/app.css");
-const abar = (): string => css("../app/shell/action-bar.css");
+const touchKeys = (): string => css("../../../packages/app/src/keys/touch-keys.css");
 
 /** The rule whose selector begins a line — the base rule, never a scoped override. */
 const ruleFor = (src: string, selector: string): string => {
@@ -141,62 +148,48 @@ describe("the reading card's pill floats", () => {
       .toContain("bottom:calc(72px + env(safe-area-inset-bottom,0px))");
   });
 
-  it("THE READING COLUMN'S 12px IS DELIBERATELY BARE, AND THE READER SHEET'S IS NOT", () => {
-    /**
-     * These two look like the same omission and are not, which is why the difference is written
-     * down rather than levelled.
-     *
-     * `.msg-actions{bottom:12px}` in the reading column is one half of a pair: `.msg` pads 12px
-     * at its bottom and `.read-col` pads none, so the bar's RESTING gap and its PINNED gap are
-     * the same 12px — the invariant `action-bar.test.ts` calls "the resting position is the
-     * pinned position". Adding an inset to the pinned half alone breaks that pair, and the
-     * assertion below is what says so.
-     *
-     * THE REASON THIS IS CHEAP TO LEAVE IS NARROWER THAN IT FIRST READ, AND THE FIRST VERSION OF
-     * THIS COMMENT WAS WRONG. It said the column is not rendered under 700px. Classic layout does
-     * collapse it there, but Zero layout keeps the split alive and renders `.read-col` from 722px
-     * (`zero-layout.css`, the `min-width:722px and max-width:1023.98px` tier) — inside the band where
-     * a phone or tablet can have a bottom inset. So the honest statement is the trade, not an
-     * absence: in that band the resting gap and the pinned gap stay equal to each other, and both
-     * sit 12px above a scrollport whose own reservation already carries the inset. Levelling the
-     * pinned half alone would buy indicator clearance by breaking the pair. If that trade is ever
-     * to be revisited it has to move BOTH halves together.
-     *
-     * The reader sheet is the opposite case — on a phone the overlay IS the whole viewport — and
-     * it carries the inset already, scoped to itself.
-     */
-    const message = css("../../../packages/ui/src/composites/message.css");
-    expect(ruleFor(message, ".msg-actions")).toContain("bottom:12px");
-    expect(css("../../../packages/ui/src/composites/reader.css"))
-      .toContain(".reader .msg-actions{bottom:calc(12px + env(safe-area-inset-bottom,0px))}");
-    /* AND NO SCOPED OVERRIDE SMUGGLES THE INSET BACK IN. Checking only the base declaration left
-       the invariant open to a `.read-col .msg-actions{bottom:calc(12px + env(…))}` added beside
-       it — which breaks the pair exactly as editing the base would, and passed. Review found it.
-       Any rule that targets the column's bar and sets `bottom` is the thing being forbidden. */
-    for (const file of ["message.css", "reader.css"]) {
-      const src = css(`../../../packages/ui/src/composites/${file}`);
-      expect(src, `${file} gives the reading column's bar its own bottom offset — the resting and pinned gaps are no longer the same 12px`)
-        .not.toMatch(/\.read-col[^{}]*\.msg-actions[^{}]*\{[^}]*bottom:/);
-    }
-  });
+  it("KEYCAPS DO NOT RENDER WHERE THERE ARE NO KEYS", async () => {
+    const touch = touchKeys();
+    const coarse = mediaBlock(touch, "pointer: coarse");
+    expect(coarse, "touch-keys.css has no coarse-pointer block").not.toBe("");
+    expect(coarse).toMatch(/button kbd\s*\{[^}]*display:\s*none/);
 
-  it("KEYCAPS DO NOT RENDER WHERE THERE ARE NO KEYS", () => {
-    /**
-     * `touch-keys.css` hides the top bar's ⌘K, the reader's "esc to return", the decision
-     * capsules' letters and the rail's Command row — and it never reached the action pill, so
-     * `r` and `⇧f` were on screen at 390px on every message and Reads pill, and `⇧U` and `esc`
-     * on the selection strip.
-     *
-     * The rule lives in `action-bar.css` and not in `touch-keys.css` because the declaration it
-     * has to beat is `.abar kbd` in that same file, where order settles it; a cross-file
-     * override would need the specificity games every selector in `touch-keys.css` plays.
-     *
-     * Mutation watched red: change the declaration to `display:inline-block` — `fit-render`
-     * reports "8 keycap(s) are laid out on a coarse-pointer device" at 390 on both faces.
-     */
-    const coarse = mediaBlock(abar(), "pointer: coarse");
-    expect(coarse, "action-bar.css has no coarse-pointer block").not.toBe("");
-    expect(coarse).toMatch(/\.abar kbd\s*\{[^}]*display:\s*none/);
+    const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as
+      typeof import("@playwright/test");
+    const browser = await launch(chromium);
+    try {
+      const panel = renderToStaticMarkup(createElement(ActionPanel, {
+        label: "Actions",
+        keysShown: true,
+        items: [
+          { id: "reply", label: "Reply", keyHint: "r", onPress: () => {} },
+          { id: "forward", label: "Forward", keyHint: "⇧f", onPress: () => {} },
+        ],
+      }));
+      const styles = await entryCss("mail");
+      // Keep the frame's touch stamp unset here to exercise the pointer media rule itself.
+      const markup = `<!doctype html><html data-face="paper" data-scheme="light"><head>
+        <style>${styles}
+${touch}</style></head><body><div class="oh-root">${panel}</div></body></html>`;
+
+      for (const hasTouch of [false, true]) {
+        const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch });
+        try {
+          await page.setContent(markup);
+          expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(hasTouch);
+          const toolbar = page.getByRole("toolbar", { name: "Actions" });
+          const reply = toolbar.getByRole("button", { name: "Reply" });
+          const forward = toolbar.getByRole("button", { name: "Forward" });
+          expect(await reply.isVisible()).toBe(true);
+          expect(await forward.isVisible()).toBe(true);
+          expect(await toolbar.locator("kbd:visible").allTextContents()).toEqual(hasTouch ? [] : ["r", "⇧f"]);
+        } finally {
+          await page.close();
+        }
+      }
+    } finally {
+      await browser.close();
+    }
   });
 
   it("THE SCREENER'S FULL-SCREEN READ RESERVES WHAT EVERY OTHER SCROLLER DOES", () => {

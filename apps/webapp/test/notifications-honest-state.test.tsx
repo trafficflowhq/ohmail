@@ -7,7 +7,12 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { MAIL_NOTICE_KINDS, type NoticeKind, type NoticePermission } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import messages from "../messages/en.json";
-import { SettingsView, type NotificationsMeta } from "../app/views/SettingsView";
+import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
+import { NONE } from "@ohmail/app/host";
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { DemoShell } from "../app/(product)/demo/DemoShell";
+import { WEB_MAIL_PARTS } from "../app/(product)/mailbox/mail-parts";
+import { MailFrame, useBrowserMail } from "../app/shell/browser-mail";
 import {
   NOTIFICATION_CHANNELS_KEY,
   /* THE STORED VALUE the emitter reads before every notice — the only thing that actually stops
@@ -45,17 +50,6 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const settingsCopy = (messages as unknown as { settings: Record<string, string> }).settings;
-
-const DEMO_META: NotificationsMeta = {
-  vipLabel: "VIP — always notifies",
-  vips: ["Petra Muhr"],
-  learnedSuggestion: {
-    text: "You usually open Petra's mail within 5 minutes.",
-    target: "Petra Muhr",
-    acceptedToast: "Added.",
-    dismissedToast: "Okay.",
-  },
-};
 
 /** A host that answers a fixed platform state; `request` reports what the OS would settle on. */
 /** An emitter that draws `carries`, as a surface hands one in. */
@@ -96,33 +90,38 @@ afterEach(async () => {
   await act(async () => { root?.unmount(); });
   root = null;
   host.remove();
+  window.history.replaceState(null, "", "/");
   window.localStorage.clear();
 });
 
-async function renderPane(
-  notifications: NotificationsMeta | null,
-  notificationHost: NotificationHost = hostAt("granted"),
-): Promise<void> {
+function WebSettings({ door }: { door: NotificationHost }) {
+  const scope = "account-b";
+  const frame = useBrowserMail(NONE, WEB_MAIL_PARTS);
+  const { host } = fakeHost({ engine: NO_ENGINE, scope, service: "self", places: { settings: frame.places.settings } });
+  const consent = useConsentState(false, scope, NONE);
+  return h(ConsentContext.Provider, { value: consent }, h(MailFrame, {
+    host: { ...host, device: { ...host.device, address: frame.address, notifications: door } },
+  }));
+}
+
+async function renderSettings(pane: React.ReactNode): Promise<void> {
+  window.history.replaceState(null, "", "#/settings/notifications");
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        timeZone: "UTC",
-        children: h(ThemeProvider, {
-          children: h(ToastHost, {
-            children: h(SettingsView, {
-              notifications,
-              tags: [],
-              tagCounts: {},
-              initialPane: "notifications",
-              notificationHost,
-            }),
-          }),
-        }),
-      }),
-    );
+    root!.render(h(NextIntlClientProvider, {
+      locale: "en",
+      messages,
+      timeZone: "UTC",
+      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, null, pane) }),
+    }));
   });
+}
+
+function renderPane(door: NotificationHost = hostAt("granted")): Promise<void> {
+  return renderSettings(h(WebSettings, { door }));
+}
+
+async function renderDemo(): Promise<void> {
+  await renderSettings(h(DemoShell, { serverDemo: true, says: { service: "managed", sendCeiling: "strict" } }));
 }
 
 /** Every switch on the pane — the `Switch` primitive renders `role="switch"`. */
@@ -135,7 +134,7 @@ function switchFor(label: string): HTMLElement | undefined {
 
 describe("a granted platform — the switches are real", () => {
   it("renders the master and a switch for each kind this surface's emitter draws, and no other", async () => {
-    await renderPane(null);
+    await renderPane();
     // master + the four mail kinds the emitter carries. No switch says who a notice is from or
     // what its subject is: no notice has a place for either.
     expect(switches().map((s) => s.getAttribute("aria-label"))).toEqual(
@@ -144,24 +143,24 @@ describe("a granted platform — the switches are real", () => {
   });
 
   it("offers no switch for a kind the emitter does not draw, and none at all where there is no emitter", async () => {
-    await renderPane(null, { ...hostAt("granted"), emitter: carrying(["ohbox", "cal_alert"]) });
+    await renderPane({ ...hostAt("granted"), emitter: carrying(["ohbox", "cal_alert"]) });
     expect(switches().map((s) => s.getAttribute("aria-label"))).toEqual([settingsCopy.notifyMaster, settingsCopy.notifyOhbox]);
-    await renderPane(null, { ...hostAt("granted"), emitter: "none" });
+    await renderPane({ ...hostAt("granted"), emitter: "none" });
     expect(switches().map((s) => s.getAttribute("aria-label")), "a switch that could change nothing").toEqual([settingsCopy.notifyMaster]);
   });
 
   it("says the privacy sentence, which is now TRUE of the code beneath it", async () => {
-    await renderPane(null);
+    await renderPane();
     expect(host.textContent).toContain(settingsCopy.notificationPrivacy!);
   });
 
   it("says how far the choice reaches — these are this device's", async () => {
-    await renderPane(null);
+    await renderPane();
     expect(host.textContent).toContain(settingsCopy.notifyReach!);
   });
 
   it("the master press is written to storage and rendered back", async () => {
-    await renderPane(null);
+    await renderPane();
     const master = switchFor(settingsCopy.notifyMaster!)!;
     expect(master.getAttribute("aria-checked")).toBe("true");
     await act(async () => { master.click(); });
@@ -170,7 +169,7 @@ describe("a granted platform — the switches are real", () => {
   });
 
   it("master OFF withdraws the event switches — no control that cannot act", async () => {
-    await renderPane(null);
+    await renderPane();
     await act(async () => { switchFor(settingsCopy.notifyMaster!)!.click(); });
     expect(switches()).toHaveLength(1);
     expect(switchFor(settingsCopy.notifyOhbox!)).toBeUndefined();
@@ -179,7 +178,7 @@ describe("a granted platform — the switches are real", () => {
 
 describe("a platform that refuses — no switch may claim ON", () => {
   it("DENIED: the master is disabled, unchecked, and the four events are gone", async () => {
-    await renderPane(null, hostAt("denied"));
+    await renderPane(hostAt("denied"));
     const master = switchFor(settingsCopy.notifyMaster!)!;
     expect(master.getAttribute("aria-checked"), "a switch claimed ON under a denied OS").toBe("false");
     expect((master as HTMLButtonElement).disabled).toBe(true);
@@ -187,26 +186,26 @@ describe("a platform that refuses — no switch may claim ON", () => {
   });
 
   it("DENIED: names the system settings, and never tells anyone to turn it on here", async () => {
-    await renderPane(null, hostAt("denied"));
+    await renderPane(hostAt("denied"));
     expect(host.textContent).toContain(settingsCopy.notifyDenied!);
   });
 
   it("UNSUPPORTED: says so, and is not confused with a refusal", async () => {
-    await renderPane(null, hostAt("unsupported"));
+    await renderPane(hostAt("unsupported"));
     expect(host.textContent).toContain(settingsCopy.notifyUnsupported!);
     expect(host.textContent).not.toContain(settingsCopy.notifyDenied!);
     expect((switchFor(settingsCopy.notifyMaster!) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("DEFAULT: says an ask is coming, and shows no event switches until it is answered", async () => {
-    await renderPane(null, hostAt("default"));
+    await renderPane(hostAt("default"));
     expect(host.textContent).toContain(settingsCopy.notifyAskFirst!);
     expect(switches()).toHaveLength(1);
     expect(switchFor(settingsCopy.notifyMaster!)!.getAttribute("aria-checked")).toBe("false");
   });
 
   it("DEFAULT then REFUSED at the prompt leaves the master OFF, not ON", async () => {
-    await renderPane(null, hostAt("default", "denied"));
+    await renderPane(hostAt("default", "denied"));
     await act(async () => { switchFor(settingsCopy.notifyMaster!)!.click(); });
     expect(
       switchFor(settingsCopy.notifyMaster!)!.getAttribute("aria-checked"),
@@ -216,7 +215,7 @@ describe("a platform that refuses — no switch may claim ON", () => {
   });
 
   it("DEFAULT then GRANTED at the prompt turns it on and reveals the events", async () => {
-    await renderPane(null, hostAt("default", "granted"));
+    await renderPane(hostAt("default", "granted"));
     await act(async () => { switchFor(settingsCopy.notifyMaster!)!.click(); });
     expect(switchFor(settingsCopy.notifyMaster!)!.getAttribute("aria-checked")).toBe("true");
     expect(switchFor(settingsCopy.notifyOhbox!)).toBeDefined();
@@ -258,7 +257,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
   };
 
   it("SAYS WHO HAS THE LAST WORD — the switch asks, the computer decides", async () => {
-    await renderPane(null, desktopHost);
+    await renderPane(desktopHost);
     expect(host.textContent ?? "").toContain(messages.settings.notifyOsHeld);
   });
 
@@ -266,7 +265,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
     /* `permission()` answers a NARROWER question on this door — may this window ask the shell —
        so `denied`, `unsupported` and `default` are all untrue here. Two sentences making
        different promises about one state is the shape this pane exists to remove. */
-    await renderPane(null, { ...desktopHost, permission: () => "default", request: () => Promise.resolve("default") });
+    await renderPane({ ...desktopHost, permission: () => "default", request: () => Promise.resolve("default") });
     const text = host.textContent ?? "";
     expect(text, "the browser's 'your device will ask' sentence reached a host that cannot ask")
       .not.toContain(messages.settings.notifyAskFirst);
@@ -284,7 +283,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
      *
      * The switch was not merely stuck. It was stuck showing the OPPOSITE of what the app was
      * doing, and the person had no way to stop the notices it said were already off. */
-    await renderPane(null, desktopHost);
+    await renderPane(desktopHost);
     const master = switchFor(messages.settings.notifyMaster)!;
     expect(
       master.getAttribute("aria-checked"),
@@ -296,7 +295,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
   });
 
   it("AND TURNING IT OFF IS WRITTEN — the press the released build swallowed", async () => {
-    await renderPane(null, desktopHost);
+    await renderPane(desktopHost);
     await act(async () => { switchFor(messages.settings.notifyMaster)!.click(); });
     expect(
       switchFor(messages.settings.notifyMaster)!.getAttribute("aria-checked"),
@@ -317,7 +316,7 @@ describe("A HOST THAT CANNOT READ THE OS ANSWER — the desktop window", () => {
   });
 
   it("CONTROL: a browser host is unchanged — no OS sentence, its own three intact", async () => {
-    await renderPane(null, hostAt("default"));
+    await renderPane(hostAt("default"));
     const text = host.textContent ?? "";
     expect(text).toContain(messages.settings.notifyAskFirst);
     expect(text, "the desktop's sentence reached a browser tab")
@@ -334,30 +333,30 @@ describe("the stored intent is reconciled on ARRIVAL, not only on a press", () =
      * build — got a pane saying yes to everything over a browser no server could reach.
      */
     const h = hostSyncing("granted");
-    await renderPane(null, h);
+    await renderPane(h);
     expect(h.asked, "nothing reconciled the stored intent on mount").toEqual([true]);
   });
 
   it("asks for NO subscription on mount when the platform refuses", async () => {
     const h = hostSyncing("denied");
-    await renderPane(null, h);
+    await renderPane(h);
     expect(h.asked).toEqual([false]);
   });
 });
 
 describe("a server that cannot deliver says so — a switch may not imply otherwise", () => {
   it("renders the no-signing-key sentence when the server has no keypair", async () => {
-    await renderPane(null, hostSyncing("granted", "no_server_key"));
+    await renderPane(hostSyncing("granted", "no_server_key"));
     expect(host.textContent).toContain(settingsCopy.notifyNoServerKey!);
   });
 
   it("says when a server row outlived the browser it pointed at", async () => {
-    await renderPane(null, hostSyncing("granted", "row_remains"));
+    await renderPane(hostSyncing("granted", "row_remains"));
     expect(host.textContent).toContain(settingsCopy.notifyRowRemains!);
   });
 
   it("says nothing extra when the reconciliation was ordinary", async () => {
-    await renderPane(null, hostSyncing("granted", "subscribed"));
+    await renderPane(hostSyncing("granted", "subscribed"));
     expect(host.textContent).not.toContain(settingsCopy.notifyNoServerKey!);
     expect(host.textContent).not.toContain(settingsCopy.notifyRowRemains!);
     expect(host.textContent).not.toContain(settingsCopy.notifyNotRegistered!);
@@ -372,13 +371,13 @@ describe("the dead sentence is gone from the shipping catalogue", () => {
 
 describe("SET-M1 — the demo world keeps the prototype screen", () => {
   it("with the mirror's meta present, the channel switches render", async () => {
-    await renderPane(DEMO_META);
+    await renderDemo();
     expect(switches().length, "the demo lost its Notifications prototype").toBeGreaterThan(0);
     expect(host.textContent).toContain("VIP — always notifies");
   });
 
   it("and the real per-device controls do not also appear", async () => {
-    await renderPane(DEMO_META);
+    await renderDemo();
     expect(switchFor(settingsCopy.notifyMaster!)).toBeUndefined();
   });
 });

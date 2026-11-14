@@ -2,8 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 import { fillFrom } from "../app/shell/locale";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
@@ -76,6 +75,7 @@ let stored: Wire;
 let patchBodies: Array<{ ohboxBar?: unknown }>;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+let Frame: ReturnType<typeof import("./fixtures/screening-settings.js").screeningSettingsFrame> | null = null;
 
 const json = (v: unknown): Response =>
   new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
@@ -102,30 +102,26 @@ const flush = async (): Promise<void> => {
 
 /** Render (or re-render, for the language switch) the pane under one catalogue. */
 async function show(locale: "en" | "de"): Promise<void> {
-  const { ScreeningSection } = await import("../app/shell/ScreeningSection.js");
+  const { screeningSettingsFrame } = await import("./fixtures/screening-settings.js");
   const messages = locale === "de" ? GERMAN : en;
   if (!root) {
+    Frame = screeningSettingsFrame();
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
   }
   await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale, messages, timeZone: "UTC",
-        children: h(ThemeProvider, { storageKey: null, children: h(ScreeningSection) }),
-      }),
-    );
+    root!.render(h(Frame!, { locale, messages }));
   });
   await flush();
 }
 
 const textarea = (): HTMLTextAreaElement =>
-  host!.querySelector(".set-screening-textarea") as HTMLTextAreaElement;
+  within(host!).getByRole<HTMLTextAreaElement>("textbox", {
+    name: (name) => [en.settings.screening.barLabel, GERMAN.settings.screening.barLabel].includes(name),
+  });
 const buttonNamed = (label: string): HTMLButtonElement | undefined =>
-  Array.from(host!.querySelectorAll("button")).find(
-    (b) => (b.textContent ?? "").trim() === label,
-  ) as HTMLButtonElement | undefined;
+  within(host!).queryByRole<HTMLButtonElement>("button", { name: label }) ?? undefined;
 const saveButton = (locale: "en" | "de"): HTMLButtonElement =>
   buttonNamed((locale === "de" ? GERMAN : en).settings.screening.save)!;
 

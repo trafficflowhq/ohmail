@@ -1,0 +1,18 @@
+@layer oh {
+  .write-verbs {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .write-discard-reason {
+    margin-block: 0 var(--s2);
+    padding: var(--s1) var(--s3) var(--s2);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    overflow-wrap: anywhere;
+  }
+}

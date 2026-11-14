@@ -2,11 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
-import { parseHash } from "../app/shell/routing";
-import { initialPaneFromUrl } from "../app/views/SettingsView";
+import { routeOf } from "@ohmail/app/frame/route";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
@@ -29,8 +27,11 @@ import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
  * **arriving at the bounce URL with no fragment at all completes the ceremony and puts the browser on
  * Settings → Mailboxes**, with no component mounted at the time.
  *
- * The route assertions go through `parseHash` and `initialPaneFromUrl` — the REAL routers — rather
- * than comparing strings, so a URL that merely looks right but routes to the Ohbox fails here.
+ * The route assertions go through `routeOf` — the REAL router, the mail frame's, which reads the fragment alone —
+ * rather than comparing strings, so a URL that merely looks right but routes to the Ohbox fails here. (Today's two
+ * routers, `parseHash` and the Settings view's `initialPaneFromUrl` reading `?settings=`, leave with today's shell.)
+ * The pane is Settings' Mailboxes pane as the web draws it: the mail's own pane (`MailboxesPane`) over the web's own
+ * wires, the list's (`webMailboxesWire`) and the connect's (`webConnectWire`, which reads the landing's store).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -135,19 +136,33 @@ async function settle(): Promise<void> {
   await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
 }
 
-/** Mount the pane AFTER the fact, which is the whole point: it renders an outcome it did not cause. */
+/**
+ * Mount the pane AFTER the fact, which is the whole point: it renders an outcome it did not cause. Settings ›
+ * Mailboxes as the web draws it, its connect door the web's own over the page's return store (the landing's).
+ */
 async function mountPane(): Promise<HTMLDivElement> {
   await unmount();
-  const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
+  const { MailboxesPane } = await import("@ohmail/app/mailboxes");
+  const { TextProvider } = await import("@ohmail/app/text");
+  const { NONE } = await import("@ohmail/app/host");
+  const { webMailboxesWire } = await import("../app/(product)/mailbox/mailboxes-wire.js");
+  const { webConnectWire } = await import("../app/(product)/mailbox/connect-wire.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+  const pane = h(MailboxesPane, {
+    wire: webMailboxesWire(), connect: webConnectWire({ owner: () => null, returned: "page" }), capability: "here",
+    service: "managed", factor: NONE, calendar: NONE, opened: null, stage: true, subscriptionPane: false,
+    go: () => undefined, ground: { importing: false, refresh: () => undefined, sync: () => undefined }, hidden: () => false,
+  });
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(MailboxSection) }));
+    root!.render(h(TextProvider, { locale: "en", messages: messages as never, timeZone: "UTC", children: pane }));
   });
   await settle();
   return host;
 }
+/** Where the browser now stands, read by the mail frame's own router. */
+const landed = () => routeOf(window.location.hash);
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
 
@@ -179,8 +194,8 @@ describe("the consent return is finished by the LANDING, not by a pane", () => {
     ]);
 
     // 2. THE ROUTE IS CORRECTED — through the real routers, not by matching a string.
-    expect(parseHash(window.location.hash).view, "the settings VIEW is open").toBe("settings");
-    expect(initialPaneFromUrl(), "on the Mailboxes PANE").toBe("mailboxes");
+    expect(landed().place, "the settings VIEW is open").toBe("settings");
+    expect(landed().sub, "on the Mailboxes PANE").toBe("mailboxes");
 
     // 3. THE SINGLE-USE VALUES ARE GONE, and they were gone BEFORE the POST — an authorization code
     //    must not sit in an address bar for the length of an IMAP probe.
@@ -198,8 +213,8 @@ describe("the consent return is finished by the LANDING, not by a pane", () => {
     mod.beginOAuthReturn();
     await settle();
     expect(mockCompleteCalls).toHaveLength(1);
-    expect(parseHash(window.location.hash).view).toBe("settings");
-    expect(initialPaneFromUrl()).toBe("mailboxes");
+    expect(landed().place).toBe("settings");
+    expect(landed().sub).toBe("mailboxes");
   });
 
   it("spends the state ONCE, however many times it is asked to", async () => {
@@ -244,8 +259,8 @@ describe("the pane RENDERS the outcome it did not cause", () => {
 
     // The screen is still the one the sentence belongs on. This is the half that was missing: a
     // failure used to be reported into a pane nobody was looking at.
-    expect(parseHash(window.location.hash).view).toBe("settings");
-    expect(initialPaneFromUrl()).toBe("mailboxes");
+    expect(landed().place).toBe("settings");
+    expect(landed().sub).toBe("mailboxes");
 
     const el = await mountPane();
     const alert = el.querySelector('[role="alert"]');
@@ -259,8 +274,8 @@ describe("the pane RENDERS the outcome it did not cause", () => {
     await settle();
 
     expect(mockCompleteCalls, "there is nothing to complete").toHaveLength(0);
-    expect(parseHash(window.location.hash).view).toBe("settings");
-    expect(initialPaneFromUrl()).toBe("mailboxes");
+    expect(landed().place).toBe("settings");
+    expect(landed().sub).toBe("mailboxes");
 
     const el = await mountPane();
     expect(text(el)).toContain(copy.oauth_admin_consent_required!);
@@ -293,8 +308,8 @@ describe("the Cloud client's BOOT is what runs the ceremony", () => {
     await settle();
 
     expect(mockCompleteCalls).toEqual([{ state: "BOOT", code: "BOOTCODE" }]);
-    expect(parseHash(window.location.hash).view).toBe("settings");
-    expect(initialPaneFromUrl()).toBe("mailboxes");
+    expect(landed().place).toBe("settings");
+    expect(landed().sub).toBe("mailboxes");
     // …and the module store is the same one the pane reads, so the answer is not stranded.
     expect(mod.oauthOutcome()?.kind).toBe("connected");
   });

@@ -28,6 +28,8 @@
  * door stands at all.
  */
 
+import { imageProxyUrl } from "./image-proxy-url.js";
+export { imageProxyUrl } from "./image-proxy-url.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   INLINE_IMAGE_MAX_BYTES, INLINE_IMAGE_MAX_PARTS, INLINE_IMAGE_MAX_TOTAL_BYTES,
@@ -92,25 +94,6 @@ export interface RemoteImagesChrome {
   needRemote: (messageId: string, urls: string[]) => void;
 }
 
-/**
- * `GET /img?mid=…&u=…` for one image, as an absolute same-origin url. Exported and pure so the
- * property that matters is asserted directly: the sender's host never appears in the request's
- * ORIGIN, only in its query — a test that only read the `src` string would pass on
- * `https://evil.example/x.png` too. `origin` is a parameter for the reason `createEngine` takes its
- * env: a test drives the real function instead of a copy.
- */
-export function imageProxyUrl(
-  base: string,
-  origin: string,
-  messageId: string,
-  url: string,
-): string {
-  const u = new URL(`${base}/img`, origin);
-  u.searchParams.set("mid", messageId);
-  u.searchParams.set("u", url);
-  return u.toString();
-}
-
 export interface RemoteImagesOptions {
   /** Say why the consent could not be recorded. The server's own sentence, never a guess. */
   onFailed: (message: string) => void;
@@ -124,6 +107,8 @@ export interface RemoteImagesOptions {
    * allowed, which is the desktop and the demo: no cookie jar, no question.
    */
   mayRead?: () => boolean;
+  /** The current owner of a consent write, or null until confirmed. A standalone wire owns its own receipts. */
+  consentOwner?: () => object | null;
   /**
    * THE ACCOUNT'S OWN ANSWER — `"auto"` (the product default: pictures load through the proxy on
    * open) or `"manual"` (the per-message consent flow, which this product shipped with).
@@ -212,6 +197,8 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   /** The host's wire, read at USE time: a press or a rendering always meets the wire this mount stands over now. */
   const wireRef = useRef(wireOf(opts.wire));
   wireRef.current = wireOf(opts.wire);
+  const consentOwnerRef = useRef(opts.consentOwner);
+  consentOwnerRef.current = opts.consentOwner;
 
   /** Read through a ref so the predicate is consulted at USE time, not at render time. */
   const mayReadRef = useRef(opts.mayRead);
@@ -275,19 +262,25 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
       // One write per message. A second press while the first is in flight would spend a
       // second `cost: "work"` invocation for an idempotent flip nobody is waiting on twice.
       if (allowed.has(messageId) || pending.has(messageId)) return;
-      // No wire: the press records nothing and admits nothing.
       const wire = wireRef.current;
       if (wire === "none") return;
+      // A stale window can still have the button that was drawn for the previous account.
+      const ownerNow = () => consentOwnerRef.current ? consentOwnerRef.current() : wireRef.current;
+      const owner = ownerNow();
+      if (owner === null) return;
+      const stillOwns = () => wireRef.current === wire && ownerNow() === owner;
       setPending((p) => new Set(p).add(messageId));
       void (async () => {
         try {
           await wire.record(messageId);
+          // The answer belongs to the window and wire that made the press.
+          if (!stillOwns()) return;
           setAllowed((a) => new Set(a).add(messageId));
         } catch (err) {
           // Nothing is admitted. See the header: a local flag the server did not record is a
           // message that shows images once and never again, with no explanation either time.
           // The wire words its own refusal: it rejects with the sentence to show.
-          onFailedRef.current(err instanceof Error ? err.message : String(err));
+          if (stillOwns()) onFailedRef.current(err instanceof Error ? err.message : String(err));
         } finally {
           setPending((p) => {
             const next = new Set(p);

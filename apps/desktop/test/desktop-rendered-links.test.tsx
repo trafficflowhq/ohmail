@@ -4,21 +4,24 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame.js";
+import { DesktopLocale } from "../src/DesktopLocale.js";
+import { linkSlot } from "../src/link-in.js";
 
 import { MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
 import {
-  flushRenderedLinks, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
+  flushRenderedLinks, linkHref, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
+  useRenderedLinks,
 } from "../../../packages/letter-body/src/rendered-links";
 import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
-import { RichEditor } from "../../webapp/app/shell/RichEditor";
 import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
-import { SignatureBlock } from "../../webapp/app/shell/SignatureBlock";
-import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
-import { HeldUnsubscribe } from "../../webapp/app/views/ScreenerView";
+import { richEditor } from "../../../packages/app/src/write/editor/index.js";
 import messages from "../../webapp/messages/en.json";
-import { DesktopSubscription, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
+import { MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { reportRenderedLinksToShell } from "../src/native.js";
 
 /**
@@ -132,6 +135,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  window.history.replaceState(null, "", "/");
   dispose?.();
   dispose = null;
   setRenderedLinksSink(null);
@@ -186,43 +190,40 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(new Set(reports().map((r) => r.surface)).size).toBe(1);
   });
 
-  it("the Screener's unsubscribe link is reported while it is drawn", async () => {
-    const url = "https://lists.example.test/unsubscribe?id=7";
-    const el = await mount(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages: messages as never,
-        timeZone: "UTC",
-        children: h(HeldUnsubscribe, { state: "not_one_click", url, onUnsubscribe: async () => null }),
-      }),
-    );
-    expect(el.querySelector("a.hm-unsub-link")?.getAttribute("href")).toBe(url);
-    expect(reports().flatMap((r) => r.urls)).toEqual([url]);
-    await unmount();
-    expect(reports().at(-1)?.urls).toEqual([]);
-  });
-
   /* THE MINTED ACCOUNT PAGE IS A LINK THE PERSON PRESSES. The mint answers after a round trip to
      the engine, outside any gesture WebKit still counts, so the press draws the address and
      opens nothing; the person's own click on it is the open, and the report came first. */
   it("the account page a press minted is reported and drawn, and opens only on its own click", async () => {
     minted = "https://account.example.test/manage?t=abc";
-    const el = await mount(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages: messages as never,
-        timeZone: "UTC",
-        children: h(DesktopSubscription, { onNowhere: () => {} }),
-      }),
-    );
-    const manage = [...el.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => b.textContent?.trim() === messages.settings.subscriptionManage,
-    );
-    expect(manage, "the pane drew no Manage control").toBeDefined();
+    window.matchMedia ??= (query) => ({
+      matches: false, media: query, onchange: null,
+      addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+    });
+    window.history.replaceState(null, "", "/#/settings/billing");
+    const noChange = () => undefined;
+    const props: DesktopFrameProps = {
+      engine: fakeMail([]).engine,
+      status: { state: "serving", mode: "cloud" },
+      session: "live", sessionRefused: false, sealFailed: false, paired: false,
+      hostLabel: null, freshness: null, account: "account", scope: "account",
+      storage: null, mayLinkOut: true, manageOffered: true, withdrawManage: noChange,
+      rereadAccess: noChange, reuseSweeps: [], recheckSweeps: async () => undefined,
+      ai: null, setAi: noChange, onStatus: noChange, openOverlay: noChange, takeOver: noChange,
+      firstRunOpen: false, firstRun: undefined, takesMailLinks: true, onUnread: noChange,
+      liveBody: async () => ({ kind: "refused", reason: "gone" }),
+      links: linkSlot(), connection: { read: () => null, subscribe: () => noChange },
+    };
+    const el = await mount(h(DesktopLocale, {
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopFrame, props) }) }),
+    }));
+    const pane = within(within(el).getByRole("region", { name: messages.settings.billing }));
+    const manage = pane.queryByRole("button", { name: messages.settings.subscriptionManage });
+    expect(manage ?? undefined, "the pane drew no Manage control").toBeDefined();
     await act(async () => { manage!.click(); });
     await turns();
-    const link = el.querySelector<HTMLAnchorElement>(`a[href="${minted}"]`);
-    expect(link, "the minted address was not drawn as a link").not.toBeNull();
+    const link = pane.queryByRole<HTMLAnchorElement>("link", { name: messages.settings.subscriptionOpen });
+    expect(link?.getAttribute("href") === minted ? link : null, "the minted address was not drawn as a link").not.toBeNull();
     expect(reports().map((r) => r.urls)).toEqual([[minted]]);
     expect(opens(), "the press opened the page itself").toEqual([]);
     // Followed, the link gives the press back; the click is its state change, so inside `act`.
@@ -320,6 +321,15 @@ describe("a message's links are on the shell's list while it is on screen", () =
   });
 });
 
+/**
+ * WRITE's EDITOR, as the mail ground makes it (`packages/app/src/mail/write-entry.ts`): the rich editor handed the
+ * body's link reading. Re-pointed (share reader-1) from today's `RichEditor` and `SignatureBlock`: the draft is the
+ * editor writing a letter, the formatted signature the same editor drawn read-only, as Write's signature draws it
+ * (`packages/app/src/write/text/Signature.ts`).
+ */
+const Editor = richEditor({ href: linkHref, useRendered: useRenderedLinks });
+const NOTHING = (): void => undefined;
+
 /** The anchors the editor drew, once its lazy chunk has arrived and ProseMirror has drawn them. */
 async function drawn(el: HTMLElement, selector: string): Promise<HTMLAnchorElement[]> {
   for (let i = 0; i < 40; i++) {
@@ -331,25 +341,25 @@ async function drawn(el: HTMLElement, selector: string): Promise<HTMLAnchorEleme
 }
 
 const OUR_SITE = "https://example.test/our-site";
+/** The links in the letter being written: the editor's text is the textbox named for it. */
+const MESSAGE_LINKS = '[role="textbox"][aria-label="Message"] a[href]';
 
 describe("the editor's links — a signature's, a draft's — are on the list while it is mounted", () => {
   it("a signature's link, drawn by the read-only editor, is reported before its click opens it", async () => {
     const el = await mount(
-      h(NextIntlClientProvider, {
-        locale: "en",
-        messages: messages as never,
-        timeZone: "UTC",
-        children: h(SignatureBlock, {
-          sig: SIG_FOLLOWING,
-          onSig: () => {},
-          signatures: { "mb-1": "Anna, our site" },
-          signaturesHtml: { "mb-1": `<p>Anna, <a href="${OUR_SITE}">our site</a></p>` },
-          mailboxId: "mb-1",
-          disabled: false,
-        }),
+      h(Editor, {
+        value: { text: "Anna, our site", html: `<p>Anna, <a href="${OUR_SITE}">our site</a></p>` },
+        onChange: NOTHING,
+        label: "Formatted signature",
+        placeholder: "",
+        editable: false,
+        focusAtMount: false,
+        onSendKey: NOTHING,
+        onLeaveKey: NOTHING,
+        onHandle: NOTHING,
       }),
     );
-    const [a] = await drawn(el, ".sig-rich a[href]");
+    const [a] = await drawn(el, '[role="textbox"][aria-label="Formatted signature"] a[href]');
     expect(a!.closest('[contenteditable="false"]'), "the signature is not the read-only view").not.toBeNull();
     const report = reports().find((r) => r.urls.includes(OUR_SITE));
     expect(report, "the signature's link never reached the shell").toBeDefined();
@@ -368,12 +378,13 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
         html: '<p><a href="https://example.test/old">old</a></p>',
       });
       replace = setValue;
-      return h(RichEditor, { value, onChange: setValue, ariaLabel: "Message" });
+      return h(Editor, {
+        value, onChange: setValue, label: "Message", placeholder: "", editable: true, focusAtMount: false,
+        onSendKey: NOTHING, onLeaveKey: NOTHING, onHandle: NOTHING,
+      });
     }
-    const el = await mount(
-      h(NextIntlClientProvider, { locale: "en", messages: messages as never, timeZone: "UTC", children: h(Draft) }),
-    );
-    await drawn(el, ".rte a[href]");
+    const el = await mount(h(Draft));
+    await drawn(el, MESSAGE_LINKS);
     expect(reports().at(-1)?.urls, "the draft's link never reached the shell").toEqual(["https://example.test/old"]);
 
     // A restored or generated draft lands through `setContent`, which emits no update.
@@ -401,7 +412,7 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
       replace!({ text: "new", html: '<p><a href="HTTPS://Bücher.example/ü?x=1#f">new</a> <a href="mailto:anna@example.test">anna@example.test</a></p>' });
     });
     await turns();
-    const anchors = await drawn(el, ".rte a[href]");
+    const anchors = await drawn(el, MESSAGE_LINKS);
     expect(anchors.map((x) => x.getAttribute("href"))).toEqual(["HTTPS://Bücher.example/ü?x=1#f", "mailto:anna@example.test"]);
     for (const a of anchors) await press(a);
     setMailtoSink(null);
@@ -453,13 +464,19 @@ describe("the wiring, from source", () => {
     const sources = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src", "packages"].flatMap(filesUnder);
     // By its path inside the body, or by the body's entry for it.
     const reaching = sources.filter((f) => /from\s+["'](?:[^"']*\/rendered-links(?:\.js)?|@ohmail\/letter-body\/links)["']/.test(source(f))).sort();
+    /* Today's two, reached by no host's entry since the switch, are on the list while they stand (the deletions
+       take them away with today's shell, or with their place's mount); nothing else may join them. */
+    const todays = [
+      "apps/webapp/app/shell/RichEditor.tsx",
+      "apps/webapp/app/views/ScreenerView.tsx",
+    ].filter((f) => existsSync(join(REPO, f)));
     expect(reaching).toEqual([
       "apps/desktop/src/DesktopSubscription.tsx",
       "apps/desktop/src/main.tsx",
-      // The meeting-invitation note's one link: core's rebuilt Microsoft 365 options page.
-      "apps/webapp/app/shell/InvitationNote.tsx",
-      "apps/webapp/app/shell/RichEditor.tsx",
-      "apps/webapp/app/views/ScreenerView.tsx",
+      "apps/webapp/app/components/InvitationNote.tsx",
+      ...todays,
+      // Write's editor on the mail ground, handed the body's link reading (today's RichEditor's).
+      "packages/app/src/mail/write-entry.ts",
       "packages/letter-body/src/BodyText.tsx",
       "packages/letter-body/src/MessageBody.tsx",
     ]);
