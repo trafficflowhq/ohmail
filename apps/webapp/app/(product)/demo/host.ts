@@ -51,7 +51,7 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       places: frame.places,
       stages: frame.stages,
       overs: frame.overs,
-      reader: NONE,
+      reader: frame.reader,
       above: frame.above,
       calendar: frame.calendar,
     },

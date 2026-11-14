@@ -110,7 +110,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       places: has.frame.places,
       stages: has.frame.stages,
       overs: has.frame.overs,
-      reader: NONE,
+      reader: has.frame.reader,
       above: has.frame.above,
       calendar: has.frame.calendar,
     },

@@ -1,10 +1,10 @@
 /** @vitest-environment jsdom */
 /**
  * THE OLD SHELL'S COMPOSITION STANDS ONCE PER FRAME, ABOVE EVERY PANE. The real shell as the tests' door mounts it,
- * with ONE stub place of another body among today's places (`_stub-place.tsx`). A walk from a place of today's to the
- * stub place and back mounts nothing of the composition a second time and asks the consent wire nothing again; a send
- * pressed before the walk is answered on the machine that sent it; and at the stub place the app is whole: the rail,
- * the notices, the palette, the key sheet and the way to the composer.
+ * with the places every host hands: the Ohbox seated (a place of its own body), every other one of today's views. A
+ * walk between the seated Ohbox and a view of today's mounts nothing of the composition a second time and asks the
+ * consent wire nothing again; a send pressed before the walk is answered on the machine that sent it; and at the
+ * seated Ohbox the app is whole: the rail, the notices, the palette, the key sheet and the way to the composer.
  *
  * Each part is counted live through a wrapper of its own module: the real hook or provider runs, the wrapper counts
  * its mounts.
@@ -15,7 +15,6 @@ import type { EngineDraft, EngineMutation } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
 import { act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "../_draft-shell.js";
 import { settleEditor } from "../_first-paint.js";
-import { STUB_ADDRESS, STUB_SAYS } from "./_stub-place";
 
 type Part = "mailState" | "consentRow" | "composer" | "fileDoor" | "pictureDoor";
 const seen = vi.hoisted(() => ({
@@ -25,12 +24,6 @@ const seen = vi.hoisted(() => ({
   asks: 0,
   wires: new WeakSet<object>(),
 }));
-
-vi.mock("../../app/shell/todays-places", async (load) => {
-  const real = await load<typeof import("../../app/shell/todays-places")>();
-  const { STUB_PLACE } = await import("./_stub-place");
-  return { ...real, todaysPlaces: () => ({ ...real.todaysPlaces(), [STUB_PLACE.id]: STUB_PLACE }) };
-});
 
 vi.mock("@ohmail/app/mail-state", async (load) => {
   const real = await load<typeof import("@ohmail/app/mail-state")>();
@@ -150,7 +143,9 @@ const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind =
 const said = (): string => screen.queryAllByRole("status").map((notice) => notice.textContent ?? "").join(" | ");
 const saysSending = (): boolean => said().includes(SENDING);
 const saysOfMila = (): boolean => said().includes("Mila");
-const atTheStub = (): boolean => screen.queryByText(STUB_SAYS) !== null;
+/** The seated Ohbox is on screen: the frame draws its reading column. A view of today's stands in the wide pane. */
+const atTheOhbox = (): boolean => screen.queryByRole("region", { name: "Reading" }) !== null;
+const TODAYS_ADDRESS = "#/history";
 const subject = (): HTMLElement | null => screen.queryByRole("textbox", { name: en.compose.subject });
 /** How many entries the rail today's views feed holds; none where no fed rail stands. */
 const fedRailEntries = (): number => {
@@ -210,22 +205,22 @@ afterEach(async () => {
   await unmountAll();
 });
 
-describe("the old shell's composition over a walk to a place of another body and back", () => {
+describe("the old shell's composition over a walk from the seated Ohbox to a view of today's and back", () => {
   it("mounts the mail state, the consent row, the composer and the two doors once, and asks the consent wire once", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => within(s.el).queryAllByRole("option").length > 0, "today's Ohbox with its letter");
+    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox with its letter");
     await rounds(8);
     expect({ mounts: { ...seen.mounts }, live: { ...seen.live }, asks: seen.asks }, "as the frame mounted").toEqual({
       mounts: ONCE, live: ONCE, asks: 1,
     });
 
-    await visit(STUB_ADDRESS);
-    await waitFor(atTheStub, "the stub place");
+    await visit(TODAYS_ADDRESS);
+    await waitFor(() => !atTheOhbox(), "History, a view of today's");
     await rounds(8);
-    expect({ ...seen.live }, "at the stub place every part still stands, once").toEqual(ONCE);
+    expect({ ...seen.live }, "at a view of today's every part still stands, once").toEqual(ONCE);
 
     await visit("#/ohbox");
-    await waitFor(() => !atTheStub() && within(s.el).queryAllByRole("option").length > 0, "today's Ohbox again");
+    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox again");
     await rounds(8);
     expect({ mounts: { ...seen.mounts }, live: { ...seen.live }, asks: seen.asks }, "after the walk").toEqual({
       mounts: ONCE, live: ONCE, asks: 1,
@@ -237,37 +232,37 @@ describe("the old shell's composition over a walk to a place of another body and
     const release = await sendTheLetter(s);
     await waitFor(saysSending, "the notice says the send is on its way");
 
-    await visit(STUB_ADDRESS);
-    await waitFor(atTheStub, "the stub place");
+    await visit("#/ohbox");
+    await waitFor(atTheOhbox, "the seated Ohbox");
     await rounds(8);
-    expect(saysSending(), "at the stub place the notice still says the send is on its way").toBe(true);
+    expect(saysSending(), "at the seated Ohbox the notice still says the send is on its way").toBe(true);
 
     await act(async () => { release(); });
     await waitFor(() => !saysSending() && saysOfMila(), "the answer applied: the notice says it went");
     await waitFor(() => !saysOfMila(), "the notice settles away", 400);
 
-    await visit("#/ohbox");
-    await waitFor(() => !atTheStub(), "today's Ohbox again");
+    await visit(TODAYS_ADDRESS);
+    await waitFor(() => !atTheOhbox(), "a view of today's again");
     await rounds(20);
     expect(sends(s), "one send left for one press").toHaveLength(1);
     expect({ ...seen.mounts }, "nothing of the composition was mounted again").toEqual(ONCE);
   }, 60_000);
 });
 
-describe("at the stub place the app is whole", () => {
+describe("at the seated Ohbox the app is whole", () => {
   it("the fed rail, a notice of today's feeds, the palette, the key sheet and the way to the composer stand; today's reader sheet does not", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
     const release = await sendTheLetter(s);
-    await visit("#/ohbox");
-    await waitFor(() => within(s.el).queryAllByRole("option").length > 0, "today's Ohbox");
+    await visit(TODAYS_ADDRESS);
+    await waitFor(() => !atTheOhbox() && fedRailEntries() > 0, "History beside its fed rail");
     await waitFor(saysSending, "the notice says the send is on its way");
     const entries = fedRailEntries();
-    expect(entries, "today's Ohbox stands beside a fed rail").toBeGreaterThan(0);
+    expect(entries, "a view of today's stands beside a fed rail").toBeGreaterThan(0);
 
-    await visit(STUB_ADDRESS);
-    await waitFor(atTheStub, "the stub place");
+    await visit("#/ohbox");
+    await waitFor(() => atTheOhbox() && within(s.el).queryAllByRole("option").length > 0, "the seated Ohbox");
     await rounds(8);
-    expect({ rail: fedRailEntries(), notice: saysSending() }, "the rail and the notice at the stub place").toEqual({
+    expect({ rail: fedRailEntries(), notice: saysSending() }, "the rail and the notice at the seated Ohbox").toEqual({
       rail: entries, notice: true,
     });
     expect(screen.queryByRole("dialog", { name: en.reader.pane, hidden: true }), "today's reader sheet").toBeNull();
@@ -284,7 +279,7 @@ describe("at the stub place the app is whole", () => {
 
     await key("c");
     await waitFor(() => subject() !== null, "c reaches the composer");
-    expect(atTheStub(), "the composer stands in place of the stub place").toBe(false);
+    expect(atTheOhbox(), "the composer stands in place of the seated Ohbox").toBe(false);
 
     await act(async () => { release(); });
     await waitFor(() => !saysOfMila(), "the send's notice settles away", 400);

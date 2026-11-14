@@ -61,13 +61,39 @@ describe("with the list's visit of the open letter", () => {
     expect(within(panel()).getByRole("button", { name: "Mark unread" })).toBeTruthy();
   });
 
-  it("j and k step the list", () => {
+  it("on a letter that came back the panel offers no read slot: its read is its release, which the list's row offers", () => {
+    mountReader({
+      letters: [letter("m1", { unread: false, triage: { state: "resurfaced" } } as never)],
+      open: "m1",
+      meeting: { visit: visitOf("m1", []), blank: null },
+    });
+    const names = within(panel())
+      .getAllByRole("button")
+      .map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
+    expect(
+      names.filter((n) => /^Mark (read|unread)/.test(n)),
+      "neither plain direction",
+    ).toEqual([]);
+    expect(names, "the panel's other verbs stand").toContain("Reply");
+    cleanup();
+    /* The control: the same letter not back at the top keeps its slot. */
+    mountReader({
+      letters: [letter("m1", { unread: false })],
+      open: "m1",
+      meeting: { visit: visitOf("m1", []), blank: null },
+    });
+    expect(within(panel()).getByRole("button", { name: "Mark unread" })).toBeTruthy();
+  });
+
+  it("j, k and u are the list's own keys: the column binds none of them", () => {
     const visit = visitOf("m1");
     mountReader({ letters: [letter("m1")], open: "m1", meeting: { visit, blank: null } });
     fireEvent.keyDown(document.body, { key: "j" });
     fireEvent.keyDown(document.body, { key: "k" });
-    expect(visit.step.down.run).toHaveBeenCalledTimes(1);
-    expect(visit.step.up.run).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document.body, { key: "u" });
+    expect(visit.step.down.run).not.toHaveBeenCalled();
+    expect(visit.step.up.run).not.toHaveBeenCalled();
+    expect(visit.act).not.toHaveBeenCalled();
   });
 
   it("Move, behind More, offers every place but the letter's own and moves on the list's path", () => {

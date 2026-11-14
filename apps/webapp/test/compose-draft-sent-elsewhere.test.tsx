@@ -270,7 +270,7 @@ describe("Compose after the letter went from another device", () => {
   /** A writes a letter and its pause saves it to the server; the row is returned. */
   async function started(): Promise<EngineDraft> {
     server = new DraftServer();
-    shell = await mountShell("#/ohbox", [message("m1")], [], { server });
+    shell = await mountShell("#/history", [message("m1")], [], { server });
     await write("lena@example.invalid", "Plans for Friday", "Shall we meet at noon?");
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => server.rows.size === 1, "the letter saved to the server");
@@ -289,7 +289,7 @@ describe("Compose after the letter went from another device", () => {
 
   it("closed on A, sent on B: Compose on A is blank, and a new letter carries only its own audience and words", async () => {
     const row = await started();
-    await go("#/ohbox");
+    await go("#/history");
     await sentOnB(row);
     await drain();
     await go("#/compose");
@@ -309,7 +309,7 @@ describe("Compose after the letter went from another device", () => {
     await sentOnB(row);
     await drain();
     await waitFor(() => text().includes(compose.sentElsewhere!), "the note");
-    await go("#/ohbox");
+    await go("#/history");
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
     expect({ subject: field("compose-subject"), note: text().includes(compose.sentElsewhere!), drafts: listed() })
@@ -332,7 +332,7 @@ describe("Compose after the letter went from another device", () => {
     await drain();
     await waitFor(() => text().includes(compose.sentElsewhere!), "the note");
     await setField("compose-subject", "A new plan for Monday");
-    await go("#/ohbox");
+    await go("#/history");
     const said = await movedSaid();
     await pause(AUTOSAVE_DELAY_MS);
     expect(await composeAfterClose(said)).toEqual({ subject: "", note: false, drafts: ["A new plan for Monday"], toast: true });
@@ -345,7 +345,7 @@ describe("Compose after the letter went from another device", () => {
     let release: () => void = () => {};
     shell.saveGate.wait = new Promise<void>((r) => { release = r; });
     const before = saves().length;
-    await go("#/ohbox");
+    await go("#/history");
     await waitFor(() => saves().length > before, "the close's save on the wire");
     await drain();
     shell.saveGate.wait = null;
@@ -388,7 +388,7 @@ describe("Compose after the letter went from another device", () => {
     await setField("compose-subject", "Plans for Friday and Saturday");
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => shell.engine.pendingMutations().some((p) => p.mutation.kind === "draft_save"), "A's save waiting");
-    await go("#/ohbox");
+    await go("#/history");
     await sentOnB(row);
     shell.offline.on = false;
     const seen: string[][] = [];
@@ -412,7 +412,7 @@ describe("Compose after the letter went from another device", () => {
 
   it("control: an ordinary unfinished letter is still resumed by Compose", async () => {
     await started();
-    await go("#/ohbox");
+    await go("#/history");
     await drain();
     await go("#/compose");
     await waitFor(() => surface() !== null, "the composer");
@@ -423,9 +423,9 @@ describe("Compose after the letter went from another device", () => {
   /** A reply written on A and closed; its row saved to the server. */
   async function replied(words: string): Promise<EngineDraft> {
     server = new DraftServer();
-    shell = await mountShell("#/ohbox", [message("m1")], [], { server });
-    await waitFor(() => q(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(q(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+    shell = await mountShell("#/history", [message("m1")], [], { server });
+    await waitFor(() => q(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(q(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
     await settleEditor();
     await waitFor(() => replySurface(shell.el) != null, "the reply editor");

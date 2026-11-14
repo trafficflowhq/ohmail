@@ -45,20 +45,18 @@ function sixWeeks(year: number, month: number): { id: string; inMonth: boolean; 
   });
 }
 
-export function ResurfaceMenu({
-  open,
-  onClose,
-  anchor,
-  act,
-  stored,
-}: {
+interface ResurfaceMenuProps {
   open: boolean;
   onClose: () => void;
   anchor: RefObject<HTMLElement | null>;
   act: (action: MessageAction) => void;
   /** The account's resurface time (`HH:MM`), where the host hands it. */
   stored?: string | null;
-}) {
+  /** Keeps another hour for next time; null where nothing can be kept. */
+  store?: ((hhmm: string) => Promise<unknown>) | null;
+}
+
+export function ResurfaceMenu({ open, onClose, anchor, act, stored, store }: ResurfaceMenuProps) {
   const t = useText("reader");
   const locale = useLocale();
   const [at, setAt] = useState(() => hhmm(stored ?? DEFAULT_RESURFACE_TIME));
@@ -77,8 +75,16 @@ export function ResurfaceMenu({
     onClose();
     act(action);
   };
-  /* Minted at the press: a menu left open across midnight dispatches the day it is pressed on. */
-  const dated = (mint: () => ResurfaceHorizon) => answer(`resurface:${mint().iso}`);
+  /*
+   * Minted at the press: a menu left open across midnight dispatches the day it is pressed on. Then, and only then,
+   * an hour that is not the stored one is kept for next time: the letter was the ask, so a refused write leaves it
+   * booked. An untouched time is no decision, and Now is a state the time does not apply to.
+   */
+  const dated = (mint: () => ResurfaceHorizon) => {
+    answer(`resurface:${mint().iso}`);
+    if (!store || at === hhmm(stored ?? DEFAULT_RESURFACE_TIME)) return;
+    store(at).catch((err: unknown) => console.warn("the resurface time was not stored", err));
+  };
   const { tomorrow, nextWeek } = resurfaceHorizonsIn(now, at, zone);
   const note = (h: ResurfaceHorizon) => horizonStamp(h, now, zone, locale);
   const skipped = [

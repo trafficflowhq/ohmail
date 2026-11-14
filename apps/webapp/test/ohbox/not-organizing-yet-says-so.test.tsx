@@ -136,7 +136,7 @@ const stranger = {
 };
 
 async function ohbox(notOrganizingYet: NotOrganizingYet | null, more: Record<string, unknown> = {}): Promise<HTMLElement> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   return mount(h(OhboxView as never, {
     owed: false, demo: false, settled: true,
     older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
@@ -268,8 +268,9 @@ describe("nothingOrganizesOf — every mailbox nothing organizes, and why", () =
 
   it("the shell hands the Ohbox and the Screener this set, not the never-agreed one", () => {
     const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell.match(/notOrganizingYet=\{demo \? null : nothingOrganizesOf\(facts\)\}/g)).toHaveLength(2);
-    expect(shell).not.toMatch(/notOrganizingYet=\{demo \? null : notOrganizingYetOf\(facts\)\}/);
+    /* The Screener takes it as its view's prop; the seated Ohbox as a member of the composition's feed. */
+    expect(shell.match(/notOrganizingYet(=\{|: )demo \? null : nothingOrganizesOf\(facts\)/g)).toHaveLength(2);
+    expect(shell).not.toMatch(/notOrganizingYet(=\{|: )demo \? null : notOrganizingYetOf\(facts\)/);
   });
 });
 

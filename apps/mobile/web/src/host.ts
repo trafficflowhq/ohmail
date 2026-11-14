@@ -91,7 +91,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       places: has.frame.places,
       stages: has.frame.stages,
       overs: has.frame.overs,
-      reader: NONE,
+      reader: has.frame.reader,
       above: has.frame.above,
       calendar: has.frame.calendar,
     },

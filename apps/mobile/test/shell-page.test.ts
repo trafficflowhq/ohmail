@@ -97,7 +97,7 @@ describe("the phone shell's answers, per setting", () => {
     signOut: named("signOut"),
     notifications: named<DeviceNotifications>("notifications"),
     frame: {
-      places: named("places"), stages: named("stages"), above: named("above"), overs: named("overs"), address: named("address"),
+      places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
       window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
     },
     signals: {
@@ -123,7 +123,7 @@ describe("the phone shell's answers, per setting", () => {
     places: has.frame.places,
     stages: has.frame.stages,
     overs: has.frame.overs,
-    reader: NONE,
+    reader: has.frame.reader,
     above: has.frame.above,
     calendar: has.frame.calendar,
   };

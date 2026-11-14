@@ -2244,7 +2244,15 @@
       "none": "Nothing open"
     },
     "key": {
-      "reply": "Reply inside the message"
+      "reply": "Reply inside the message",
+      "replyAll": "Reply to everyone on the message",
+      "forward": "Forward the message on",
+      "answerLater": "Queue it for the Reply Run",
+      "park": "Park it (out of the way, still here)",
+      "resurface": "Resurface it later",
+      "move": "Move to another place",
+      "deleteAsk": "Delete — asks first",
+      "deleteKey": "Move it to Trash"
     },
     "verb": {
       "reply": "Reply",

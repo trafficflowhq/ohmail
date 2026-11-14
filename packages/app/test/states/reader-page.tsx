@@ -367,6 +367,7 @@ const reader = readerEntry({
   look: () => undefined,
   sentCopy: "none",
   reply: "none",
+  invitation: "none",
 });
 const place: PlaceEntry = {
   id: "ohbox",

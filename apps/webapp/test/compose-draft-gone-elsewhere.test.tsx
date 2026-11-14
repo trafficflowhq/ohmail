@@ -447,7 +447,7 @@ describe("a save that waited offline, then the row was deleted on another device
     await typeSubject(words);
     await pause(AUTOSAVE_DELAY_MS + 400);
     if (leave) {
-      await act(async () => { window.location.hash = "#/ohbox"; });
+      await act(async () => { window.location.hash = "#/history"; });
       await pause(300);
     }
     shell.offline.on = false;
@@ -480,7 +480,7 @@ describe("a save that waited offline, then the row was deleted on another device
   it("landed after the composer was left: a reload makes no draft", async () => {
     await openLetter();
     await editThroughTheQueue("Plans for Friday, written on the train", true);
-    await reload("#/ohbox");
+    await reload("#/history");
     expect({ creates: creates(), row: readComposeRow(OWNER) }).toEqual({ creates: [], row: null });
   }, 60_000);
 
@@ -792,9 +792,9 @@ describe("a save refused, then a draft opened from Drafts", () => {
     await typeSubject(TYPED);
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => text().includes(compose.draftNotSaved!), "the refusal said", 60);
-    await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => q(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
-    await press(q(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row m1");
+    await act(async () => { window.location.hash = "#/history"; });
+    await waitFor(() => q(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
+    await press(q(".view-history :is(.row, [role=option])[data-id='m1']"), "the row m1");
     const click = async (node: Element | undefined): Promise<void> => {
       await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     };

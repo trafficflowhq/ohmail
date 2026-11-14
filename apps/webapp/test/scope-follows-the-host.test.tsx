@@ -8,27 +8,16 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import messages from "../messages/en.json";
 import { DEMO_STORAGE_OWNER, namesOwner, resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import {
   ACCOUNT, ISO, act, installConfirmEnv, rememberOwner, scriptSession, sessionFull, teardownConfirmEnv, tick,
 } from "./fixtures/cloud-confirm-shell";
 
-/* ONE TEST PLACE OF ANOTHER BODY: History is drawn by a body of its own, so leaving for it unmounts today's views and
-   coming back mounts them again under the same frame. No host seats such a place yet; the day one does, this case
-   takes that place and the stand-in goes. */
-vi.mock("../app/shell/todays-places", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../app/shell/todays-places")>();
-  const { createElement } = await import("react");
-  const Elsewhere = () => createElement("h1", null, "A place of another body");
-  return {
-    todaysPlaces: () => ({
-      ...real.todaysPlaces(),
-      history: { id: "history", body: "elsewhere", rail: null, panes: { kind: "wide", Wide: Elsewhere } },
-    }),
-  };
-});
+/* THE PLACE OF ANOTHER BODY IS THE SEATED OHBOX, as every host hands it: leaving the composer for it takes today's
+   view off the stage and coming back draws it again, under the same frame and the same composition. */
+const seatedList = (): Element | null => document.querySelector('section[aria-label="Messages"] [role="listbox"], section[aria-label="Messages"] h1');
 
 const h = React.createElement;
 let root: Root | null = null;
@@ -97,9 +86,9 @@ describe("today's views mounted again under the same frame", () => {
     await write(FIRST);
     /* Another tab signs in as B: the jar's marker names B while A's frame stands. */
     document.cookie = `tf_owner=${OTHER}; Path=/`;
-    await visit("#/history");
-    expect(subject(), "today's views still stand where the other body is drawn").toBeNull();
-    expect(document.body.textContent ?? "").toContain("A place of another body");
+    await visit("#/ohbox");
+    expect(subject(), "today's composer still stands where the seated Ohbox is drawn").toBeNull();
+    expect(seatedList(), "the seated Ohbox's list").not.toBeNull();
     await visit("#/compose");
     expect(subject(), "the composer mounted again").not.toBeNull();
     await write(AFTER);

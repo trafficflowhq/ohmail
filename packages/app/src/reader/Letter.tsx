@@ -2,7 +2,7 @@
  * ONE LETTER OF THE COLUMN: the kit's message sheet around the body the shell hands in. The wrapper carries the read
  * rule's facts; the text stands in its own block; the body's own controls stand in the head and above the text.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import {
   BlockedImages,
   LetterHistory,
@@ -22,6 +22,7 @@ import {
 import { headStamp, placeOfFolder, readerZone } from "@ohmail/app-logic/reader";
 import { useLiveBody } from "@ohmail/app-logic/reading";
 import { useSessionDead } from "@ohmail/app-logic/session/session-truth";
+import { endOpen } from "@ohmail/app-logic/session/ui-vitals";
 import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { useFrame } from "../frame/commands.js";
@@ -61,6 +62,8 @@ const whole = (p: { name: string | null; address: string }): string =>
 
 export interface LetterViewProps {
   readonly message: EngineMessage;
+  /** The letter the column opened at: its text on screen ends the open's measure. */
+  readonly opened: boolean;
   /** Unread as the column presents it. */
   readonly unread: boolean;
   /** `tint`: the sheet is washed and a hidden word says unread; `dot`: the head's dot. */
@@ -74,13 +77,28 @@ export interface LetterViewProps {
   readonly onPerson: (person: ContactOf) => void;
 }
 
-export function Letter({ message, unread, look, reading, presented, narrow, onPerson }: LetterViewProps) {
+export function Letter({
+  message,
+  opened,
+  unread,
+  look,
+  reading,
+  presented,
+  narrow,
+  onPerson,
+}: LetterViewProps) {
   const t = useText("reader");
   const tm = useText("message");
   const parts = useParts();
   const { host } = useFrame();
   const scheme = useSignal(host.device.appearance).scheme;
   const body = useLetterBody(message);
+  /* THE OPEN'S MEASURE ENDS HERE, in the commit that put the opened letter's text in the document: never on a text
+     still owed (its snippet, its loading), which would report the wait as over. Held as on screen until it leaves. */
+  useLayoutEffect(() => {
+    if (!opened || body.state === "snippet" || body.state === "loading") return undefined;
+    return endOpen(message.id);
+  }, [opened, message.id, body.state]);
   const [notice, setNotice] = useState<LetterNotice | null>(null);
   const [controls, setControls] = useState<readonly LetterControl[]>([]);
   const liveWire = host.wires.liveBody;
@@ -92,6 +110,10 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
   const views = controls.filter((c) => c.id !== "history");
   const history = controls.find((c) => c.id === "history");
   const Body = parts.body;
+  const Invitation = parts.invitation;
+  /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
+  const invitation =
+    Invitation === NONE || isProtected(message) ? null : <Invitation messageId={message.id} />;
   const text = isProtected(message) ? (
     <p>{t("protected")}</p>
   ) : (
@@ -129,11 +151,16 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
         }
         unread={look === "tint" && unread}
         lead={
-          views.length > 0 ? (
-            <LetterViews
-              label={t("views")}
-              views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
-            />
+          views.length > 0 || invitation !== null ? (
+            <>
+              {views.length > 0 ? (
+                <LetterViews
+                  label={t("views")}
+                  views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
+                />
+              ) : null}
+              {invitation}
+            </>
           ) : undefined
         }
         after={

@@ -101,6 +101,7 @@ function join(o: Joined) {
       look: "none",
       sentCopy: "none",
       reply: "none",
+      invitation: "none",
     }),
     window: fakeWindow("desktop"),
     address,

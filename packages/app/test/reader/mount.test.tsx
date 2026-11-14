@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellDispatch, ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
 import { Frame } from "../../src/frame/Frame.js";
@@ -18,7 +18,7 @@ import { TextProvider } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress } from "../support/fake-window.js";
 import { ListMeetingContext, type ListMeeting } from "@ohmail/app-logic/reading";
-import { readerEntry } from "../../src/reader/index.js";
+import { readerEntry, readerEntryFrom, readingScrollerIn, type ReaderParts } from "../../src/reader/index.js";
 import { bodyDouble, fakeMail, letter, mountReader, READER_PLACE, WORDS } from "./support/mail.js";
 
 /**
@@ -71,6 +71,50 @@ describe("the reader in the frame", () => {
     expect(within(pane).getByRole("article")).toBeTruthy();
     expect(within(pane).getByText("The text of m1.")).toBeTruthy();
     expect(live.seams).toBe(1);
+  });
+
+  it("the door names the reading column's scrolling box to a list that walks it: the one the letters scroll in", () => {
+    mountReader({ letters: [letter("m1")], open: "m1" });
+    const column = screen.getByRole("region", { name: "Reading" });
+    const scroller = readingScrollerIn(column);
+    const text = within(screen.getByRole("region", { name: "Open message" })).getByText("The text of m1.");
+    expect(scroller?.contains(text), "the letter's text stands in the box the door names").toBe(true);
+    expect(readingScrollerIn(null)).toBeNull();
+  });
+
+  it("an entry over parts read in each render draws them as they stand, and the column is not drawn again", () => {
+    const first = ({ messageId }: { readonly messageId: string }) => <p>{`first word on ${messageId}`}</p>;
+    const second = ({ messageId }: { readonly messageId: string }) => <p>{`second word on ${messageId}`}</p>;
+    let invitation = first;
+    const listeners = new Set<() => void>();
+    const subscribe = (changed: () => void) => {
+      listeners.add(changed);
+      return () => void listeners.delete(changed);
+    };
+    const fixed = {
+      body: bodyDouble().body,
+      files: "none",
+      pictures: "none",
+      look: "none",
+      sentCopy: "none",
+      reply: "none",
+    } as const;
+    /* A shell's door changes identity while it fetches: the entry reads it again in every render. */
+    function useHere(): ReaderParts {
+      const now = useSyncExternalStore(subscribe, () => invitation);
+      return useMemo(() => ({ ...fixed, invitation: now }), [now]);
+    }
+    mountReader({ letters: [letter("m1")], open: "m1", host: { reader: readerEntryFrom(useHere) } });
+    const pane = screen.getByRole("region", { name: "Open message" });
+    expect(within(pane).getByText("first word on m1")).toBeTruthy();
+    act(() => {
+      invitation = second;
+      for (const changed of listeners) changed();
+    });
+    expect(within(pane).getByText("second word on m1")).toBeTruthy();
+    expect(screen.queryByText("first word on m1")).toBeNull();
+    const again = screen.getByRole("region", { name: "Open message" });
+    expect(again, "the same column, not one drawn again").toBe(pane);
   });
 
   it("with no reader handed, the column stays empty, no seam runs and nothing throws", () => {
@@ -224,6 +268,7 @@ describe("the reader in the frame", () => {
       look: "none",
       sentCopy: "none",
       reply: "none",
+      invitation: "none",
     });
     const acted: string[] = [];
     const meeting: ListMeeting = {

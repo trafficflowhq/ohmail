@@ -1,15 +1,15 @@
 /** @vitest-environment jsdom */
 /**
- * ONE PRESS SEAM PER FRAME, WITH THE REAL OLD SHELL BESIDE A READER'S PLACE. A TEST HOST: the real frame over today's
- * views, mounted as `_todays-shell.tsx` mounts them, whose places are today's with ONE stub place of another body
- * that names the reader (`_stub-place.tsx`), and whose host hands the real reader (`readerEntry`, its body a double).
- * No real host is mixed so; this is the harness the scope switch reuses (a walk to a place of another body and back).
+ * ONE PRESS SEAM PER FRAME, WITH THE REAL OLD SHELL AND THE SEATED OHBOX. The real frame as `_todays-shell.tsx` mounts
+ * it: the hosts' own places (the Ohbox seated, a reader's place; every other one of today's views) and the shell's own
+ * reader.
  *
  * The real `useShellDispatch` is counted live through a wrapper, each call by the file that made it. The old shell's
- * composition stands above every pane and hands the frame's room its own seam: walking today's Ohbox, the stub place
- * and today's Ohbox again, the one live seam is the shell's at every step, never two, never the room's, and it is
- * mounted once. Over a host that stands nothing above the panes the room mounts its own, only while a reader's place
- * is on screen. And a delete a closed tab left in the journal is replayed once at the mount, by that one seam.
+ * composition stands above every pane and hands the frame's room its own seam: walking News, the seated Ohbox and News
+ * again, the one live seam is the shell's at every step, never two, never the room's, and it is mounted once. Over a
+ * host that stands nothing above the panes (a test host: one stub place that names the reader, `_stub-place.tsx`) the
+ * room mounts its own, only while a reader's place is on screen. And a delete a closed tab left in the journal is
+ * replayed once at the mount, by that one seam.
  */
 import { createElement as h, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -74,6 +74,7 @@ const READER = readerEntry({
   look: "none",
   sentCopy: "none",
   reply: "none",
+  invitation: "none",
 });
 
 let root: Root | null = null;
@@ -89,18 +90,20 @@ async function loaded() {
 let parts: Awaited<ReturnType<typeof loaded>> | null = null;
 
 /**
- * The test host: today's supplies and inputs, today's places spread with the stub, and the real reader handed. `bare`:
- * a host that stands nothing above the panes, with a plain place where today's Ohbox stood and no other.
+ * The host: today's supplies and inputs as every shell hands them (the seated Ohbox, the shell's reader). `bare`: a
+ * host that stands nothing above the panes, with a plain place where the Ohbox stands, the stub place that names the
+ * reader, a reader of the test's own, and no other place.
  */
 function Entry({ engine, bare }: { engine: OhmailEngine; bare: boolean }) {
   const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
   const frame = useTodaysSupplies(NONE);
-  const host = useMemo(() => {
-    const todays = bare ? { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ohbox: PLAIN } : frame.places;
-    const places = { ...todays, [STUB_PLACE.id]: STUB_PLACE } as unknown as FramePlaces;
+  const host = useMemo((): ReturnType<typeof hostFromTodaysInputs> => {
+    if (!bare) return hostFromTodaysInputs({ demo: false, engine }, engine, frame, NONE);
+    const places = {
+      ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ohbox: PLAIN, [STUB_PLACE.id]: STUB_PLACE,
+    } as unknown as FramePlaces;
     const made = hostFromTodaysInputs({ demo: false, engine }, engine, { ...frame, places }, NONE);
-    const above = bare ? NONE : made.features.above;
-    return { ...made, features: { ...made.features, places, reader: READER, above } };
+    return { ...made, features: { ...made.features, places, reader: READER, above: NONE } };
   }, [engine, frame, bare]);
   return h(TodaysFrame, { host, todays: NO_TODAYS });
 }
@@ -126,6 +129,8 @@ async function visit(fragment: string) {
   });
 }
 
+/** A view of today's the walks start from and come back to. */
+const TODAYS_ADDRESS = "#/reads";
 const owners = (): Owner[] => live.seams.map((s) => s.owner as Owner).sort();
 const readerColumn = () => screen.queryByRole("region", { name: "Reading" });
 
@@ -135,7 +140,7 @@ beforeEach(() => {
   live.peak = 0;
   live.mounts = 0;
   Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
-  window.location.hash = "#/ohbox";
+  window.location.hash = TODAYS_ADDRESS;
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
@@ -143,22 +148,22 @@ afterEach(async () => {
   await teardown();
 });
 
-describe("one press seam per frame, the real old shell beside a reader's place", () => {
-  it("today's Ohbox, the stub place, today's Ohbox: the shell's seam at every step, mounted once, never the room's", async () => {
+describe("one press seam per frame, the real old shell and the seated Ohbox", () => {
+  it("News, the seated Ohbox, News: the shell's seam at every step, mounted once, never the room's", async () => {
     const engine = engineOver(await storeWith([msg("m1")]));
     S.engine = engine;
     await draw(engine);
-    await waitFor(() => live.seams.length > 0, "today's Ohbox drawn with its seam");
-    expect(owners(), "today's Ohbox: the old shell's seam alone").toEqual(["shell"]);
-    expect(readerColumn(), "today's Ohbox draws no reading column of the frame's").toBeNull();
-
-    await visit(STUB_ADDRESS);
-    await waitFor(() => readerColumn() !== null, "the stub place's reading column");
-    expect(owners(), "the stub place: the old shell's seam still, and no seam of the room's").toEqual(["shell"]);
+    await waitFor(() => live.seams.length > 0, "News drawn with its seam");
+    expect(owners(), "News: the old shell's seam alone").toEqual(["shell"]);
+    expect(readerColumn(), "a view of today's draws no reading column of the frame's").toBeNull();
 
     await visit("#/ohbox");
-    await waitFor(() => readerColumn() === null, "today's Ohbox again");
-    expect(owners(), "today's Ohbox again: the old shell's seam alone").toEqual(["shell"]);
+    await waitFor(() => readerColumn() !== null, "the seated Ohbox's reading column");
+    expect(owners(), "the seated Ohbox: the old shell's seam still, and no seam of the room's").toEqual(["shell"]);
+
+    await visit(TODAYS_ADDRESS);
+    await waitFor(() => readerColumn() === null, "News again");
+    expect(owners(), "News again: the old shell's seam alone").toEqual(["shell"]);
     expect({ peak: live.peak, mounts: live.mounts }, "one seam was live after every commit, and it was mounted once").toEqual({
       peak: 1, mounts: 1,
     });
@@ -167,6 +172,7 @@ describe("one press seam per frame, the real old shell beside a reader's place",
   it("over a host that stands nothing above the panes: no seam, the room's on the reader's place, none again", async () => {
     const engine = engineOver(await storeWith([msg("m1")]));
     S.engine = engine;
+    window.location.hash = "#/ohbox";
     await draw(engine, true);
     await waitFor(() => screen.queryByText("a plain place") !== null, "the plain place");
     expect(owners(), "a place that draws no letter: no seam").toEqual([]);
@@ -192,14 +198,14 @@ describe("one press seam per frame, the real old shell beside a reader's place",
       return replay(messageId, opts);
     };
     armDeleteIntent({ id: "press-of-the-closed-tab", messageIds: ["m1"], at: Date.now() }, HARNESS_SCOPE);
-    window.location.hash = STUB_ADDRESS;
+    window.location.hash = "#/ohbox";
     await draw(engine);
-    await waitFor(() => readerColumn() !== null, "the stub place's reading column");
+    await waitFor(() => readerColumn() !== null, "the seated Ohbox's reading column");
     await waitFor(() => replayed.length > 0, "the journal's replay");
+    await visit(TODAYS_ADDRESS);
+    await waitFor(() => readerColumn() === null, "News");
     await visit("#/ohbox");
-    await waitFor(() => readerColumn() === null, "today's Ohbox");
-    await visit(STUB_ADDRESS);
-    await waitFor(() => readerColumn() !== null, "the stub place again");
+    await waitFor(() => readerColumn() !== null, "the seated Ohbox again");
     await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
     expect(replayed, "the journal was replayed by more than one seam, or again on the walk").toEqual(["m1"]);
   });

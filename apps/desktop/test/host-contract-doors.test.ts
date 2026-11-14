@@ -23,7 +23,7 @@ const engine = named<HostContract["engine"]>("engine");
 
 /** What every shell hands the frame, the same stand-ins for both doors here. */
 const FRAME = {
-  places: named("places"), stages: named("stages"), above: named("above"), overs: named("overs"), address: named("address"),
+  places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
   window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
 } as DesktopSupplies["frame"];
 const has: DesktopSupplies = {
@@ -71,7 +71,7 @@ const entries = (from: object, ...handedOn: FeatureName[]) =>
     places: FRAME.places,
     stages: FRAME.stages,
     overs: FRAME.overs,
-    reader: NONE,
+    reader: FRAME.reader,
     above: FRAME.above,
     calendar: FRAME.calendar,
   });

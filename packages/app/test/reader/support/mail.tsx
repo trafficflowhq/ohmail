@@ -138,6 +138,7 @@ export function mountReader(o: MountReader) {
     look: "none",
     sentCopy: "none",
     reply: "none",
+    invitation: "none",
     ...o.parts,
   };
   const address = fakeAddress(o.open === null ? "#/ohbox" : `#/ohbox/m/${o.open}`);

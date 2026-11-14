@@ -8,7 +8,9 @@ import { ActionPanel, MovePicker, type PanelVerb } from "@ohmail/ui/mail";
 import { useMirror } from "@ohmail/app-logic/reader";
 import { useListVisit } from "@ohmail/app-logic/reading";
 import type { EngineMessage, TagDTO as TagEntity } from "@ohmail/client-engine";
+import { useResurfaceTime } from "../../frame/room.js";
 import { useText } from "../../text/index.js";
+import { useLetterKeys, type PanelMenu } from "../keys.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
 import { useVerbs, type Verbs } from "./use-verbs.js";
 
@@ -105,30 +107,37 @@ function panelVerbs(
           },
         ]
       : []),
-    {
-      id: "read",
-      label: t(`verb.${readSlot}`),
-      icon: readSlot === "markRead" ? "read" : "unread",
-      apart: true,
-      rank: 0,
-      wordOrder: 1,
-      wordFirst: room === "fold" || room === "foldl",
-      behind: room === "phone",
-      keyHint: "u",
-      widest: t("verb.markUnread"),
-      hotIcon: readSlot === "markRead",
-      onPress: () => act("unread"),
-    },
+    ...(readSlot === null
+      ? []
+      : [
+          {
+            id: "read",
+            label: t(`verb.${readSlot}`),
+            icon: readSlot === "markRead" ? ("read" as const) : ("unread" as const),
+            apart: true,
+            rank: 0,
+            wordOrder: 1,
+            wordFirst: room === "fold" || room === "foldl",
+            behind: room === "phone",
+            keyHint: "u",
+            widest: t("verb.markUnread"),
+            hotIcon: readSlot === "markRead",
+            onPress: () => act("unread"),
+          },
+        ]),
   ];
 }
 
 export function ActionBar({
   verbs,
   room = "desktop",
+  keys,
   reply,
 }: {
   verbs: Verbs;
   room?: PanelRoom;
+  /** The letter the panel acts on, where the column has the keyboard: its verbs are bound by key too. */
+  keys?: EngineMessage | null;
   /** An open reply's verbs (`write`'s), shown in the letter's place: one panel for the column. Null: the letter's. */
   reply: readonly PanelVerb[] | null;
 }) {
@@ -149,6 +158,8 @@ export function ActionBar({
   /* The panel's wrapper: the read rule's stop (`data-read-stop`). */
   const stop = useRef<HTMLDivElement | null>(null);
   const { act } = verbs;
+  /* The account's resurface hour and its writer, as the shell handed them to the room. */
+  const hour = useResurfaceTime();
   const { mirror } = useMirror();
   const tags = verbs.tag === null ? [] : (mirror?.list<TagEntity>("tag") ?? []);
   const all = panelVerbs(t, tm, verbs, tags.length > 0, toggle, room);
@@ -157,6 +168,14 @@ export function ActionBar({
   const behind = all.filter((v) => v.behind || folded.includes(v.id));
   const beforeRead = behind.filter((v) => v.id !== "read");
   const read = behind.filter((v) => v.id === "read");
+  /* A key opens a menu as its button does: out of the verb's own button, else out of More where it stands behind it. */
+  const byKey = (which: PanelMenu): void => {
+    const root = stop.current;
+    const own = which === "resurface" ? root?.querySelector<HTMLElement>('[data-id="resurface"]') : null;
+    pressed.current = own ?? root?.querySelector<HTMLElement>("[data-more]") ?? null;
+    setMenu((m) => (m === which ? null : which));
+  };
+  useLetterKeys(keys != null, keys == null ? null : { letter: keys, verbs, menu: byKey });
   useKeyboardBack(reply !== null, stop);
   return (
     <div className="rd-stop" data-read-stop="" ref={stop}>
@@ -171,7 +190,14 @@ export function ActionBar({
           more={{ label: t("verb.more"), behind: true, expanded: more || undefined, onPress: toggle("more") }}
         />
       )}
-      <ResurfaceMenu open={menu === "resurface"} onClose={close} anchor={pressed} act={act} />
+      <ResurfaceMenu
+        open={menu === "resurface"}
+        onClose={close}
+        anchor={pressed}
+        act={act}
+        stored={hour.stored}
+        store={hour.store}
+      />
       <Menu open={menu === "tag"} onClose={close} anchor={pressed} label={t("verb.tag")} up right>
         {tags.map((tag) => {
           const on = verbs.tagged.includes(tag.id);

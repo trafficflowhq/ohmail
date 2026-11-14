@@ -2244,7 +2244,15 @@
       "none": "Nichts geöffnet"
     },
     "key": {
-      "reply": "In der Nachricht antworten"
+      "reply": "In der Nachricht antworten",
+      "replyAll": "Allen auf der Nachricht antworten",
+      "forward": "Nachricht weiterleiten",
+      "answerLater": "Für die Antwortrunde vormerken",
+      "park": "Parken (aus dem Weg, aber weiter da)",
+      "resurface": "Später wieder auftauchen lassen",
+      "move": "An einen anderen Ort verschieben",
+      "deleteAsk": "Löschen — fragt zuerst",
+      "deleteKey": "In den Papierkorb verschieben"
     },
     "verb": {
       "reply": "Antworten",

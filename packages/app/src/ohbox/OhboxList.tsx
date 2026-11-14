@@ -3,7 +3,7 @@
  * list, the way back to the top, and the selection's verbs at its foot. New and Earlier are a window over one index
  * space (the headings are items in it), so a list of thousands mounts only what is on screen.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useOhboxModel } from "@ohmail/app-logic/ohbox";
 import { JumpBack } from "@ohmail/ui/base";
 import { ListTail, Sheet } from "@ohmail/ui/mail";
@@ -21,11 +21,8 @@ import "./ohbox.css";
 /** The way back stands once the list is this far from its top, or half a screen where that is more. */
 const BACK_FROM_PX = 240;
 
-/**
- * `notice`: what a shell stands at the head of the list's flow (today's away line and storage card). It is the
- * scroller's first block, so a line that pins itself sticks under nothing and the rest scrolls with the rows.
- */
-export function OhboxList({ plan, notice }: PaneProps & { notice?: ReactNode }) {
+/** A pane of the frame: it takes `PaneProps` only. What a shell stands over it or first in it is `beside`'s. */
+export function OhboxList({ plan }: PaneProps) {
   const model = useOhboxModel();
   const beside = useOhboxBeside();
   const t = useText("ohbox");
@@ -99,6 +96,7 @@ export function OhboxList({ plan, notice }: PaneProps & { notice?: ReactNode }) 
       onPointerCancelCapture={model.pointer.onPointerCancelCapture}
       onContextMenuCapture={model.pointer.onContextMenuCapture}
     >
+      {beside.over}
       <OhboxHead model={model} beside={beside} plan={plan} onMarkAllRead={model.markAllRead} />
       {/* Focusable by the shell only (never a tab stop): where the keyboard stands when a verb left no row. */}
       <div
@@ -108,7 +106,7 @@ export function OhboxList({ plan, notice }: PaneProps & { notice?: ReactNode }) 
         data-phone={plan.device === "phone" ? "" : undefined}
       >
         <ListTouch scroller={scroller} off={model.picked.size > 0} pull={beside.pull}>
-          {notice}
+          {beside.first}
           <SquaresRoomContext.Provider value={room}>
             {plan.device === "phone" ? <Sheet kind="plain">{rows}</Sheet> : rows}
           </SquaresRoomContext.Provider>

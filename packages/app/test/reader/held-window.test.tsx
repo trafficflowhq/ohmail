@@ -70,6 +70,7 @@ function mount() {
     look: "none",
     sentCopy: "none",
     reply: "none",
+    invitation: "none",
   };
   const mail = fakeMail(THREAD);
   let holds: RoomHolds = { held: new Set(), places: new Map() };

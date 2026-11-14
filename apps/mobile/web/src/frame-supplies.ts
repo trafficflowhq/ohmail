@@ -67,7 +67,8 @@ export function phoneFrameSupplies(
   return {
     places: mounted.places,
     stages: mounted.stages,
-    /* No old shell stands on the phone: nothing above the panes. */
+    /* No place of the phone's has a reading column yet, and no old shell stands here: nothing above the panes. */
+    reader: NONE,
     above: NONE,
     // A phone shell holds no keyboard registry, so it hands no over.
     overs: { palette: NONE, keys: NONE },

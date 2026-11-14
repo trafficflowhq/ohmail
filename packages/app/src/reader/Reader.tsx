@@ -3,7 +3,17 @@
  * them (along the head on a phone), the action panel at its foot. With nothing open, the blank. The read rule runs
  * here with the column's names; the visit is the list's where the list that opened the letter handed one.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode, type WheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+  type WheelEvent,
+} from "react";
 import { Button, JumpBack } from "@ohmail/ui/base";
 import { BlankColumn, ReadingHead, Sheet } from "@ohmail/ui/mail";
 import {
@@ -29,14 +39,26 @@ import { Contact, type ContactOf } from "./contact/Contact.js";
 import { Letter } from "./Letter.js";
 import { useParts } from "./parts.js";
 import { READER_DOM, scrollerOf } from "./read-dom.js";
-import { useReaderKeys } from "./keys.js";
+import { useLetterKeys, useReaderKeys } from "./keys.js";
 import { Squares } from "./Squares.js";
 import { Tags } from "./Tags.js";
 import "./column.css";
 
 export function Reader({ route, plan, keysHere }: PaneProps) {
   const tp = useText("place");
-  if (route.open === null) return <Blank />;
+  /* The keyboard stood on the column's scroller when the letter it showed left: the next letter's takes it. */
+  const keyboard = useRef(false);
+  const blank = route.open === null;
+  useEffect(() => {
+    if (blank) keyboard.current = false;
+  }, [blank]);
+  if (route.open === null)
+    return (
+      <>
+        <RestingKeys />
+        <Blank />
+      </>
+    );
   /* The way back names where it goes, where the place has a word of its own. */
   const from = tp.has(route.place) ? tp(route.place) : "";
   return (
@@ -48,8 +70,15 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
       room={plan.device === "fold" && plan.pose === "land" ? "foldl" : plan.device}
       keysHere={keysHere}
       from={from}
+      keyboard={keyboard}
     />
   );
+}
+
+/** With nothing open the letter's keys rest for want of a cursor, listed as the key sheet lists them. */
+function RestingKeys() {
+  useLetterKeys(true, null);
+  return null;
 }
 
 const nameOf = (m: EngineMessage): string => m.from.name?.trim() || m.from.address;
@@ -61,6 +90,7 @@ function Conversation({
   from,
   narrow,
   room,
+  keyboard,
 }: {
   openId: string;
   phone: boolean;
@@ -71,6 +101,8 @@ function Conversation({
   keysHere: boolean;
   /** The place's word, for the way back; "" where it has none. */
   from: string;
+  /** Whether the letter shown before this one held the keyboard on its scroller; this one's takes it then. */
+  keyboard: MutableRefObject<boolean>;
 }) {
   const t = useText("reader");
   const press = usePress();
@@ -86,6 +118,7 @@ function Conversation({
   const markSeen = useMemo(() => markSeenOver(press), [press]);
   const column = useColumnVisit(opened, visit?.wiring ?? null, markSeen);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const columnRoot = useKeyboardStays(setRoot, keyboard);
   const scroller = useMemo(() => ({ current: scrollerOf(root) }), [root]);
   useThreadRead({ scroller, wiring: column.wiring ?? undefined, active: opened !== null, names: READER_DOM });
   /* An open is an open: the column's own visit is entered. A list's visit is the list's to enter. */
@@ -131,7 +164,7 @@ function Conversation({
     if (dy !== 0) scrollByHand(sc, dy, { deltaY: e.deltaY, deltaMode: e.deltaMode });
   };
   return (
-    <div className="rd-column" data-read-column="" ref={setRoot} onWheel={onWheel}>
+    <div className="rd-column" data-read-column="" ref={columnRoot} onWheel={onWheel}>
       <Sheet
         kind="reading"
         label={t("pane")}
@@ -147,13 +180,14 @@ function Conversation({
             squares={phone ? squares : undefined}
           />
         }
-        foot={<ActionBar verbs={verbs} room={room} reply={replyVerbs} />}
+        foot={<ActionBar verbs={verbs} room={room} keys={keysHere ? opened : null} reply={replyVerbs} />}
         jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
       >
         {messages.map((m) => (
           <Letter
             key={m.id}
             message={m}
+            opened={m.id === openId}
             unread={m.id === openId && visit !== null ? visit.unread : m.unread}
             look={look}
             reading={reading}
@@ -167,6 +201,39 @@ function Conversation({
       </Sheet>
       <Contact person={person} onClose={() => setPerson(null)} />
     </div>
+  );
+}
+
+/**
+ * THE KEYBOARD STAYS IN THE COLUMN FROM LETTER TO LETTER. Each letter draws a column of its own; where the keyboard
+ * stood on the one that leaves (the arrows scroll it there), the next one's scroller takes it in the commit that
+ * draws it, so the arrows go on scrolling what is read and never fall back to walking the list.
+ */
+function useKeyboardStays(
+  onRoot: (el: HTMLDivElement | null) => void,
+  keyboard: MutableRefObject<boolean>,
+): (el: HTMLDivElement | null) => void {
+  const root = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const here = scrollerOf(root.current);
+    if (!keyboard.current || here === null) return;
+    keyboard.current = false;
+    const at = here.ownerDocument.activeElement;
+    if (at === null || at === here.ownerDocument.body) here.focus({ preventScroll: true });
+  });
+  useLayoutEffect(
+    () => () => {
+      const mine = scrollerOf(root.current);
+      keyboard.current = mine !== null && mine.ownerDocument.activeElement === mine;
+    },
+    [root, keyboard],
+  );
+  return useCallback(
+    (el: HTMLDivElement | null) => {
+      root.current = el;
+      onRoot(el);
+    },
+    [onRoot],
   );
 }
 

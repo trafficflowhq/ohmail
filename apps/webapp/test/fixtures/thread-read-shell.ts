@@ -9,6 +9,7 @@ import { expect, vi } from "vitest";
 import { flushSync } from "react-dom";
 import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
+import { readSlot as seatedReadSlot, reportPress, reportSays } from "../ohbox/_finders.js";
 
 export const ME = "walker@example.invalid";
 export const LENA = { name: "Lena", address: "lena@example.invalid" };
@@ -146,7 +147,16 @@ export const theRow = (host: HTMLElement): HTMLElement | null =>
 export const openTheRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host), "the conversation's row");
 };
-/** The read slot of the bar in `scope` (the column or the sheet). */
-export const readSlot = (scope: ParentNode): HTMLElement | null => scope.querySelector<HTMLElement>(".abar .abar-read");
+/**
+ * The read slot in `scope`: at the seated Ohbox the open letter's panel's (`scope` holds the reading column), at a
+ * place of today's the bar's in the column or the sheet.
+ */
+export const readSlot = (scope: ParentNode): HTMLElement | null =>
+  seatedReadSlot(scope) ?? scope.querySelector<HTMLElement>(".abar .abar-read");
+/** What a verb's answer says: at a seated place the frame's report, at a place of today's the capsule. */
 export const toastText = (): string =>
-  [...document.querySelectorAll<HTMLElement>(".toast")].map((t) => t.textContent ?? "").join(" | ");
+  [reportSays(), ...[...document.querySelectorAll<HTMLElement>(".toast")].map((t) => t.textContent ?? "")]
+    .filter((t) => t !== "").join(" | ");
+/** The Undo a verb's answer offers: the frame's report's at a seated place, the capsule's elsewhere. */
+export const undoPress = (): HTMLElement | null =>
+  reportPress() ?? document.querySelector<HTMLElement>(".toast .toast-act");

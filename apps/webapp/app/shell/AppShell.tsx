@@ -68,6 +68,7 @@ import {
   type RailNavProps,
   type ResolvedTheme,
   type ThemePreference,
+  type ToastFn,
 } from "@ohmail/ui";
 import {
   EngineProvider,
@@ -245,7 +246,7 @@ import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField }
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
-  go, goFirstRun, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox,
+  canonicalHash, go, goFirstRun, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox,
   useHashRoute,
   type Route,
 } from "./routing";
@@ -253,7 +254,9 @@ import { goCompose } from "./compose-door";
 import { beginSearch, markStartup, useUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
-import { TodaysOhbox, type OhboxReplyDone } from "./TodaysOhbox";
+import { TodaysOhboxFed } from "./TodaysOhboxAbove";
+import { TodaysReaderFed } from "./reader-parts";
+import { isTodays } from "./todays-places";
 import { ReadsView } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView, ScreenerWarmup } from "../views/ScreenerView";
@@ -277,7 +280,8 @@ import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
-import { useFrame, useRoomHandOver, type PaneProps } from "@ohmail/app/frame";
+import { isCalendarPlace, routeOf, useFrame, useKeptPane, useRoomHandOver, type PaneProps } from "@ohmail/app/frame";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { useTodaysFixed } from "./TodaysFrame";
 import { useTodaysSignals } from "./todays-signals";
 import { useTodaysFeeds } from "./todays-feeds";
@@ -419,6 +423,34 @@ export { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, showDesktopCta } from "./t
  * guard still reads it from here.
  */
 export { CURSOR_HINT_MS };
+
+/** The demo's ribbon, until it is dismissed for the session. Drawn once: by the stage, or over a seated place's list. */
+function DemoRibbon({ onDismiss }: { onDismiss: () => void }) {
+  const t = useTranslations();
+  return (
+    <div className="demo-ribbon">
+      <span>
+        {t.rich("ribbon.label", { b: (chunks) => <b>{chunks}</b> })}
+      </span>
+      <button type="button" onClick={onDismiss}>
+        {t("ribbon.dismiss")}
+      </button>
+    </div>
+  );
+}
+
+/** The stage's one card: the found-settings question first, a host's card only while no question stands. */
+function StageCard({ offer, hostCard }: { offer: ReturnType<typeof useProfileImport>; hostCard: ReactNode }) {
+  return offer.offer ? (
+    <ProfileImportCard
+      offer={offer.offer}
+      phase={offer.phase}
+      onImport={offer.importNow}
+      onNotNow={offer.notNow}
+      onAcknowledge={offer.acknowledge}
+    />
+  ) : hostCard ?? null;
+}
 
 /**
  * TODAY'S VIEWS IN THE FRAME'S WIDE PANE: the one body every place of today's shares, kept mounted by the frame while
@@ -573,7 +605,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
 }) {
   /* WHOSE STORED KEYS THIS MOUNT READS AND WRITES: the host's scope, read as the shell mounts and held for the
      life of the mount. The frame mounts everything again under another scope; a shell handed another one throws. */
-  const scope = usePinnedScope(useFrame().host.session.scope);
+  const frame = useFrame();
+  const scope = usePinnedScope(frame.host.session.scope);
   const demo = useDemoMode();
   /* For EFFECT GATES only — see `useResolvedDemoMode`. Never rendered: reading it in output
      would reintroduce the hydration mismatch `useDemoMode` exists to prevent. */
@@ -634,7 +667,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * never heard of.
    */
   const reader = engine.read();
-  const hostToast = useToast();
+  /* ONE SURFACE A REPORT: the frame's own slot while a seated place is on screen at the moment it is raised, today's
+     capsule while a view of today's is. Every use below is unchanged. */
+  const capsule = useToast();
+  const hostToast: ToastFn = useStableCallback((message, options) => (todaysNow ? capsule : frame.report)(message, options));
   /**
    * THE DISPATCH SPINE — every press that changes mail leaves through `shell-dispatch.ts`: the
    * two undo windows, the routing window, the organizer's refusal vocabulary, the report doors
@@ -657,6 +693,17 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      on is one that was off during the incident. `ui-vitals.ts` carries the reasoning. */
   useUiVitals();
   const route = useHashRoute();
+  /* IS THE PLACE ON SCREEN ONE OF TODAY'S VIEWS, or a seated place of the frame? The one value today's sheet, the
+     stage's card and ribbon, the reports and the open letter's keys are gated by. Read off the address as THIS render
+     read it, by the frame's own parser: a shell that moved the address itself renders one commit before the frame's
+     context carries the new place, and its own effects (the route's transition, the mirror of the open letter) run in
+     that commit. */
+  const here = routeOf(canonicalHash(route)).place;
+  /* A place of the calendar is the frame's, never one of today's views. */
+  const todaysNow = !isCalendarPlace(here) && isTodays(frame.host.features.places[here]);
+  /* A SEATED PLACE IN ONE COLUMN (the frame's plan, which draws its columns): a letter stands over its list only
+     while the address names it, as today's sheet stood there, and the cursor row is the list's own. */
+  const seatedOneColumn = !todaysNow && frame.plan.columns === 1;
   // The registry owns ⌘K (see `keymap.tsx`). Leaving the hook's own binding on as well
   // would toggle twice per keypress, which cancels out and never opens the palette.
   const palette = useCommandPalette({ bindKey: false });
@@ -826,10 +873,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * taken the whole stage there, unable to load or complete. The web's host hands the wire where
    * its page has the client that runs it: the browser. The same word gates `seedSection` below.
    */
-  const seedSupported = useFrame().host.wires.seedReview !== NONE;
+  const seedSupported = frame.host.wires.seedReview !== NONE;
   const seedOffer = useSeedOffer({ demo, known: consent.known, supported: seedSupported,
     seedConfirmedAt: consent.seedConfirmedAt, hasMailbox: hasLiveMailbox(facts), scope });
   const seedOwed = seedOffer.owed;
+  /* The seed review takes the stage at whatever address while it is owed: over a seated place too, the rail around it. */
+  useKeptPane(seedOwed);
   /**
    * THE WHOLE-MIRROR DERIVATIONS — the consent partition, the presentation projection and every
    * pile, count and lookup over them, in `shell-derivations.ts`. Below the dispatch spine whose
@@ -1151,9 +1200,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, selectOhboxRow, setOhboxThreadRead, ohboxEnter, setOhboxEnter, sheetThreadRead, enterSheet, viewEnter, spendViewEnter,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, selectOhboxRow, ohboxCursor, letterUp, closeLetterUp, setOhboxThreadRead, ohboxEnter, setOhboxEnter, sheetThreadRead, enterSheet, viewEnter, spendViewEnter,
   } = useShellOpenState({
-    engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
+    engine, reader, derived, route, todaysNow, seatedOneColumn, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
     tagGroups, folderMessages, trashRows: trashPage.items, decision: { facts, consent, stage: Boolean(firstRun) && !demo },
   });
@@ -1294,30 +1343,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   );
 
   /**
-   * The Ohbox's split-pane selection IS the intent: selecting a row renders the message in full
-   * anatomy, so the selected body is fetched on selection (a truncation inside that anatomy
-   * reads as a short email, not a missing body). In the shell rather than `OhboxView` for
-   * `message-chrome.tsx`'s reason: the pane mounts twice while the reader is open, and the test
-   * harness mounts the view with no `EngineProvider`. `urgent`, and only the two selection
-   * effects pass it: this message IS the screen and must not queue behind the four-wide limiter.
-   * It is deliberately not `retry`, which would re-ask a refusing server from a re-running
-   * effect — the billed poll the failed-guard prevents.
-   */
-  useEffect(() => {
-    if (selectedOhbox) hydrateBody(selectedOhbox.id, { urgent: true });
-  }, [selectedOhbox?.id, hydrateBody]);
-
-  /**
-   * The reader's own message is hydrated too — the gap that made History snippet-only. The effect above
-   * covers the split-pane selection; a message opened straight into the reader sheet (History's
-   * `onOpen`, and every width whose reading column is hidden) was never reached by it, so the pane
-   * rendered `bodyOf` over an un-hydrated mirror. Keyed on `readerFor` as the selection effect is keyed
-   * on `selectedOhbox.id`; `hydrateBody` is single-flight and idempotent, so the overlap when the reader
-   * shows an Ohbox message costs nothing.
+   * TODAY'S SHEET'S OWN MESSAGE IS HYDRATED HERE — the gap that made History snippet-only: a message opened
+   * straight into the reader sheet (History's `onOpen`, and every width whose reading column is hidden) rendered
+   * `bodyOf` over an un-hydrated mirror. Keyed on `readerFor`; `urgent`, because this message IS the screen and must
+   * not queue behind the four-wide limiter, and deliberately not `retry`, which would re-ask a refusing server from
+   * a re-running effect. The Ohbox's own selection asked here too while today's view drew it; at the seated Ohbox the
+   * reader asks for the conversation it draws, once, so no second ask leaves from the shell.
    */
   useEffect(() => {
     if (readerFor) hydrateBody(readerFor, { urgent: true });
   }, [readerFor, hydrateBody]);
+  /* On one column of a seated Ohbox no reader is drawn for a row only walked to: the cursor row's letter is asked
+     ahead here, as the selection's was, so it is there when Enter is pressed. A letter over the list is the reader's. */
+  useEffect(() => {
+    if (seatedOneColumn && route.messageId == null && ohboxCursor != null) hydrateBody(ohboxCursor, { urgent: true });
+  }, [seatedOneColumn, route.messageId, ohboxCursor, hydrateBody]);
 
   // The engine's `unread` IS the answer now — the client-side overlay that used to sit on top of
   // it is gone. The optimistic overlay already makes the flip instant, and unlike the `Set` it
@@ -1376,7 +1416,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
-    pileSetFor, doneSetFor, pinsSpentFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+    pileSetFor, doneSetFor, pinsSpentFor, letterUp, closeLetterUp, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });
@@ -1396,7 +1436,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints, settingsSection,
     inPiles, railNow, railRef, readerRef, tagGroup,
   } = useShellKeys({
-    engine, reader, demo, scope, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
+    engine, reader, demo, scope, t, theme, route, todaysNow, seatedOneColumn, palette, pullBinding, consent, syncStatus, mailState,
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
@@ -1641,6 +1681,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     [subjectRule, reader, derived],
   );
 
+  /* The stage is what is on screen: a view of today's, or the seed review over whatever place the address names. */
+  const stageUp = todaysNow || seedOwed;
+  const dismissRibbon = useStableCallback(() => {
+    setRibbonGone(true);
+    // Dismissed for this render either way; a refused jar is announced once.
+    durableSessionSet("ohmail.demo-ribbon", "gone", "demo.ribbon");
+  });
+  /* WHAT THE READER'S PARTS READ at a seated place: the one file door, the one picture door, the one look at a file
+     and the one composer's Reply. One object while none of the four moves. */
+  const lookAt = useStableCallback((messageId: string, attachmentId: string) => setPreviewFor({ messageId, attachmentId }));
+  const readerFed = useMemo(
+    () => ({ attachments, remoteImages, look: lookAt, toggleReply }),
+    [attachments, remoteImages, lookAt, toggleReply],
+  );
+
   /**
    * WHAT TODAY'S CHROME SAID, SAID BY THE FRAME: the rail as a model, every strip as a notice in the one slot, and the
    * mailbox's state as the frame's connection reading. `todaysShown` is the dialog a notice's "Show" opens.
@@ -1669,23 +1724,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     {/* THE STAGE, one element, made here and drawn by `TodaysViews` where the frame keeps today's body. */}
     <TodaysStage.Provider value={
     <div className="today">
-        {demo && !ribbonGone ? (
-          <div className="demo-ribbon">
-            <span>
-              {t.rich("ribbon.label", { b: (chunks) => <b>{chunks}</b> })}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setRibbonGone(true);
-                // Dismissed for this render either way; a refused jar is announced once.
-                durableSessionSet("ohmail.demo-ribbon", "gone", "demo.ribbon");
-              }}
-            >
-              {t("ribbon.dismiss")}
-            </button>
-          </div>
-        ) : null}
+        {/* The ribbon and the stage's card stand once: here while the stage is on screen (a view of today's, or the
+            seed review over any place), over the list's head at a seated place (the feed below). */}
+        {stageUp && demo && !ribbonGone ? <DemoRibbon onDismiss={dismissRibbon} /> : null}
 
           {/* A SETTINGS SECTION ON A NARROW WINDOW: the way back to the section list, which the old top bar carried. */}
           {settingsSection && narrowNow ? (
@@ -1702,15 +1743,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 deliberately, because imported rules ARE screening decisions — and a host's card
                 (the desktop's default-mail ask) only while no question stands. */}
             <div className="stage-notice">
-              {profileImportOffer.offer ? (
-                <ProfileImportCard
-                  offer={profileImportOffer.offer}
-                  phase={profileImportOffer.phase}
-                  onImport={profileImportOffer.importNow}
-                  onNotNow={profileImportOffer.notNow}
-                  onAcknowledge={profileImportOffer.acknowledge}
-                />
-              ) : stageCard ?? null}
+              {stageUp ? <StageCard offer={profileImportOffer} hostCard={stageCard} /> : null}
             </div>
             {/* THE SEED REVIEW TAKES THE STAGE while it is owed. It decides what the Ohbox
                 contains, so answering it before reading the piles is the order that makes the
@@ -1749,139 +1782,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                  class — the facts a report needs, and nothing a message could leak. */
               fallback={(error) => <ViewFailCard view={effectiveView} error={error} />}
             >
-            {effectiveView === "ohbox" ? (
-              <ViewBoundary
-                key="ohbox"
-                onError={(error) => console.error("[view] render failed", "ohbox", error)}
-                fallback={(error) => <ViewFailCard view="ohbox" error={error} />}
-              >
-              <TodaysOhbox
-                pull={pullBinding}
-                located={located}
-                replyDone={replyDone}
-                demo={demo}
-                {...(setupHref ? { setupHref } : {})}
-                /* THE AWAY-RESPONDER NOTICE — the one state in which this product sends mail
-                   on its own, made visible on the pane its owner actually reads. Same gate as
-                   the settings row (`awaySection` below): absent on the demo, absent on a
-                   standalone install, and absent unless the SERVER's own row says it is on.
-                   `awayNotice.on` resting false means the fail-shape is a missing courtesy
-                   line, never a false claim that replies are going out. */
-                standingNotice={
-                  (() => {
-                    /* THE AWAY LINE IS THE LIST'S FIRST BLOCK, not a header tenant — see
-                       `OhboxList`'s `notice` for why it moved and `AwayNotice` for the form
-                       it takes by width. Its three-part gate is unchanged. */
-                    const away = demo || !awaySupported || !awayNotice.on
-                      ? null
-                      : (
-                        <AwayNotice
-                          audience={awayNotice.audience}
-                          throttle={awayNotice.throttle}
-                          /* The pile scope, so the line states WHICH mail is answered and not
-                             only who. Projected through the engine's own `awayEffectivePiles`
-                             inside `useAwayNotice`, never re-derived here. */
-                          piles={awayNotice.piles}
-                        />
-                      );
-                    /* The storage card follows the away line: the line is pinned, the card scrolls with the rows. */
-                    const card = demo ? null : storageCard ?? null;
-                    return away === null && card === null ? undefined : <>{away}{card}</>;
-                  })()
-                }
-                noticeSection={
-                  (() => {
-                    /* The header slot's tenant: the Option B ohmarchy offer. What the mailbox is doing is the
-                       frame's connection notice, and who organizes it the notice slot's, so nothing about either
-                       stands over the mail. The offer renders nothing when it has nothing to say. */
-                    /**
-                     * ONE ASK AT A TIME ON A FIRST RUN: MEASURED on the released 0.13.7: at +15 s after connecting a
-                     * mailbox a person faced THREE asks at once — the setup flow's modal, the OS "Open email links
-                     * with ohmail?" prompt stacked over the flow's own Continue and Cancel row, and this banner
-                     * behind both. `route.firstRun` is the stage's own gate (see the mount below), so this is the
-                     * same condition rather than a second opinion about it. WAITS, not withheld: `faceOffer.eligible`
-                     * is unchanged and the banner is there the moment the flow closes — a first run is the one visit
-                     * where somebody has a screen full of decisions already.
-                     */
-                    const offer = faceOffer.eligible && applyFaceAllDevices !== null
-                      && !route.firstRun && (facts?.length ?? 0) > 0 // waits for a mailbox, every door
-                      ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
-                      : null;
-                    return (
-                      <>
-                        {offer}
-                      </>
-                    );
-                  })()
-                }
-                resurfacedRows={resurfacedRows}
-                newForYou={ohbox.newForYou}
-                previouslySeen={ohbox.previouslySeen}
-                threadParticipants={participantsOf}
-                threadCountOf={threadCountOf}
-                threadMarksOf={threadMarksOf}
-                conversationOf={ohboxConversationOf}
-                absoluteTime={absoluteTime}
-                onToggleTime={toggleAbsoluteTime}
-                threadSubject={threadSubjectOf}
-                tags={tags}
-                now={now}
-                selectedId={selectedOhbox?.id ?? null}
-                lastActed={lastActed}
-                /* The column's third answer — see `ohboxGone`. One prop, because "the message
-                   this column was showing has been taken away" is one fact. */
-                gone={ohboxGone ? { openTrash: openTrashWindow } : null}
-                /* The row's own selection, which also decides Move's seed — see `selectOhboxRow`. */
-                onSelect={selectOhboxRow}
-                /* The ID travels, and that is not tidiness. This was `() => setReaderOpen(true)`
-                   against a reader hard-wired to `selectedOhbox`, so the indirection hid a
-                   staleness: `OhboxView.open` calls `onSelect(id)` and this in the SAME tick,
-                   so the shell's `selectedOhbox` here is still the PREVIOUS row. With the
-                   reader holding an id of its own, reading that stale value would open the
-                   message the user was on before the one they tapped.
-
-                   It is `enterReader` and no longer `setReaderFor` — see the gate above. */
-                onEnterReader={enterReader}
-                enterId={ohboxEnter}
-                onEntered={() => setOhboxEnter(null)}
-                onMarkSeen={markSeen}
-                /* The row being read, held in New by the engine; the visit's wiring for the sheet. */
-                onHoldRow={holdOhboxRow}
-                onThreadRead={setOhboxThreadRead}
-                readSetFor={readSetFor}
-                /* An Undo puts the row back as it stood at the press — the view answers (`UndoLink`). */
-                undoLink={undoLink}
-                onRestoreHold={restoreOhboxHold}
-                /* WHICH MESSAGE THE SHEET IS SHOWING, so the view can tell when it CLOSES.
-                   Reading is committed on the way out of a message, and at a width with no
-                   reading column dismissing the sheet is the way out — often the only one, since
-                   a phone reader taps in, reads, and taps back without ever moving the cursor.
-                   The view owns that decision, including the width test that makes a desktop
-                   sheet-close not a departure; the shell owns the sheet, so the state has to
-                   travel. Nothing else in the view reads it. */
-                readerId={readerFor}
-                doorbellInitials={waitingLive.map((w) => w.initial)}
-                doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
-                doorbellCount={screener.waitingCount}
-                doorbellSettled={screener.queueSettled}
-                notOrganizingYet={demo ? null : nothingOrganizesOf(facts)}
-                /* May this view state its emptiness as a fact yet? Derived once in
-                   `mail-state.ts`; see `MailState.settled` and `MailState.owed` — the pair the
-                   shared `listSurface` reading asks, never one of them alone. The gate mail
-                   of senders the store does not list joins the Ohbox on its queue answer, so the
-                   count waits for that answer too. */
-                settled={mailState.settled && screener.storeSettled}
-                owed={mailState.owed}
-                onDoorbell={() => go("screener")}
-                onAction={onMessageAction}
-                onAddTag={openTagPicker}
-                onDropTag={dropTag}
-                bulk={bulkVerbs}
-                onMarkAllRead={markAllRead}
-              />
-              </ViewBoundary>
-            ) : null}
-
             {inPiles ? (
               <KeptPiles
                 active={isKeptPile(effectiveView) ? effectiveView : null}
@@ -2771,7 +2671,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       <Reader
         /* OPEN FOR THE "GONE" ANSWER TOO — the sheet closing on a tombstone is precisely the
            silence this fixes: the message left and the surface said nothing. */
-        open={readerMessage != null || readerGone}
+        /* AND ONLY OVER A VIEW OF TODAY'S: a seated place's letter stands in the frame's reading column. */
+        open={todaysNow && (readerMessage != null || readerGone)}
         ariaLabel={t("reader.pane")}
         returnHint={t("reader.hintReturn")}
         closeOnEscape={false}
@@ -2789,7 +2690,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
            does not read as tappable. The component's own default is English. */
         closeLabel={t("reader.back")}
       >
-        {sheetMessage ? (
+        {todaysNow && sheetMessage ? (
           <MessagePane
             /* Presented state, not stored state — see `sheetMessage`. The ACTIONS still act on
                the real message: `sheetMessage` differs only in the `unread` the verb derives
@@ -2806,7 +2707,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             scroller={readerRef}
             threadRead={sheetThreadRead ?? undefined}
           />
-        ) : readerGone ? (
+        ) : todaysNow && readerGone ? (
           <MessageGone openTrash={openTrashWindow} />
         ) : (
           <span />
@@ -2814,7 +2715,95 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       </Reader>
     </div>
     }>
-      {children}
+      {/* WHAT THE SEATED PLACES READ, provided once above every pane: the presented mirror the reader draws from (the
+          one today's lists read), the reader's parts' feed, and the Ohbox's feed: today's inputs at the mount of the
+          Ohbox, as this composition computes them. No hook is called a second time for a place. */}
+      <PresentedMirrorContext.Provider value={presented}>
+      <TodaysReaderFed.Provider value={readerFed}>
+      <TodaysOhboxFed.Provider
+        value={{
+          pull: pullBinding,
+          located,
+          replyDone,
+          demo,
+          ...(setupHref ? { setupHref } : {}),
+          resurfacedRows,
+          newForYou: ohbox.newForYou,
+          previouslySeen: ohbox.previouslySeen,
+          threadParticipants: participantsOf,
+          threadCountOf,
+          threadMarksOf,
+          conversationOf: ohboxConversationOf,
+          absoluteTime,
+          onToggleTime: toggleAbsoluteTime,
+          threadSubject: threadSubjectOf,
+          tags,
+          now,
+          lastActed,
+          /* The column's third answer: the letter this column was showing has been taken away. */
+          gone: ohboxGone ? { openTrash: openTrashWindow } : null,
+          /* The row's own selection beside the address, which also decides Move's seed (`selectOhboxRow`). */
+          onSelectRow: selectOhboxRow,
+          /* The cursor row it writes: what the list marks where one column stands and the address names no letter. */
+          cursor: ohboxCursor,
+          /* Records the row's open (Forward's target). It opens no sheet: the letter is the frame's column, beside
+             the list, or over it where one column stands (the address names it then). */
+          onEnterReader: enterReader,
+          enterId: ohboxEnter,
+          onEntered: () => setOhboxEnter(null),
+          onMarkSeen: markSeen,
+          /* The row being read, held in New by the engine; the visit's wiring. */
+          onHoldRow: holdOhboxRow,
+          onThreadRead: setOhboxThreadRead,
+          readSetFor,
+          /* An Undo puts the row back as it stood at the press (`UndoLink`). */
+          undoLink,
+          onRestoreHold: restoreOhboxHold,
+          doorbellInitials: waitingLive.map((w) => w.initial),
+          doorbellHues: waitingLive.map((w) => avatarHue(w.from.address)),
+          doorbellCount: screener.waitingCount,
+          doorbellSettled: screener.queueSettled,
+          notOrganizingYet: demo ? null : nothingOrganizesOf(facts),
+          /* May the list state its emptiness as a fact yet? The pair of `mail-state.ts`; the gate mail of senders the
+             store does not list joins the Ohbox on its queue answer, so the count waits for that answer too. */
+          settled: mailState.settled && screener.storeSettled,
+          owed: mailState.owed,
+          onDoorbell: () => go("screener"),
+          onAction: onMessageAction,
+          onSenderPress: onStageClickCapture,
+          onAddTag: openTagPicker,
+          onDropTag: dropTag,
+          bulk: bulkVerbs,
+          onMarkAllRead: markAllRead,
+          /* OVER THE LIST'S HEAD while the Ohbox is on screen, each drawn once (the stage draws the first two while
+             it is up): the demo's ribbon, the stage's one card, and the header's tenant, the ohmarchy offer. The offer
+             WAITS while a first run is open (one ask at a time: its stage's own gate) and for a mailbox, every door. */
+          over: {
+            ribbon: !stageUp && demo && !ribbonGone ? <DemoRibbon onDismiss={dismissRibbon} /> : null,
+            stageCard: !stageUp && (profileImportOffer.offer || stageCard)
+              ? <StageCard offer={profileImportOffer} hostCard={stageCard} />
+              : null,
+            tenant: faceOffer.eligible && applyFaceAllDevices !== null && !route.firstRun && (facts?.length ?? 0) > 0
+              ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
+              : null,
+          },
+          /* THE LIST'S FIRST BLOCK, inside its scroller: the away line (the one state in which this product sends
+             mail on its own: absent on the demo, on a standalone install, and unless the server's own row says it is
+             on), then the storage card: the line is pinned, the card scrolls with the rows. */
+          first: demo || !((awaySupported && awayNotice.on) || storageCard) ? null : (
+            <>
+              {awaySupported && awayNotice.on
+                ? <AwayNotice audience={awayNotice.audience} throttle={awayNotice.throttle} piles={awayNotice.piles} />
+                : null}
+              {storageCard ?? null}
+            </>
+          ),
+        }}
+      >
+        {children}
+      </TodaysOhboxFed.Provider>
+      </TodaysReaderFed.Provider>
+      </PresentedMirrorContext.Provider>
     </TodaysStage.Provider>
     {/* WHAT STANDS ABOVE, beside what the frame draws: every overlay of the composition, in a holder that takes no
         box (`today.css`), so nothing here stands in the frame's layout. */}

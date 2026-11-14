@@ -553,7 +553,7 @@ async function mountForwardShell(o: {
 }): Promise<void> {
   await unmount();
   setViewport();
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/history";
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
@@ -617,8 +617,8 @@ async function mountForwardShell(o: {
       } as never) }) }),
     }));
   });
-  expect(await waitUntil(() => host!.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null), "m1 in the Ohbox").toBe(true);
-  const row = host!.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
+  expect(await waitUntil(() => host!.querySelector('.view-history :is(.row, [role=option])[data-id="m1"]') !== null), "m1 in History").toBe(true);
+  const row = host!.querySelector<HTMLElement>('.view-history :is(.row, [role=option])[data-id="m1"]')!;
   await act(async () => {
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));

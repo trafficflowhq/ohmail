@@ -165,7 +165,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       places: has.frame.places,
       stages: has.frame.stages,
       overs: has.frame.overs,
-      reader: NONE,
+      reader: has.frame.reader,
       above: has.frame.above,
       calendar: has.frame.calendar,
     },

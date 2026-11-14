@@ -16,7 +16,8 @@ import { createElement as h, useEffect, useMemo, useRef, useSyncExternalStore, t
 import { useLocale, useMessages, useTimeZone } from "next-intl";
 import {
   CANNOT, FEATURE_NAMES, NONE,
-  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None, type Signal,
+  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None,
+  type ReaderEntry, type Signal,
 } from "@ohmail/app/host";
 import { TextProvider } from "@ohmail/app/text";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -107,6 +108,12 @@ export interface TodaysShellProps {
   managedService?: boolean;
   /** The host's way back to a live session (Sign in, Reload); none where the case hands none. Hand a stable one. */
   recover?: HostSession["recover"];
+  /**
+   * The reader a case's host hands in place of the shell's own, for a case that stands a reading column of its own
+   * parts; absent: the shell's (`todaysReader`) where the composition stands, none where it does not. Hand one made
+   * once (at module scope), as a shell does.
+   */
+  reader?: ReaderEntry;
 }
 
 const orNone = <T,>(value: T | undefined | null): T | None => (value === undefined || value === null ? NONE : value);
@@ -187,7 +194,9 @@ export function hostFromTodaysInputs(
       foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
-    features: { ...features, places: frame.places, stages: frame.stages, overs: frame.overs, reader: NONE, above: todays ? frame.above : NONE } as HostContract["features"],
+    features: {
+      ...features, places: frame.places, stages: frame.stages, overs: frame.overs, reader: props.reader ?? (todays ? frame.reader : NONE), above: todays ? frame.above : NONE,
+    } as HostContract["features"],
     device: {
       build: support
         ? { surface: support.surface, version: support.version ?? null, commit: support.commit ?? null, mailtoLeaves: support.mailtoLeaves !== false }

@@ -18,12 +18,14 @@ export type MayBeNone<K extends keyof HostWires> = { readonly [W in K]: HostWire
 export type Entries<K extends FeatureName = FeatureName> = Readonly<Record<K, FeatureEntry>>;
 
 /**
- * What every shell hands the frame, the same on all three: the places and stages it mounts (it imports them), what it
- * stands above every pane, the address bar, the window and the look it stands under, and its way back to a live session.
+ * What every shell hands the frame, the same on all three: the places and stages it mounts (it imports them), the
+ * reading column it imports, what it stands above every pane, the address bar, the window and the look it stands
+ * under, and its way back to a live session.
  */
 export interface FrameSupplies {
   readonly places: FramePlaces;
   readonly stages: FrameStages;
+  readonly reader: HostFeatures["reader"];
   readonly above: HostFeatures["above"];
   readonly overs: FrameOvers;
   /** The calendar's root export (`calendar` of `@ohmail/app/calendar`) where the shell mounts it, else `none`. */
