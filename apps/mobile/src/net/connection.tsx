@@ -10,7 +10,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState, Platform } from "react-native";
-import { classifyWindowSyncFailure, unsentDraftsOf } from "@ohmail/client-engine";
+import { classifyWindowSyncFailure, unsentDraftsOf, type PullRing } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
@@ -161,10 +161,15 @@ export interface Connection {
    * The sync doorbell — the wake channel, the Servers screen and pull-to-refresh all ring
    * this one. Resolves when the sync round actually settles (a round already in flight is
    * JOINED, not doubled — the engine's own poll/wake doctrine), which is what lets a pull
-   * spinner end honestly; a failure resolves too, with the sentence in `syncError`.
+   * spinner end honestly; a failure resolves too, with the sentence in `syncError`. `heard` is
+   * handed the ring's own answer the moment it lands, ahead of the round: a pull says at once when
+   * the server answers that it is not fetching new mail.
    */
-  syncNow(): Promise<void>;
+  syncNow(heard?: RingHeard): Promise<void>;
 }
+
+/** What a ring's answer is heard by: `null` is a ring that was refused or has no doorbell. */
+export type RingHeard = (ring: PullRing | null) => void;
 
 const ConnectionContext = createContext<Connection | null>(null);
 
@@ -872,7 +877,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           enter({ k: "idle" });
           setSyncError(null);
         }),
-      syncNow: () => {
+      syncNow: (heard) => {
         // Not live ⇒ nothing to sync, settled already. Live ⇒ behind the session's identity
         // clearance (see `clearance` — no drain may move the mirror before the verdict), the
         // runner joins the round in flight or starts one, and the returned promise IS that
@@ -898,6 +903,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           // so a held-down refresh cannot stack unbounded rounds.
           const rang = session.engine.requestPull();
           const round = runner.request(session.engine);
+          // A button hands its press event in this place: only a function is a listener.
+          if (typeof heard === "function") void rang.then(heard, () => undefined);
           void rang.then((r) => {
             if (!r || r.requested === 0) return;
             for (const delayMs of [4_000, 10_000]) {

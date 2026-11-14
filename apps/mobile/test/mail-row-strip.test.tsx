@@ -110,6 +110,7 @@ vi.mock("../src/ui/MessageReader", () => ({ MessageReader: () => null }));
 vi.mock("../src/ui/OrganizerStrip", () => ({ OrganizerStrip: () => null, useStandaloneClaim: () => ({ claim: null, strip: null }) }));
 vi.mock("../src/ui/not-organizing", () => ({ knockSlotOf: () => ({ k: "none" }), noneOrganizedWhy: () => null, notOrganizingSay: () => "" }));
 vi.mock("../src/ui/WaitingStrip", () => ({ WaitingStrip: () => null }));
+vi.mock("../src/ui/LateStrip", () => ({ LateStrip: () => null }));
 vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
 vi.mock("../src/ui/standalone-form", () => ({ readingAtConnectLine: () => "", readingAtConnectNow: () => null }));
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));

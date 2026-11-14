@@ -27,6 +27,9 @@ import {
   isImporting,
   seedGrowth,
   stripSpeaks,
+  fetchingLate,
+  FILER_KEY_SET,
+  OWES_NOTHING_KEYS,
   type MailStateInputs,
   type MailboxFacts,
 } from "../app/shell/mail-state";
@@ -1704,8 +1707,9 @@ describe("A STILL MIRROR THAT IS SHORT OF THE ACCOUNT IS NOT A STRIP STATE, AND 
   });
 
   it("the STRIP has no key for it and NEITHER CATALOG has a sentence — in both languages", () => {
-    // The type has no `behind` member, so a re-add cannot be a one-line copy change; and the
-    // string is gone from both catalogs, so a re-added arm would render its own key at somebody.
+    // The key `behind` is the server's own word that new mail is not being fetched (the block at
+    // the end of this file), never a short mirror; and the old string is gone from both catalogs,
+    // so a re-added arm would render its own key at somebody.
     expect(deriveMailState(stalled(73_525, 5_107)).key).not.toBe("behind");
     for (const catalog of [messages, deMessages]) {
       const sync = (catalog as unknown as { sync: Record<string, string> }).sync;
@@ -1919,5 +1923,123 @@ describe("a copy this computer cannot store into is not catching up", () => {
   it("CONTROL: a paired host's own store refusal keeps the age label", () => {
     const host = mailbox({ status: "error", errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" });
     expect(deriveMailState(inputs({ freshness: STALE, mailboxes: [host] })).key).toBe("stale");
+  });
+});
+
+/**
+ * NEW MAIL IS LATE. The server says on every mailbox row whether new mail is being fetched
+ * (`fetching`); for 26 hours it was not, and every state below read as healthy. One arm, from that
+ * one fact: null and absent say nothing.
+ *
+ * Mutations watched red: the arm removed (the first case); the arm moved above `stopped` or below
+ * `blocked` (the two rank cases); `since` taken oldest-first (the since case); `behind: false`
+ * counted (the silence case); the key added to OWES_NOTHING_KEYS (the owed case).
+ */
+describe("new mail is late: the server says it is not fetching", () => {
+  const SINCE = new Date(NOW - 50 * 60_000).toISOString();
+  const synced = (over: Partial<MailboxFacts> = {}): MailboxFacts =>
+    mailbox({ lastSyncAt: new Date(NOW - 30_000).toISOString(), ...over });
+  const late = (over: Partial<MailboxFacts> = {}): MailboxFacts =>
+    synced({ fetching: { behind: true, since: SINCE }, ...over });
+
+  it("a row whose fetching is behind is the state, with the time the server gave", () => {
+    const s = deriveMailState(inputs({ mailboxes: [late()] }));
+    expect(s.key).toBe("behind");
+    expect(s.asOf).toBe(SINCE);
+    expect(stripSpeaks(s.key)).toBe(true);
+    // The day's title and the stamp move with the clock.
+    expect(s.clock).toBe(true);
+  });
+
+  it("one behind row among several is enough; with no time on record the state stands without one", () => {
+    expect(deriveMailState(inputs({ mailboxes: [synced({ fetching: null }), late({ id: "mb2" })] })).key).toBe("behind");
+    const s = deriveMailState(inputs({ mailboxes: [synced({ fetching: { behind: true, since: null } })] }));
+    expect(s.key).toBe("behind");
+    expect(s.asOf).toBeNull();
+  });
+
+  it("the time is the newest the behind rows carry: the last instant anything was checked", () => {
+    const older = new Date(NOW - 3 * 3_600_000).toISOString();
+    const rows = [
+      late({ fetching: { behind: true, since: older } }),
+      late({ id: "mb2", fetching: { behind: true, since: SINCE } }),
+      late({ id: "mb3", fetching: { behind: true, since: null } }),
+      // Not behind: its time is no part of the sentence.
+      synced({ id: "mb4", fetching: { behind: false, since: new Date(NOW - 1_000).toISOString() } }),
+    ];
+    expect(fetchingLate(rows)).toEqual({ since: SINCE });
+    expect(deriveMailState(inputs({ mailboxes: rows })).asOf).toBe(SINCE);
+    expect(fetchingLate([synced({ fetching: { behind: true, since: "not a time" } })])).toEqual({ since: null });
+  });
+
+  it("null, absent and not-behind say nothing: every state is what it was without the field", () => {
+    expect(fetchingLate(null)).toBeNull();
+    expect(fetchingLate([])).toBeNull();
+    const worlds: Array<Partial<MailStateInputs> & { mailboxes: MailboxFacts[] }> = [
+      { mailboxes: [synced()] },
+      { mailboxes: [synced({ pendingMoves: 3 })] },
+      { mailboxes: [blockedMailbox("at_capacity")] },
+      { mailboxes: [synced({ status: "error", errorCode: "auth" })] },
+      { mailboxes: [mailbox()], mirrored: 0, growth: seedGrowth(0) },
+      { mailboxes: [synced()], mirrored: 400, growth: importingFromEmpty(400) },
+      { mailboxes: [synced({ status: "disabled" })] },
+    ];
+    for (const w of worlds) {
+      const plain = deriveMailState(inputs(w));
+      for (const fetching of [null, { behind: false, since: SINCE }, { behind: false, since: null }]) {
+        const withField = { ...w, mailboxes: w.mailboxes.map((m) => ({ ...m, fetching })) };
+        expect(deriveMailState(inputs(withField)), `${plain.key} changed under ${JSON.stringify(fetching)}`).toEqual(plain);
+      }
+    }
+  });
+
+  it("it ranks with the connection: under a stopped, failing, lost or stale loop", () => {
+    const rows = [late()];
+    const sync = { bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false };
+    expect(deriveMailState(inputs({ mailboxes: rows, sync: { ...sync, terminal: true } })).key).toBe("stopped");
+    expect(deriveMailState(inputs({ mailboxes: rows, sync: { ...sync, failures: 3 } })).key).toBe("failing");
+    expect(deriveMailState(inputs({ mailboxes: rows, sync: { ...sync, ownerLost: true } })).key).toBe("ownerLost");
+    expect(deriveMailState(inputs({
+      mailboxes: rows, freshness: { state: "stale", asOf: new Date(NOW - 90 * 60_000).toISOString() },
+    })).key).toBe("stale");
+  });
+
+  it("…and before a mailbox's own trouble, our filing, an import and a first sync", () => {
+    const behind = { fetching: { behind: true, since: SINCE } };
+    expect(deriveMailState(inputs({ mailboxes: [blockedMailbox("at_capacity", behind)] })).key).toBe("behind");
+    expect(deriveMailState(inputs({
+      mailboxes: [late(), synced({ id: "mb2", status: "error", errorCode: "auth" })],
+    })).key).toBe("behind");
+    expect(deriveMailState(inputs({ mailboxes: [late({ pendingMoves: 3 })] })).key).toBe("behind");
+    expect(deriveMailState(inputs({ mailboxes: [late()], mirrored: 400, growth: importingFromEmpty(400) })).key)
+      .toBe("behind");
+    expect(deriveMailState(inputs({ mailboxes: [mailbox(behind)], mirrored: 0, growth: seedGrowth(0) })).key)
+      .toBe("behind");
+  });
+
+  it("the demo and a stood-down loop stay silent", () => {
+    expect(deriveMailState(inputs({ mailboxes: [late()], demo: true })).key).toBe("quiet");
+    expect(deriveMailState(inputs({
+      mailboxes: [late()],
+      sync: { bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false, standingDown: true },
+    })).key).toBe("quiet");
+  });
+
+  it("the loop still drains: a first catch-up under it is still owed, and a drained pane is settled", () => {
+    expect(OWES_NOTHING_KEYS).not.toContain("behind");
+    const sync = { bootstrapping: true, failures: 0, terminal: false, refused: false, ownerLost: false };
+    const s = deriveMailState(inputs({ mailboxes: [late()], sync, engineFreshness: { state: "unknown", asOf: null } }));
+    expect(s.key).toBe("behind");
+    expect(s.owed).toBe(true);
+    expect(deriveMailState(inputs({ mailboxes: [late()] })).settled).toBe(true);
+  });
+
+  it("the mailbox note is in the filer table for Cloud and for a server, never for a computer", () => {
+    for (const key of ["notCheckedNoteCloud", "notCheckedNoteServer"]) expect(FILER_KEY_SET).toContain(key);
+    const copy = (messages as unknown as { mailboxes: Record<string, string> }).mailboxes;
+    expect(copy.notCheckedNoteCloud).toContain("ohmail Cloud");
+    expect(copy.notCheckedNoteServer).not.toMatch(/Cloud/);
+    expect((deMessages as unknown as { mailboxes: Record<string, string> }).mailboxes.notCheckedNoteServer)
+      .not.toMatch(/Cloud/);
   });
 });

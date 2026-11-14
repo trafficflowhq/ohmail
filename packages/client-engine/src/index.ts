@@ -649,6 +649,7 @@ export type {
   ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
   AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire,
   WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
+  FetchingStanding, PullRing,
 } from "./adapters/adapter.js";
 export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {

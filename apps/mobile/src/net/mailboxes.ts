@@ -170,6 +170,18 @@ export interface PhoneMailbox {
   /** `MailboxDTO.errorCode` and `authKind`, read only to class the support mail's block; absent where the wire sent none. */
   errorCode?: string;
   authKind?: string;
+  /**
+   * IS NEW MAIL BEING FETCHED FOR THIS MAILBOX — `MailboxDTO.fetching`: `behind` when nothing
+   * fetches or fetching has fallen behind, `since` the last finished pass. `null`: the answering
+   * server does not say (a mailbox it does not fetch, a computer or this phone's own engine).
+   * Absent where a server older than the field answered. Neither is "up to date": both are silence.
+   */
+  fetching?: PhoneFetching | null;
+}
+
+export interface PhoneFetching {
+  behind: boolean;
+  since: string | null;
 }
 
 export interface PhoneFiling {
@@ -195,6 +207,13 @@ function filingOf(raw: unknown): PhoneFiling | undefined {
     stuckSince: instantOf(f.stuckSince), stuckRefusalClass: wordOf(f.stuckRefusalClass),
     lastRefusalClass: wordOf(f.lastRefusalClass), nextAttemptAt: instantOf(f.nextAttemptAt), asOf: instantOf(f.asOf),
   };
+}
+
+/** The wire's `fetching`: an object is read, with only a plain `true` behind; anything else says nothing. */
+function fetchingOf(raw: unknown): PhoneFetching | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const f = raw as Record<string, unknown>;
+  return { behind: f.behind === true, since: instantOf(f.since) };
 }
 
 /** A non-empty string or `null` — an empty string is not an instant. */
@@ -322,6 +341,7 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
         ...(typeof r.errorCode === "string" && r.errorCode !== "" ? { errorCode: r.errorCode } : {}),
         ...(typeof r.authKind === "string" && r.authKind !== "" ? { authKind: r.authKind } : {}),
+        ...("fetching" in r ? { fetching: fetchingOf(r.fetching) } : {}),
       });
     }
     return out;
