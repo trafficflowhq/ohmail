@@ -56,7 +56,7 @@ describe("the one reader", () => {
 
 const ROOTS = [
   path.join(HERE, "../app"), path.join(HERE, "../middleware.ts"), path.join(HERE, "../../../packages/app/src"),
-  path.join(HERE, "../../../packages/app-logic/src"),
+  path.join(HERE, "../../../packages/app-logic/src"), path.join(HERE, "../../../packages/letter-body/src"),
 ];
 const NAME = String.raw`(?:"tf_(?:session|refresh|csrf|resume|owner)"|SESSION_COOKIE|RESUME_COOKIE|OWNER_COOKIE)`;
 const HAND_READ = new RegExp(String.raw`[!=]==\s*${NAME}|${NAME}\s*[!=]==|\bcookies(?:\(\))?\.(?:get|has)\(`, "g");

@@ -1,0 +1,20 @@
+/* The figure a sheet is about: the number first, then what it is of in the second ink; a word ends the line. */
+@layer oh {
+  .oh-figureline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s1) var(--s2);
+    padding: var(--s2) 0 var(--s3);
+    color: var(--ink2);
+  }
+
+  .oh-figureline > .oh-count[data-kind="point"] {
+    color: var(--ink);
+  }
+
+  .oh-figureline > .oh-tag {
+    align-self: center;
+    margin-left: auto;
+  }
+}

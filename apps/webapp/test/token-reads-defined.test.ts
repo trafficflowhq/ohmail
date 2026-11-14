@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  * the ohmarchy face alone with a fallback at every read. KNOWN_UNDEFINED is a ratchet: it may only fall.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
-const DOMAIN = ["apps/webapp/app", "packages/app-logic/src", "packages/app/src/keys", "packages/ui/src", "packages/tokens/src"];
+const DOMAIN = ["apps/webapp/app", "packages/app-logic/src", "packages/app/src/keys", "packages/letter-body/src", "packages/ui/src", "packages/tokens/src"];
 const TOKENS = "packages/tokens/src/tokens.css";
 const FACE = "packages/tokens/src/ohmarchy.css";
 
@@ -32,11 +32,13 @@ const walk = (dir: string, out: string[] = []): string[] => {
    its own meaning under its own root (the tokens package's design-not-yet-imported test holds who may meet and that
    both seam sheets load; packages/app/test/frame/seam.test.ts holds the sheets). Every other page loads today's
    sheets alone. So what the new design declares defines nothing here: a sheet of today's views reads today's names.
-   The design's own reads are held by the tokens package's design-one-source test: the design's folders, and the
-   kit's three, whose stylesheets read the design's tokens. */
+   The design's own reads are held by the tokens package's design-one-source test: the design's folders, the
+   kit's three, whose stylesheets read the design's tokens, and the body's sheet look, whose every rule stands
+   under `.mb[data-look="sheet"]`, which the reader's body entry alone sets, on a page of the new design. */
 const NEW_DESIGN = [
   "packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/",
   "packages/ui/src/base/", "packages/ui/src/mail/", "packages/ui/src/calendar/",
+  "packages/letter-body/src/message-body-sheet.css",
 ];
 const files = DOMAIN.flatMap((d) => walk(join(ROOT, d))).map((f) => relative(ROOT, f).replace(/\\/g, "/"))
   .filter((f) => !NEW_DESIGN.some((dir) => f.startsWith(dir)));

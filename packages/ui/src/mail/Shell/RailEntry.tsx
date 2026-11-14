@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { KeyHint } from "../../base/index.js";
 import { v } from "../../base/tokens.js";
+import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { animate, motionShape } from "../../motion/motion.js";
 import "./rail-entry.css";
@@ -55,6 +56,8 @@ export interface RailEntryProps {
   /** The whole name, where the entry may cut it. */
   title?: string;
   onPress?: () => void;
+  /** A right click, or the key that opens the context menu: the entry's own menu, where the pointer is. */
+  onMenu?: (at: { x: number; y: number }) => void;
 }
 
 /** One place: its sign, its name, its count. */
@@ -81,6 +84,13 @@ export function RailEntry(props: RailEntryProps) {
     ...(depth ? { "--oh-railentry-depth": depth } : {}),
   } as CSSProperties;
   const folds = kind === "fold" || expanded !== undefined;
+  const { onMenu } = props;
+  const menu = onMenu
+    ? (event: MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        onMenu(cssPoint(event));
+      }
+    : undefined;
 
   return (
     <button
@@ -98,6 +108,7 @@ export function RailEntry(props: RailEntryProps) {
       title={props.title}
       style={style}
       onClick={onPress}
+      onContextMenu={menu}
     >
       {folds ? (
         <span className="oh-railentry-chevron">

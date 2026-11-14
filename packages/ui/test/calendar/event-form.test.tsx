@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { createRef, useState } from "react";
+import { SuggestionList, useSuggestions } from "@ohmail/ui/base";
 import { EventForm, QuickAdd, type EventFormRow } from "@ohmail/ui/calendar";
 
 afterEach(cleanup);
@@ -18,6 +20,54 @@ const when = (over: Partial<Record<"day" | "starts" | "allDay", () => void>> = {
 });
 
 describe("the event form", () => {
+  it("lets its line of text offer while it is typed in: the field is the list's combobox, and its element is handed out", () => {
+    const at = createRef<HTMLInputElement>();
+    function Form() {
+      const [place, setPlace] = useState("");
+      const offers = useSuggestions({
+        id: "place-list",
+        text: place,
+        onText: setPlace,
+        own: (text) => [{ rows: text ? [{ id: "cameo", primary: "Kino Cameo" }] : [] }],
+        free: true,
+        onTake: (row) => setPlace(row.primary),
+      });
+      const row: EventFormRow = {
+        id: "place",
+        icon: "place",
+        items: [
+          {
+            kind: "text",
+            value: place,
+            label: "Place",
+            placeholder: "A place",
+            suggests: offers.field,
+            ref: at,
+          },
+        ],
+      };
+      return (
+        <>
+          <EventForm rows={[row]} />
+          <SuggestionList {...offers.list} label="Place suggestions" anchor={at} />
+        </>
+      );
+    }
+    render(<Form />);
+    const place = screen.getByRole("combobox", { name: "Place" }) as HTMLInputElement;
+    expect(at.current).toBe(place);
+    expect(place.placeholder).toBe("A place");
+    fireEvent.change(place, { target: { value: "kin" } });
+    expect(place.value).toBe("kin");
+    expect(place.getAttribute("aria-controls")).toBe(
+      screen.getByRole("listbox", { name: "Place suggestions" }).id,
+    );
+    fireEvent.keyDown(place, { key: "ArrowDown" });
+    fireEvent.keyDown(place, { key: "Enter" });
+    expect(place.value).toBe("Kino Cameo");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
   it("draws a row's controls by their names, in the order given", () => {
     render(<EventForm rows={[when()]} />);
     expect(screen.getByRole("button", { name: "Day" }).textContent).toBe("Wed 11 Nov");

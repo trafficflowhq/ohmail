@@ -8,7 +8,11 @@
     "organizer": { "imports": ["mail-io", "core", "db-mail", "db", "wire", "cal-core", "cal-providers"] },
     "client-engine": { "imports": ["wire", "core", "cal-core"] },
     "app-logic": { "imports": ["client-engine", "wire", "core", "cal-core"] },
-    "app": { "imports": ["ui", "tokens", "app-logic", "wire"], "typesOnly": ["client-engine", "cal-core"] },
+    "app": {
+      "imports": ["ui", "tokens", "app-logic", "letter-body", "wire"],
+      "typesOnly": ["client-engine", "cal-core"]
+    },
+    "letter-body": { "imports": ["client-engine", "core", "app-logic", "ui", "tokens", "wire"] },
     "cal-core": { "imports": ["wire", "core"] },
     "cal-providers": { "imports": ["cal-core", "wire", "core"] },
     "db": { "imports": ["db-mail", "wire"] },
@@ -21,7 +25,7 @@
     "webapp": { "never": ["organizer", "cal-providers", "testing"] },
     "desktop": { "never": ["organizer", "cal-providers", "testing"] },
     "paired-page": { "never": ["organizer", "cal-providers", "testing"] },
-    "mobile": { "never": ["organizer", "cal-providers", "testing"] },
+    "mobile": { "never": ["organizer", "cal-providers", "testing", "letter-body"] },
     "server": { "never": ["organizer", "testing"] },
     "worker": { "never": ["testing"] },
     "sidecar": { "never": ["testing"] },

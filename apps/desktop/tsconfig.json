@@ -76,6 +76,7 @@
       "@ohmail/client-engine/calendar-acts": ["../../packages/client-engine/src/calendar-acts.ts"],
       "@ohmail/client-engine/calendar-writes": ["../../packages/client-engine/src/calendar-writes.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@ohmail/ui/body-parts": ["../../packages/ui/src/body-parts.ts"],
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
       "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
@@ -84,6 +85,10 @@
          published tree this map and `vite.config.ts`'s alias table are their only resolvers. A
          folder's door resolves as the folder; a moved file by its own name. */
       "@ohmail/app-logic/*": ["../../packages/app-logic/src/*"],
+      "@ohmail/letter-body/links": ["../../packages/letter-body/src/rendered-links.ts"],
+      "@ohmail/letter-body/cache": ["../../packages/letter-body/src/mail-doc-cache.ts"],
+      "@ohmail/letter-body/words": ["../../packages/letter-body/src/words.ts"],
+      "@ohmail/letter-body": ["../../packages/letter-body/src/index.ts"],
       "@ohmail/app/host/browser": ["../../packages/app/src/host/browser/index.ts"],
       "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
       "@ohmail/app/keys": ["../../packages/app/src/keys/index.ts"],

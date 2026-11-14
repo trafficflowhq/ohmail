@@ -29,7 +29,7 @@ import {
 import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
 import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "./(product)/resume/signed-out-note";
 import { postSignedOut, thisTabName } from "./signed-out-signal";
-import { forgetMailDocs } from "./letter-body/mail-doc-cache";
+import { forgetMailDocs } from "@ohmail/letter-body/cache";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/refresh/logout` revokes the session

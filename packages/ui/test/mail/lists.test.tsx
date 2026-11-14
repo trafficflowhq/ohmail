@@ -10,6 +10,7 @@ import {
   ListHead,
   ListLine,
   ListTail,
+  MonthRail,
   ReadSquares,
   SelectionBar,
 } from "../../src/mail/index.js";
@@ -75,6 +76,76 @@ describe("ListHead", () => {
   });
 });
 
+describe("ListHead, a place of one person or one pile", () => {
+  it("says a quiet line under its name, above what stands below, and how many it holds before its tools", () => {
+    render(
+      <ListHead
+        title="Petra Wyss"
+        meta="petra@makersfest.example"
+        count="2 messages"
+        aside={<button type="button">More</button>}
+        below={<p>the direction</p>}
+      />,
+    );
+    const head = screen.getByRole("banner");
+    const [meta, count, below, tool] = [
+      within(head).getByText("petra@makersfest.example"),
+      within(head).getByText("2 messages"),
+      within(head).getByText("the direction"),
+      within(head).getByRole("button", { name: "More" }),
+    ];
+    const before = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(before(screen.getByRole("heading", { level: 1, name: "Petra Wyss" }), meta)).toBe(true);
+    expect(before(meta, below)).toBe(true);
+    expect(before(count, tool)).toBe(true);
+  });
+
+  it("draws neither where neither is handed, and the line alone where nothing else stands below", () => {
+    const { rerender } = render(<ListHead title="Drafts" />);
+    expect(screen.getByRole("banner").textContent).toBe("Drafts");
+    rerender(<ListHead title="Petra Wyss" meta="petra@makersfest.example" />);
+    expect(within(screen.getByRole("banner")).getByText("petra@makersfest.example")).toBeTruthy();
+  });
+});
+
+describe("MonthRail", () => {
+  const entries = [
+    { id: "2026", label: "2026", year: true },
+    { id: "2026-11", label: "Nov", title: "November 2026" },
+    { id: "2026-10", label: "Oct", title: "October 2026" },
+    { id: "2025", label: "2025", year: true },
+  ];
+
+  it("is a named way through a list's time: one press a year or a month, the one the list is at marked as current", () => {
+    const onPick = vi.fn();
+    render(
+      <MonthRail label="Month" entries={entries} current="2026-10" onPick={onPick}>
+        <p>the rows</p>
+      </MonthRail>,
+    );
+    expect(screen.getByText("the rows")).toBeTruthy();
+    const rail = screen.getByRole("navigation", { name: "Month" });
+    expect(within(rail).getAllByRole("button")).toHaveLength(4);
+    const october = within(rail).getByRole("button", { name: "October 2026" });
+    expect(october.textContent).toBe("Oct");
+    expect(october.getAttribute("aria-current")).toBe("true");
+    expect(within(rail).getByRole("button", { name: "2026" }).getAttribute("aria-current")).toBeNull();
+    fireEvent.click(within(rail).getByRole("button", { name: "2025" }));
+    expect(onPick).toHaveBeenCalledWith("2025");
+  });
+
+  it("leaves a list with nothing to step through standing alone", () => {
+    render(
+      <MonthRail label="Month" entries={[]}>
+        <p>the rows</p>
+      </MonthRail>,
+    );
+    expect(screen.queryByRole("navigation")).toBeNull();
+    expect(screen.getByText("the rows")).toBeTruthy();
+  });
+});
+
 describe("Doorbell", () => {
   it("is named by how many wait and where it leads, and goes there", () => {
     const onPress = vi.fn();
@@ -131,6 +202,29 @@ describe("GroupHeading", () => {
   });
 });
 
+describe("GroupHeading, with a control of the group's own", () => {
+  it("stands the control at the heading's end and keeps it out of the heading's name", () => {
+    const onOrder = vi.fn();
+    render(
+      <GroupHeading
+        count="12"
+        aside={
+          <button type="button" onClick={onOrder}>
+            Best match
+          </button>
+        }
+      >
+        Results
+      </GroupHeading>,
+    );
+    const heading = screen.getByRole("heading", { level: 2 });
+    expect(heading.textContent).toBe("Results12");
+    expect(heading.contains(screen.getByRole("button", { name: "Best match" }))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Best match" }));
+    expect(onOrder).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ListTail", () => {
   it("is one line with one word that can be pressed", () => {
     const onPress = vi.fn();
@@ -142,6 +236,15 @@ describe("ListTail", () => {
 });
 
 describe("ListLine", () => {
+  it("says a whole sentence as it is handed, with its own full stop and no dot added: why a list is withheld", () => {
+    const why = "Your mail is still being read. The senders are listed when that is done.";
+    render(<ListLine>{why}</ListLine>);
+    const line = screen.getByText(why);
+    expect(line.closest("p")!.textContent).toBe(why);
+    expect(line.closest("p")!.querySelector("svg")).toBeNull();
+    expect(line.closest("p")!.hasAttribute("role")).toBe(false);
+  });
+
   it("says what the list is reading as a status that is busy", () => {
     render(<ListLine busy>Loading more senders…</ListLine>);
     const line = screen.getByRole("status");
@@ -280,6 +383,19 @@ describe("FolderShelf", () => {
     expect(onAll).toHaveBeenCalledTimes(1);
   });
 
+  it("hands on a folder's own menu, asked for with the pointer's other button, with where it was asked", () => {
+    const [onMenu, onOpen] = [vi.fn(), vi.fn()];
+    render(<FolderShelf {...shelf} onOpen={onOpen} onMenu={onMenu} />);
+    const rosa = screen.getByRole("button", { name: "Gartenlokal Rosa" });
+    const asked = fireEvent.contextMenu(rosa, { clientX: 40, clientY: 90 });
+    /* The browser's own menu does not open over it. */
+    expect(asked).toBe(false);
+    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 40, y: 90 });
+    expect(onOpen).not.toHaveBeenCalled();
+    /* The lines that are no folder have no menu of their own. */
+    expect(fireEvent.contextMenu(screen.getByRole("button", { name: "Folders" }))).toBe(true);
+  });
+
   it("shows only its line while it is shut", () => {
     const onToggle = vi.fn();
     render(<FolderShelf {...shelf} expanded={false} onToggle={onToggle} />);
@@ -307,6 +423,19 @@ describe("FolderFold", () => {
       add: { label: "New folder" },
     },
   ];
+
+  it("hands on a folder's own menu, asked for with the pointer's other button, and leaves the line that adds one alone", () => {
+    const onMenu = vi.fn();
+    render(<FolderFold label="All folders" groups={groups} onMenu={onMenu} />);
+    expect(
+      fireEvent.contextMenu(screen.getByRole("button", { name: "Gartenlokal Rosa" }), {
+        clientX: 12,
+        clientY: 30,
+      }),
+    ).toBe(false);
+    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 12, y: 30 });
+    expect(fireEvent.contextMenu(screen.getByRole("button", { name: "New folder" }))).toBe(true);
+  });
 
   it("is the named tree of every folder, under its mailbox, with the line that adds one", () => {
     const onOpen = vi.fn();
@@ -416,5 +545,31 @@ describe("AccountRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add its calendars" }));
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("its offer can be spent: off, or under way after its own press, and then it takes no second one", () => {
+    const [onToggle, onPress] = [vi.fn(), vi.fn()];
+    const offered = (offer: { label: string; disabled?: boolean; busy?: boolean }) => (
+      <AccountRow
+        {...row}
+        state={undefined}
+        expanded={false}
+        onToggle={onToggle}
+        offer={{ ...offer, onPress }}
+      />
+    );
+    const { rerender } = render(offered({ label: "Organizing here", busy: true }));
+    const under = screen.getByRole("button", { name: "Organizing here" }) as HTMLButtonElement;
+    expect([under.getAttribute("aria-busy"), under.getAttribute("aria-disabled"), under.disabled]).toEqual([
+      "true",
+      "true",
+      false,
+    ]);
+    fireEvent.click(under);
+    rerender(offered({ label: "Organize here", disabled: true }));
+    const off = screen.getByRole("button", { name: "Organize here" }) as HTMLButtonElement;
+    expect(off.disabled).toBe(true);
+    fireEvent.click(off);
+    expect([onPress.mock.calls.length, onToggle.mock.calls.length]).toEqual([0, 0]);
   });
 });

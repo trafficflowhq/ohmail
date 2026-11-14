@@ -1,19 +1,15 @@
 import { useId, type Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./field.css";
+import { useBox } from "./secret.js";
 
-export interface FieldProps {
+interface FieldShared {
   label: string;
-  value: string;
-  onChange?: (value: string) => void;
-  type?: "text" | "password" | "email" | "search" | "tel" | "url" | "time" | "date" | "number";
   placeholder?: string;
   /** One line under it. A refusal takes its place. */
   hint?: string;
   /** The refusal: one line that names the fix. */
   refusal?: string;
-  /** Several lines: how many it starts with. */
-  lines?: number;
   /** Off while what it holds is being saved: it takes no keys, and a screen reader hears that it is unavailable. */
   disabled?: boolean;
   /** In a menu: one line, the label beside the field. */
@@ -22,7 +18,9 @@ export interface FieldProps {
   bare?: boolean;
   /** A sign inside a bare field's box, before the words: `search` for a list's search. */
   sign?: IconName;
+  /** The name it is sent by. Left out: it is sent by none, so a press before the page's script runs sends nothing typed. */
   name?: string;
+  /** What the browser may fill it with ("username", "current-password"); off unless the form says. */
   autoComplete?: string;
   /** The keyboard a phone opens for it: `numeric` for a code. */
   inputMode?: "none" | "text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url";
@@ -31,8 +29,33 @@ export interface FieldProps {
   /** The ids of what else describes it, said after its own hint or refusal. */
   "aria-describedby"?: string;
   id?: string;
+  /** The element: a form puts the keys on it, and takes and empties a password through it. */
   ref?: Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
+
+/** A field of words: the app hands them in and is handed what is typed. Without `onChange` it is read only. */
+interface FieldOfWords extends FieldShared {
+  type?: "text" | "email" | "search" | "tel" | "url" | "time" | "date" | "number";
+  value: string;
+  onChange?: (value: string) => void;
+  /** Several lines: how many it starts with. */
+  lines?: number;
+}
+
+/**
+ * A password. What is typed stands in the field's own box and is written into no attribute of the page, whatever
+ * is handed here (`secret.ts`). `value` is not needed: a form takes what was typed through `ref` at its press
+ * (`ref.current.value`) and empties it the same way. A form that keeps what is typed may hand it in and is handed
+ * every change; the field follows what it holds. It always takes keys: one that should take none is `disabled`.
+ */
+interface FieldOfSecret extends FieldShared {
+  type: "password";
+  value?: string;
+  onChange?: (value: string) => void;
+  lines?: never;
+}
+
+export type FieldProps = FieldOfWords | FieldOfSecret;
 
 /**
  * A labelled field. The label is bound to it; a refusal is said with it, and said when it appears or changes
@@ -61,20 +84,21 @@ export function Field({
 }: FieldProps) {
   const own = useId();
   const at = id ?? own;
+  const secret = type === "password";
+  const box = useBox(secret, value, lines ? undefined : (ref as Ref<HTMLInputElement> | undefined));
   const said = (refusal ?? hint) ? `${at}-said` : undefined;
   const described = [said, describedBy].filter(Boolean).join(" ") || undefined;
   const shared = {
     id: at,
     name,
     className: "oh-control oh-field-input",
-    value,
     placeholder,
     "aria-label": bare ? label : undefined,
     "aria-invalid": refusal ? true : undefined,
     "aria-describedby": described,
     inputMode,
     maxLength,
-    readOnly: !onChange,
+    readOnly: secret ? undefined : !onChange,
     disabled,
     spellCheck: false,
   } as const;
@@ -95,6 +119,7 @@ export function Field({
       {lines ? (
         <textarea
           {...shared}
+          value={value}
           ref={ref as Ref<HTMLTextAreaElement>}
           rows={lines}
           data-lines=""
@@ -103,7 +128,8 @@ export function Field({
       ) : (
         <input
           {...shared}
-          ref={ref as Ref<HTMLInputElement>}
+          value={box.value}
+          ref={box.ref}
           type={type}
           autoComplete={autoComplete}
           onChange={(e) => onChange?.(e.currentTarget.value)}

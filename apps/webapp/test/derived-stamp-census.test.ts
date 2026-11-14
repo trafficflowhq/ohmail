@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_DERIVED_FROM } from "../app/shell/engine";
 import { shellFramePaths } from "./source-anchor.js";
@@ -155,6 +155,31 @@ describe("every surface that draws a body subscribes to one", () => {
     // The census must have a subject: four surfaces draw bodies today.
     expect(draws.length, "no file was found drawing a body — the census matched nothing")
       .toBeGreaterThanOrEqual(4);
+  });
+
+  /**
+   * The new tree's surfaces, WALKED rather than listed: the reader's views and its behaviour. A file there that
+   * calls `bodyOf` takes the body's arrival through the one door (`@ohmail/app-logic/reading`'s body-arrival),
+   * never a store of its own, so the old reader and the new one re-draw a landed body by the same rule.
+   */
+  it("pairs every bodyOf call of the new tree with the body's arrival", () => {
+    const roots = ["../../../packages/app/src", "../../../packages/app-logic/src/reader"]
+      .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : []);
+    const callers: string[] = [];
+    const unsubscribed: string[] = [];
+    for (const file of roots.flatMap(walk)) {
+      const src = code(readFileSync(file, "utf8"));
+      // A CALL, not a mention, as the case above reads it.
+      if (!/(?:^|[^\w.])bodyOf\s*\(|\.bodyOf\s*\(/m.test(src)) continue;
+      const where = relative(process.cwd(), file).split("\\").join("/");
+      callers.push(where);
+      if (!/useBodyArrival\s*\(|useBodyStamp\s*\(/.test(src)) unsubscribed.push(where);
+    }
+    expect(callers.length, "no file of the new tree was found calling bodyOf — the census matched nothing")
+      .toBeGreaterThanOrEqual(1);
+    expect(unsubscribed, "a surface of the new tree draws a body without the body's arrival").toEqual([]);
   });
 });
 

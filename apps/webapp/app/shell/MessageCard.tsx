@@ -15,8 +15,8 @@ import { useTranslations } from "next-intl";
 import { AddressText, Avatar, Badge, Button, Icon } from "@ohmail/ui";
 import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, shownDateOf, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
-import { MessageBody } from "../letter-body";
-import { BlockNoticeGloss, type BlockNotice } from "../letter-body";
+import { MessageBody } from "../letter-body/MessageBody";
+import { BlockNoticeGloss, type BlockNotice } from "@ohmail/letter-body";
 import { MessageFiles } from "./MessageFiles";
 import { replyAllRecipients } from "./compose-from";
 import {

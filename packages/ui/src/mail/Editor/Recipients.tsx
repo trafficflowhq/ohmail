@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } fr
 import { Button, Tag } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import { RecipientChip, type RecipientPerson } from "./RecipientChip.js";
+import { RecipientType, type RecipientSuggest } from "./recipient-type.js";
 import "./recipients.css";
 import { useRecipientDrag, type Landing } from "./recipient-drag.js";
 
@@ -22,6 +23,8 @@ export interface RecipientsProps {
   folded?: { label: string; names: string; change: { label: string; onPress?: () => void } };
   /** The way to the lines that are not shown yet, at the first line's end: "Cc Bcc". */
   more?: { label: string; onPress?: () => void };
+  /** The people a line can take while it is typed in: its place to type is then a combobox, and they stand under the line. */
+  suggest?: RecipientSuggest;
   /** What was refused, as one line under the people: "Not an address: petra@makersfest". Said with each refused person. */
   refusal?: string;
   subject?: { label: string; placeholder: string; value: string; onChange?: (value: string) => void };
@@ -107,27 +110,14 @@ export function Recipients(props: RecipientsProps) {
                   onPointerDown={(e) => drag.press(e, person, line.id)}
                 />
               ))}
-              <span className="oh-recipients-type">
-                <input
-                  className="oh-control oh-recipients-in"
-                  type="text"
-                  data-type={line.id}
-                  aria-label={line.label}
-                  autoComplete="off"
-                  spellCheck={false}
-                  readOnly={locked}
-                  value={line.typed}
-                  onChange={(e) => onType?.(line.id, e.target.value)}
-                  onKeyDown={(e) => typeKey(e, line)}
-                />
-                {more && l === 0 && !locked ? (
-                  <span className="oh-recipients-more">
-                    <Button kind="quiet" size="s" onPress={more.onPress}>
-                      {more.label}
-                    </Button>
-                  </span>
-                ) : null}
-              </span>
+              <RecipientType
+                line={line}
+                locked={locked}
+                suggest={props.suggest}
+                more={more && l === 0 && !locked ? more : undefined}
+                onType={onType}
+                onKeys={(e) => typeKey(e, line)}
+              />
             </span>
           </div>
         ))

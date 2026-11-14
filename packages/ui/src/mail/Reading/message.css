@@ -66,6 +66,44 @@
     text-wrap: pretty;
   }
 
+  /* In a stream a letter is cut after a few lines until it is opened, its last line fading. A letter that fits is
+     whole. Its control stands in the middle of the sheet's foot; the arrow turns while it stands open. */
+  .oh-message-clip {
+    --oh-message-clip-lines: 6;
+    --oh-message-clip-fade: 2.6em;
+
+    overflow: hidden;
+  }
+
+  .oh-message-clip[data-shut] {
+    max-height: calc(var(--oh-message-clip-lines) * var(--lh-read) * var(--t-read));
+    mask-image: linear-gradient(to bottom, var(--ink) calc(100% - var(--oh-message-clip-fade)), transparent);
+  }
+
+  .oh-message-clip[data-shut][data-fits] {
+    mask-image: none;
+  }
+
+  .oh-message-more {
+    --oh-message-more-pull: calc(var(--s3) * -1);
+
+    display: flex;
+    justify-content: center;
+    margin: var(--s3) 0 var(--oh-message-more-pull);
+  }
+
+  .oh-message-more[data-open] {
+    margin-top: var(--s5);
+  }
+
+  .oh-message-more .oh-button-mark {
+    transition: transform var(--d-pop) var(--e-std);
+  }
+
+  .oh-message-more > .oh-button[aria-expanded="true"] > .oh-button-mark {
+    transform: rotate(180deg);
+  }
+
   :root[data-face="ohmarchy"] .oh-message {
     --oh-message-new: 0 0 0 var(--ringw) var(--new-ring), inset var(--new-bar) 0 0 0 var(--hot);
   }

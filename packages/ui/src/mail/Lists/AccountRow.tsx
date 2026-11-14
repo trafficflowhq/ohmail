@@ -14,8 +14,11 @@ export interface AccountRowProps {
   state?: string;
   /** Words for what the account carries: Mail, Calendar. */
   carries?: readonly string[];
-  /** An offer in place of a state: the row's one action. */
-  offer?: { label: string; onPress?: () => void };
+  /**
+   * An offer in place of a state: the row's one action. `busy`: under way after its own press (the app hands the
+   * working label); `disabled`: spent, until the row's own state moves. Either way it takes no second press.
+   */
+  offer?: { label: string; onPress?: () => void; disabled?: boolean; busy?: boolean };
   /** Whether its lines stand. */
   expanded: boolean;
   onToggle?: () => void;
@@ -56,7 +59,7 @@ export function AccountRow(props: AccountRowProps) {
           </button>
           {offer ? (
             <span className="oh-accountrow-offer" onClick={(event) => event.stopPropagation()}>
-              <Button kind="two" size="s" onPress={offer.onPress}>
+              <Button kind="two" size="s" onPress={offer.onPress} disabled={offer.disabled} busy={offer.busy}>
                 {offer.label}
               </Button>
             </span>

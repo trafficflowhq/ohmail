@@ -490,11 +490,23 @@
       "node": "./dist/press/undo-window.js",
       "default": "./src/press/undo-window.ts"
     },
+    "./reader": {
+      "types": "./src/reader/index.ts",
+      "ohmail-source": "./src/reader/index.ts",
+      "node": "./dist/reader/index.js",
+      "default": "./src/reader/index.ts"
+    },
     "./reading": {
       "types": "./src/reading/index.ts",
       "ohmail-source": "./src/reading/index.ts",
       "node": "./dist/reading/index.js",
       "default": "./src/reading/index.ts"
+    },
+    "./reading/body-arrival": {
+      "types": "./src/reading/body-arrival.ts",
+      "ohmail-source": "./src/reading/body-arrival.ts",
+      "node": "./dist/reading/body-arrival.js",
+      "default": "./src/reading/body-arrival.ts"
     },
     "./reading/conversation-on-screen": {
       "types": "./src/reading/conversation-on-screen.ts",
@@ -789,6 +801,12 @@
       "ohmail-source": "./src/text/idn.ts",
       "node": "./dist/text/idn.js",
       "default": "./src/text/idn.ts"
+    },
+    "./text/live-copy": {
+      "types": "./src/text/live-copy.ts",
+      "ohmail-source": "./src/text/live-copy.ts",
+      "node": "./dist/text/live-copy.js",
+      "default": "./src/text/live-copy.ts"
     },
     "./text/locale": {
       "types": "./src/text/locale.ts",

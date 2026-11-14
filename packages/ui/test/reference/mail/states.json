@@ -55,10 +55,17 @@
     },
     { "component": "ListHead", "state": "hot", "looks": "all" },
     { "component": "ListHead", "state": "ink" },
+    {
+      "component": "ListHead",
+      "state": "meta",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    { "component": "ListHead", "state": "count" },
     { "component": "Doorbell", "state": "rest", "looks": "all" },
     { "component": "Doorbell", "state": "pressed" },
     { "component": "Doorbell", "state": "focus" },
     { "component": "GroupHeading", "state": "hot", "looks": "all" },
+    { "component": "GroupHeading", "state": "aside" },
     {
       "component": "ListTail",
       "state": "rest",
@@ -132,6 +139,36 @@
       ]
     },
     { "component": "Sheet", "state": "plain", "looks": "all" },
+    {
+      "component": "Sheet",
+      "state": "back",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone"]
+    },
+    {
+      "component": "MonthRail",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "FigureLine",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "ScaleBar",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "FigureTable",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingActs",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
     { "component": "ActionPanel", "state": "held", "looks": "all" },
     { "component": "ActionPanel", "state": "reply" },
     {
@@ -143,6 +180,7 @@
     { "component": "Message", "state": "unread", "looks": "all" },
     { "component": "Message", "state": "read" },
     { "component": "Message", "state": "own" },
+    { "component": "Message", "state": "clip" },
     {
       "component": "MessageHead",
       "state": "details",
@@ -324,6 +362,7 @@
     { "component": "Composer", "state": "blank", "looks": "all" },
     { "component": "Composer", "state": "reply" },
     { "component": "Composer", "state": "drafted" },
+    { "component": "Composer", "state": "placeholder" },
     {
       "component": "Composer",
       "state": "failed",
@@ -411,6 +450,11 @@
     {
       "component": "SettingsSheet",
       "state": "aside",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "aside-seg",
       "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
     },
     {

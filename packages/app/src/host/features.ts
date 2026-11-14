@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import type { CalendarEntry, FrameNotice, FramePlaces, FrameStages } from "../frame/contract.js";
+import type { ComponentType, ReactNode } from "react";
+import type { CalendarEntry, FrameNotice, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
 import type { None } from "./contract.js";
 
 /**
@@ -28,6 +28,16 @@ export interface FeatureEntry {
 }
 
 /**
+ * The reading column a shell imports (`@ohmail/app/reader`) and hands over: the frame draws `Reading` where a place's
+ * panes say `Reading: "reader"`, and never imports it.
+ */
+export interface ReaderEntry {
+  readonly Reading: ComponentType<PaneProps>;
+  /** The action panel for one letter, where a list draws a letter in place. */
+  readonly Actions: ComponentType<{ readonly messageId: string }>;
+}
+
+/**
  * Replaces, key by key: `accountSection`, `mailboxSection`, `aiSection`, `billingSection`
  * (`subscription`), `storageSection`, `storageCard`, `accountNotice` (`accountStrip`),
  * `invitesSection`, `securitySection`, `aboutSection`, `desktopSection`, `devicesSection`,
@@ -40,6 +50,8 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
   readonly places: FramePlaces;
   /** The bodies that stand over the app. */
   readonly stages: FrameStages;
+  /** The reading column, or `none`: a place that names it then draws an empty column. */
+  readonly reader: ReaderEntry | None;
   /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */
   readonly calendar: CalendarEntry | None;
 };

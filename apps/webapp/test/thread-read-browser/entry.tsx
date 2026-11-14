@@ -9,7 +9,7 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createThreadRead } from "@ohmail/client-engine";
-import { MessageBody } from "../../app/letter-body/MessageBody";
+import { MessageBody } from "../../../../packages/letter-body/src/MessageBody";
 import { createThreadReadDom } from "@ohmail/app-logic/reading/reader-seen";
 import { readStreamCards } from "@ohmail/app-logic/lists/stream-landing-read";
 

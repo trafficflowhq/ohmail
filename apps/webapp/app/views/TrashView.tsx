@@ -29,7 +29,7 @@ import {
 } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { displayAddressee, displayAddressUnder } from "@ohmail/app-logic/text/idn";
-import { BodyText } from "../letter-body";
+import { BodyText } from "@ohmail/letter-body";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { ListEmpty, ListReadColumn, ListSentence, useListView } from "../shell/list-view";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";

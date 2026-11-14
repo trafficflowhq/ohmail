@@ -10,6 +10,12 @@
       "node": "./dist/index.js",
       "default": "./src/index.ts"
     },
+    "./body-parts": {
+      "types": "./src/body-parts.ts",
+      "ohmail-source": "./src/body-parts.ts",
+      "node": "./dist/body-parts.js",
+      "default": "./src/body-parts.ts"
+    },
     "./long-text": {
       "types": "./src/format/long-text.ts",
       "ohmail-source": "./src/format/long-text.ts",
