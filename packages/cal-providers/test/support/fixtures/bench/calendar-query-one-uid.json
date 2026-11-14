@@ -1,0 +1,15 @@
+{
+  "provider": "caldav",
+  "name": "calendar-query-one-uid",
+  "request": {
+    "method": "REPORT",
+    "url": "http://127.0.0.1:8821/bench/ohmail-bench-r2-cal-accounts-20261113/",
+    "depth": "1",
+    "body": "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\"><c:prop-filter name=\"UID\"><c:text-match collation=\"i;octet\">wheel-class.r2-cal-accounts-20261113@ohmail-bench.example</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"
+  },
+  "response": {
+    "status": 207,
+    "contentType": "text/xml",
+    "body": "<?xml version='1.0' encoding='utf-8'?>\n<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/wheel-class.ics</href><propstat><prop><getetag>&quot;etag-2&quot;</getetag><C:calendar-data>BEGIN:VCALENDAR&#13;\nVERSION:2.0&#13;\nCALSCALE:GREGORIAN&#13;\nPRODID:-//ohmail//cal bench//EN&#13;\nBEGIN:VTIMEZONE&#13;\nTZID:Europe/Zurich&#13;\nBEGIN:STANDARD&#13;\nDTSTART:19701025T030000&#13;\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU&#13;\nTZNAME:CET&#13;\nTZOFFSETFROM:+0200&#13;\nTZOFFSETTO:+0100&#13;\nEND:STANDARD&#13;\nBEGIN:DAYLIGHT&#13;\nDTSTART:19700329T020000&#13;\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU&#13;\nTZNAME:CEST&#13;\nTZOFFSETFROM:+0100&#13;\nTZOFFSETTO:+0200&#13;\nEND:DAYLIGHT&#13;\nEND:VTIMEZONE&#13;\nBEGIN:VEVENT&#13;\nUID:evt-2@bench.example&#13;\nDTSTART;TZID=Europe/Zurich:20261117T180000&#13;\nDTEND;TZID=Europe/Zurich:20261117T193000&#13;\nDESCRIPTION:Six evenings at the wheel. Bring an apron.&#13;\nDTSTAMP:20261113T120000Z&#13;\nRRULE:FREQ=WEEKLY;COUNT=6;BYDAY=TU&#13;\nSEQUENCE:0&#13;\nSUMMARY:Wheel class&#13;\nX-OHMAIL-BENCH:r2-cal-accounts-20261113&#13;\nEND:VEVENT&#13;\nBEGIN:VEVENT&#13;\nUID:evt-2@bench.example&#13;\nRECURRENCE-ID;TZID=Europe/Zurich:20261201T180000&#13;\nDTSTART;TZID=Europe/Zurich:20261202T190000&#13;\nDTEND;TZID=Europe/Zurich:20261202T203000&#13;\nDESCRIPTION:Six evenings at the wheel. Bring an apron.&#13;\nDTSTAMP:20261113T120000Z&#13;\nSEQUENCE:0&#13;\nSUMMARY:Wheel class&#13;\nX-OHMAIL-BENCH:r2-cal-accounts-20261113&#13;\nEND:VEVENT&#13;\nEND:VCALENDAR&#13;\n</C:calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+  }
+}

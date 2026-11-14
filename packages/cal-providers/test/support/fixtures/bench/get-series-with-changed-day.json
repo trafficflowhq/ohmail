@@ -1,0 +1,13 @@
+{
+  "provider": "caldav",
+  "name": "get-series-with-changed-day",
+  "request": {
+    "method": "GET",
+    "url": "http://127.0.0.1:8821/bench/ohmail-bench-r2-cal-accounts-20261113/wheel-class.ics"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/calendar",
+    "body": "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\nPRODID:-//ohmail//cal bench//EN\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Zurich\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\r\nTZNAME:CET\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:19700329T020000\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\nTZNAME:CEST\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:evt-2@bench.example\r\nDTSTART;TZID=Europe/Zurich:20261117T180000\r\nDTEND;TZID=Europe/Zurich:20261117T193000\r\nDESCRIPTION:Six evenings at the wheel. Bring an apron.\r\nDTSTAMP:20261113T120000Z\r\nRRULE:FREQ=WEEKLY;COUNT=6;BYDAY=TU\r\nSEQUENCE:0\r\nSUMMARY:Wheel class\r\nX-OHMAIL-BENCH:r2-cal-accounts-20261113\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:evt-2@bench.example\r\nRECURRENCE-ID;TZID=Europe/Zurich:20261201T180000\r\nDTSTART;TZID=Europe/Zurich:20261202T190000\r\nDTEND;TZID=Europe/Zurich:20261202T203000\r\nDESCRIPTION:Six evenings at the wheel. Bring an apron.\r\nDTSTAMP:20261113T120000Z\r\nSEQUENCE:0\r\nSUMMARY:Wheel class\r\nX-OHMAIL-BENCH:r2-cal-accounts-20261113\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+  }
+}

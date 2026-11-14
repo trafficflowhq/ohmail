@@ -1,0 +1,98 @@
+{
+  "note": "Invented. The studio's demo world; every address is on a reserved domain, every person is in the fixtures' registry of invented names.",
+  "user": { "name": "Mila Brunner", "address": "mila@lichtgrat.example" },
+  "calendars": [
+    { "id": "cal-studio", "name": "Calendar", "color": "auto", "isDefaultCalendar": true, "canEdit": true, "canShare": true, "canViewPrivateItems": true },
+    { "id": "cal-market", "name": "Market", "color": "lightGreen", "isDefaultCalendar": false, "canEdit": true, "canShare": true, "canViewPrivateItems": true },
+    { "id": "cal-closing-days", "name": "Studio closing days", "color": "lightGray", "isDefaultCalendar": false, "canEdit": false, "canShare": false, "canViewPrivateItems": false }
+  ],
+  "events": [
+    {
+      "id": "evt-glaze-firing",
+      "calendarId": "cal-studio",
+      "subject": "Glaze firing",
+      "bodyPreview": "Cone 6. The blue set for the catalogue goes in first.",
+      "start": { "dateTime": "2026-11-19T09:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-19T11:00:00", "timeZone": "Europe/Zurich" }
+    },
+    {
+      "id": "evt-catalogue-proofs",
+      "calendarId": "cal-studio",
+      "subject": "Catalogue proofs",
+      "bodyPreview": "Read the spring catalogue's proofs, page by page.",
+      "start": { "dateTime": "2026-11-20T14:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-20T15:00:00", "timeZone": "Europe/Zurich" }
+    },
+    {
+      "id": "evt-wheel-class",
+      "calendarId": "cal-studio",
+      "subject": "Wheel class",
+      "bodyPreview": "Six evenings at the wheel. Bring an apron.",
+      "start": { "dateTime": "2026-11-17T18:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-17T19:30:00", "timeZone": "Europe/Zurich" },
+      "recurrence": {
+        "pattern": { "type": "weekly", "interval": 1, "daysOfWeek": ["tuesday"], "firstDayOfWeek": "monday" },
+        "range": { "type": "numbered", "startDate": "2026-11-17", "numberOfOccurrences": 6, "recurrenceTimeZone": "Europe/Zurich" }
+      }
+    },
+    {
+      "seriesMasterId": "evt-wheel-class",
+      "originalDate": "2026-12-01",
+      "start": { "dateTime": "2026-12-02T19:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-12-02T20:30:00", "timeZone": "Europe/Zurich" }
+    },
+    {
+      "id": "evt-market-day",
+      "calendarId": "cal-market",
+      "subject": "Market day",
+      "bodyPreview": "The stall at the winter market, all day.",
+      "isAllDay": true,
+      "showAs": "free",
+      "start": { "dateTime": "2026-11-21T00:00:00", "timeZone": "UTC" },
+      "end": { "dateTime": "2026-11-22T00:00:00", "timeZone": "UTC" }
+    },
+    {
+      "id": "evt-stall-planning-call",
+      "calendarId": "cal-market",
+      "subject": "Stall planning call",
+      "bodyPreview": "Who brings the shelves, who brings the till.",
+      "isOnlineMeeting": true,
+      "onlineMeetingProvider": "teamsForBusiness",
+      "start": { "dateTime": "2026-11-23T10:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-23T10:30:00", "timeZone": "Europe/Zurich" }
+    },
+    {
+      "id": "evt-kiln-handover",
+      "calendarId": "cal-studio",
+      "subject": "Kiln handover",
+      "bodyPreview": "The kiln's keys and its firing log change hands.",
+      "start": { "dateTime": "2026-11-25T16:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-25T16:30:00", "timeZone": "Europe/Zurich" },
+      "attendees": [{ "type": "required", "status": { "response": "none", "time": "0001-01-01T00:00:00Z" }, "emailAddress": { "name": "Petra Wyss", "address": "petra@makersfest.example" } }]
+    },
+    {
+      "id": "evt-catalogue-shoot",
+      "calendarId": "cal-studio",
+      "subject": "Catalogue shoot",
+      "bodyPreview": "Photographs of the blue set for the spring catalogue.",
+      "start": { "dateTime": "2026-11-26T10:00:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-26T12:00:00", "timeZone": "Europe/Zurich" },
+      "isOrganizer": false,
+      "allowNewTimeProposals": true,
+      "organizer": { "emailAddress": { "name": "Giulia Ferrari", "address": "giulia@terracotta-milano.example" } },
+      "attendees": [{ "type": "required", "status": { "response": "none", "time": "0001-01-01T00:00:00Z" }, "emailAddress": { "name": "Mila Brunner", "address": "mila@lichtgrat.example" } }]
+    },
+    {
+      "id": "evt-kiln-service",
+      "calendarId": "cal-studio",
+      "subject": "Kiln service",
+      "bodyPreview": "The yearly check of the kiln's elements.",
+      "start": { "dateTime": "2026-11-27T08:30:00", "timeZone": "Europe/Zurich" },
+      "end": { "dateTime": "2026-11-27T09:30:00", "timeZone": "Europe/Zurich" },
+      "isOrganizer": false,
+      "allowNewTimeProposals": false,
+      "organizer": { "emailAddress": { "name": "Giulia Ferrari", "address": "giulia@terracotta-milano.example" } },
+      "attendees": [{ "type": "required", "status": { "response": "none", "time": "0001-01-01T00:00:00Z" }, "emailAddress": { "name": "Mila Brunner", "address": "mila@lichtgrat.example" } }]
+    }
+  ]
+}

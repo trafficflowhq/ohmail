@@ -31,6 +31,7 @@
     "packages/fixtures",
     "packages/services",
     "packages/cal-core",
+    "packages/cal-providers",
     "packages/tokens",
     "packages/ui",
     "packages/wire"

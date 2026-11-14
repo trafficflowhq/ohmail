@@ -1,0 +1,15 @@
+{
+  "provider": "caldav",
+  "name": "calendar-query-one-uid-refused",
+  "request": {
+    "method": "REPORT",
+    "url": "https://p00-caldav.icloud.com/principal-1/calendars/ohmail-bench-r2-cal-accounts-20261113/",
+    "depth": "1",
+    "body": "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\"><c:prop-filter name=\"UID\"><c:text-match collation=\"i;octet\">wheel-class.r2-cal-accounts-20261113@ohmail-bench.example</c:text-match></c:prop-filter></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"
+  },
+  "response": {
+    "status": 412,
+    "contentType": "",
+    "body": ""
+  }
+}

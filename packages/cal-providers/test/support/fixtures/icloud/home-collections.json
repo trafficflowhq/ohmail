@@ -1,0 +1,15 @@
+{
+  "provider": "caldav",
+  "name": "home-collections",
+  "request": {
+    "method": "PROPFIND",
+    "url": "https://p00-caldav.icloud.com/principal-1/calendars/",
+    "depth": "1",
+    "body": "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/><cs:getctag/><d:sync-token/></d:prop></d:propfind>"
+  },
+  "response": {
+    "status": 207,
+    "contentType": "application/xml",
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<multistatus xmlns=\"DAV:\">\n\n    \n    \n    <response xmlns=\"DAV:\">\n            <href>/principal-1/calendars/ohmail-bench-r2-cal-accounts-20261113/</href>\n            \n                <propstat>\n                    <prop>\n                        \n                            \n                                <resourcetype xmlns=\"DAV:\"><collection/><calendar xmlns=\"urn:ietf:params:xml:ns:caldav\"/></resourcetype>\n                            \n                        \n                            \n                                <displayname xmlns=\"DAV:\">ohmail-bench-r2-cal-accounts-20261113</displayname>\n                            \n                        \n                            \n                                <supported-calendar-component-set xmlns=\"urn:ietf:params:xml:ns:caldav\"><comp name='VEVENT' xmlns='urn:ietf:params:xml:ns:caldav'/></supported-calendar-component-set>\n                            \n                        \n                            \n                                <getctag xmlns=\"http://calendarserver.org/ns/\">ctag-1</getctag>\n                            \n                        \n                            \n                                <sync-token xmlns=\"DAV:\">sync-1</sync-token>\n                            \n                        \n                    </prop>\n                    <status>HTTP/1.1 200 OK</status>\n                </propstat>\n                \n            \n        </response>\n        \n        </multistatus>"
+  }
+}
