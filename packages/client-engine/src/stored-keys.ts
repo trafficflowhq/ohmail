@@ -793,6 +793,12 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "ohmail-preview", store: "keyring", owner: "desktop-shell",
+    at: ["apps/desktop/src-tauri/src/engine.rs"],
+    holds: "the same service for a preview build, which runs beside a released install and never reads or writes that install's key",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
     key: ".old", store: "file", owner: "desktop-shell",
     at: ["apps/desktop/src-tauri/src/engine.rs"],
     holds: "the ending of the engine log's one earlier generation (`engine.log.old`)",
@@ -1030,6 +1036,12 @@ export const STORED_KEYS = [
     key: "io.ohmail.desktop", store: "identifier", owner: "desktop-shell",
     at: ["apps/desktop/src-tauri/tauri.conf.json", "apps/desktop/src-tauri/src/engine.rs", "apps/desktop/src-tauri/src/default_mail.rs"],
     holds: "the desktop app's identifier: its data folder, its keystore service of old, its bundle id",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "io.ohmail.preview", store: "identifier", owner: "desktop-shell",
+    at: ["apps/desktop/src-tauri/src/variant.rs"],
+    holds: "a preview build's identifier: its own data and log folders, apart from a released install's",
     words: false, erased: "never", mark: "kept",
   },
   {
