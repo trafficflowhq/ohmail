@@ -17,7 +17,7 @@ import { adminDbFor, attestStaffDbFault, resetAdminDbs, webhookAlertSink, telegr
   // send path, because the retention sweep's caller is the worker, which may not depend on
   // `@trafficflow/services`. This host is the one place that needs both halves.
   makeSupabaseStagingStorage, // The organizer's last completed pass, for the filing strip (mail 0097).
-  organizerCycleReader, type AdminDb, type AlertSink } from "@trafficflow/db/cloud";
+  organizerStandingReader, type AdminDb, type AlertSink } from "@trafficflow/db/cloud";
 import {
   resolveCloudInstallId,
   createLogger, makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
@@ -265,12 +265,13 @@ function buildServices(cfg: HostConfig): ApiServices {
        If the two ever derive different ids the hand-back is refused everywhere, which is the
        safe direction and a visible one. */
     installId: resolveCloudInstallId(process.env),
-    /* WHEN THE ORGANIZER'S LAST PASS FINISHED, for the filing strip's "the last pass finished N
-       seconds ago" clause (mail 0097) — the fact that separates a mailbox waiting its turn in the
-       rotation from one waiting on nothing. Injected rather than imported by the builder for the
+    /* HOW THE ORGANIZER STANDS: when its last pass finished, for the filing strip's "the last pass
+       finished N seconds ago" clause (mail 0097) — the fact that separates a mailbox waiting its turn
+       in the rotation from one waiting on nothing — and whether fetching is behind, for the mailbox's
+       `fetching` and the pull answer. Injected rather than imported by the builder for the
        reason `allowance` is: `worker_heartbeats` is a Cloud table and that module is inside the
        desktop engine's import closure. Passed BY REFERENCE, so the wiring is greppable. */
-    lastOrganizerCycleAt: organizerCycleReader,
+    organizerStanding: organizerStandingReader,
   }));
   // No adapter injected: a screener or approval decision leaves `folder_state` pending and
   // the worker applies the IMAP move — the serverless host never opens IMAP to apply

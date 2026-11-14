@@ -88,7 +88,7 @@ import {
  */
 const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
-import { breachSetAside, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
+import { breachSetAside, DatabaseFaultError, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
@@ -295,6 +295,16 @@ export interface WorkerStats {
    * or all-failed cycle must not refresh freshness, or `/health` lies about a dead leader.
    */
   lastCycleAt: Date | null;
+  /**
+   * Up to when the cycle is known to have MOVED: the later of the last rotation that ended and the
+   * last mailbox turn that returned, whatever their outcome, and never later than the start of the
+   * oldest turn still running. Null before the first. What `/health`'s stuck rule measures, and it
+   * is about movement, not success: a turn that fails has returned (a mailbox that keeps failing is
+   * quarantined, and a restart mends no password), a rotation is one turn per mailbox and may run
+   * long while its turns keep ending, and one turn that never returns holds the clock back however
+   * many others end beside it.
+   */
+  cycleProgressAt: Date | null;
   /** The last rotation's wall clock, and the last completed tail walk's work time (ms). */
   lastRotationMs: number | null;
   lastTailMs: number | null;
@@ -341,7 +351,8 @@ export interface WorkerHooks {
   /**
    * The advisory lock is provably gone (session dropped / another backend owns it). The
    * worker has ALREADY quiesced — every mailbox detached, every timer cleared — so this is
-   * purely the signal for the supervisor to stop advertising leadership and go 503.
+   * purely the signal for the supervisor to stop advertising leadership, close this worker
+   * (`stop()`) and start over as a waiting start.
    */
   onLockLost?: (err: LockLostError) => void;
   }
@@ -732,8 +743,11 @@ export async function startWorkerWithLock(
     // now the ONLY use of `config.accountId` in the worker: it VALIDATES the pairing, so a
     // stale TF_ACCOUNT_ID next to a live TF_MAILBOX_ID is a loud refusal instead of a
     // credential row written under the wrong account.
+    // Both reads name the database as their origin, as the roster read does (`loadRosterMailboxes`):
+    // a start that meets a refused or reset dial here waits for the database (`supervisor.ts`).
     if (config.mailboxId && config.imap) {
-      const row = await loadMailboxById(db, config.mailboxId);
+      const envMailboxId = config.mailboxId;
+      const row = await asDatabaseFault("boot.envMailbox", () => loadMailboxById(db, envMailboxId));
       if (!row) throw new Error(`TF_MAILBOX_ID ${config.mailboxId} does not exist`);
       if (config.accountId && row.accountId !== config.accountId) {
         throw new Error(
@@ -741,20 +755,20 @@ export async function startWorkerWithLock(
           `(it belongs to account ${row.accountId}); refusing to bootstrap credentials`,
         );
       }
+      const envCreds = { mailboxId: envMailboxId, imap: config.imap, smtp: config.smtp };
       try {
-        await bootstrapEnvCreds(db, keyProvider, {
-          mailboxId: config.mailboxId, imap: config.imap, smtp: config.smtp,
-        });
+        await asDatabaseFault("boot.envCreds", () => bootstrapEnvCreds(db, keyProvider, envCreds));
       } catch (err) {
         // A REFUSAL IS NOT A FAULT, AND IT IS NOT SILENT EITHER. The mailbox this deployment is
         // configured for has been removed, or its account erased; recreating its sealed
         // credentials is the one thing a restart must not do, and taking the whole worker down
         // over it would stop every other mailbox this process serves. So: one named line, and
         // the run continues with the removal standing.
-        if (!(err instanceof BootstrapRefusedError) && !(err instanceof AccountErasedError)) throw err;
+        const refusal = err instanceof DatabaseFaultError ? err.cause : err;
+        if (!(refusal instanceof BootstrapRefusedError) && !(refusal instanceof AccountErasedError)) throw err;
         (config.logger ?? silentLogger).warn("env_creds_bootstrap_refused", {
           mailboxId: config.mailboxId,
-          reason: err instanceof BootstrapRefusedError
+          reason: refusal instanceof BootstrapRefusedError
             ? "this mailbox has been removed; its credentials were deleted with it and env will "
               + "not put them back"
             : "this mailbox's account has been erased; nothing may be written against it",
@@ -879,6 +893,10 @@ export async function startWorkerWithLock(
     let stopped = false;
     let lockLost = false;
     let lastCycleAt: Date | null = null;
+    /** When a rotation and a mailbox's turn last ended, and when each turn still running began (`cycleProgressAt`). */
+    let lastRotationEndAt: number | null = null;
+    let lastTurnEndAt: number | null = null;
+    const visitStarts = new Map<string, number>();
     /** The last rotation's and the last completed tail's wall clock, for `/health` and `cycle_phases`. */
     let lastRotationMs: number | null = null;
     /** How many due turns (`admitDue`) the last rotation gave, for `cycle_phases`. */
@@ -3562,7 +3580,8 @@ export async function startWorkerWithLock(
       const scheduled: string[] = [];
       if (toSchedule.length > 0) {
         // One read of the hosts, only when there is something to schedule.
-        const hosts = await loadAttachHosts(db, toSchedule.map((m) => m.mailboxId));
+        const hosts = await asDatabaseFault("roster.attachHosts",
+          () => loadAttachHosts(db, toSchedule.map((m) => m.mailboxId)));
         if (stopped) return;
         for (const mb of toSchedule) {
           const queued = attachPool.enqueue({
@@ -3782,11 +3801,9 @@ export async function startWorkerWithLock(
       // A roster pass that throws must not take the rotation with it. `requestRoster`'s queued entry
       // always caught this (a roster pass is a DB read, a failure a blip, not a reason to stop serving
       // attached mailboxes), and the in-cycle path had no catch — the same failure tolerated on one
-      // path and fatal on the other. It is not cosmetic: `loadEnabledMailboxes` reads through the bare
-      // handle, so a dead database throws an UNTAGGED `ECONNREFUSED` here, which `isSharedDatabaseFault`
-      // correctly declines to call ours (byte-identical to a dead IMAP host). Uncaught, it left
-      // `cycle()` before a lane ran, so no tagged fault was raised, `noteDatabaseFault` never fired,
-      // and `/health` answered `degraded: false` through a total outage. Caught here, the pass is
+      // path and fatal on the other. It is not cosmetic: uncaught, a dead database's throw out of the
+      // roster read left `cycle()` before a lane ran, so `noteDatabaseFault` never fired and
+      // `/health` answered `degraded: false` through a total outage. Caught here, the pass is
       // skipped, the lanes meet the database through the tagged repo, and the outage is announced
       // (`shared-db-fault.pg.test.ts`).
       try {
@@ -4880,10 +4897,13 @@ export async function startWorkerWithLock(
           // maps it re-reads on the next turn.
           const lane = (async () => {
             const visitStarted = Date.now();
+            visitStarts.set(rt.mailboxId, visitStarted);
             const successBefore = rt.lastSuccessAt;
             try {
               await visitMailbox(rt, wokenVisit);
             } finally {
+              visitStarts.delete(rt.mailboxId);
+              lastTurnEndAt = Date.now();
               const visitMs = Date.now() - visitStarted;
               const asked = rt.turnMessages;
               // Every turn's wall clock, so the lane that holds a pass open has a name: the
@@ -5028,6 +5048,7 @@ export async function startWorkerWithLock(
       // nothing to sync, so a dead leader never looks fresh.
       const rotationMs = Date.now() - passStartedMs;
       lastRotationMs = rotationMs;
+      lastRotationEndAt = Date.now();
       lastDueRevisits = dueRevisits;
       if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
       await beat();
@@ -6805,6 +6826,14 @@ export async function startWorkerWithLock(
       wakeHub = null;
     }
 
+    /** {@link WorkerStats.cycleProgressAt}. A memory read. */
+    function cycleProgressAt(): Date | null {
+      const moved = Math.max(lastRotationEndAt ?? 0, lastTurnEndAt ?? 0);
+      const running = visitStarts.size > 0 ? Math.min(...visitStarts.values()) : null;
+      if (running === null) return moved > 0 ? new Date(moved) : null;
+      return new Date(moved > 0 ? Math.min(moved, running) : running);
+    }
+
     let teardown: Promise<void> | null = null;
     return {
       stats(): WorkerStats {
@@ -6839,6 +6868,7 @@ export async function startWorkerWithLock(
           // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
           apiCron: apiCron?.health() ?? [],
           parkedReader: parkedAccountsReader ? "composed" : "absent",
+          cycleProgressAt: cycleProgressAt(),
           lastRotationMs,
           lastTailMs,
           tail: tailPosition(),
@@ -6916,7 +6946,12 @@ function sample(mbs: readonly EnabledMailbox[], n = 3): string {
  * match) and starts THIS function explicitly (`scripts/bundle-host.mjs` carries the other half). Under
  * `node dist/index.js` and `tsx src/index.ts` nothing changes — the guard below calls the same function.
  */
-export async function runWorkerCli(): Promise<void> {
+export async function runWorkerCli(
+  seams: {
+    /** TEST SEAM: the parsed configuration, before anything reads it. Absent in every deployed process. */
+    configure?: (config: WorkerConfig) => WorkerConfig;
+  } = {},
+): Promise<void> {
   await (async () => {
     // THE composition root for logging. `startWorkerWithLock` defaults to `silentLogger` so no test or
     // embedder inherits stdout noise; the process a human deploys is the one that turns the logger on,
@@ -6940,7 +6975,8 @@ export async function runWorkerCli(): Promise<void> {
       // handler: the rejection escaped a discarded async IIFE. See `installCrashHandlers`.
       const { runWorkerSupervised } = await import("./supervisor.js");
       // The model client's `ai_call` lines read `cliLog` at each call, after it is rebuilt below.
-      const config = loadConfig(process.env, { log: () => cliLog });
+      const parsed = loadConfig(process.env, { log: () => cliLog });
+      const config = seams.configure ? seams.configure(parsed) : parsed;
       cliLog = createLogger({
         service: "worker",
         fields: { instanceId: config.instanceId ?? instanceIdFrom(), environment: config.environment },
@@ -6994,9 +7030,11 @@ export async function runWorkerCli(): Promise<void> {
   })();
 }
 
-// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by with backoff and
-// serves health 200 instead of exiting, so a rolling deploy cannot crash-loop the
-// new instance. The dynamic import inside keeps supervisor.ts → index.ts a one-way
+// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by and serves health 200 instead of
+// exiting, so a rolling deploy cannot crash-loop the new instance, and a start that cannot reach the
+// database waits and retries instead of exiting, so an outage cannot spend the host's restarts. What
+// still exits 1: a refused or broken deployment, a cycle that stopped moving, a worker that could not
+// be closed (`supervisor.ts`). The dynamic import inside keeps supervisor.ts → index.ts a one-way
 // dependency.
 if (isCliEntry(import.meta.url)) {
   void runWorkerCli();

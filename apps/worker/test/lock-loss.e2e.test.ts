@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
-import { StaticKeyProvider } from "@trafficflow/core";
+import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
@@ -112,43 +112,90 @@ describe("leader-lock loss (split-brain guard)", () => {
     expect(settled).toBe(false);           // a clean handover must not look like a failure
   }, 20000);
 
-  it("quiesces the leader and hands the shard over instead of two workers syncing the same accounts", async () => {
+  /** The supervisor's own log lines, by event name, in order. */
+  function recorder(): { logger: ReturnType<typeof createLogger>; events: string[] } {
+    const events: string[] = [];
+    const logger = createLogger({
+      service: "worker",
+      sink: (line) => { events.push(String((JSON.parse(line) as { event?: unknown }).event)); },
+    });
+    return { logger, events };
+  }
+
+  it("a leader that loses its lock gives up everything it holds and leads again in the same process", async () => {
     const db = makeDb(DB);
     const fleet = new FakeAdapterFleet();
     await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
 
-    // The FATAL hook is what the CLI turns into `process.exit(1)` so the platform replaces
-    // the instance. Nothing exercised it before; it is asserted here end to end.
+    // The FATAL hook is what the CLI turns into `process.exit(1)`. A lost lock used to end there:
+    // the host restarted the process, and a host that had stopped restarting left the shard dark.
     const fatals: unknown[] = [];
-    const a = await runWorkerSupervised(cfgFor(fleet), { onFatal: (err) => fatals.push(err) });
+    const { logger, events } = recorder();
+    const a = await runWorkerSupervised(cfgFor(fleet, { logger }), { onFatal: (err) => fatals.push(err) });
     closers.push(() => a.stop());
     expect(a.state()).toBe("leader");
-    expect(fatals).toHaveLength(0);
     await waitFor(async () => (await health(a.healthPort)).body.mailboxes === 1, 8000, "A to serve");
     expect(fleet.openCount).toBe(1);
 
     // Kill the session that holds the lock. Nothing else changes: the process is alive, its
     // IMAP connections are up, and its timers are running — exactly the split-brain setup.
-    const holders = await lockHolders(leaderLockKeyFor(0));
+    const holders = await lockHolders(key);
     expect(holders.length).toBe(1);
     await terminate(holders);
 
-    // A must surrender: no longer leader, health 503 (so the platform replaces it), and it
-    // must have CLOSED its connections rather than keep syncing accounts it no longer owns.
-    await waitFor(() => a.state() === "failed", 8000, "A to surrender leadership");
+    // A surrenders, closes what it held, and takes the lock again itself. On every read on the way
+    // there is at most one session holding the lock and at most one connection to the mailbox.
+    await waitFor(async () => {
+      expect((await lockHolders(key)).length).toBeLessThanOrEqual(1);
+      expect(fleet.openCount).toBeLessThanOrEqual(1);
+      return events.filter((e) => e === "leader_acquired").length === 2 && a.state() === "leader";
+    }, 15000, "A to lead again");
+    const order = events.filter((e) => ["leader_acquired", "leader_lock_lost", "leadership_surrendered"].includes(e));
+    expect(order).toEqual(["leader_acquired", "leader_lock_lost", "leadership_surrendered", "leader_acquired"]);
+    await a.whenLeader();                                                    // the second leadership
+    await waitFor(async () => (await health(a.healthPort)).body.mailboxes === 1, 8000, "A to serve again");
     const ha = await health(a.healthPort);
-    expect(ha.status).toBe(503);
-    expect(ha.body).toMatchObject({ ok: false, leader: false, healthy: false });
-    expect(String(ha.body.error)).toMatch(/lock lost/i);
-    expect(fatals).toHaveLength(1);
-    expect((fatals[0] as Error).name).toBe("LockLostError");
-    await waitFor(() => fleet.openCount === 0, 8000, "A to close its mailbox connections");
+    expect(ha.status).toBe(200);
+    expect(ha.body).toMatchObject({ ok: true, leader: true, healthy: true, waitingForDatabaseSeconds: null });
+    expect("error" in ha.body).toBe(false);
+    expect(fatals).toHaveLength(0);                                          // no exit, no restart
+    expect((await lockHolders(key)).length).toBe(1);
+    expect(fleet.openCount).toBe(1);
+  }, 60000);
 
-    // ...and the shard is genuinely free: a fresh instance takes it over and serves.
-    const b = await runWorkerSupervised(cfgFor(fleet));
+  it("with a second instance standing by, a lost lock never yields two leaders, and the loser stands by", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    await seedMailbox(db);
+    const key = leaderLockKeyFor(0);
+
+    const fatals: unknown[] = [];
+    const a = await runWorkerSupervised(cfgFor(fleet), { onFatal: (err) => fatals.push(err) });
+    closers.push(() => a.stop());
+    const b = await runWorkerSupervised(cfgFor(fleet), { onFatal: (err) => fatals.push(err) });
     closers.push(() => b.stop());
-    await waitFor(() => b.state() === "leader", 8000, "B to take the shard over");
-    await waitFor(async () => (await health(b.healthPort)).body.mailboxes === 1, 8000, "B to serve");
-    expect((await health(a.healthPort)).body.leader).toBe(false);   // never two leaders
+    expect([a.state(), b.state()]).toEqual(["leader", "standby"]);
+    await waitFor(async () => (await health(a.healthPort)).body.mailboxes === 1, 8000, "A to serve");
+
+    await terminate(await lockHolders(key));
+
+    // Whichever of the two wins the lock next, on every read one session holds it at most and one
+    // instance calls itself leader at most; it settles on one leader and one spare.
+    const leaders = (): number => [a, b].filter((w) => w.state() === "leader").length;
+    await waitFor(async () => {
+      expect((await lockHolders(key)).length).toBeLessThanOrEqual(1);
+      expect(leaders()).toBeLessThanOrEqual(1);
+      return leaders() === 1 && [a, b].some((w) => w.state() === "standby");
+    }, 15000, "one leader and one spare");
+    const [leader, spare] = a.state() === "leader" ? [a, b] : [b, a];
+    await waitFor(async () => (await health(leader.healthPort)).body.mailboxes === 1, 8000, "the leader to serve");
+    expect((await health(spare.healthPort)).body).toMatchObject({ leader: false, standby: true, healthy: true });
+
+    // …and the spare is a real one: it takes the shard over when the leader stops.
+    await leader.stop();
+    await waitFor(() => spare.state() === "leader", 8000, "the spare to take over");
+    await waitFor(async () => (await health(spare.healthPort)).body.mailboxes === 1, 8000, "the spare to serve");
+    expect(fatals).toHaveLength(0);
   }, 60000);
 });

@@ -890,6 +890,13 @@ export interface MailboxFacts {
   /** The gap offer's stranger count (mail 0158), forwarded on the same rule as {@link gapLetters}. */
   gapStrangers?: number | null;
   /**
+   * Is new mail being fetched for this mailbox: `behind` when nothing is fetching or fetching has
+   * fallen behind, `since` the last finished pass. `null` when this server does not say (a mailbox
+   * it does not fetch, or a host that keeps no such record): silence, never "up to date".
+   * Absent on a server older than the field.
+   */
+  fetching?: { behind: boolean; since: string | null } | null;
+  /**
    * `false` while the local engine has not read the lease for this reader row, when its NULL
    * `organizerState` is "not looked" rather than "nobody". Absent is every other case and every
    * door that cannot say. Setup waits on it before offering Agree.
