@@ -17,9 +17,23 @@ import { hideMessages } from "../press/delete-undo.js";
 
 export const PresentedMirrorContext: Context<EntityReader | null> = createContext<EntityReader | null>(null);
 
-/** The presented mirror a shell handed, or null where none was. */
+/**
+ * The presented mirror a shell handed, or null where none was. It belongs to the reading column alone: its null arm
+ * is the column's fail-closed on a host that hands a reader and no ground. A place reads `usePresented()`.
+ */
 export function usePresentedMirror(): EntityReader | null {
   return useContext(PresentedMirrorContext);
+}
+
+/**
+ * The mirror as the lists present it, as the ground stands it above every pane. Throws where none stands: a place
+ * never reads the raw mirror in its place.
+ */
+export function usePresented(): EntityReader {
+  const mirror = useContext(PresentedMirrorContext);
+  if (mirror === null)
+    throw new Error("usePresented: no presented mirror stands above (PresentedMirrorContext)");
+  return mirror;
 }
 
 /**

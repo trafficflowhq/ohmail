@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine,
   MemoryMirrorStore,
@@ -199,6 +200,7 @@ async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}):
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("@ohmail/app/keys");
 
@@ -221,6 +223,8 @@ async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}):
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const suggestions = useScreenerSuggestions({
+      text: useSuggestText(),
+      wire: CLOUD_WIRE,
       active: opts.active ?? true,
       toast: (() => {}) as never,
     });
@@ -1005,6 +1009,7 @@ describe("honest states", () => {
   it("a run that stopped part-way is not reported as a clean success", async () => {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     suggestReply = (body) =>
@@ -1027,7 +1032,7 @@ describe("honest states", () => {
     const engine = await engineWith(MANY);
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
-      const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
       const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
@@ -1061,6 +1066,7 @@ describe("honest states", () => {
   it("on an unmetered host the done line counts suggestions and names no credits", async () => {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
@@ -1079,7 +1085,7 @@ describe("honest states", () => {
     const engine = await engineWith(MANY);
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
-      const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
       const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
@@ -1182,6 +1188,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     toasted: () => string;
   }> {
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
@@ -1191,7 +1198,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
       const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       live = st;
@@ -1502,13 +1509,14 @@ describe("SCR-SUGGEST-FLAKE — the auto batch must not cancel a manual purchase
     const isBuy = (p: Pending, n: number) => p.path.startsWith("/screener/suggest") && p.body?.dryRun !== true && p.body?.senders?.length === n;
 
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let toasted = "";
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
-      const s = useScreenerSuggestions({ active: true, autoSuggest: true, toast: ((m: string) => { toasted = m; }) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, autoSuggest: true, toast: ((m: string) => { toasted = m; }) as never });
       const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
@@ -1592,6 +1600,7 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
   /** The same probe the chunk tests use, minus the toast. */
   async function mountControl(): Promise<{ control: () => SuggestBatchControl }> {
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
@@ -1599,7 +1608,7 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      const s = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: (() => {}) as never });
       const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
@@ -1789,6 +1798,7 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
   async function runOnce(reply: (n: number) => Record<string, unknown>): Promise<string> {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     let n = 0;
@@ -1813,7 +1823,7 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
     const engine = await engineWith(MANY);
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
-      const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: ((m: string) => { toasted = m; }) as never });
       const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
@@ -1897,6 +1907,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const store = new MemoryMirrorStore();
     await store.load();
     await store.applyChanges(held.map((m): SyncChange => ({
@@ -1924,7 +1935,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
       const [v, setV] = React.useState(0);
       forceRender = () => setV((x) => x + 1);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-      const suggestions = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
+      const suggestions = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: (() => {}) as never });
       live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
       // The gain signal rides `forSenders`, exactly as `AppShell` binds it at every render.
       suggestions.forSenders(live.unsuggestedSenders, [], 0, live.queueSettled);

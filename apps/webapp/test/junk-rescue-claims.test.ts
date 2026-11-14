@@ -25,7 +25,7 @@ import { readFileSync } from "node:fs";
 
 const REPO = `${process.cwd().replace(/\/$/, "")}/`;
 const ROUTE = `${REPO}packages/api/src/junk-window.ts`;
-const CLIENT = `${REPO}apps/webapp/app/shell/junk-window.ts`;
+const CLIENT = `${REPO}packages/app-logic/src/screener/junk-window.ts`;
 const VIEW = `${REPO}apps/webapp/app/views/ScreenerView.tsx`;
 
 /**

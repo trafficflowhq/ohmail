@@ -28,6 +28,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { ReaderEntry } from "@ohmail/app/host";
 import { announceUpdate, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
@@ -143,6 +144,8 @@ export const message = (id: string, over: Partial<EngineMessage> = {}): EngineMe
   subject: `Subject ${id}`, from: { address: SENDER, name: "The colleague" },
   to: [{ address: "me@example.invalid", name: "Me" }], cc: [],
   date: "2026-09-27T08:29:00.000Z", unread: false, snippet: `snippet of ${id}`,
+  /* A letter's tags, as every mirror row carries them: the reader's head reads the list. */
+  labels: [],
   updatedAt: "2026-09-27T08:29:00.000Z",
   ...over,
 } as unknown as EngineMessage);
@@ -605,6 +608,8 @@ export async function mountShell(
     noMailbox?: boolean;
     /** Another window of this browser: an IndexedDB mirror on the one disk (`indexedDB`), under these Web Locks. */
     locks?: EngineLocks;
+    /** The reader the host hands (a case that stands a place with a reading column); absent: none. */
+    reader?: ReaderEntry;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -649,6 +654,7 @@ export async function mountShell(
       ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
       : ROSTER),
     ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
+    ...(options.reader !== undefined ? { reader: options.reader } : {}),
   };
   /* The host's half of the mail-link seam, as the desktop holds it: the link in state, dropped
      once the shell says it took it. */
@@ -706,8 +712,8 @@ export const forwardDock = (el: HTMLElement): HTMLElement | null => el.querySele
 /** Open message `id` (unless one is open) and press Forward in its menu. */
 export async function openForward(s: DraftShell, id = "m1"): Promise<void> {
   if (s.el.querySelector(".read-col .msg") == null) {
-    await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
-    await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
+    await waitFor(() => s.el.querySelector(`:is(.view-ohbox, .view-history) :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+    await press(s.el.querySelector(`:is(.view-ohbox, .view-history) :is(.row, [role=option])[data-id='${id}']`), "the row");
   }
   const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
   await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });

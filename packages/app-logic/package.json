@@ -46,6 +46,12 @@
       "node": "./dist/consent/index.js",
       "default": "./src/consent/index.ts"
     },
+    "./consent/consent-row": {
+      "types": "./src/consent/consent-row.ts",
+      "ohmail-source": "./src/consent/consent-row.ts",
+      "node": "./dist/consent/consent-row.js",
+      "default": "./src/consent/consent-row.ts"
+    },
     "./consent/consent-state": {
       "types": "./src/consent/consent-state.ts",
       "ohmail-source": "./src/consent/consent-state.ts",
@@ -57,6 +63,12 @@
       "ohmail-source": "./src/consent/consent-wire.ts",
       "node": "./dist/consent/consent-wire.js",
       "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/partition": {
+      "types": "./src/consent/partition.ts",
+      "ohmail-source": "./src/consent/partition.ts",
+      "node": "./dist/consent/partition.js",
+      "default": "./src/consent/partition.ts"
     },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
@@ -976,6 +988,24 @@
       "node": "./dist/screener/impersonation-filed.js",
       "default": "./src/screener/impersonation-filed.ts"
     },
+    "./screener/junk-answers": {
+      "types": "./src/screener/junk-answers.ts",
+      "ohmail-source": "./src/screener/junk-answers.ts",
+      "node": "./dist/screener/junk-answers.js",
+      "default": "./src/screener/junk-answers.ts"
+    },
+    "./screener/junk-window": {
+      "types": "./src/screener/junk-window.ts",
+      "ohmail-source": "./src/screener/junk-window.ts",
+      "node": "./dist/screener/junk-window.js",
+      "default": "./src/screener/junk-window.ts"
+    },
+    "./screener/no-suggestion": {
+      "types": "./src/screener/no-suggestion.ts",
+      "ohmail-source": "./src/screener/no-suggestion.ts",
+      "node": "./dist/screener/no-suggestion.js",
+      "default": "./src/screener/no-suggestion.ts"
+    },
     "./screener/screener-given-up": {
       "types": "./src/screener/screener-given-up.ts",
       "ohmail-source": "./src/screener/screener-given-up.ts",
@@ -994,11 +1024,23 @@
       "node": "./dist/screener/screener-state.js",
       "default": "./src/screener/screener-state.ts"
     },
+    "./screener/screener-suggest": {
+      "types": "./src/screener/screener-suggest.ts",
+      "ohmail-source": "./src/screener/screener-suggest.ts",
+      "node": "./dist/screener/screener-suggest.js",
+      "default": "./src/screener/screener-suggest.ts"
+    },
     "./screener/spam-row": {
       "types": "./src/screener/spam-row.ts",
       "ohmail-source": "./src/screener/spam-row.ts",
       "node": "./dist/screener/spam-row.js",
       "default": "./src/screener/spam-row.ts"
+    },
+    "./screener/suggest-answers": {
+      "types": "./src/screener/suggest-answers.ts",
+      "ohmail-source": "./src/screener/suggest-answers.ts",
+      "node": "./dist/screener/suggest-answers.js",
+      "default": "./src/screener/suggest-answers.ts"
     },
     "./screener/suggestion-overlay": {
       "types": "./src/screener/suggestion-overlay.ts",
@@ -1041,6 +1083,12 @@
       "ohmail-source": "./src/session/confirm-schedule.ts",
       "node": "./dist/session/confirm-schedule.js",
       "default": "./src/session/confirm-schedule.ts"
+    },
+    "./session/day-clock": {
+      "types": "./src/session/day-clock.ts",
+      "ohmail-source": "./src/session/day-clock.ts",
+      "node": "./dist/session/day-clock.js",
+      "default": "./src/session/day-clock.ts"
     },
     "./session/document-hidden": {
       "types": "./src/session/document-hidden.ts",
@@ -1173,6 +1221,12 @@
       "ohmail-source": "./src/text/index.ts",
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
+    },
+    "./text/ai-refusal-copy": {
+      "types": "./src/text/ai-refusal-copy.ts",
+      "ohmail-source": "./src/text/ai-refusal-copy.ts",
+      "node": "./dist/text/ai-refusal-copy.js",
+      "default": "./src/text/ai-refusal-copy.ts"
     },
     "./text/idn": {
       "types": "./src/text/idn.ts",

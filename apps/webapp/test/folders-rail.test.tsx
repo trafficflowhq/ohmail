@@ -557,10 +557,13 @@ describe("flag-off parity and the number keys — the structural claims, at the 
        on passing off that prop when the partition moved to `shell-derivations.ts`. */
     // The call takes the one options builder the lists and a press's read-back share, and the
     // builder carries the flag.
-    expect(derivations).toMatch(/consentPartition\(reader, shellConsentOptions\(consent, now, ownAddresses, firstImportDoneAt\)\)/);
+    /* The partition's call and its memo left `shell-derivations.ts` for the frame that derives it
+       (`consent/partition.ts`, cut out for the mail ground): asked of that frame. */
+    const partition = stripComments(shellFrameOf("usePartitionOf").source);
+    expect(partition).toMatch(/consentPartition\(reader, shellConsentOptions\(consent, now, ownAddresses, firstImportDoneAt\)\)/);
     expect(stripComments(readFileSync(`${process.cwd()}/packages/app-logic/src/press/consent-options.ts`, "utf8")))
       .toMatch(/return \{[\s\S]{0,1200}foldersEnabled: consent\.foldersEnabled,/);
-    expect(derivations).toMatch(/consent\.foldersEnabled,\n\s*\],/);
+    expect(partition).toMatch(/consent\.foldersEnabled,\n\s*\],/);
   });
 });
 

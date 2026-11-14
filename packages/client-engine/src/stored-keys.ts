@@ -284,7 +284,7 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.junkSweepDismissedAt", store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/shell/junk-window.ts"],
+    at: ["packages/app-logic/src/screener/junk-window.ts"],
     holds: "the count a junk sweep offer was dismissed at, keyed by the account's mailbox ids",
     words: false, erased: "never", mark: "kept",
   },

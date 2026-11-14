@@ -9,8 +9,13 @@ import { PartsContext } from "./parts.js";
 import type { ReaderParts } from "./ports.js";
 import { Reader } from "./Reader.js";
 
-export function readerEntry(parts: ReaderParts): ReaderEntry {
+/**
+ * The entry over parts a shell reads in each render: its doors change identity while they fetch, and a column whose
+ * component is made once still draws the door as it stands now. `useParts` is a hook, called first in each render.
+ */
+export function readerEntryFrom(useParts: () => ReaderParts): ReaderEntry {
   function Reading(pane: PaneProps) {
+    const parts = useParts();
     return (
       <PartsContext.Provider value={parts}>
         <Reader {...pane} />
@@ -18,6 +23,7 @@ export function readerEntry(parts: ReaderParts): ReaderEntry {
     );
   }
   function Actions({ messageId }: { readonly messageId: string }) {
+    const parts = useParts();
     return (
       <PartsContext.Provider value={parts}>
         <LetterActions messageId={messageId} />
@@ -25,4 +31,9 @@ export function readerEntry(parts: ReaderParts): ReaderEntry {
     );
   }
   return { Reading, Actions };
+}
+
+/** The entry over parts that never change: a test's, a states page's. */
+export function readerEntry(parts: ReaderParts): ReaderEntry {
+  return readerEntryFrom(() => parts);
 }

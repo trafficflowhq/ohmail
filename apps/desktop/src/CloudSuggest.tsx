@@ -21,6 +21,7 @@ import { SuggestControl } from "../../webapp/app/views/ScreenerView";
 import {
   useScreenerSuggestions,
   type SenderSuggestion,
+  type SuggestText,
 } from "../../webapp/app/shell/screener-suggest";
 import type { SuggestStanding } from "../../webapp/app/shell/no-suggestion";
 import { cloudSuggestWire } from "./cloud-suggest.js";
@@ -39,15 +40,18 @@ export interface CloudSuggestProps {
    * 402 here otherwise reached this control alone and the rows went on saying a suggestion is coming.
    */
   absorbStanding: (standing: SuggestStanding | null) => void;
+  /** The two readers the run says its sentences through, bound by the frame that draws this control. */
+  text: SuggestText;
 }
 
-export function CloudSuggest({ senders, resuggestable, unanswered, absorb, absorbStanding }: CloudSuggestProps) {
+export function CloudSuggest({ senders, resuggestable, unanswered, absorb, absorbStanding, text }: CloudSuggestProps) {
   const toast = useToast();
   const suggestions = useScreenerSuggestions({
     /* Mounted only inside the Screener, so being here IS being active. The flag exists for the
        shell, which builds this machinery once and keeps it across every view. */
     active: true,
     toast,
+    text,
     wire: cloudSuggestWire,
     publish: absorb,
     publishStanding: absorbStanding,

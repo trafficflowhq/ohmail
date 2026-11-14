@@ -10,13 +10,14 @@
  * AND THE OLD SHELL'S FALLBACK FOR THE CONSENT WIRE lives here and nowhere else: the browser's own client where the
  * page has one, and with it the review of who you write to, as the web's own host answers. It is for the tests that
  * mount the web's views and name no wire; a test that hands `NONE` has none. No shell does this: each hands its own
- * wire or says `none`.
+ * wire or says `none`. THE JUNK WIRE AND THE SUGGESTION WIRE the same way: the browser's own client where the page has one.
  */
 import { createElement as h, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useLocale, useMessages, useTimeZone } from "next-intl";
 import {
   CANNOT, FEATURE_NAMES, NONE,
-  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None, type Signal,
+  type FeatureEntry, type FeatureName, type FrameSupplies, type HostContract, type HostSession, type LinkedDraft, type LinkIn, type None,
+  type ReaderEntry, type Signal,
 } from "@ohmail/app/host";
 import { TextProvider } from "@ohmail/app/text";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -33,12 +34,14 @@ import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { EngineProvider, useEngine, type OwnerResolver, type ProvidedEngine } from "../app/shell/engine";
 import type { GapLettersTransport } from "../app/shell/GapLettersNotice";
 import type { SupportHost } from "../app/shell/HelpContactPane";
+import { cloudWire as CLOUD_JUNK } from "../app/(product)/mailbox/junk-wire";
 import type { JunkWire } from "../app/shell/junk-window";
 import type { FreshnessProbe, MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { NotificationHost } from "../app/shell/notification-settings";
 import type { OrganizerNoticeTransport } from "../app/shell/OrganizerNotice";
 import type { ProfileImportTransport } from "../app/shell/ProfileImportCard";
 import type { ImageDoor } from "../app/shell/remote-images";
+import { CLOUD_WIRE as CLOUD_SUGGEST } from "../app/(product)/mailbox/suggest-wire";
 import type { SuggestWire } from "../app/shell/screener-suggest";
 import type { TrashWire } from "../app/shell/trash-window";
 import { TodaysFrame } from "../app/shell/TodaysFrame";
@@ -96,9 +99,9 @@ export interface TodaysShellProps {
   imageWire?: ImageDoor;
   imagesFromComputer?: boolean;
   olderBodyWire?: OlderBodyWire;
-  junkWire?: JunkWire;
+  junkWire?: JunkWire | None;
   trashWire?: TrashWire;
-  suggestWire?: SuggestWire;
+  suggestWire?: SuggestWire | None;
   draftReplyWire?: DraftReplyWire;
   firstRun?: FirstRunHost;
   mailtoDraft?: ComposePrefill | null;
@@ -107,6 +110,12 @@ export interface TodaysShellProps {
   managedService?: boolean;
   /** The host's way back to a live session (Sign in, Reload); none where the case hands none. Hand a stable one. */
   recover?: HostSession["recover"];
+  /**
+   * The reader a case's host hands in place of the shell's own, for a case that stands a reading column of its own
+   * parts; absent: the shell's (`todaysReader`) where the composition stands, none where it does not. Hand one made
+   * once (at module scope), as a shell does.
+   */
+  reader?: ReaderEntry;
 }
 
 const orNone = <T,>(value: T | undefined | null): T | None => (value === undefined || value === null ? NONE : value);
@@ -147,6 +156,9 @@ export function hostFromTodaysInputs(
   });
   const support = props.support;
   const consent = props.consentTransport ?? (apiConfigured() ? CLOUD_CONSENT : NONE);
+  /* What the old shell stands above the panes is handed on with today's own places, the ones the frame keeps, and never
+     beside others: a test that draws panes of its own in the frame mounts no old shell over them. */
+  const todays = Object.values(frame.places).some((place) => place !== NONE && place.panes.kind === "wide" && place.panes.kept === true);
   return {
     engine,
     session: {
@@ -166,9 +178,9 @@ export function hostFromTodaysInputs(
       consent,
       images: orNone(props.imageWire),
       olderBody: orNone(props.olderBodyWire),
-      junk: orNone(props.junkWire),
+      junk: props.junkWire ?? (apiConfigured() ? CLOUD_JUNK : NONE),
       trash: orNone(props.trashWire),
-      suggest: orNone(props.suggestWire),
+      suggest: props.suggestWire ?? (apiConfigured() ? CLOUD_SUGGEST : NONE),
       draftReply: orNone(props.draftReplyWire),
       firstRun: orNone(props.firstRun),
       seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
@@ -184,7 +196,9 @@ export function hostFromTodaysInputs(
       foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
-    features: { ...features, places: frame.places, stages: frame.stages, reader: NONE } as HostContract["features"],
+    features: {
+      ...features, places: frame.places, stages: frame.stages, reader: props.reader ?? (todays ? frame.reader : NONE), above: todays ? frame.above : NONE,
+    } as HostContract["features"],
     device: {
       build: support
         ? { surface: support.surface, version: support.version ?? null, commit: support.commit ?? null, mailtoLeaves: support.mailtoLeaves !== false }

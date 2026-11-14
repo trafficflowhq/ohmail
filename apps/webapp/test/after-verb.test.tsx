@@ -33,6 +33,7 @@ import {
   nextRowAfter,
   readAfterVerb,
 } from "@ohmail/app-logic/press/after-verb";
+import { blankSays, cursorRow, openLetter, pickedRows, seatedList } from "./ohbox/_finders.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -101,7 +102,8 @@ type Spec = { id: string; thread?: string; date?: string; folder?: string; from?
 const msg = (s: Spec): EngineMessage => ({
   id: s.id, accountId: "a1", mailboxId: "mb1", threadId: s.thread ?? `t-${s.id}`, folder: s.folder ?? "INBOX",
   subject: `Subject ${s.thread ?? s.id}`, from: { address: s.from ?? address(s.id), name: `Person ${s.id}` },
-  to: [], date: s.date ?? "2026-09-03T09:00:00.000Z", unread: s.unread ?? false,
+  to: [], cc: [], date: s.date ?? "2026-09-03T09:00:00.000Z", unread: s.unread ?? false,
+  labels: [],
   updatedAt: s.date ?? "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -234,7 +236,7 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 
 const selId = (el: HTMLElement): string | null =>
-  el.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
+  cursorRow(el)?.getAttribute("data-id") ?? null;
 
 describe("nextRowAfter — the row walk", () => {
   const standing = (keys: string[]) => new Set(keys);
@@ -333,8 +335,8 @@ describe("after a verb, on the shipped shell", () => {
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "J", shiftKey: true, bubbles: true, cancelable: true }));
     });
-    await waitFor(() => container.querySelectorAll(":is(.row.picked, [role=option][data-picked])").length >= 2, "two rows picked");
-    const picked = [...container.querySelectorAll(":is(.row.picked, [role=option][data-picked])")].map((r) => r.getAttribute("data-id"));
+    await waitFor(() => pickedRows(container).length >= 2, "two rows picked");
+    const picked = pickedRows(container).map((r) => r.getAttribute("data-id"));
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(first), "the picked rows to leave");
     await waitFor(() => selId(container) != null, "the selection to advance");
@@ -355,7 +357,10 @@ describe("after a verb, on the shipped shell", () => {
     await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
     await settle();
     expect(selId(container)).toBeNull();
-    expect(container.textContent).toContain("Nothing open.");
+    /* PARITY L19, DECLARED (RULING-JOIN J-3): the resting column says the list's blank, not "Nothing open.": nothing is
+       open and the column says so. */
+    expect(openLetter(container)).toBeNull();
+    expect(blankSays(container), "the column does not rest").not.toBeNull();
   });
 
   /* The choice obeyed is the one kept for the shell's own account: its host hands it one account while the storage
@@ -373,7 +378,10 @@ describe("after a verb, on the shipped shell", () => {
     await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
     await settle();
     expect(selId(container)).toBeNull();
-    expect(container.textContent).toContain("Nothing open.");
+    /* PARITY L19, DECLARED (RULING-JOIN J-3): the resting column says the list's blank, not "Nothing open.": nothing is
+       open and the column says so. */
+    expect(openLetter(container)).toBeNull();
+    expect(blankSays(container), "the column does not rest").not.toBeNull();
   });
 
   it("a removal MY verb did not cause moves nothing — the marker is the difference", async () => {
@@ -402,7 +410,7 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
   };
   const ringId = (): string | null => (document.activeElement as HTMLElement | null)?.closest?.(":is(.row, [role=option])")?.getAttribute("data-id") ?? null;
   const focusCursor = async (el: HTMLElement): Promise<void> => {
-    await act(async () => { el.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])")!.focus(); });
+    await act(async () => { cursorRow(el)!.focus(); });
   };
 
   it("u moves the row up under New, and the ring goes with it, not to the row that slid into its place", async () => {
@@ -430,7 +438,7 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
     await settle();
     expect(selId(container)).toBeNull();
     expect(ringId()).toBeNull();
-    expect(document.activeElement).toBe(container.querySelector(".view :is(.scroller, .ob-scroll)"));
+    expect(document.activeElement).toBe(seatedList(container)?.querySelector(".ob-scroll"));
     // j from the list takes the cursor, and the ring with it.
     await press("j");
     await waitFor(() => selId(container) != null, "j to take the cursor");
@@ -571,8 +579,8 @@ describe("the keyboard ring stays on the row the verbs act on", () => {
     await settle();
     expect(noLayer()).toBeNull();
     /* Screening moves no cursor on: the keyboard is on the cursor's row where one stands, else on the list. */
-    const list = container.querySelector(".view :is(.row.sel, [role=option][data-open])")
-      ?? container.querySelector(".view :is(.scroller, .ob-scroll)");
+    const list = cursorRow(container)
+      ?? seatedList(container)?.querySelector(".ob-scroll");
     expect(list, "the list stands").not.toBeNull();
     expect(holder(), "the keyboard back in the list").toBe(list);
   });

@@ -332,6 +332,14 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
     readers: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
     glue: { file: "apps/webapp/app/shell/screener-text.ts" },
   },
+  "packages/app-logic/src/screener/junk-window.ts": {
+    readers: { t: "screener" },
+    glue: { call: "useJunkWindow" },
+  },
+  "packages/app-logic/src/screener/screener-suggest.ts": {
+    readers: { t: "screener", tAi: "aiRefusal" },
+    glue: { file: "apps/webapp/app/shell/suggest-text.ts" },
+  },
   "packages/app-logic/src/writing/mail-send.ts": {
     readers: { t: "" },
     glue: { file: "apps/webapp/app/shell/mail-send-text.ts" },

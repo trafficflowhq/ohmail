@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { setActiveFormatZone } from "../app/shell/locale";
-import { useDayClock } from "../app/shell/day-clock";
+import { useDayClock } from "@ohmail/app-logic/session/day-clock";
 
 /**
  * ═══ "TOMORROW" IS TOMORROW AT THE PRESS, NEVER AT THE MOUNT ════════════════════════════════
@@ -206,7 +206,7 @@ describe("the horizon is minted from the clock at the press", () => {
 
 describe("useDayClock re-reads at the day boundary and not on the minute", () => {
   function Probe({ fixed }: { fixed: Date | null }): React.ReactElement {
-    const now = useDayClock(fixed);
+    const now = useDayClock(fixed, ZONE);
     return h("i", { "data-now": now.toISOString() }) as React.ReactElement;
   }
 
@@ -236,6 +236,17 @@ describe("useDayClock re-reads at the day boundary and not on the minute", () =>
     const before = shown();
     await act(async () => { vi.advanceTimersByTime(60_000); });
     expect(shown(), "the day turned and the shell kept yesterday").not.toBe(before);
+    expect(readerDay(shown())).toBe("2026-09-13");
+  });
+
+  it("reads the day in the zone it is told, whatever zone the shell's own stamps are in", async () => {
+    // 23:59 in Zurich is 09:59 the next morning in Auckland: two minutes on, the day has turned in Zurich alone.
+    setActiveFormatZone("Pacific/Auckland");
+    vi.useFakeTimers({ now: LATE });
+    await mountProbe(null);
+    const before = shown();
+    await act(async () => { vi.advanceTimersByTime(120_000); });
+    expect(shown(), "the clock read the day in the shell's zone, not in the one it was told").not.toBe(before);
     expect(readerDay(shown())).toBe("2026-09-13");
   });
 

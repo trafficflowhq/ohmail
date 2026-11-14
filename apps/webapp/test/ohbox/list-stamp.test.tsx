@@ -75,7 +75,7 @@ let selected: string[] = [];
  * the rows can RENDER two forms and nothing about the press that changes which.
  */
 async function render(rows: Record<string, unknown>[]): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const base = {
     demo: false, settled: true, owed: false,

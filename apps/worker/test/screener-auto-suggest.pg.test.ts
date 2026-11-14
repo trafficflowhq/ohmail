@@ -1548,7 +1548,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 describe("the automatic batch size is ONE number on both sides of the boundary", () => {
   it("matches `AUTO_BATCH_SIZE` in the webapp's Screener spender", () => {
     const src = readFileSync(
-      fileURLToPath(new URL("../../webapp/app/shell/screener-suggest.ts", import.meta.url)), "utf8",
+      fileURLToPath(new URL("../../../packages/app-logic/src/screener/screener-suggest.ts", import.meta.url)), "utf8",
     );
     const m = /export const AUTO_BATCH_SIZE = (\d+);/.exec(src);
     expect(m, "AUTO_BATCH_SIZE was not found — the probe is stale, not the claim").not.toBeNull();

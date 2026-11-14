@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
@@ -363,6 +363,7 @@ describe("the window's Screener refusal clears when access returns", () => {
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({
+        text: { screener: useTranslations("screener") as never, aiRefusal: useTranslations("aiRefusal") as never },
         active: true, toast: (() => {}) as never, wire: cloudSuggestWire,
       });
       control = s.forSenders([SENDER]);

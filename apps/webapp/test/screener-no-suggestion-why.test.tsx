@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine, MemoryMirrorStore,
   type EngineMessage, type Folder, type SyncChange,
@@ -155,6 +156,7 @@ async function mountView(
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("@ohmail/app/keys");
 
@@ -162,6 +164,8 @@ async function mountView(
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const suggestions = useScreenerSuggestions({
+      text: useSuggestText(),
+      wire: CLOUD_WIRE,
       active: true, toast: (() => {}) as never, autoSuggest: opts.optedIn === true,
     });
     const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
@@ -499,10 +503,13 @@ describe("standingOfRefusal / standingOfStop — the two doors into the standing
 describe("absorbStanding — a host control's refusal reaches the shell's rows", () => {
   it("the shell's hook reads a standing put in from outside, and does not publish it back", async () => {
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const published: unknown[] = [];
     let api: { standing: unknown; absorbStanding: (s: "no_budget" | null) => void } | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({
+        text: useSuggestText(),
+      wire: CLOUD_WIRE,
         active: false, toast: (() => {}) as never, publishStanding: (x) => { published.push(x); },
       });
       api = s as never;

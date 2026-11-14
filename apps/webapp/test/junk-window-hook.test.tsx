@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { readFileSync } from "node:fs";
 import messages from "../messages/en.json";
 import type { JunkItemWire, JunkPageWire, JunkSearchWire, JunkSweepWire } from "../app/api-client";
@@ -92,7 +92,12 @@ async function mountHook(
   initiallyWarm = false,
   initialKeep?: Keep,
 ): Promise<void> {
+  /* With no wire handed, the page's own where the page has a client, and none where it has none: the hook has no
+     wire of its own. */
   const { useJunkWindow } = await import("../app/shell/junk-window");
+  const { cloudWire } = await import("../app/(product)/mailbox/junk-wire");
+  const { apiConfigured } = await import("../app/api-client");
+  const pagesOwn = apiConfigured() ? cloudWire : "none";
   function Probe(): null {
     const [active, set] = React.useState(initiallyActive);
     const [warm, setW] = React.useState(initiallyWarm);
@@ -100,7 +105,7 @@ async function mountHook(
     setActive = set;
     setWarm = setW;
     setKeep = setK;
-    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire, warm, keep);
+    control = useJunkWindow(active, ((msg: string) => { toasts.push(msg); }) as never, hostWire ?? pagesOwn, useTranslations("screener") as never, warm, keep);
     return null;
   }
   host = document.createElement("div");

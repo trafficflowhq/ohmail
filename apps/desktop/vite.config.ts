@@ -882,6 +882,8 @@ export default defineConfig({
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
+      // The kit's calendar parts: the reader's return menu picks its day with them.
+      { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
@@ -896,7 +898,12 @@ export default defineConfig({
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
+      { find: "@ohmail/app/mail/ground", replacement: r("../../packages/app/src/mail/ground/index.ts") },
+      { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
+      { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },
+      { find: "@ohmail/app/reader", replacement: r("../../packages/app/src/reader/index.ts") },
       // The letter editor's schema, marks and commands, each by its own file: the web shell's editor reads them.
       { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
       { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },

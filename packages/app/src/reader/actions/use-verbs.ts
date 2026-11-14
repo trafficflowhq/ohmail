@@ -5,17 +5,26 @@
  * anything else; otherwise they hand a draft to the place `write`. Nothing is sent from here.
  */
 import { useMemo } from "react";
-import { isOwnVerb, markSeenOver, moveTargetsOf, runOwnVerb, type VerbWords } from "@ohmail/app-logic/reader";
+import {
+  isOwnVerb,
+  markSeenOver,
+  moveTargetsOf,
+  readerZone,
+  readIsItsRelease,
+  resurfaceHorizonsIn,
+  runOwnVerb,
+  type VerbWords,
+} from "@ohmail/app-logic/reader";
 import type { ListVisit, ThreadReadWiring } from "@ohmail/app-logic/reading";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
 import type { EngineMessage } from "@ohmail/client-engine";
 import { useFrame } from "../../frame/commands.js";
-import { usePressWhereOn } from "../../frame/room.js";
+import { useOwnAddresses, usePressWhereOn, useResurfaceTime } from "../../frame/room.js";
 import type { LinkedDraft } from "../../host/index.js";
 import { useLocale, useText } from "../../text/index.js";
 import { useParts } from "../parts.js";
 
-type Answer = (messageId: string, how: "reply" | "reply_all" | "forward") => void;
+type Answer = (messageId: string, how: "reply" | "reply_all" | "forward", from?: "menu") => void;
 const noAnswer = (): Answer | null => null;
 
 /** `write`'s open for an answer, or null where the shell handed none (the same hook on every render of an entry). */
@@ -39,13 +48,29 @@ export function draftFor(action: "reply" | "reply_all" | "forward", m: EngineMes
   return { to: [m.from.address], cc, bcc: [], subject: prefixed("Re:", m.subject), body: "" };
 }
 
+/**
+ * Reply all is a verb of its own where someone besides the sender and the account has the letter: the account's own
+ * addresses are the room's, the one set the send reads its audience with. Until the room knows them, where the
+ * letter went to more than one person besides its sender.
+ */
+export function hasReplyAll(message: EngineMessage | null, ownAddresses: readonly string[]): boolean {
+  const sender = message?.from.address.toLowerCase();
+  const people = [...(message?.to ?? []), ...(message?.cc ?? [])].map((p) => p.address.toLowerCase());
+  const others = new Set(people.filter((a) => a !== sender));
+  const mine = new Set(ownAddresses.map((a) => a.toLowerCase()));
+  return mine.size > 0 ? [...others].some((a) => !mine.has(a)) : others.size > 1;
+}
+
 export interface Verbs {
   /** Run `action` on the letter. */
   readonly act: (action: MessageAction) => void;
   /** No list's visit and no press seam here: the reader's own verbs cannot run. */
   readonly idle: boolean;
-  /** The read slot's face: what a press does now. */
-  readonly readSlot: "markRead" | "markUnread";
+  /**
+   * The read slot's face: what a press does now. Null on a letter that came back, where a list's visit stands: its
+   * read is its release, which the list's row offers as Done, and the plain directions are not offered beside it.
+   */
+  readonly readSlot: "markRead" | "markUnread" | null;
   /** Put a tag on the letter or take it off, through the room's seam; null where no seam stands. */
   readonly tag: ((tagId: string, on: boolean) => void) | null;
   /** The letter's tags, by id. */
@@ -57,6 +82,11 @@ export interface Verbs {
   readonly moves: readonly MoveTarget[];
   /** More than one person besides the sender has the letter: Reply all is a verb of its own. */
   readonly replyAll: boolean;
+  /**
+   * The pile the letter is filed in, of the three the panel's Later, Park and Resurface put it in and take it out of;
+   * null in none (a letter brought back to the top is in none of them).
+   */
+  readonly filed: "reply_later" | "set_aside" | "bubbled_up" | null;
 }
 
 export function useVerbs(
@@ -68,6 +98,8 @@ export function useVerbs(
   const press = usePressWhereOn();
   const { commands } = useFrame();
   const answer = useAnswer();
+  /* The account's resurface hour, as the shell handed it to the room: what the quick return books at. */
+  const hour = useResurfaceTime();
   const t = useText("reader");
   const locale = useLocale();
   const words: VerbWords = useMemo(
@@ -91,15 +123,19 @@ export function useVerbs(
     });
     return (iso: string) => f.format(new Date(iso));
   }, [locale]);
-  const readSlot = visit
-    ? visit.readSet.length > 0
-      ? "markRead"
-      : "markUnread"
-    : message?.unread
-      ? "markRead"
-      : "markUnread";
-  const act = (action: MessageAction): void => {
+  const readSlot =
+    visit && message !== null && readIsItsRelease(message)
+      ? null
+      : visit
+        ? visit.readSet.length > 0
+          ? "markRead"
+          : "markUnread"
+        : message?.unread
+          ? "markRead"
+          : "markUnread";
+  const act = (asked: MessageAction): void => {
     if (message === null) return;
+    let action = asked;
     if (answer !== null && (action === "reply" || action === "reply_all" || action === "forward")) {
       answer(message.id, action);
       return;
@@ -112,6 +148,10 @@ export function useVerbs(
       commands.write(draftFor(action, message));
       return;
     }
+    /* The quick return (`b` on a letter with no booking), where no list's visit runs it: tomorrow at the account's
+       hour, minted at the press, as the chooser's own Tomorrow is. */
+    if (action === "resurface")
+      action = `resurface:${resurfaceHorizonsIn(new Date(), hour.stored, readerZone()).tomorrow.iso}`;
     if (!isOwnVerb(action) || press === null) return;
     if (action === "unread" && !message.unread && own !== null) {
       // The column's own Mark unread: the visit keeps it unread and holds it for the rest of the visit.
@@ -135,12 +175,9 @@ export function useVerbs(
             null,
           );
   const moves = visit !== null && message !== null ? moveTargetsOf(message) : [];
-  /* Reply all is a verb of its own where the letter went to more than one person besides its sender. */
-  const sender = message?.from.address.toLowerCase();
-  const replyAll =
-    message !== null &&
-    new Set([...message.to, ...message.cc].map((p) => p.address.toLowerCase()).filter((a) => a !== sender))
-      .size > 1;
+  const replyAll = hasReplyAll(message, useOwnAddresses());
+  const pile = message?.triage?.state;
+  const filed = pile === "reply_later" || pile === "set_aside" || pile === "bubbled_up" ? pile : null;
   return {
     act,
     readSlot,
@@ -149,5 +186,6 @@ export function useVerbs(
     tagged: message?.labels ?? [],
     moves,
     replyAll,
+    filed,
   };
 }

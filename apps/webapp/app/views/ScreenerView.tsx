@@ -52,7 +52,7 @@ import { messageOf, type JunkItemWire } from "../api-client";
 import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-copy";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
-import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
+import { junkKeyOf, type JunkWindowControl } from "@ohmail/app-logic/screener/junk-window";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
@@ -81,10 +81,10 @@ import {
 } from "@ohmail/app-logic/mail-state/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "@ohmail/app-logic/screener/screener-state";
 import type { ImpersonationFiledNotice } from "@ohmail/app-logic/screener/impersonation-filed";
-import type { SuggestBatchControl } from "../shell/screener-suggest";
+import type { SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 import {
   noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
-} from "../shell/no-suggestion";
+} from "@ohmail/app-logic/screener/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { MessageBody } from "../letter-body/MessageBody";

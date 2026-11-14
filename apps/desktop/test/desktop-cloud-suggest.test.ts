@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
@@ -135,6 +135,12 @@ describe("the hosted door's suggest control", () => {
   let absorbed: Array<{ address: string; suggestion: SenderSuggestion }>;
   let stood: Array<SuggestStanding | null>;
 
+  /** The control as the desktop's frame draws it: with the run's two readers bound where a hook may be called. */
+  function Framed(props: Omit<React.ComponentProps<typeof CloudSuggest>, "text">): React.ReactElement {
+    const text = { screener: useTranslations("screener") as never, aiRefusal: useTranslations("aiRefusal") as never };
+    return h(CloudSuggest, { ...props, text });
+  }
+
   const mount = async (senders = SENDERS, resuggestable: string[] = []) => {
     absorbed = [];
     stood = [];
@@ -152,7 +158,7 @@ describe("the hosted door's suggest control", () => {
             h(
               ToastHost,
               null,
-              h(CloudSuggest, {
+              h(Framed, {
                 senders,
                 resuggestable,
                 unanswered: 0,

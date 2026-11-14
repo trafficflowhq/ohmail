@@ -14,14 +14,14 @@ import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { DraftReplyWire } from "./draft-reply";
 import type { GapLettersTransport } from "./GapLettersNotice";
 import type { SupportHost } from "./HelpContactPane";
-import type { JunkWire } from "./junk-window";
+import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
 import type { FreshnessProbe, MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
-import type { SuggestStanding } from "./no-suggestion";
+import type { SuggestStanding } from "@ohmail/app-logic/screener/no-suggestion";
 import type { NotificationHost } from "./notification-settings";
 import type { OrganizerNoticeTransport } from "./OrganizerNotice";
 import type { ProfileImportTransport } from "./ProfileImportCard";
 import type { ImageDoor } from "./remote-images";
-import type { SenderSuggestion, SuggestWire } from "./screener-suggest";
+import type { SenderSuggestion, SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import type { TrashWire } from "./trash-window";
 
 /** What the Screener's own suggest control is handed. */

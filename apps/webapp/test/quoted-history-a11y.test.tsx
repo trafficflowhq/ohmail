@@ -41,12 +41,12 @@ describe("the toggle by keyboard", () => {
   });
 
   it("a prose html body (Outlook)", async () => {
-    const { container } = render(<MessageBody messageId="m1" text={fx("01").text} html={fx("01").html} />);
+    const { container } = render(<MessageBody owner={null} messageId="m1" text={fx("01").text} html={fx("01").html} />);
     await operate(container);
   });
 
   it("a framed body: the toggle stands outside the frame and controls its sheet", async () => {
-    const { container } = render(<MessageBody messageId="m1" text="" html={fx("13").html} />);
+    const { container } = render(<MessageBody owner={null} messageId="m1" text="" html={fx("13").html} />);
     expect(container.querySelector("iframe")).not.toBeNull();
     await operate(container);
     const id = container.querySelector("button.msg-history-toggle")!.getAttribute("aria-controls")!;

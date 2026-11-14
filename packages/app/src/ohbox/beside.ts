@@ -48,6 +48,11 @@ export interface OhboxBeside {
    *  list is still owed, and gone the moment it is read. The shell draws it (its own grace, zero text nodes, hidden
    *  from the screen reader); left out, the list draws none. */
   shape?: ReactNode;
+  /** What a shell stands over the list's head, on the list's sheet, as it is given (today's offers and cards). */
+  over?: ReactNode;
+  /** What a shell stands as the scroller's first block (today's away line and storage card): a line that pins itself
+   *  sticks under nothing, and the rest scrolls with the rows. */
+  first?: ReactNode;
   /** Where the doorbell, the end of the list and the empty Ohbox lead. */
   go: {
     screener(): void;

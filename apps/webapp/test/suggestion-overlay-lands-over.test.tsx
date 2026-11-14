@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import en from "../messages/en.json";
 import type { ScreenerSuggestions, SenderSuggestion, SuggestWire } from "../app/shell/screener-suggest";
 
@@ -38,7 +39,7 @@ async function mount(mirror?: (address: string) => string | null): Promise<() =>
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   let s: ScreenerSuggestions | null = null;
   function Probe(): null {
-    s = useScreenerSuggestions({ active: false, toast: (() => {}) as never, wire, ...(mirror ? { mirrorSuggestionOf: mirror } : {}) });
+    s = useScreenerSuggestions({ text: useSuggestText(), active: false, toast: (() => {}) as never, wire, ...(mirror ? { mirrorSuggestionOf: mirror } : {}) });
     return null;
   }
   host = document.createElement("div");

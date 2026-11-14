@@ -41,10 +41,17 @@ export function letter(id: string, over: Partial<EngineMessage> = {}): EngineMes
   } as EngineMessage;
 }
 
+/** One object for the engine's verdict on the copy's age: a reader that subscribes to it needs the same one back. */
+const COPY_AGE_UNKNOWN = { state: "unknown", asOf: null } as const;
+/** One list for every read: the model keeps what it was last answered by identity. */
+const NOTHING_ABANDONED: readonly never[] = [];
+
 export interface FakeMail {
   readonly engine: OhmailEngine;
   readonly mutations: EngineMutation[];
   readonly bodyAsks: string[];
+  /** What a part above the panes told the engine: each cutline and each list of Sent folders, as handed. */
+  readonly told: { readonly cutlines: unknown[]; readonly sentFolders: unknown[] };
   /** Change a letter, as a drain would. */
   readonly patch: (id: string, over: Partial<EngineMessage>) => void;
   /** A letter arrives, as a page of the mirror would bring it. */
@@ -83,6 +90,7 @@ export function fakeMail(
   } as unknown as EntityReader;
   const mutations: EngineMutation[] = [];
   const bodyAsks: string[] = [];
+  const told = { cutlines: [] as unknown[], sentFolders: [] as unknown[] };
   const engine = {
     read: () => reader,
     verbRead: () => reader,
@@ -107,11 +115,33 @@ export function fakeMail(
     trashAvailable: () => true,
     replayDelete: async () => ({ status: "confirmed" }),
     restoreFromTrash: async () => ({ status: "confirmed" }),
+    /* What the mail ground reads of an engine at rest (the stamp a placing body moves, the rows taken in, the copy's
+       age, how often a Sent folder was asked for), and the two things it tells it, kept as they were handed. */
+    placementStamp: () => 0,
+    receivedMessages: () => 0,
+    freshness: () => COPY_AGE_UNKNOWN,
+    sentFolderAsks: () => 0,
+    /* And what the Screener's model, which the ground stands, reads at rest: no change the server refused, a queue
+       this device cannot page, and its asks at the mount, answered with nothing. */
+    abandoned: () => NOTHING_ABANDONED,
+    screenerWaitingAvailable: () => false,
+    refreshScreenerWaiting: async () => undefined,
+    refreshHeldReleases: async () => undefined,
+    refreshUnscreened: async () => undefined,
+    autoFiled: async () => null,
+    setCutline: (cutline: unknown) => {
+      told.cutlines.push(cutline);
+    },
+    setSentFolders: (mailboxes: unknown) => {
+      told.sentFolders.push(mailboxes);
+      return false;
+    },
   } as unknown as OhmailEngine;
   return {
     engine,
     mutations,
     bodyAsks,
+    told,
     patch: (id, over) => {
       const m = rows.get(`message:${id}`) as EngineMessage;
       rows.set(`message:${id}`, { ...m, ...over });

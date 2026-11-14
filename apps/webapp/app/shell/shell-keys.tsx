@@ -49,7 +49,9 @@ import {
 } from "@ohmail/app-logic/layout/narrow";
 import type { PullBinding } from "./PullNewMail";
 import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
-import { go, goFolder, goScreener, goSettings, goTag, goTriage, switchKeyOf, type Route, type TriagePileId } from "./routing";
+import {
+  go, goFolder, goScreener, goSettings, goTag, goTriage, reflectMessage, switchKeyOf, type Route, type TriagePileId,
+} from "./routing";
 import { goCompose } from "./compose-door";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import type { ShellCompose } from "./shell-compose";
@@ -140,6 +142,16 @@ export interface ShellKeysInput {
   facts: MailboxFacts[] | null;
   /** Is the seed screen still owed? It TAKES the stage — `effectiveView` says so once. */
   seedOwed: boolean;
+  /**
+   * Is the place on screen one of today's views? At a seated place the open letter's verbs are the reader's own
+   * keys and the list's are its model's: the shell registers its own for them only while this holds.
+   */
+  todaysNow: boolean;
+  /**
+   * Is a SEATED place on screen in ONE column (the frame's plan)? Its letter stands over its list only while the
+   * address names it; with none there no reader is mounted, and the cursor row's verbs are this shell's, as today.
+   */
+  seatedOneColumn: boolean;
   /** The folder rail's own verbs (`folder-verbs.ts`), handed over on a live folders account. */
   folderVerbs: FolderVerbs;
   screener: Pick<ScreenerState, "queueSettled" | "storeSettled" | "waiting" | "waitingCount">;
@@ -243,7 +255,7 @@ export interface ShellKeysInput {
 export type ShellKeys = ReturnType<typeof useShellKeys>;
 
 export function useShellKeys({
-  engine, reader, demo, scope, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
+  engine, reader, demo, scope, t, theme, route, todaysNow, seatedOneColumn, palette, pullBinding, consent, syncStatus, mailState,
   facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
   receiptsNew,
   accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
@@ -309,6 +321,16 @@ export function useShellKeys({
     [barPanel != null, () => setBarPanel(null)],
     [replyTo != null, () => setReplyTo(null)],
     [readerFor != null, () => setReaderFor(null)],
+    /* A SEATED PLACE'S LETTER OVER ITS LIST (one column): it is closed as today's sheet is, by taking the letter out of
+       the address. The cursor stays on its row, and the keyboard goes there first (the cursor's row, which `j` may
+       have moved under the letter; else the letter's), so it stands there when the column over it has gone. */
+    [seatedOneColumn && route.messageId != null, () => {
+      const id = route.messageId;
+      if (id === null) return;
+      (queryVisible<HTMLElement>("section.fr-list [role=option][data-open]")
+        ?? queryVisible<HTMLElement>(`section.fr-list [role=option][data-id="${CSS.escape(id)}"]`))?.focus({ preventScroll: true });
+      reflectMessage(route, null);
+    }],
   ];
   const closeInnermost = escapeLayers.find(([open]) => open)?.[1] ?? null;
 
@@ -442,7 +464,8 @@ export function useShellKeys({
     const rail = document.querySelector(".rail");
     const el = document.activeElement;
     if (rail && el instanceof HTMLElement && rail.contains(el)) {
-      const row = queryVisible<HTMLElement>(".view :is(.row.sel, [role=option][data-open])");
+      // The selected row of today's view, or of a seated place's list (the frame's list section).
+      const row = queryVisible<HTMLElement>(":is(.view, section.fr-list) :is(.row.sel, [role=option][data-open])");
       if (row) row.focus();
       else el.blur();
     }
@@ -495,6 +518,11 @@ export function useShellKeys({
       { barPanel, setBarPanel },
       (x) => onMessageAction("resurface", x),
     ));
+
+  /* Whose the letter's verbs are, by key: this shell's on a view of today's, and at a seated place only where one
+     column stands and the address names no letter (the reader, which binds them for the letter it draws, is not
+     mounted then). */
+  const shellVerbs = todaysNow || (seatedOneColumn && route.messageId == null);
 
   /* A go-to by key: the place, then focus handed from the rail to the list (`leaveRailAfterGoTo`). */
   const byKey = (to: () => void) => (): void => { to(); leaveRailAfterGoTo(); };
@@ -555,7 +583,12 @@ export function useShellKeys({
         go("triage");
       },
     },
-    {
+    /* THE OPEN LETTER'S VERBS, by key: the shell's while a view of today's is on screen. At a seated place the
+       reader binds each of them itself, once, for the letter in its column (`r`, `⇧R`, `⇧F` here; `a`, `e`, `b`,
+       `m`, `d`, ⌫ and ⌦ below), so the shell registers none of them there and no chord is bound twice. WHERE THE
+       SEATED PLACE STANDS IN ONE COLUMN WITH NO LETTER OVER ITS LIST no reader is mounted: the verbs are the shell's
+       there, on the cursor row, as they were on a cursor row with no sheet up (`shellVerbs`). */
+    ...(shellVerbs ? [{
       chord: "r",
       group: "message",
       label: t("shortcuts.reply"),
@@ -626,7 +659,7 @@ export function useShellKeys({
         }
         else onMessageAction("forward", focused);
       },
-    },
+    }] satisfies KeyBinding[] : []),
     /* Declared only while a run is open, so the sheet never prints its line where there is no run. */
     ...(fr == null ? [] : [{
       /* SEND, INSIDE THE REPLY RUN. The overlay's Done button and this chord are one path —
@@ -698,11 +731,14 @@ export function useShellKeys({
         if (!focused) return;
         openSenderMenu(
           focused.id,
-          queryVisible<HTMLElement>(`.view :is(.row, [role=option])[data-id="${CSS.escape(focused.id)}"]`),
+          // The row in today's view, or in a seated place's list (the frame's list section).
+          queryVisible<HTMLElement>(
+            `:is(.view, section.fr-list) :is(.row, [role=option])[data-id="${CSS.escape(focused.id)}"]`,
+          ),
         );
       },
     },
-    {
+    ...(shellVerbs ? [{
       // `f` starts a Reply Run over the Answer Later pile, and until this binding there
       // was NO keyboard way to put anything INTO that pile — `later` was reachable only from
       // the reader's action menu. A keyboard user could start a run they could not fill, and
@@ -820,7 +856,7 @@ export function useShellKeys({
       placeable: cursorHere,
       ...deleteReason,
       run: (m) => onMessageAction("delete", m),
-    }),
+    })] satisfies KeyBinding[] : []),
     /* ⇧⌫ — RESTORE, and only in Trash. The mirror image of ⌫: the key that removes mail from a
        pile is the key that brings it back from the bin, one modifier apart, so the two are one
        gesture to learn. Listed at every route so the sheet documents it (the rule above), inert
@@ -1446,13 +1482,21 @@ export function useShellKeys({
    * condition repeated ten times is nine chances to forget it, and the tenth view added later
    * would render underneath the screen with nobody noticing.
    */
-  const effectiveView = seedOwed
-    ? "seed"
-    : route.view === "tag" && !tagGroup
-      ? "ohbox"
-      : route.view === "folder" && !openFolder
-        ? "ohbox"
-        : route.view;
+  const effectiveView = seedOwed ? "seed" : route.view;
+  /**
+   * A TAG OR A FOLDER THAT NO LONGER EXISTS HAS NO VIEW: its address becomes the Ohbox's, in place (no history
+   * entry). Until then the stage draws nothing for it, and never the Ohbox under another place's address. Only once
+   * the mirror can say so: a reload restores an address before its tag or folder has arrived, and a settled state
+   * can precede the first rows. The mirror has arrived once this engine has completed a drain (an account with no
+   * letter at all is told so too), or holds mail already (a mirror restored from the device, before its first drain).
+   */
+  const noSuchPlace = (route.view === "tag" && !tagGroup) || (route.view === "folder" && !openFolder);
+  const mirrorArrived = !syncStatus.bootstrapping || reader.list("message").length > 0;
+  useEffect(() => {
+    if (!noSuchPlace || !mailState.settled || !mirrorArrived) return;
+    window.history.replaceState(window.history.state, "", "#/ohbox");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  }, [noSuchPlace, mailState.settled, mirrorArrived, tagGroups, openFolder]);
   /** The route is on one of the three piles — the group News and Receipts are kept alive in. */
   const inPiles = effectiveView === "ohbox" || isKeptPile(effectiveView);
 

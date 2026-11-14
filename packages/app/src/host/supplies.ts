@@ -1,7 +1,7 @@
 import type { CalendarEntry, FramePlaces, FrameStages } from "../frame/contract.js";
 import type { None } from "./contract.js";
 import type { Appearance, HostAddress, WindowFacts } from "./device.js";
-import type { FeatureEntry, FeatureName } from "./features.js";
+import type { FeatureEntry, FeatureName, HostFeatures } from "./features.js";
 import type { HostSession } from "./session.js";
 import type { Signal } from "./signals.js";
 import type { HostWires } from "./wires.js";
@@ -19,11 +19,14 @@ export type Entries<K extends FeatureName = FeatureName> = Readonly<Record<K, Fe
 
 /**
  * What every shell hands the frame, the same on all three: the places and stages it mounts (it imports them), the
- * address bar, the window and the look it stands under, and its way back to a live session.
+ * reading column it imports, what it stands above every pane, the address bar, the window and the look it stands
+ * under, and its way back to a live session.
  */
 export interface FrameSupplies {
   readonly places: FramePlaces;
   readonly stages: FrameStages;
+  readonly reader: HostFeatures["reader"];
+  readonly above: HostFeatures["above"];
   /** The calendar's root export (`calendar` of `@ohmail/app/calendar`) where the shell mounts it, else `none`. */
   readonly calendar: CalendarEntry | None;
   readonly address: HostAddress;

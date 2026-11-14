@@ -80,6 +80,7 @@
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
       "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
       "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
+      "@ohmail/ui/calendar": ["../../packages/ui/src/calendar/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       /* Behaviour without a screen, and the host contract. Same story as the leaves above: in the
          published tree this map and `vite.config.ts`'s alias table are their only resolvers. A
@@ -93,7 +94,11 @@
       "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
       "@ohmail/app/keys": ["../../packages/app/src/keys/index.ts"],
       "@ohmail/app/mail-state": ["../../packages/app/src/mail-state/index.ts"],
+      "@ohmail/app/mail/ground": ["../../packages/app/src/mail/ground/index.ts"],
+      "@ohmail/app/mail": ["../../packages/app/src/mail/index.ts"],
       "@ohmail/app/ohbox": ["../../packages/app/src/ohbox/index.ts"],
+      "@ohmail/app/reader/body": ["../../packages/app/src/reader/body/index.ts"],
+      "@ohmail/app/reader": ["../../packages/app/src/reader/index.ts"],
       "@ohmail/app/write/editor/schema": ["../../packages/app/src/write/editor/schema.ts"],
       "@ohmail/app/write/editor/commands": ["../../packages/app/src/write/editor/commands.ts"],
       "@ohmail/app/write/editor/marks": ["../../packages/app/src/write/editor/marks.ts"],

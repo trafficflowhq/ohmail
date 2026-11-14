@@ -107,3 +107,39 @@ describe("a long conversation's row in a real browser", () => {
     expect(read.hidden, "the run does not say how many it hides").toMatch(/\+\d+/);
   }, 60_000);
 });
+
+describe("the Ohbox's states page draws both columns", () => {
+  async function columns(query: string) {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+    );
+    await page.goto(`${ORIGIN}/?${query}`);
+    await page.waitForSelector("[role=option][data-id]", { timeout: 15_000 });
+    await page.waitForTimeout(500);
+    const reading = page.getByRole("region", { name: "Reading" });
+    const read = {
+      letter: await reading.getByRole("region", { name: "Open message" }).getByRole("article").count(),
+      text: (await reading.textContent()) ?? "",
+      errors,
+    };
+    await page.close();
+    return read;
+  }
+
+  it("an open letter stands in the reading column, drawn by the reader the host hands", async () => {
+    const read = await columns("hold=1&open=ben-kiln&screen=ohbox");
+    expect(read.errors).toEqual([]);
+    expect(read.letter, "no letter in the reading column").toBeGreaterThan(0);
+    expect(read.text).toContain("The new element arrived early and the kiln heats evenly again");
+  }, 60_000);
+
+  it("with nothing open the reading column says the list's blank", async () => {
+    const read = await columns("open=none&screen=ohbox");
+    expect(read.errors).toEqual([]);
+    expect(read.letter).toBe(0);
+    expect(read.text, "the reading column is empty").toMatch(/unread/i);
+  }, 60_000);
+});

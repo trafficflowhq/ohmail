@@ -16,6 +16,7 @@ import {
 import type { PictureSeam } from "@ohmail/app-logic/reader";
 import { Frame } from "../../../src/frame/Frame.js";
 import type { LayoutPlan, PaneProps, PlaceEntry } from "../../../src/frame/contract.js";
+import { KeymapProvider } from "../../../src/keys/index.js";
 import {
   readerEntry,
   type LetterProps,
@@ -123,6 +124,8 @@ export interface MountReader {
   readonly bodies?: Readonly<Record<string, unknown>>;
   /** Other rows of the mirror, keyed `<type>:<id>`. */
   readonly rows?: Readonly<Record<string, unknown>>;
+  /** The catalogue the shell hands, in place of the reader's and the room's whole. */
+  readonly words?: Messages;
 }
 
 export function mountReader(o: MountReader) {
@@ -133,7 +136,9 @@ export function mountReader(o: MountReader) {
     files: "none",
     pictures: "none",
     look: "none",
+    sentCopy: "none",
     reply: "none",
+    invitation: "none",
     ...o.parts,
   };
   const address = fakeAddress(o.open === null ? "#/ohbox" : `#/ohbox/m/${o.open}`);
@@ -154,14 +159,17 @@ export function mountReader(o: MountReader) {
       <Frame host={made.host} />
     </PresentedMirrorContext.Provider>
   );
+  /* The key map's registry stands above the frame, as a shell's does: the column declares its keys into it. */
   const view = render(
-    <TextProvider locale={lang} messages={WORDS[lang]} timeZone="Europe/Zurich">
-      {o.meeting === undefined ? (
-        frame
-      ) : (
-        <ListMeetingContext.Provider value={o.meeting}>{frame}</ListMeetingContext.Provider>
-      )}
-      {o.children}
+    <TextProvider locale={lang} messages={o.words ?? WORDS[lang]} timeZone="Europe/Zurich">
+      <KeymapProvider>
+        {o.meeting === undefined ? (
+          frame
+        ) : (
+          <ListMeetingContext.Provider value={o.meeting}>{frame}</ListMeetingContext.Provider>
+        )}
+        {o.children}
+      </KeymapProvider>
     </TextProvider>,
   );
   return { ...made, mail, view, handed: double.handed, parts };

@@ -37,6 +37,8 @@ import messagesDe from "../../messages/de.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { JunkWire } from "../../app/shell/junk-window";
+import type { SuggestWire } from "../../app/shell/screener-suggest";
 import { settleFirstPaint } from "../_first-paint.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 
@@ -264,6 +266,9 @@ export function installShellEnv(): void {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows at the seated Ohbox ask `animate` (the lead's stub,
+     `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -342,6 +347,10 @@ export async function mountShell(
      * Absent is the harness's own rule: the Cloud client, on this configured page.
      */
     consentTransport?: ConsentTransport | "none";
+    /** A HOST'S JUNK WIRE; `"none"` is a host that has none. Absent is the harness's own rule. */
+    junkWire?: JunkWire | "none";
+    /** A HOST'S SUGGESTION WIRE; `"none"` is a host that buys none. Absent is the harness's own rule. */
+    suggestWire?: SuggestWire | "none";
     /** The host's providers between the toast host and `AppShell` — the Cloud's locale seam. Absent: none. */
     wrap?: (shell: React.ReactElement) => React.ReactElement;
     /** The first-run door, as `CloudShell` hands it over. Absent: the desktop window's shape. */
@@ -366,6 +375,8 @@ export async function mountShell(
     mailboxFacts: opts.probe ?? (async (): Promise<MailboxFacts[]> => facts),
     ...(opts.engine ? { engine: opts.engine } : {}),
     ...(opts.consentTransport ? { consentTransport: opts.consentTransport } : {}),
+    ...(opts.junkWire ? { junkWire: opts.junkWire } : {}),
+    ...(opts.suggestWire ? { suggestWire: opts.suggestWire } : {}),
     ...(opts.firstRun ? { firstRun: opts.firstRun } : {}),
     ...(opts.stageCard ? { stageCard: opts.stageCard } : {}),
   };

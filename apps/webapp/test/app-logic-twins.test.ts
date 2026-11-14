@@ -9,9 +9,24 @@ import * as kit from "@ohmail/ui";
 import * as geometry from "@ohmail/app-logic/geometry";
 import { SCROLL_KEYS } from "@ohmail/app-logic/keys";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
-import { DECISION_QUIET, type DecisionDestination, type DecisionScope } from "@ohmail/app-logic/screener/decision";
+import {
+  DECISION_KEY,
+  DECISION_ORDER,
+  DECISION_QUIET,
+  PILE_KEY,
+  PILE_VERB_KEY,
+  type DecisionDestination,
+  type DecisionScope,
+} from "@ohmail/app-logic/screener/decision";
+import * as decisionCopy from "../app/shell/decision-copy";
 import type { ConsentStateWire as ConsentReadOfTheRow } from "@ohmail/app-logic/consent/consent-wire";
 import type { ConsentStateWire as ConsentReadOfTheClient } from "../app/api-client";
+import type * as JunkAnswers from "@ohmail/app-logic/screener/junk-answers";
+import type * as SuggestAnswers from "@ohmail/app-logic/screener/suggest-answers";
+import type * as ServerClient from "../app/api-client";
+import type * as Host from "@ohmail/app/host";
+import type * as Junk from "@ohmail/app-logic/screener/junk-window";
+import type * as Suggest from "@ohmail/app-logic/screener/screener-suggest";
 import { autoLoadsImages as readerAutoLoads } from "@ohmail/app-logic/reader";
 import { HELD_FOLDERS } from "@trafficflow/core/destinations";
 import { autoLoadsImages as shellAutoLoads } from "../app/shell/remote-images";
@@ -79,6 +94,13 @@ describe("the types behaviour declares beside the kit's", () => {
     expect([...DECISION_QUIET].sort()).toEqual([...kit.DECISION_QUIET].sort());
   });
 
+  it("each decision's key, in the order the kit's bar lists them, and the pile names the shell's table reads", () => {
+    expect(DECISION_KEY).toEqual(kit.DECISION_KEY);
+    expect(DECISION_ORDER).toEqual(Object.keys(kit.DECISION_KEY));
+    expect(PILE_KEY).toEqual(decisionCopy.PILE_KEY);
+    expect(PILE_VERB_KEY).toEqual(decisionCopy.PILE_VERB_KEY);
+  });
+
   it("the press seam's report is the kit's toast, option for option", () => {
     expectTypeOf<ToastOptions>().toEqualTypeOf<kit.ToastOptions>();
     expectTypeOf<ToastFn>().toEqualTypeOf<kit.ToastFn>();
@@ -104,6 +126,37 @@ describe("the consent read as the consent row declares it", () => {
       screeningScope: true,
     };
     expect(Object.keys(heldEqual)).toHaveLength(20);
+  });
+});
+
+/**
+ * AND THE ANSWERS OF THE SCREENER'S TWO WIRES ARE DECLARED TWICE: by the server client, and beside the Junk window
+ * and the suggestion run, which may not import it. Each is the client's own, field for field: a host's wire that
+ * answers the one answers the other. And the two wires themselves: the host contract's and the hooks' own, which the
+ * ground's mount casts the one to the other, hold the same members.
+ */
+describe("the answers of the Junk wire and of the suggestion wire as the Screener's logic declares them", () => {
+  it("are the server client's, type for type", () => {
+    expectTypeOf<JunkAnswers.JunkItemWire>().toEqualTypeOf<ServerClient.JunkItemWire>();
+    expectTypeOf<JunkAnswers.JunkMailboxWire>().toEqualTypeOf<ServerClient.JunkMailboxWire>();
+    expectTypeOf<JunkAnswers.JunkPageWire>().toEqualTypeOf<ServerClient.JunkPageWire>();
+    expectTypeOf<JunkAnswers.JunkRescueWire>().toEqualTypeOf<ServerClient.JunkRescueWire>();
+    expectTypeOf<JunkAnswers.JunkSearchWire>().toEqualTypeOf<ServerClient.JunkSearchWire>();
+    expectTypeOf<JunkAnswers.JunkSweepWire>().toEqualTypeOf<ServerClient.JunkSweepWire>();
+    expectTypeOf<SuggestAnswers.ScreenerWirePage>().toEqualTypeOf<ServerClient.ScreenerWirePage>();
+    expectTypeOf<SuggestAnswers.ScreenerSkipReason>().toEqualTypeOf<ServerClient.ScreenerSkipReason>();
+    expectTypeOf<SuggestAnswers.ScreenerSuggestWire>().toEqualTypeOf<ServerClient.ScreenerSuggestWire>();
+  });
+
+  it("the code for a server never reached is the server client's own", async () => {
+    const { UNREACHED_CODE } = await import("../app/shell/screener-suggest");
+    const { OFFLINE_CODE } = await import("../app/api-client");
+    expect(UNREACHED_CODE).toBe(OFFLINE_CODE);
+  });
+
+  it("the wires a host hands are the Junk window's and the suggestion run's own, member for member", () => {
+    expectTypeOf<keyof Host.JunkWire>().toEqualTypeOf<keyof Junk.JunkWire>();
+    expectTypeOf<keyof Host.SuggestWire>().toEqualTypeOf<keyof Suggest.SuggestWire>();
   });
 });
 
