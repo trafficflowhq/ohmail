@@ -6,7 +6,7 @@
  * may ask for that body over whatever place the address names. A place of two columns may stand a component of its
  * own above both of them, and nothing else.
  */
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Frame } from "../../src/frame/Frame.js";
@@ -263,5 +263,62 @@ describe("what a place stands above its two columns", () => {
     expect(counted("placeAbove")).toEqual({ mounts: 2, live: 1 });
     expect(counted("list")).toEqual({ mounts: 2, live: 1 });
     expect(rail(), "coming back mounted the rail again").toBe(railAtFirst);
+  });
+});
+
+/**
+ * THE SLOT'S REACH. What a host stands above every pane stands around everything the frame's root holds, not around
+ * the columns alone: a registered place's count, drawn by the rail at the side and by the whole rail More opens over
+ * the app, and a stage's body, drawn over the app, each read it. The reader is strict, as the mail ground's are: it
+ * throws where what stands above does not reach.
+ */
+const Ground = createContext<string | null>(null);
+function GroundAbove({ children }: { children: ReactNode }) {
+  return <Ground.Provider value="7">{children}</Ground.Provider>;
+}
+function useGround(): string {
+  const ground = useContext(Ground);
+  if (ground === null) throw new Error("a reader of the ground was drawn outside it");
+  return ground;
+}
+function useGroundCount() {
+  return { count: useGround(), hot: false };
+}
+const counting: PlaceEntry = {
+  ...ohbox(false),
+  rail: { group: "main", icon: "ohbox", label: "title", useCount: useGroundCount },
+};
+function StageBody(_: PaneProps) {
+  return <p>the stage, with {useGround()} from above</p>;
+}
+
+describe("what a host stands above reaches everything the root holds", () => {
+  const places = { ohbox: counting, search: elsewhere };
+
+  it("a registered place's count is drawn in the rail at the side", () => {
+    render(frameOf({ places, above: GroundAbove, address: fakeAddress("#/ohbox") }));
+    expect(within(rail()).getByRole("button", { name: "Ohbox 7" })).toBeTruthy();
+  });
+
+  it("and in the whole rail that More opens over a dock at the foot", () => {
+    render(
+      frameOf({ places, above: GroundAbove, address: fakeAddress("#/ohbox"), window: fakeWindow("phone") }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const sheet = screen.getByRole("dialog", { name: "More" });
+    expect(within(sheet).getByRole("button", { name: "Ohbox 7" })).toBeTruthy();
+  });
+
+  it("a stage's body, over the app, reads it too", () => {
+    render(
+      frameOf({
+        places,
+        stages: { firstRun: { id: "firstRun", Body: StageBody } },
+        above: GroundAbove,
+        address: fakeAddress("#/first-run"),
+      }),
+    );
+    const stage = screen.getByRole("dialog", { name: "ohmail" });
+    expect(within(stage).getByText("the stage, with 7 from above")).toBeTruthy();
   });
 });

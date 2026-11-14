@@ -219,6 +219,10 @@ export default defineConfig({
       { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
+      // The mail ground's mounts one by one, ABOVE the mail entry (the prefix-match reason above).
+      { find: "@ohmail/app/mail/ground", replacement: r("./packages/app/src/mail/ground/index.ts") },
+      // The mail product's entry, BELOW `mail-state`: its name begins that one's.
+      { find: "@ohmail/app/mail", replacement: r("./packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
       { find: "@ohmail/app/screener", replacement: r("./packages/app/src/screener/index.ts") },
       { find: "@ohmail/app/search", replacement: r("./packages/app/src/search/index.ts") },

@@ -56,7 +56,17 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
    * What a shell stands above every pane, once per mounted frame, under the scope: the providers its places read.
    * `none`: nothing stands there (a host with no old shell; the fake host).
    */
-  readonly above: ComponentType<{ readonly children: ReactNode }> | None;
+  readonly above:
+    | (ComponentType<{ readonly children: ReactNode }> & {
+        /**
+         * This component hands the frame's room its own press seam (`useRoomHandOver`), so the room mounts none. Said
+         * on the component itself, statically: whose seam a frame presses through is never read off what a child did
+         * in a render. The old shell's composition alone says it. A component that does not say it brings no seam:
+         * the press seam is then the room's own, for the frame's life, and a hand-over there is refused.
+         */
+        readonly handsSeam?: true;
+      })
+    | None;
   /** What stands over every place (the palette, the key sheet), each the entry it imports or `none`. */
   readonly overs: FrameOvers;
   /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */

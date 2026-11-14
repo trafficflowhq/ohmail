@@ -14,10 +14,12 @@ import { fakeMail, letter, READER_PLACE, WORDS } from "../reader/support/mail.js
 /**
  * A PLACE THAT DRAWS ITS OWN READING COLUMN MAY ASK FOR THE ROOM. News, Receipts and Trash draw their own column (their
  * letters are a stream, or not in the mirror), yet their verbs go through the frame's one press seam. `room: true` on
- * their panes turns the seam on there, and only where a reader is handed: the name alone never starts it.
+ * their panes asks for it there. Where a reader is handed the room's own seam stands for the frame's life (the mail
+ * ground's ruling, S-2), so the place that asks meets that one seam, and so does a place that does not; where no
+ * reader is handed no seam stands, and the name alone never starts one.
  */
 
-const live = vi.hoisted(() => ({ seams: 0 }));
+const live = vi.hoisted(() => ({ seams: 0, mounts: 0 }));
 vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
   const real = await load<typeof import("@ohmail/app-logic/press/shell-dispatch")>();
   const { useEffect: effect } = await import("react");
@@ -27,6 +29,7 @@ vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
       const seam = real.useShellDispatch(input);
       effect(() => {
         live.seams += 1;
+        live.mounts += 1;
         return () => {
           live.seams -= 1;
         };
@@ -38,6 +41,7 @@ vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
 
 beforeEach(() => {
   live.seams = 0;
+  live.mounts = 0;
   localStorage.clear();
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
@@ -90,15 +94,16 @@ function mount(address: string, withReader: boolean) {
 }
 
 describe("a place's own column asks for the room", () => {
-  it("runs the one seam on a place that asks, beside its own column, and none on one that does not", () => {
+  it("runs the one seam on a place that asks, beside its own column, and the same one on a place that does not: the room's own, for the frame's life", () => {
     const visit = mount("#/reads", true);
     expect(screen.getByText("own column at news, a seam")).toBeTruthy();
-    expect(live.seams).toBe(1);
+    expect(live).toEqual({ seams: 1, mounts: 1 });
     act(() => visit.visit("#/receipts"));
-    expect(screen.getByText("own column at receipts, no seam")).toBeTruthy();
-    expect(live.seams).toBe(0);
+    expect(screen.getByText("own column at receipts, a seam")).toBeTruthy();
+    expect(live).toEqual({ seams: 1, mounts: 1 });
     act(() => visit.visit("#/reads"));
-    expect(live.seams).toBe(1);
+    expect(screen.getByText("own column at news, a seam")).toBeTruthy();
+    expect(live).toEqual({ seams: 1, mounts: 1 });
   });
 
   it("never starts the seam where no reader is handed, though the place asks", () => {

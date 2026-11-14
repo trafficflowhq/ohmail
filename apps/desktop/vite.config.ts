@@ -900,6 +900,8 @@ export default defineConfig({
       { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
+      { find: "@ohmail/app/mail/ground", replacement: r("../../packages/app/src/mail/ground/index.ts") },
+      { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
       // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
       { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },

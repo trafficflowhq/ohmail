@@ -4,9 +4,10 @@
  * the host's registrations. It asks for no setting: everything comes from the host contract. Everything under
  * it is mounted again when the host's scope changes.
  *
- * Under the scope the order is: the root, the room, what the host stands above every pane (`features.above`), then
- * everything the root holds. Nothing above the columns is mounted or unmounted by a place change; only another scope
- * mounts it again, and under a scope the frame refuses none of it mounts.
+ * Under the scope the order is: the root, the room (with its own press seam where the host hands a ground or a
+ * reader), what the host stands above every pane (`features.above`), then everything the root holds. Nothing above
+ * the columns is mounted or unmounted by a place change; only another scope mounts it again, and under a scope the
+ * frame refuses none of it mounts.
  */
 import {
   useCallback,
@@ -47,6 +48,7 @@ import { layoutPlan } from "./layout-plan.js";
 import { createNoticeStore } from "./notice-store.js";
 import { createOfferStore } from "./offers.js";
 import { RoomGate } from "./room.js";
+import type { RoomSeam } from "./room-store.js";
 import { useReportSlot } from "./report-slot.js";
 import { attributesOf } from "./root-attributes.js";
 import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
@@ -203,19 +205,6 @@ function panesOf(
   };
 }
 
-/**
- * The room's press seam runs only where the reader is drawn, or a place's own column asks for it and a reader is
- * handed: never beside the old shell's own.
- */
-function drawsTheReader(entry: PlaceEntry | null, reader: ReaderEntry | None): boolean {
-  return (
-    reader !== NONE &&
-    entry !== null &&
-    entry.panes.kind === "columns" &&
-    (entry.panes.Reading === "reader" || entry.panes.room === true)
-  );
-}
-
 function FrameBody({ host }: { host: FrameHost }) {
   const facts = useSignal(host.device.window);
   const look = useSignal(host.device.appearance);
@@ -266,8 +255,20 @@ function FrameBody({ host }: { host: FrameHost }) {
   const keptShown = keptBody !== null && (keptOver || entry?.body === keptBody.body);
   const readingShown = plan.columns === 2 || route.open !== null || holdsItsReading(entry);
   const panes = panesOf(entry, pane, readingShown, host.features.reader, keptBody, keptShown);
-  /* Never while the kept body is on screen: no reading column is drawn then. */
-  const room = !keptShown && drawsTheReader(entry, host.features.reader);
+  const Above = host.features.above;
+  /* Whose press seam it is, the host's record says, statically. A shell that hands its own says `handsSeam`. A host
+     that hands a ground above the panes (a component that does not say it) or a reader gets the room's own, mounted
+     once for the frame's life. A host that hands neither has nothing that can press, and no seam. */
+  const whose: RoomSeam =
+    Above !== NONE && Above.handsSeam === true
+      ? "handed"
+      : Above !== NONE || host.features.reader !== NONE
+        ? "own"
+        : "none";
+  /* The room's own seam is on wherever the frame stands. A handed one is the old shell's: on at every place the
+     frame draws, never over the body that shell keeps, whose views press through its seam themselves. */
+  const room = whose === "own" || (whose === "handed" && !keptShown);
+  const root = useRef<HTMLDivElement>(null);
   const parts = (
     <FrameParts
       host={host}
@@ -285,12 +286,11 @@ function FrameBody({ host }: { host: FrameHost }) {
       over={over}
     />
   );
-  const Above = host.features.above;
 
   return (
     <FrameContext.Provider value={context}>
-      <FrameRoot attributes={attributes} held={held || staged}>
-        <RoomGate on={room} own={Above === NONE}>
+      <FrameRoot drawn={root} attributes={attributes} held={held || staged}>
+        <RoomGate on={room} whose={whose}>
           {Above === NONE ? parts : <Above>{parts}</Above>}
         </RoomGate>
       </FrameRoot>

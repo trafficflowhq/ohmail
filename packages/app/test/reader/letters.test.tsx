@@ -923,7 +923,9 @@ describe("the panel's menus", () => {
           },
         };
         const meeting = { visit, blank: null };
-        mountReader({ letters: [letter("m1")], open: "m1", meeting, host: { above: Shell } });
+        /* A shell that hands its own seam says so: the room then mounts none beside it. */
+        const above = Object.assign(Shell, { handsSeam: true as const });
+        mountReader({ letters: [letter("m1")], open: "m1", meeting, host: { above } });
       }
       const time = () => screen.getByLabelText("Time", { selector: "input" }) as HTMLInputElement;
       const press = async (name: RegExp) => {

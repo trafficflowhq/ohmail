@@ -8,8 +8,8 @@
  * composition stands above every pane and hands the frame's room its own seam: walking News, the seated Ohbox and News
  * again, the one live seam is the shell's at every step, never two, never the room's, and it is mounted once. Over a
  * host that stands nothing above the panes (a test host: one stub place that names the reader, `_stub-place.tsx`) the
- * room mounts its own, only while a reader's place is on screen. And a delete a closed tab left in the journal is
- * replayed once at the mount, by that one seam.
+ * room mounts its own, once, and it stands for the frame's life, whatever place is on screen. And a delete a closed
+ * tab left in the journal is replayed once at the mount, by that one seam, over either host.
  */
 import { createElement as h, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -169,23 +169,35 @@ describe("one press seam per frame, the real old shell and the seated Ohbox", ()
     });
   });
 
-  it("over a host that stands nothing above the panes: no seam, the room's on the reader's place, none again", async () => {
+  it("over a host that stands nothing above the panes: the room's own seam at every step, mounted once, the journal replayed once", async () => {
     const engine = engineOver(await storeWith([msg("m1")]));
     S.engine = engine;
+    const replayed: string[] = [];
+    const replay = engine.replayDelete.bind(engine);
+    engine.replayDelete = (messageId, opts) => {
+      replayed.push(messageId);
+      return replay(messageId, opts);
+    };
+    armDeleteIntent({ id: "press-of-the-closed-tab", messageIds: ["m1"], at: Date.now() }, HARNESS_SCOPE);
     window.location.hash = "#/ohbox";
     await draw(engine, true);
     await waitFor(() => screen.queryByText("a plain place") !== null, "the plain place");
-    expect(owners(), "a place that draws no letter: no seam").toEqual([]);
+    await waitFor(() => live.seams.length > 0, "the room's seam");
+    expect(owners(), "a place that draws no letter: the room's own seam all the same").toEqual(["room"]);
 
     await visit(STUB_ADDRESS);
     await waitFor(() => readerColumn() !== null, "the stub place's reading column");
-    await waitFor(() => live.seams.length > 0, "the room's seam");
     expect(owners(), "the reader's place: the room's own seam alone").toEqual(["room"]);
 
     await visit("#/ohbox");
     await waitFor(() => readerColumn() === null, "the plain place again");
-    expect(owners(), "the plain place again: no seam").toEqual([]);
-    expect(live.peak, "after every commit of the walk at most one seam was live").toBe(1);
+    expect(owners(), "the plain place again: the room's own seam still").toEqual(["room"]);
+    expect({ peak: live.peak, mounts: live.mounts }, "one seam was live after every commit, and it was mounted once").toEqual({
+      peak: 1, mounts: 1,
+    });
+    await waitFor(() => replayed.length > 0, "the journal's replay");
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    expect(replayed, "the journal was replayed more than once over the walk").toEqual(["m1"]);
   });
 
   it("a delete a closed tab left in the journal is replayed once, at the mount, on a reader's place too", async () => {

@@ -81,7 +81,7 @@ import {
 } from "./engine";
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
 import { avatarHue, placeLabel } from "./format";
-import { useDayClock } from "./day-clock";
+import { useDayClock } from "@ohmail/app-logic/session/day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
 import { MessageGone, MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
@@ -91,7 +91,8 @@ import { useMessageAttachments } from "./attachments";
 import { askAnew, conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 import { useRemoteImages, type ImageDoor } from "./remote-images";
 import { NONE } from "@ohmail/app/host";
-import { useConsentState, windowOwnersOf, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
+import { useConsentRow } from "@ohmail/app-logic/consent/consent-row";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
@@ -176,8 +177,8 @@ import { ShortcutSheet } from "./ShortcutSheet";
 import { useMayHandOffFor } from "./send-handoff";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import { SendWaitsRelay } from "./UpdateLine";
-import { MailStateProvider } from "@ohmail/app/mail-state";
-import { useMailState, type FreshnessProbe, type MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { MailStateHost } from "@ohmail/app/mail/ground";
+import { useMailState, type MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
@@ -256,6 +257,7 @@ import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { TodaysOhboxFed } from "./TodaysOhboxAbove";
 import { TodaysReaderFed } from "./reader-parts";
+import { TodaysGround } from "./todays-ground";
 import { isTodays } from "./todays-places";
 import { ReadsView } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
@@ -281,7 +283,6 @@ import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
 import { isCalendarPlace, routeOf, useFrame, useKeptPane, useRoomHandOver, type PaneProps } from "@ohmail/app/frame";
-import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { useTodaysFixed } from "./TodaysFrame";
 import { useTodaysSignals } from "./todays-signals";
 import { useTodaysFeeds } from "./todays-feeds";
@@ -494,47 +495,7 @@ export function TodaysAbove({ children }: { children: ReactNode }) {
     </MailStateHost>
   );
 }
-
-/**
- * The mail-state provider, hoisted above `ShellInner`. As the outermost
- * element of `ShellInner`'s return, the shell PROVIDED the mailbox facts
- * and could not read them — fine while consumers were leaves, wrong once
- * the From line needed the facts on the wire: `sendReply` and the compose
- * plan are built in `ShellInner`, and a fact the shell cannot see is one
- * the mutation cannot carry. `mirrored` moved up because the provider
- * needs it. Nothing else moved; the existing consumers read a context,
- * not a position. `scope` is the host's, as the frame hands it: whose mail state this is.
- */
-function MailStateHost({ scope, probe, freshnessProbe, children }: { scope: string | null; probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
-  const engine = useEngine();
-  /* THE DERIVED STAMP, not the global version: the one thing this host computes is a count of
-     messages, and a body landing moves neither the count nor anything under it. `children` is a
-     stable element, so the provider re-rendering never reaches the shell — what this removes is
-     the whole-mirror `list("message")` below, once per body publish. */
-  const derived = useDerivedVersion();
-  /**
-   * EVERY message in the MIRROR — Screener, Reads and Receipts included, not the Ohbox's rows.
-   *
-   * What this DEVICE holds, and no longer the progress signal: the engine evicts past the window
-   * as the pages land, so this pins at the window's floor while an import runs on. Sampled exactly
-   * once — here — because two surfaces sampling their own could disagree about whether the mirror
-   * is growing. The engine calls `notify()` once per drained page, so this is live with no extra
-   * plumbing.
-   */
-  const mirrored = useMemo(() => engine.read().list("message").length, [engine, derived]);
-  /**
-   * AND HOW MUCH IT HAS TAKEN IN — the import's producer on this door. Counted at the sync
-   * reader's own door, so eviction cannot move it; sampled on the SAME stamp as `mirrored`, so the
-   * pair the provider derives from is read at one instant. The derived stamp and not the global
-   * one for the same reason as the line above: a body landing moves neither number.
-   */
-  const received = useMemo(() => engine.receivedMessages(), [engine, derived]);
-  return (
-    <MailStateProvider scope={scope} probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored} received={received}>
-      {children}
-    </MailStateProvider>
-  );
-}
+TodaysAbove.handsSeam = true as const; // said statically: the frame's room mounts no seam beside this shell's own
 
 function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread, children }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
@@ -715,7 +676,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   // See `PullNewMail.tsx`.
   const pullBinding = usePullNewMail(mailboxFacts);
   /* The clock this shell RENDERS against — see `day-clock.ts` for why it is not a mount value. */
-  const now = useDayClock(demo ? DEMO_NOW : null);
+  const now = useDayClock(demo ? DEMO_NOW : null, activeFormatZone());
   /**
    * …and what a PRESS reads. The rendered clock is at most one watch interval old, which is a
    * minute in which a booking can be made for the wrong day; a press asks the clock itself.
@@ -730,32 +691,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * senders who went quiet years ago and were never screened presents in History. Nothing
    * moves; this is a filter over the same mirror.
    */
-  /**
-   * THE SETTINGS STAMP off the mirror — the `settings` entity's `updatedAt`, recomputed per
-   * version bump. The entity is the sync channel's doorbell for consent-settings writes made on
-   * ANY surface (`change-log.ts` says why it exists); `useConsentState` re-asks `GET /consent`
-   * whenever it moves, which is what lets a folders flip or an image-posture change made in
-   * another window reach THIS one within normal sync latency instead of at the next boot. The
-   * record's CONTENT is deliberately not read beyond the stamp — the live consent read stays the
-   * one authority, so the two cannot drift.
-   */
-  const settingsStamp = useMemo(() => {
-    const read = engine.read();
-    const rows = read.entries<{ updatedAt?: string }>("settings");
-    /* …AND EACH MAILBOX_PROFILE ROW'S SEQ (RULING-026): a new organizer document can move a mailbox's
-       window, which `GET /consent` answers in `screeningByMailbox`; the row is the doorbell, never read. */
-    const profiles = read.entries("mailbox_profile").map((e) => `${e.id}:${e.seq}`).sort().join(",");
-    if (rows.length === 0 && profiles === "") return null;
-    return `${String(rows[0]?.entity?.updatedAt ?? "")}|${profiles}`;
-    // `derived` is the subscription; the reader object is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, derived]);
   /* `resolvedDemo`, NOT `demo` — the third gate in this file to take the correction, and the
      same one-render-wide difference the wake registration and the away notice record above:
      a prerendered `?demo=1` page hydrates with `serverDemo === false`, so this issued
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
-  const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
-  const consent = useConsentState(!resolvedDemo, scope, consentTransport ?? NONE, settingsStamp, windowOwners);
+  const consent = useConsentRow({ engine, derived, facts, active: !resolvedDemo, scope, transport: consentTransport ?? NONE });
   /* ONE PRESS SEAM PER FRAME: this one, handed to the frame's room with the facts and the row's resurface hour, so a
      reader's place presses through it and its undo windows live for the frame, whatever place is on screen. */
   useRoomHandOver({
@@ -886,7 +826,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * order the regions they replace had.
    */
   const {
-    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
+    mailPartition, ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
     folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
@@ -2715,10 +2655,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       </Reader>
     </div>
     }>
-      {/* WHAT THE SEATED PLACES READ, provided once above every pane: the presented mirror the reader draws from (the
-          one today's lists read), the reader's parts' feed, and the Ohbox's feed: today's inputs at the mount of the
-          Ohbox, as this composition computes them. No hook is called a second time for a place. */}
-      <PresentedMirrorContext.Provider value={presented}>
+      {/* WHAT THE SEATED PLACES READ, provided once above every pane: the mail ground's contexts, filled with this
+          composition's own consent row, partition and presented mirror (the one today's lists read, and the reader
+          draws from); the reader's parts' feed; and the Ohbox's feed: today's inputs at the mount of the Ohbox, as
+          this composition computes them. No hook is called a second time for a place. */}
+      <TodaysGround consent={consent} partition={mailPartition} presented={presented}>
       <TodaysReaderFed.Provider value={readerFed}>
       <TodaysOhboxFed.Provider
         value={{
@@ -2803,7 +2744,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         {children}
       </TodaysOhboxFed.Provider>
       </TodaysReaderFed.Provider>
-      </PresentedMirrorContext.Provider>
+      </TodaysGround>
     </TodaysStage.Provider>
     {/* WHAT STANDS ABOVE, beside what the frame draws: every overlay of the composition, in a holder that takes no
         box (`today.css`), so nothing here stands in the frame's layout. */}

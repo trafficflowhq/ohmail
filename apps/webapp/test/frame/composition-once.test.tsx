@@ -8,13 +8,35 @@
  *
  * Each part is counted live through a wrapper of its own module: the real hook or provider runs, the wrapper counts
  * its mounts.
+ *
+ * AND WHAT A PLACE READS OF THE MAIL GROUND, OVER BOTH CALLERS, the same cases and the same expectations: over a
+ * tests' host that hands the mail ground (two places that read it as a seat does, nothing of the old shell), and
+ * over the old shell with those two places at two of its ids, where the shell makes every call and fills the
+ * ground's contexts. The mail state, the consent row and the partition stand once for the frame's life over a walk
+ * between the two, the consent wire is asked once, the engine is told one cutline, and a place reads the very row
+ * and the very record the one call and the one derivation answered. A place that called for the row itself would be
+ * seen: the wire is asked a second time.
  */
+import { createElement as h, useMemo } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { screen, within } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineDraft, EngineMutation } from "@ohmail/client-engine";
+import type { EngineDraft, EngineMutation, OhmailEngine } from "@ohmail/client-engine";
+import { useConsent, usePartition } from "@ohmail/app-logic/consent";
+import { useConsentRow } from "@ohmail/app-logic/consent/consent-row";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { usePresentedMirror } from "@ohmail/app-logic/reading";
+import { PLACE_IDS, useFrame, type FramePlaces, type PlaceEntry } from "@ohmail/app/frame";
+import { NONE } from "@ohmail/app/host";
+import { MailGround } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
 import en from "../../messages/en.json";
 import { act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "../_draft-shell.js";
 import { settleEditor } from "../_first-paint.js";
+import { hostFromTodaysInputs } from "../_todays-shell";
+import { engineOver, msg, NOW, setup, storeWith, teardown } from "../_view-shell";
 
 type Part = "mailState" | "consentRow" | "composer" | "fileDoor" | "pictureDoor";
 const seen = vi.hoisted(() => ({
@@ -23,6 +45,11 @@ const seen = vi.hoisted(() => ({
   /** How often the consent wire's `state` was asked, on whichever wire object the row was handed. */
   asks: 0,
   wires: new WeakSet<object>(),
+  /** The partition's one derivation: its mounts, how many stand now, and every record it answered. */
+  partition: { mounts: 0, live: 0 },
+  records: new WeakSet<object>(),
+  /** Every row the consent row's one call answered. */
+  rows: new WeakSet<object>(),
 }));
 
 vi.mock("@ohmail/app/mail-state", async (load) => {
@@ -58,6 +85,7 @@ vi.mock("@ohmail/app-logic/consent/consent-state", async (load) => {
         };
       }
       const row = real.useConsentState(...args);
+      seen.rows.add(row);
       useEffect(() => {
         seen.mounts.consentRow += 1;
         seen.live.consentRow += 1;
@@ -66,6 +94,26 @@ vi.mock("@ohmail/app-logic/consent/consent-state", async (load) => {
         };
       }, []);
       return row;
+    },
+  };
+});
+
+vi.mock("@ohmail/app-logic/consent/partition", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/consent/partition")>();
+  const { useEffect } = await import("react");
+  return {
+    ...real,
+    usePartitionOf: (...args: Parameters<typeof real.usePartitionOf>) => {
+      const record = real.usePartitionOf(...args);
+      seen.records.add(record);
+      useEffect(() => {
+        seen.partition.mounts += 1;
+        seen.partition.live += 1;
+        return () => {
+          seen.partition.live -= 1;
+        };
+      }, []);
+      return record;
     },
   };
 });
@@ -200,6 +248,9 @@ beforeEach(() => {
     seen.live[part] = 0;
   }
   seen.asks = 0;
+  seen.partition.mounts = 0;
+  seen.partition.live = 0;
+  read.length = 0;
 });
 afterEach(async () => {
   await unmountAll();
@@ -283,5 +334,172 @@ describe("at the seated Ohbox the app is whole", () => {
 
     await act(async () => { release(); });
     await waitFor(() => !saysOfMila(), "the send's notice settles away", 400);
+  }, 60_000);
+});
+
+/**
+ * WHAT A PLACE READS OF THE GROUND, kept per render: the consent row, the partition's record and the presented
+ * mirror, as a seat written after the first one reads them, with nothing of a shell.
+ */
+const read: Array<{ at: string; row: object; partition: object; presented: object | null }> = [];
+function readingAt(at: string, alsoCalling: "nothing" | "the row's own hook" = "nothing") {
+  return function Reading() {
+    const row = useConsent();
+    const partition = usePartition();
+    const presented = usePresentedMirror();
+    read.push({ at, row, partition, presented });
+    return h("section", { "aria-label": at }, alsoCalling === "nothing" ? null : h(CallsForTheRow));
+  };
+}
+/** A SECOND CALLER of the row's hook under the same frame: what no place may be. */
+function CallsForTheRow() {
+  const { host } = useFrame();
+  const wire = host.wires.consent;
+  const transport = useMemo(
+    () => (wire === NONE ? NONE : ({ ...wire, foldersStorable: false } as unknown as ConsentTransport)),
+    [wire],
+  );
+  useConsentRow({ engine: host.engine, derived: 0, facts: null, active: true, scope: host.session.scope, transport });
+  return null;
+}
+const reads = (at: string, alsoCalling?: "the row's own hook"): PlaceEntry["panes"] => ({
+  kind: "wide", Wide: readingAt(at, alsoCalling),
+});
+type Places = Partial<Record<(typeof PLACE_IDS)[number], PlaceEntry>>;
+/** Two places of two bodies that read the ground, at News's and Receipts' addresses. */
+const FIRST = "#/reads";
+const SECOND = "#/receipts";
+const TWO_PLACES: Places = {
+  news: { id: "news", body: "reads-the-ground-1", rail: null, panes: reads("the first place") },
+  receipts: { id: "receipts", body: "reads-the-ground-2", rail: null, panes: reads("the second place") },
+};
+const WITH_A_SECOND_CALLER: Places = {
+  news: { id: "news", body: "calls-again", rail: null, panes: reads("the first place", "the row's own hook") },
+};
+
+const OWN: MailboxFacts[] = [{
+  id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null,
+  disabledReason: null, syncBlockedReason: null, syncBlockedSince: null,
+  lastSyncAt: "2026-09-16T08:59:00.000Z", createdAt: "2026-09-01T00:00:00.000Z",
+  organizerRole: "organizer" as const, organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
+}];
+const ownFacts = async (): Promise<MailboxFacts[]> => OWN;
+const answering = (): ConsentTransport => ({
+  foldersStorable: false,
+  state: async () => ({ seedConfirmedAt: "2026-09-01T00:00:00.000Z", dormancyDays: 45 }),
+}) as unknown as ConsentTransport;
+
+let stood: Root | null = null;
+async function loaded() {
+  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  const { EngineProvider } = await import("../../app/shell/engine");
+  const { TodaysFrame } = await import("../../app/shell/TodaysFrame");
+  const { NO_TODAYS } = await import("../../app/shell/todays-inputs");
+  const { useTodaysSupplies } = await import("../../app/shell/todays-supplies");
+  return { ThemeProvider, ToastHost, EngineProvider, TodaysFrame, NO_TODAYS, useTodaysSupplies };
+}
+let parts: Awaited<ReturnType<typeof loaded>> | null = null;
+
+/**
+ * THE TWO CALLERS, one host each over the same inputs (the window and the address as every shell hands them, the
+ * same wire, the same facts). `ground`: these places and no other, `MailGround` above them: the ground's own mounts
+ * make every call. `shell`: the places every host hands with these standing at two of their ids, the old shell's
+ * composition above them: the old shell makes every call and fills the ground's contexts.
+ */
+type Caller = "ground" | "shell";
+function Stood({ caller, engine, places, consent }: { caller: Caller; engine: OhmailEngine; places: Places; consent: ConsentTransport }) {
+  const { TodaysFrame, NO_TODAYS, useTodaysSupplies } = parts!;
+  const frame = useTodaysSupplies(NONE);
+  const host = useMemo(() => {
+    const inputs = { demo: false, engine, consentTransport: consent, mailboxFacts: ownFacts };
+    if (caller === "shell") {
+      return hostFromTodaysInputs(inputs, engine, { ...frame, places: { ...frame.places, ...places } as FramePlaces }, NONE);
+    }
+    const only = { ...Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])), ...places } as unknown as FramePlaces;
+    const made = hostFromTodaysInputs(inputs, engine, { ...frame, places: only }, NONE);
+    return { ...made, features: { ...made.features, places: only, above: MailGround } };
+  }, [caller, engine, frame, places, consent]);
+  return h(TodaysFrame, { host, todays: NO_TODAYS });
+}
+async function stand(caller: Caller, engine: OhmailEngine, places: Places): Promise<void> {
+  parts ??= await loaded();
+  const { ThemeProvider, ToastHost, EngineProvider } = parts;
+  window.location.hash = FIRST;
+  const tree = h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", now: NOW } as never,
+    h(TextProvider, { locale: "en", messages: en as never, timeZone: "UTC" } as never,
+      h(ThemeProvider as never, null, h(ToastHost as never, null,
+        h(EngineProvider, { demo: false, engine } as never, h(Stood, { caller, engine, places, consent: answering() }))))));
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  stood = createRoot(container);
+  await act(async () => { stood!.render(tree); });
+}
+const at = (name: string): boolean => screen.queryByRole("region", { name }) !== null;
+const lastAt = (name: string) => [...read].reverse().find((r) => r.at === name)!;
+const ONE_EACH = { mailState: 1, consentRow: 1, partition: 1 };
+
+describe.each([
+  ["a host that hands the mail ground", "ground"],
+  ["the old shell, filling the ground's contexts", "shell"],
+] as const)("what a place reads of the ground over %s", (_, caller) => {
+  beforeEach(() => {
+    setup();
+  });
+  afterEach(async () => {
+    if (stood) await act(async () => { stood!.unmount(); });
+    stood = null;
+    await teardown();
+  });
+
+  it("the mail state, the consent row and the partition stand once over a walk, the wire is asked once, and a place reads the very row and record", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    const cutlines: unknown[] = [];
+    const tell = engine.setCutline.bind(engine);
+    engine.setCutline = (cutline) => {
+      cutlines.push(cutline);
+      tell(cutline);
+    };
+    await stand(caller, engine, TWO_PLACES);
+    await waitFor(() => at("the first place") && seen.asks > 0, "the first place, its row asked for");
+    await rounds(8);
+    const stands = () => ({
+      mailState: seen.live.mailState, consentRow: seen.live.consentRow, partition: seen.partition.live,
+    });
+    expect(stands(), "as the frame mounted").toEqual(ONE_EACH);
+    const first = lastAt("the first place");
+    expect(seen.rows.has(first.row), "the place read a row the one call did not answer").toBe(true);
+    expect(seen.records.has(first.partition), "the place read a record the one derivation did not answer").toBe(true);
+    expect(first.presented, "the place was handed no presented mirror").not.toBeNull();
+
+    await visit(SECOND);
+    await waitFor(() => at("the second place"), "the second place");
+    await rounds(8);
+    expect(stands(), "at the second place").toEqual(ONE_EACH);
+    const second = lastAt("the second place");
+    expect(seen.rows.has(second.row), "the second place read a row the one call did not answer").toBe(true);
+    expect(second.partition, "another place reads another record").toBe(first.partition);
+    /* Over the ground a reader is handed the same row while nothing of it moved; the old shell's row is a new
+       object at each of its renders, until it is gone. */
+    if (caller === "ground") expect(second.row, "another place reads another row").toBe(first.row);
+
+    await visit(FIRST);
+    await waitFor(() => at("the first place"), "the first place again");
+    await rounds(8);
+    expect(
+      { mounts: { mailState: seen.mounts.mailState, consentRow: seen.mounts.consentRow, partition: seen.partition.mounts }, asks: seen.asks },
+      "after the walk",
+    ).toEqual({ mounts: ONE_EACH, asks: 1 });
+    expect(cutlines, "the engine was told the cutline once, as the row answered it").toEqual([{ dormancyDays: 45, scope: "window" }]);
+  }, 60_000);
+
+  it("a place that calls for the row itself is seen: a second row stands and the wire is asked a second time", async () => {
+    const engine = engineOver(await storeWith([msg("m1")]));
+    await stand(caller, engine, WITH_A_SECOND_CALLER);
+    await waitFor(() => at("the first place") && seen.asks > 1, "the second caller's own ask");
+    await rounds(8);
+    /* Two rows stand in the one frame, and the wire heard more than the one ask a frame owes (the old shell draws a
+       place's pane twice at its mount, so its second caller asks twice). */
+    expect(seen.live.consentRow, "the rows that stand in one frame").toBe(2);
+    expect(seen.asks, "the asks one frame made of its consent wire").toBeGreaterThan(1);
   }, 60_000);
 });

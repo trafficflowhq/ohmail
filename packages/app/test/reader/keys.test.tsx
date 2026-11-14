@@ -396,7 +396,7 @@ describe("the column's keys in the key map's registry", () => {
     }
   });
 
-  it("z stands there while the room's seam stands, and leaves with it", () => {
+  it("z stands there while the room's seam stands, which is the frame's life: the column's keys leave on a walk, z stays", () => {
     const { address } = mountReader({
       letters: [letter("m1")],
       open: "m1",
@@ -406,7 +406,8 @@ describe("the column's keys in the key map's registry", () => {
     expect(table.filter((b) => b.chord === "z")).toMatchObject([{ group: "app" }]);
     act(() => address.visit("#/reads"));
     expect(screen.getByText("today")).toBeTruthy();
-    expect(bound()).toEqual([]);
+    /* A host that hands a reader keeps the room's own seam for the frame's life (the mail ground's ruling, S-2). */
+    expect(bound()).toEqual(["z"]);
     act(() => address.visit("#/ohbox"));
     expect(bound()).toEqual(["r", "z"]);
     expect(resting()).toMatchObject([{ disabled: true, disabledReason: "no_cursor" }]);

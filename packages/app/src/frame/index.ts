@@ -27,6 +27,7 @@ export {
   usePress,
   usePressWhereOn,
   useResurfaceTime,
+  useRoomFacts,
   useRoomHandOver,
   useRoomHolds,
   type ResurfaceTime,

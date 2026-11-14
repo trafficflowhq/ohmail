@@ -560,7 +560,7 @@ apps/webapp/app/(product)/verify-email/use-verify-door.ts	eslint:unused-directiv
 apps/webapp/app/components/AttachmentPreview.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/components/ComposeAttach.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/error-report.ts	eslint:unused-directive	1	removals
-apps/webapp/app/shell/AppShell.tsx	eslint:unused-directive	4	removals
+apps/webapp/app/shell/AppShell.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/shell/AppShell.tsx	ohmail/package-borders:testing	1	removals
 apps/webapp/app/shell/FaceRow.tsx	ohmail/owner-lookup	1	ruling:scope-switch-settings
 apps/webapp/app/shell/FoldersRailGroup.tsx	eslint:unused-directive	2	removals
@@ -574,7 +574,7 @@ apps/webapp/app/shell/forward-files.ts	eslint:unused-directive	2	removals
 apps/webapp/app/shell/notification-settings.ts	ohmail/owner-lookup	1	ruling:scope-switch-notices
 apps/webapp/app/shell/sent-reveal.ts	eslint:unused-directive	2	removals
 apps/webapp/app/shell/shell-compose.ts	eslint:unused-directive	2	removals
-apps/webapp/app/shell/shell-derivations.ts	eslint:unused-directive	4	removals
+apps/webapp/app/shell/shell-derivations.ts	eslint:unused-directive	2	removals
 apps/webapp/app/shell/shell-open-state.ts	eslint:unused-directive	3	removals
 apps/webapp/app/shell/stream-bar.ts	eslint:unused-directive	1	removals
 apps/webapp/app/views/AddressView.tsx	eslint:unused-directive	1	removals
@@ -716,9 +716,15 @@ packages/api/test/contract/wire-drift.fixture.ts	ohmail/package-borders:client-e
 packages/api/test/drafts-send.test.ts	ohmail/declared-dependency	1	services-proof
 packages/api/test/internal-alerts-db-outage.test.ts	ohmail/declared-dependency	1	services-proof
 packages/app-logic/README.md	prettier	1	lift-a
+packages/app-logic/src/consent/consent-row.ts	ohmail/no-inline-config	1	ruling:composition-lift
+packages/app-logic/src/consent/consent-row.ts	prettier	1	ruling:composition-lift
+packages/app-logic/src/consent/consent-row.ts	react-hooks/exhaustive-deps	1	ruling:composition-lift
 packages/app-logic/src/consent/consent-state.ts	max-lines	1	ruling:lift-b-mailboxes
 packages/app-logic/src/consent/consent-state.ts	max-lines-per-function	2	ruling:lift-b-mailboxes
 packages/app-logic/src/consent/consent-state.ts	prettier	1	ruling:lift-b-removals
+packages/app-logic/src/consent/partition.ts	ohmail/no-inline-config	2	ruling:composition-lift
+packages/app-logic/src/consent/partition.ts	prettier	1	ruling:composition-lift
+packages/app-logic/src/consent/partition.ts	react-hooks/exhaustive-deps	6	ruling:composition-lift
 packages/app-logic/src/doors/app-update.ts	no-restricted-globals	1	lift-a
 packages/app-logic/src/doors/app-update.ts	prettier	1	lift-a
 packages/app-logic/src/doors/build-watch.ts	no-restricted-globals	7	lift-a
@@ -865,6 +871,7 @@ packages/app-logic/src/session/boot-cache.ts	no-restricted-globals	2	lift-a
 packages/app-logic/src/session/boot-cache.ts	prettier	1	lift-a
 packages/app-logic/src/session/browser-online.ts	no-restricted-globals	5	lift-a
 packages/app-logic/src/session/browser-online.ts	prettier	1	lift-a
+packages/app-logic/src/session/day-clock.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/session/document-hidden.ts	no-restricted-globals	2	lift-a
 packages/app-logic/src/session/drain-mark.ts	prettier	1	lift-a
 packages/app-logic/src/session/modal-gate.ts	no-restricted-globals	1	lift-a
@@ -932,6 +939,8 @@ packages/app/src/host/panes.ts	prettier	1	lift-a
 packages/app/src/host/session.ts	prettier	1	lift-a
 packages/app/src/host/wires.ts	prettier	1	lift-a
 packages/app/src/keys/touch-keys.css	stylelint:selector-max-type	5	ruling:lift-b-search
+packages/app/src/mail/ground/MailStateMount.tsx	prettier	1	ruling:composition-lift
+packages/app/src/mail/ground/MailStateMount.tsx	react-hooks/exhaustive-deps	2	ruling:composition-lift
 packages/app/src/write/editor/commands.ts	prettier	1	ruling:write-lift
 packages/app/src/write/editor/marks.ts	prettier	1	ruling:write-lift
 packages/app/test/borders.test.ts	prettier	1	lift-a

@@ -102,6 +102,12 @@ export type PlacePanes =
       readonly holds?: "always";
       /** What the place stands above both of its columns and nothing else: mounted with them, unmounted with them. */
       readonly Above?: ComponentType<{ readonly children: ReactNode }>;
+      /**
+       * The place keeps its open letter over a walk to another place and back: the frame remembers the last letter
+       * open here for the frame's life and opens it again when a `go` to this place names none, at two columns only,
+       * never on one. `open(null)` forgets it. It is never stored, and never carried into another scope.
+       */
+      readonly keepsOpen?: true;
     }
   | {
       readonly kind: "wide";

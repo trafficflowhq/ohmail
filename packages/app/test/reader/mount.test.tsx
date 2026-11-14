@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { armDeleteIntent, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
 import type { ShellDispatch, ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
 import { Frame } from "../../src/frame/Frame.js";
 import {
@@ -19,14 +20,23 @@ import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress } from "../support/fake-window.js";
 import { ListMeetingContext, type ListMeeting } from "@ohmail/app-logic/reading";
 import { readerEntry, readerEntryFrom, readingScrollerIn, type ReaderParts } from "../../src/reader/index.js";
-import { bodyDouble, fakeMail, letter, mountReader, READER_PLACE, WORDS } from "./support/mail.js";
+import {
+  bodyDouble,
+  fakeMail,
+  letter,
+  mountReader,
+  READER_PLACE,
+  WORDS,
+  type FakeMail,
+} from "./support/mail.js";
 
 /**
  * THE READER IS MOUNTED BY THE FRAME ALONE, where a place names it, with the frame's one press seam. The seam is the
- * real `useShellDispatch`, counted live: once per frame on a reader's place, never on a place that draws its own.
+ * real `useShellDispatch`, counted live and by its mounts: one per frame, for the frame's life, whatever place is on
+ * screen, on a host that hands a reader; none on a host that hands neither a reader nor anything above the panes.
  */
 
-const live = vi.hoisted(() => ({ seams: 0 }));
+const live = vi.hoisted(() => ({ seams: 0, mounts: 0 }));
 vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
   const real = await load<typeof import("@ohmail/app-logic/press/shell-dispatch")>();
   const { useEffect: effect } = await import("react");
@@ -36,6 +46,7 @@ vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
       const seam = real.useShellDispatch(input);
       effect(() => {
         live.seams += 1;
+        live.mounts += 1;
         return () => {
           live.seams -= 1;
         };
@@ -47,6 +58,7 @@ vi.mock("@ohmail/app-logic/press/shell-dispatch", async (load) => {
 
 beforeEach(() => {
   live.seams = 0;
+  live.mounts = 0;
   localStorage.clear();
   Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
 });
@@ -62,6 +74,19 @@ function Wide({ route }: PaneProps) {
   return <p>{`today at ${route.place}, ${pressed}`}</p>;
 }
 const TODAY: PlaceEntry = { id: "news", body: "today", rail: null, panes: { kind: "wide", Wide } };
+
+/** A delete a closed tab left in the journal of `acct-1`, and every delete the engine is then asked to replay. */
+function leftInTheJournal(mail: FakeMail): string[] {
+  const replayed: string[] = [];
+  const replay = mail.engine.replayDelete.bind(mail.engine);
+  mail.engine.replayDelete = (messageId, opts) => {
+    replayed.push(messageId);
+    return replay(messageId, opts);
+  };
+  armDeleteIntent({ id: "the-press-of-a-closed-tab", messageIds: ["m1"], at: Date.now() }, "acct-1");
+  return replayed;
+}
+const settled = () => act(async () => new Promise((r) => setTimeout(r, 50)));
 
 describe("the reader in the frame", () => {
   it("a place that names the reader draws it in the reading column, and the letter opens there", () => {
@@ -117,8 +142,9 @@ describe("the reader in the frame", () => {
     expect(again, "the same column, not one drawn again").toBe(pane);
   });
 
-  it("with no reader handed, the column stays empty, no seam runs and nothing throws", () => {
+  it("with no reader handed, the column stays empty, no seam runs and nothing throws", async () => {
     const mail = fakeMail([letter("m1")]);
+    const replayed = leftInTheJournal(mail);
     const { host } = fakeHost({
       engine: mail.engine,
       service: "self",
@@ -126,7 +152,10 @@ describe("the reader in the frame", () => {
       places: { ohbox: READER_PLACE },
       address: fakeAddress("#/ohbox/m/m1"),
     });
-    expect(host.features.reader).toBe(NONE);
+    expect({ reader: host.features.reader, above: host.features.above }).toEqual({
+      reader: NONE,
+      above: NONE,
+    });
     render(
       <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
         <Frame host={host} />
@@ -134,12 +163,20 @@ describe("the reader in the frame", () => {
     );
     expect(within(screen.getByRole("region", { name: "Reading" })).queryByRole("region")).toBeNull();
     expect(screen.queryByRole("article")).toBeNull();
-    /* No reader, no room: the place's name alone never turns the seam on (it would read the engine for nobody). */
-    expect(live.seams).toBe(0);
+    /* No reader and nothing above: nothing on this host can press, and the place's name alone never mounts the seam
+       (it would read the engine for nobody). What a closed tab left in the journal waits there for a frame with one. */
+    expect(live).toEqual({ seams: 0, mounts: 0 });
+    await settled();
+    expect(replayed, "a journal was replayed where no seam stands").toEqual([]);
+    expect(
+      takeDeleteIntents(Date.now(), "acct-1").map((pressed) => pressed.messageIds),
+      "the press a closed tab left is no longer in the journal",
+    ).toEqual([["m1"]]);
   });
 
-  it("one seam per frame on a reader's place, none on a place that draws its own, and back", () => {
+  it("one seam per frame: on a reader's place, on a place of another body and back, the one mount", async () => {
     const mail = fakeMail([letter("m1")]);
+    const replayed = leftInTheJournal(mail);
     const mounted: string[] = [];
     function Stub(pane: PaneProps) {
       usePress();
@@ -164,12 +201,16 @@ describe("the reader in the frame", () => {
       </TextProvider>,
     );
     expect(screen.getByText("the stub reader")).toBeTruthy();
-    expect(live.seams).toBe(1);
+    expect(live, "on the reader's place").toEqual({ seams: 1, mounts: 1 });
     act(() => address.visit("#/reads"));
-    expect(screen.getByText("today at news, no seam")).toBeTruthy();
-    expect(live.seams).toBe(0);
+    /* A place of another body mounts no seam and needs none of its own: its press is the room's. */
+    expect(screen.getByText("today at news, a seam")).toBeTruthy();
+    expect(live, "on a place of another body").toEqual({ seams: 1, mounts: 1 });
     act(() => address.visit("#/ohbox"));
-    expect(live.seams).toBe(1);
+    expect(live, "back on the reader's place").toEqual({ seams: 1, mounts: 1 });
+    await waitFor(() => expect(replayed, "the journal was not replayed at the mount").toEqual(["m1"]));
+    await settled();
+    expect(replayed, "the journal was replayed again on the walk").toEqual(["m1"]);
   });
 
   it("the room's held deletes are state: a delete inside its window is held, and nothing is off the room", () => {
@@ -303,12 +344,16 @@ describe("the reader in the frame", () => {
         </ListMeetingContext.Provider>
       );
     }
+    /* A room is off in one place alone: over the body the old shell keeps, under the seam that shell hands. */
     const STREAM: PlaceEntry = {
       id: "news",
       body: "news",
       rail: null,
-      panes: { kind: "wide", Wide: Stream },
+      panes: { kind: "wide", Wide: Stream, kept: true },
     };
+    const shell = Object.assign(({ children }: { children: ReactNode }) => <>{children}</>, {
+      handsSeam: true as const,
+    });
     const { host } = fakeHost({
       engine: mail.engine,
       service: "self",
@@ -316,6 +361,7 @@ describe("the reader in the frame", () => {
       places: { news: STREAM },
       reader: entry,
       address: fakeAddress("#/reads"),
+      above: shell,
     });
     render(
       <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
@@ -385,7 +431,7 @@ describe("the room under a shell that hands its own seam", () => {
       places: { ohbox: READER_PLACE },
       reader: { Reading: reading, Actions: () => null },
       address: fakeAddress("#/ohbox/m/m1"),
-      above,
+      above: Object.assign(above, { handsSeam: true as const }),
     });
     return render(
       <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">

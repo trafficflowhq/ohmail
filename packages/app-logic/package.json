@@ -46,6 +46,12 @@
       "node": "./dist/consent/index.js",
       "default": "./src/consent/index.ts"
     },
+    "./consent/consent-row": {
+      "types": "./src/consent/consent-row.ts",
+      "ohmail-source": "./src/consent/consent-row.ts",
+      "node": "./dist/consent/consent-row.js",
+      "default": "./src/consent/consent-row.ts"
+    },
     "./consent/consent-state": {
       "types": "./src/consent/consent-state.ts",
       "ohmail-source": "./src/consent/consent-state.ts",
@@ -57,6 +63,12 @@
       "ohmail-source": "./src/consent/consent-wire.ts",
       "node": "./dist/consent/consent-wire.js",
       "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/partition": {
+      "types": "./src/consent/partition.ts",
+      "ohmail-source": "./src/consent/partition.ts",
+      "node": "./dist/consent/partition.js",
+      "default": "./src/consent/partition.ts"
     },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
@@ -1065,6 +1077,12 @@
       "ohmail-source": "./src/session/confirm-schedule.ts",
       "node": "./dist/session/confirm-schedule.js",
       "default": "./src/session/confirm-schedule.ts"
+    },
+    "./session/day-clock": {
+      "types": "./src/session/day-clock.ts",
+      "ohmail-source": "./src/session/day-clock.ts",
+      "node": "./dist/session/day-clock.js",
+      "default": "./src/session/day-clock.ts"
     },
     "./session/document-hidden": {
       "types": "./src/session/document-hidden.ts",
