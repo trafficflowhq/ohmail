@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, Field, InfoMark, Menu, RadioLines, Seg, Slot } from "../../src/base/index.js";
@@ -245,7 +245,17 @@ describe("SettingNote, on a sheet that counts and waits", () => {
     expect(screen.getByRole("status").textContent).toBe("The payment did not go through.");
     rerender(<SettingNote busy>Reading the plans</SettingNote>);
     expect(screen.getByRole("status").textContent).toBe("Reading the plans");
-    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+    /* A live region that says it is busy asks a screen reader to wait with what it holds: it does not say so. */
+    expect(screen.getByRole("status").hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("says a settled outcome when it appears, where the app marks it as said: calmly, with no sign", () => {
+    render(<SettingNote said>The mailbox is connected.</SettingNote>);
+    const note = screen.getByRole("status");
+    expect(note.textContent).toBe("The mailbox is connected.");
+    expect(note.querySelector("svg")).toBeNull();
+    expect(note.hasAttribute("aria-busy")).toBe(false);
+    expect(note.tagName).toBe("P");
   });
 });
 
@@ -302,6 +312,36 @@ describe("a plan's line", () => {
     cleanup();
     render(<RadioLines label="Whose mail" value="a" options={[{ value: "a", label: "This address" }]} />);
     expect(screen.getByRole("radio").textContent).toBe("This address");
+  });
+
+  it("on a sheet a plan among the plans is one radio a line, named by all it shows, with a mark that is drawn and never said", () => {
+    const onChange = vi.fn();
+    render(
+      <RadioLines
+        kind="sheet"
+        label="Plans"
+        value="plus"
+        onChange={onChange}
+        options={[
+          { value: "solo", label: "Solo", note: "2 mailboxes · 2 GB", figure: "$9" },
+          { value: "plus", label: "Plus", tag: "Your plan", note: "5 mailboxes · 5 GB", figure: "$15" },
+        ]}
+      />,
+    );
+    const lines = within(screen.getByRole("radiogroup", { name: "Plans" })).getAllByRole("radio");
+    const [solo, plus] = lines as [HTMLElement, HTMLElement];
+    expect(lines.map((line) => line.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    expect(screen.getByRole("radio", { name: /^Plus\s*Your plan\s*5 mailboxes · 5 GB\s*\$15$/ })).toBe(plus);
+    /* Its mark is a drawn thing of its own, one a line, and holds no word. */
+    for (const line of lines) {
+      const marks = [...line.children].filter((part) => part.getAttribute("aria-hidden") === "true");
+      expect(marks.map((mark) => mark.textContent)).toEqual([""]);
+    }
+    /* One stop of Tab, on the taken plan; a press takes a plan, and the arrows move the choice. */
+    expect(lines.map((line) => line.tabIndex)).toEqual([-1, 0]);
+    fireEvent.click(solo);
+    fireEvent.keyDown(plus, { key: "ArrowDown" });
+    expect(onChange.mock.calls).toEqual([["solo"], ["solo"]]);
   });
 });
 

@@ -22,6 +22,15 @@
     flex: none;
     margin: var(--oh-refusal-way-gap);
   }
+  /* Under a finger a line is narrow: the sentence folds wherever it must, and where its way no longer fits
+     beside it the way stands whole under it. */
+  :root[data-touch="1"] .oh-refusal {
+    flex-wrap: wrap;
+    row-gap: var(--s1);
+  }
+  :root[data-touch="1"] .oh-refusal-say {
+    overflow-wrap: anywhere;
+  }
   .oh-refusal[data-start] {
     --oh-refusal-pad: 0 var(--s3) var(--s1) var(--s3);
     justify-content: flex-start;

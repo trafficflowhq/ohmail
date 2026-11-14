@@ -6,87 +6,14 @@
     overflow: hidden;
     background: var(--stage);
   }
-  .oh-opening-bar {
-    --oh-opening-bar: 10px;
-    display: block;
-    flex: none;
-    width: var(--oh-opening-part, auto);
-    height: var(--oh-opening-bar);
-    border-radius: var(--r-pill);
-    background: var(--hover-ground);
-  }
-  .oh-opening-sheet .oh-opening-bar {
+  .oh-opening-sheet .oh-shapebar {
     background: var(--soft-sheet);
   }
-  .oh-opening-bar[data-as="who"],
-  .oh-opening-bar[data-as="title"] {
-    --oh-opening-bar: var(--s3);
-  }
-  .oh-opening-bar[data-as="time"] {
-    width: var(--s6);
-  }
   /* The shapes breathe; with motion reduced the motion sheet's duration stops them. */
-  .oh-opening-rows,
   .oh-opening-menu,
   .oh-opening-head,
   .oh-opening-top {
-    animation: oh-opening-breathe var(--d-pull) var(--e-std) infinite alternate;
-  }
-  @keyframes oh-opening-breathe {
-    from {
-      opacity: 1;
-    }
-    to {
-      opacity: 0.5;
-    }
-  }
-  .oh-opening-rows {
-    --oh-opening-rows-pad: 0 var(--s2) var(--s1);
-    padding: var(--oh-opening-rows-pad);
-  }
-  /* Among a list's own rows the list's box is already there. */
-  .oh-opening-rows[data-within] {
-    --oh-opening-rows-pad: 0;
-  }
-
-  .oh-opening-row {
-    --oh-opening-row-pad: 0 var(--s3) 0 var(--s1);
-    display: grid;
-    grid-template-columns: var(--gutter) minmax(0, 1fr);
-    align-content: center;
-    row-gap: var(--s2);
-    height: var(--row);
-    padding: var(--oh-opening-row-pad);
-  }
-  .oh-opening-face {
-    grid-row: 1 / span 3;
-    align-self: center;
-    justify-self: center;
-    width: var(--av);
-    height: var(--av);
-    border-radius: var(--av-r);
-    background: var(--soft-sheet);
-  }
-  .oh-opening-first {
-    display: flex;
-    grid-column: 2;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-  .oh-opening-row > .oh-opening-bar {
-    grid-column: 2;
-  }
-  :root[data-touch="0"] .oh-opening-bar[data-as="more"] {
-    display: none;
-  }
-  :root[data-touch="1"] .oh-opening-row {
-    height: calc(var(--row) + var(--s4));
-  }
-
-  /* Among a list's rows a shape keeps exactly a row's room, so the list does not move when the row arrives. */
-  :root[data-touch="1"] .oh-opening-rows[data-within] > .oh-opening-row {
-    height: var(--row);
+    animation: oh-shape-breathe var(--d-pull) var(--e-std) infinite alternate;
   }
 
   .oh-opening[data-kind="window"] {
@@ -165,8 +92,8 @@
     height: var(--head);
     padding: var(--oh-opening-head-pad);
   }
-  .oh-opening-head > .oh-opening-bar {
-    --oh-opening-part: 72px;
+  .oh-opening-head > .oh-shapebar {
+    --oh-shapebar-part: 72px;
   }
   .oh-opening-line {
     display: flex;
@@ -200,9 +127,9 @@
     height: var(--s8);
     padding: var(--oh-opening-top-pad);
   }
-  .oh-opening-top > .oh-opening-bar {
-    --oh-opening-part: 96px;
-    --oh-opening-bar: var(--s4);
+  .oh-opening .oh-opening-top > .oh-shapebar {
+    --oh-shapebar-part: 96px;
+    --oh-shapebar-h: var(--s4);
   }
   .oh-opening[data-kind="phone"] > .oh-opening-line {
     --oh-opening-line-pad: 0 var(--s5) var(--s4);

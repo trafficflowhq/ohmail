@@ -13,6 +13,8 @@ import {
 /* What a field waits for, in ms, and how much must be typed before a source is asked. A pause is no motion. */
 const MIN = 3;
 const PAUSE = 200;
+/* How long a row an answer put first must have stood before Enter or Tab takes it unasked: the time to see it. */
+const SEEN = 300;
 const SIGN = 400;
 const DROP = 2000;
 const KEEP = 300_000;
@@ -173,6 +175,23 @@ function useAnswers<R extends SuggestionRow>(options: SuggestionsOptions<R>) {
   return { answers, busy, question, rest };
 }
 
+/**
+ * Whether the row that is on by itself (`self`, its id) has only just been put there by an answer. An answer lands
+ * a pause and a round trip after the last letter, inside the moment a typist presses Enter: a row nobody has had
+ * the time to see is not taken. Only an answer that brings another first row counts; the device's own rows follow
+ * the typing itself.
+ */
+function useUnseen(self: string | null, answers: readonly unknown[]): () => boolean {
+  const put = useRef({ id: self, answers, at: 0 });
+  useLayoutEffect(() => {
+    const was = put.current;
+    if (self === was.id && answers === was.answers) return;
+    const landed = self !== null && self !== was.id && answers !== was.answers;
+    put.current = { id: self, answers, at: landed ? Date.now() : was.at };
+  });
+  return () => Date.now() - put.current.at < SEEN;
+}
+
 /** The row an arrow goes to. `null`: the typed text, a stop of its own where it is an answer. */
 function stepped<R extends SuggestionRow>(
   rows: readonly R[],
@@ -239,6 +258,7 @@ export function useSuggestions<R extends SuggestionRow = SuggestionRow>(
   /* The row under the keys is no longer among the rows: the newer answer came without it. */
   const left = at !== null && found < 0 ? at : null;
   const shown = rows.length > 0;
+  const unseen = useUnseen(at === null && active !== null ? rows[active]!.id : null, answers);
 
   const take = (row: R, via: SuggestionVia) => {
     close();
@@ -256,7 +276,8 @@ export function useSuggestions<R extends SuggestionRow = SuggestionRow>(
     }
     if (key !== "Enter" && key !== "Tab" && key !== "Escape") return false;
     if (!shown && (key === "Escape" || !left)) return false;
-    const on = left ?? (active === null ? null : rows[active]!);
+    const fresh = at === null && unseen();
+    const on = left ?? (active === null || fresh ? null : rows[active]!);
     const row = key === "Escape" || event.shiftKey ? null : on;
     /* Enter on a row and Esc are the list's alone. Tab goes on by itself; with no row the key is the form's own. */
     if (key === "Escape" || (key === "Enter" && row)) {

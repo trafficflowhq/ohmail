@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { MenuItem, Tag } from "../../../../src/base/index.js";
+import { Dot, MenuItem, SentencePart, Slot, Tag } from "../../../../src/base/index.js";
 import {
   ActionPanel,
   BlankColumn,
@@ -11,13 +11,50 @@ import {
   MessageHead,
   QuickLook,
   ReadingHead,
+  ReadingLine,
   ReadSquares,
+  Sheet,
   type MessageHeadProps,
   type PanelNote,
   type PanelVerb,
 } from "../../../../src/mail/index.js";
 import * as W from "./world.js";
 import { force, type KitSubject, type Look } from "../../harness.js";
+
+const sentenceHead = (
+  <ReadingHead
+    under
+    sentence={
+      <>
+        <SentencePart>Lena Kaufmann</SentencePart>{" "}
+        <SentencePart
+          end={
+            <>
+              <Slot>Ohbox</Slot>
+              <Dot kind="hot" />
+            </>
+          }
+        >
+          goes to{" "}
+        </SentencePart>
+      </>
+    }
+    lines={
+      <>
+        <ReadingLine
+          sign="ok"
+          person={{ label: "lena@atelier-eichspan.example", onPress: () => undefined }}
+          word={{ text: "Confirmed" }}
+        >
+          <Slot>this sender</Slot>
+        </ReadingLine>
+        <ReadingLine sign="spark" figure={{ text: "92%", title: "Confidence" }} why>
+          A personal note from a real address
+        </ReadingLine>
+      </>
+    }
+  />
+);
 
 const more = { label: "More", behind: true };
 const panel = (state: string, items: (PanelVerb | PanelNote)[], withMore = false): KitSubject => ({
@@ -139,7 +176,7 @@ export const reading: KitSubject[] = [
         clip={{ open: false, word: "Expand" }}
       >
         {
-          "Hi there. This issue is about tools that do one thing well.\n\nSmall tools are not lesser tools. They are the ones that fit your hand on the first try: the ladle that pours without dripping, the pencil that starts every list, the app with exactly one screen.\n\nThis week's essay visits three workshops and asks each maker which object they would save from a fire. Nobody picked the expensive one.\n\nAlso inside: a lamp you can repair with a coin, and a short list of things that got better when someone removed a feature.\n\nUntil next week,\nMara"
+          "Hi there. This issue is about tools that do one thing well.\n\nSmall tools are not lesser tools. They are the ones that fit your hand on the first try: the ladle that pours without dripping, the pencil that starts every list, the app with exactly one screen. This week's essay visits three workshops and asks each maker which object they would save from a fire. Nobody picked the expensive one.\n\nAlso inside: a lamp you can repair with a coin, and a short list of things that got better when someone removed a feature.\n\nUntil next week,\nMara"
         }
       </Message>
     ),
@@ -215,6 +252,22 @@ export const reading: KitSubject[] = [
         />
       </div>
     ),
+  },
+  /* A sender who waits, as the column's head: the sentence with its place, the address and what its check found,
+     whom the decision is for, and why the place is advised. The reference's column has the keys: where a face rings
+     such a column (ohmarchy), the head stands in its column, whose ring runs along the head's own edges. */
+  {
+    key: "ReadingHead/sentence",
+    place: "block",
+    target: ".oh-readinghead",
+    render: (look) =>
+      look.face === "ohmarchy" ? (
+        <div style={{ display: "flex", height: 240 }}>
+          <Sheet kind="reading" focused head={sentenceHead} />
+        </div>
+      ) : (
+        <div style={{ margin: "0 var(--ringw)" }}>{sentenceHead}</div>
+      ),
   },
   {
     key: "ReadingHead/letter",

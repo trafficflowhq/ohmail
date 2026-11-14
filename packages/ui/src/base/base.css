@@ -14,9 +14,14 @@
     --oh-ring-pick: inset 0 0 0 var(--oh-hair) var(--pick-ring);
     --oh-ring-line: inset 0 0 0 var(--oh-hair) var(--line);
     --oh-ring-focus: inset 0 0 0 var(--oh-focus) var(--focus);
-    /* What a system reports it draws over at a glass's foot. A host that knows it counts for nothing (a keyboard
-       is up) says so on the element it stands its columns in. */
-    --oh-inset-foot: env(safe-area-inset-bottom, 0px);
+    /* What a system draws over at a glass's foot, and how high a keyboard stands. A host that knows the glass
+       says both on the root: `--sys-b` (0 while a keyboard is up, which covers it) and `--kb`. Without a host,
+       what the system itself reports. What is fixed at the foot keeps the larger of its own margin and the
+       inset, never the two added; a sheet from the foot stands on the keys. */
+    --oh-inset-foot: var(--sys-b, env(safe-area-inset-bottom, 0px));
+    --oh-inset-keys: var(--kb, 0px);
+    /* The face of what is set in columns or as code: a letter's plain text, a block of code. */
+    --oh-face-mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
     --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
     --oh-touch: 0;
     --oh-layer-jump: 5;
@@ -104,7 +109,7 @@
     width: var(--oh-hair);
     height: var(--oh-hair);
     overflow: hidden;
-    clip-path: inset(50%);
+    clip: rect(0, 0, 0, 0);
     white-space: nowrap;
   }
 

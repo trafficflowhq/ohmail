@@ -51,6 +51,11 @@ export interface RailEntryProps {
   cursor?: boolean;
   /** A row is being dragged and this place takes it; `over` while the pointer is on it. */
   drop?: "ready" | "over";
+  /**
+   * A small word after the name that tells two of one name apart: the folder above it, its mailbox, a find
+   * hit's way. It is drawn, and belongs in `label` where the entry is named for a screen reader.
+   */
+  hint?: string;
   /** Its name for a screen reader where the count belongs to it: "News, 5". */
   label?: string;
   /** The whole name, where the entry may cut it. */
@@ -125,7 +130,10 @@ export function RailEntry(props: RailEntryProps) {
           <Icon name={icon} size={kind === "sub" ? 16 : 20} />
         </span>
       ) : null}
-      <span className="oh-railentry-name">{children}</span>
+      <span className="oh-railentry-name">
+        {children}
+        {props.hint ? <small className="oh-railentry-hint">{props.hint}</small> : null}
+      </span>
       {digit ? (
         <KeyHint shown>{digit}</KeyHint>
       ) : keyHint && (props.keyShown || props.keyStands) ? (

@@ -11,6 +11,7 @@ import { launch } from "../../../../test/compare/render.mjs";
 import {
   Blank,
   Button,
+  CameraSquare,
   ChoiceTiles,
   Dialog,
   Dot,
@@ -20,13 +21,19 @@ import {
   FieldStack,
   FindField,
   JumpBack,
+  Menu,
+  MenuItem,
   Notice,
   Page,
+  RadioLines,
+  RefusalLine,
   RowsShape,
   Sentence,
+  SentencePart,
   Seg,
   Slot,
   StepDots,
+  Tag,
 } from "../../src/base/index.js";
 import { AgendaRow, MiniMonth } from "../../src/calendar/index.js";
 import {
@@ -46,6 +53,8 @@ import {
   MessageHead,
   MonthRail,
   MovePicker,
+  ReadingHead,
+  ReadingLine,
   Row,
   Rows,
   RuleLine,
@@ -58,6 +67,7 @@ import {
   Sheet,
   TagLine,
   TextNotKept,
+  TickList,
   letterText,
   type RowProps,
 } from "../../src/mail/index.js";
@@ -329,7 +339,8 @@ describe("what a press inside a dialog came to", () => {
         const box = (el: Element) => el.getBoundingClientRect();
         const dialog = document.querySelector("[role='dialog']")!;
         const list = dialog.querySelector("[role='list']")!;
-        const line = dialog.querySelector("[role='status']")!;
+        /* A refusal answers a press: it is an alert. */
+        const line = dialog.querySelector("[role='alert']")!;
         const close = [...dialog.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Close"))!;
         const words = line.querySelector("span")!;
         return {
@@ -1404,6 +1415,212 @@ describe("an empty place's way on, as a link", () => {
   );
 });
 
+describe("an empty place's one answer, in ink where the place says so", () => {
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: said to be the view's one capsule it stands on the solid ground in the ground's own ink; left unsaid it is a second button",
+    async (face) => {
+      const got = await drawn(
+        <>
+          <div id="ink">
+            <Empty
+              mark="oh"
+              label="6 decided"
+              act={{ label: "Ohbox", kind: "ink", keyHint: "g o", onPress: () => {} }}
+            />
+          </div>
+          <div id="two">
+            <Empty label="No drafts" act={{ label: "Write", onPress: () => {} }} />
+          </div>
+        </>,
+        () => {
+          const token = (name: string, as: "color" | "backgroundColor") => {
+            const probe = document.createElement("i");
+            probe.style[as] = `var(${name})`;
+            document.querySelector(".oh-root")!.append(probe);
+            const seen = getComputedStyle(probe)[as];
+            probe.remove();
+            return seen;
+          };
+          const act = (id: string) => getComputedStyle(document.querySelector(`#${id} button`)!);
+          const key = document.querySelector("#ink kbd")!;
+          return {
+            ink: [act("ink").backgroundColor, act("ink").color],
+            solid: [token("--solid", "backgroundColor"), token("--on-solid", "color")],
+            two: act("two").backgroundColor,
+            keyInTheCapsule: key.parentElement === document.querySelector("#ink button"),
+          };
+        },
+        { face },
+      );
+      expect(got.ink).toEqual(got.solid);
+      expect(got.two).not.toBe(got.solid[0]);
+      expect(got.keyInTheCapsule).toBe(true);
+    },
+    60_000,
+  );
+});
+
+describe("the square a camera stands in", () => {
+  it.each([
+    ["paper", "phone"],
+    ["ohmarchy", "phone"],
+    ["paper", "desktop"],
+  ] as const)(
+    "in %s on a %s: a square as wide as its room up to its own measure, four corners a fifth in from its edges, and the hot dot in its upper right only while the camera looks",
+    async (face, device) => {
+      const got = await drawn(
+        <>
+          <div id="live">
+            <CameraSquare state="live" label="Camera" />
+          </div>
+          <div id="off">
+            <CameraSquare state="off" label="Camera off" />
+          </div>
+          <div id="narrow" style={{ width: 200 }}>
+            <CameraSquare state="live" label="Camera" />
+          </div>
+        </>,
+        () => {
+          const token = (name: string) => {
+            const probe = document.createElement("i");
+            probe.style.backgroundColor = `var(${name})`;
+            document.querySelector(".oh-root")!.append(probe);
+            const seen = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return seen;
+          };
+          const read = (id: string) => {
+            const room = document.getElementById(id)!;
+            const square = room.querySelector('[role="img"]')!;
+            const box = square.getBoundingClientRect();
+            const marks = [...square.children].map((mark) => {
+              const r = mark.getBoundingClientRect();
+              return {
+                dot: mark.getAttribute("data-kind") !== null,
+                /* How far in from the square's nearer edges, as shares of its side. */
+                in: [
+                  Math.min(r.left - box.left, box.right - r.right) / box.width,
+                  Math.min(r.top - box.top, box.bottom - r.bottom) / box.height,
+                ].map((share) => Math.round(share * 100)),
+                size: [Math.round(r.width), Math.round(r.height)],
+                right: r.left + r.width / 2 > box.left + box.width / 2,
+                upper: r.top + r.height / 2 < box.top + box.height / 2,
+              };
+            });
+            return {
+              side: [Math.round(box.width), Math.round(box.height)],
+              room: Math.round(room.getBoundingClientRect().width),
+              ground: getComputedStyle(square).backgroundColor,
+              corners: marks.filter((mark) => !mark.dot),
+              dots: marks.filter((mark) => mark.dot),
+            };
+          };
+          return {
+            live: read("live"),
+            off: read("off"),
+            narrow: read("narrow"),
+            solid: token("--solid"),
+            quiet: token("--off"),
+          };
+        },
+        { face, device },
+      );
+      const { live, off, narrow } = got;
+      /* A square, never wider than its own measure and never wider than its room. */
+      expect(live.side[0]).toBe(live.side[1]);
+      expect(live.side[0]).toBe(Math.min(live.room, 342));
+      expect(narrow.side).toEqual([200, 200]);
+      expect(off.side).toEqual(live.side);
+      expect([live.ground, off.ground]).toEqual([got.solid, got.quiet]);
+      /* Four corners, one in each quarter, each 22 hundredths in from its two edges. */
+      for (const state of [live, off, narrow]) {
+        expect(state.corners).toHaveLength(4);
+        expect(state.corners.map((c) => c.in)).toEqual(Array(4).fill([22, 22]));
+        expect(new Set(state.corners.map((c) => `${c.right}${c.upper}`)).size).toBe(4);
+        expect(state.corners.map((c) => c.size)).toEqual(Array(4).fill([32, 32]));
+      }
+      expect(live.dots.map((d) => [d.size, d.right, d.upper])).toEqual([[[10, 10], true, true]]);
+      expect(off.dots).toEqual([]);
+    },
+    60_000,
+  );
+});
+
+describe("a plan among the plans, on a sheet of settings", () => {
+  it.each([
+    ["paper", "desktop"],
+    ["ohmarchy", "desktop"],
+    ["paper", "phone"],
+  ] as const)(
+    "in %s on a %s: each plan is a line of the sheet as high as the sheet's lines, its mark 18 wide and filled only on the taken plan, its figure ending the line; beside a pointer what it holds stands on the name's line, under a finger under it",
+    async (face, device) => {
+      const got = await drawn(
+        <SettingsSheet title="Plans">
+          <RadioLines
+            kind="sheet"
+            label="Plans"
+            value="plus"
+            options={[
+              { value: "solo", label: "Solo", note: "2 mailboxes · 1,000 credits · 2 GB", figure: "$9" },
+              {
+                value: "plus",
+                label: "Plus",
+                tag: "Your plan",
+                note: "5 mailboxes · 2,000 credits · 5 GB",
+                figure: "$15",
+              },
+            ]}
+          />
+          <SettingLine label="Renews" value="Thu 10 Dec" onPress={() => {}} />
+        </SettingsSheet>,
+        () => {
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;height:var(--h-l)";
+          document.querySelector(".oh-root")!.append(probe);
+          const least = probe.getBoundingClientRect().height;
+          probe.remove();
+          const pressed = document.querySelector('[role="group"]')!.getBoundingClientRect();
+          const lines = [...document.querySelectorAll('[role="radio"]')].map((line) => {
+            const box = line.getBoundingClientRect();
+            const mark = line.querySelector('[aria-hidden="true"]')!;
+            const m = mark.getBoundingClientRect();
+            const [word, note, figure] = ["span", "small", "b"].map((tag) =>
+              line.querySelector(tag)!.getBoundingClientRect(),
+            ) as [DOMRect, DOMRect, DOMRect];
+            const pad = parseFloat(getComputedStyle(line).paddingRight);
+            return {
+              high: Math.round(box.height * 10) / 10,
+              asThePressedLine: [box.left - pressed.left, box.right - pressed.right].map((v) =>
+                Math.round(v),
+              ),
+              mark: [Math.round(m.width), Math.round(m.height)],
+              filled: getComputedStyle(mark).backgroundColor !== "rgba(0, 0, 0, 0)",
+              figureEnds: Math.round(box.right - pad - figure.right),
+              noteUnder: note.top >= word.bottom - 0.5,
+              noteBeside: note.left >= word.right - 0.5 && note.right <= figure.left + 0.5,
+              heavy: Number(getComputedStyle(line.querySelector("span")!).fontWeight),
+            };
+          });
+          return { lines, least: Math.round(least * 10) / 10 };
+        },
+        { entry: "mail", face, device },
+      );
+      const [solo, plus] = got.lines as [(typeof got.lines)[number], (typeof got.lines)[number]];
+      for (const line of got.lines) {
+        expect(line.asThePressedLine).toEqual([0, 0]);
+        expect(line.mark).toEqual([18, 18]);
+        expect(line.figureEnds).toBe(0);
+        expect([line.noteBeside, line.noteUnder]).toEqual(device === "phone" ? [false, true] : [true, false]);
+      }
+      if (device !== "phone") expect([solo.high, plus.high]).toEqual([got.least, got.least]);
+      else expect(solo.high).toBeGreaterThan(got.least);
+      expect([solo.filled, plus.filled]).toEqual([false, true]);
+      expect(plus.heavy).toBeGreaterThan(solo.heavy);
+    },
+    60_000,
+  );
+});
+
 describe("a section of Settings in its list, to a screen reader", () => {
   const menu = (open: "General" | null) => (
     <Rows>
@@ -2320,6 +2537,119 @@ describe("a letter being written", () => {
     });
   };
 
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: a list between lines of text has no gap of its own over or under it, so an empty line is the only air; before a quote it keeps the blocks' own gap",
+    async (face) => {
+      const L = letterText;
+      const got = await drawn(
+        <Composer {...frame}>
+          <div className={L.text}>
+            <p className={L.paragraph}>
+              Text
+              <br />
+              <br />
+            </p>
+            <ul id="between" className={L.bullets}>
+              <li className={L.item}>
+                <p className={L.paragraph}>One</p>
+              </li>
+              <li className={L.item}>
+                <p className={L.paragraph}>Two</p>
+              </li>
+            </ul>
+            <p className={L.paragraph}>
+              <br />
+              After
+            </p>
+            <ol id="before-quote" className={L.numbers}>
+              <li className={L.item}>
+                <p className={L.paragraph}>Three</p>
+              </li>
+            </ol>
+            <blockquote className={L.quote}>
+              <p className={L.paragraph}>Quoted</p>
+            </blockquote>
+          </div>
+        </Composer>,
+        () => {
+          const box = (el: Element) => el.getBoundingClientRect();
+          const between = document.getElementById("between")!;
+          const quoteList = document.getElementById("before-quote")!;
+          const gap = document.createElement("i");
+          gap.style.cssText = "display:block;height:var(--oh-lettertext-gap)";
+          between.parentElement!.append(gap);
+          const own = box(gap).height;
+          gap.remove();
+          const items = [...between.children].map(box);
+          return {
+            over: Math.round((box(between).top - box(between.previousElementSibling!).bottom) * 100) / 100,
+            under: Math.round((box(between.nextElementSibling!).top - box(between).bottom) * 100) / 100,
+            items: Math.round((items[1]!.top - items[0]!.bottom) * 100) / 100,
+            beforeQuote:
+              Math.round((box(quoteList.nextElementSibling!).top - box(quoteList).bottom) * 100) / 100,
+            own,
+          };
+        },
+        { entry: "mail", face },
+      );
+      expect([got.over, got.under, got.items]).toEqual([0, 0, 0]);
+      expect(got.own).toBeGreaterThan(0);
+      expect(got.beforeQuote).toBe(got.own);
+    },
+    60_000,
+  );
+
+  it.each([
+    ["the editor's root", "rich"],
+    ["a plain text box", "plain"],
+  ] as const)(
+    "the box a screen reader calls the text is the padded one, where it is %s: 12 over and under its words and 16 at their sides, as tall as the text's least, and the room around it holds none of its own",
+    async (_what, kind) => {
+      const got = await drawn(
+        <Composer {...frame}>
+          {/* The app's editor stands its root in a box of its own, as an editor library does. */}
+          <div>
+            {kind === "rich" ? (
+              <div
+                id="text"
+                className={letterText.text}
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Message"
+              >
+                <p className={letterText.paragraph}>Hello</p>
+              </div>
+            ) : (
+              <textarea id="text" className={letterText.plain} aria-label="Message" defaultValue="Hello" />
+            )}
+          </div>
+        </Composer>,
+        () => {
+          const text = document.getElementById("text")!;
+          const room = text.parentElement!.parentElement!;
+          const [t, r] = [text.getBoundingClientRect(), room.getBoundingClientRect()];
+          const pads = (el: Element) => {
+            const cs = getComputedStyle(el);
+            return [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft];
+          };
+          return {
+            text: pads(text),
+            room: pads(room),
+            same: [t.left - r.left, t.top - r.top, t.width - r.width].map((v) => Math.round(v)),
+            least: [Math.round(t.height), parseFloat(getComputedStyle(room).minHeight)],
+          };
+        },
+        { entry: "mail" },
+      );
+      expect(got.text).toEqual(["12px", "16px", "12px", "16px"]);
+      expect(got.room).toEqual(["0px", "0px", "0px", "0px"]);
+      expect(got.same).toEqual([0, 0, 0]);
+      expect(got.least[1]).toBeGreaterThan(100);
+      expect(got.least[0]).toBe(got.least[1]);
+    },
+    60_000,
+  );
+
   it.each(ASK_LOOKS)(
     "in %s on a %s at Text size %s: a list stands on the text's own lines, one empty line from the text around it; a quote and code keep air of their own",
     async (face, device, zoom) => {
@@ -2498,35 +2828,37 @@ describe("a letter being written", () => {
           </Composer>
         </>,
         () => {
-          const starts: { rect: DOMRect; box: DOMRect; hidden: Element | null }[] = [];
-          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          for (let node = walk.nextNode(); node; node = walk.nextNode()) {
-            if (!(node.textContent ?? "").startsWith("Schreib")) continue;
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            starts.push({
-              rect: range.getBoundingClientRect(),
-              box: node.parentElement!.closest("section")!.getBoundingClientRect(),
-              hidden: node.parentElement!.closest("[aria-hidden]"),
-            });
-          }
-          const [ph, typed] = starts;
-          const at = document.elementFromPoint(ph!.rect.left + 4, ph!.rect.top + 4)!;
+          /* The words are drawn, not written: no reader of text finds them, and they are measured by their box. */
+          const drawnWords = document.querySelector<HTMLElement>("[data-words]")!;
+          const typed = [...document.querySelectorAll("div")].find(
+            (el) => el.children.length === 0 && (el.textContent ?? "").startsWith("Schreib"),
+          )!;
+          const within = (el: Element) => {
+            const [own, box] = [el.getBoundingClientRect(), el.closest("section")!.getBoundingClientRect()];
+            return { left: own.left - box.left, top: own.top - box.top, right: box.right - own.right, own };
+          };
+          const [ph, text] = [within(drawnWords), within(typed)];
+          const at = document.elementFromPoint(ph.own.left + 4, ph.own.top + 4)!;
+          const said = getComputedStyle(drawnWords, "::before").content;
           return {
-            count: starts.length,
-            dx: ph!.rect.left - ph!.box.left - (typed!.rect.left - typed!.box.left),
-            dy: ph!.rect.top - ph!.box.top - (typed!.rect.top - typed!.box.top),
-            inside: ph!.rect.right <= ph!.box.right && ph!.rect.left >= ph!.box.left,
-            hitsThePlaceholder: ph!.hidden !== null && ph!.hidden.contains(at),
+            count: document.body.textContent!.split("Schreib").length - 1,
+            said,
+            dx: ph.left - text.left,
+            dy: ph.top - text.top,
+            inside: ph.left >= 0 && ph.right >= 0,
+            hitsThePlaceholder: drawnWords.contains(at),
+            hidden: drawnWords.closest("[aria-hidden='true']") !== null,
             scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
           };
         },
         { entry: "mail", face, device, zoom, lang: "de" },
       );
-      expect(got.count).toBe(2);
+      /* Written once, in the letter that holds it as text; drawn once, from the words handed. */
+      expect(got.count).toBe(1);
+      expect(got.said).toBe('"Schreib deine Nachricht an die Töpferwerkstatt"');
       expect(Math.abs(got.dx)).toBeLessThanOrEqual(0.5);
       expect(Math.abs(got.dy)).toBeLessThanOrEqual(0.5);
-      expect(got).toMatchObject({ inside: true, hitsThePlaceholder: false, scrolls: false });
+      expect(got).toMatchObject({ inside: true, hitsThePlaceholder: false, hidden: true, scrolls: false });
     },
   );
 
@@ -2577,6 +2909,49 @@ describe("a letter being written", () => {
   );
 });
 
+describe("what is fixed at a glass's foot, where the host says what the glass holds", () => {
+  const stand = (glass: string) => (
+    <>
+      <style>{`:root{${glass}}`}</style>
+      <div id="column" style={{ position: "relative", height: 400 }}>
+        <JumpBack label="Nach oben" to="top" shown />
+      </div>
+      <Menu open onClose={() => {}} label="Mehr">
+        <MenuItem onPress={() => {}}>Als gelesen markieren</MenuItem>
+        <MenuItem onPress={() => {}}>Später</MenuItem>
+      </Menu>
+    </>
+  );
+  const read = () => {
+    const column = document.getElementById("column")!.getBoundingClientRect();
+    const jump = document.querySelector("#column button")!.getBoundingClientRect();
+    const sheet = document.querySelector("[role='menu']")!.getBoundingClientRect();
+    return {
+      jump: Math.round((column.bottom - jump.bottom) * 10) / 10,
+      sheet: Math.round((window.innerHeight - sheet.bottom) * 10) / 10,
+      sheetTop: sheet.top,
+    };
+  };
+  const phone = { entry: "base", device: "phone" } as const;
+
+  it("with no word from the host, and with an inset no larger than their own margins, they keep their margins", async () => {
+    const own = await drawn(stand(""), read, phone);
+    expect([own.jump, own.sheet]).toEqual([12, 8]);
+    expect(await drawn(stand("--sys-b:8px"), read, phone)).toEqual(own);
+  });
+
+  it("over a system's bar each keeps the bar's height, never its margin added to it", async () => {
+    const bar = await drawn(stand("--sys-b:34px"), read, phone);
+    expect([bar.jump, bar.sheet]).toEqual([34, 34]);
+  });
+
+  it("while a keyboard is up the bar counts for nothing, and a sheet from the foot stands on the keys, whole inside what is left", async () => {
+    const keys = await drawn(stand("--sys-b:0px;--kb:300px"), read, phone);
+    expect([keys.jump, keys.sheet]).toEqual([12, 308]);
+    expect(keys.sheetTop).toBeGreaterThanOrEqual(8);
+  });
+});
+
 describe("the reading column's foot at a glass's edge", () => {
   const column = (inset?: string) => (
     <div
@@ -2619,6 +2994,435 @@ describe("the reading column's foot at a glass's edge", () => {
       expect(bar.over - own.over).toBeCloseTo(18, 1);
       expect(bar.room - own.room).toBeCloseTo(18, 1);
     },
+  );
+});
+
+describe("a place's sections in its list's head", () => {
+  const sections = (fit?: "tighter") => (
+    <Seg
+      label="Bereiche"
+      value="waiting"
+      fit={fit}
+      options={[
+        { value: "waiting", label: "Wartend", count: 6 },
+        { value: "screened", label: "Aussortiert", count: 2 },
+        { value: "spam", label: "Spam", count: 1 },
+      ]}
+    />
+  );
+  const read = () => {
+    const head = document.querySelector("header")!;
+    const box = head.getBoundingClientRect();
+    const name = head.querySelector("h1")!.getBoundingClientRect();
+    const group = head.querySelector("[role='group']")!;
+    const track = group.getBoundingClientRect();
+    const items = [...group.querySelectorAll("button")];
+    const probe = (css: string) => {
+      const el = document.createElement("i");
+      el.style.cssText = `display:block;position:absolute;${css}`;
+      head.append(el);
+      const got = { h: el.getBoundingClientRect().height, font: getComputedStyle(el).fontSize };
+      el.remove();
+      return got;
+    };
+    const first = getComputedStyle(items[0]!);
+    return {
+      head: box.height,
+      name: name.height,
+      line: probe("height:calc(var(--head) - var(--s2))").h,
+      phoneLine: probe("height:calc(var(--head) - var(--s3) - var(--s1))").h,
+      beside: track.top < name.bottom && track.bottom > name.top,
+      under: track.top >= name.bottom - 0.5,
+      trackWide: track.width,
+      /* A box is read in the window's px, a style's length in the page's own. */
+      room:
+        box.width -
+        (parseFloat(getComputedStyle(head).paddingLeft) + parseFloat(getComputedStyle(head).paddingRight)) *
+          (parseFloat(getComputedStyle(document.documentElement).zoom) || 1),
+      items: items.map((b) => Math.round(b.getBoundingClientRect().height * 10) / 10),
+      font: first.fontSize,
+      meta: probe("font-size:var(--t-meta)").font,
+      sides: [first.paddingLeft, first.paddingRight],
+      inside: items.every((b) => {
+        const r = b.getBoundingClientRect();
+        return r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+      }),
+      scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  };
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s with a pointer: the name keeps a place's first line, the sections stand beside it a size smaller, and in a narrow list they go under it while the name's line stays",
+    async (face) => {
+      const at = { entry: "mail", face } as const;
+      const wide = await drawn(
+        <div style={{ width: 420 }}>
+          <ListHead title="Screener" hot sections={sections()} />
+        </div>,
+        read,
+        at,
+      );
+      expect(wide.beside).toBe(true);
+      expect(wide.name).toBeCloseTo(wide.line, 1);
+      /* The reference (screener.css, the head): 28 high, 10 at the sides, the meta size. */
+      expect(wide.items).toEqual([28, 28, 28]);
+      expect(wide.sides).toEqual(["10px", "10px"]);
+      expect(wide.font).toBe(wide.meta);
+      expect(wide.inside).toBe(true);
+      /* A list dragged narrower than its sections: the kit has measured them to their closest stand. */
+      const narrow = await drawn(
+        <div style={{ width: 240 }}>
+          <ListHead title="Screener" hot sections={sections("tighter")} />
+        </div>,
+        read,
+        at,
+      );
+      expect(narrow.under).toBe(true);
+      expect(narrow.name).toBeCloseTo(wide.name, 1);
+      expect(narrow.inside).toBe(true);
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", "phone", 1],
+    ["ohmarchy", "phone", 1],
+    ["paper", "fold", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: under a finger the sections are the head's second line, as wide as the list, each a finger high and inside it",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ width: device === "fold" ? 300 : undefined }}>
+          <ListHead title="Screener" hot sections={sections(zoom === 1.5 ? "tighter" : undefined)} />
+        </div>,
+        read,
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      expect(got.under).toBe(true);
+      expect(got.name / zoom).toBeCloseTo((device === "phone" ? got.phoneLine : got.line) / zoom, 1);
+      expect(got.trackWide).toBeCloseTo(got.room, 0);
+      for (const high of got.items) expect(high / zoom).toBeGreaterThanOrEqual(44);
+      expect(got.inside).toBe(true);
+      expect(got.scrolls).toBe(false);
+    },
+    60_000,
+  );
+});
+
+describe("the reading column's head, a sentence that is the control", () => {
+  const head = (who: string, address: string, place: string, reason: string) => (
+    <ReadingHead
+      sentence={
+        <>
+          <SentencePart>{who}</SentencePart>{" "}
+          <SentencePart>
+            geht in <Slot>{place}</Slot>
+            <Dot kind="hot" />
+          </SentencePart>
+        </>
+      }
+      lines={
+        <>
+          <ReadingLine sign="ok" person={{ label: address }} word={{ text: "Bestätigt" }}>
+            <Slot>dieser Absender</Slot>
+            <Tag>Abmelden angeboten</Tag>
+          </ReadingLine>
+          <ReadingLine sign="spark" figure={{ text: "92%", title: "Sicherheit" }} why>
+            {reason}
+          </ReadingLine>
+        </>
+      }
+    />
+  );
+  const read = () => {
+    const banner = document.querySelector("#sentence header")!;
+    const plain = document.querySelector("#subject header")!;
+    const box = banner.getBoundingClientRect();
+    const [sentence, who, why] = [...banner.children].map((el) => el.getBoundingClientRect());
+    const texts: DOMRect[] = [];
+    const walk = document.createTreeWalker(banner, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      if (!(node.textContent ?? "").trim() || node.parentElement!.closest(".oh-vh")) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      texts.push(...range.getClientRects());
+    }
+    const style = (el: Element) => getComputedStyle(el);
+    const lines = [...banner.children];
+    const parts = [...banner.querySelectorAll(".oh-sentence-part")].map((p) => p.getBoundingClientRect());
+    return {
+      pads: [style(banner).padding, style(plain).padding],
+      ground: [style(banner).backgroundColor, style(plain).backgroundColor],
+      sentenceFont: [style(lines[0]!).fontSize, style(plain.firstElementChild!).fontSize],
+      whoUnder: Math.round((who!.top - sentence!.bottom) * 10) / 10,
+      whyUnder: Math.round((why!.top - who!.bottom) * 10) / 10,
+      whySmaller: parseFloat(style(lines[2]!).fontSize) < parseFloat(style(lines[1]!).fontSize),
+      sign: banner.querySelectorAll("svg").length,
+      partsStacked: parts[1]!.top >= parts[0]!.bottom - 1,
+      inside: texts.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+      controlsInside: [...banner.querySelectorAll("button")].every((b) => {
+        const r = b.getBoundingClientRect();
+        return r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+      }),
+      scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  };
+  /* As in its column: the head reaches over the column's ring on both sides. */
+  const both = (who: string, address: string, place: string, reason: string) => (
+    <div style={{ margin: "0 var(--ringw)" }}>
+      <div id="sentence">{head(who, address, place, reason)}</div>
+      <div id="subject">
+        <ReadingHead subject="Glaze order #2291" names="Giulia Ferrari" people={[]} />
+      </div>
+    </div>
+  );
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s with a pointer: it stands on the conversation's head's ground and sides, the sentence in the subject's face, who it is a step under it, why a size smaller under that",
+    async (face) => {
+      const got = await drawn(
+        <div style={{ width: 740 }}>
+          {both("Lena Kaufmann", "lena@atelier-eichspan.example", "Ohbox", "Eine persönliche Nachricht")}
+        </div>,
+        read,
+        { entry: "mail", face },
+      );
+      /* The reference (the Screener's head on a desktop): beside and under them the two heads are one; over it
+         the sentence keeps the head's own room, 9, where on paper a subject stands a step closer to the top, 5. */
+      const [sentence, subject] = got.pads.map((pad) => pad.split(" "));
+      expect(sentence!.slice(1)).toEqual(subject!.slice(1));
+      expect([sentence![0], subject![0]]).toEqual(
+        face === "paper" ? ["9px", "5px"] : [subject![0], subject![0]],
+      );
+      expect(got.ground[0]).toBe(got.ground[1]);
+      expect(got.sentenceFont[0]).toBe(got.sentenceFont[1]);
+      /* The reference (core's byline and the Screener's `why`): 8 under the sentence, then 4. */
+      expect(got.whoUnder).toBe(8);
+      expect(got.whyUnder).toBe(4);
+      expect(got.whySmaller).toBe(true);
+      expect(got.sign).toBe(2);
+      expect(got.partsStacked).toBe(false);
+      expect(got.inside && got.controlsInside).toBe(true);
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", 1],
+    ["ohmarchy", 1],
+    ["paper", 1.5],
+    ["ohmarchy", 1.5],
+  ] as const)(
+    "in %s on a phone at Text size %s: a long sentence breaks between its two parts and every word and control stays inside the head",
+    async (face, zoom) => {
+      const got = await drawn(
+        both(
+          "Veranstaltungsbüro Winterthur",
+          "veranstaltungen-anmeldung@makersfest-winterthur.example",
+          "Aussortiert",
+          "Eine Massensendung von einer Adresse, die du nie angeschrieben hast",
+        ),
+        read,
+        { entry: "mail", face, device: "phone", zoom, lang: "de" },
+      );
+      expect(got.partsStacked).toBe(true);
+      expect(got.inside).toBe(true);
+      expect(got.controlsInside).toBe(true);
+      expect(got.scrolls).toBe(false);
+    },
+    60_000,
+  );
+});
+
+describe("words that are pressed, under a finger at Text size 1.5", () => {
+  const row: RowProps = {
+    who: "Töss Energie",
+    address: "rechnung@toess-energie.example",
+    people: [{ name: "Töss Energie", address: "rechnung@toess-energie.example" }],
+    subject: "Ihre Oktober-Rechnung ist bereit",
+    preview: "Ihre Rechnung für Oktober liegt bei.",
+    when: "06:15",
+  };
+  it.each([
+    ["paper", 1, "News"],
+    ["paper", 1.5, "Choose"],
+    ["paper", 1.5, "Aussortiert"],
+    ["ohmarchy", 1.5, "Belege"],
+  ] as const)(
+    "in %s at Text size %s the place %s stands whole inside its chip, the chip inside its row, and the list does not scroll sideways",
+    async (face, zoom, word) => {
+      const got = await drawn(
+        <Rows label="Wartend">
+          <Row
+            {...row}
+            place={
+              word === "Choose"
+                ? { word, choose: { label: "Einen Ort wählen" } }
+                : { word, accept: { label: `${word} annehmen` }, choose: { label: "Einen Ort wählen" } }
+            }
+          />
+        </Rows>,
+        () => {
+          const chip = document.querySelector(".oh-row-beside .oh-row-place-word")!;
+          const box = chip.getBoundingClientRect();
+          /* The word's own letters: the arrow beside it is drawn, not written. */
+          const range = document.createRange();
+          range.selectNodeContents(chip.firstChild!);
+          const words = [...range.getClientRects()].filter((r) => r.width > 0);
+          const slot = document.querySelector(".oh-row-slot")!.getBoundingClientRect();
+          const list = document.querySelector("[role='listbox']")!;
+          return {
+            wordsInside: words.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+            oneLine: new Set(words.map((r) => Math.round(r.top))).size === 1,
+            chipInside: box.left >= slot.left - 0.5 && box.right <= slot.right + 0.5,
+            listScrolls: list.scrollWidth > list.clientWidth,
+            pageScrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        {
+          entry: "mail",
+          face,
+          device: "phone",
+          zoom,
+          lang: word === "News" || word === "Choose" ? "en" : "de",
+        },
+      );
+      expect(got).toEqual({
+        wordsInside: true,
+        oneLine: true,
+        chipInside: true,
+        listScrolls: false,
+        pageScrolls: false,
+      });
+    },
+    60_000,
+  );
+
+  it.each([
+    ["phone", undefined],
+    ["fold", [719, 781]],
+    ["foldl", [841, 673]],
+  ] as const)(
+    "on a %s a slot in a line narrower than its words folds them inside the line, and adds nothing to what the page scrolls",
+    async (device, window) => {
+      const got = await drawn(
+        <div id="line" style={{ display: "flex", flexWrap: "wrap", gap: 4, width: 96 }}>
+          <Slot>dieser Absender</Slot>
+          <Slot>ganze Domain</Slot>
+        </div>,
+        () => {
+          const line = document.getElementById("line")!.getBoundingClientRect();
+          return [...document.querySelectorAll("button")].map((slot) => {
+            const box = slot.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(slot);
+            const words = [...range.getClientRects()].filter((r) => r.width > 0);
+            return {
+              inLine: box.left >= line.left - 0.5 && box.right <= line.right + 0.5,
+              wordsInside: words.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+              scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            };
+          });
+        },
+        { entry: "base", device, zoom: 1.5, lang: "de", window: window ? [...window] : undefined },
+      );
+      for (const slot of got) expect(slot).toEqual({ inLine: true, wordsInside: true, scrolls: false });
+    },
+    60_000,
+  );
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s on a phone a refusal with its way folds its sentence inside the line, the way whole beside or under it",
+    async (face) => {
+      const got = await drawn(
+        <RefusalLine way={{ label: "Erneut versuchen", onPress: () => {} }}>
+          Weitere Absender konnten nicht geladen werden: Serververbindungsunterbrechung.
+        </RefusalLine>,
+        () => {
+          const line = document.querySelector("[role='status']")!;
+          const box = line.getBoundingClientRect();
+          const say = line.querySelector(".oh-refusal-say")!;
+          const range = document.createRange();
+          range.selectNodeContents(say);
+          const words = [...range.getClientRects()].filter((r) => r.width > 0);
+          const way = line.querySelector("button")!.getBoundingClientRect();
+          /* The way's own letters. */
+          const label = document.createRange();
+          const letters = document.createTreeWalker(line.querySelector("button")!, NodeFilter.SHOW_TEXT);
+          label.selectNodeContents(letters.nextNode()!);
+          return {
+            wordsInside: words.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5),
+            wayInside: way.left >= box.left - 0.5 && way.right <= box.right + 0.5,
+            wayWhole: new Set([...label.getClientRects()].map((r) => Math.round(r.top))).size === 1,
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "base", face, device: "phone", zoom: 1.5, lang: "de" },
+      );
+      expect(got).toEqual({ wordsInside: true, wayInside: true, wayWhole: true, scrolls: false });
+    },
+    60_000,
+  );
+});
+
+describe("two folders of one name on the shelf", () => {
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: the hint stands after the name, smaller and quieter, and on the open folder in the open folder's own ink; a long one is cut with the name inside the rail",
+    async (face) => {
+      const got = await drawn(
+        <div style={{ width: 232 }}>
+          <FolderShelf
+            label="Ordner"
+            expanded
+            folders={[
+              { id: "a", name: "Angebote", hint: "Kunden" },
+              { id: "b", name: "Angebote", hint: "Privat", current: true },
+              { id: "c", name: "Veranstaltungsunterlagen", hint: "Gartenlokal Rosa und Partner" },
+            ]}
+          />
+        </div>,
+        () => {
+          const rail = document.querySelector(".oh-foldershelf")!.getBoundingClientRect();
+          return [...document.querySelectorAll("small")].map((hint) => {
+            const entry = hint.closest("button")!;
+            const name = hint.parentElement!;
+            const range = document.createRange();
+            range.selectNodeContents(name.firstChild!);
+            const word = range.getBoundingClientRect();
+            const [own, around] = [getComputedStyle(hint), getComputedStyle(name)];
+            const box = hint.getBoundingClientRect();
+            return {
+              after: box.left >= word.right - 0.5,
+              apart: Math.round(box.left - word.right),
+              smaller: parseFloat(own.fontSize) < parseFloat(around.fontSize),
+              lighter: Number(own.fontWeight) <= Number(around.fontWeight),
+              inkOfEntry: own.color === getComputedStyle(entry).color,
+              /* What is longer than the rail is cut inside the name's own box, which ends inside the rail. */
+              inside:
+                entry.getBoundingClientRect().right <= rail.right + 0.5 &&
+                name.getBoundingClientRect().right <= rail.right + 0.5 &&
+                getComputedStyle(name).overflow === "hidden",
+            };
+          });
+        },
+        { entry: "mail", face },
+      );
+      expect(got).toHaveLength(3);
+      /* The reference (folders.css): 8 after the name, the meta size, the text weight, the second ink. */
+      expect(got[0]).toEqual({
+        after: true,
+        apart: 8,
+        smaller: true,
+        lighter: true,
+        inkOfEntry: false,
+        inside: true,
+      });
+      expect(got[1]).toMatchObject({ after: true, smaller: true, inkOfEntry: true, inside: true });
+      expect(got[2]!.inside).toBe(true);
+    },
+    60_000,
   );
 });
 
@@ -3034,6 +3838,290 @@ describe("a row still owed, among a list's rows", () => {
       expect(Math.abs(got.left)).toBeLessThanOrEqual(1);
       expect(Math.abs(got.right)).toBeLessThanOrEqual(1);
     },
+  );
+});
+
+describe("people to tick, on a phone", () => {
+  const person = (id: string, name: string, address: string, count: string, on: boolean) => ({
+    id,
+    name,
+    address,
+    count,
+    said: `${count.replace("×", "")} Nachrichten`,
+    on,
+  });
+  it.each([
+    ["paper", 1],
+    ["paper", 1.5],
+    ["ohmarchy", 1],
+    ["ohmarchy", 1.5],
+  ] as const)(
+    "in %s at Text size %s: the count, the field and the press for all stay inside the sheet, the field and the press under the count; a person's address stands under the name inside the row, whole, and the tick stays at the row's end",
+    async (face, zoom) => {
+      const got = await drawn(
+        <TickList
+          figure="7"
+          words="Personen, denen du geschrieben hast"
+          label="Personen, denen du geschrieben hast"
+          find={{ label: "Jemanden finden", placeholder: "Jemanden finden", value: "" }}
+          all={{ label: "Keine" }}
+          people={[
+            person("lena", "Lena Kaufmann", "lena.kaufmann@lichtgrat-werkstatt.example", "12×", true),
+            person("ben", "Ben Frei", "ben@paperbird.example", "3×", false),
+          ]}
+        />,
+        () => {
+          const head = document.querySelector("header")!;
+          const h = head.getBoundingClientRect();
+          const [count, find, all] = [
+            head.querySelector("h2")!,
+            head.querySelector("input")!,
+            head.querySelector("button")!,
+          ].map((part) => part.getBoundingClientRect()) as [DOMRect, DOMRect, DOMRect];
+          const inside = (box: DOMRect, room: DOMRect) =>
+            box.left >= room.left - 0.5 && box.right <= room.right + 0.5;
+          const rows = [...document.querySelectorAll('[role="checkbox"]')].map((row) => {
+            const box = row.getBoundingClientRect();
+            const name = row.querySelector("b")!.getBoundingClientRect();
+            const address = [...row.querySelectorAll("span")].find(
+              (part) => (part.textContent ?? "").includes("@") && !part.querySelector("span"),
+            )!;
+            const a = address.getBoundingClientRect();
+            const tick = row.lastElementChild!.getBoundingClientRect();
+            return {
+              addressUnderTheName: a.top >= name.bottom - 0.5,
+              addressInside: inside(a, box) && a.bottom <= box.bottom + 0.5,
+              addressWhole: address.scrollWidth <= address.clientWidth,
+              tickInside: inside(tick, box),
+              tickAfterTheWords: tick.left >= Math.max(name.right, a.right) - 0.5,
+            };
+          });
+          return {
+            countInside: inside(count, h),
+            findInside: inside(find, h),
+            allInside: inside(all, h),
+            under: [find.top >= count.bottom - 0.5, all.top >= count.bottom - 0.5],
+            rows,
+            sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device: "phone", zoom, lang: "de" },
+      );
+      expect({ ...got, rows: [] }).toEqual({
+        countInside: true,
+        findInside: true,
+        allInside: true,
+        under: [true, true],
+        rows: [],
+        sideways: 0,
+      });
+      expect(got.rows).toEqual(
+        Array(2).fill({
+          addressUnderTheName: true,
+          addressInside: true,
+          addressWhole: true,
+          tickInside: true,
+          tickAfterTheWords: true,
+        }),
+      );
+    },
+    60_000,
+  );
+});
+
+describe("a row of a stream, a row's own button and a row's place as a word", () => {
+  const sender = { name: "Tonpost", address: "news@tonpost.example" };
+  const letter: RowProps = {
+    who: "Tonpost",
+    people: [sender],
+    subject: "Sechs neue Glasuren diese Woche",
+    preview: "Dazu zwei neue Engoben.",
+    when: "gestern 09:12",
+  };
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: a stream's unread row is set bold in the ink as every unread row and draws no dot on its circle",
+    async (face) => {
+      const got = await drawn(
+        <Rows>
+          <Row {...letter} unread />
+          <Row {...letter} unread stream />
+          <Row {...letter} stream />
+        </Rows>,
+        () =>
+          [...document.querySelectorAll('[role="button"]')].map((row) => {
+            const who = getComputedStyle(row.querySelector("b")!);
+            return {
+              weight: Number(who.fontWeight),
+              ink: who.color,
+              dots: row.querySelectorAll("[data-kind='hot']").length,
+            };
+          }),
+        { entry: "mail", face },
+      );
+      const [unread, stream, read] = got;
+      expect([unread!.dots, stream!.dots, read!.dots]).toEqual([1, 0, 0]);
+      expect([stream!.weight, stream!.ink]).toEqual([unread!.weight, unread!.ink]);
+      expect(stream!.weight).toBeGreaterThan(read!.weight);
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", "desktop"],
+    ["ohmarchy", "desktop"],
+    ["paper", "phone"],
+  ] as const)(
+    "in %s on a %s: a row's own button that is a word alone keeps 12 at both its sides, one with a sign 8 before the sign; the room the row keeps for it is the button's own box",
+    async (face, device) => {
+      const got = await drawn(
+        <div style={{ width: device === "phone" ? undefined : 460 }}>
+          <Rows>
+            <Row {...letter} own={{ label: "Senden abbrechen" }} />
+            <Row {...letter} own={{ label: "Verwerfen", icon: "trash" }} />
+          </Rows>
+        </div>,
+        () =>
+          [...document.querySelectorAll("button")].map((own) => {
+            const cs = getComputedStyle(own);
+            const room = own.parentElement!.querySelector("[data-room]")!;
+            const [o, r] = [own.getBoundingClientRect(), room.getBoundingClientRect()];
+            return {
+              sides: [cs.paddingLeft, cs.paddingRight],
+              overItsRoom: [o.left - r.left, o.right - r.right].map((v) => Math.round(v * 10) / 10),
+            };
+          }),
+        { entry: "mail", face, device },
+      );
+      expect(got.map((own) => own.sides)).toEqual([
+        ["12px", "12px"],
+        ["8px", "12px"],
+      ]);
+      /* With a pointer the button stands exactly over the room the row keeps for it. */
+      if (device === "desktop")
+        expect(got.map((own) => own.overItsRoom)).toEqual([
+          [0, 0],
+          [0, 0],
+        ]);
+    },
+    60_000,
+  );
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a place's word too long for the row gives way before the name is cut, and the time never leaves the row",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ width: device === "phone" ? undefined : 380 }}>
+          <Rows>
+            <Row {...letter} who="Töss" where="von deinem Mailserver einsortiert" />
+            {/* A word that fits: beside a time of the day it does so in the narrowest look too. */}
+            <Row {...letter} who="Töss" where="Spam" when="09:12" />
+          </Rows>
+        </div>,
+        () =>
+          [...document.querySelectorAll('[role="button"]')].map((row) => {
+            const box = row.getBoundingClientRect();
+            const pad =
+              parseFloat(getComputedStyle(row).paddingRight) * (box.width / (row as HTMLElement).offsetWidth);
+            const [who, when] = [row.querySelector("b")!, row.querySelector("time")!];
+            const where = [...row.querySelectorAll("span")].find(
+              (el) => /Mailserver|Spam/.test(el.textContent ?? "") && el.children.length === 0,
+            )!;
+            return {
+              timeInside: when.getBoundingClientRect().right <= box.right - pad + 0.5,
+              timeWhole: when.scrollWidth <= when.clientWidth,
+              nameWhole: who.scrollWidth <= who.clientWidth,
+              whereInside: where.getBoundingClientRect().right <= when.getBoundingClientRect().left + 0.5,
+              whereCut: where.scrollWidth > where.clientWidth,
+              sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            };
+          }),
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      const [long, short] = got;
+      expect(long).toEqual({
+        timeInside: true,
+        timeWhole: true,
+        nameWhole: true,
+        whereInside: true,
+        whereCut: true,
+        sideways: 0,
+      });
+      /* A word that fits is whole, as before. */
+      expect(short).toEqual({ ...long, whereCut: false });
+    },
+    60_000,
+  );
+});
+
+describe("words too long for their room in a menu", () => {
+  it.each([
+    ["paper", "phone", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1.5],
+    ["paper", "desktop", 1],
+    ["ohmarchy", "desktop", 1],
+  ] as const)(
+    "in %s on a %s at Text size %s: a menu item's words too long for the menu take a second line inside it, its key and its note stay whole, and an item that fits keeps its one line and its height",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ position: "relative", height: 600 }}>
+          <Menu open onClose={() => {}} label="Mehr" anchor={{ x: 20, y: 20 }}>
+            <MenuItem icon="read" note="3" onPress={() => {}}>
+              Ohbox, als gelesen markieren und alle weiteren Nachrichten dieses Absenders dorthin legen
+            </MenuItem>
+            <MenuItem icon="reply" onPress={() => {}}>
+              Antworten
+            </MenuItem>
+          </Menu>
+        </div>,
+        () => {
+          const menu = document.querySelector('[role="menu"]')!;
+          const m = menu.getBoundingClientRect();
+          const probe = document.createElement("i");
+          /* A menu's line: a pointer's, and on a phone a finger's own height. */
+          const finger = document.documentElement.dataset.device === "phone";
+          probe.style.cssText = `display:block;height:var(${finger ? "--h-l" : "--h-m"})`;
+          menu.append(probe);
+          const least = probe.getBoundingClientRect().height;
+          probe.remove();
+          const items = [...menu.querySelectorAll('[role="menuitem"]')].map((item) => {
+            const box = item.getBoundingClientRect();
+            const word = item.querySelector("span")!;
+            const w = word.getBoundingClientRect();
+            const note = item.querySelector("small")?.getBoundingClientRect();
+            /* The lines the words stand on, counted by the words themselves: their box also holds the item's air. */
+            const letters = document.createRange();
+            letters.selectNodeContents(word);
+            const lines = new Set([...letters.getClientRects()].map((line) => Math.round(line.top))).size;
+            return {
+              inside: box.left >= m.left - 0.5 && box.right <= m.right + 0.5,
+              wordInside: w.right <= box.right + 0.5 && w.top >= box.top && w.bottom <= box.bottom,
+              noteInside: note ? note.right <= box.right + 0.5 && note.left >= w.right - 0.5 : true,
+              lines,
+              high: Math.round(box.height * 10) / 10,
+            };
+          });
+          return {
+            items,
+            least: Math.round(least * 10) / 10,
+            menuInside: m.left >= 0 && m.right <= innerWidth + 0.5,
+            scrollsSideways: menu.scrollWidth > menu.clientWidth,
+            sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          };
+        },
+        { face, device, zoom, lang: "de" },
+      );
+      const [long, short] = got.items;
+      expect([got.menuInside, got.scrollsSideways, got.sideways]).toEqual([true, false, 0]);
+      expect([long!.inside, long!.wordInside, long!.noteInside]).toEqual([true, true, true]);
+      expect(long!.lines).toBeGreaterThan(1);
+      expect([short!.inside, short!.wordInside, short!.lines]).toEqual([true, true, 1]);
+      /* An item of one line is exactly as high as a menu's line ever was; on a phone a finger's own height. */
+      expect(short!.high).toBe(got.least);
+      expect(long!.high).toBeGreaterThan(short!.high);
+    },
+    60_000,
   );
 });
 

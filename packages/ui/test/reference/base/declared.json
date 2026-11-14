@@ -364,6 +364,30 @@
     "reason": "Under a finger the kit's small button is 44 high, as every control of the kit is; the sheet draws its search filters 36 high there. The button's name and drawn values are the reference's."
   },
   {
+    "key": "Empty/decided@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "One letter of the answer's word (the x of Ohbox) differs by a hair (41 pixels that touch; two ten-thousandths of the picture). The answer's name, box and drawn values are the reference's, its key stands where the reference's does, and the same place in paper is equal in its picture.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "CameraSquare/live",
+    "reason": "The design's live square is a button because its page has no camera: a press on it stands for a code that was read. The kit's square is the camera's own place and takes no press: a picture, named the same, in both of its states. Its box, its drawn values and its picture bind.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "img", "as": "button" }]
+  },
+  {
+    "key": "Counters/rest",
+    "question": "names",
+    "reason": "The design's first read counts while it is drawn: its figures differ from one taking of the reference to the next (610, 647 and 4,938, 4,667 in three looks of one address). The specimen holds one count. The figures' face, size and column, the words and their dots still bind.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Counters/rest",
+    "question": "picture",
+    "reason": "The same moving count: the numerals in the picture are another moment's. Boxes and drawn values are equal in all three looks.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "Button/mark-set@ohmarchy-light-phone",
     "question": "picture",
     "since": "2026-11-16",

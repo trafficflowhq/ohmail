@@ -21,6 +21,7 @@ export interface PageProps {
   /**
    * The heavy line where a decision needs it, and a note under it that explains. In parts where it holds more than
    * words: small facts as tags in a row, what matters heavy and what explains it plain each on a row of its own.
+   * A note handed without a line is drawn alone, in the line's place: what explains is never left out unsaid.
    */
   line?: string | readonly PageLinePart[];
   note?: string;
@@ -69,7 +70,7 @@ export function Page(props: PageProps) {
   const page = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const holdsMaterial = Boolean(material);
-  const holdsLine = Boolean(line?.length);
+  const holdsLine = Boolean(line?.length || note);
   /*
    * Two columns cannot scroll: where the sentence column is taller than the page, its act would stand under the
    * window's foot out of every pointer's reach. The page folds to one column then, which scrolls. A sheet cannot say
@@ -147,9 +148,9 @@ export function Page(props: PageProps) {
           ))}
         </div>
         {material ? <div className="oh-page-material">{material}</div> : null}
-        {line?.length ? (
+        {holdsLine ? (
           <div className="oh-page-line">
-            {typeof line === "string" ? <span className="oh-page-heavy">{line}</span> : line.map(linePart)}
+            {typeof line === "string" ? <span className="oh-page-heavy">{line}</span> : line?.map(linePart)}
             {note ? <span className="oh-page-note">{note}</span> : null}
           </div>
         ) : null}

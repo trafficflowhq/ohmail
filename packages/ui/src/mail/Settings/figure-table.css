@@ -27,17 +27,18 @@
     white-space: nowrap;
   }
 
+  /* A mailbox's name is drawn in the second ink, as its figures are; the row that sums them is in the ink. */
   .oh-figuretable-name {
     display: flex;
     align-items: center;
     min-width: 0;
-    color: var(--ink);
+    color: var(--ink2);
     font-weight: var(--w-mid);
   }
 
   .oh-figuretable-name > .oh-tagdot {
     --oh-tagdot-size: var(--oh-figuretable-dot);
-    --oh-tagdot-gap: 0 var(--s2) 0 0;
+    --oh-tagdot-gap: 0 6px 0 0;
   }
 
   .oh-figuretable-word {

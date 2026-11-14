@@ -22,6 +22,12 @@
     margin-right: var(--oh-monthrail-room);
   }
 
+  /* No step to take: the list stands as if alone, its two boxes unseen by the layout. */
+  .oh-monthrail[data-bare],
+  .oh-monthrail[data-bare] > .oh-monthrail-list {
+    display: contents;
+  }
+
   .oh-monthrail-steps {
     position: absolute;
     top: var(--s1);

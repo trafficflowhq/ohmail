@@ -6,6 +6,7 @@
     "FolderFold": "FolderShelf",
     "Attach": "Composer",
     "DraftTabs": "Composer",
+    "ReadingLine": "ReadingHead",
     "SettingLine": "SettingsSheet",
     "SettingArea": "SettingsSheet",
     "SettingFilter": "SettingsSheet",
@@ -61,6 +62,14 @@
       "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
     },
     { "component": "ListHead", "state": "count" },
+    {
+      "component": "ListHead",
+      "state": "sections",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    { "component": "PullMark", "state": "armed", "looks": ["paper-light-phone", "ohmarchy-light-phone"] },
+    { "component": "TickList", "state": "rest", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    { "component": "TickList", "state": "settled" },
     { "component": "Doorbell", "state": "rest", "looks": "all" },
     { "component": "Doorbell", "state": "pressed" },
     { "component": "Doorbell", "state": "focus" },
@@ -218,6 +227,11 @@
       "component": "ReadingHead",
       "state": "letter",
       "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "ReadingHead",
+      "state": "sentence",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
     },
     {
       "component": "BlankColumn",

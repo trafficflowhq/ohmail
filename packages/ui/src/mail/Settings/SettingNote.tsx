@@ -14,17 +14,22 @@ export interface SettingNoteProps {
   warn?: boolean;
   /** It says that something is being read: said when it appears, and gone when the lines it stands for arrive. */
   busy?: boolean;
+  /**
+   * A settled outcome that is no fault ("The mailbox is connected."): said when it appears, calmly, with no sign.
+   * A note that only explains the line it stands under leaves it out: it is read, not announced.
+   */
+  said?: boolean;
 }
 
 /** A note on a sheet of settings: the second ink, under the line it is about, at a reading measure. */
-export function SettingNote({ children, warn, busy }: SettingNoteProps) {
+export function SettingNote({ children, warn, busy, said }: SettingNoteProps) {
   const parts = typeof children === "string" ? [children] : children;
   return (
     <p
       className="oh-text oh-settingnote"
       data-warn={warn ? "" : undefined}
-      role={warn || busy ? "status" : undefined}
-      aria-busy={busy ? true : undefined}
+      /* Said when it appears. It never calls itself busy: that would ask a screen reader to wait with it. */
+      role={warn || busy || said ? "status" : undefined}
     >
       {warn ? <Icon name="warn" size={18} /> : null}
       <span>

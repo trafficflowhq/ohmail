@@ -242,17 +242,77 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
     }
   }, 60_000);
 
-  it("a row's swipe travels with the finger", async () => {
+  it("a head's line of segments wider than its list scrolls inside the head: the pressed one in view, a fade at each end that hides more", async () => {
+    const page = await mount("piles", zoom);
+    try {
+      const read = () =>
+        page.evaluate(() => {
+          const head = document.querySelector("header")!;
+          const group = document.querySelector('[role="group"]')!;
+          const line = group.parentElement!;
+          const [box, on] = [line.getBoundingClientRect(), group.querySelector('[aria-pressed="true"]')!];
+          const item = on.getBoundingClientRect();
+          return {
+            /* The head is as wide as its list, whatever its line holds, and the window does not scroll. */
+            head: Math.round(
+              head.getBoundingClientRect().width /
+                (parseFloat(getComputedStyle(document.documentElement).zoom) || 1),
+            ),
+            page: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            wider: line.scrollWidth > line.clientWidth + 1,
+            at: Math.round(line.scrollLeft),
+            end: Math.round(line.scrollWidth - line.clientWidth),
+            seen: item.left >= box.left - 0.5 && item.right <= box.right + 0.5,
+            pressed: on.textContent,
+            fade: getComputedStyle(line).maskImage,
+            /* No segment is cut to fit: each keeps its own words whole. */
+            whole: [...group.querySelectorAll("button")].every((b) => b.scrollWidth <= b.clientWidth + 1),
+          };
+        });
+      const first = await read();
+      expect([first.head, first.page, first.wider, first.whole]).toEqual([300, false, true, true]);
+      /* It starts with the pressed segment in view, so both ends hide more and both fade. */
+      expect([first.pressed, first.seen, first.at > 0, first.at < first.end]).toEqual([
+        "2022",
+        true,
+        true,
+        true,
+      ]);
+      /** Which ends fade, the near one then the far one: read from the mask the line is drawn through. */
+      const fades = (fade: string): boolean[] | null => {
+        const stops =
+          /^linear-gradient\(to right, rgba\(0, 0, 0, 0\) 0px, rgba?\([^)]+\) (\d+)px, rgba?\([^)]+\) (.+), rgba\(0, 0, 0, 0\) 100%\)$/.exec(
+            fade,
+          );
+        return stops ? [stops[1] !== "0", stops[2]!.includes("32px")] : null;
+      };
+      expect(fades(first.fade)).toEqual([true, true]);
+      /* At its start only the far end fades; at its end only the near one. */
+      const fadeAt = async (left: number) => {
+        await page.evaluate((to) => {
+          const line = document.querySelector('[role="group"]')!.parentElement!;
+          line.scrollLeft = to;
+          line.dispatchEvent(new Event("scroll"));
+        }, left);
+        return fades((await read()).fade);
+      };
+      expect(await fadeAt(0)).toEqual([false, true]);
+      expect(await fadeAt(first.end)).toEqual([true, false]);
+      /* A press on another segment takes it: the line is a line of the same segments. */
+      await page.getByRole("button", { name: "2020" }).click();
+      expect((await read()).pressed).toBe("2020");
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("a row pulled by the list's layer stands as far as it is pulled, in the page's own px", async () => {
     const page = await mount("swipe", zoom, { phone: true });
     try {
-      const before = await rectOf(page, ".oh-row");
-      const from: [number, number] = [before.left + 120, before.top + before.height / 2];
-      /* 60 of the window's px: short of the point where the verb fires, at either size. */
-      const lift = await finger(page, along(from, [60, 0]));
-      await frames(page);
+      const rest = await rectOf(page, ".oh-row-slot");
       const pulled = await rectOf(page, ".oh-row");
-      await lift();
-      near(pulled.left - before.left, 60);
+      /* 60 of the page's px, short of the point where the verb fires: 60 times the Text size in the window's. */
+      near(pulled.left - rest.left, 60 * zoom);
     } finally {
       await page.close();
     }
@@ -785,6 +845,162 @@ describe("the look tiles under the keys and a finger", () => {
             await page.close();
           }
         }
+    },
+    60_000,
+  );
+});
+
+describe("words a part measures for itself, in German at the largest Text size", () => {
+  it.each([
+    ["paper", 1],
+    ["paper", 1.5],
+    ["ohmarchy", 1.5],
+  ] as const)(
+    "in %s on a phone at Text size %s: the draft control draws its fewer words where the whole would be cut, whole and inside the foot, and keeps its whole name",
+    async (face, zoom) => {
+      const page = await mount("draftFoot", zoom, { face, phone: true });
+      try {
+        await frames(page);
+        const control = page.getByRole("button", { name: "Aus deinem Text entwerfen", exact: true });
+        expect(await control.count()).toBe(1);
+        const at = await control.evaluate((button) => {
+          const foot = button.closest('[role="toolbar"]')!.getBoundingClientRect();
+          const box = button.getBoundingClientRect();
+          const drawn = [...button.querySelectorAll("span")].filter(
+            (word) => word.getClientRects().length > 0,
+          );
+          return {
+            words: drawn.map((word) => word.textContent),
+            cut: drawn.map((word) => word.scrollWidth - word.clientWidth),
+            past: Math.max(box.right - foot.right, foot.left - box.left),
+          };
+        });
+        /* One of the two is drawn, never both, and what is drawn is whole. */
+        expect(at.words).toHaveLength(1);
+        expect(at.cut[0], `"${at.words[0]}" past its own box`).toBeLessThanOrEqual(0);
+        expect(at.past, "the control past the foot's edge").toBeLessThanOrEqual(0.5);
+        if (zoom === 1.5) expect(at.words).toEqual(["Aus Text entwerfen"]);
+      } finally {
+        await page.close();
+      }
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", 1],
+    ["ohmarchy", 1],
+    ["paper", 1.5],
+    ["ohmarchy", 1.5],
+  ] as const)(
+    "in %s at Text size %s: a list line's quiet press wider than the line takes a second line inside the list, its words inside it with air over and under them; one that fits is the small button on one line",
+    async (face, zoom) => {
+      const page = await mount("lineFold", zoom, { face });
+      try {
+        await frames(page);
+        const got = await page.evaluate(() =>
+          [...document.querySelectorAll("#column p")].map((line) => {
+            const box = line.getBoundingClientRect();
+            const act = line.querySelector("button")!;
+            const [a, word] = [act.getBoundingClientRect(), act.querySelector("span")!];
+            const w = word.getBoundingClientRect();
+            const letters = document.createRange();
+            letters.selectNodeContents(word);
+            const probe = document.createElement("i");
+            probe.style.cssText = "display:block;height:var(--h-s)";
+            line.append(probe);
+            const small = probe.getBoundingClientRect().height;
+            probe.remove();
+            return {
+              actInside: a.left >= box.left - 0.5 && a.right <= box.right + 0.5,
+              wordInsideItsPress: w.left >= a.left - 0.5 && w.right <= a.right + 0.5,
+              wordHasAir: w.top - a.top >= 2 && a.bottom - w.bottom >= 2,
+              lines: new Set([...letters.getClientRects()].map((row) => Math.round(row.top))).size,
+              overASmallButton: Math.round((a.height - small) * 10) / 10,
+              sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            };
+          }),
+        );
+        const [long, short] = got;
+        expect({ ...long, lines: Math.min(long!.lines, 2), overASmallButton: 0 }).toEqual({
+          actInside: true,
+          wordInsideItsPress: true,
+          wordHasAir: true,
+          lines: 2,
+          overASmallButton: 0,
+          sideways: 0,
+        });
+        expect(long!.overASmallButton).toBeGreaterThan(0);
+        /* One that fits is exactly the small button it was. */
+        expect(short).toEqual({ ...long, lines: 1, overASmallButton: 0 });
+      } finally {
+        await page.close();
+      }
+    },
+    60_000,
+  );
+
+  it("in paper at Text size 1: a list line's quiet press folds when its column narrows and stands on one line again when it widens, with nothing drawn again", async () => {
+    const page = await mount("lineFold", 1, { face: "paper" });
+    try {
+      await frames(page);
+      const folds = () =>
+        page.evaluate(() =>
+          [...document.querySelectorAll("#column p > button")].map((b) => b.hasAttribute("data-fold")),
+        );
+      expect(await folds()).toEqual([true, false]);
+      await page.evaluate(() => void (document.getElementById("column")!.style.width = "1200px"));
+      await frames(page);
+      expect(await folds()).toEqual([false, false]);
+      await page.evaluate(() => void (document.getElementById("column")!.style.width = "250px"));
+      await frames(page);
+      expect(await folds()).toEqual([true, false]);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it.each([
+    ["paper", 1],
+    ["ohmarchy", 1],
+    ["paper", 1.5],
+  ] as const)(
+    "in %s at Text size %s: a note that is to stay in the reading panel, longer than its column, takes a second line inside the panel; the panel stays inside its column and keeps its verb",
+    async (face, zoom) => {
+      const page = await mount("panelNote", zoom, { face });
+      try {
+        await frames(page);
+        const at = await page.evaluate(() => {
+          const column = document.getElementById("column")!.getBoundingClientRect();
+          const bar = document.querySelector('[role="toolbar"]')!;
+          const box = bar.getBoundingClientRect();
+          const note = bar.querySelector("span")!;
+          const n = note.getBoundingClientRect();
+          const lineHigh =
+            parseFloat(getComputedStyle(note).lineHeight) * (box.width / (bar as HTMLElement).offsetWidth);
+          return {
+            barPast: Math.max(box.right - column.right, column.left - box.left),
+            notePast: Math.max(
+              n.right - box.right,
+              box.left - n.left,
+              n.bottom - box.bottom,
+              box.top - n.top,
+            ),
+            noteCut: note.scrollWidth - note.clientWidth,
+            lines: Math.round(n.height / lineHigh),
+            words: note.textContent,
+            verb: bar.querySelector("button")!.getClientRects().length > 0,
+          };
+        });
+        expect(at.words).toBe("Dieses Postfach wird von nichts organisiert");
+        expect(at.barPast, "the panel past its column").toBeLessThanOrEqual(0.5);
+        expect(at.notePast, "the note past the panel").toBeLessThanOrEqual(0.5);
+        expect(at.noteCut, "the note's words past its own box").toBeLessThanOrEqual(0);
+        expect(at.lines).toBeGreaterThan(1);
+        expect(at.verb).toBe(true);
+      } finally {
+        await page.close();
+      }
     },
     60_000,
   );

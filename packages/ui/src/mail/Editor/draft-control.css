@@ -70,6 +70,15 @@
     display: none;
   }
 
+  /* The control has measured that its whole word would be cut: it draws the fewer words in its place. */
+  .oh-draft-control[data-cut] > .oh-draft-word {
+    display: none;
+  }
+
+  .oh-draft-control[data-cut] > .oh-draft-short {
+    display: block;
+  }
+
   /* Quiet: its words without the capsule, and no price. The pointer still finds a button there. */
   .oh-draft[data-idle] > .oh-draft-control {
     background: transparent;

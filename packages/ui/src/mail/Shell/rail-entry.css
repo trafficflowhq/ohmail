@@ -87,6 +87,22 @@
     text-overflow: ellipsis;
   }
 
+  /* Which of two folders of one name: small after the name, in the second ink; on the place you are in, the
+     entry's own ink, a step lighter. */
+  .oh-railentry-hint {
+    --oh-railentry-hint-on: 0.74;
+
+    margin-left: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+  }
+
+  .oh-railentry[aria-current="page"] .oh-railentry-hint {
+    color: inherit;
+    opacity: var(--oh-railentry-hint-on);
+  }
+
   .oh-railentry-count {
     min-width: 1ch;
     color: var(--ink2);

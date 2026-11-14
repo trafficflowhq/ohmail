@@ -1,4 +1,4 @@
-import { useId, type Ref } from "react";
+import { useId, type KeyboardEvent, type Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./field.css";
 import { useBox } from "./secret.js";
@@ -28,6 +28,18 @@ interface FieldShared {
   maxLength?: number;
   /** The ids of what else describes it, said after its own hint or refusal. */
   "aria-describedby"?: string;
+  /**
+   * The keys have left it, by Tab, a press elsewhere or the window: where a form looks at what was typed once
+   * the person is done with the field. It is told apart from what is typed, and nothing is handed: the form
+   * holds the words, and a password is taken through `ref`.
+   */
+  onLeave?: () => void;
+  /**
+   * Enter was pressed in a field of one line, and not to end an input method's composition. The key is not
+   * cancelled: a form around the field is still sent by it. A field of several lines never says it: Enter there
+   * is a new line.
+   */
+  onEnter?: () => void;
   id?: string;
   /** The element: a form puts the keys on it, and takes and empties a password through it. */
   ref?: Ref<HTMLInputElement | HTMLTextAreaElement>;
@@ -79,6 +91,8 @@ export function Field({
   inputMode,
   maxLength,
   "aria-describedby": describedBy,
+  onLeave,
+  onEnter,
   id,
   ref,
 }: FieldProps) {
@@ -101,7 +115,11 @@ export function Field({
     readOnly: secret ? undefined : !onChange,
     disabled,
     spellCheck: false,
+    onBlur: onLeave,
   } as const;
+  const enter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) onEnter?.();
+  };
   return (
     <div
       className="oh-field"
@@ -133,6 +151,7 @@ export function Field({
           type={type}
           autoComplete={autoComplete}
           onChange={(e) => onChange?.(e.currentTarget.value)}
+          onKeyDown={onEnter ? enter : undefined}
         />
       )}
       {refusal ? (

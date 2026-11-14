@@ -377,10 +377,14 @@ describe("Composer", () => {
   });
 
   it("draws the signature as words alone while the letter is held by an earlier send, as while it goes", () => {
-    const signature = { label: "Signature", text: "Mila Brunner" };
+    const signature = { label: "Signature", text: "Mila Brunner", remove: { label: "Remove signature" } };
     const { rerender } = render(<Composer {...frame({ signature: { ...signature, locked: true } })} />);
     expect(screen.queryByRole("textbox", { name: "Signature" })).toBeNull();
     expect(screen.getByText("Mila Brunner")).toBeTruthy();
+    /* A letter on its way keeps its signature: the way to take it off is not offered, held or going. */
+    expect(screen.queryByRole("button", { name: "Remove signature" })).toBeNull();
+    rerender(<Composer {...frame({ signature, going: true })} />);
+    expect(screen.queryByRole("button", { name: "Remove signature" })).toBeNull();
     rerender(<Composer {...frame({ signature })} />);
     expect(screen.getByRole("textbox", { name: "Signature" }).textContent).toBe("Mila Brunner");
   });
@@ -426,15 +430,92 @@ describe("Composer", () => {
     }
   });
 
+  it("says a leave of the signature's field apart from what is typed in it, with the words it then holds", () => {
+    const [onSigned, onLeave] = [vi.fn(), vi.fn()];
+    render(
+      <Composer
+        {...frame({ signature: { label: "Signature", text: "Mila Brunner", onChange: onSigned, onLeave } })}
+      />,
+    );
+    const signed = screen.getByRole("textbox", { name: "Signature" });
+    signed.textContent = "";
+    fireEvent.input(signed);
+    /* Typed down to nothing: handed over as typed, and no leave is said while the field still has the keys. */
+    expect(onSigned.mock.calls).toEqual([[""]]);
+    expect(onLeave).not.toHaveBeenCalled();
+    fireEvent.blur(signed);
+    expect(onLeave.mock.calls).toEqual([[""]]);
+    /* The leave still hands the words over, as it always did. */
+    expect(onSigned.mock.calls).toEqual([[""], [""]]);
+  });
+
+  it("puts the keys in the field that Edit as text opens: the press that took the button away does not drop them", () => {
+    const signature = { label: "Signature", text: "Mila Brunner\nLichtgrat" };
+    const formatted = <p>Mila Brunner</p>;
+    const Held = () => {
+      const [text, setText] = useState(false);
+      return (
+        <Composer
+          {...frame({
+            signature: text
+              ? signature
+              : { ...signature, formatted, asText: { word: "Edit as text", onPress: () => setText(true) } },
+          })}
+        />
+      );
+    };
+    render(<Held />);
+    const way = screen.getByRole("button", { name: "Edit as text" });
+    way.focus();
+    fireEvent.click(way);
+    const field = screen.getByRole("textbox", { name: "Signature" });
+    expect(document.activeElement).toBe(field);
+    /* The caret stands after the words, where a person goes on writing. */
+    const caret = document.getSelection()!;
+    expect(caret.isCollapsed).toBe(true);
+    expect(field.contains(caret.anchorNode)).toBe(true);
+    expect(caret.anchorOffset).toBeGreaterThan(0);
+  });
+
+  it("leaves the keys where they are when a field stands from the start, or comes without that press", () => {
+    const signature = { label: "Signature", text: "Mila Brunner" };
+    const { rerender } = render(<Composer {...frame({ signature })} />);
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Signature" }));
+    rerender(<Composer {...frame({ signature: { ...signature, formatted: <p>Mila Brunner</p> } })} />);
+    rerender(<Composer {...frame({ signature })} />);
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Signature" }));
+  });
+
+  it("forgets the press when the app does not answer it with the field: a field that comes later takes no keys", () => {
+    const signature = { label: "Signature", text: "Mila Brunner" };
+    const formatted = <p>Mila Brunner</p>;
+    /* The app asks before it gives the formatting up: the press alone changes nothing. */
+    const asText = { word: "Edit as text", onPress: vi.fn() };
+    const { rerender } = render(<Composer {...frame({ signature: { ...signature, formatted, asText } })} />);
+    const way = screen.getByRole("button", { name: "Edit as text" });
+    way.focus();
+    fireEvent.click(way);
+    expect(asText.onPress).toHaveBeenCalledTimes(1);
+    /* The person says no: the formatted signature stands as it stood. */
+    rerender(<Composer {...frame({ signature: { ...signature, formatted, asText } })} />);
+    expect(document.activeElement).toBe(way);
+    /* Later the plain field arrives by another way than that press: the keys stay where they are. */
+    rerender(<Composer {...frame({ signature })} />);
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "Signature" }));
+  });
+
   it("draws the words that stand for a text not yet written, unsaid, and only while they are handed", () => {
     const { rerender } = render(
       <Composer {...frame({ children: <div />, placeholder: "Write your message" })} />,
     );
-    const words = screen.getByText("Write your message");
-    /* The editor names its own placeholder to a screen reader; the drawn words are not said a second time. */
-    expect(words.closest('[aria-hidden="true"]')).not.toBeNull();
-    rerender(<Composer {...frame({ children: "Buongiorno" })} />);
+    /* Drawn from the words handed, and written nowhere: no reader of the page's text finds them. */
+    const words = document.querySelector('[data-words="Write your message"]');
+    expect(words).not.toBeNull();
     expect(screen.queryByText("Write your message")).toBeNull();
+    /* The editor names its own placeholder to a screen reader; the drawn words are not said a second time. */
+    expect(words!.closest('[aria-hidden="true"]')).not.toBeNull();
+    rerender(<Composer {...frame({ children: "Buongiorno" })} />);
+    expect(document.querySelector("[data-words]")).toBeNull();
   });
 
   it("hands a pressed mark its own element, so that what the mark opens can come out of it", () => {
@@ -613,6 +694,37 @@ describe("DraftControl", () => {
     expect(screen.getByRole("button", { name: "Draft from your text" })).toBeTruthy();
   });
 
+  it("draws its fewer words wherever the whole would be cut, whatever the foot's width, and the whole again when it fits", () => {
+    /* jsdom lays nothing out: the whole word needs 180 px, and the room is what the case says. */
+    let room = 240;
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(180);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => room);
+    const de = {
+      label: "Aus deinem Text entwerfen",
+      short: "Aus Text entwerfen",
+      title: "Aus deinem Text entwerfen",
+    };
+    const { rerender } = render(<DraftControl {...de} />);
+    const control = screen.getByRole("button", { name: "Aus deinem Text entwerfen" });
+    /* The control says on itself that its whole word would be cut: its sheet then draws the fewer words. */
+    const cut = () => control.dataset.cut !== undefined;
+    expect(cut()).toBe(false);
+    room = 120;
+    rerender(<DraftControl {...de} />);
+    expect(cut()).toBe(true);
+    /* Both stand in it, and its name is the whole word whichever is drawn. */
+    expect(within(control).getByText(de.short)).toBeTruthy();
+    expect(control.getAttribute("aria-label")).toBe(de.label);
+    room = 240;
+    rerender(<DraftControl {...de} />);
+    expect(cut()).toBe(false);
+    /* With no fewer words handed nothing is taken away: the one word stands, cut where it must be. */
+    room = 120;
+    cleanup();
+    render(<DraftControl label="Aus deinem Text entwerfen" title="Aus deinem Text entwerfen" />);
+    expect(screen.getByRole("button").dataset.cut).toBeUndefined();
+  });
+
   it("stands quiet with nothing to draft from, without a price, and still takes the press", () => {
     const onPress = vi.fn();
     render(
@@ -632,13 +744,24 @@ describe("DraftControl", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
-  it("rests while it drafts", () => {
+  it("rests while it drafts: it takes no press, says so, and keeps the keys of the person who pressed it", () => {
     const onPress = vi.fn();
-    render(<DraftControl busy label="Drafting" title="Drafting" onPress={onPress} />);
-    const control = screen.getByRole("button", { name: "Drafting" }) as HTMLButtonElement;
-    expect(control.getAttribute("aria-busy")).toBe("true");
+    const { rerender } = render(<DraftControl label="Draft reply" title="Draft reply" onPress={onPress} />);
+    const control = screen.getByRole("button", { name: "Draft reply" }) as HTMLButtonElement;
+    control.focus();
     fireEvent.click(control);
-    expect(onPress).not.toHaveBeenCalled();
+    expect(onPress).toHaveBeenCalledTimes(1);
+    rerender(<DraftControl busy label="Drafting" title="Drafting" onPress={onPress} />);
+    /* The same control stands, with the keys still on it: a control the browser itself turns off can drop them. */
+    expect(screen.getByRole("button", { name: "Drafting" })).toBe(control);
+    expect(document.activeElement).toBe(control);
+    expect([
+      control.getAttribute("aria-busy"),
+      control.getAttribute("aria-disabled"),
+      control.disabled,
+    ]).toEqual(["true", "true", false]);
+    fireEvent.click(control);
+    expect(onPress).toHaveBeenCalledTimes(1);
   });
 });
 
