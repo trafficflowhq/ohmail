@@ -17,11 +17,13 @@ export interface Size {
 }
 
 /* The room kept to the window's edge, and to the anchor or the point. Not tokens yet. */
-const EDGE = 8;
+/** The room every card that stands by itself keeps to the edge of what holds it. */
+export const EDGE = 8;
 const GAP = { anchor: 8, point: 2 };
 const FOOT = 12;
 
-const between = (low: number, high: number, n: number) => Math.max(low, Math.min(high, n));
+/** `n`, held between `low` and `high`; where the two cross, `low` wins. */
+export const between = (low: number, high: number, n: number) => Math.max(low, Math.min(high, n));
 
 /**
  * The menu's corner in the window. It opens downwards at the anchor's left edge; upwards when it

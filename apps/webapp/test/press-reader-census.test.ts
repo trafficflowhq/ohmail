@@ -39,7 +39,7 @@ const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
 describe("the web's press readers", () => {
   it("every site is classified, in order, and every says-done site carries a superseded arm", () => {
     const found: Record<string, string[]> = {};
-    for (const f of [...walk(join(ROOT, "app")), ...walk(join(ROOT, "../../packages/app-logic/src"))]) {
+    for (const f of [...walk(join(ROOT, "app")), ...walk(join(ROOT, "../../packages/app-logic/src")), ...walk(join(ROOT, "../../packages/letter-body/src"))]) {
       const sites = pressReaderSites(readFileSync(f, "utf8"));
       if (sites.length === 0) continue;
       const rel = relative(ROOT, f);

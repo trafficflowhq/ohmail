@@ -54,7 +54,10 @@ const refused = (reason: ProviderRefusal | WriteRefusal, wait: number | null = n
   reason,
   retryAfterMs: wait,
 });
+/** Done, as found: a write's own request was not what made it so (a refused precondition and a compare, an object already so). */
 const answered = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items });
+/** Done by the write's own request: what waits behind it may be re-based onto `items`. */
+const wrote = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items, written: true });
 
 function segment(id: string): string | null {
   if (id === "" || id === "." || id === ".." || id.length > MAX_PROVIDER_ID_CHARS) return null;
@@ -249,10 +252,12 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       if ("ok" in res) return res;
       if (res.status !== 201 && res.status !== 200) return refusalOf(res, "not_found");
       const held = itemOf(res);
-      return held === null ? refused("unreadable") : answered(held.item === null ? [] : [held.item]);
+      return held === null ? refused("unreadable") : wrote(held.item === null ? [] : [held.item]);
     },
 
     async change(c, _cal, target, change, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const id = segment(target.id);
       if (id === null) return refused("not_found");
       const body = bodyOf(change);
@@ -266,10 +271,12 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       if (res.status === 412) return afterStale(signedIn.token, id, target.id, change, signal);
       if (res.status !== 200) return refusalOf(res, "event_gone");
       const held = itemOf(res);
-      return held === null ? refused("unreadable") : answered(held.item === null ? [] : [held.item]);
+      return held === null ? refused("unreadable") : wrote(held.item === null ? [] : [held.item]);
     },
 
     async remove(c, _cal, target, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const id = segment(target.id);
       if (id === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
@@ -278,13 +285,15 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       if ("ok" in pre) return pre.reason === "event_gone" ? answered([{ kind: "gone", id: target.id }]) : pre;
       const res = await send(signedIn.token, "DELETE", eventUrl(id), null, signal, pre);
       if ("ok" in res) return res;
-      if (res.status === 204 || res.status === 200 || res.status === 404 || res.status === 410)
-        return answered([{ kind: "gone", id: target.id }]);
+      if (res.status === 204 || res.status === 200) return wrote([{ kind: "gone", id: target.id }]);
+      if (res.status === 404 || res.status === 410) return answered([{ kind: "gone", id: target.id }]);
       if (res.status === 412) return afterStale(signedIn.token, id, target.id, null, signal);
       return refusalOf(res, "event_gone");
     },
 
     async answer(c, _cal, target, req: { readonly as: string; readonly reply: WriteReply }, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const id = segment(target.id);
       if (id === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
@@ -313,10 +322,21 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       );
       if ("ok" in res) return res;
       if (res.status !== 202 && res.status !== 200) return refusalOf(res, "event_gone");
+      // Read again after the answer: a copy Graph's answer call names no version of, so nothing waiting behind it is re-based onto it.
       const after = await read(signedIn.token, id, signal);
       if ("ok" in after || after.status !== 200) return answered([]);
       const shown = itemOf(after);
       return answered(shown === null || shown.item === null ? [] : [shown.item]);
+    },
+
+    // A series ended before one of its days is not written by this writer yet.
+    async endSeries() {
+      return refused("repeat_unsupported");
+    },
+
+    // Nor the days of a series from one of them on, as a series of their own.
+    async continueSeries() {
+      return refused("repeat_unsupported");
     },
 
     moveEvent: null,

@@ -1,15 +1,20 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { useState, type ReactNode, type Ref } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Avatar,
   avatarHue,
   Blank,
   Button,
+  ChoiceTiles,
   Count,
   EndDot,
   Faces,
   Field,
+  FieldPair,
+  FieldStack,
   FindField,
   HintLine,
   InfoMark,
@@ -19,11 +24,22 @@ import {
   Seg,
   Sentence,
   Slot,
+  SuggestionList,
   Switch,
   Tag,
+  useSuggestions,
 } from "../../src/base/index.js";
 
 afterEach(cleanup);
+
+/** What a form may hand a password field of either kind. */
+interface SecretProps {
+  value?: string;
+  onChange?: (typed: string) => void;
+  ref?: Ref<HTMLInputElement>;
+  autoComplete?: string;
+  name?: string;
+}
 
 describe("Button", () => {
   it("is a button named by its word, and runs on a press", () => {
@@ -112,6 +128,23 @@ describe("Button", () => {
         Connect
       </Button>,
     );
+  });
+
+  it("a way to another site opens beside the app and tells that site nothing of where it came from", () => {
+    render(
+      <>
+        <Button kind="quiet" href="https://help.mailprovider.example/app-passwords" outside icon="go">
+          App passwords
+        </Button>
+        <Button kind="quiet" href="/settings/mailboxes">
+          Mailboxes
+        </Button>
+      </>,
+    );
+    const out = screen.getByRole("link", { name: "App passwords" }) as HTMLAnchorElement;
+    expect([out.target, out.rel.split(" ").sort()]).toEqual(["_blank", ["noopener", "noreferrer"]]);
+    const here = screen.getByRole("link", { name: "Mailboxes" }) as HTMLAnchorElement;
+    expect([here.target, here.hasAttribute("rel")]).toEqual(["", false]);
   });
 
   it("carries its key beside its word", () => {
@@ -210,6 +243,27 @@ describe("Sentence and Blank", () => {
     );
     expect(screen.getByRole("heading", { level: 2, name: "Add an account" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Move to Trash" })).toBeNull();
+  });
+
+  it.each([
+    ["its closing full stop is the dot, never both", "Connect your mailbox.", "Connect your mailbox", 1],
+    ["ending on a word it gets the dot", "Welcome", "Welcome", 1],
+    [
+      "ending on another mark it is said as it stands, with no dot",
+      "Still reading your mail…",
+      "Still reading your mail…",
+      0,
+    ],
+    ["a question keeps its mark and gets no dot", "Whose mail is this?", "Whose mail is this?", 0],
+  ])("a sentence handed whole, as a catalogue writes it: %s", (_, written, read, dots) => {
+    render(
+      <Sentence size="xl" level={1} end="hot">
+        {written}
+      </Sentence>,
+    );
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading.textContent).toBe(read);
+    expect(heading.querySelectorAll("[aria-hidden='true']")).toHaveLength(dots);
   });
 
   it("a blank says what it wants, hands on what is typed, and goes on with Enter and back with Esc", () => {
@@ -348,7 +402,199 @@ describe("Field", () => {
   });
 });
 
+/**
+ * A PASSWORD IS IN NO MARKUP. An input that is handed its value by React has it written into the element's `value`
+ * attribute on every key, where a snapshot of the page, a report tool or any script that reads `outerHTML` finds it.
+ * The kit never hands React a password, whatever a form hands the kit: what is typed stands in the field's own box
+ * and in nothing the page's markup holds.
+ *
+ * PLANT (the controlled field): in `Field.tsx` or `Blank.tsx`, hand `value` to the `<input>` for a password as for
+ * any other kind. The cases "is in no markup while it is typed, nor after the press" and "drawn on a server" are red.
+ *
+ * What was typed is looked for and never printed: each reading is a yes or a no.
+ */
+describe.each<[string, (p: SecretProps) => ReactNode]>([
+  ["Field", (p) => <Field label="Password" type="password" {...p} />],
+  ["Blank", (p) => <Blank label="Password" placeholder="type it" type="password" {...p} />],
+])("a password in a %s", (_, secret) => {
+  const TYPED = "zq-typed-in-the-case-7c1f";
+  const inMarkup = () => document.documentElement.outerHTML.includes(TYPED);
+  const box = () => screen.getByLabelText("Password") as HTMLInputElement;
+  const type = (value: string) => fireEvent.change(box(), { target: { value } });
+
+  /** A form that keeps what is typed, as a form that validates on every key does, and empties it at its press. */
+  function Keeping({ taken, start = "" }: { taken?: (typed: string) => void; start?: string }) {
+    const [held, setHeld] = useState(start);
+    return (
+      <form>
+        {secret({ value: held, onChange: setHeld })}
+        <Button
+          onPress={() => {
+            taken?.(held);
+            setHeld("");
+          }}
+        >
+          Sign in
+        </Button>
+      </form>
+    );
+  }
+
+  it("is in no markup while it is typed, nor after the press, in a form that keeps what is typed", () => {
+    const taken = vi.fn();
+    render(<Keeping taken={taken} />);
+    expect(inMarkup()).toBe(false);
+    type(TYPED);
+    /* The field holds it, and the form was handed it: only the markup has none of it. */
+    expect(box().value === TYPED).toBe(true);
+    expect(box().hasAttribute("value")).toBe(false);
+    expect(inMarkup()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(taken.mock.calls.length === 1 && taken.mock.calls[0]![0] === TYPED).toBe(true);
+    expect(inMarkup()).toBe(false);
+    /* The form emptied what it holds: the field's own box follows it. */
+    expect(box().value).toBe("");
+  });
+
+  it("is the field's alone in a form that hands no value: taken and emptied through the field itself", () => {
+    const at: { current: HTMLInputElement | null } = { current: null };
+    const filled = vi.fn();
+    render(secret({ ref: at, onChange: (typed) => filled(typed !== "") }));
+    expect(at.current).toBe(box());
+    type(TYPED);
+    expect(filled.mock.calls).toEqual([[true]]);
+    expect(at.current!.value === TYPED).toBe(true);
+    expect(inMarkup()).toBe(false);
+    at.current!.value = "";
+    expect(box().value).toBe("");
+    expect(inMarkup()).toBe(false);
+  });
+
+  it("takes keys with nothing handed to it at all: it is read only for nobody", () => {
+    render(secret({}));
+    expect(box().readOnly).toBe(false);
+    type(TYPED);
+    expect(box().value === TYPED).toBe(true);
+    expect(inMarkup()).toBe(false);
+  });
+
+  it("drawn again over what a form still holds, it shows that and still writes none of it", () => {
+    const first = render(<Keeping start={TYPED} />);
+    expect(box().value === TYPED).toBe(true);
+    expect(inMarkup()).toBe(false);
+    first.unmount();
+    render(<Keeping start={TYPED} />);
+    expect(box().value === TYPED).toBe(true);
+    expect(box().hasAttribute("value")).toBe(false);
+    expect(inMarkup()).toBe(false);
+  });
+
+  it("drawn on a server with a value in hand, its markup holds none", () => {
+    expect(renderToStaticMarkup(secret({ value: TYPED, onChange: () => {} })).includes(TYPED)).toBe(false);
+  });
+
+  it("is filled by the browser as the form says, off unless said, and is sent by no name unless handed one", () => {
+    const plain = render(secret({}));
+    expect([box().getAttribute("autocomplete"), box().hasAttribute("name"), box().type]).toEqual([
+      "off",
+      false,
+      "password",
+    ]);
+    plain.unmount();
+    render(secret({ autoComplete: "current-password", name: "password" }));
+    expect([box().getAttribute("autocomplete"), box().name]).toEqual(["current-password", "password"]);
+  });
+});
+
+describe("FieldStack", () => {
+  it("holds a form's fields in their order and adds nothing a screen reader hears: each field keeps its own label", () => {
+    render(
+      <FieldStack>
+        <FieldPair>
+          <Field label="IMAP host" value="imap.lichtgrat.example" onChange={() => {}} />
+          <Field label="Port" value="993" inputMode="numeric" onChange={() => {}} />
+        </FieldPair>
+        <Field label="Username" value="" onChange={() => {}} />
+        <Switch label="Implicit TLS" on labelled />
+      </FieldStack>,
+    );
+    expect(
+      screen.getAllByRole("textbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent),
+    ).toEqual(["IMAP host", "Port", "Username"]);
+    expect(screen.getByRole("switch", { name: "Implicit TLS" })).toBeTruthy();
+    expect(screen.queryByRole("group")).toBeNull();
+  });
+});
+
+describe("ChoiceTiles", () => {
+  const options = [
+    { value: "gmail", label: "Gmail" },
+    { value: "icloud", label: "iCloud", dim: true },
+    { value: "other", label: "Other (IMAP)" },
+  ] as const;
+
+  it("is a named group of presses: the taken one says so, the one Enter takes prints its key, a press takes any", () => {
+    const onChange = vi.fn();
+    render(
+      <ChoiceTiles
+        label="Mail providers"
+        options={options}
+        value="gmail"
+        enter={{ value: "gmail", keyHint: "↵" }}
+        onChange={onChange}
+      />,
+    );
+    const group = screen.getByRole("group", { name: "Mail providers" });
+    const tiles = within(group).getAllByRole("button");
+    expect(tiles.map((tile) => tile.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    /* The key is printed on the tile as on every button: where a face shows it, it is read with the tile's word. */
+    expect(within(group).getByRole("button", { name: /^Gmail/ })).toBe(tiles[0]);
+    expect(tiles.map((tile) => tile.querySelector("kbd")?.textContent ?? null)).toEqual(["↵", null, null]);
+    /* One that does not fit what was typed steps back, and can still be pressed. */
+    fireEvent.click(within(group).getByRole("button", { name: "iCloud" }));
+    expect(onChange.mock.calls).toEqual([["icloud"]]);
+  });
+
+  it("with none taken, none says it is", () => {
+    render(<ChoiceTiles label="Mail providers" options={options} value={null} />);
+    expect(screen.getAllByRole("button").map((tile) => tile.getAttribute("aria-pressed"))).toEqual([
+      "false",
+      "false",
+      "false",
+    ]);
+  });
+});
+
 describe("FindField", () => {
+  it("offers while it is typed in where it is handed a list's field: a combobox by its name, the caret kept", () => {
+    function Find() {
+      const [text, setText] = useState("");
+      const offers = useSuggestions({
+        id: "find-list",
+        text,
+        onText: setText,
+        own: (typed) => [{ rows: typed ? [{ id: "seen", primary: "Seen", secondary: "Winterthur" }] : [] }],
+        free: true,
+        onTake: (row) => setText(row.primary),
+      });
+      return (
+        <>
+          <FindField label="Place" value={text} sign="place" suggests={offers.field} />
+          <SuggestionList {...offers.list} label="Place suggestions" placement="inline" />
+        </>
+      );
+    }
+    render(<Find />);
+    const field = screen.getByRole("combobox", { name: "Place" }) as HTMLInputElement;
+    expect(field.readOnly).toBe(false);
+    fireEvent.change(field, { target: { value: "se" } });
+    expect(field.value).toBe("se");
+    expect(field.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(screen.getByRole("option"));
+    expect(field.value).toBe("Seen");
+    expect(field.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("is a textbox named by its label, in no form, and hands what is typed and the keys to the app", () => {
     const [onChange, onKeyDown] = [vi.fn(), vi.fn()];
     render(

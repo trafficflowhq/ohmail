@@ -5,6 +5,13 @@ import "./notice.css";
 export interface NoticeAct {
   label: string;
   onPress: () => void;
+  /** Off: while the notice's other answer is under way. */
+  disabled?: boolean;
+  /**
+   * Under way after its own press: the answer stays where it is, off to a second press and said busy, and the keys
+   * of the person who pressed it stay on it. An answer taken away while it runs drops them onto the page.
+   */
+  busy?: boolean;
 }
 
 export interface NoticeProps {
@@ -33,7 +40,14 @@ export function Notice({ place, title, hot, line, acts }: NoticeProps) {
       {acts ? (
         <div className="oh-notice-acts">
           {acts.map((act, i) => (
-            <Button key={act.label} size="s" kind={i ? "quiet" : "ink"} onPress={act.onPress}>
+            <Button
+              key={act.label}
+              size="s"
+              kind={i ? "quiet" : "ink"}
+              onPress={act.onPress}
+              disabled={act.disabled}
+              busy={act.busy}
+            >
               {act.label}
             </Button>
           ))}

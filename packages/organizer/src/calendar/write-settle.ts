@@ -28,6 +28,8 @@ export interface ClaimedWrite {
   /** The stored event is still the one the write stood in for (a new event not yet named by the provider). */
   readonly provisional: boolean;
   readonly toCalendarId: string | null;
+  /** What its row keeps once applied, in place of its act (`appliedPayloadOf`): at most the day a series' end ended it at. */
+  readonly kept: Readonly<Record<string, string>>;
 }
 
 export interface SettleContext {
@@ -47,11 +49,14 @@ function one(rows: readonly unknown[], what: string): void {
   if (rows.length !== 1) throw new Error(`a calendar write's ${what} changed ${rows.length} rows, not one`);
 }
 
-/** The writes that wait for `head`, directly or through another: they were made on what it would write. */
-async function followersOf(tx: Tx, accountId: string, eventId: string | null, headId: string): Promise<string[]> {
-  if (eventId === null) return [];
+/**
+ * The writes that wait for `head`, directly or through another: they were made on what it would
+ * write. Of any event: the second part of a press on a day and the days after it is the new
+ * series', and waits for the first, the old series' end.
+ */
+async function followersOf(tx: Tx, accountId: string, _eventId: string | null, headId: string): Promise<string[]> {
   const open = await tx.select({ id: calWrites.id, payload: calWrites.payload }).from(calWrites)
-    .where(and(eq(calWrites.accountId, accountId), eq(calWrites.eventId, eventId), eq(calWrites.state, "pending")));
+    .where(and(eq(calWrites.accountId, accountId), eq(calWrites.state, "pending")));
   const chain = new Set([headId]);
   for (let grew = true; grew;) {
     grew = false;
@@ -71,23 +76,31 @@ const eventChange = (changes: CalendarChange[], eventId: string | null): void =>
   if (eventId !== null && !changes.some((c) => c.id === eventId)) changes.push({ kind: "calendar_event", id: eventId, op: "update" });
 };
 
-/** A row refused with its word, and the rows that waited for it refused with it, in the caller's transaction. */
-export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | "expired", changes: CalendarChange[]): Promise<void> {
+/**
+ * A row refused with its word, and the rows that waited for it refused with it, in the caller's
+ * transaction: one change for each event whose mark changed, the head's and its followers' (the
+ * second half of a press is the new series' record's).
+ */
+export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | "expired" | "earlier_refused", changes: CalendarChange[]): Promise<void> {
   one(await tx.update(calWrites).set({ state: "refused", refusal: word, nextAttemptAt: null, updatedAt: sql`now()` })
     .where(claimed(w, accountId)).returning({ id: calWrites.id }), "refusal");
   const followers = await followersOf(tx, accountId, w.eventId, w.id);
-  if (followers.length > 0) {
-    await tx.update(calWrites).set({ state: "refused", refusal: "earlier_refused", nextAttemptAt: null, updatedAt: sql`now()` })
-      .where(and(eq(calWrites.accountId, accountId), inArray(calWrites.id, followers), eq(calWrites.state, "pending")));
-  }
   eventChange(changes, w.eventId);
+  if (followers.length > 0) {
+    const refused = await tx.update(calWrites).set({ state: "refused", refusal: "earlier_refused", nextAttemptAt: null, updatedAt: sql`now()` })
+      .where(and(eq(calWrites.accountId, accountId), inArray(calWrites.id, followers), eq(calWrites.state, "pending")))
+      .returning({ eventId: calWrites.eventId });
+    for (const r of refused) eventChange(changes, r.eventId);
+  }
 }
 
 /**
- * The provider refused the write for what it is: the row is refused with its word, and so is what
- * waited for it. A version the provider moved past makes the calendar due, so its copy is read again.
+ * The provider refused the write for what it is (or the queue's own age, `expired`, where a series'
+ * end too old to send was looked at and not found its own): the row is refused with its word, and so
+ * is what waited for it. A version the provider moved past makes the calendar due, so its copy is
+ * read again.
  */
-export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: WriteWord): Promise<"gone" | void> {
+export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: WriteWord | "expired"): Promise<"gone" | void> {
   const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const changes: CalendarChange[] = [];
     await refuseInTx(tx, ctx.key.accountId, w, word, changes);
@@ -112,10 +125,21 @@ export async function settleLater(ctx: SettleContext, w: ClaimedWrite, waitMs: n
   return done;
 }
 
-/** The attempt was not the write's: it is given back, and the write is owed at once again. */
-export async function settleGivenBack(ctx: SettleContext, w: ClaimedWrite): Promise<"gone" | void> {
+/**
+ * The attempt was not the write's: it is given back, and the write is owed at once again. A word
+ * that waits for the person gives it back whole, a series' end's too: the provider answered before
+ * it acted, and nothing landed (kept, the next try would take an end another program made since
+ * for its own: the sixth recheck's finding). Only an attempt cut as the turn ended (`cut`: the
+ * worker's stop, the turn's own time), of any write, is never given back to zero: the request it was
+ * claimed for may have been carried out as the turn ended, so the write is not let go while it is
+ * owed so (the fourth recheck's finding of a day's cancel so cut), and a series' end finds its own
+ * end at the provider only with an attempt counted. One attempt is given back, never more: an
+ * earlier one that ended unheard stays counted.
+ */
+export async function settleGivenBack(ctx: SettleContext, w: ClaimedWrite, cut = false): Promise<"gone" | void> {
+  const back = cut ? sql`greatest(${calWrites.attempts} - 1, 1)` : sql`${calWrites.attempts} - 1`;
   const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
-    one(await tx.update(calWrites).set({ attempts: sql`${calWrites.attempts} - 1`, nextAttemptAt: null, updatedAt: sql`now()` })
+    one(await tx.update(calWrites).set({ attempts: back, nextAttemptAt: null, updatedAt: sql`now()` })
       .where(claimed(w, ctx.key.accountId)).returning({ id: calWrites.id }), "give-back");
   });
   return done === "gone" ? "gone" : undefined;
@@ -130,12 +154,15 @@ function versionIn(items: readonly ChangeItem[], providerId: string | null): str
 
 /**
  * The provider took the write: its answer goes into the store through the reading's planner, the
- * row is closed as applied with nothing of the act kept, the event's row is stamped in the same
- * transaction (one `now()` for both, which the door's `after` rule reads), and the writes that
- * waited on the old version take the new one.
+ * row is closed as applied with nothing of the act kept (a series' end keeps the day it ended the
+ * series at, `kept`), and the event's row is stamped in the same
+ * transaction (one `now()` for both, which the door's `after` rule reads). Only where the write's
+ * own request made it so (`written`: its 2xx, and at CalDAV its own tag) do the writes that waited
+ * on the old version take the new one: a write found done answers a copy that may be someone
+ * else's newer one, and what waited behind it keeps its version and is refused for it.
  */
 export async function settleApplied(
-  ctx: SettleContext, w: ClaimedWrite, items: readonly ChangeItem[], targetProviderId: string | null,
+  ctx: SettleContext, w: ClaimedWrite, items: readonly ChangeItem[], targetProviderId: string | null, written: boolean,
 ): Promise<{ readonly changed: number; readonly unkept: number } | "gone"> {
   const apply: ApplyContext = {
     db: ctx.db, key: ctx.key, calendar: { id: w.calendarId, providerId: w.calendarProviderId }, zones: ctx.map.zones,
@@ -167,10 +194,10 @@ export async function settleApplied(
   }
   const version = versionIn(items, named);
   const close = async (tx: Tx, changes: CalendarChange[]): Promise<void> => {
-    one(await tx.update(calWrites).set({ state: "applied", refusal: null, payload: {}, nextAttemptAt: null, updatedAt: sql`now()` })
+    one(await tx.update(calWrites).set({ state: "applied", refusal: null, payload: w.kept, nextAttemptAt: null, updatedAt: sql`now()` })
       .where(claimed(w, ctx.key.accountId)).returning({ id: calWrites.id }), "close");
     if (w.eventId === null) return;
-    if (version !== null) {
+    if (version !== null && written) {
       await tx.update(calWrites).set({ baseVersionTag: version, updatedAt: sql`now()` }).where(and(
         eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.eventId, w.eventId), eq(calWrites.state, "pending"),
         sql`${calWrites.id} <> ${w.id}`, sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,

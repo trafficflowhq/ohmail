@@ -1,0 +1,184 @@
+/* What a field offers while a person types. It wears a menu's surface; the row the keys are on and the row under
+   the pointer are one wash. Nothing in it loops: the sign of loading is one line that runs once and then stands. */
+@layer oh {
+  /* At a field it stands in a layer of its own over the window, so that nothing that holds the field cuts it. */
+  .oh-suggest-layer {
+    position: fixed;
+    inset: 0;
+    z-index: var(--oh-layer-over);
+    pointer-events: none;
+  }
+  .oh-suggest {
+    --oh-suggest-min: 232px;
+    --oh-suggest-pad: var(--s2);
+    --oh-suggest-run: 2px;
+    --oh-suggest-run-r: 1px;
+    --oh-soft: var(--soft-sheet);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: var(--oh-suggest-min);
+    max-width: var(--oh-suggest-max, 440px);
+    padding: var(--oh-suggest-pad);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--float);
+    transform-origin: var(--x-pop-origin);
+  }
+  .oh-suggest-layer > .oh-suggest {
+    position: absolute;
+    pointer-events: auto;
+  }
+  .oh-suggest[data-up] {
+    transform-origin: var(--x-pop-origin-up);
+  }
+
+  /* The rows scroll where the list is taller than its room; a foot stays. */
+  .oh-suggest-list {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-suggest-group + .oh-suggest-group::before {
+    --oh-suggest-rule-gap: var(--s1) var(--s3);
+    content: "";
+    display: block;
+    height: var(--oh-hair);
+    margin: var(--oh-suggest-rule-gap);
+    background: var(--line);
+  }
+  .oh-suggest-head {
+    --oh-suggest-head-pad: var(--s2) var(--s3) var(--s1);
+    padding: var(--oh-suggest-head-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  /* A row: the mark of its kind, a first line and a second under it. It is as tall as its lines. */
+  .oh-suggest-row {
+    --oh-suggest-row-gap: 10px;
+    --oh-suggest-row-pad: 6px var(--s3);
+    --oh-suggest-lh: 1.25;
+    display: flex;
+    align-items: center;
+    gap: var(--oh-suggest-row-gap);
+    width: 100%;
+    min-height: var(--h-l);
+    padding: var(--oh-suggest-row-pad);
+    border-radius: var(--r-row);
+    line-height: var(--oh-suggest-lh);
+  }
+  .oh-suggest-row[aria-selected="true"] {
+    background: var(--hover);
+  }
+  .oh-suggest-mark {
+    --oh-suggest-mark: 24px;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--oh-suggest-mark);
+    min-height: var(--oh-suggest-mark);
+    color: var(--ink2);
+  }
+  .oh-suggest-words {
+    display: grid;
+    flex: 1 1 auto;
+    gap: var(--oh-hair);
+    min-width: 0;
+  }
+  /* A line that does not fit wraps to a second one. */
+  .oh-suggest-first,
+  .oh-suggest-second {
+    display: -webkit-box;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .oh-suggest-first {
+    font-weight: var(--w-text);
+  }
+  .oh-suggest-second {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-suggest-typed {
+    font-weight: var(--w-bold);
+  }
+  .oh-suggest-second > .oh-suggest-typed {
+    color: var(--ink);
+  }
+
+  .oh-suggest-foot {
+    --oh-suggest-foot-pad: var(--s1) var(--s3) 2px;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--s2);
+    padding: var(--oh-suggest-foot-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-suggest-credit {
+    --oh-suggest-credit-under: 2px;
+    border-radius: var(--r-sq);
+  }
+  .oh-suggest-credit:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-suggest-credit-under);
+  }
+
+  /* Answers are on their way: one line along the top, over the rows that stand. */
+  .oh-suggest[data-busy]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: var(--r-sheet);
+    left: var(--r-sheet);
+    height: var(--oh-suggest-run);
+    border-radius: var(--oh-suggest-run-r);
+    background: var(--ink3);
+    transform-origin: 0 50%;
+    animation: oh-suggest-run calc(var(--d-pull) * 2) var(--e-move) both;
+    pointer-events: none;
+  }
+
+  @keyframes oh-suggest-run {
+    from {
+      transform: scaleX(0);
+    }
+
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  :root[data-touch="1"] .oh-suggest-row {
+    min-height: var(--h-xl);
+  }
+
+  /* Set into a sheet: the rows alone, on the sheet. */
+  .oh-suggest[data-inline] {
+    --oh-suggest-pad: 0;
+    min-width: 0;
+    max-width: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-suggest {
+    --oh-suggest-pad: var(--s1);
+  }
+  :root[data-face="ohmarchy"] .oh-suggest-row {
+    --oh-suggest-row-gap: var(--s2);
+  }
+  :root[data-face="ohmarchy"] .oh-suggest-row[aria-selected="true"] {
+    background: var(--off);
+  }
+}

@@ -73,4 +73,10 @@
     padding: var(--oh-ruleline-between);
     white-space: normal;
   }
+
+  /* A place with a long name folds inside the sentence's column: it never pushes the line out of a narrow window. */
+  :root[data-touch="1"] .oh-ruleline-goes .oh-slot {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }

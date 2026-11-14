@@ -14,6 +14,9 @@
     --oh-ring-pick: inset 0 0 0 var(--oh-hair) var(--pick-ring);
     --oh-ring-line: inset 0 0 0 var(--oh-hair) var(--line);
     --oh-ring-focus: inset 0 0 0 var(--oh-focus) var(--focus);
+    /* What a system reports it draws over at a glass's foot. A host that knows it counts for nothing (a keyboard
+       is up) says so on the element it stands its columns in. */
+    --oh-inset-foot: env(safe-area-inset-bottom, 0px);
     --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
     --oh-touch: 0;
     --oh-layer-jump: 5;

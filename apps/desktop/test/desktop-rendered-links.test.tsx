@@ -6,10 +6,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { NextIntlClientProvider } from "next-intl";
 
-import { MessageBody, sanitizeMailHtml } from "../../webapp/app/letter-body/MessageBody";
+import { MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
 import {
   flushRenderedLinks, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
-} from "../../webapp/app/letter-body/rendered-links";
+} from "../../../packages/letter-body/src/rendered-links";
 import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
@@ -450,16 +450,17 @@ function bodyOf(src: string, signature: string): string {
 describe("the wiring, from source", () => {
   it("only the renderers, the minted account page and the desktop entry reach the seam", () => {
     const sources = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src", "packages"].flatMap(filesUnder);
-    const reaching = sources.filter((f) => /from\s+["'][^"']*\/rendered-links(?:\.js)?["']/.test(source(f))).sort();
+    // By its path inside the body, or by the body's entry for it.
+    const reaching = sources.filter((f) => /from\s+["'](?:[^"']*\/rendered-links(?:\.js)?|@ohmail\/letter-body\/links)["']/.test(source(f))).sort();
     expect(reaching).toEqual([
       "apps/desktop/src/DesktopSubscription.tsx",
       "apps/desktop/src/main.tsx",
-      "apps/webapp/app/letter-body/BodyText.tsx",
-      "apps/webapp/app/letter-body/MessageBody.tsx",
       // The meeting-invitation note's one link: core's rebuilt Microsoft 365 options page.
       "apps/webapp/app/shell/InvitationNote.tsx",
       "apps/webapp/app/shell/RichEditor.tsx",
       "apps/webapp/app/views/ScreenerView.tsx",
+      "packages/letter-body/src/BodyText.tsx",
+      "packages/letter-body/src/MessageBody.tsx",
     ]);
   });
 

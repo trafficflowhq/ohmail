@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { DEFAULT_LIMITS, intlZones, readCalendar, type CalEvent } from "@ohmail/cal-core";
+import { DEFAULT_LIMITS, intlZones, readCalendar, type CalEvent, type EventTime, type RRule } from "@ohmail/cal-core";
 import {
   serializeCredential, Secret,
   type Answer, type CalendarInfo, type CalendarProvider, type CalendarProviders, type CalendarReader, type CalendarRef,
@@ -32,6 +32,11 @@ import {
 
 export const AVAILABLE = await realPgAvailable();
 export const ZONES = intlZones();
+/**
+ * The query words this world's own reads are made of, for a file outside the worker's package that
+ * reads the same rows: taken from here, they are the ones the store's tables are typed against.
+ */
+export { and, asc, eq, sql };
 
 /** Two key versions, so that a re-wrap and a seal under the newer one are both in reach. */
 export function keyRing(): StaticKeyProvider {
@@ -317,7 +322,7 @@ export function tokenEndpoint(answer: (form: URLSearchParams, url: string) => Pr
 
 /** One call a scripted writer was asked, with the connection and the calendar it was handed. */
 export interface WriterCall {
-  readonly kind: "create" | "change" | "remove" | "answer" | "move";
+  readonly kind: "create" | "change" | "remove" | "answer" | "move" | "end" | "continue";
   readonly connection: Connection;
   readonly calendar: string;
   readonly key: string | null;
@@ -355,8 +360,10 @@ export function scriptedWriter(word: ProviderWord, script: {
     async create(c: Connection, cal: CalendarRef, req: { readonly key: WriteKey; readonly event: EventDraft }): Promise<WriteAnswer> {
       return run({ kind: "create", connection: c, calendar: cal.id, key: req.key.hex, target: null, draft: req.event, change: null }, () => {
         const id = `made-${req.key.hex}`;
-        if (!objects.has(id)) objects.set(id, { version: 1, summary: req.event.summary });
-        return { ok: true, items: [upsertOf(id)] };
+        // Made again under a key it holds: found done (the provider's own guard), not made by this request.
+        if (objects.has(id)) return { ok: true, items: [upsertOf(id)] };
+        objects.set(id, { version: 1, summary: req.event.summary });
+        return { ok: true, items: [upsertOf(id)], written: true };
       });
     },
     async change(c: Connection, cal: CalendarRef, target: WriteTarget, change: EventChange): Promise<WriteAnswer> {
@@ -368,18 +375,37 @@ export function scriptedWriter(word: ProviderWord, script: {
         }
         const was = objects.get(target.id) ?? { version: 1, summary: "" };
         objects.set(target.id, { version: was.version + 1, summary: change.summary ?? was.summary });
-        return { ok: true, items: [upsertOf(target.id)] };
+        return { ok: true, items: [upsertOf(target.id)], written: true };
       });
     },
     async remove(c: Connection, cal: CalendarRef, target: WriteTarget): Promise<WriteAnswer> {
       return run({ kind: "remove", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => {
         if (stale(target)) return { ok: false, reason: "version_stale", retryAfterMs: null };
         objects.delete(target.id);
-        return { ok: true, items: [{ kind: "gone", id: target.id }] };
+        return { ok: true, items: [{ kind: "gone", id: target.id }], written: true };
       });
     },
     async answer(c: Connection, cal: CalendarRef, target: WriteTarget): Promise<WriteAnswer> {
-      return run({ kind: "answer", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => ({ ok: true, items: [upsertOf(target.id)] }));
+      return run({ kind: "answer", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => ({ ok: true, items: [upsertOf(target.id)], written: true }));
+    },
+    async endSeries(c: Connection, cal: CalendarRef, target: WriteTarget): Promise<WriteAnswer> {
+      return run({ kind: "end", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => {
+        if (stale(target)) return { ok: false, reason: "version_stale", retryAfterMs: null };
+        const was = objects.get(target.id) ?? { version: 1, summary: "" };
+        objects.set(target.id, { version: was.version + 1, summary: was.summary });
+        return { ok: true, items: [upsertOf(target.id)], written: true };
+      });
+    },
+    async continueSeries(
+      c: Connection, cal: CalendarRef,
+      req: { readonly key: WriteKey; readonly from: WriteTarget; readonly start: EventTime; readonly end: EventTime; readonly rule: RRule; readonly change: EventChange },
+    ): Promise<WriteAnswer> {
+      return run({ kind: "continue", connection: c, calendar: cal.id, key: req.key.hex, target: req.from, draft: null, change: req.change }, () => {
+        const id = `made-${req.key.hex}`;
+        if (objects.has(id)) return { ok: true, items: [upsertOf(id)] };
+        objects.set(id, { version: 1, summary: req.change.summary ?? objects.get(req.from.id)?.summary ?? "" });
+        return { ok: true, items: [upsertOf(id)], written: true };
+      });
     },
     moveEvent: null,
   };
@@ -399,10 +425,12 @@ const OPS = { calendar_event_create: "create", calendar_event_update: "update", 
 export async function recordWrite(w: World, o: {
   readonly accountId: string; readonly key: string; readonly act: unknown; readonly after?: string | null;
   readonly state?: "pending" | "refused"; readonly refusal?: string | null;
+  /** One of a press's two parts (a day and the days after it): which, and the press's key. */
+  readonly part?: CalendarWritePayload["part"];
 }): Promise<{ readonly id: string; readonly eventId: string }> {
   const act = parseCalendarAct(o.act);
   if (act === null) throw new Error("the test's act is no act the door takes");
-  const payload: CalendarWritePayload = writePayloadOf(act, o.after ?? null, null);
+  const payload: CalendarWritePayload = writePayloadOf(act, o.after ?? null, o.part ?? null);
   if (act.kind === "calendar_event_create") {
     const [row] = await w.db.insert(calWrites).values({
       accountId: o.accountId, calendarId: act.calendarId, eventId: act.eventId, op: "create", payload, idempotencyKey: o.key,

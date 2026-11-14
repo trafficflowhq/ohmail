@@ -1,0 +1,17 @@
+{
+  "accountSecurity": {
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "cancelled": "Cancelled",
+    "codesUnused": "Some unused",
+    "codesNoneUnused": "None unused",
+    "on": "On",
+    "notSetUp": "Not set up",
+    "generate": "Generate",
+    "replace": "Replace",
+    "setUp": "Set up",
+    "remove": "Remove",
+    "byHand": "Type this key into your authenticator app.",
+    "byHandLabel": "Key"
+  }
+}

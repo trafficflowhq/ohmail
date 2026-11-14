@@ -1,6 +1,7 @@
-import type { KeyboardEvent, MouseEvent, Ref } from "react";
+import type { ChangeEvent, KeyboardEvent, MouseEvent, Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { Avatar } from "./Avatar.js";
+import type { SuggestionField } from "../Overlays/use-suggestions.js";
 import { Button } from "./Button.js";
 import "./find-field.css";
 
@@ -26,6 +27,11 @@ export interface FindFieldProps {
   took?: string;
   /** The control that empties the field; it stands only while there are words. */
   clear?: { label: string; onPress?: () => void };
+  /**
+   * It offers while it is typed in: what `useSuggestions` hands for its field, which then carries the text, its
+   * change and the list's keys. An `onKeyDown` beside it takes the keys in their place and asks the list first.
+   */
+  suggests?: SuggestionField;
   /** The keys the app answers in the field: Enter, the arrows, Escape. */
   onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
   ref?: Ref<HTMLInputElement>;
@@ -36,7 +42,25 @@ export interface FindFieldProps {
  * form and carries no name of a form's: what is typed is the app's to ask with, never the browser's to keep.
  */
 export function FindField(props: FindFieldProps) {
-  const { label, value, onChange, placeholder, sign = "search", chip, took, clear, onKeyDown, ref } = props;
+  const {
+    label,
+    value,
+    onChange,
+    placeholder,
+    sign = "search",
+    chip,
+    took,
+    clear,
+    suggests,
+    onKeyDown,
+    ref,
+  } = props;
+  const typed = suggests ?? {
+    autoComplete: "off",
+    value,
+    readOnly: !onChange,
+    onChange: (event: ChangeEvent<HTMLInputElement>) => onChange?.(event.currentTarget.value),
+  };
   /* A press on the box itself is a press on the field: the keys go to the words. */
   const toWords = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) event.currentTarget.querySelector("input")?.focus();
@@ -62,13 +86,10 @@ export function FindField(props: FindFieldProps) {
         className="oh-control oh-findfield-input"
         type="text"
         aria-label={label}
-        value={value}
         placeholder={placeholder}
-        autoComplete="off"
         spellCheck={false}
-        readOnly={!onChange}
-        onChange={(event) => onChange?.(event.currentTarget.value)}
-        onKeyDown={onKeyDown}
+        {...typed}
+        {...(onKeyDown ? { onKeyDown } : null)}
       />
       {took ? (
         <span className="oh-findfield-took">

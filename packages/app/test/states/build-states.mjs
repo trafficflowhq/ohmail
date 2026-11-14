@@ -2,8 +2,9 @@
 /**
  * The frame's states page as one HTML document: the page bundled with its stylesheets, under BOTH designs'
  * token sheets as the product page loads them (the old sheets, then the new through the kit), so the seam
- * is read as it stands in the app. `statesPage()` returns the document; run alone, it writes it to the path
- * given (a comparison subject sets it as the page's content, with the state in the address).
+ * is read as it stands in the app. `statesPage()` returns the document, `statesPage(<entry>)` another page drawn
+ * over the frame; run alone, it writes it to the path given (a comparison subject sets it as the page's content,
+ * with the state in the address).
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -65,10 +66,10 @@ async function faces() {
     .join("\n");
 }
 
-export async function statesPage() {
+export async function statesPage(page = "packages/app/test/states/states-page.tsx") {
   const result = await build({
     absWorkingDir: ROOT,
-    entryPoints: ["packages/app/test/states/states-page.tsx"],
+    entryPoints: [page],
     bundle: true,
     write: false,
     outdir: "out",

@@ -1,0 +1,11 @@
+{
+  "calmail": {
+    "today": "Heute",
+    "now": "jetzt",
+    "allDay": "ganztägig",
+    "busy": "Belegt",
+    "toAnswer": "Zu beantworten",
+    "more": "+{count}",
+    "coming": "Demnächst mit {name}"
+  }
+}

@@ -100,7 +100,7 @@ describe("the header's ⋯ trigger shares its class with nothing", () => {
   });
 
   it("no other element in the webapp or packages/ui carries them", () => {
-    const files = [...walk("apps/webapp/app", ".tsx"), ...walk("packages/ui/src", ".tsx")];
+    const files = [...walk("apps/webapp/app", ".tsx"), ...walk("packages/letter-body/src", ".tsx"), ...walk("packages/ui/src", ".tsx")];
     const carriers: string[] = [];
     for (const p of files) {
       const sf = p === CARD ? cardFile : parse(p);

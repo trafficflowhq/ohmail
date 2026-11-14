@@ -326,6 +326,8 @@ describe("Cancel during the verify cancels the erase", () => {
 const APP = `${process.cwd()}/apps/webapp/app`;
 /** The behaviour moved out of the shell: read with it, named from the repository's root. */
 const LOGIC = `${process.cwd()}/packages/app-logic/src`;
+/** The letter's body, moved out of the web app: read with it, named from the repository's root. */
+const BODY = `${process.cwd()}/packages/letter-body/src`;
 const siteName = (abs: string): string => (abs.startsWith(APP) ? abs.slice(APP.length + 1) : abs.slice(process.cwd().length + 1));
 
 /**
@@ -427,7 +429,7 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
 
   it("every post-verify site in the tree is classified, and no unclassified one appears", () => {
     expect(existsSync(APP), `the census corpus must exist at ${APP} (run vitest from the repo root)`).toBe(true);
-    const sites = [...walk(APP), ...walk(LOGIC)].flatMap((abs) =>
+    const sites = [...walk(APP), ...walk(LOGIC), ...walk(BODY)].flatMap((abs) =>
       postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     expect(sites.length, "the census found the ceremonies").toBeGreaterThan(0);
@@ -436,7 +438,7 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
   });
 
   it("every post-verify act but the sign-in is gated on the ceremony's generation, and the pin may only FALL", () => {
-    const sites = [...walk(APP), ...walk(LOGIC)].flatMap((abs) =>
+    const sites = [...walk(APP), ...walk(LOGIC), ...walk(BODY)].flatMap((abs) =>
       postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     const files = [...new Set(sites.map((s) => s.file))].sort();

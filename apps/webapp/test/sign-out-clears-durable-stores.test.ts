@@ -60,6 +60,7 @@ const ENGINE = resolve("packages/client-engine/src");
 const LOGIC = resolve("packages/app-logic/src");
 /** So do the app's own parts that left the shell (the mail state's mount), and the slot's that follow. */
 const APP_PARTS = resolve("packages/app/src");
+const BODY = resolve("packages/letter-body/src");
 
 /** Prefixes sign-out sweeps, as sign-out itself names them. */
 const SWEPT = [
@@ -642,7 +643,7 @@ describe("sign-out clears the durable decision stores", () => {
     const undecided: string[] = [];
     const files = [
       ...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(APP_PARTS) ? walk(APP_PARTS) : []),
-      ...(existsSync(LOGIC) ? walk(LOGIC) : []),
+      ...(existsSync(LOGIC) ? walk(LOGIC) : []), ...(existsSync(BODY) ? walk(BODY) : []),
     ];
     for (const file of files) {
       // The register of stored names spells every key of every store and keeps none itself; its

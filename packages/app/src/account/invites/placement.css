@@ -1,0 +1,5 @@
+/* Invites' own placement: the name's blank keeps the step a blank standing on a sheet has. It draws no look. Own
+   classes: `account-`. */
+.account-invite-name {
+  padding: var(--s2) 0;
+}

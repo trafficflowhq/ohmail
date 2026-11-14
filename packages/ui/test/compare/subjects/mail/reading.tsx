@@ -3,6 +3,7 @@ import { MenuItem, Tag } from "../../../../src/base/index.js";
 import {
   ActionPanel,
   BlankColumn,
+  BlockedImages,
   ContactCard,
   Files,
   FileTile,
@@ -109,6 +110,40 @@ export const reading: KitSubject[] = [
       }
     </Message>,
   ),
+  /* A stream's letter, cut until it is pressed: what follows the text waits, and one word opens it. */
+  {
+    key: "Message/clip",
+    place: "block",
+    width: 740,
+    render: () => (
+      <Message
+        head={
+          <MessageHead
+            sender={{ name: "Skylark Notes", address: "mara@skylarknotes.example" }}
+            note={
+              <BlockedImages
+                caption="Images blocked"
+                sentence="Images in this message are blocked."
+                open={false}
+                onOpen={() => {}}
+                onClose={() => {}}
+              />
+            }
+            menu={{ label: "Message" }}
+            stamp={stamp("07:02")}
+            to={[{ word: "to", people: [you] }]}
+            details={details()}
+          />
+        }
+        subject="#131: the joy of small tools"
+        clip={{ open: false, word: "Expand" }}
+      >
+        {
+          "Hi there. This issue is about tools that do one thing well.\n\nSmall tools are not lesser tools. They are the ones that fit your hand on the first try: the ladle that pours without dripping, the pencil that starts every list, the app with exactly one screen.\n\nThis week's essay visits three workshops and asks each maker which object they would save from a fire. Nobody picked the expensive one.\n\nAlso inside: a lamp you can repair with a coin, and a short list of things that got better when someone removed a feature.\n\nUntil next week,\nMara"
+        }
+      </Message>
+    ),
+  },
   {
     key: "MessageHead/details",
     place: "block",

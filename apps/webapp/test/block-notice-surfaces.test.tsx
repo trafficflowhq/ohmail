@@ -45,7 +45,7 @@ import {
 import { ThemeProvider } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { COPY } from "../app/letter-body/MessageBody";
+import { COPY } from "../../../packages/letter-body/src/MessageBody";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../app/shell/locale";
 import { imageProxyUrl, useRemoteImages, type RemoteImagesChrome } from "../app/shell/remote-images";
 import { settleFirstPaint } from "./_first-paint.js";
@@ -275,7 +275,7 @@ const at = (parent: Element, cls: string): number =>
 /* ── 1. the census ────────────────────────────────────────────────────────────────────────── */
 
 const APP = resolve(process.cwd(), "apps/webapp/app");
-const VIEWER = "letter-body/MessageBody.tsx";
+const VIEWER = "../../../packages/letter-body/src/MessageBody.tsx";
 /** Every product surface that mounts the viewer — the FOUR hosts. */
 const HOSTS = [
   "shell/MessageCard.tsx",

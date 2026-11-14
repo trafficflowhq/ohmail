@@ -136,6 +136,7 @@
 
   /* The text: the app's editor stands in the letter's measure, at the reading size. */
   .oh-composer-text {
+    position: relative;
     max-width: var(--measure);
     min-height: var(--oh-composer-text-min);
     padding: var(--s3) var(--s4);
@@ -146,6 +147,17 @@
     overflow-wrap: break-word;
     text-wrap: pretty;
     cursor: text;
+  }
+
+  /* The words for a text not yet written: on the text's first line, in the second ink, and never in a press's way. */
+  .oh-composer-placeholder {
+    position: absolute;
+    top: var(--s3);
+    right: var(--s4);
+    left: var(--s4);
+    color: var(--ink2);
+    pointer-events: none;
+    user-select: none;
   }
 
   .oh-composer-signature {
@@ -181,6 +193,35 @@
 
   .oh-composer-signature > .oh-button {
     margin-top: var(--oh-composer-tool);
+    color: var(--ink2);
+  }
+
+  /* A formatted signature stands as it will be sent and is no field. The way to its words and the way off stand at
+     its end, and go under it where the line is too short for both. */
+  .oh-composer-signature[data-formatted] {
+    --oh-composer-signed-least: 14em;
+
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .oh-composer-signature[data-formatted] > .oh-composer-signed {
+    flex: 1 1 var(--oh-composer-signed-least);
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .oh-composer-signacts {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-composer-gap);
+    max-width: 100%;
+    margin-top: var(--oh-composer-tool);
+  }
+
+  .oh-composer-signacts > .oh-button {
     color: var(--ink2);
   }
 

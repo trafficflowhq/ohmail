@@ -361,12 +361,12 @@ describe("the window hands the shell no address", () => {
    a listener here would be a second door on Chromium alone (the frame-links rig measures both). */
 describe("the message frame is left to the shell's new-window door", () => {
   it("MessageBody installs no link listener on the frame's document", () => {
-    const rel = "apps/webapp/app/letter-body/MessageBody.tsx";
+    const rel = "packages/letter-body/src/MessageBody.tsx";
     let body: string;
     try {
       body = readFileSync(resolve(process.cwd(), rel), "utf8");
     } catch {
-      body = readFileSync(resolve(process.cwd(), "../webapp/app/letter-body/MessageBody.tsx"), "utf8");
+      body = readFileSync(resolve(process.cwd(), "../../packages/letter-body/src/MessageBody.tsx"), "utf8");
     }
     expect(body, "a link listener is installed in the mail renderer again").not.toMatch(/interceptLinkClicks/);
     expect(body, "a click listener is put on a document in the mail renderer").not.toMatch(/addEventListener\(\s*["']click["']/);

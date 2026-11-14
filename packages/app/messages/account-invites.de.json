@@ -1,0 +1,9 @@
+{
+  "accountInvites": {
+    "notRead": "Nicht gelesen",
+    "notDone": "Nicht ausgeführt",
+    "notCopied": "Nicht kopiert",
+    "cancelled": "Abgebrochen",
+    "none": "Keine Einladungen"
+  }
+}

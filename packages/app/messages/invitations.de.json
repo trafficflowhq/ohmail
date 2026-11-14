@@ -1,0 +1,28 @@
+{
+  "invitations": {
+    "title": "Einladungen",
+    "close": "Schließen",
+    "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "noZone": "Die Einladungen können nicht aufgelistet werden: Dieses Gerät kennt seine Zeitzone nicht.",
+    "group": {
+      "toAnswer": "Zu beantworten",
+      "changed": "Geändert",
+      "answered": "Beantwortet"
+    },
+    "answer": {
+      "label": "Antwort",
+      "accepted": "Ja",
+      "tentative": "Vielleicht",
+      "declined": "Nein"
+    },
+    "cancelled": "abgesagt",
+    "mark": "oh",
+    "allAnswered": "{count, plural, one {# beantwortet} other {# beantwortet}}",
+    "allDay": "ganztägig",
+    "span": "{from}–{to}",
+    "from": "Von",
+    "calendar": "Kalender",
+    "sendAgain": "Erneut senden",
+    "letGo": "Verwerfen"
+  }
+}

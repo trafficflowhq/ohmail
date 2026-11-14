@@ -25,6 +25,8 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const APP = join(HERE, "..", "app");
 /** The behaviour moved out of the shell: read with it, keyed `app-logic/…`. */
 const LOGIC = join(HERE, "..", "..", "..", "packages", "app-logic", "src");
+/** The letter's body, moved out of the web app: read with it, keyed `letter-body/…`. */
+const BODY = join(HERE, "..", "..", "..", "packages", "letter-body", "src");
 const NEEDLE = "planScreeningChange(";
 
 /**
@@ -75,7 +77,7 @@ function tsFiles(dir: string): string[] {
 
 function sites(): Map<string, number> {
   const counted = new Map<string, number>();
-  for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"]] as const) for (const file of tsFiles(root)) {
+  for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"], [BODY, "letter-body/"]] as const) for (const file of tsFiles(root)) {
     const blanked = scan.withoutCommentsAndLiterals(readFileSync(file, "utf8"));
     /* The DEFINITION is not a call site: it is the only occurrence followed by a parameter list
        on the next line, and it lives in the planner's own file. */

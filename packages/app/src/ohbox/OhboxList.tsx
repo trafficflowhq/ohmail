@@ -9,6 +9,7 @@ import { JumpBack } from "@ohmail/ui/base";
 import { ListTail, Sheet } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { useText } from "../text/index.js";
+import { ListTouch } from "../touch/index.js";
 import { useOhboxBeside } from "./beside.js";
 import { OhboxEmpty } from "./OhboxEmpty.js";
 import { OhboxGroup } from "./OhboxGroup.js";
@@ -106,10 +107,12 @@ export function OhboxList({ plan, notice }: PaneProps & { notice?: ReactNode }) 
         tabIndex={-1}
         data-phone={plan.device === "phone" ? "" : undefined}
       >
-        {notice}
-        <SquaresRoomContext.Provider value={room}>
-          {plan.device === "phone" ? <Sheet kind="plain">{rows}</Sheet> : rows}
-        </SquaresRoomContext.Provider>
+        <ListTouch scroller={scroller} off={model.picked.size > 0} pull={beside.pull}>
+          {notice}
+          <SquaresRoomContext.Provider value={room}>
+            {plan.device === "phone" ? <Sheet kind="plain">{rows}</Sheet> : rows}
+          </SquaresRoomContext.Provider>
+        </ListTouch>
       </div>
       <JumpBack
         label={t("end.top")}

@@ -1,5 +1,5 @@
-import type { ReactNode } from "react";
-import { Avatar, Button, Slot, Switch } from "../../base/index.js";
+import type { ChangeEvent, ReactNode, Ref } from "react";
+import { Avatar, Button, Slot, Switch, type SuggestionField } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
 import type { CalendarTone } from "../tone.js";
@@ -21,8 +21,20 @@ export type EventFormItem =
   | { kind: "take"; value: string; label: string; onPress?: () => void }
   /** A time, typed. */
   | { kind: "time"; value: string; label: string; onChange?: (value: string) => void }
-  /** One line of text: the place. */
-  | { kind: "text"; value: string; label: string; placeholder?: string; onChange?: (value: string) => void }
+  /**
+   * One line of text: the place. `suggests`: it offers while it is typed in, and is then the combobox of a
+   * suggestion list (what `useSuggestions` hands for its field, which carries the text and its change); `ref`
+   * is the field itself, for the list to stand at.
+   */
+  | {
+      kind: "text";
+      value: string;
+      label: string;
+      placeholder?: string;
+      onChange?: (value: string) => void;
+      suggests?: SuggestionField;
+      ref?: Ref<HTMLInputElement>;
+    }
   /** Several lines: the notes. Enter is a new line here. */
   | { kind: "notes"; value: string; label: string; placeholder?: string; onChange?: (value: string) => void }
   /** A quiet word between two things: "to", "Invite". */
@@ -113,14 +125,17 @@ function field(it: Extract<EventFormItem, { kind: "time" | "text" | "notes" }>, 
       return (
         <input
           key={key}
+          ref={it.ref}
           className="oh-control oh-evform-field"
           type="text"
-          autoComplete="off"
           spellCheck={false}
-          value={it.value}
           placeholder={it.placeholder}
           aria-label={it.label}
-          onChange={(e) => it.onChange?.(e.target.value)}
+          {...(it.suggests ?? {
+            autoComplete: "off",
+            value: it.value,
+            onChange: (e: ChangeEvent<HTMLInputElement>) => it.onChange?.(e.target.value),
+          })}
         />
       );
     case "notes":

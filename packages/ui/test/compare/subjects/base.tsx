@@ -2,14 +2,18 @@ import {
   Avatar,
   Blank,
   Button,
+  ChoiceTiles,
   Count,
   Dialog,
   Dot,
   Empty,
   Faces,
   Field,
+  FieldPair,
+  FieldStack,
   FindField,
   HintLine,
+  Icon,
   InfoMark,
   JumpBack,
   KeyHelp,
@@ -30,11 +34,16 @@ import {
   Sentence,
   Sign,
   Slot,
+  StepDots,
+  SuggestionCredit,
+  SuggestionList,
   Switch,
   Tag,
   TagDot,
   WaitRow,
   Where,
+  type IconName,
+  type SuggestionRow,
 } from "../../../src/base/index.js";
 import type React from "react";
 import keyTable from "./base-keys.json" with { type: "json" };
@@ -251,6 +260,8 @@ const slot: KitSubject[] = [
 const ME = "Mila Brunner";
 /* The sheet's fields take typing; a field without a handler is the kit's read-only one. */
 const typed = () => {};
+/** What a part of a page before the app stands on: the ground on paper; ohmarchy's page is a window in the sheet's tone. */
+const onPage = (look: Look): "ground" | "sheet" => (look.face === "ohmarchy" ? "sheet" : "ground");
 const field: KitSubject[] = [
   {
     key: "Field/rest",
@@ -293,17 +304,54 @@ const field: KitSubject[] = [
       <Field
         label="App password"
         type="password"
-        value="wrong"
         refusal="This provider needs an app password, not the account password."
         onChange={typed}
       />
     ),
+    /* A password is in no markup: the box is filled on the real node, as a person fills it, five characters long. */
+    act: (page) =>
+      page.evaluate(() => {
+        for (const box of document.querySelectorAll<HTMLInputElement>("input[type='password']"))
+          box.value = "x".repeat(5);
+      }),
   },
   {
     key: "Field/lines",
     place: "block",
     width: 320,
     render: () => <Field label="Signature" lines={3} value={`${ME}\nLichtgrat Studio`} onChange={typed} />,
+  },
+  /*
+   * A plain mailbox's servers in the setup, as a page before the app holds them: a field on a page is the soft
+   * white on paper and the soft sheet's tone in ohmarchy (the page says so; here the stage does). Under a finger
+   * the form carries its one switch.
+   */
+  {
+    key: "FieldStack/rest",
+    place: "block",
+    on: onPage,
+    render: ({ device, face }) => (
+      <div
+        style={
+          {
+            "--oh-field-ground": face === "ohmarchy" ? "var(--soft-sheet)" : "var(--soft)",
+          } as React.CSSProperties
+        }
+      >
+        <FieldStack>
+          <FieldPair>
+            <Field label="IMAP host" value="mail.lichtgrat.example" onChange={typed} />
+            <Field label="Port" value="993" onChange={typed} />
+          </FieldPair>
+          <FieldPair>
+            <Field label="SMTP host" value="mail.lichtgrat.example" onChange={typed} />
+            <Field label="Port" value="465" onChange={typed} />
+          </FieldPair>
+          <Field label="Username" value="" placeholder="mila@lichtgrat.example" onChange={typed} />
+          {device === "desktop" ? null : <Switch label="Implicit TLS" on labelled />}
+        </FieldStack>
+      </div>
+    ),
   },
 ];
 
@@ -422,6 +470,32 @@ const seg: KitSubject[] = [
         label="Text size"
         value="100"
         options={["90", "100", "110", "125", "150"].map((v) => ({ value: v, label: `${v}%` }))}
+      />
+    ),
+  },
+  /* The twelve of the setup's provider step, before anything is typed: Enter takes the first. */
+  {
+    key: "ChoiceTiles/rest",
+    place: "block",
+    on: onPage,
+    render: () => (
+      <ChoiceTiles
+        label="Mail providers"
+        enter={{ value: "Gmail", keyHint: "↵" }}
+        options={[
+          "Gmail",
+          "Microsoft",
+          "iCloud",
+          "Yahoo",
+          "Fastmail",
+          "GMX",
+          "Infomaniak",
+          "WEB.DE",
+          "t-online",
+          "bluewin",
+          "Other (IMAP)",
+          "Proton",
+        ].map((name) => ({ value: name, label: name }))}
       />
     ),
   },
@@ -1039,6 +1113,19 @@ const feedback: KitSubject[] = [
 ];
 
 const pages: KitSubject[] = [
+  /* The setup at its provider step: the second of five phases on a desktop, the first of four on a phone. */
+  {
+    key: "StepDots/rest",
+    place: "block",
+    on: onPage,
+    target: ".oh-stepdots-mark",
+    render: ({ device }) =>
+      device === "phone" ? (
+        <StepDots label="Step 1 of 4, Mailbox, 1 of 3" steps={4} at={0} />
+      ) : (
+        <StepDots label="Step 2 of 5, Mailbox, 1 of 3" steps={5} at={1} />
+      ),
+  },
   {
     key: "Page/refused",
     place: "window",
@@ -1111,12 +1198,139 @@ const STANDS: Record<string, KitSubject["on"]> = {
 };
 const stood = (s: KitSubject): KitSubject => (s.key in STANDS ? { ...s, on: STANDS[s.key] } : s);
 
+/* What a field offers while a person types: the places and people of the design sheet's own specimens. */
+const offered = (id: string, icon: IconName, primary: string, secondary?: string): SuggestionRow => ({
+  id,
+  mark: <Icon name={icon} size={20} />,
+  primary,
+  secondary,
+});
+const who = (name: string, address: string, tag?: string): SuggestionRow => ({
+  id: address,
+  mark: <Avatar name={name} address={address} size="xs" />,
+  primary: name,
+  secondary: address,
+  tag,
+});
+const TEC = [
+  offered("technorama", "place", "Swiss Science Center Technorama", "Technoramastrasse 1, 8404 Winterthur"),
+  offered("technikum-9", "house", "Technikumstrasse 9", "8400 Winterthur"),
+  offered("technikumstrasse", "road", "Technikumstrasse", "8400 Winterthur"),
+  offered("technopark", "place", "Technopark Winterthur", "Technoparkstrasse 2, 8406 Winterthur"),
+  offered("tecknau", "town", "Tecknau", "Basel-Landschaft"),
+];
+const credit = <SuggestionCredit>© OpenStreetMap contributors</SuggestionCredit>;
+const offers = (
+  state: string,
+  props: Pick<
+    React.ComponentProps<typeof SuggestionList>,
+    "groups" | "query" | "active" | "busy" | "placement"
+  > & {
+    foot?: boolean;
+  },
+): KitSubject => ({
+  key: `SuggestionList/${state}`,
+  place: "block",
+  render: () => (
+    <SuggestionList
+      id={`suggest-${state}`}
+      label="Suggestions"
+      groups={props.groups}
+      query={props.query}
+      active={props.active}
+      busy={props.busy}
+      placement={props.placement}
+      foot={props.foot === false ? undefined : credit}
+    />
+  ),
+});
+const suggest: KitSubject[] = [
+  offers("place", { groups: [{ rows: TEC }], query: "tec", active: null }),
+  offers("keys", { groups: [{ rows: TEC }], query: "tec", active: 1 }),
+  offers("groups", {
+    groups: [
+      {
+        head: "Your places",
+        rows: [
+          offered("own-fest", "history", "Makersfest, Hall 2, Zürich"),
+          offered("own-zurich", "history", "Zürich"),
+          offered("own-airport", "history", "Zürich Airport", "Flughafenstrasse, 8058 Kloten"),
+        ],
+      },
+      {
+        rows: [
+          offered("zurich-hb", "place", "Zürich HB", "Bahnhofplatz, 8001 Zurich"),
+          offered("zuercherstrasse", "road", "Zürcherstrasse", "8400 Winterthur"),
+          offered("zoo", "house", "Zürichbergstrasse 221", "8044 Zurich"),
+        ],
+      },
+    ],
+    query: "zür",
+    active: null,
+  }),
+  offers("busy", { groups: [{ rows: TEC }], query: "tech", active: null, busy: true }),
+  offers("people", {
+    groups: [
+      {
+        rows: [
+          who("Ben Arnold", "ben@lichtgrat.example"),
+          who("Rahel Beck", "rahel@lichtgrat.example"),
+          who("Tim Berger", "tim@gassenblatt.example", "wrote to you"),
+        ],
+      },
+    ],
+    query: "be",
+    active: 0,
+    foot: false,
+  }),
+  offers("long", {
+    groups: [
+      {
+        rows: [
+          offered("konzil", "place", "Konzil Konstanz", "Hafenstraße 2, 78462 Konstanz, Germany"),
+          offered("uni", "house", "Universitätsstraße 10", "78464 Konstanz, Germany"),
+          offered(
+            "kunsthalle",
+            "place",
+            "Kunst- und Ausstellungshalle der Bundesrepublik Deutschland",
+            "Helmut-Kohl-Allee 4, 53113 Bonn, Germany",
+          ),
+          offered(
+            "zinnbauer",
+            "road",
+            "Bischöflich-Geistlicher-Rat-Josef-Zinnbauer-Straße",
+            "84130 Dingolfing, Germany",
+          ),
+        ],
+      },
+    ],
+    query: "kon",
+    active: null,
+  }),
+  offers("inline", {
+    groups: [
+      { head: "Your places", rows: [offered("own-kino", "history", "Kino Seeblick")] },
+      {
+        rows: [
+          offered("seen", "town", "Seen", "Winterthur, Zurich"),
+          offered("seestrasse", "road", "Seestrasse", "8002 Zurich"),
+          offered("seebad", "place", "Seebad Enge", "Mythenquai 9, 8002 Zurich"),
+        ],
+      },
+    ],
+    query: "see",
+    active: null,
+    placement: "inline",
+  }),
+];
+
 export const subjects: KitSubject[] = [
   ...overWindow,
   ...feedback,
   ...pages,
   ...rest,
   ...overlays,
+  ...suggest,
   ...button,
   ...dot,
   ...keyHint,
