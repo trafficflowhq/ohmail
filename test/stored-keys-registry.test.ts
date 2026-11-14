@@ -166,6 +166,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "app.ohmail.organizer.OrganizerServiceModule": "a class name in the phone's configuration",
   "app.ohmail.appswitch.OhmailSwitchModule": "a class name in the phone's configuration",
   "app.ohmail.appswitch.SwitchProvider": "a class name in the phone's configuration",
+  "app.ohmail.notices.OhmailNoticesModule": "a class name in the phone's configuration",
   "app.ohmail.organizer.STOP": "an intent's action word inside the phone app",
   "ohmail.engine": "a log tag on the phone",
   "app.ohmail.engine": "a log subsystem's name on the phone",

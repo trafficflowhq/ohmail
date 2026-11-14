@@ -1134,7 +1134,7 @@ export const DE: Deck = {
   /* --------------------------------------------- organizing in the background */
 
   stateOrganizing: "Organisiert",
-  notifBody: (address: string): string => `Organisiert ${address}.`,
+  notifBody: "Organisiert deine Mail auf diesem Handy.",
   notifStop: "Nicht mehr organisieren",
   notifStopFailed: "Stopp nicht abgeschlossen — wird erneut versucht.",
   organizerRestricted:
@@ -1209,8 +1209,12 @@ export const DE: Deck = {
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Der Server hat die Adresse deines Verteilers abgelehnt, Weckrufe sind deshalb aus. Mails "
       + "kommen weiterhin an, wenn du die App öffnest oder zum Aktualisieren ziehst."
-    : "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App "
-      + "öffnest oder zum Aktualisieren ziehst.",
+    : reason === "switched_off"
+      ? "Benachrichtigungen für neue Mail sind auf diesem Handy ausgeschaltet, deshalb weckt nichts "
+        + "ohmail, solange die App geschlossen ist. Mails kommen weiterhin an, wenn du die App öffnest "
+        + "oder zum Aktualisieren ziehst."
+      : "Weckrufe konnten nicht eingerichtet werden. Mails kommen weiterhin an, wenn du die App "
+        + "öffnest oder zum Aktualisieren ziehst.",
 
   /* ------------------------------------------------- world (phone-specific) */
 

@@ -234,6 +234,7 @@ describe("the built page in a browser", () => {
     app: "ohmail", other: "here",
     scope: "p0123456789abcdef0123456789abcdef", accountId: "acct-1", setting: "managed", serverName: "mail.example",
     build: { version: "2.0.0", commit: "abc" }, place: null, oldCopy: "absent", notifications: "default",
+    notices: ["ohbox", "screener", "pairing"],
     facts: { posture: { folds: [], hasFold: false }, insets: { top: 0, right: 0, bottom: 0, left: 0 }, keyboard: { height: 0 }, online: true },
   };
 

@@ -18,6 +18,8 @@ import { createPhoneEngine, keptStoreOf } from "./engine";
 import { phoneFrameSupplies } from "./frame-supplies";
 import { phoneHost } from "./host";
 import type { KeptStorage } from "./kept-storage";
+import { phoneNoticeEmitter } from "./notice-emitter";
+import { storedNoticeChoices } from "./notices";
 import { takeOldCopy } from "./old-copy";
 import { ownStorage } from "./owner";
 import { PhonePage } from "./page";
@@ -73,8 +75,13 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
         permission = answer.permission ?? permission;
         return permission;
       },
-      // This page draws no notice of its own.
-      emitter: "none",
+      // The wake registration is native's. The page says whether its two switches want one (`notices.tsx`).
+      syncSubscription: async (wanted) => {
+        await bridge.request("act", { act: "wake.want", wanted });
+        return null;
+      },
+      // Native draws; the page hands it the gate's answers, for the kinds native says it draws on this phone.
+      emitter: phoneNoticeEmitter(bridge, config.notices),
     },
     signals,
   });
@@ -94,6 +101,7 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
       timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
       sync={sync}
       drawn={() => void bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
+      noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal")}
     />,
   );
 }

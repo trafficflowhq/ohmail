@@ -32,6 +32,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFormatter, useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection, SettingsSubhead, useToast } from "@ohmail/ui";
+import { devicesOf } from "@ohmail/client-engine";
+import { useEngineOrNull } from "@ohmail/app-logic/engine/context";
+import { showDevicesListed, type ToldDevices } from "@ohmail/app-logic/notices/use-notices";
 import {
   ApiError, devices as devicesApi, pair, type DeviceDTO, type PairingTokenDTO,
 } from "../../api-client";
@@ -137,21 +140,58 @@ export function DevicesSection() {
     };
   }, []);
 
+  /**
+   * THE LIST IS LIVE. The account's engine, whose settings record says how many devices were ever
+   * made and taken back; `null` outside a shell. A device paired while this pane is open moves the
+   * record, and the list is read again by itself. What the list shows is told to the notices
+   * (`devices-listed.ts`): the record's two numbers as the read that answered began, so a device
+   * the record counts is told without a notice only once it is on this list.
+   */
+  const engine = useEngineOrNull();
+  /** The record's numbers at the start of the last read of the list that answered; `null` while none did, or the last failed. */
+  const [listedAt, setListedAt] = useState<ToldDevices | null>(null);
+  /** Which read is the latest: an earlier one that answers after it would put an older list on screen. */
+  const asked = useRef(0);
+
   const refresh = useCallback(async () => {
+    const ask = ++asked.current;
+    const at = engine === null ? null : devicesOf(engine.read());
     try {
       const [{ items: sessions }, { items: mints }] = await Promise.all([
         devicesApi.list(),
         pair.list(),
       ]);
-      if (!alive.current) return;
+      if (!alive.current || ask !== asked.current) return;
       setItems(sessions);
       // Live device-pair codes only. Spent and expired rows are history, and invite tokens
       // belong to the Invites pane on the build that has one.
       setCodes(mints.filter((m) => m.grant === "device-pair" && m.status === "live"));
+      setListedAt(at === null ? null : { made: at.made, revoked: at.revoked });
     } catch (err) {
-      if (alive.current) setError(sentence(err));
+      if (!alive.current || ask !== asked.current) return;
+      setListedAt(null);
+      setError(sentence(err));
     }
-  }, [sentence]);
+  }, [sentence, engine]);
+
+  // Told once the list is on screen; taken down when the pane leaves or a later read replaces it.
+  useEffect(() => (engine === null ? undefined : showDevicesListed(engine, listedAt)), [engine, listedAt]);
+
+  // The record's made or revoked moves: a device was paired or taken back, so the list is read again.
+  useEffect(() => {
+    if (engine === null) return undefined;
+    const numbers = (): string => {
+      const d = devicesOf(engine.read());
+      return d === null ? "" : `${d.made}/${d.revoked}`;
+    };
+    let last = numbers();
+    return engine.subscribe(() => {
+      const now = numbers();
+      if (now === last) return;
+      last = now;
+      void refresh();
+    });
+  }, [engine, refresh]);
 
   useEffect(() => {
     void refresh();

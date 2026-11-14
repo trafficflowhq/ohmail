@@ -17,6 +17,7 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import type { MailRecordKind } from "@ohmail/wire";
 import { draftContentRevision } from "../draft-revision.js";
+import { deviceNumbers } from "../device-numbers.js";
 import { bridgeTx, type Db } from "../context.js";
 import type {
   FolderDTO, SettingsDTO, MailboxProfileDTO,
@@ -1035,6 +1036,7 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     if (b.at !== null) off[b.id] = b.at.toISOString();
   }
   const subjectHeading = subjectHeadingOf(row?.subjectHeading, row?.subjectHeadingAt);
+  const named = await deviceNumbers(db, accountId);
   // THE PER-MAILBOX SIGNATURES (mail 0075) ARE DELIBERATELY NOT ON THIS ENTITY, and the
   // absence is a bound, not an omission. Every signature write appends its
   // own settings change row, and this materializer runs once PER ROW with no compaction — so
@@ -1057,6 +1059,11 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     // The subject's place, present only while stated: an account that stated nothing sends the record
     // it sent before the key.
     ...(subjectHeading === null ? {} : { subjectHeading }),
+    // The account's named devices, as three whole numbers (`device-numbers.ts`): the two that only
+    // rise are what a client decides a device notice from; the third is what a person is shown.
+    devices: named.live,
+    devicesMade: named.made,
+    devicesRevoked: named.revoked,
     // A missing row still needs a stamp the client can compare; the epoch is honest for "nothing
     // was ever written", and the first real write replaces it with the row's own.
     updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : new Date(0).toISOString(),

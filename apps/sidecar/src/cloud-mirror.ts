@@ -42,6 +42,7 @@ import type {
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
 import { removeCalendarChange, storeCalendarSwitch, upsertCalendarChange } from "./cloud-mirror-calendar.js";
+import { forgetHostedDevices, keepHostedDevices, keepHostedDevicesAtStart } from "./cloud-mirror-devices.js";
 import { answeredByCloud, retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
@@ -1610,6 +1611,9 @@ async function applyAccountUpsert(
         .onConflictDoUpdate({ target: accountSettings.accountId, set: cols });
       // And the calendar's switch, which the local feed's gate reads (`cloud-mirror-calendar.ts`).
       await storeCalendarSwitch(tx, dia, world.accountId, st.calendarEnabledAt);
+      // And the account's devices, which the window's record answers in place of this copy's own
+      // count (`cloud-mirror-devices.ts`): this copy's device rows are not the hosted account's.
+      keepHostedDevices(world.accountId, ch.entity);
       return true;
     }
     case "thread": {
@@ -2707,6 +2711,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const cursor = readCursor(cfg.cursorPath);
   /** The bootstrap generation's on-disk marks, beside the cursor. See {@link BootstrapGen}. */
   const genPath = genPathFor(cfg.cursorPath);
+  // A new mirror has read nothing of the account's devices yet (`cloud-mirror-devices.ts`).
+  forgetHostedDevices(cfg.world.accountId);
   let stopped = false;
   /**
    * The abort every loop in this file checks. Set by `stop()` and never cleared: a mirror that has
@@ -4772,6 +4778,18 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       constraint: quarantine.values().next().value?.constraint ?? null,
     }),
     async start() {
+      // THE HOSTED ACCOUNT's DEVICES, read once before the first pull (`cloud-mirror-devices.ts`): a
+      // device paired while this desktop was closed is then told at this start. One page, closed; any
+      // answer that is not one keeps none, and the pull goes on as before.
+      try {
+        const res = await fetchCloud("/sync/snapshot?limit=1");
+        if (res.ok && !stopped) {
+          const page: unknown = await res.json();
+          if (!stopped) keepHostedDevicesAtStart(cfg.world.accountId, page);
+        }
+      } catch {
+        // Keeps none: a refused or unreadable answer is not this read's to report; the pull meets it.
+      }
       // A first pull that fails is a bad network or an expired token, not a launch failure: the
       // mirror serves what it holds and the poll retries (on backoff). Scheduling regardless is what
       // keeps a transient bootstrap failure from stopping the mirror forever.
@@ -4788,6 +4806,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     },
     async stop() {
       stopped = true;
+      forgetHostedDevices(cfg.world.accountId);
       // Set BEFORE the await, or the walk this is waiting on never sees the ask and the wait is
       // the very hang it exists to prevent.
       aborted = true;

@@ -53,6 +53,14 @@ describe("the window's emitter", () => {
     expect(r.handed).toEqual([]);
   });
 
+  it("says whether the shell took a notice, so that a device's notice not drawn is told again", async () => {
+    const paired: Notice = { kind: "pairing", change: "paired", device: null };
+    expect(await desktopNoticeEmitter(shell().s).post(paired)).toBe(true);
+    expect(await desktopNoticeEmitter(shell({ refuse: true }).s).post(paired), "notifications are off for ohmail").toBe(false);
+    expect(await desktopNoticeEmitter(shell({ focused: true }).s).post(paired), "this window is the one looked at").toBe(false);
+    expect(await desktopNoticeEmitter(shell().s).post({ kind: "scheduled", outcome: "sent", count: 1 }), "not carried").toBe(false);
+  });
+
   it("hands over nothing for a kind it does not carry", () => {
     const r = shell();
     const emitter = desktopNoticeEmitter(r.s);

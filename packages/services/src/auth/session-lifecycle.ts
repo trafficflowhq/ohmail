@@ -6,6 +6,7 @@ import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from 
 import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
+import { ringDeviceRevoked } from "./device-doorbell.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
 import type { SessionSurface } from "./config-types.js";
 import type { AuthConfig } from "./types.js";
@@ -178,6 +179,15 @@ const AUTO_MINT_DEVICE_LABELS: Partial<Record<DeviceKind, string>> = {
  * none, and only a paired browser (the pairing redeem's row) has a family it can name.
  */
 type InstallClass = "desktop" | "phone" | "paired-web";
+
+/**
+ * Does a sign-in of `kind` that brings no device row of its own make one? The label map's own
+ * answer, for a caller that has to know after its sign-in committed whether a named device was made
+ * (`device-doorbell.ts`). A pairing and the desktop approval bring their row and are not asked.
+ */
+export function mintsNamedDevice(kind: DeviceKind): boolean {
+  return Object.hasOwn(AUTO_MINT_DEVICE_LABELS, kind);
+}
 
 function installClassOf(kind: string, named: boolean): InstallClass | null {
   if (Object.hasOwn(AUTO_MINT_DEVICE_LABELS, kind)) return "desktop";
@@ -491,7 +501,12 @@ export class SessionLifecycle {
     // The shared core: fenced, in id order, the pending grants voided around the claim.
     // A take-back in Devices ends what this device handed its sign-in to, transitively.
     const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now(), { handedOffFrom: deviceId });
-    if (revoked > 0) return;
+    if (revoked > 0) {
+      // The take-back has committed: the device is stamped and the account's other clients are told
+      // (`device-doorbell.ts`). Only here: no other ending of a session is a take-back in Devices.
+      await ringDeviceRevoked(ctx, { accountId: ctx.accountId, userId, deviceId });
+      return;
+    }
     // The core audits a claim; a revoke that matched nothing is still written down, as it always was.
     const db = asTx(ctx);
     const u = await this.loadUser(db, userId);

@@ -15,6 +15,7 @@ import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { TOLD_DEVICES_PREFIX } from "@ohmail/app-logic/notices/use-notices";
 import { SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "../app/session-refresh";
 import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
@@ -79,6 +80,7 @@ const SWEPT = [
   OWNED_REPLY_DRAFT_PREFIX,
   OWNED_REPLY_META_PREFIX,
   NOTIFICATION_SUBSCRIPTION_PREFIX,
+  TOLD_DEVICES_PREFIX,
   READING_ALONG_PREFIX,
   SESSION_MINTED_KEY,
   SESSION_ATTEMPT_KEY,
@@ -321,6 +323,8 @@ describe("sign-out clears the durable decision stores", () => {
       // …and the same two under the account that typed them.
       [`${OWNED_REPLY_DRAFT_PREFIX}acct-a:msg-2`]: "an unsent reply body, named",
       [`${OWNED_REPLY_META_PREFIX}acct-a:lane-2`]: "{}",
+      // The two numbers of the account's devices this browser has told: the key names the account.
+      [`${TOLD_DEVICES_PREFIX}acct-a`]: '{"made":2,"revoked":0}',
       "ohmail.boot.acct-a.piles": "{}",
     };
     for (const [k, v] of Object.entries(jar)) window.localStorage.setItem(k, v);
@@ -352,6 +356,7 @@ describe("sign-out clears the durable decision stores", () => {
       "OWNED_REPLY_DRAFT_PREFIX",
       "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
+      "TOLD_DEVICES_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",
       "SESSION_ATTEMPT_KEY",
@@ -395,6 +400,7 @@ describe("sign-out clears the durable decision stores", () => {
       "OWNED_REPLY_DRAFT_PREFIX",
       "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
+      "TOLD_DEVICES_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",
       "SESSION_ATTEMPT_KEY",

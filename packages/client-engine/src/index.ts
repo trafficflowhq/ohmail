@@ -234,9 +234,9 @@ export {
   SUMMARY_AT_START, calendarChoicesOf, mailChoicesOf, noticeChoicesOf, noticeStartsOn,
   type CalendarNoticeChoices, type MailNoticeChoices, type NoticeChoices, type NoticeWhere,
 } from "./notices/choices.js";
-export { AHEAD_DAYS, AHEAD_MAX, type NoticeAhead, type NoticeEmitter } from "./notices/emitter.js";
-export type { NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
-export { noticeSampleOf } from "./notices/sample.js";
+export { AHEAD_DAYS, AHEAD_MAX, type NoticeAhead, type NoticeEmitter, type NoticeTaken } from "./notices/emitter.js";
+export type { NoticeDevices, NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
+export { TOLD_DEVICES_PREFIX, devicesOf, noticeSampleOf } from "./notices/sample.js";
 export {
   alertNotice, answeredNotice, cancelledNotice, foundNotice, invitationNotice, movedNotice, summaryNotice,
   type NoticedEvent,

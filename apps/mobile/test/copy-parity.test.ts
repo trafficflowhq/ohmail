@@ -569,8 +569,8 @@ describe("the phone's two copy decks", () => {
       "javax.net.ssl.SSLHandshakeException: Trust anchor for certification path not found",
       "ECONNRESET",                                    // …and the arm that is not a pin failure
     ],
-    /* the one value it tests for, and one that is not it */
-    wakeOff: ["endpoint_refused", "no_distributor"],
+    /* the two values it tests for, and one that is neither */
+    wakeOff: ["endpoint_refused", "switched_off", "no_distributor"],
     /* THE FIVE ARMS OF THE PAIRING CONFIRMATION'S "what answered" LINE, one value each. The
        four flavors are `/hello`'s own vocabulary (`net/pairing.ts`, `state/servers.ts#flavor`);
        the fifth is a flavor this build has never heard of, whose arm names it verbatim rather

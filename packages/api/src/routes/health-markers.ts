@@ -886,6 +886,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // so a host ahead of the migration fails at each. Deploy order migration, then the API.
   ["pairing_tokens", "handoff_from_device_id"],
   ["devices", "handed_off_from"],
+  // mail 0212_devices_revoked_at — when a named device was taken back in Devices. LOUD: the settings record counts
+  // the column at every read (`materializeSettings`: the snapshot's first page and every settings change of the
+  // feed), so a host ahead of the migration 42703s on each. Deploy order migration, then the API.
+  ["devices", "revoked_at"],
 ] as const;
 
 /**
@@ -1323,7 +1327,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0210_account_settings_subject_heading";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0212_devices_revoked_at";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

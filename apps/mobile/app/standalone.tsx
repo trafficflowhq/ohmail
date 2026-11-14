@@ -212,7 +212,6 @@ function Credentials() {
          * own success. Native for `local-engine-native.ts`'s reason (`AppState`
          * not loadable under vitest); `void` — an open mailbox must not wait.
          */
-        const address = fields.address.trim();
         /* ══ AND THE SESSION BELONGS TO THIS LAUNCH ═══════════════════════════════════════
          *
          * The import below is not awaited, and the adoption after it can be refused — which
@@ -223,7 +222,7 @@ function Credentials() {
          * inside the slot, and the discard bumps it. */
         const launch = standaloneLaunchGeneration();
         void import("../src/engine/organizer-session-native")
-          .then((m) => { m.startOrganizerSessionNative(outcome.door, address, launch); })
+          .then((m) => { m.startOrganizerSessionNative(outcome.door, launch); })
           /* A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. Swallowed, this would be an
              app that looks like it organizes in the background and does not. */
           .catch(() => { sayOrganizerRestricted(); });

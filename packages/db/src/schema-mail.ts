@@ -1530,6 +1530,11 @@ export const devices = pgTable("devices", {
   // mail 0209 — the device whose session handed this one its sign-in on the same phone, or NULL. A reuse sweep and a
   // take-back of that device end this one too. No foreign key; never projected into a DTO.
   handedOffFrom: uuid("handed_off_from"),
+  // mail 0212 — when a person took this device back in Devices, or NULL: a device that signed itself out, was
+  // replaced by a newer sign-in, or was ended by a sweep or a factor change carries none. Stamped once, after the
+  // take-back committed (`device-doorbell.ts`), never cleared. The settings record counts the rows that carry it;
+  // the instant itself is never projected into a DTO.
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("devices_id_account_uq").on(t.id, t.accountId),
   ixUser: index("devices_user_idx").on(t.userId) }));

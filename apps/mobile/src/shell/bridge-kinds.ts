@@ -27,6 +27,10 @@
  * THE SWITCH BETWEEN THE TWO APPS crosses as three closed kinds and one event, and none of them carries an address,
  * an account, a code or the other app's sign-in: the page asks whether the other app is here, asks native to open
  * it at a place, or to open its store page. Native does every part of it; the page only asks.
+ *
+ * A NOTICE crosses as the act `notices.post` with a {@link BridgeNotice}: a kind, and with it a whole number or
+ * words of a closed list. The page hands over no title, no sentence and no name; native writes every word a
+ * notice shows from its own string resources ({@link readNotice}).
  */
 import { isSwitchPlace, type SwitchPlace } from "../switch/place";
 
@@ -96,6 +100,32 @@ export type OtherAppState = "here" | "absent" | "unknown";
 
 export type { SwitchPlace };
 
+/** The largest count a notice says: the shared kinds' own bound, held equal to it by the page (`web/src/signals.ts`). */
+export const NOTICE_COUNT_MAX = 9999;
+
+/**
+ * A MAIL NOTICE AS IT CROSSES TO NATIVE: one of the kinds this phone draws, with exactly its own members. A count
+ * is a whole number from 1 to {@link NOTICE_COUNT_MAX}; every other member is a word of a closed list, and the
+ * device of a pairing is the server's own word for its kind, never the name a device gave itself. No member can
+ * hold a letter's sender, subject or words, or an address: a notice is read on a locked screen by whoever stands
+ * there. A send that waited for its time is not carried on the phone.
+ */
+export type BridgeNotice =
+  | { readonly kind: "ohbox"; readonly count: number }
+  | { readonly kind: "screener"; readonly count: number }
+  | {
+    readonly kind: "pairing"; readonly change: "paired" | "revoked";
+    readonly device: "desktop" | "phone" | "browser" | null;
+  };
+export type BridgeNoticeKind = BridgeNotice["kind"];
+
+/**
+ * What native did with a notice it was handed. `unsupported`: this app on this system draws none (the iPhone, the
+ * calendar's app, a build without the native poster). `inFront`: the app is the one being looked at. `denied`: the
+ * system does not let this app post, or its session is not the live one.
+ */
+export type NoticePosted = "posted" | "unsupported" | "inFront" | "denied";
+
 /** What the page is told once, before it mounts anything. */
 export interface ShellConfig {
   /** The app the page runs in, read natively from the app's own identifier. */
@@ -116,6 +146,11 @@ export interface ShellConfig {
   /** The phone's old copy of this mailbox waits to be handed across once (`oldCopy.page`). */
   readonly oldCopy: "present" | "absent";
   readonly notifications: NoticePermission;
+  /**
+   * The mail notices native draws here, by kind: none on the iPhone, none in the calendar's app, none in a build
+   * without the poster. The page offers a switch for these only and asks for no other.
+   */
+  readonly notices: readonly BridgeNoticeKind[];
   /** The readings as they stand now; each later change comes as its event. */
   readonly facts: {
     readonly posture: FoldReading;
@@ -133,7 +168,15 @@ export type ShellAct =
   | { readonly act: "notifications.permission" }
   | { readonly act: "notifications.request" }
   | { readonly act: "diagnostics.share" }
-  | { readonly act: "backup.read" };
+  | { readonly act: "backup.read" }
+  /** Draw one mail notice. Native writes its words; what was done with it comes back as `notice`. */
+  | { readonly act: "notices.post"; readonly notice: BridgeNotice }
+  /**
+   * Whether a closed app is to be woken for new mail: this device's master switch and its new-mail switch,
+   * both on. One boolean and nothing else. Native keeps this pairing's wake registration while it is true, and
+   * takes it down at the server and at the distributor while it is false.
+   */
+  | { readonly act: "wake.want"; readonly wanted: boolean };
 
 /**
  * What native was asked to keep under a word it refused: SHA-256 over the word's UTF-16 code units, each low byte
@@ -174,7 +217,10 @@ export interface Requests {
   readonly cancel: { readonly ask: { readonly of: number }; readonly answer: Record<never, never> };
   readonly act: {
     readonly ask: ShellAct;
-    readonly answer: { readonly permission?: NoticePermission; readonly backup?: "excluded" | "included" | "unknown" };
+    readonly answer: {
+      readonly permission?: NoticePermission; readonly backup?: "excluded" | "included" | "unknown";
+      readonly notice?: NoticePosted;
+    };
   };
   /** A link the web view's own navigation asked to open, held natively by its token. */
   readonly linkAskOpen: { readonly ask: { readonly token: string }; readonly answer: { readonly opened: boolean } };
@@ -307,13 +353,77 @@ const isStr = (v: unknown, max = 4096): v is string => typeof v === "string" && 
 const METHODS: Record<HttpMethod, true> = { GET: true, HEAD: true, POST: true, PUT: true, PATCH: true, DELETE: true };
 const ACTS: Record<ShellAct["act"], true> = {
   signOut: true, openServers: true, chrome: true, "notifications.permission": true, "notifications.request": true,
-  "diagnostics.share": true, "backup.read": true,
+  "diagnostics.share": true, "backup.read": true, "notices.post": true, "wake.want": true,
 };
 const NOTES: Record<NoteWhat, true> = {
   mounted: true, durabilityLost: true, keeperRefused: true, pieceDropped: true, foreignEpoch: true, deadlinePassed: true,
   consoleError: true, consoleWarn: true, copyFilled: true, copyHandedAcross: true, copyNotTaken: true,
 };
 const member = (set: object, v: unknown): boolean => typeof v === "string" && Object.prototype.hasOwnProperty.call(set, v);
+
+/** A count a notice says. */
+const isCount = (v: unknown): boolean =>
+  typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= NOTICE_COUNT_MAX;
+type PairingNotice = Extract<BridgeNotice, { readonly kind: "pairing" }>;
+const CHANGES: Record<PairingNotice["change"], true> = { paired: true, revoked: true };
+const DEVICES: Record<NonNullable<PairingNotice["device"]>, true> = { desktop: true, phone: true, browser: true };
+
+/**
+ * Each kind with exactly its members, and what each may be. Typed over the union, so a kind or a member the
+ * guard does not list fails to compile, and so does one it lists that the union does not have.
+ */
+const NOTICE_MEMBERS: {
+  readonly [K in BridgeNoticeKind]: {
+    readonly [F in Exclude<keyof Extract<BridgeNotice, { readonly kind: K }>, "kind">]: (v: unknown) => boolean
+  }
+} = {
+  ohbox: { count: isCount },
+  screener: { count: isCount },
+  pairing: { change: (v) => member(CHANGES, v), device: (v) => v === null || member(DEVICES, v) },
+};
+
+/**
+ * THE NOTICE, READ CLOSED. A record of a listed kind that holds exactly that kind's members, each a whole number
+ * in its range or a word of its list: then a COPY of those members, and native reads the copy, never the page's
+ * own object. Anything else is `null`: a string where a word belongs, a member too many (whatever its name and
+ * value, a symbol too), a member missing or only inherited, a kind or a word that is not listed. Each member is
+ * read once, so what was judged is what is handed on.
+ */
+export function readNotice(raw: unknown): BridgeNotice | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const from = raw as Record<string, unknown>;
+  const own = (name: string): boolean => Object.prototype.hasOwnProperty.call(from, name);
+  const kind = own("kind") ? from.kind : undefined;
+  if (typeof kind !== "string" || !Object.prototype.hasOwnProperty.call(NOTICE_MEMBERS, kind)) return null;
+  const members = NOTICE_MEMBERS[kind as BridgeNoticeKind] as Readonly<Record<string, (v: unknown) => boolean>>;
+  const names = Object.keys(members);
+  // The kind and each of its members, and not one key more: the count says no other key stands beside them.
+  if (Reflect.ownKeys(from).length !== names.length + 1) return null;
+  const copy: Record<string, unknown> = { kind };
+  for (const name of names) {
+    if (!own(name)) return null;
+    const value = from[name];
+    if (!members[name]!(value)) return null;
+    copy[name] = value;
+  }
+  return copy as unknown as BridgeNotice;
+}
+
+/** Every kind a notice crosses as, in the guard's own order. */
+export const BRIDGE_NOTICE_KINDS = Object.keys(NOTICE_MEMBERS) as readonly BridgeNoticeKind[];
+
+/** The keys the act `notices.post` crosses with: the envelope's three, the act and its notice. */
+const POST_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "notice"]);
+/** The act that draws a notice is as closed as its notice: no key beside its own, and a notice that reads. */
+const isNoticePost = (m: Record<string, unknown>): boolean =>
+  Reflect.ownKeys(m).every((key) => typeof key === "string" && POST_KEYS.has(key)) && readNotice(m.notice) !== null;
+
+/** The keys the act `wake.want` crosses with: the envelope's three, the act and its one boolean. */
+const WANT_KEYS: ReadonlySet<string> = new Set(["id", "epoch", "kind", "act", "wanted"]);
+/** As closed as the act that draws: no key beside its own, and `wanted` one of the two booleans, never a word for one. */
+const isWakeWant = (m: Record<string, unknown>): boolean =>
+  Reflect.ownKeys(m).every((key) => typeof key === "string" && WANT_KEYS.has(key)) &&
+  Object.prototype.hasOwnProperty.call(m, "wanted") && (m.wanted === true || m.wanted === false);
 
 /** Root-relative, and nothing a URL parser could read as another place. */
 export function isRootRelative(path: unknown): path is string {
@@ -349,7 +459,8 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
   http: (m) => isStr(m.scope, 128) && member(METHODS, m.method) && isRootRelative(m.path) &&
     isHeaders(m.headers) && isBody(m.body),
   cancel: (m) => isId(m.of),
-  act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark"),
+  act: (m) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
+    (m.act !== "notices.post" || isNoticePost(m)) && (m.act !== "wake.want" || isWakeWant(m)),
   linkAskOpen: (m) => isStr(m.token, 128),
   answer: (m) => isId(m.askId) &&
     ((m.what === "back" && typeof m.took === "boolean") || (m.what === "unsent" && isId(m.unsent))),

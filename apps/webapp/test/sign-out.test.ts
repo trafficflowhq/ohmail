@@ -609,9 +609,11 @@ describe("a one-account wipe takes only what its reach allows", () => {
   const A = "acct_A";
   const B = "acct_B";
   let engine: typeof import("@ohmail/client-engine");
-  let k = { locks: "", notes: "", reply: "", minted: "", owed: "" };
+  let k = { locks: "", notes: "", reply: "", minted: "", owed: "", told: "" };
   const ownKeys = (owner: string): string[] => [
     `${k.locks}${owner}`, `${k.notes}${owner}`, `ohmail.access.${owner}`, `ohmail.boot.ownAddresses.${owner}`,
+    // What this browser has told of the account's devices: one account's numbers never go with another's.
+    `${k.told}${owner}`,
   ];
   const jarKeys = (): string[] => [`${k.reply}m-b`, k.minted];
   const left = (keys: string[]): string[] => keys.filter((key) => localStorage.getItem(key) !== null);
@@ -631,6 +633,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
       reply: (await import("@ohmail/app-logic/writing/mail-send")).REPLY_DRAFT_PREFIX,
       minted: (await import("../app/session-refresh")).SESSION_MINTED_KEY,
       owed: (await import("../app/(product)/resume/signed-out-note")).REVOKE_OWED_PREFIX,
+      told: (await import("@ohmail/app-logic/notices/use-notices")).TOLD_DEVICES_PREFIX,
     };
     for (const owner of [A, B]) {
       const store = new engine.IndexedDbMirrorStore({ owner });

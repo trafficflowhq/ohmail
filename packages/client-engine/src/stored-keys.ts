@@ -464,9 +464,21 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.notifications.channels", store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/shell/notification-settings.ts"],
+    at: ["apps/webapp/app/shell/notification-settings.ts", "apps/mobile/web/src/notices.tsx"],
     holds: "which notification channels are switched on, on this device",
     words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.notices.calendar", store: "localStorage", owner: "web",
+    at: ["apps/mobile/web/src/notices.tsx"],
+    holds: "which of the calendar's notices are switched on and whether a notice or a widget shows an event's title, on this device: switches alone, never an event. Read by the phone's page beside the mail's record; nothing writes it until a Notifications pane offers the calendar's switches, and until then the start values hold",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohmail.notices.devices.told.", family: true, store: "localStorage", owner: "web",
+    at: ["packages/client-engine/src/notices/sample.ts"],
+    holds: "what this device has told of the account's named devices, per account: two whole numbers that only rise (how many were ever made, how many a person took back in Devices), never a device's name, kind or address. A device paired while no app was open is told from them at the next start. Advanced only once a notice of the rise was taken by the platform, or while the person stands at the Devices list. Removed at sign-out in the browser and in the desktop's window; on the phone it goes with the web view's data when a pairing is forgotten",
+    words: false, erased: "sign-out", mark: "kept",
   },
   {
     key: "ohmail.notifications.subscription", family: true, store: "localStorage", owner: "web",
@@ -1117,6 +1129,15 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "ohmail-notices-live", store: "file", owner: "phone",
+    at: [
+      "apps/mobile/modules/ohmail-notices/android/src/main/java/app/ohmail/notices/LiveInstanceGate.kt",
+      "apps/mobile/plugins/wake-push-renderer.js",
+    ],
+    holds: "which of the Android app's pairings is the signed-in one, by the pairing's local id (never an account, an address or a server): the only pairing a notice is drawn for; written at sign-in and at a switch, removed at sign-out, in the no-backup folder. Read by the wake's renderer; written and read by the notices' module, through the gate's name",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
     key: "ohcal-snapshot.json", store: "file", owner: "phone",
     at: ["packages/client-engine/src/notices/snapshot.ts"],
     holds: "the calendar's coming days, read by the phone's own alerts and widgets: for each event its time, its id and its label (a title only where the person's title switch shows titles, `Busy` for a private one, `Event` otherwise), never a letter's words, never an address, never an attendee. Written by the phone's native side, atomically, in the phone app's own files folder (the shared group's folder once one exists), kept outside backups, and also removed when the calendar is switched off on the device. No build writes it yet: the writer comes with those alerts and widgets",
@@ -1166,8 +1187,23 @@ export const STORED_KEYS = [
   },
   {
     key: "app.ohmail.push.new_mail", store: "identifier", owner: "phone",
-    at: ["apps/mobile/plugins/wake-push-renderer.js"],
+    at: [
+      "apps/mobile/plugins/wake-push-renderer.js",
+      "apps/mobile/modules/ohmail-notices/android/src/main/java/app/ohmail/notices/NoticePoster.kt",
+    ],
     holds: "the Android notification channel of new mail; the system keeps a person's settings for it under this id",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "app.ohmail.notices.screener", store: "identifier", owner: "phone",
+    at: ["apps/mobile/modules/ohmail-notices/android/src/main/java/app/ohmail/notices/NoticePoster.kt"],
+    holds: "the Android notification channel of senders waiting in the Screener; the system keeps a person's settings for it under this id",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "app.ohmail.notices.devices", store: "identifier", owner: "phone",
+    at: ["apps/mobile/modules/ohmail-notices/android/src/main/java/app/ohmail/notices/NoticePoster.kt"],
+    holds: "the Android notification channel of a device paired with the account or signed out of it; the system keeps a person's settings for it under this id",
     words: false, erased: "never", mark: "kept",
   },
   {

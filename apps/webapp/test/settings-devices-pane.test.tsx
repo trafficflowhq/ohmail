@@ -41,6 +41,9 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { MemoryMirrorStore, noticeChoicesOf, type Notice, type SyncChange } from "@ohmail/client-engine";
+import { EngineContext, type EngineBinding } from "@ohmail/app-logic/engine/context";
+import { NoticeCaller, noticeReadsOf, toldDevicesIn, type HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import messages from "../messages/en.json";
 import { decodeQr, matrixFromSvg } from "./fixtures/qr-decode";
 
@@ -61,7 +64,8 @@ const TOKEN = createHash("sha256").update("settings-devices-pane fixture").diges
 /** The one allow-listed managed API origin (`app/api-origin.ts`) — the link's base. */
 const API_ORIGIN = "https://api.ohmail.app";
 
-type Answer = { status: number; body?: unknown };
+/** `held`: the answer waits until it resolves, as a read still on the wire does. */
+type Answer = { status: number; body?: unknown; held?: Promise<void> };
 let answers: Record<string, Answer> = {};
 let calls: Array<{ method: string; url: string; body: unknown }> = [];
 let originalFetch: typeof globalThis.fetch;
@@ -109,6 +113,7 @@ beforeEach(() => {
     });
     if (!hit) return new Response("{}", { status: 200 });
     const [, a] = hit;
+    if (a.held) await a.held;
     return new Response(a.body === undefined ? null : JSON.stringify(a.body), {
       status: a.status,
       headers: { "content-type": "application/json" },
@@ -626,5 +631,150 @@ describe("Strict Mode — development double-mount must not wedge the pane", () 
     const c = await mountNode(h(React.StrictMode, null, h(DevicesSection)));
     expect(c.textContent).toContain("Mila's phone");
     expect(c.textContent).toContain("Codes not yet used");
+  });
+});
+
+describe("the list is live: a device paired while the pane is open appears in it, and only then counts as told", () => {
+  const AT = "2026-11-17T09:00:00.000Z";
+  let seq = 0;
+  const PAIRED: Notice = { kind: "pairing", change: "paired", device: null };
+
+  /**
+   * The account's engine as the pane and the notices read it: its copy, where a ring puts the settings
+   * record, and its subscription. The notices' reads are built as every surface builds them, with the
+   * person standing at this pane in a window that is looked at.
+   */
+  async function paneWithNotices() {
+    const copy = new MemoryMirrorStore();
+    await copy.load();
+    const listeners = new Set<() => void>();
+    const engine = {
+      read: () => copy,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const ring = async (made: number): Promise<void> => {
+      await copy.applyChanges([{
+        type: "settings", op: "update", id: "acct", seq: ++seq, updatedAt: AT,
+        entity: {
+          accountId: "acct", dormancyDays: null, folderMailboxesOff: {}, locale: null, updatedAt: AT,
+          devices: made, devicesMade: made, devicesRevoked: 0,
+        },
+      } as SyncChange]);
+      await act(async () => {
+        for (const listener of listeners) listener();
+        await Promise.resolve();
+      });
+    };
+    await ring(1);
+    const jar = new Map<string, string>();
+    const told = toldDevicesIn({
+      get: (key) => jar.get(key) ?? null,
+      set: (key, value) => { jar.set(key, value); return "stored"; },
+      remove: (key) => { jar.delete(key); return "stored"; },
+    });
+    /** In front the platform draws nothing; behind it takes the notice. */
+    let behind = false;
+    const posted: Notice[] = [];
+    const emitter: HostNoticeEmitter = {
+      carries: ["ohbox", "screener", "pairing"], acts: [], ahead: "none",
+      post: (notice) => { posted.push(notice); return behind; },
+      takeBack: () => undefined,
+    };
+    const caller = new NoticeCaller(emitter, noticeReadsOf(engine, { permission: () => "granted" }, {
+      choices: () => noticeChoicesOf(null, null, { ohcalPhone: false }),
+      atDevices: () => !behind,
+      told,
+    }));
+    const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
+    const binding = { engine, demo: false, serverDemo: false, sync: { state: "idle" } } as unknown as EngineBinding;
+    const c = await mountNode(h(EngineContext.Provider, { value: binding }, h(DevicesSection)));
+    const settle = (): void => caller.settle("acct", copy);
+    return {
+      c, ring, settle, posted,
+      kept: () => told.read("acct"),
+      goBehind: () => { behind = true; },
+      listReads: () => calls.filter((r) => r.method === "GET" && r.url.includes("/api/devices")).length,
+    };
+  }
+
+  it("the record rises, the list is read again and shows the new device, and only then the numbers are kept", async () => {
+    answers["GET /api/devices"] = { status: 200, body: { items: [THIS_BROWSER] } };
+    const p = await paneWithNotices();
+    p.settle();
+    expect(p.kept(), "this browser's first sign-in learns the record").toEqual({ made: 1, revoked: 0 });
+    const readsBefore = p.listReads();
+
+    // At night a device is paired: the ring reaches the copy while the list's read is still on the wire.
+    let answer!: () => void;
+    answers["GET /api/devices"] = {
+      status: 200, body: { items: [THIS_BROWSER, PAIRED_PHONE] }, held: new Promise<void>((r) => { answer = r; }),
+    };
+    await p.ring(2);
+    expect(p.listReads(), "the pane reads its list again by itself").toBe(readsBefore + 1);
+    p.settle();
+    expect(p.kept(), "a rise the list does not show yet is not told").toEqual({ made: 1, revoked: 0 });
+    expect(p.c.textContent).not.toContain("Mila's phone");
+
+    await act(async () => {
+      answer();
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(p.c.textContent).toContain("Mila's phone");
+    p.settle();
+    expect(p.kept(), "the list shows the new device: the person has read it").toEqual({ made: 2, revoked: 0 });
+    p.goBehind();
+    p.settle();
+    // Handed twice to a window in front, which drew neither; nothing once it is behind.
+    expect(p.posted, "nothing more to tell once the window is behind").toEqual([PAIRED, PAIRED]);
+  });
+
+  it("a read of the list already on the wire when the device is paired does not count the device as shown", async () => {
+    // The pane opens and reads its list; the pairing rings before that read answers, with the old list.
+    let first!: () => void;
+    answers["GET /api/devices"] = {
+      status: 200, body: { items: [THIS_BROWSER] }, held: new Promise<void>((r) => { first = r; }),
+    };
+    const p = await paneWithNotices();
+    p.settle();
+    let second!: () => void;
+    answers["GET /api/devices"] = {
+      status: 200, body: { items: [THIS_BROWSER, PAIRED_PHONE] }, held: new Promise<void>((r) => { second = r; }),
+    };
+    await p.ring(2);
+    await act(async () => {
+      first();
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    p.settle();
+    expect(p.kept(), "the list that answered was read before the pairing").toEqual({ made: 1, revoked: 0 });
+    await act(async () => {
+      second();
+      await Promise.resolve();
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(p.c.textContent).toContain("Mila's phone");
+    p.settle();
+    expect(p.kept()).toEqual({ made: 2, revoked: 0 });
+  });
+
+  it("with the list's read failing nothing is kept, and the notice is drawn once the window is behind", async () => {
+    answers["GET /api/devices"] = { status: 200, body: { items: [THIS_BROWSER] } };
+    const p = await paneWithNotices();
+    p.settle();
+    answers["GET /api/devices"] = { status: 503, body: { error: { code: "unavailable", message: "unavailable" } } };
+    await p.ring(2);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    p.settle();
+    expect(p.kept(), "the list could not show the new device").toEqual({ made: 1, revoked: 0 });
+    expect(p.c.textContent).not.toContain("Mila's phone");
+    p.goBehind();
+    p.settle();
+    expect(p.posted).toEqual([PAIRED, PAIRED]);
+    expect(p.kept(), "told once the platform took it").toEqual({ made: 2, revoked: 0 });
   });
 });

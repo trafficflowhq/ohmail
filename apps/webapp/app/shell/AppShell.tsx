@@ -129,7 +129,7 @@ import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { useOhboxVisitMark } from "@ohmail/app-logic/reading/ohbox-visit";
-import { useNotices, type NoticeReads } from "@ohmail/app-logic/notices/use-notices";
+import { noticeReadsOf, useNotices } from "@ohmail/app-logic/notices/use-notices";
 import { usePileNote, type PileNoteSaid } from "@ohmail/app-logic/lists/pile-note";
 import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
@@ -1416,11 +1416,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /* THE NOTICES (`use-notices.ts`): at each settle of the copy the rail reads, the gate is asked
      and this surface's emitter draws what it answers. Nothing where the host hands in no emitter;
      the choices and the permission are read at each settle, so a switch pressed counts at once. */
-  const noticeReads = useMemo((): NoticeReads => ({
+  const devicesShown = effectiveView === "settings" && route.settingsPane === "devices";
+  const noticeReads = useMemo(() => noticeReadsOf(engine, notificationHost ?? null, {
     choices: () => noticeChoicesOf(readChannels(), null, { ohcalPhone: false }),
-    permission: () => notificationHost?.permission() ?? "unsupported",
-    devices: () => null,
-  }), [notificationHost]);
+    // The Devices list is open in a window that is being looked at: the person is reading it.
+    atDevices: () => devicesShown && typeof document !== "undefined" && document.hasFocus(),
+  }), [engine, notificationHost, devicesShown]);
   useNotices({
     reader: presented,
     version: derived,
