@@ -147,7 +147,7 @@ describe("an undecided mailbox asks the organize decision again", () => {
   /* The boot cache marks consent known before the live read, with no completion stamp in it. */
   it("the boot cache's consent is not the stamp: nothing opens before the live read", async () => {
     const { bootCacheKey } = await import("@ohmail/app-logic/session/boot-cache");
-    const { CONSENT_BOOT_SCOPE } = await import("../app/shell/consent-state.js");
+    const { CONSENT_BOOT_SCOPE } = await import("@ohmail/app-logic/consent/consent-state");
     document.cookie = "tf_owner=acct_cached";
     window.localStorage.setItem(bootCacheKey(CONSENT_BOOT_SCOPE, "acct_cached"),
       JSON.stringify({ v: 1, seedConfirmedAt: "2026-09-01T00:00:00.000Z", dormancyDays: 90, screeningBaselineAt: null }));

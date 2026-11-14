@@ -12,7 +12,7 @@ import {
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../../shell/AwayResponderRow";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
-import type { ConsentTransport } from "../../shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { DraftReplyWire } from "../../shell/draft-reply";
 import type { OwnerResolver } from "../../shell/engine";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
@@ -20,7 +20,7 @@ import type { GapLettersTransport } from "../../shell/GapLettersNotice";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import type { JunkWire } from "../../shell/junk-window";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
-import type { FreshnessProbe, MailboxProbe } from "../../shell/MailStateProvider";
+import type { FreshnessProbe, MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { NotificationHost } from "../../shell/notification-settings";
 import type { OrganizerNoticeTransport } from "../../shell/OrganizerNotice";
 import type { ProfileImportTransport } from "../../shell/ProfileImportCard";
@@ -67,7 +67,8 @@ export interface WebSupplies {
   readonly reads: { readonly mailboxes: Supplied<HostReads["mailboxes"]>; readonly access: Supplied<HostReads["access"]> };
   /**
    * Every wire but the switch for a person's own model, which only a desktop on its own has. A browser hands in no
-   * picture fetcher, and the five calls today's views still make themselves are `none` until their first caller.
+   * picture fetcher, and the four calls today's views still make themselves are `none` until their first caller. The
+   * review of who you write to is handed where this page has a client.
    */
   readonly wires: Transports<
     | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "consent" | "olderBody" | "junk" | "trash"

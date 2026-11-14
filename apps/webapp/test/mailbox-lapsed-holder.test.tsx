@@ -41,7 +41,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), organizer: async () => mockPeek },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 /** A reader row whose holder is named; `organizerState` says whether it still renews. */
 const reader = (state: "held" | "stopped"): MailboxDTO => ({

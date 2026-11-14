@@ -206,6 +206,7 @@ describe("THE SYNC RAIL GETS NO READER ARM — a ruling, not an omission", () =>
     engineFreshness: { state: "current", asOf: stamp },
     now: NOW,
     demo: false,
+    scope: null,
   } as never);
 
   it("a reader whose mirror is growing is NOT `blocked`", () => {

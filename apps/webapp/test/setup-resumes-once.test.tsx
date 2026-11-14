@@ -4,7 +4,7 @@ import {
   ISO, answerConsentWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
-import { CONSENT_BOOT_SCOPE } from "../app/shell/consent-state";
+import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 

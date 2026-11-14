@@ -69,7 +69,7 @@ vi.mock("../app/api-client", async () => {
     },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 const roots: Root[] = [];
 beforeEach(() => { mockThrows = null; mockListed = []; });

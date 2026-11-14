@@ -15,7 +15,7 @@ import { waterlineStamp } from "./format";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
-import { useMailState, useMailboxFacts } from "./MailStateProvider";
+import { useMailState, useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { FILING_REFUSAL_REASONS, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useHashRoute } from "./routing";
 

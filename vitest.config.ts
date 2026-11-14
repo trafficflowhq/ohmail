@@ -204,6 +204,7 @@ export default defineConfig({
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
       { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
+      { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },

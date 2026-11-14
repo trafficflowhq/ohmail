@@ -74,7 +74,7 @@ import {
   standDownKey, webFiler, type WebFiler,
 } from "@ohmail/app-logic/mail-state/mail-state";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
-import { useMailState } from "../../shell/MailStateProvider";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { useEngineOrNull } from "../../shell/engine";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale } from "../../shell/locale";
@@ -715,9 +715,9 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
          */
 
         /**
-         * The real `MailStateProvider` memoizes its binding (`shell/MailStateProvider.tsx`) so the cycle does not
-         * close in the product; a test that stands in for it with a fresh closure per render closes it, and then the
-         * loop only needs a state update that never bails out. This is that update, so this is where it is fixed.
+         * The real `MailStateProvider` memoizes its binding (`@ohmail/app-logic/mail-state/mail-state-binding`) so the
+         * cycle does not close in the product; a test that stands in for it with a fresh closure per render closes it, and
+         * then the loop only needs a state update that never bails out. This is that update, so this is where it is fixed.
          */
         setItems((prev) => {
           if (prev === null) return got;

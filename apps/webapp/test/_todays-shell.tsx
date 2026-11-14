@@ -6,6 +6,11 @@
  * `desktopHost` or `pairedHost`: the entries' own tests and the journeys prove those.
  *
  * The old door's one default lives here and nowhere else: an absent `managedService` is the managed service.
+ *
+ * AND THE OLD SHELL'S FALLBACK FOR THE CONSENT WIRE lives here and nowhere else: the browser's own client where the
+ * page has one, and with it the review of who you write to, as the web's own host answers. It is for the tests that
+ * mount the web's views and name no wire; a test that hands `NONE` has none. No shell does this: each hands its own
+ * wire or says `none`.
  */
 import { createElement as h, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { useLocale, useMessages, useTimeZone } from "next-intl";
@@ -20,14 +25,16 @@ import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../app/shell/AwayResponderRow";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
-import type { ConsentTransport } from "../app/shell/consent-state";
+import { apiConfigured } from "../app/api-client";
+import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "../app/(product)/mailbox/consent-over-api";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { EngineProvider, useEngine, type OwnerResolver, type ProvidedEngine } from "../app/shell/engine";
 import type { GapLettersTransport } from "../app/shell/GapLettersNotice";
 import type { SupportHost } from "../app/shell/HelpContactPane";
 import type { JunkWire } from "../app/shell/junk-window";
-import type { FreshnessProbe, MailboxProbe } from "../app/shell/MailStateProvider";
+import type { FreshnessProbe, MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { NotificationHost } from "../app/shell/notification-settings";
 import type { OrganizerNoticeTransport } from "../app/shell/OrganizerNotice";
 import type { ProfileImportTransport } from "../app/shell/ProfileImportCard";
@@ -84,7 +91,8 @@ export interface TodaysShellProps {
   awayIsLocal?: boolean;
   awayOnHost?: string | null;
   profileImportTransport?: ProfileImportTransport;
-  consentTransport?: ConsentTransport;
+  /** The consent wire the test's host hands; `NONE` says it has none; absent: the web's own where the page has a client. */
+  consentTransport?: ConsentTransport | None;
   imageWire?: ImageDoor;
   imagesFromComputer?: boolean;
   olderBodyWire?: OlderBodyWire;
@@ -138,6 +146,7 @@ export function hostFromTodaysInputs(
     help: props.support ? { name: "help", render: () => null } : NONE,
   });
   const support = props.support;
+  const consent = props.consentTransport ?? (apiConfigured() ? CLOUD_CONSENT : NONE);
   return {
     engine,
     session: {
@@ -154,7 +163,7 @@ export function hostFromTodaysInputs(
       liveBody: orNone(props.liveBodyWire),
       away: orNone(props.awayTransport),
       profileImport: orNone(props.profileImportTransport),
-      consent: orNone(props.consentTransport),
+      consent,
       images: orNone(props.imageWire),
       olderBody: orNone(props.olderBodyWire),
       junk: orNone(props.junkWire),
@@ -162,7 +171,8 @@ export function hostFromTodaysInputs(
       suggest: orNone(props.suggestWire),
       draftReply: orNone(props.draftReplyWire),
       firstRun: orNone(props.firstRun),
-      screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
+      seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
+      screening: NONE, autoFiled: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
     } as unknown as HostContract["wires"],
     capabilities: {
       ...CANNOT,
@@ -171,7 +181,7 @@ export function hostFromTodaysInputs(
       rulesMarked: props.actRulesUnmarked !== true,
       awayRunsOn: props.awayIsLocal === true ? "thisComputer" : props.awayOnHost ? { host: props.awayOnHost } : CANNOT.awayRunsOn,
       unsubscribeFrom: props.imagesFromComputer === true ? "computer" : "service",
-      foldersStorable: props.consentTransport?.foldersStorable ?? CANNOT.foldersStorable,
+      foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
     features: { ...features, places: frame.places, stages: frame.stages } as HostContract["features"],

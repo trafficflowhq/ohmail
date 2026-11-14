@@ -11,17 +11,11 @@
 import { createTranslator } from "next-intl";
 import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { fillOver, type Messages } from "@ohmail/app/text/fill";
+import { LOCALES, isAppLocale, normalizeLocale, type AppLocale } from "@ohmail/app-logic/text/locale";
 
-/**
- * THE CLOSED SET, and it is closed in four places that must agree: here, the CHECK on
- * `account_settings.locale` (mail 0053), the wire validation in `PATCH /consent/settings`, and
- * the selector in Settings → General. `test/locale-catalog.test.ts` holds this array against the
- * catalogue files that exist on disk, so adding a member without adding `messages/<locale>.json`
- * fails rather than rendering raw keys.
- */
-export const LOCALES = ["en", "de"] as const;
-
-export type AppLocale = (typeof LOCALES)[number];
+/* The closed set and its two readers are behaviour's (`@ohmail/app-logic/text/locale`); every importer of this file
+   keeps taking them here. */
+export { LOCALES, isAppLocale, normalizeLocale, type AppLocale };
 
 /**
  * ENGLISH IS THE FALLBACK, not merely the default — the distinction matters at two different
@@ -51,25 +45,6 @@ export const LOCALE_COOKIE = "ohmail.locale";
 
 /** A year. Long enough that a returning reader is not reset to English, short enough to expire. */
 const LOCALE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
-
-export function isAppLocale(value: unknown): value is AppLocale {
-  return typeof value === "string" && (LOCALES as readonly string[]).includes(value);
-}
-
-/**
- * Reduce anything to a member of {@link LOCALES}, or `null` for "this says nothing". The primary
- * subtag only: `de-CH`, `de-DE` and `de` are one catalogue here, and a Swiss reader asking for
- * `de-CH` must not fall through to English on a tag mismatch; case is folded because
- * `Accept-Language` and a hand-set cookie arrive in either. `null` rather than `DEFAULT_LOCALE` is
- * the whole point of the return type: a caller must distinguish "nobody has said" (keep looking at
- * the next source) from "they said English" — the account read in `consent-state.ts` depends on
- * exactly that difference.
- */
-export function normalizeLocale(value: string | null | undefined): AppLocale | null {
-  if (typeof value !== "string") return null;
-  const primary = value.trim().toLowerCase().split(/[-_]/)[0] ?? "";
-  return isAppLocale(primary) ? primary : null;
-}
 
 /** The local preference, or `null` when storage is blocked or nothing has been stored. */
 export function readStoredLocale(): AppLocale | null {

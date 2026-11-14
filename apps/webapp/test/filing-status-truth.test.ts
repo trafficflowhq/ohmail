@@ -91,6 +91,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: ago(30_000) },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
 } as MailStateInputs);
 

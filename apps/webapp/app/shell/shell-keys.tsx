@@ -31,7 +31,7 @@ import {
   useTheme,
 } from "@ohmail/ui";
 import { replyAllRecipients } from "./compose-from";
-import type { ConsentState } from "./consent-state";
+import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
 import { hueOf } from "./format";

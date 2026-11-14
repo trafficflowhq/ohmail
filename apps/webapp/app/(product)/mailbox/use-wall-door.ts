@@ -84,6 +84,7 @@ export function useWallDoor({ facts, onLifted }: { facts: AccessRefusedFacts; on
   const { check, armPoll, checkAgain } = useWallLift({
     lifts: async () => opensTheWall(await account.access({ fresh: true })),
     onLifted,
+    scope: readOwner(),
     owner: readOwner(),
   });
   const [signingOut, setSigningOut] = useState(false);

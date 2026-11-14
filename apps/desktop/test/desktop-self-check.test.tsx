@@ -18,9 +18,9 @@ const FACTS: Array<Record<string, unknown>> = [
   { id: "m1", address: "ann@example.test", displayName: null, status: "connected" },
   { id: "m2", address: "old@example.test", displayName: null, status: "disabled" },
 ];
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return { ...real, useMailboxFacts: () => FACTS, useMailState: () => ({ state: null, refresh: async () => {} }) };
 });

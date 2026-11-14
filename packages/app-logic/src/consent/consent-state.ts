@@ -15,12 +15,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_DORMANCY_DAYS, readScreeningByMailbox, type MailboxScreening, type ScreeningSource,
 } from "@ohmail/client-engine";
-import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
-import { readBootCache, writeBootCache } from "@ohmail/app-logic/session/boot-cache";
-import { normalizeLocale, type AppLocale } from "./locale";
-import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
-import { storageOwnerState } from "@ohmail/app-logic/storage/storage-owner";
-import type { TravelledChangeWire } from "./travelled-change";
+import type { ConsentStateWire } from "./consent-wire.js";
+import { readBootCache, writeBootCache } from "../session/boot-cache.js";
+import { normalizeLocale, type AppLocale } from "../text/locale.js";
+import { usePinnedScope, type StorageScope } from "../storage/scope.js";
+import { isDemoOwned } from "../storage/storage-owner.js";
+import type { TravelledChangeWire } from "./travelled-change.js";
 
 /**
  * The five calls this hook makes, gathered into something a host can hand in — the `AwayTransport`/`SuggestWire`
@@ -30,7 +30,7 @@ import type { TravelledChangeWire } from "./travelled-change";
  * WIRE is injected, never the controls: `autoSuggest` is the one flag that authorises spending, and its
  * echo-not-the-argument discipline and single `setState` are decided above this seam — a second implementation is a
  * second answer to "is auto-suggest on", and the direction that costs money is where they disagree. Methods are
- * shaped like `api-client`'s own `consent` object, the default.
+ * shaped like `api-client`'s own `consent` object, which the web's host hands in; there is no default.
  */
 export interface ConsentTransport {
   /**
@@ -145,30 +145,11 @@ function failureOf(err: unknown, attempt: number): ConsentReadFailure {
   };
 }
 
-/** The hosted transport — the browser talking to the API this app was written against. */
-export const CLOUD_CONSENT: ConsentTransport = {
-  /* True for every server this tab may reach, and the READ decides: a self-hosted
-     server inherits `withoutFoldersFlag`, whose consent read carries no
-     `foldersEnabledAt`, so the hook withholds the pane there. */
-  foldersStorable: true,
-  state: () => consentApi.state(),
-  setAutoSuggest: (enabled) => consentApi.setAutoSuggest(enabled),
-  setAutoAct: (enabled) => consentApi.setAutoAct(enabled),
-  setDormancyDays: (days, scope) => consentApi.setDormancyDays(days, scope),
-  setBlockRemoteImages: (blocked) => consentApi.setBlockRemoteImages(blocked),
-  setBlockTrackingPixels: (blocked) => consentApi.setBlockTrackingPixels(blocked),
-  setBlockAutoUnsubscribe: (blocked) => consentApi.setBlockAutoUnsubscribe(blocked),
-  setFoldersEnabled: (enabled) => consentApi.setFoldersEnabled(enabled),
-  setMailboxFoldersEnabled: (mailboxId, enabled) =>
-    consentApi.setMailboxFoldersEnabled(mailboxId, enabled),
-  // The markup rides its own argument; dropped, a formatted save was sent as "clear the signature".
-  setMailboxSignature: (mailboxId, signature, signatureHtml) =>
-    consentApi.setMailboxSignature(mailboxId, signature, signatureHtml),
-  setThemeFace: (themeFace) =>
-    consentApi.setThemeFace(themeFace).then((stored) => ({ themeFace: stored })),
-  setResurfaceTime: (resurfaceTime) =>
-    consentApi.setResurfaceTime(resurfaceTime).then((stored) => ({ resurfaceTime: stored })),
-};
+/** The wire behind a mounted hook, or a refusal where its host handed none: a press there reaches nothing. */
+function wireOf(link: { current: ConsentTransport | "none" }): ConsentTransport {
+  if (link.current === "none") throw new Error("ohmail: no consent wire stands behind this shell");
+  return link.current;
+}
 
 export interface ConsentState {
   /** Null until the seed review has been confirmed. Drives which onboarding step is shown. */
@@ -369,17 +350,6 @@ export interface ConsentState {
    */
   standalone: boolean;
   /**
-   * Does this bundle carry the browser's Cloud client — a fact about the BUILD, and the question {@link
-   * standalone} used to answer before it started answering a better one. Published here because
-   * `AppShell` may not import `app/api-client` (published mirror) and this hook reads `apiConfigured()`
-   * anyway. Two questions with different answers on the desktop's hosted door: "is there a server to
-   * reach?" — {@link standalone}, transport-aware; "can a hosted CEREMONY run in this window?" — this
-   * one: the seed review and the remote-image proxy call `app/api-client` DIRECTLY, so no transport
-   * makes them work; false ⇒ the shell withholds them. Not a state field: settled before first render,
-   * derived, so a `setState` cannot leave it behind.
-   */
-  cloudClient: boolean;
-  /**
    * CAN THE SERVER BEHIND THIS WIRE STORE THE FOLDERS FLAG — the one consumer that must not draw a
    * dead pane reads it beside `known`. Two halves, both required: the transport's declaration
    * ({@link ConsentTransport.foldersStorable}) and the LIVE read carrying `foldersEnabledAt` at all
@@ -482,7 +452,6 @@ const RESTING: ConsentState = {
   resurfaceTime: null,
   known: false,
   standalone: false,
-  cloudClient: false,
   foldersStorable: false,
   // NEVER BEEN THROUGH SETUP, at rest. Not a safe position — see
   // {@link ConsentState.onboardingCompletedAt}: it is the value that would OPEN a setup dialog,
@@ -494,20 +463,6 @@ const RESTING: ConsentState = {
   screeningScope: "window",
   screeningByMailbox: null,
 };
-
-/**
- * WHOSE CONSENT CACHE THIS IS — the remembered account, else the identity the HOST established
- * (the desktop window's mounted mailbox, the host door's pairing), never the demo's. The cache
- * holds the three partition inputs and authorises nothing, which is why a host identity is
- * enough (`storage-owner.ts`); without it the paired desktop partitioned rules-only for as long
- * as its consent read failed. One resolver for the read and both writes.
- */
-function consentCacheOwner(): string | null {
-  const cookie = readOwner();
-  if (cookie !== null) return cookie;
-  const s = storageOwnerState();
-  return s.source === "host" ? s.owner : null;
-}
 
 /**
  * THE ROLES `GET /mailboxes` STATES, as one key: sorted `id:organizerRole` pairs, a mailbox with no
@@ -598,8 +553,8 @@ function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
 /**
  * @param active `false` on the demo. Keeps {@link RESTING}, which is the same window the engine
  * would have used unasked.
- * @param transport A host's own wire — the desktop on its HOSTED door. Absent ⇒ the browser's
- * Cloud client, and where that is not configured either (a standalone install) nothing is asked.
+ * @param transport The wire this mount's host handed in, or `"none"` where the host has none ⇒
+ * nothing is asked, nothing is written and the row rests. A wire nobody handed in is refused.
  * See {@link ConsentTransport}. It must be a STABLE value — a module constant, as
  * `awayOverBridge` is — or, strictly, it must not change identity in a way the caller depends on:
  * the effect below reads it through a ref and re-runs only on `active`/reachability, so a fresh
@@ -607,7 +562,9 @@ function acceptConsentCache(parsed: unknown): ConsentBootCache | null {
  */
 export function useConsentState(
   active: boolean,
-  transport?: ConsentTransport,
+  /** Whose remembered answer this mount reads and writes: the scope its host handed, held for the life of the mount. */
+  scope: StorageScope,
+  transport: ConsentTransport | "none",
   /**
    * The settings stamp from the sync channel — the `settings` entity's `updatedAt` as the mirror
    * holds it, or null. Every consent-settings write appends a `settings` change row in the same
@@ -716,6 +673,19 @@ export function useConsentState(
     mailboxId: string, signature: string | null, signatureHtml?: string | null,
   ) => Promise<Record<string, string>>;
 } {
+  if (transport === undefined) throw new Error("ohmail: the consent hook was mounted with no word about its wire");
+  /**
+   * WHOSE CONSENT CACHE THIS IS — the scope this mount was handed (the account on the web, the
+   * desktop window's mounted mailbox, the host door's pairing), read once as it mounts and never
+   * looked up again; none under no scope and none under the demo's. The cache holds the three
+   * partition inputs and authorises nothing; without it the paired desktop partitioned rules-only
+   * for as long as its consent read failed. One resolver for the read and both writes.
+   */
+  const owner = useRef(usePinnedScope(scope));
+  const cacheOwner = (): string | null => {
+    const s = owner.current;
+    return s === null || isDemoOwned(s) ? null : s;
+  };
   const [state, setState] = useState<ConsentState>(RESTING);
   /**
    * The LAST CACHE ROW this hook wrote or adopted, so a same-tab settings write can update the
@@ -727,15 +697,15 @@ export function useConsentState(
    */
   const bootCache = useRef<ConsentBootCache | null>(null);
 
-  /* IS THERE ANYWHERE TO ASK — the host's wire, or the browser's. One answer, read by the fetch
+  /* IS THERE ANYWHERE TO ASK — the host's wire, and no other. One answer, read by the fetch
      below, by all four writers, and by `standalone`, so those six can never disagree about
      whether this account has a stored row. */
-  const reachable = transport !== undefined || apiConfigured();
+  const reachable = transport !== "none";
   /* The wire behind a stable identity, so the effect's dependencies stay `[active, reachable]` and
      a host that builds its transport inline does not refetch on every render. The same `link` ref
      `screener-suggest.ts` keeps around its own wire, for the same reason. */
-  const link = useRef<ConsentTransport>(transport ?? CLOUD_CONSENT);
-  link.current = transport ?? CLOUD_CONSENT;
+  const link = useRef<ConsentTransport | "none">(transport);
+  link.current = transport;
 
   /**
    * THE RE-ASK GUARDS — the mobile coordinator's semantics, in three refs:
@@ -787,7 +757,7 @@ export function useConsentState(
     const mine = ++readSeq.current;
     let failure: ConsentReadFailure;
     try {
-        const wire: ConsentStateWire = await link.current.state();
+        const wire: ConsentStateWire = await wireOf(link).state();
         // A write from this tab outranks every read in flight; a newer applied read outranks an
         // older one arriving late; and a read outliving the hook's active era — deactivated,
         // unmounted — is nobody's answer. Issuance alone supersedes nothing — see the refs above.
@@ -903,10 +873,9 @@ export function useConsentState(
           // The same read as the three fields above, so the map and they never come from two answers.
           screeningByMailbox: readScreeningByMailbox(wire.screeningByMailbox),
           known: true,
-          // Both of these are DERIVED on the way out (see the return) and are written here only
-          // because the state object carries them. Nothing may read them off `state`.
+          // DERIVED on the way out (see the return) and written here only because the state
+          // object carries it. Nothing may read it off `state`.
           standalone: false,
-          cloudClient: false,
           // THE SERVER'S HALF of the folders capability: does this read CARRY the axis. Present
           // (null or an instant) is a door that stores the flag; ABSENT is `withoutFoldersFlag`,
           // every door built from `localRoutes` — a self-hosted server included. Live reads only:
@@ -921,8 +890,8 @@ export function useConsentState(
         // it), from the same normalised values, under the same account id the read used —
         // and only the three fields `ConsentBootCache` names, which is the authorisation
         // boundary, not an economy.
-        const owner = consentCacheOwner();
-        if (owner !== null) {
+        const keptFor = cacheOwner();
+        if (keptFor !== null) {
           const next: ConsentBootCache = {
             v: 1,
             seedConfirmedAt: wire.seedConfirmedAt ?? null,
@@ -930,7 +899,7 @@ export function useConsentState(
             screeningBaselineAt: wire.screeningBaselineAt ?? null,
             foldersEnabledAt: wire.foldersEnabledAt ?? null,
           };
-          writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
+          writeBootCache(CONSENT_BOOT_SCOPE, keptFor, next);
           bootCache.current = next;
         }
         return;
@@ -941,7 +910,7 @@ export function useConsentState(
           ? { attempt: failures.current, reason: "shape" }
           : failureOf(err, failures.current);
       }
-      const sink = link.current.readFailed;
+      const sink = link.current === "none" ? undefined : link.current.readFailed;
       if (sink) {
         try { void Promise.resolve(sink(failure)).catch(() => undefined); } catch { /* a courtesy */ }
       }
@@ -972,16 +941,16 @@ export function useConsentState(
     retryStep.current = 0;
     /**
      * The device's last answer, first — synchronously, before the fetch is issued, so the live
-     * answer can only land on top of the cache, never under it. Keyed by {@link consentCacheOwner}
-     * — the remembered account id, else the host's identity for the window it mounted, so the
-     * cached window and the cached mail describe the same mailbox. Neither (a first visit) ⇒ no
-     * cache; the boot waits for the server as before. The `prev.known` guard makes "the fetch
+     * answer can only land on top of the cache, never under it. Keyed by the scope this mount was
+     * handed (`cacheOwner` above), so the cached window and the cached mail describe the same
+     * mailbox. No scope, or the demo's ⇒ no cache; so does a first visit, and the boot waits for
+     * the server as before. The `prev.known` guard makes "the fetch
      * already answered" win unconditionally; unreachable with the synchronous read above, kept
      * because that is an ordering fact of this effect's body.
      */
-    const owner = consentCacheOwner();
-    if (owner !== null) {
-      const cached = readBootCache(CONSENT_BOOT_SCOPE, owner, acceptConsentCache);
+    const keptFor = cacheOwner();
+    if (keptFor !== null) {
+      const cached = readBootCache(CONSENT_BOOT_SCOPE, keptFor, acceptConsentCache);
       if (cached !== null) {
         bootCache.current = cached;
         knownRef.current = true;
@@ -1010,7 +979,6 @@ export function useConsentState(
     };
     // The fetch itself lives in `fetchLive` below so the settings-stamp effect can share it —
     // one implementation of "read the live answer and apply it under the guards".
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, reachable, fetchLive]);
 
 
@@ -1071,7 +1039,7 @@ export function useConsentState(
       // a host that swaps transports (the desktop's door switch) is never written through a
       // stale wire. A call reaching here without the method is a caller that ignored the
       // null gate below; refusing beats silently "succeeding".
-      const write = link.current.setThemeFace;
+      const write = wireOf(link).setThemeFace;
       if (!write) throw new Error("this transport cannot store an account-wide face");
       // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
       // request, so a re-ask racing this write is discarded whatever it answers.
@@ -1086,11 +1054,11 @@ export function useConsentState(
   );
   // Null when the transport cannot store an account-wide face, so the settings row withholds the
   // "apply for all devices" affordance structurally — a control that cannot control is the
-  // built-and-unreachable shape the injected-node seam exists to avoid. A STANDALONE desktop
-  // window passes no transport at all and keeps only the device pin, which is the whole of the
+  // built-and-unreachable shape the injected-node seam exists to avoid. A shell whose host
+  // hands no wire keeps only the device pin, which is the whole of the
   // appearance choice a machine with no account row can make.
   const setThemeFace =
-    typeof (transport ?? CLOUD_CONSENT).setThemeFace === "function" ? writeThemeFace : null;
+    transport !== "none" && typeof transport.setThemeFace === "function" ? writeThemeFace : null;
 
   /**
    * THE RESURFACE DEFAULT — `writeThemeFace`'s shape: read the method off `link` at call time,
@@ -1100,7 +1068,7 @@ export function useConsentState(
    */
   const writeResurfaceTime = useCallback(
     async (resurfaceTime: string | null): Promise<string | null> => {
-      const write = link.current.setResurfaceTime;
+      const write = wireOf(link).setResurfaceTime;
       if (!write) throw new Error("this transport cannot store a resurface time");
       writeEpoch.current += 1;
       const at = era.current;
@@ -1114,17 +1082,17 @@ export function useConsentState(
     },
     [applyEcho],
   );
-  // Null when the transport cannot store one — the standalone desktop window passes no transport
+  // Null when the transport cannot store one — a shell whose host hands no wire has none
   // at all, and a chooser there keeps working on the product's 09:00 with nothing to persist.
   const setResurfaceTime =
-    typeof (transport ?? CLOUD_CONSENT).setResurfaceTime === "function" ? writeResurfaceTime : null;
+    transport !== "none" && typeof transport.setResurfaceTime === "function" ? writeResurfaceTime : null;
 
   const setAutoSuggest = useCallback(async (enabled: boolean): Promise<boolean> => {
     // The user's act outranks every read in flight — see `writeEpoch`. Bumped BEFORE the
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setAutoSuggest(enabled);
+    const res = await wireOf(link).setAutoSuggest(enabled);
     const on = res.autoSuggestAt != null;
     // BOTH FIELDS FROM THE SAME ECHO. Setting the boolean from the server and the instant from
     // the argument (or leaving it stale) is how a row reads "On since <yesterday>" about a write
@@ -1140,14 +1108,14 @@ export function useConsentState(
   const writeAutoAct = useCallback(async (enabled: boolean): Promise<boolean> => {
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setAutoAct!(enabled);
+    const res = await wireOf(link).setAutoAct!(enabled);
     const on = res.autoActAt != null;
     applyEcho(at, (prev) => ({ ...prev, autoAct: on, autoActAt: res.autoActAt ?? null }));
     return on;
   }, [applyEcho]);
   // Null when the wire cannot write it — the switch is then not drawn.
   const setAutoAct =
-    typeof (transport ?? CLOUD_CONSENT).setAutoAct === "function" ? writeAutoAct : null;
+    transport !== "none" && typeof transport.setAutoAct === "function" ? writeAutoAct : null;
 
   const setDormancyDays = useCallback(async (
     days: number | null | undefined, scope?: "window" | "all_time",
@@ -1156,7 +1124,7 @@ export function useConsentState(
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setDormancyDays(days, scope);
+    const res = await wireOf(link).setDormancyDays(days, scope);
     // FROM THE SERVER ECHO, never the argument — the server stores the default as NULL and reads it
     // back as the default number, so this is the window the partition memo must re-key on.
     //
@@ -1193,7 +1161,7 @@ export function useConsentState(
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setBlockRemoteImages(blocked);
+    const res = await wireOf(link).setBlockRemoteImages(blocked);
     const on = res.blockRemoteImagesAt != null;
     // BOTH FIELDS FROM THE SAME ECHO, as with auto-suggest — a row reading "Off since <yesterday>"
     // about a refused write is the failure that rule exists to prevent, and here the refused write
@@ -1207,7 +1175,7 @@ export function useConsentState(
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setBlockTrackingPixels(blocked);
+    const res = await wireOf(link).setBlockTrackingPixels(blocked);
     // The echo is the OPT-OUT instant; the flag is its absence. Inverted exactly once, here.
     const on = res.loadTrackingPixelsAt == null;
     applyEcho(at, (prev) => ({
@@ -1221,7 +1189,7 @@ export function useConsentState(
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setFoldersEnabled(enabled);
+    const res = await wireOf(link).setFoldersEnabled(enabled);
     const on = res.foldersEnabledAt != null;
     // BOTH FIELDS FROM THE SAME ECHO — auto-suggest's rule: the boolean the shell gates on and
     // the instant the row displays must move together or not at all.
@@ -1233,10 +1201,10 @@ export function useConsentState(
     // cache partition inputs this tab never confirmed. Era-guarded like the state echo — a
     // cross-world completion must not write the departed account's flag into this device's
     // cache either.
-    const owner = consentCacheOwner();
-    if (era.current === at && owner !== null && bootCache.current !== null) {
+    const keptFor = cacheOwner();
+    if (era.current === at && keptFor !== null && bootCache.current !== null) {
       const next: ConsentBootCache = { ...bootCache.current, foldersEnabledAt: res.foldersEnabledAt ?? null };
-      writeBootCache(CONSENT_BOOT_SCOPE, owner, next);
+      writeBootCache(CONSENT_BOOT_SCOPE, keptFor, next);
       bootCache.current = next;
     }
     return on;
@@ -1247,7 +1215,7 @@ export function useConsentState(
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
       const at = era.current;
-      const res = await link.current.setMailboxFoldersEnabled(mailboxId, enabled);
+      const res = await wireOf(link).setMailboxFoldersEnabled(mailboxId, enabled);
       const off = res.folderMailboxesOff ?? {};
       // THE WHOLE MAP FROM THE ECHO — the server answers with every exception after the write,
       // so a stale tab that missed another device's toggle heals on its own next write.
@@ -1262,7 +1230,7 @@ export function useConsentState(
       // The user's act outranks every read in flight — see `writeEpoch`.
       writeEpoch.current += 1;
       const at = era.current;
-      const res = await link.current.setMailboxSignature(mailboxId, signature, signatureHtml);
+      const res = await wireOf(link).setMailboxSignature(mailboxId, signature, signatureHtml);
       const map = res.signatures ?? {};
       // BOTH MAPS FROM THE ECHO — the exceptions dial's rule, and it has to cover both halves
       // because a write to EITHER changes both columns: saving markup derives the text, and
@@ -1285,7 +1253,7 @@ export function useConsentState(
     // request, so a re-ask racing this write is discarded whatever it answers.
     writeEpoch.current += 1;
     const at = era.current;
-    const res = await link.current.setBlockAutoUnsubscribe(blocked);
+    const res = await wireOf(link).setBlockAutoUnsubscribe(blocked);
     // `== null` ⇒ the pass runs. The same collapse as the read above, for the same reason, and it
     // has to be spelled the same way in both places or a server that answered with the field
     // omitted would move the switch one way on load and the other on write.
@@ -1298,9 +1266,9 @@ export function useConsentState(
     return on;
   }, [applyEcho]);
 
-  // Derived rather than stored, so neither can be left behind by a setState
-  // that forgot it: both are facts about the BUILD and the mode, settled before first render (`active` is `!demo`; see
-  // {@link ConsentState.standalone} and {@link ConsentState.cloudClient}).
+  // Derived rather than stored, so it cannot be left behind by a setState
+  // that forgot it: a fact about the mode and the wire, settled before first render (`active` is `!demo`; see
+  // {@link ConsentState.standalone}).
   // Presented, not stored: with no wire, the ANSWER is the resting values —
   // synchronously, in the same render that observes the wire gone. The
   // reset effect runs after paint, so on the overlay door switch the commit
@@ -1312,11 +1280,10 @@ export function useConsentState(
   return {
     ...presented,
     standalone: active && !reachable,
-    cloudClient: apiConfigured(),
     /* The transport's declaration AND the server's own read: the browser's wire declares true
        for every server it may reach, and only the read can say a self-hosted one drops the flag.
        Only while a wire is reachable at all — with none there is no server to answer for. */
-    foldersStorable: reachable && link.current.foldersStorable && presented.foldersStorable,
+    foldersStorable: link.current !== "none" && link.current.foldersStorable && presented.foldersStorable,
     setThemeFace,
     setResurfaceTime,
     setAutoSuggest,

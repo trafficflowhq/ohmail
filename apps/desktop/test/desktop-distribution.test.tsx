@@ -56,7 +56,7 @@ async function lockAnchors(distribution: string): Promise<string[]> {
      to match. Named at the seam rather than suppressed at the call: the component's real props are
      asserted by the objects handed to it, three lines down. */
   const mod = await import("../src/DesktopAccessLock.js") as {
-    DesktopAccessLock: (p: { facts: AccessRefusedFacts; onSignedOut: (s: never) => void }) => React.ReactElement;
+    DesktopAccessLock: (p: { facts: AccessRefusedFacts; scope: string | null; onSignedOut: (s: never) => void }) => React.ReactElement;
   };
   const { DesktopAccessLock } = mod;
   const facts: AccessRefusedFacts = { reason: "payment_required", manageUrl: "https://example.invalid/billing" };
@@ -74,7 +74,7 @@ async function lockAnchors(distribution: string): Promise<string[]> {
       locale: "en",
       messages: messages as never,
       timeZone: "UTC",
-      children: h(DesktopAccessLock, { facts, onSignedOut: () => {} }),
+      children: h(DesktopAccessLock, { facts, scope: null, onSignedOut: () => {} }),
     }));
   });
   // The way back is a BUTTON that mints its address at the press; no anchor carries the 402's.

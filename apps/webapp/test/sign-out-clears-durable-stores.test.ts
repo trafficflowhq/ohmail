@@ -58,6 +58,8 @@ const APP = existsSync(resolve("apps/webapp/app")) ? resolve("apps/webapp/app") 
 const ENGINE = resolve("packages/client-engine/src");
 /** And the behaviour moved out of the shell runs on this origin too: its keys are this census's. */
 const LOGIC = resolve("packages/app-logic/src");
+/** So do the app's own parts that left the shell (the mail state's mount), and the slot's that follow. */
+const APP_PARTS = resolve("packages/app/src");
 
 /** Prefixes sign-out sweeps, as sign-out itself names them. */
 const SWEPT = [
@@ -638,7 +640,10 @@ describe("sign-out clears the durable decision stores", () => {
    */
   it("every localStorage key in the app is either swept or deliberately exempt", () => {
     const undecided: string[] = [];
-    const files = [...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(LOGIC) ? walk(LOGIC) : [])];
+    const files = [
+      ...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(APP_PARTS) ? walk(APP_PARTS) : []),
+      ...(existsSync(LOGIC) ? walk(LOGIC) : []),
+    ];
     for (const file of files) {
       // The register of stored names spells every key of every store and keeps none itself; its
       // rows are held to the tree by `test/stored-keys-registry.test.ts`.

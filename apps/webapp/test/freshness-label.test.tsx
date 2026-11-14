@@ -75,6 +75,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   growth: seedGrowth(MIRRORED_DEFAULT),
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -255,7 +256,7 @@ const QUIET: MailState = {
 };
 
 let current: MailState = QUIET;
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: current, refresh: () => {} }),
 }));
 

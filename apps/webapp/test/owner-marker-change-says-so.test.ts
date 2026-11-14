@@ -52,7 +52,7 @@ const STRIP_QUIET = {
   pending: 0, filing: null, settled: true,
 } as const;
 let stripState: Record<string, unknown> = { ...STRIP_QUIET, key: "ownerLost" };
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: stripState, refresh: () => {} }),
 }));
 

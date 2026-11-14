@@ -13,7 +13,7 @@ import { bracketSpan, lineOf, withoutCommentsAndLiterals } from "../../../script
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app/src", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
 const SKIP = new Set(["node_modules", "dist", ".next", "coverage"]);
 
 /** The one-argument sites, each with why its rules are the local ones by construction. */

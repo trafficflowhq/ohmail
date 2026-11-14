@@ -114,6 +114,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -331,7 +332,7 @@ vi.mock("../app/api-client", () => ({
   },
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: mockMailState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 

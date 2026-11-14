@@ -4,6 +4,7 @@ import {
   ISO, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
   textOf, tick,
 } from "./fixtures/live-walk-shell";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE SCREENER IS THE CONSENT CUTLINE'S OWN SURFACE, AND IT WAS THE ONE THAT IGNORED IT.
@@ -137,7 +138,10 @@ describe("the Screener queue is partitioned by consent, not by folder", () => {
     installShellEnv();
     answerSyncWith(world);
   });
-  afterEach(teardownShellEnv);
+  afterEach(async () => {
+    await teardownShellEnv();
+    resetStorageOwnerForTest();
+  });
 
   it("holds the ACTIVE undecided senders, and only those", async () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
@@ -264,6 +268,9 @@ describe("the Screener queue is partitioned by consent, not by folder", () => {
    * merely failed.
    */
   it("a tab whose /consent never answers partitions NOTHING", async () => {
+    // An account this browser holds no answer for. The cases above were answered for the account the
+    // harness hands where a test names none, and a remembered answer is a known window, not a silence.
+    setStorageOwner("acct_never_answered");
     // The fixture answers `/consent` properly on purpose (see `installShellEnv`); this replaces
     // that one answer with a failure and leaves `/sync` alone.
     const inner = globalThis.fetch;

@@ -34,9 +34,9 @@ vi.mock("../src/native.js", async () => {
   const real = await vi.importActual<typeof import("../src/native.js")>("../src/native.js");
   return { ...real, openWeb: vi.fn(async (place: string) => { bridge.opened.push(place); }) };
 });
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return { ...real, useMailboxFacts: () => [{ id: "mb_1", address: "sam@example.com", status: "connected" }] };
 });

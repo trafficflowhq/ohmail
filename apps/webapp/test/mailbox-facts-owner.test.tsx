@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   installShellEnv, mailbox, mountShell, teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
-import { FACTS_POLL_MS } from "../app/shell/MailStateProvider";
+import { FACTS_POLL_MS } from "@ohmail/app-logic/mail-state/mail-state-binding";
 
 /**
  * ═══ THE MAILBOX-FACTS POLL BELONGS TO ONE ACCOUNT TOO ═════════════════════════════════════

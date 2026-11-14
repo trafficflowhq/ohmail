@@ -300,7 +300,7 @@ const APP_SHELL = path.resolve(HERE, "../../webapp/app/shell/AppShell.tsx");
    the one that carried it. A file that is absent refuses — an unreadable half is not a zero. */
 const RAIL_MOUNTS = ["../../webapp/app/shell/shell-keys.tsx", "../../webapp/app/shell/AppShell.tsx"]
   .map((rel) => path.resolve(HERE, rel));
-const CONSENT_STATE = path.resolve(HERE, "../../webapp/app/shell/consent-state.ts");
+const CONSENT_STATE = path.resolve(HERE, "../../../packages/app-logic/src/consent/consent-state.ts");
 const FOLDER_VERBS = path.resolve(HERE, "../../webapp/app/shell/folder-verbs.ts");
 /** The standalone route table's own source — link four is about how it is COMPOSED. */
 const LOCAL_TABLE_SRC = path.resolve(HERE, "../../../packages/api/src/routes/local.ts");

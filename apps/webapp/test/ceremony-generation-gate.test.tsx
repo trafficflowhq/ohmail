@@ -46,7 +46,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({
     state: { mailboxes: null, mirrored: 0, freshness: { state: "unknown", asOf: null } } as unknown as MailState,
     refresh: () => {},

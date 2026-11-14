@@ -13,10 +13,9 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
-import { ApiError, account, api, away, mailboxes as mailboxApi } from "../../api-client";
+import { ApiError, account, api, apiConfigured, away, mailboxes as mailboxApi } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { signOut } from "../../sign-out";
-import { CLOUD_CONSENT } from "../../shell/consent-state";
 import { CLOUD_WIRE as DRAFT_REPLY_WIRE } from "../../shell/draft-reply";
 import { dayStamp } from "../../shell/format";
 import type { GapLettersTransport } from "../../shell/GapLettersNotice";
@@ -34,6 +33,7 @@ import { AboutSection } from "./AboutSection";
 import { AccountSection } from "./AccountSection";
 import { AiSection } from "./AiSection";
 import { CloudStorageNotice } from "./CloudStorageNotice";
+import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "./consent-over-api";
 import { DevicesSection } from "./DevicesSection";
 import { webHost, type WebSupplies } from "./host";
 import { InvitesSection } from "./InvitesSection";
@@ -184,7 +184,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       firstRun: firstRun ?? NONE,
       screening: NONE,
       autoFiled: NONE,
-      seedReview: NONE,
+      seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
       folderSummary: NONE,
       mailboxes: NONE,
     },

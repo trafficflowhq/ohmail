@@ -16,7 +16,7 @@ import de from "../messages/de.json";
  */
 
 let mailboxFacts: Array<Record<string, unknown>> | null = null;
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailboxFacts: () => mailboxFacts }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailboxFacts: () => mailboxFacts }));
 const rig = vi.hoisted(() => ({ onVerified: null as null | (() => void) }));
 vi.mock("../app/(product)/mailbox/StepUpPrompt", () => ({
   StepUpPrompt: (props: { onVerified: () => void }) => {

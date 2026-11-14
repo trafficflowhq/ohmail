@@ -117,7 +117,7 @@ function FactsProbe(): React.ReactElement {
   return h("div", { "data-testid": "facts" }, shown);
 }
 let engineHook: () => unknown;
-let hooks: typeof import("../app/shell/MailStateProvider");
+let hooks: typeof import("@ohmail/app-logic/mail-state/mail-state-binding");
 
 const roots: Root[] = [];
 afterEach(async () => {
@@ -149,8 +149,8 @@ async function mount(
   const engineModule = await import("../app/shell/engine");
   const { EngineProvider } = engineModule;
   engineHook = engineModule.useEngine;
-  hooks = await import("../app/shell/MailStateProvider");
-  const { MailStateProvider } = hooks;
+  hooks = await import("@ohmail/app-logic/mail-state/mail-state-binding");
+  const { MailStateProvider } = await import("@ohmail/app/mail-state");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -165,6 +165,7 @@ async function mount(
           demo: false,
           engine: e,
           children: h(MailStateProvider, {
+            scope: null,
             probe,
             ...(f ? { freshnessProbe: f } : {}),
             mirrored: 4_200,

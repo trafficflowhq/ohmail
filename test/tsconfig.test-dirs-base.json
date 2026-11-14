@@ -75,6 +75,7 @@
       "@ohmail/app/host": ["../packages/app/src/host/index.ts"],
       "@ohmail/app/calendar": ["../packages/app/src/calendar/index.ts"],
       "@ohmail/app/keys": ["../packages/app/src/keys/index.ts"],
+      "@ohmail/app/mail-state": ["../packages/app/src/mail-state/index.ts"],
       "@ohmail/app/ohbox": ["../packages/app/src/ohbox/index.ts"],
       "@ohmail/app/text": ["../packages/app/src/text/index.ts"],
       "@ohmail/ui/long-text": ["../packages/ui/src/format/long-text.ts"],

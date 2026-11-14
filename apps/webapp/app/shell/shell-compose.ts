@@ -74,7 +74,7 @@ import {
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
 } from "./compose-from";
-import type { ConsentState } from "./consent-state";
+import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
 import { dropCopy, handleOf, twins } from "@ohmail/app-logic/writing/draft-creates";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "@ohmail/app-logic/writing/reply-autosave";

@@ -32,7 +32,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 
 const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
-const { FACTS_POLL_MS } = await import("../app/shell/MailStateProvider.js");
+const { FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
 
 type Fetching = MailboxFacts["fetching"];
 /** A healthy, synced mailbox row; `fetching` is left off the row unless a case names it. */
@@ -82,7 +82,7 @@ async function mount(opts: { managed?: boolean; locale?: "en" | "de"; variant?: 
     } as never,
   });
   const { EngineProvider } = await import("../app/shell/engine.js");
-  const { MailStateProvider } = await import("../app/shell/MailStateProvider.js");
+  const { MailStateProvider } = await import("@ohmail/app/mail-state");
   const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
   const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const host = document.createElement("div");
@@ -98,7 +98,7 @@ async function mount(opts: { managed?: boolean; locale?: "en" | "de"; variant?: 
         children: h(EngineProvider as never, {
           demo: false, engine,
           children: h(MailStateProvider as never, {
-            probe: async () => structuredClone(served), mirrored: 12, children: strip,
+            scope: null, probe: async () => structuredClone(served), mirrored: 12, children: strip,
           } as never),
         } as never),
       }),

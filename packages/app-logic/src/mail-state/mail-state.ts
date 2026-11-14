@@ -34,6 +34,7 @@ import {
   FILING_REFUSAL_REASONS, IMPORT_FLOOR_MAX_MS, filingRefusalReason, importFloorInWindow, type FilingRefusalReason,
 } from "@ohmail/client-engine";
 import { liftedAt, refusalIsStale } from "../session/access-window.js";
+import type { StorageScope } from "../storage/scope.js";
 import {
   holderIsLive, holderStopped, nothingOrganizesWhy, notOrganizingYet, organizerSituation, rosterRefusalReason,
   standingOf, type NothingOrganizesWhy, type RequestRefusalReason,
@@ -2059,6 +2060,12 @@ export interface MailStateInputs {
   now: number;
   /** True in the demo and on the Desktop: a fixture world has no sync to report. */
   demo: boolean;
+  /**
+   * WHOSE MAIL STATE THIS IS: the scope of the mount that asks, handed in. The ladder names no stored
+   * key with it; it is whose answer the access window is asked for, so the service's open word for
+   * another account withholds no date of this one's copy and silences no block of this one's mailbox.
+   */
+  scope: StorageScope;
 }
 
 /**
@@ -2136,7 +2143,7 @@ export function deriveMailState(input: MailStateInputs): MailState {
  * Each step says why it outranks the next.
  */
 function climb(input: MailStateInputs): MailState {
-  const { sync, failureStreak, freshness, mailboxes, mirrored, pulled, growth, now, demo } = input;
+  const { sync, failureStreak, freshness, mailboxes, mirrored, pulled, growth, now, demo, scope } = input;
 
   // A fixtures engine drains once from local data and is permanently settled. There is no
   // sync here to have a state, and the demo promises that nothing leaves the tab — so it gets
@@ -2185,7 +2192,7 @@ function climb(input: MailStateInputs): MailState {
   if (freshness.state === "stale" && freshness.asOf !== null && !copyRefused(mailboxes)) {
     // …but never a date from before the account reopened (mail 0135): it would date the closure.
     // The first drain after the lift moves `asOf` past it.
-    const lifted = liftedAt();
+    const lifted = liftedAt(scope);
     if (lifted !== null && Date.parse(freshness.asOf) < lifted) return { ...QUIET, key: "catchingUp" };
     return { ...QUIET, key: "stale", clock: true, count: mirrored, asOf: freshness.asOf };
   }
@@ -2268,7 +2275,7 @@ function climb(input: MailStateInputs): MailState {
   // <ts>}` — gating on the reason gave that mailbox silence. Complete only
   // because reason non-null ⇒ since non-null (five writers audited, each
   // sets and clears both in one statement).
-  const reopened = refusalIsStale(now);
+  const reopened = refusalIsStale(scope, now);
   // …except the WALL's own block inside the minute after the service said open (mail 0135): the
   // reopening has just cleared it, and a list read a moment before still carries it.
   const blocked = live.find((m) => m.syncBlockedSince !== null

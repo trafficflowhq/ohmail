@@ -10,6 +10,8 @@ import * as geometry from "@ohmail/app-logic/geometry";
 import { SCROLL_KEYS } from "@ohmail/app-logic/keys";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
 import { DECISION_QUIET, type DecisionDestination, type DecisionScope } from "@ohmail/app-logic/screener/decision";
+import type { ConsentStateWire as ConsentReadOfTheRow } from "@ohmail/app-logic/consent/consent-wire";
+import type { ConsentStateWire as ConsentReadOfTheClient } from "../app/api-client";
 
 const html = (): HTMLElement => document.documentElement;
 afterEach(() => html().removeAttribute("style"));
@@ -74,5 +76,27 @@ describe("the types behaviour declares beside the kit's", () => {
   it("the press seam's report is the kit's toast, option for option", () => {
     expectTypeOf<ToastOptions>().toEqualTypeOf<kit.ToastOptions>();
     expectTypeOf<ToastFn>().toEqualTypeOf<kit.ToastFn>();
+  });
+});
+
+/**
+ * AND THE CONSENT READ IS DECLARED TWICE: by the server client and by the consent row, which may not import it. The
+ * row's is the client's own, narrowed to the fields the row reads. (The desktop's stand-in for the client is held to
+ * the row's in the desktop's tests: no file of this app may import that one.)
+ */
+describe("the consent read as the consent row declares it", () => {
+  it("is the server client's, field for field, but for the one field the row hands on unread", () => {
+    type Shared = Exclude<keyof ConsentReadOfTheRow, "screeningByMailbox">;
+    expectTypeOf<ConsentReadOfTheClient>().toMatchTypeOf<ConsentReadOfTheRow>();
+    expectTypeOf<keyof ConsentReadOfTheRow>().toMatchTypeOf<keyof ConsentReadOfTheClient>();
+    expectTypeOf<Pick<ConsentReadOfTheRow, Shared>>().toEqualTypeOf<Pick<ConsentReadOfTheClient, Shared>>();
+    const heldEqual: Record<Shared, true> = {
+      seedConfirmedAt: true, dormancyDays: true, screeningBaselineAt: true, autoSuggestAt: true, autoActAt: true,
+      blockRemoteImagesAt: true, loadTrackingPixelsAt: true, blockAutoUnsubscribeAt: true, foldersEnabledAt: true,
+      folderMailboxesOff: true, signatures: true, signaturesHtml: true, signatureSources: true, signatureChanges: true,
+      dormancyChange: true, locale: true, themeFace: true, resurfaceTime: true, onboardingCompletedAt: true,
+      screeningScope: true,
+    };
+    expect(Object.keys(heldEqual)).toHaveLength(20);
   });
 });

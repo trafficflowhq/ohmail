@@ -123,7 +123,7 @@ describe("the Cloud door's mailbox list carries Cloud's filings, and the presses
       sync: { bootstrapping: false, failures: 0, terminal: false, refused: false }, failureStreak: 3,
       mailboxes: [row as unknown as MailboxFacts], mirrored: 10, growth: seedGrowth(10),
       freshness: { state: "current", asOf: new Date(now).toISOString() },
-      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
+      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false, scope: null,
     } as MailStateInputs);
     expect(state.key, "no strip on the Cloud door").toBe("filing");
     expect(state.filing).toMatchObject({ arm: "stuck", count: 6 });

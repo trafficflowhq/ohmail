@@ -11,7 +11,8 @@ import { NONE } from "@ohmail/app/host";
 import { Frame, PLACE_IDS, type FramePlaces } from "@ohmail/app/frame";
 import { TextProvider } from "@ohmail/app/text";
 import { EngineProvider } from "../../app/shell/engine";
-import { MailStateProvider, type MailboxProbe } from "../../app/shell/MailStateProvider";
+import { MailStateProvider } from "@ohmail/app/mail-state";
+import type { MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { TodaysOhbox, type TodaysOhboxProps } from "../../app/shell/TodaysOhbox";
 import { useTodaysSupplies } from "../../app/shell/todays-supplies";
 import { engineOver, storeWith } from "../_view-shell";
@@ -46,13 +47,14 @@ export function todayEngine(): Promise<ReturnType<typeof engineOver>> {
   return shared;
 }
 
-function Host({ engine }: { engine: ReturnType<typeof engineOver> }): ReactNode {
+/* The mail state as the shell mounts it: for the scope the host hands, over the frame of that host. */
+function Host({ engine, probe }: { engine: ReturnType<typeof engineOver>; probe?: MailboxProbe }): ReactNode {
   const frame = useTodaysSupplies(NONE);
   const host = useMemo(
     () => hostFromTodaysInputs({ demo: false, engine }, engine, { ...frame, places: PLACES }, NONE),
     [engine, frame],
   );
-  return h(Frame, { host });
+  return h(MailStateProvider, { scope: host.session.scope, mirrored: 0, probe } as never, h(Frame, { host }));
 }
 
 function Words({ children }: { children: ReactNode }): ReactNode {
@@ -67,8 +69,7 @@ function TodayOhbox(props: TodayOhboxProps): ReactNode {
   const engine = ready!;
   return h(Words, null,
     h(EngineProvider, { demo: false, engine } as never,
-      h(MailStateProvider, { mirrored: 0, probe: props.mailboxProbe } as never,
-        h(Fed.Provider, { value: props }, h(Host, { engine })))));
+      h(Fed.Provider, { value: props }, h(Host, { engine, probe: props.mailboxProbe }))));
 }
 
 /** Await before the first render (the engine the mail state stands on); every call hands the same component. */

@@ -21,11 +21,11 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
-import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
-import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "./engine";
-import { SYNC_FAILURE_STREAK, syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
+import { documentHidden } from "../session/document-hidden.js";
+import { useDemoMode, useEngine, useFreshness, useSyncStatus } from "../engine/index.js";
+import { SYNC_FAILURE_STREAK, syncMayRead } from "../session/sync-scheduler.js";
+import type { StorageScope } from "../storage/scope.js";
 import {
   deriveMailState,
   firstRunProgress,
@@ -38,7 +38,7 @@ import {
   type MailState,
   type MailStateInputs,
   type MirrorGrowth,
-} from "@ohmail/app-logic/mail-state/mail-state";
+} from "./mail-state.js";
 
 /**
  * `GET /mailboxes`, narrowed to {@link MailboxFacts}. Supplied by the Cloud client and by the
@@ -58,7 +58,7 @@ export type FreshnessFacts = MailStateInputs["freshness"];
  * engine's own answer when present: the window engine drains the sidecar's
  * local feed and is always "current" relative to it, so its own stamp can
  * never say the desktop is behind the hosted account — the sidecar's stamp
- * can. Must REJECT on failure: the provider keeps the last answer it saw,
+ * can. Must REJECT on failure: the binding keeps the last answer it saw,
  * because a stale claim may only be withdrawn by evidence of currency — a
  * dead bridge mapped to "current" silently unlabels a days-old mirror.
  */
@@ -124,13 +124,13 @@ export const MAIL_CLOCK_MS = 5_000;
  */
 export const FACTS_POLL_MS = 30_000;
 
-interface MailStateBinding {
+export interface MailStateBinding {
   state: MailState;
   /**
    * The facts themselves, not only the sentence derived from them.
    * Compose's From selector and the reply's From line need the account's
    * mailboxes — ids, addresses, can-send — a question `MailState`
-   * deliberately cannot answer. Published from here because this provider
+   * deliberately cannot answer. Published from here because this binding
    * already reads `GET /mailboxes` every 30 s, and two pollers is two
    * answers. `null` keeps its meaning exactly: we CANNOT SEE mailboxes (the
    * demo, a first poll not landed) — never "there are none".
@@ -153,7 +153,7 @@ interface MailStateBinding {
    * `state.count`, and the difference is load-bearing: `MailState.count` is carried by the states
    * that use it and left at `0` by the rest, so a surface reading the mirror's size from the
    * derived state would report an empty device for the whole of an outage. This is the input the
-   * provider was handed, unconditioned by which sentence the ladder chose. Its consumer is the
+   * binding was handed, unconditioned by which sentence the ladder chose. Its consumer is the
    * Mailboxes pane's holdings line, through {@link deviceHoldings}. NOT the import's numerator —
    * see `pulled` below, which is what the strip and the pull stage quote.
    */
@@ -200,15 +200,12 @@ interface MailStateBinding {
   factsReadAt: () => number | null;
 }
 
-const MailStateContext = createContext<MailStateBinding | null>(null);
+export const MailStateContext = createContext<MailStateBinding | null>(null);
 
-export function MailStateProvider({
-  probe,
-  freshnessProbe,
-  mirrored,
-  received,
-  children,
-}: {
+/** What the mount hands the binding: whose it is, the two probes and the mirror's two counts. */
+export interface MailStateInput {
+  /** The scope of the mount, as its host hands it: whose answer the ladder asks the access window for. */
+  scope: StorageScope;
   probe?: MailboxProbe;
   /** See {@link FreshnessProbe} — the desktop's sidecar-truth override; absent everywhere else. */
   freshnessProbe?: FreshnessProbe;
@@ -220,8 +217,9 @@ export function MailStateProvider({
    * {@link mirrored} exactly as it stands today. See {@link firstRunProgress}.
    */
   received?: number | null;
-  children: ReactNode;
-}) {
+}
+
+export function useMailStateBinding({ scope, probe, freshnessProbe, mirrored, received }: MailStateInput): MailStateBinding {
   const sync = useSyncStatus();
   const demo = useDemoMode();
   const engineFreshness = useFreshness();
@@ -291,8 +289,9 @@ export function MailStateProvider({
         growth,
         now: beat,
         demo,
+        scope,
       }),
-    [sync, freshness, engineFreshness, facts, mirrored, pulled, growth, beat, demo],
+    [sync, freshness, engineFreshness, facts, mirrored, pulled, growth, beat, demo, scope],
   );
 
   // The clock, armed only while something on screen depends on elapsed time.
@@ -303,7 +302,7 @@ export function MailStateProvider({
   }, [state.clock]);
 
   /**
-   * IS THIS PROVIDER STILL MOUNTED? — and the SETUP half is not decoration.
+   * IS THIS BINDING STILL MOUNTED? — and the SETUP half is not decoration.
    *
    * It used to be a cleanup alone. React's StrictMode mounts every effect, tears it down and
    * mounts it again, so a development build ran the cleanup once on a component that was very
@@ -319,7 +318,7 @@ export function MailStateProvider({
 
   /**
    * Whose question is this? — the one identity both held answers belong to. Three things decide
-   * which mailbox the provider is describing, and a change in ANY makes every answer in flight a
+   * which mailbox the binding is describing, and a change in ANY makes every answer in flight a
    * statement about something else: `probeEngine` (a different engine is a different mailbox),
    * `probe` (the source of `GET /mailboxes`; `undefined` is its own case — "we cannot ask"), and
    * `freshnessProbe` (the desktop's sidecar-truth override, which can change WITHOUT the engine on
@@ -419,7 +418,6 @@ export function MailStateProvider({
       // is a better answer than a fabricated empty account. A signed-out tab is the shell's own
       // `SessionScreen`'s business, not this strip's.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now, probeEngine]);
 
   const readFreshness = useCallback(async (): Promise<void> => {
@@ -437,7 +435,6 @@ export function MailStateProvider({
       // current) or label a current one (mapped stale). The last thing the sidecar said is the
       // best thing known.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now]);
 
   /**
@@ -463,7 +460,6 @@ export function MailStateProvider({
       void readFreshness();
     }, cadence);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readFreshness, probedFreshness?.state]);
 
   /**
@@ -479,7 +475,6 @@ export function MailStateProvider({
     // BOTH readers, because both hold an answer the clear has just discarded and both are silent
     // until something asks again. The freshness poll above owns only its timer.
     if (now.freshnessProbe) void readFreshness();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read, readFreshness]);
 
   useEffect(() => {
@@ -489,7 +484,6 @@ export function MailStateProvider({
       void read();
     }, FACTS_POLL_MS);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read]);
 
   /**
@@ -507,7 +501,6 @@ export function MailStateProvider({
      it is asked now rather than on the next beat of the poll. */
   useEffect(() => {
     if (sync.standingDown === true && now.probe) void readRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync.standingDown]);
   /* A sent copy landed in a folder this client does not know as Sent (`OhmailEngine.sentFolderAsks`):
      the mailbox's Sent folder was recorded after the last read, so the roster is asked once per rise. */
@@ -521,7 +514,6 @@ export function MailStateProvider({
     const seen = asksSeen.current;
     asksSeen.current = { engine: probeEngine, n: sentFolderAsks };
     if (seen.engine === probeEngine && sentFolderAsks > seen.n && now.probe) void readRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [probeEngine, sentFolderAsks]);
   const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
   const factsReadAt = useCallback(() => factsReadAtRef.current, []);
@@ -542,11 +534,11 @@ export function MailStateProvider({
     [state, facts, probe, mirrored, pulled, freshness, refresh, importOverById, factsReadAt],
   );
 
-  return <MailStateContext.Provider value={binding}>{children}</MailStateContext.Provider>;
+  return binding;
 }
 
 /**
- * What to say about this mailbox, decided once. See {@link MailStateProvider} for why this
+ * What to say about this mailbox, decided once. See this file's header for why this
  * throws rather than returning a resting value when nothing provided it.
  */
 export function useMailState(): MailStateBinding {

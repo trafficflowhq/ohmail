@@ -930,6 +930,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     return (
       <DesktopAccessLock
         facts={accessRefused}
+        scope={mount.kind === "engine" ? mount.key : null}
         press={shell?.kind === "status" ? { status: shell.status, session: hostedSession } : null}
         onSignedOut={onStatus}
         onLifted={() => { setAccessRefused(null); reviveStandingDown(); }}

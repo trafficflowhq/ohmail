@@ -247,10 +247,12 @@ vi.mock("../app/api-client", () => ({
  */
 const seen: { facts: MailboxFacts[] | null } = { facts: null };
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, mailboxes: seen.facts, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
-  // `AppShell` mounts the provider itself, so the stub has to supply it as well as the hook —
-  // the mock replaces the whole module, and a missing export is a render-time throw.
+}));
+// `AppShell` mounts the provider itself, so the stub has to supply it as well as the hook: the provider
+// stands in a file of its own, and the real one would ask the stubbed module for the binding it makes.
+vi.mock("@ohmail/app/mail-state", () => ({
   MailStateProvider: ({ children }: { children?: unknown }) => children,
 }));
 

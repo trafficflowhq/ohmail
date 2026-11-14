@@ -181,12 +181,14 @@ export function useWallLift(opts: {
   lifts: () => Promise<boolean>;
   /** Absent = a wall with no way to lift, which asks nothing. */
   onLifted: (() => void) | undefined;
+  /** Whose wall this is, as its host says it: the lift is recorded for that owner (`markWallLifted`). */
+  scope: string | null;
   owner: string | null;
 }): { check: WallCheck; armPoll: () => void; checkAgain: () => void } {
-  const { lifts, onLifted, owner } = opts;
+  const { lifts, onLifted, scope, owner } = opts;
   return useAccessSchedule({
     read: onLifted === undefined ? undefined : lifts,
-    onOpen: onLifted === undefined ? undefined : () => { markWallLifted(); onLifted(); },
+    onOpen: onLifted === undefined ? undefined : () => { markWallLifted(scope); onLifted(); },
     minute: WALL_READ_MS,
     owner,
   });

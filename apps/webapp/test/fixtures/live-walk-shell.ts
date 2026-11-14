@@ -35,7 +35,7 @@ import type { OwnerResolver } from "../../app/shell/engine";
 import messages from "../../messages/en.json";
 import messagesDe from "../../messages/de.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ConsentTransport } from "../../app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { settleFirstPaint } from "../_first-paint.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
@@ -337,8 +337,11 @@ export async function mountShell(
      * built here.
      */
     locale?: "en" | "de";
-    /** A HOST'S CONSENT WIRE — the desktop's hosted and paired doors pass one. Absent is the Cloud client. */
-    consentTransport?: ConsentTransport;
+    /**
+     * A HOST'S CONSENT WIRE — the desktop's hosted and paired doors pass one; `"none"` is a host that has none.
+     * Absent is the harness's own rule: the Cloud client, on this configured page.
+     */
+    consentTransport?: ConsentTransport | "none";
     /** The host's providers between the toast host and `AppShell` — the Cloud's locale seam. Absent: none. */
     wrap?: (shell: React.ReactElement) => React.ReactElement;
     /** The first-run door, as `CloudShell` hands it over. Absent: the desktop window's shape. */
