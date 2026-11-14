@@ -156,17 +156,20 @@ describe("the old heads and the 2.0 line", () => {
   it("(b) an entry planted in the 1.0 range, below the head or in the future is red", () => {
     const above = OLD_HEADS.mail.when + 1;
     const top = Math.max(...readEntries(DIRS.mail).map((e) => e.when)) + 1;
+    // A number above the journal's last, so each plant below is red for its own reason alone.
+    const past = (k: number, name: string): string =>
+      `${String(Math.max(...readEntries(DIRS.mail).map(numbered)) + k).padStart(4, "0")}_${name}`;
     expect(lineFaults("mail", planted("mail", { tag: "0199_x", when: top }), NOW + 10), "0199, stamped by the clock").not.toEqual([]);
     expect(lineFaults("mail", planted("mail", { tag: "0186_x", when: above }), NOW), "0186 above the head").not.toEqual([]);
     expect(lineFaults("mail", planted("mail", { tag: "0199_x", when: OLD_HEADS.mail.when - 1 }), NOW),
       "0199 slipped in below the head: recorded as applied nowhere, skipped everywhere").not.toEqual([]);
-    expect(lineFaults("mail", planted("mail", { tag: "0206_x", when: NOW + 60_000 }), NOW), "a future stamp").not.toEqual([]);
+    expect(lineFaults("mail", planted("mail", { tag: past(1, "x"), when: NOW + 60_000 }), NOW), "a future stamp").not.toEqual([]);
     expect(lineFaults("cloud", planted("cloud", { tag: "0106_x", when: OLD_HEADS.cloud.when }), NOW), "a 2.0 entry at the head's stamp").not.toEqual([]);
     expect(lineFaults("cloud", planted("cloud", { tag: "0107_x", when: top + 5 }, { tag: "0106_x", when: top + 6 }), NOW + 10),
       "numbers that fall").not.toEqual([]);
     expect(deviceLineFaults(plantedDevice("0199_x.sql"), PINNED_DEVICE), "an unpinned device file below the start").toHaveLength(1);
     // The admitted shapes, through the same readers.
-    expect(lineFaults("mail", planted("mail", { tag: "0206_x", when: top }, { tag: "0207_y", when: top + 1 }), top + 1)).toEqual([]);
+    expect(lineFaults("mail", planted("mail", { tag: past(1, "x"), when: top }, { tag: past(2, "y"), when: top + 1 }), top + 1)).toEqual([]);
     expect(deviceLineFaults(plantedDevice("0207_x.sql", "0186.noop"), PINNED_DEVICE)).toEqual([]);
   });
 

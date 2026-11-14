@@ -36,7 +36,7 @@ describe("a person's own state verbs replayed in order past a day", () => {
     expect((await b.send("PATCH", "/messages", { ids: [b.msg.id], unread: false }, "k-seen3", opened)).status).toBe(200);
     const mv = await answer(await b.send("POST", `/messages/${b.msg.id}/move`, { folder: "Archive" }, "k-mv3", later));
     // The routes' own answers in this fixture (no Trash folder; no Archive folder) — never `superseded`.
-    expect({ del, mv }).toEqual({ del: "422:no_trash_folder", mv: "400:validation_failed" });
+    expect({ del, mv }).toEqual({ del: "422:no_trash_folder", mv: "422:no_such_folder" });
   });
 });
 

@@ -1,5 +1,5 @@
 import {
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, clockSkewBoundMs,
   ClaimReleaseError,
   isMalformed, parseClaim, peekLease, runLeaseGate, sameMetaStamp, withMinted,
@@ -66,7 +66,7 @@ export const CLOUD_DISPLAY_NAME = "ohmail Cloud";
  * secret to sign one", so a mailbox with no key must not advertise `requests` ({@link organizerCapabilitiesFor}).
  */
 export const ORGANIZER_CAPABILITIES: readonly string[] = [
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES,
 ];
 
 /* Why `moves` joins the set here and not earlier (mail 0094). A capability means "this build has an
@@ -74,8 +74,9 @@ export const ORGANIZER_CAPABILITIES: readonly string[] = [
    first; the advertisement lands after, and that ORDER is the whole promise — advertised first, a
    reader reads `capable: true`, writes a record this organizer has no code to drain, and the person
    watches a message sit pending until it expires. `profile` joined the same way one slice later,
-   `rules` after, each in the same commit as its applier. The set is COMPLETE for the kinds mail 0094
-   admits, so the standing path is reached only by a FUTURE kind. The three `rule.*` kinds share ONE
+   `rules` after, each in the same commit as its applier; `folder_moves` with `message.file`'s, the
+   move into a person's own folder. The set is COMPLETE for the kinds this build admits, so the
+   standing path is reached only by a FUTURE kind. The three `rule.*` kinds share ONE
    capability because they share one applier. Still not injectable and still through
    {@link organizerCapabilitiesFor}, so a mailbox with no key advertises NOTHING — including `moves`. */
 

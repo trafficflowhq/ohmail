@@ -17,6 +17,7 @@ import {
 } from "./selectors.js";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isHeldFolder } from "@trafficflow/core/destinations";
+import { moveLanding } from "./mutations.js";
 import type { EntityReader } from "./store.js";
 import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation } from "./types.js";
 
@@ -286,7 +287,8 @@ export function filedOutOfOhbox(reader: EntityReader, m: EngineMutation): Engine
     if (canonicalDestination(m.folder) === canonicalDestination(FOLDER_OF_VIEW.ohbox)) return null;
   } else if (m.kind !== "message_delete") return null;
   const msg = reader.get<EngineMessage>("message", m.messageId);
-  return msg && (m.kind === "message_delete" || msg.folder !== m.folder) ? msg : null;
+  // A move files the letter only where it paints it: a press the engine refuses spends no pin.
+  return msg && (m.kind === "message_delete" || moveLanding(reader, msg, m.folder) !== null) ? msg : null;
 }
 
 /**

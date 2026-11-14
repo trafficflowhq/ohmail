@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   applyScreenerDecision, AccountErasedError, validateRequestPayload, claimIdempotencyKey,
-  applyMessageMove, validateMovePayload, type MoveRefusal,
+  applyMessageMove, validateMovePayload, validateFolderMovePayload, type MoveRefusal,
+  resolveFolderDestination, type FolderDestinationRefusal,
   applyProfileUpdate, validateProfileUpdatePayload,
   applyRuleRequest, validateRulePayload, settleReaderRuleRows, ruleKeyIsOwnAddress, OwnAddressesPerPass, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
@@ -20,6 +21,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
+import { userFolderExclusion } from "@trafficflow/core/adapters/imap-types";
 
 /**
  * The dispatch table — one entry per kind this build carries out: `screener.decide`, `message.move`,
@@ -80,6 +82,19 @@ const MOVE_REFUSAL_REASON: Readonly<Record<MoveRefusal, RequestRefusalReason>> =
 };
 
 /**
+ * Why a `message.file` record found no folder, as the reader is told. A name no reader's own door
+ * would have sent (its shape, or a place that is not the person's own) is a record this build does
+ * not apply: `invalid_payload`. A folder this mailbox does not list, or one a folder command stands
+ * on, is a fact about this organizer's store the reader could not see: `no_such_folder`.
+ */
+const FOLDER_REFUSAL_REASON: Readonly<Record<FolderDestinationRefusal, RequestRefusalReason>> = {
+  unusable: "invalid_payload",
+  reserved: "invalid_payload",
+  absent: "no_such_folder",
+  busy: "no_such_folder",
+};
+
+/**
  * The rule applier's own word, mapped the same way and for the same reason. `own_address` has no
  * word of its own on the wire (a new one would widen the column's CHECK): the record is understood
  * and not a decision this build applies, which is what `invalid_payload` says.
@@ -106,7 +121,12 @@ const ruleHandler = (kind: string): KindHandler => (payload, ctx) => {
   };
 };
 
-const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
+/**
+ * A `Map`, never a property lookup: the kind is text a signed record chose, and a kind spelt
+ * `__proto__`, `constructor` or `hasOwnProperty` must miss here like any other kind this build has
+ * no applier for, and stand.
+ */
+const KIND_HANDLERS: ReadonlyMap<string, KindHandler> = new Map(Object.entries<KindHandler>({
   "screener.decide": (payload, ctx) => {
     const decision = validateRequestPayload(payload);
     if (!decision) return null;
@@ -163,6 +183,26 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
     };
   },
 
+  /* A move into one of the person's own folders. The name is checked against THIS store's list of
+     the mailbox's folders, in the apply's own transaction, before any write: the reader's check was
+     made against its own store, and what this one writes is its own row's spelling. */
+  "message.file": (payload, ctx) => {
+    const file = validateFolderMovePayload(payload);
+    if (!file) return null;
+    return async (tx) => {
+      const found = await resolveFolderDestination(
+        tx, { accountId: ctx.accountId, mailboxId: ctx.mailboxId }, file.folder, userFolderExclusion,
+      );
+      if (!found.ok) return { applied: false, reason: FOLDER_REFUSAL_REASON[found.refusal] };
+      const r = await applyMessageMove(tx, {
+        accountId: ctx.accountId, mailboxId: ctx.mailboxId, payload: file, folder: found.folder, now: ctx.now,
+        decidedAt: ctx.decidedAt,
+      });
+      if (r.applied) return { applied: true };
+      return { applied: false, reason: MOVE_REFUSAL_REASON[r.refusal] };
+    };
+  },
+
   /**
    * Mail 0094. The kind that existed to close a SUCCESS THAT CHANGED NOTHING: before it, a reader
    * editing an away responder, a signature, a dormancy window or a screening posture got `200`, the
@@ -186,7 +226,7 @@ const KIND_HANDLERS: Readonly<Record<string, KindHandler | undefined>> = {
       return { applied: true };
     };
   },
-};
+}));
 
 
 /**
@@ -763,12 +803,13 @@ export async function applyMetaRequests(
      * Every kind in `REQUEST_KINDS` has an entry here now, and the reader appends all of them; a
      * kind with no entry is a NEWER install's, and leaving its record standing is what lets this
      * organizer apply it after an update rather than refusing a decision a person made. */
-    const handler = KIND_HANDLERS[e.kind];
+    const handler = KIND_HANDLERS.get(e.kind);
     if (!handler) {
       standing++;
       log("organizer_request_standing", {
         mailboxId: rt.mailboxId, accountId: rt.accountId, requestId: e.requestId,
-        reason: "unhandled_kind", kind: e.kind,
+        // A kind this codebase does not define is text a record chose: named by a fixed word.
+        reason: "unhandled_kind", kind: isRequestKind(e.kind) ? e.kind : "other",
       });
       continue;
     }

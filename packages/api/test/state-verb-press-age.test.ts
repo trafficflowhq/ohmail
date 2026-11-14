@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { changeLog, folderState, idempotencyKeys, mailboxes, messages, messageTags, tags } from "@trafficflow/db";
+import { changeLog, folderState, idempotencyKeys, mailboxes, mailboxFolders, messages, messageTags, tags } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
@@ -103,6 +103,19 @@ describe("the press age: a move replayed past a day", () => {
     await w.db.update(folderState).set({ desiredFolder: "ohmail/News" }).where(eq(folderState.messageId, w.m.id));
     w.to(25);
     expect((await w.send("POST", `/messages/${w.m.id}/move`, { folder: "ohmail/Receipts" }, "k-a", w.at(0))).status).toBe(200);
+  });
+
+  it("a move into a person's own folder replayed at 25 h over a newer move is refused stale_press, and writes nothing", async () => {
+    const w = await world();
+    await w.db.insert(mailboxFolders).values({ mailboxId: w.mb, accountId: w.s.accountId, folder: "Clients/Acme" });
+    expect((await w.send("POST", `/messages/${w.m.id}/move`, { folder: "Clients/Acme" }, "k-f", w.at(0))).status).toBe(200);
+    w.to(6);
+    expect((await w.send("POST", `/messages/${w.m.id}/move`, { folder: "ohmail/News" }, "k-n", w.at(6))).status).toBe(200);
+    w.to(25);
+    const before = { placement: await w.placement(), changes: await w.changes() };
+    const replay = await w.send("POST", `/messages/${w.m.id}/move`, { folder: "Clients/Acme" }, "k-f", w.at(0));
+    expect([replay.status, await code(replay)]).toEqual([409, "stale_press"]);
+    expect({ placement: await w.placement(), changes: await w.changes() }).toEqual(before);
   });
 });
 

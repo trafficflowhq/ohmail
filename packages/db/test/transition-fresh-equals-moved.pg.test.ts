@@ -65,6 +65,20 @@ const REPLACED: Record<string, string> = {
   platform_signals_provider_check: "platform_signals_provider_shape",
 };
 
+/**
+ * THE CLOSED LISTS 2.0 WIDENS UNDER THEIR OWN NAMES, each with the members it adds: such a
+ * constraint must read as it read with exactly these members added, and refuse everything else it
+ * refused. Named one by one, as above.
+ */
+const WIDENED: Record<string, readonly string[]> = {
+  // mail 0207
+  organizer_requests_kind_closed: ["message.file"],
+  organizer_requests_refused_reason_closed: ["no_such_folder"],
+};
+/** A list constraint's definition with `add` appended to its one array of members. */
+const widenedDef = (def: string, add: readonly string[]): string =>
+  def.replace("]", `${add.map((m) => `, '${m}'::text`).join("")}]`);
+
 describe.skipIf(!PG_UP)("a store from empty and a store moved", () => {
   let a: ReturnType<typeof postgres>;
   let b: ReturnType<typeof postgres>;
@@ -140,7 +154,9 @@ describe.skipIf(!PG_UP)("a store from empty and a store moved", () => {
       const same = now.get(`${was.table}.${was.name}`);
       if (same) {
         // A constraint 1.0.11 never validated reads `NOT VALID` there; here it is validated.
-        if (same.def !== was.def.replace(/ NOT VALID$/, "") || !same.valid) lost.push(`${was.table}.${was.name} reads ${same.def}`);
+        const stood = was.def.replace(/ NOT VALID$/, "");
+        const want = WIDENED[was.name] === undefined ? stood : widenedDef(stood, WIDENED[was.name]!);
+        if (same.def !== want || !same.valid) lost.push(`${was.table}.${was.name} reads ${same.def}`);
         continue;
       }
       const heir = now.get(`${was.table}.${REPLACED[was.name]}`);
@@ -153,6 +169,7 @@ describe.skipIf(!PG_UP)("a store from empty and a store moved", () => {
     expect(lost).toEqual([]);
     // The list names nothing 1.0.11 did not carry, and the one table that left took its own constraints.
     expect(Object.keys(REPLACED).filter((name) => !refused.constraints.some((c) => c.name === name))).toEqual([]);
+    expect(Object.keys(WIDENED).filter((name) => !refused.constraints.some((c) => c.name === name))).toEqual([]);
     expect(refused.tables.filter((t) => !stands.has(t))).toEqual(["away_responder_sent"]);
     const takesNoNull = new Set(after.notNull);
     expect(refused.notNull.filter((c) => stands.has(c.split(".")[0]!) && !takesNoNull.has(c))).toEqual([]);

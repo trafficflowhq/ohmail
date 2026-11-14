@@ -204,7 +204,7 @@ export {
   // request at all. Mail 0094 adds the three capabilities beside `requests`: an organizer names
   // each family of request it has an applier for, so a reader is refused at its own door rather
   // than queueing a record the holder will never take.
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES,
   capabilitiesColumn, hasCapability, readRequestEligibility, decisionCanBeApplied,
   fanOutPlace, writesHere, accountWritesHere, mailboxTakesPressSql, readMailboxesTakingAPress,
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
@@ -217,6 +217,12 @@ export { parkedResumeWhere, parkedResumeSet } from "./organizer-park.js";
 /* The junk rescue's two states (`junk_rescues`) — one constant, narrowed at the write door and
    spelled out by the CHECK on both stores. Reaches nothing. */
 export { JUNK_RESCUE_STATUSES, isJunkRescueStatus, type JunkRescueStatus } from "./junk-rescue-status.js";
+
+/* Where a move into a person's own folder may go: the move's door and the organizer's drain ask the
+   same check, each against its own store. The exclusion rule is core's, handed in. */
+export {
+  resolveFolderDestination, type FolderDestination, type FolderDestinationRefusal, type FolderExclusionRule,
+} from "./folder-destination.js";
 
 /* Mail 0094 — the appliers for the request kinds that are not a Screener decision. Same shape and
    same reason as `screener-apply.js` beside it: ONE transactional core, reached from the
@@ -239,6 +245,8 @@ export {
   reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, createPressKeysSince, createPressesSince, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
   type LeavingSettle,
   type ValidatedMovePayload, type MoveRefusal,
+  FOLDER_MOVE_NAME_MAX, type ValidatedFolderMovePayload, type InventoryFolder,
+  folderMoveNameError, validateFolderMovePayload, type FolderMoveNameError,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,
   type ApplyProfileUpdateInput, type ApplyProfileUpdateResult,

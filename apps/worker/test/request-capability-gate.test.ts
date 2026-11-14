@@ -6,7 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, organizerRequests, rules,
   capabilitiesColumn, hasCapability, readRequestEligibility, CAPABILITY_REQUESTS,
-  CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES,
 } from "@trafficflow/db";
 import {
   formatClaim, parseClaim, isMalformed, deriveRequestKey,
@@ -169,12 +169,13 @@ describe("an organizer that HOLDS a key offers the channel, and a decision queue
        content of the promise: advertised first, a reader would read `capable: true`, write a
        record this organizer has no code to drain, and the person would watch a message sit pending
        until it expired — nothing to report, because the claim was true about a build that did not
-       exist yet. This literal is what makes the order reviewable. */
+       exist yet. This literal is what makes the order reviewable. `folder_moves` joined in the
+       commit that gave `message.file` its applier. */
     expect([...ORGANIZER_CAPABILITIES]).toEqual([
-      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
+      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES,
     ]);
     expect([...organizerCapabilitiesFor({ hasRequestKey: true })]).toEqual([
-      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES,
+      CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, CAPABILITY_FOLDER_MOVES,
     ]);
   });
 
@@ -185,8 +186,9 @@ describe("an organizer that HOLDS a key offers the channel, and a decision queue
        So this compares the two sets rather than naming absences.
 
        `screener.decide` maps to `requests`, the three `rule.*` kinds share `rules` (one applier,
-       one table), `message.move` to `moves`, `profile.update` to `profile`. Four capabilities for
-       six kinds, and `capabilityForKind` is the map both sides read. */
+       one table), `message.move` to `moves`, `profile.update` to `profile`, `message.file` to
+       `folder_moves`. Five capabilities for seven kinds, and `capabilityForKind` is the map both
+       sides read. */
     const needed = new Set(REQUEST_KINDS.map((k) => capabilityForKind(k)));
     expect([...needed].sort(), "a request kind needs a capability this organizer does not advertise")
       .toEqual([...ORGANIZER_CAPABILITIES].sort());

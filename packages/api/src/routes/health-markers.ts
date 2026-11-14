@@ -1229,15 +1229,19 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // replaced under its name). Against a 0139 database a message past a store limit cannot be
   // recorded as written off, so the cursor of its folder holds and the cycle fails every pass.
   ["message_failures_code_closed", "data_too_large"],
-  // Mail 0145_press_decided_at — `superseded` joins the request refusals (0094's constraint,
-  // replaced under its name). Against a 0144 database the organizer's ack of an aged move behind a
-  // newer placement is refused by the old CHECK and the reader's row never settles.
-  ["organizer_requests_refused_reason_closed", "superseded"],
   // Mail 0164_messages_server_missing — `stale_locator` and `unconfirmed` join the filing classes on
   // both tables (0097's and 0117's constraints, replaced under their names). Against a 0163 database
   // the worker's deferral of a letter it lost track of is refused by the old CHECK.
   ["folder_state_last_error_class_check", "stale_locator"],
   ["junk_rescues_error_class_check", "stale_locator"],
+  // Mail 0207_request_folder_moves — `message.file` joins the request kinds (0094's constraint) and
+  // `no_such_folder` the refusals (0145's), each replaced under its name. The refusal needle MOVED
+  // from 0145's `superseded`; a database carrying `no_such_folder` carries every earlier member too.
+  // Against a 0205 database a reader's move into a person's own folder is refused at its door by the
+  // old kind CHECK, and an organizer's refusal of one cannot be recorded, so the reader's row never
+  // settles.
+  ["organizer_requests_kind_closed", "message.file"],
+  ["organizer_requests_refused_reason_closed", "no_such_folder"],
 ];
 
 /**
@@ -1287,7 +1291,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0205_calendar";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0207_request_folder_moves";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

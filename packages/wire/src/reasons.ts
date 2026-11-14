@@ -36,7 +36,7 @@ export type ServiceErrorCode =
   | "mailbox_probe_failed" | "mailbox_read_timeout" | "mailbox_reconnect_required"
   | "mailbox_signs_in_with_oauth" | "mailbox_stood_down" | "meta_folder_full" | "meta_undeletable"
   | "method_not_allowed" | "no_junk_folder" | "no_manage_surface" | "no_return_confirm"
-  | "no_storage_limit" | "no_trash_folder" | "not_found" | "not_in_trash" | "not_organizer"
+  | "no_storage_limit" | "no_such_folder" | "no_trash_folder" | "not_found" | "not_in_trash" | "not_organizer"
   | "nothing_to_sweep" | "oauth_device_state_invalid" | "oauth_device_unconfigured"
   | "oauth_exchange_failed" | "oauth_no_address" | "oauth_no_refresh_token" | "oauth_state_expired"
   | "oauth_state_invalid" | "oauth_unconfigured" | "organized_elsewhere"

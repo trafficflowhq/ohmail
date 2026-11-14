@@ -184,7 +184,7 @@ describe("a send and a move, and an update answer", () => {
     { name: "a composed letter", m: COMPOSED },
     { name: "a composed letter with a blind copy", m: BLIND },
   ];
-  const MOVE: EngineMutation = { kind: "move", messageId: "giulia", folder: "archive" };
+  const MOVE: EngineMutation = { kind: "move", messageId: "giulia", folder: "ohmail/News" };
   const ANSWERS: Array<{ name: string; refuse: () => Response }> = [
     { name: "426 client_too_old", refuse: () => answer(426, { code: "client_too_old", message: "too old", retryable: true }) },
     { name: "503 server_updating naming 30 s", refuse: () => answer(503, { code: "server_updating", retryable: true }, { "retry-after": "30" }) },

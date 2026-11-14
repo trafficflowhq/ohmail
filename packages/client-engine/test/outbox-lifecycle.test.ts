@@ -292,7 +292,7 @@ describe("I2 — a retry acts on ONE record and owns its outcome", () => {
     const a = w.engine.abandoned()[0]!;
 
     // Q: seven counted failures, then left INSIDE its (long) backoff.
-    await w.engine.mutate({ kind: "move", messageId: "giulia", to: "INBOX" } as unknown as EngineMutation);
+    await w.engine.mutate({ kind: "move", messageId: "giulia", folder: "ohmail/News" } as EngineMutation);
     for (let i = 0; i < OUTBOX_MAX_SERVER_FAILURES - 2; i++) {
       w.advance(OUTBOX_BACKOFF_CAP_MS + 1);
       await w.engine.syncOnce();
@@ -615,7 +615,7 @@ describe("I3 — supersession is about the TARGET, not the kind", () => {
     return retired;
   }
 
-  const msg = (kind: string, id = "petra") => ({ kind, messageId: id, state: "reply_later", to: "INBOX" } as unknown as EngineMutation);
+  const msg = (kind: string, id = "petra") => ({ kind, messageId: id, state: "reply_later", folder: "ohmail/News" } as unknown as EngineMutation);
 
   it("keys by target across kinds — the rule itself, pinned as a table", () => {
     /**

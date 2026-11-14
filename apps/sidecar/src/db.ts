@@ -12,7 +12,7 @@ import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "dr
 import { mailSchema } from "@trafficflow/db/mail";
 import {
   MAIL_JOURNAL, NOTHING_OPENS, OLD_HEADS, TransitionRefused, adoptBaseline, adoptReissuedOriginals, ensureSearchExtensions,
-  inTransitionWindow, readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
+  readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
 } from "@trafficflow/db/journal";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
@@ -1419,8 +1419,9 @@ async function applyMigrations(
 /**
  * Bring a store 1.0 made to the far side of the 2.0 window, and answer the head it then stands at
  * with what that took: how many entries, and the slowest. A store already past the window is
- * answered at once. The count a window shows runs over everything this open owes up to the window's
- * end: each 1.0 entry is one step, and the window's six land together as the last.
+ * answered at once. The count a window shows runs over everything this open owes: each 1.0 entry is
+ * one step, the window's six land together, and each entry after the window is a step of the pass
+ * that follows.
  */
 async function throughTheWindow(
   db: LocalDb,
@@ -1435,8 +1436,8 @@ async function throughTheWindow(
   if (state === "moved" || state === "fresh") return { through, applied: 0, slowest: null };
   const floorMs = opts.slowMigrationFloorMs ?? SLOW_MIGRATION_MS;
   const old = entries.filter((e) => e.when > through && e.when <= OLD_HEADS.mail.when);
-  const window = entries.filter((e) => e.when > OLD_HEADS.mail.when && inTransitionWindow("mail", e.tag));
-  const owed = old.length + window.length;
+  // Every entry above the store's head: the road, the window's six, and each entry after the window.
+  const owed = entries.filter((e) => e.when > through).length;
   let slowest: MigrationCensus["slowest"] = null;
   let applied = 0;
   const took = (migration: string, ms: number): void => {

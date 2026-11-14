@@ -7,12 +7,14 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   accounts, accountSyncState, changeLog, folderOps, folderState,
   mailboxFolders, mailboxes, messageFailures, messageInstances, messages,
+  resolveFolderDestination, type Tx,
 } from "@trafficflow/db";
+import { userFolderExclusion } from "@trafficflow/core/adapters/imap-types";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { FolderOpsService, ServiceError, type ServiceContext } from "../src/index.js";
+import { FolderOpsService, MessageService, ServiceError, type ServiceContext } from "../src/index.js";
 import { setFoldersEnabled } from "../src/consent-seed.js";
 
 /**
@@ -580,5 +582,52 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       .where(inArray(folderOps.folderId, [parent, child]));
     expect(ops).toHaveLength(1);
     expect(ops[0]!.folderId).toBe(parent);
+  });
+
+  it("a move into a folder WAITS for that folder's delete being enqueued, then refuses: the check and the write are one window", async () => {
+    // The same lock, the other door: a move into a person's own folder checks the folder under
+    // `assertOrganizerRole`'s share lock, which a folder command's enqueue holds FOR UPDATE. Held by
+    // hand here while a delete of the folder is inserted; the move parks, then reads it and refuses.
+    const ctx = (): ServiceContext => ({
+      db: db as unknown as ServiceContext["db"], accountId: ACCOUNT, userId: null,
+      now: () => new Date(), requestId: `race-${randomUUID()}`,
+    } as ServiceContext);
+    await db.update(mailboxes).set({ status: "connected", organizerRole: "organizer" }).where(eq(mailboxes.id, mb));
+    const [target] = await db.insert(mailboxFolders)
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Racing/Into", uidvalidity: 17n, uidnext: 1n, highestmodseq: 1n })
+      .returning();
+    const letter = await msg("Elsewhere");
+
+    let settled = false;
+    let move!: Promise<unknown>;
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select id from mailboxes where id = ${mb} for update`);
+      move = new MessageService().move(ctx(), letter, { folder: "Racing/Into" }).then(
+        () => { settled = true; return "moved"; },
+        (e: unknown) => { settled = true; return e instanceof ServiceError ? e.code : `other: ${String(e)}`; },
+      );
+      await new Promise((r) => setTimeout(r, 400));
+      expect(settled, "the move ran through the held lock").toBe(false);
+      await tx.insert(folderOps).values({ accountId: ACCOUNT, mailboxId: mb, folderId: target!.id, op: "delete", toFolder: null });
+    });
+    expect(await move).toBe("conflict");
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, letter));
+    expect(fs?.desiredFolder ?? null, "the move wrote a desire into a folder being deleted").not.toBe("Racing/Into");
+  });
+
+  it("a move's folder is found by its exact name only, under this server's collation", async () => {
+    await db.insert(mailboxFolders)
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Exact/Café", uidvalidity: 19n, uidnext: 1n, highestmodseq: 1n });
+    const ask = (name: string) => db.transaction((tx) => resolveFolderDestination(
+      tx as unknown as Tx, { accountId: ACCOUNT, mailboxId: mb }, name, userFolderExclusion,
+    ));
+    // Case, the decomposed spelling, a space or a slash around it, the server's delimiter, its encoding.
+    for (const name of [
+      "exact/café", "EXACT/CAFÉ", "Exact/Café", "Exact/Café ", " Exact/Café", "Exact/Café/",
+      "Exact.Café", "Exact/Caf&AOk-",
+    ]) {
+      expect(await ask(name), name).toEqual({ ok: false, refusal: "absent" });
+    }
+    expect(await ask("Exact/Café")).toEqual({ ok: true, folder: "Exact/Café" });
   });
 });

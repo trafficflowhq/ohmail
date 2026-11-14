@@ -93,7 +93,7 @@ describe("every change reaches the rows through one kept projector", () => {
     await r.engine.mutate({ kind: "mark_seen", messageIds: ["i2"], unread: false, via: "glance" });
     expect(rows(r.render()).find((m) => (m.memberIds ?? [m.id]).includes("i2"))?.unread, "a read is not shown").toBe(false);
 
-    await r.engine.mutate({ kind: "move", messageId: "i1", folder: "Archive" as never });
+    await r.engine.mutate({ kind: "move", messageId: "i1", folder: "ohmail/News" });
     expect(ids(r.render()), "a move is not shown").not.toContain("i1");
 
     r.state.heldDeletes = new Set(["i2"]);

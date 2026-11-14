@@ -8,7 +8,8 @@ import {
   senderPatternFromAddress,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
   decisionInstant, placementDecidedAfter, readDecidedAfter, goneEverywhereWhere,
-  type ChangeInput, type LedgerTx, type OrganizedBy, type Tx,
+  folderMoveNameError, validateFolderMovePayload, resolveFolderDestination, carryBinding,
+  type ChangeInput, type InventoryFolder, type LedgerTx, type OrganizedBy, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import type { Destination, NativeLocator } from "@trafficflow/core/mail";
@@ -18,7 +19,7 @@ import {
 } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { asServiceRefusal } from "./erasure-fence.js";
-import { foldersEnabled, userFolderById } from "./folders.js";
+import { foldersEnabled, userFolderById, userFolderExclusion } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import { zonedMonth, zonedMonthOf, type ZonedMonth } from "./reader-clock.js";
@@ -1363,7 +1364,7 @@ export class MessageService {
     /** `putBackAutoFiling` — the Screener's automatic filing undone (mail 0138), in this transaction. */
     opts: { idempotency?: MoveIdempotency | null; putBackAutoFiling?: boolean } = {},
   ): Promise<MoveResult | MoveRequestResult> {
-    const folder = this.validFolder(body.folder);
+    const target = this.moveTarget(body);
     const from = body.from === undefined ? null : this.validFolder(body.from);
 
     /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
@@ -1405,13 +1406,18 @@ export class MessageService {
        * promotion inherits no queue of moves. The skip stops a reader EXECUTING an intent; this
        * stops one being RECORDED.
        */
+      /* A person's own folder travels as a kind of its own, so the holder is asked for the word that
+         kind needs (`folder_moves`): a holder without it refuses at this door, and nothing is queued. */
       const route = await routeMailboxWrite(
-        bridgeTx(tx), ctx.accountId, msg.mailboxId, "message.move",
+        bridgeTx(tx), ctx.accountId, msg.mailboxId, "place" in target ? "message.move" : "message.file",
       );
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
-          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
-          destination: moveDestinationWord(folder), holder: route.holder,
+          messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey, holder: route.holder,
+          destination: "place" in target
+            ? { word: moveDestinationWord(target.place) }
+            // Checked against THIS store's list first; the organizer checks its own again.
+            : { folder: await this.folderDestination(tx, ctx, msg.mailboxId, target.name) },
         }, opts);
       }
       /* THE LOCKED RE-CHECK, AND IT IS NOT REDUNDANT WITH THE BRANCH ABOVE.
@@ -1422,6 +1428,10 @@ export class MessageService {
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, msg.mailboxId);
       // THE STALE PRESS, before any write: a placement decided after this press stands.
       if (aged && await placementDecidedAfter(bridgeTx(tx), id, floor!)) return this.stalePress(tx, ctx, id);
+      /* A person's own folder, found under the share lock a folder command's enqueue takes FOR
+         UPDATE: no command on it can commit between this answer and the write below. */
+      const folder: string = "place" in target
+        ? target.place : await this.folderDestination(tx, ctx, msg.mailboxId, target.name);
 
       // Write DESIRED state only. observedFolder is the worker's truth — read
       // and PRESERVE it (never overwrite on conflict); the worker flips it when the
@@ -1554,7 +1564,7 @@ export class MessageService {
       if (route.route === "request") {
         return this.requestMove(tx, ctx, {
           messageId: id, mailboxId: msg.mailboxId, dedupKey: msg.dedupKey,
-          destination: "trash", holder: route.holder,
+          destination: { word: "trash" }, holder: route.holder,
         }, opts);
       }
       // The locked re-check — see `move`'s note on why the plain read above does not replace it.
@@ -1736,7 +1746,10 @@ export class MessageService {
         throw new ServiceError("not_in_trash", 409, "this message is not in Trash");
       }
 
-      const target = (await this.restoreTargets(ctx, [{ mailboxId: msg.mailboxId, trashedFrom: fs.trashedFrom }]))(
+      // Read through this transaction: on a one-connection store a read on `ctx.db` waits for it.
+      // NO-CREDENTIAL-REPORT: a context derived onto the transaction's handle, with the binding
+      // `ctx.db` carries; `restoreTargets` reads folder rows and never reaches `noteCredentialAccount`.
+      const target = (await this.restoreTargets({ ...ctx, db: carryBinding(ctx.db, tx) }, [{ mailboxId: msg.mailboxId, trashedFrom: fs.trashedFrom }]))(
         msg.mailboxId, fs.trashedFrom,
       );
       const now = ctx.now();
@@ -1961,6 +1974,44 @@ export class MessageService {
     return canon as Folder;
   }
 
+  /**
+   * WHERE A MOVE GOES: one of the six places, exactly as {@link validFolder} reads them, or one of the
+   * person's own folders by its exact name. Here the name is checked for its shape alone (a fixed
+   * sentence, never the name); whether it is a destination is the mailbox's own list's answer
+   * ({@link folderDestination}). A press that also writes the sender's rule files to a place only.
+   */
+  private moveTarget(body: MoveBody): { place: Folder } | { name: string } {
+    const v: unknown = body.folder;
+    const canon = typeof v === "string" ? canonicalDestination(v) : v;
+    if (typeof canon === "string" && FOLDER_SET.has(canon)) return { place: canon as Folder };
+    if (folderMoveNameError(v) !== null) {
+      throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
+    }
+    if (body.pressRule === true) {
+      throw new ServiceError("validation_failed", 400, "a press that writes the sender's rule files to one of ohmail's places");
+    }
+    return { name: v as string };
+  }
+
+  /**
+   * One of the person's own folders of this mailbox, as THIS store lists it, or the refusal: 422
+   * `no_such_folder` for a folder the mailbox does not list or that is not the person's own (the
+   * Imbox, a pile, Sent, Trash, Junk), 409 `conflict` while a folder command overlaps it. In the
+   * caller's transaction; the organizer's arm asks it under `assertOrganizerRole`'s share lock.
+   */
+  private async folderDestination(tx: Tx, ctx: ServiceContext, mailboxId: string, name: string): Promise<InventoryFolder> {
+    const found = await resolveFolderDestination(bridgeTx(tx), { accountId: ctx.accountId, mailboxId }, name, userFolderExclusion);
+    if (found.ok) return found.folder;
+    if (found.refusal === "busy") {
+      throw new ServiceError(
+        "conflict", 409,
+        "another change to that folder is still being made on your mail server — it settles in seconds",
+      );
+    }
+    if (found.refusal === "unusable") throw new ServiceError("validation_failed", 400, "folder is not a canonical folder");
+    throw new ServiceError("no_such_folder", 422, "that folder is not one of this mailbox's own folders");
+  }
+
 
   /**
    * Write the move request and answer `pending`. No local write of any kind happens here. Shared
@@ -1974,24 +2025,32 @@ export class MessageService {
   private async requestMove(
     tx: Tx, ctx: ServiceContext,
     r: {
-      messageId: string; mailboxId: string; dedupKey: string; destination: string;
+      messageId: string; mailboxId: string; dedupKey: string;
+      /** A place by its word (`message.move`), or a person's own folder this store lists (`message.file`). */
+      destination: { word: string } | { folder: InventoryFolder };
       holder: OrganizedBy;
     },
     opts: { idempotency?: MoveIdempotency | null },
   ): Promise<MoveRequestResult> {
     const requestId = randomUUID();
+    // The press instant rides in the payload; the record keeps its creation instant, which the
+    // request windows age by. The organizer compares it only when it is aged.
+    const pressedAt = ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {};
+    const d = r.destination;
+    // EXACTLY what `validateMovePayload` (or `validateFolderMovePayload`) re-checks on the other
+    // side, and nothing else. The payload crosses an install boundary through a header another
+    // machine wrote, so the organizer validates it again independently — this is the door's half.
+    const travel = "word" in d
+      ? { kind: "message.move" as const, payload: { dedupKey: r.dedupKey, destination: d.word, ...pressedAt } }
+      : { kind: "message.file" as const, payload: { dedupKey: r.dedupKey, folder: d.folder, ...pressedAt } };
+    // A folder move the organizer's own validator would refuse is never queued.
+    if (travel.kind === "message.file" && validateFolderMovePayload(travel.payload) === null) {
+      throw new ServiceError("validation_failed", 400, "this move cannot travel to the install that organizes this mailbox");
+    }
     const pending = await writeReaderRequest(tx, ctx, {
       mailboxId: r.mailboxId,
-      kind: "message.move",
-      // EXACTLY what `validateMovePayload` re-checks on the other side, and nothing else. The
-      // payload crosses an install boundary through a header another machine wrote, so the
-      // organizer validates it again independently — this is the door's half of that pair.
-      // The press instant rides in the payload; the record keeps its creation instant, which the
-      // request windows age by. The organizer compares it only when it is aged.
-      payload: {
-        dedupKey: r.dedupKey, destination: r.destination,
-        ...(ctx.pressFloor ? { pressedAt: ctx.pressFloor.toISOString() } : {}),
-      },
+      kind: travel.kind,
+      payload: travel.payload,
       holder: r.holder,
       requestId,
     });
