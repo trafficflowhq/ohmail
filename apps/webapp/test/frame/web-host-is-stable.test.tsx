@@ -3,10 +3,18 @@
  * THE WEB HANDS THE FRAME ONE HOST WHILE NOTHING CHANGED. Today's views are fed from the host once per host object;
  * an entry that built a new record on every render would draw the whole old shell again on every poll of the page.
  */
+import type { ReactNode } from "react";
 import { renderHook } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it } from "vitest";
 import { NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
 import { useWebHost, type WebWords } from "../../app/(product)/mailbox/web-supplies";
+import messages from "../../messages/en.json";
+
+/** The words' provider the page's every entry stands under (`LocaleShell`), as the frame's tests mount it. */
+const Words = ({ children }: { children: ReactNode }) => (
+  <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">{children}</NextIntlClientProvider>
+);
 
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
@@ -22,7 +30,7 @@ const words: WebWords = {
 
 describe("the web's host", () => {
   it("is the same record on a render with nothing changed, and a new one when an answer moves", () => {
-    const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words });
+    const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words, wrapper: Words });
     const first = view.result.current;
     view.rerender(words);
     expect(view.result.current).toBe(first);
@@ -32,7 +40,7 @@ describe("the web's host", () => {
   });
 
   it("answers the connect form's key with its own wire, one wire for the page's life", () => {
-    const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words });
+    const view = renderHook((w: WebWords) => useWebHost(engine, w, frame), { initialProps: words, wrapper: Words });
     const wire = view.result.current.wires.connect;
     if (wire === NONE) throw new Error("the web connects mailboxes");
     expect(Object.keys(wire).sort()).toEqual(["connect", "discover", "edit", "localServerWait", "probe", "signIn"]);

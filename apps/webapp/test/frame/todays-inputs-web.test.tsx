@@ -4,10 +4,18 @@
  * one equals what `CloudShell` handed the old shell, input by input. Each hosted wire is the shared file's own object:
  * the one the views fell back to when the old door was handed nothing.
  */
+import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { describe, expect, it, vi } from "vitest";
 import { NONE, type FrameSupplies, type HostContract } from "@ohmail/app/host";
 import type { ServerHello } from "../../app/hello";
+import messages from "../../messages/en.json";
+
+/** The words' provider the page's every entry stands under (`LocaleShell`), as the frame's tests mount it. */
+const Words = ({ children }: { children: ReactNode }) => (
+  <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">{children}</NextIntlClientProvider>
+);
 
 const flavor = vi.hoisted(() => ({
   selfHost: false,
@@ -50,7 +58,7 @@ async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages:
     server, invites: selfHost, subscriptionPage: !selfHost, withdrawManage: () => undefined, storageBlock: !selfHost,
     account: "acct-1", firstRun: undefined, mailboxFacts, resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
   };
-  const { result } = renderHook(() => useWebHost(engine, words, frame));
+  const { result } = renderHook(() => useWebHost(engine, words, frame), { wrapper: Words });
   return { host: result.current, read: { inputs: todaysInputs(result.current, NO_TODAYS), mailboxFacts } };
 }
 
@@ -66,6 +74,7 @@ describe("the web's host, read back as today's inputs", () => {
     const draft = await import("../../app/shell/draft-reply");
     const { away } = await import("../../app/api-client");
     const { browserNotificationHost } = await import("../../app/shell/notification-settings");
+    const { browserNoticePage, webNoticeEmitter } = await import("../../app/shell/notice-emitter");
     const { liveBodyOverApi, SEND_SURFACE } = await import("../../app/(product)/mailbox/web-supplies");
     expect(inputs.consentTransport).toBe(CLOUD_CONSENT);
     expect(inputs.profileImportTransport).toBe(HOSTED);
@@ -75,7 +84,12 @@ describe("the web's host, read back as today's inputs", () => {
     expect(inputs.suggestWire).toBe(suggest.CLOUD_WIRE);
     expect(inputs.draftReplyWire).toBe(draft.CLOUD_WIRE);
     expect(inputs.awayTransport).toBe(away);
-    expect(inputs.notificationHost).toBe(browserNotificationHost);
+    // The browser's own notification host, each part the shared file's object; its notices the page's own emitter.
+    const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); });
+    expect(inputs.notificationHost).toEqual({
+      ...browserNotificationHost,
+      emitter: { ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function) },
+    });
     expect(inputs.liveBodyWire).toBe(liveBodyOverApi);
     expect(inputs.mailboxFacts).toBe(mailboxFacts);
     // What `CloudShell` passed: the managed service, its ceiling, Help with the confirmed account, no picture fetcher.
@@ -175,7 +189,7 @@ async function pageAsking(hellos: Array<ServerHello | null>) {
     invites: false, subscriptionPage: true, withdrawManage: () => undefined, storageBlock: true,
     account: "acct-1", firstRun: undefined, mailboxFacts: async () => [], resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
   };
-  const page = renderHook(() => useWebHost(engine, { ...words, server: useServerWords(false) }, frame));
+  const page = renderHook(() => useWebHost(engine, { ...words, server: useServerWords(false) }, frame), { wrapper: Words });
   return { page, wire: () => todaysInputs(page.result.current, NO_TODAYS).imageWire, WEB_IMAGES };
 }
 
@@ -223,6 +237,44 @@ describe("the server's first word on pictures, when the page's first ask got no 
       expect(flavor.asked, "asked a fifth time").toBe(4);
       expect(wire(), "a picture wire with no word from the server").toBeUndefined();
       page.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("whichever of the online event and the 30 seconds comes first asks, and the other is let go", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { page } = await pageAsking([null, null, null, null, FETCHES_PICTURES]);
+      const waited = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+      const online = () => act(async () => { window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(0); });
+      await waited(0);
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      await online();
+      expect(flavor.asked, "the window came back online").toBe(2);
+      await waited(30_000);
+      expect(flavor.asked, "the first wait's 30 seconds asked as well as the online event").toBe(3);
+      await online();
+      await online();
+      expect(flavor.asked, "the page's ask and three more").toBe(4);
+      await waited(120_000);
+      expect(flavor.asked, "asked a fifth time").toBe(4);
+      page.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("a page that goes while it waits to ask again asks nothing more", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { page } = await pageAsking([null, FETCHES_PICTURES]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      page.unmount();
+      window.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(flavor.asked, "asked after the page went").toBe(1);
     } finally {
       restore();
     }

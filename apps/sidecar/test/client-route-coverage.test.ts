@@ -470,7 +470,7 @@ function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, bo
     "the standalone table composes no calendar route": !table.toLowerCase().includes("calendar"),
     "the standalone engine serves no calendar record": !standalone.toLowerCase().includes("calendar"),
     "the calendar's routes are mounted by the server's program, only beside its calendar service":
-      program.includes("services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes] : cfg.chosen.routes"),
+      program.includes("services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes, ...calendarNoticeRoutes] : cfg.chosen.routes"),
   };
   const all = Object.values(holds).every(Boolean);
   return { exempt: new Set(all ? CALENDAR_HOSTED_DOOR_ONLY : []), holds };
