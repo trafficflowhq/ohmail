@@ -835,6 +835,18 @@ pub fn plan_with(
     })
 }
 
+/// What a launch with no stored door reads from the environment for `name`.
+///
+/// A preview reads everything but the data directory, which is then the app's own and nothing
+/// else. `OHMAIL_DATA_DIR` left in a shell could name the released install's folder, and a newer
+/// build that opened that store would migrate it for good.
+fn launch_env(name: &str, preview: bool, read: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    if preview && name == DATA_DIR_VAR {
+        return None;
+    }
+    read(name)
+}
+
 /// Where the packaged engine bundle is, given the app's resource directory. One spelling, so the
 /// plan and anything that wants to report the layout cannot disagree about it.
 ///
@@ -1418,7 +1430,7 @@ impl ShellPaths {
                     if name == KEK_VAR {
                         Some(resolved.clone())
                     } else {
-                        std::env::var(name).ok()
+                        launch_env(name, crate::variant::PREVIEW, &|n| std::env::var(n).ok())
                     }
                 };
                 match plan(&get, resources, self.app_data.as_deref(), &look) {
@@ -4329,8 +4341,21 @@ pub const KEK_VAR: &str = "OHMAIL_KEK";
 /// The service name is the product rather than the bundle identifier on purpose: two artifacts of
 /// this app must never end up with two different keys for one data directory, and a bundle id is
 /// exactly the thing that differs between them.
-pub const KEYSTORE_SERVICE: &str = "ohmail";
+///
+/// A preview build is the one artifact that gets a name of its own: it runs beside a released
+/// install with a data directory of its own, and under the product's name it would read that
+/// install's key and write its own over it.
+pub const KEYSTORE_SERVICE: &str = keystore_service(crate::variant::PREVIEW);
 pub const KEYSTORE_ENTRY: &str = "install-key";
+
+/// The keystore service of the released app, or of a preview.
+pub const fn keystore_service(preview: bool) -> &'static str {
+    if preview {
+        "ohmail-preview"
+    } else {
+        "ohmail"
+    }
+}
 
 /// Where the SAME key already lives on a Mac that has run the SwiftUI client.
 ///
@@ -4633,7 +4658,7 @@ fn look_up(entry: &keyring::Entry) -> Stored {
 /// `Empty` everywhere else, which is the honest answer: there is nothing to migrate FROM on a
 /// machine where no earlier version ever stored anything.
 #[cfg(target_os = "macos")]
-fn look_up_older() -> Stored {
+fn look_up_older_store() -> Stored {
     match keyring::Entry::new(LEGACY_KEYSTORE_SERVICE, LEGACY_KEYSTORE_ENTRY) {
         Ok(entry) => look_up(&entry),
         Err(err) => Stored::Refused(err.to_string()),
@@ -4641,8 +4666,22 @@ fn look_up_older() -> Stored {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn look_up_older() -> Stored {
+fn look_up_older_store() -> Stored {
     Stored::Empty
+}
+
+fn look_up_older() -> Stored {
+    older_key(crate::variant::PREVIEW, look_up_older_store)
+}
+
+/// The earlier version's key, which a preview never asks for: that key belongs to the released
+/// install beside it, and adopting it would copy that install's key under the preview's name.
+fn older_key(preview: bool, store: impl FnOnce() -> Stored) -> Stored {
+    if preview {
+        Stored::Empty
+    } else {
+        store()
+    }
 }
 
 /// Write a key and prove it can be read back.
@@ -5006,7 +5045,14 @@ fn engine_configure<R: tauri::Runtime>(
 ) -> Result<serde_json::Value, String> {
     // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
     let provisional = provisional == Some(true);
-    if config::parse(&config)?.mode() == Mode::Local {
+    let asked = config::parse(&config)?;
+    // A preview signs in to a preview server only, refused here before a door is staged or written.
+    if crate::variant::PREVIEW {
+        if let Some(why) = config::preview_door_refusal(&asked) {
+            return Err(why);
+        }
+    }
+    if asked.mode() == Mode::Local {
         return shell.switch_door_with(&config, provisional, None);
     }
     // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it in

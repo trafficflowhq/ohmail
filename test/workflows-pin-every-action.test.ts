@@ -55,6 +55,11 @@ const CENSUS: Record<string, string[]> = {
     "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3",
   ],
   "guard.yml": ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4"],
+  "preview.yml": [
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
+    "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7",
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7",
+  ],
   "release-feeds.yml": [
     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
     "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4",

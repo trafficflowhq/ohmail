@@ -222,6 +222,17 @@ describe("the hosted jobs each event starts", () => {
     expect(of("search-budget.yml")).toEqual([BUDGET]);
   });
 
+  it("the nightly preview: 0 on a dispatch on next and on a push to next; no pull request, tag or push to main starts it", () => {
+    const of = (jobs: string[]) => jobs.filter((j) => j.startsWith("preview.yml:"));
+    expect(of(hosted("workflow_dispatch", "refs/heads/next"))).toEqual([]);
+    expect(of(hosted("push", "refs/heads/next"))).toEqual([]);
+    for (const jobs of [push(), push(BATCH), hosted("push", "refs/heads/main"), hosted("push", "refs/tags/v0.30.7"), nightly()]) expect(of(jobs)).toEqual([]);
+    /* THE CONTROL: with the switch on hosted the expression names GitHub's runner for the job. Its own first step
+       refuses that runner (workflows-route-linux-jobs.test.ts), so the job that starts there builds nothing. */
+    expect(of(hosted("workflow_dispatch", "refs/heads/next", {}, { "vars.OHMAIL_LINUX_RUNNER": "hosted" })))
+      .toEqual(["preview.yml: desktop-preview-linux @ubuntu-24.04"]);
+  });
+
   it("the weekly fresh-clone run: 11", () => {
     expect(hosted("schedule", "refs/heads/main", { cron: "weekly" })).toEqual([
       "linux-build @ubuntu-24.04", "linux-suite-1 @ubuntu-24.04", "linux-suite-2 @ubuntu-24.04", "macos-build @macos-latest",

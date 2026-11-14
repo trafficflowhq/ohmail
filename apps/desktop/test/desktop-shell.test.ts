@@ -652,7 +652,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty-eight files and no others", () => {
+  it("is these sixty files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -818,6 +818,12 @@ describe("the Rust side", () => {
       "unclean_exit_tests.rs",
       "updater.rs",
       "updater_tests.rs",
+      // THE RELEASED APP OR A NIGHTLY PREVIEW OF THE NEXT VERSION. ALWAYS compiled, and it touches
+      // nothing: two identifiers, whether the `preview` feature is on, and the one pure check
+      // `main` asks before it builds anything, that the bundler's identifier and that feature name
+      // the same variant.
+      "variant.rs",
+      "variant_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
       // behaved correctly; the webview was never measured, and that is where a 4.1 GB session
       // went while ohmail's own telemetry stayed flat. Reports every webview process's RSS every
@@ -2427,6 +2433,7 @@ describe("the auto-updater", () => {
       "windowsSetup",
       "macBundle",
       "macAppStore",
+      "preview",
       "unpackaged",
     ];
     for (const kind of kinds) {

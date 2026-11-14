@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ohmail preview",
+  "identifier": "io.ohmail.preview",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "ohmail preview",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 390,
+        "minHeight": 400,
+        "dragDropEnabled": false,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["appimage"]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": []
+      }
+    }
+  }
+}

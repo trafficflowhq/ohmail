@@ -51,6 +51,16 @@ default = []
 # update row is withheld by the bundler's `OHMAIL_DISTRIBUTION=mas` literal rather than by this.
 mas = []
 
+# A NIGHTLY PREVIEW OF THE NEXT MAJOR VERSION, built to run beside a released install without
+# touching it. Not the engine-less "interface preview" the notes above speak of: this build
+# carries the engine. With `tauri.preview.conf.json` it is a different app to the system (its own
+# identifier, and so its own data and log folders); this feature covers what the identifier does
+# not: its own keystore item, no look at an older install's key, no update of its own, no claim
+# on mail links, and a server door that opens only to this computer or a tailnet. `variant.rs`
+# refuses at startup a build that has the identifier without the feature, or the reverse.
+# `scripts/build-engine-app.mjs --distribution preview` selects all of it together.
+preview = []
+
 local-engine = [
     "dep:keyring",
     "dep:getrandom",

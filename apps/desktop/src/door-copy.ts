@@ -451,6 +451,16 @@ const EN = {
   /* ── SETTINGS → ABOUT ────────────────────────────────────────────────────────────────────── */
   aboutAppLabel: "ohmail for desktop",
   aboutAppWhy: "The build running in this window.",
+  /* A NIGHTLY PREVIEW SAYS SO, on the mark every screen carries and in the row under the build.
+     Two mark keys, because a build made from a checkout names no commit and a sentence is never
+     glued from parts. */
+  previewMark: (commit: string) => `Preview build ${commit}`,
+  previewMarkUnstamped: "Preview build",
+  aboutPreviewLabel: "Preview build",
+  aboutPreviewWhy:
+    "A nightly build of the next version. It keeps its own data, apart from an installed ohmail, "
+    + "and the next night's build replaces it.",
+  aboutPreviewUnstamped: "Built from a checkout",
   aboutPublisher: "Published by",
   aboutPublisherWhy: "The company that writes this app.",
   aboutLicence: "Licence",
@@ -871,6 +881,7 @@ const EN = {
 export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   doorLocalName: ["machine"],
   diagnosticWritten: ["path"],
+  previewMark: ["commit"],
   doorHostSay: ["machine"],
   hostReached: ["host"],
   hostReachedTs: ["machine"],

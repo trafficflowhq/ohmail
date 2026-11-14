@@ -1,0 +1,292 @@
+name: preview
+
+# The nightly preview of the next major version: the Linux desktop app built from `next` as an
+# AppImage that runs beside a released install without touching it.
+#
+# What it builds. One artifact, `ohmail-preview-linux-<commit>`, by
+# `npm run app:build:engine -- --distribution preview`: the preview's own identifier
+# (apps/desktop/src-tauri/tauri.preview.conf.json), and so its own data and log folders; the cargo
+# feature `preview` (its own keystore item, no update of its own, no claim on mail links, a server
+# door that opens only to this computer or a tailnet); the window's mark. The job then starts what
+# it built in a home folder of its own and fails unless the app kept to the preview's folder and
+# says it is a preview.
+#
+# What it does not build. macOS and Windows: build-variant.mjs refuses a preview there, because
+# those shells still name the released app's mail-link handler and registry keys. A .deb or an
+# .rpm: either would install over the released app's own files. The phone app.
+#
+# Where it runs: on the maintainers' own runners, and nowhere else. The job carries the routing
+# expression of ci.yml (test/workflows-route-linux-jobs.test.ts holds it byte for byte), and its
+# first step refuses a GitHub-hosted runner, so a run the expression sends there builds nothing.
+# The hosted runners are one pool for the whole organisation; build.yml and android.yml, which
+# build every platform there, are not dispatched on `next`.
+#
+# When it runs. By dispatch on `next`: the nightly is a maintainer's dispatch, because a schedule
+# fires on the default branch alone. And on a push to `next` that changes this file or the preview
+# variant's own files, so a change to the variant is built the moment it lands. That push is also
+# what makes the workflow known to GitHub: a file that exists on `next` alone cannot be dispatched
+# before it has run once.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [next]
+    paths:
+      - .github/workflows/preview.yml
+      - apps/desktop/scripts/build-variant.mjs
+      - apps/desktop/src-tauri/tauri.preview.conf.json
+      - apps/desktop/src-tauri/src/variant.rs
+
+permissions:
+  contents: read
+
+# One run per commit, never cancelled: a night's build is not dropped for the next one.
+concurrency:
+  group: preview-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  # The commit the window's mark and Settings → About show.
+  OHMAIL_BUILD_SHA: ${{ github.sha }}
+  # The Rust build.yml compiles with, an exact release.
+  RUST_TOOLCHAIN: "1.99.0"
+
+jobs:
+  desktop-preview-linux:
+    name: preview · Linux desktop · AppImage
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
+    # Forty, the longest a job on the maintainers' runners may take.
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # NO HOSTED BUILD. The expression above sends a run to GitHub's runners whenever one of its
+      # conditions fails; this build then stops here, before it has installed or compiled anything.
+      - name: This build runs on the maintainers' own runners only
+        if: ${{ runner.environment != 'self-hosted' }}
+        run: |
+          echo "::error::the preview is built on the maintainers' own runners only; this run was routed to a ${{ runner.environment }} runner, so nothing was built"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      # build.yml's Linux list, for the same reasons (it states them), and `rustup`: GitHub's
+      # image carries it and a runner of ours does not.
+      - name: Install the Tauri prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            build-essential curl wget file patchelf desktop-file-utils \
+            xdg-utils rpm cpio fuse3 \
+            xvfb x11-utils x11-apps \
+            meson ninja-build libxml2-dev at-spi2-core \
+            rustup
+
+      # The compiler is the pinned release's own binary, put first on PATH: the distribution's
+      # rustup does not install the `cargo` and `rustc` names itself.
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          dirname "$(rustup which cargo)" >> "$GITHUB_PATH"
+          export PATH="$(dirname "$(rustup which cargo)"):$PATH"
+          test "$(rustc --version | cut -d' ' -f2)" = "$RUST_TOOLCHAIN" \
+            || { echo "rustc reports $(rustc --version), not the pinned $RUST_TOOLCHAIN" >&2; exit 1; }
+          rustc --version
+          cargo --version
+          node --version
+
+      - name: Install the desktop tree from its lockfile
+        working-directory: apps/desktop
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: Build the engine bundle
+        run: node scripts/engine-bundle.mjs
+
+      - name: The engine boots from the shipped layout, and only from it
+        run: node scripts/verify-engine-boot.mjs
+
+      # Downloaded and checked against its recorded checksum on every run: a runner of ours keeps
+      # nothing between jobs, and takes no cache.
+      - name: Vendor the Node runtime
+        run: node scripts/vendor-node.mjs --platform linux
+
+      # As build.yml does, and for its reasons: the bundler would otherwise download this plugin
+      # from a branch nobody here watches.
+      - name: Pin the AppImage's GTK plugin to this repository's copy
+        run: |
+          set -euo pipefail
+          TOOLS="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
+          mkdir -p "$TOOLS"
+          install -m 0755 apps/desktop/src-tauri/linux/linuxdeploy-plugin-gtk.sh \
+            "$TOOLS/linuxdeploy-plugin-gtk.sh"
+
+      # The AT-SPI bridge the released AppImage carries (build.yml states the fault it fixes).
+      - name: Build the AT-SPI bridge the AppImage carries
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/at-spi2-core"
+          mkdir -p "$W"
+          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" download-network -- curl -fsSL -o "$W/at-spi2-core-2.52.0.tar.xz" https://download.gnome.org/sources/at-spi2-core/2.52/at-spi2-core-2.52.0.tar.xz
+          bash apps/desktop/src-tauri/linux/at-spi2-core/build-bridge.sh "$W/out" --tarball "$W/at-spi2-core-2.52.0.tar.xz" | tee "$W/build.log"
+          grep -E '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log" >> "$GITHUB_ENV"
+          test "$(grep -cE '^OHMAIL_ATK_BRIDGE(_BUILD_ID)?=' "$W/build.log")" = 2
+
+      # ONE WORD SELECTS EVERY HALF: the overlay with the preview's identifier, the cargo feature
+      # and the window's literal (apps/desktop/scripts/build-variant.mjs). The script scans and
+      # smokes the window bundle before it packages, as it does for a release.
+      - name: Build the preview app, smoking its bundle
+        env:
+          NO_STRIP: "true"
+        working-directory: apps/desktop
+        run: npm run app:build:engine -- --distribution preview --bundles appimage -- -- --locked
+
+      - name: Name the artifact
+        run: |
+          set -euo pipefail
+          B=apps/desktop/src-tauri/target/release/bundle/appimage
+          ls -la "$B"
+          test "$(find "$B" -maxdepth 1 -name '*.AppImage' | wc -l)" = 1
+          mkdir -p build
+          find "$B" -maxdepth 1 -name '*.AppImage' -exec mv {} build/ohmail-preview-linux-x86_64.AppImage \;
+          test -s build/ohmail-preview-linux-x86_64.AppImage
+          chmod +x build/ohmail-preview-linux-x86_64.AppImage
+          sha256sum build/ohmail-preview-linux-x86_64.AppImage
+
+      # ── WHAT THE PACKAGE SAYS IT IS ───────────────────────────────────────
+      # Its launcher entry names the preview and claims no mail link: the released app's entry
+      # claims `mailto`, and a preview that did would take those links from an installed ohmail.
+      - name: The AppImage is a preview and takes no mail link
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/preview-inspect" && mkdir -p "$RUNNER_TEMP/preview-inspect"
+          (cd "$RUNNER_TEMP/preview-inspect" && "$GITHUB_WORKSPACE/build/ohmail-preview-linux-x86_64.AppImage" --appimage-extract > /dev/null)
+          ROOT="$RUNNER_TEMP/preview-inspect/squashfs-root"
+          test "$(find "$ROOT/usr/share/applications" -name '*.desktop' | wc -l)" = 1
+          ENTRY="$(find "$ROOT/usr/share/applications" -name '*.desktop')"
+          cat "$ENTRY"
+          grep -aqx 'Name=ohmail preview' "$ENTRY" || { echo "the launcher entry does not say it is a preview" >&2; exit 1; }
+          if grep -aq 'x-scheme-handler' "$ENTRY"; then
+            echo "the preview's launcher entry claims a link scheme" >&2; exit 1
+          fi
+          test -f "$ROOT/usr/bin/ohmail"
+
+      # ── THE PREVIEW IS STARTED, AND IT KEEPS TO ITS OWN FOLDER ────────────
+      # build.yml's launch check (scripts/verify-desktop-launch.mjs: a window with real geometry
+      # and a rendered frame), in a home folder made for this step, with none of the variables a
+      # shell could name another store by. Then the proof this workflow exists for: the app wrote
+      # the preview's folder and no released identifier's.
+      - name: The preview opens a window that renders, in a home of its own
+        run: |
+          set -euo pipefail
+          for t in xwd xwininfo Xvfb; do
+            command -v "$t" > /dev/null || { echo "launch check: $t is not installed"; exit 1; }
+          done
+          H="$RUNNER_TEMP/preview-home"
+          rm -rf "$H" && mkdir -p "$H"
+          Xvfb :99 -screen 0 1400x900x24 &
+          XVFB=$!
+          for _ in $(seq 30); do xwininfo -display :99 -root > /dev/null 2>&1 && break; sleep 1; done
+          set +e
+          env -u OHMAIL_DATA_DIR -u OHMAIL_KEK -u OHMAIL_MODE -u OHMAIL_CLOUD_URL \
+            APPIMAGE_EXTRACT_AND_RUN=1 DISPLAY=:99 \
+            node scripts/verify-desktop-launch.mjs build/ohmail-preview-linux-x86_64.AppImage \
+            --home "$H" --out launch-check --timeout 120
+          RC=$?
+          set -e
+          kill "$XVFB" 2>/dev/null || true
+          [ "$RC" = 0 ] || exit "$RC"
+          ls -la "$H/.local/share"
+          test -d "$H/.local/share/io.ohmail.preview" \
+            || { echo "PREVIEW-FOLDER-ABSENT: the app did not write $H/.local/share/io.ohmail.preview" >&2; exit 1; }
+          FOREIGN="$(find "$H" \( -name 'io.ohmail.desktop*' -o -name 'app.ohmail*' \) -print)"
+          if [ -n "$FOREIGN" ]; then
+            echo "PREVIEW-OPENED-A-RELEASED-FOLDER: the preview wrote under a released identifier:" >&2
+            echo "$FOREIGN" >&2
+            exit 1
+          fi
+          echo "the preview kept to $H/.local/share/io.ohmail.preview"
+
+      # ── IT SAYS IT IS A PREVIEW, SO IT NEVER ASKS THE RELEASE FEED ────────
+      # The release feed would replace this build with the released app. The shell names its
+      # install kind in its own `updater_offer` line; a preview's must read "preview".
+      - name: The running preview says it is a preview
+        run: |
+          set -euo pipefail
+          APP=build/ohmail-preview-linux-x86_64.AppImage
+          rm -rf install-kind && mkdir -p install-kind/run && chmod 700 install-kind/run
+          Xvfb :97 -screen 0 1280x800x24 &
+          XVFB=$!
+          for _ in $(seq 30); do xwininfo -display :97 -root > /dev/null 2>&1 && break; sleep 1; done
+          setsid env -u OHMAIL_DATA_DIR -u OHMAIL_KEK -u OHMAIL_MODE -u OHMAIL_CLOUD_URL \
+            APPIMAGE_EXTRACT_AND_RUN=1 HOME="$RUNNER_TEMP/preview-home" \
+            XDG_RUNTIME_DIR="$PWD/install-kind/run" DISPLAY=:97 \
+            "./$APP" > install-kind/app.out 2> install-kind/app.err &
+          APP_PID=$!
+          LINE=""
+          for _ in $(seq 120); do
+            LINE="$(grep -a -m1 '"event":"updater_offer"' install-kind/app.err || true)"
+            [ -n "$LINE" ] && break
+            kill -0 "$APP_PID" 2> /dev/null || break
+            sleep 1
+          done
+          kill -TERM -- "-$APP_PID" 2> /dev/null || true
+          sleep 3
+          kill -KILL -- "-$APP_PID" 2> /dev/null || true
+          kill "$XVFB" 2> /dev/null || true
+          if [ -z "$LINE" ]; then
+            echo "INSTALL-KIND-NOT-READ: the app wrote no updater_offer line in 120 s; its last output:" >&2
+            tail -n 20 install-kind/app.err >&2 || true
+            exit 1
+          fi
+          KIND="$(printf '%s' "$LINE" | sed -n 's/.*"installKind":"\([A-Za-z-]*\)".*/\1/p')"
+          if [ "$KIND" != preview ]; then
+            echo "INSTALL-KIND-NOT-PREVIEW ${KIND:-unreadable}: this build would ask the release feed for an update." >&2
+            echo "$LINE" >&2
+            exit 1
+          fi
+          echo "the running build reports installKind preview: $LINE"
+
+      # The shell's own tests with the preview feature on, beside the two configurations
+      # build.yml runs.
+      - name: cargo test (the preview configuration)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked --features local-engine,preview
+
+      - name: Keep the launch captures when it fails
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: preview-launch-captures-${{ github.run_number }}
+          path: |
+            launch-check
+            install-kind
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Upload the preview AppImage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ohmail-preview-linux-${{ github.sha }}
+          path: build/ohmail-preview-linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 7

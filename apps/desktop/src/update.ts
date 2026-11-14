@@ -84,6 +84,7 @@ export const INSTALL_KINDS = [
   "windowsSetup",
   "macBundle",
   "macAppStore",
+  "preview",
   "unpackaged",
   "unknown",
 ] as const;
@@ -103,6 +104,7 @@ export const MANAGED_SENTENCE_KEYS: Partial<Record<InstallKind, string>> = {
   linuxPackage: "managedPackage",
   flatpak: "managedFlatpak",
   macAppStore: "managedAppStore",
+  preview: "managedPreview",
   unpackaged: "managedUnpackaged",
 };
 

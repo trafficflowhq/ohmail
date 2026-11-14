@@ -7,10 +7,14 @@
  * ARTIFACT, so both are read from a literal the bundler folded in — a runtime sniff (a path, a
  * receipt, a bundle id) answers differently under a test, a symlink and a copied app, and the one
  * thing neither surface may do is appear on a store build because a probe returned the wrong thing.
+ *
+ * A third build, `preview`, is a nightly build of the next major version that runs beside a released
+ * install. The next night's build is its update, it meets no hosted service, and it says what it is
+ * on every screen (`PreviewMark.tsx`).
  */
 
 /** Every distribution this window knows. `direct` is the default and what every other build is. */
-export const DISTRIBUTIONS = ["direct", "mas"] as const;
+export const DISTRIBUTIONS = ["direct", "mas", "preview"] as const;
 
 export type Distribution = (typeof DISTRIBUTIONS)[number];
 
@@ -26,12 +30,23 @@ export const DISTRIBUTION: Distribution = ((): Distribution => {
   return (DISTRIBUTIONS as readonly string[]).includes(raw) ? (raw as Distribution) : "direct";
 })();
 
-/** Does this copy replace its own files? False on the store build: the store does that. */
+/**
+ * Does this copy replace its own files? False on the store build: the store does that. False on a
+ * preview: the release feed would replace it with the released app.
+ */
 export function selfUpdates(distribution: Distribution = DISTRIBUTION): boolean {
-  return distribution !== "mas";
+  return distribution !== "mas" && distribution !== "preview";
 }
 
-/** May this copy send somebody to the operator's subscription page? False on the store build. */
+/**
+ * May this copy send somebody to the operator's subscription page? False on the store build, and
+ * on a preview, whose only server is a preview server with nothing to buy.
+ */
 export function linksOutToBilling(distribution: Distribution = DISTRIBUTION): boolean {
-  return distribution !== "mas";
+  return distribution !== "mas" && distribution !== "preview";
+}
+
+/** Is this copy a nightly preview of the next version? */
+export function isPreview(distribution: Distribution = DISTRIBUTION): boolean {
+  return distribution === "preview";
 }
