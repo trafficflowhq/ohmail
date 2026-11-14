@@ -63,18 +63,28 @@ export type ShellRefusal =
   }
   | { readonly why: "noShell" }
   | { readonly why: "rules" }
+  /** The view was asked to be the door's and handed a scope: it shows neither page. */
+  | { readonly why: "door" }
   | { readonly why: "ended"; readonly epoch: string };
 
 type NativeEvent<T> = { readonly nativeEvent: T };
 
-export interface ShellViewProps extends ViewProps {
-  readonly scope: string | null;
+interface ShellViewEvents extends ViewProps {
   readonly onMessage: (e: NativeEvent<PageMessage>) => void;
   readonly onEpoch: (e: NativeEvent<{ readonly epoch: string }>) => void;
   readonly onLinkAsk: (e: NativeEvent<{ readonly epoch: string; readonly token: string; readonly url: string }>) => void;
   readonly onMailto: (e: NativeEvent<{ readonly epoch: string; readonly url: string }>) => void;
   readonly onRefused: (e: NativeEvent<ShellRefusal>) => void;
 }
+
+/**
+ * What a view is asked to be: one scope's page, or the door's page, which stands while no scope is live. Never
+ * both: the door's page with a scope does not compile here, and the native view refuses it (`why: "door"`).
+ */
+export type ShellViewProps = ShellViewEvents & (
+  | { readonly scope: string | null; readonly door?: false }
+  | { readonly scope: null; readonly door: true }
+);
 
 /** What the view itself answers. */
 export interface ShellViewHandle {

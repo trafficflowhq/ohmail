@@ -121,6 +121,7 @@ apps/mobile/test/death-nobody-heard.test.ts	source-text	reads source as text (ts
 apps/mobile/test/diagnostic-file.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/disabled-control-dims.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/domain-card-files-the-domain.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/door-page.test.ts	artifact	reads what was built: the door's page, its policy, its manifest and its bundle's inputs	layer 5	phone-screens	
 apps/mobile/test/doorbell-cap.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors-answer-under-its-option.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	phone-screens	
