@@ -116,6 +116,15 @@ Four options:
   smallest model measured to do both jobs; something much smaller will suggest
   a door and then fail to write a draft, and says so rather than hanging.
 
+The desktop also offers **Custom Local Endpoint** for keyless OpenAI-compatible
+servers such as LM Studio, vLLM and llama.cpp. Enter the API base URL (usually
+ending in `/v1`) and a model ID served by that endpoint. The server must expose
+`GET /models` beneath that base URL; saving checks that the selected model is
+listed, without running inference. Requests use `/chat/completions` for both
+suggestions and drafts. This option does not support authenticated endpoints
+or the Anthropic Messages API. Like Ollama, a non-loopback address sends content
+to the machine at that address, not necessarily this computer.
+
 A key is sealed under a key held in your operating system's keystore, is never
 written down in the clear, is never read back, and is sent to no host but its
 own vendor's. The endpoint for a key is fixed in the code and no setting can

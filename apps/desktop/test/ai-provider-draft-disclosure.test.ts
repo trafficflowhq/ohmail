@@ -39,7 +39,13 @@ const NOTES = constant("DEFAULT_KB_K");
 
 /** The five destination lines: each is shown on its own, as the option's line and as the summary's. */
 const WHY = [
-  "choiceAnthropicWhy", "choiceOpenaiWhy", "choiceOpenCodeGoWhy", "choiceOllamaWhy", "choiceOllamaWhyElsewhere",
+  "choiceAnthropicWhy",
+  "choiceOpenaiWhy",
+  "choiceOpenCodeGoWhy",
+  "choiceOllamaWhy",
+  "choiceOllamaWhyElsewhere",
+  "choiceCustomLocalWhy",
+  "choiceCustomLocalWhyElsewhere",
 ] as const;
 
 describe("the provider form says what a draft sends", () => {

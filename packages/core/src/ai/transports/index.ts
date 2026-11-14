@@ -9,6 +9,7 @@ export * from "./ai-transport.js";
 export * from "./ai-anthropic.js";
 export * from "./ai-openai.js";
 export * from "./ai-ollama.js";
+export * from "./ai-custom-local.js";
 export * from "./ai-opencode-go.js";
 export * from "./ai-opencode-go-chat.js";
 export * from "./ai-opencode-go-models.js";
