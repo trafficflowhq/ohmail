@@ -18,14 +18,14 @@ import type { OwnerResolver } from "../../shell/engine";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { GapLettersTransport } from "../../shell/GapLettersNotice";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
-import type { JunkWire } from "../../shell/junk-window";
+import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import type { FreshnessProbe, MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { NotificationHost } from "../../shell/notification-settings";
 import type { OrganizerNoticeTransport } from "../../shell/OrganizerNotice";
 import type { ProfileImportTransport } from "../../shell/ProfileImportCard";
 import type { ImageDoor } from "../../shell/remote-images";
-import type { SuggestWire } from "../../shell/screener-suggest";
+import type { SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import type { TrashWire } from "../../shell/trash-window";
 
 type Engine = HostContract["engine"];

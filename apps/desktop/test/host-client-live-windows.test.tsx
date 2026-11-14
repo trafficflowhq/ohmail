@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -197,7 +197,8 @@ describe("what the wires DO to the two windows, through the shared hooks", () =>
     const { useTrashWindow } = await import("../../webapp/app/shell/trash-window");
     const out: { junk?: { supported: boolean }; trash?: { supported: boolean } } = {};
     function Probe(): null {
-      out.junk = useJunkWindow(true, (() => undefined) as never, junk);
+      /* No wire handed in is the host saying it has none: the Junk window takes its wire or `none`, never a default. */
+      out.junk = useJunkWindow(true, (() => undefined) as never, junk ?? "none", useTranslations("screener") as never);
       out.trash = useTrashWindow(true, trash);
       return null;
     }

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
@@ -186,10 +186,11 @@ function OptInHarness({ transport, standaloneDoor = false }: {
     transport ? (standaloneDoor ? consentOverBridgeStandalone : consentOverBridge) : "none",
   );
   const suggestions = useScreenerSuggestions({
+    text: { screener: useTranslations("screener") as never, aiRefusal: useTranslations("aiRefusal") as never },
     active: false,
     autoSuggest: consent.autoSuggest,
     toast,
-    ...(transport ? { wire: cloudSuggestWire } : {}),
+    wire: transport ? cloudSuggestWire : "none",
   });
   const autoOptIn = suggestions.autoOptIn(["a@example.com", "b@example.com", "c@example.com"]);
   return h(

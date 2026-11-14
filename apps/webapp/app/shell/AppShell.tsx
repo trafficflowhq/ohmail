@@ -84,6 +84,7 @@ import { avatarHue, placeLabel } from "./format";
 import { useDayClock } from "@ohmail/app-logic/session/day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
+import type { Translator } from "@ohmail/app-logic/text/translator";
 import { MessageGone, MessagePane, type BulkAction, type MessageAction } from "./MessagePane";
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
@@ -101,12 +102,13 @@ import { firstRunImportOver, useFirstRunQueueSettle } from "@ohmail/app-logic/do
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { useScreenerText } from "./screener-text";
-import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
+import { useSuggestText } from "./suggest-text";
+import { useJunkPileKey, useJunkWindow, type JunkWire } from "@ohmail/app-logic/screener/junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
-import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
-import type { SuggestStanding } from "./no-suggestion";
+import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
+import type { SuggestStanding } from "@ohmail/app-logic/screener/no-suggestion";
 import { AutoSuggestRow } from "./AutoSuggestRow";
 import { AutoActRow } from "./AutoActRow";
 import { ScreeningSection } from "./ScreeningSection";
@@ -863,10 +865,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     // 0040 — so the automatic purchase cannot happen on a guess.
     autoSuggest: consent.autoSuggest,
     toast,
-    /* The host's own wire where there is one — see {@link suggestWire}. Spread rather than passed
-       as `undefined`, so an absent prop leaves the hook on its documented default rather than
-       being handed a hole. */
-    ...(suggestWire ? { wire: suggestWire } : {}),
+    text: useSuggestText(),
+    /* The host's own wire where there is one (see {@link suggestWire}), and none where the host named none: the
+       hook has no wire of its own. */
+    wire: suggestWire ?? NONE,
     mirrorSuggestionOf: mirrorSuggestionOfEngine(engine),
   });
   /**
@@ -1061,7 +1063,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const junkOn = !demo && consent.foldersEnabled && !seedOwed;
   const junkOnScreener = junkOn && route.view === "screener";
   const junkKeep = { on: junkOn, moved: useJunkPileKey(junkOn) };
-  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire, junkOnScreener, junkKeep);
+  const junkWindow = useJunkWindow(junkOnScreener && route.screenerSegment === "spam", toast, junkWire ?? NONE, useTranslations("screener") as unknown as Translator, junkOnScreener, junkKeep);
   /**
    * WHAT TO SAY ABOUT THE PROVIDER'S JUNK FOLDER, and whether to offer the way in — the honest
    * half of JUNK-INVISIBLE, read by the rail's folders group and by search's empty state. The

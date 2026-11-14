@@ -20,7 +20,7 @@ import type { TodaysNodes } from "../../webapp/app/shell/todays-inputs";
 import { useTranslations } from "next-intl";
 import type { EngineStatus } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
-import { CloudSuggest } from "./CloudSuggest.js";
+import { CloudSuggest, type CloudSuggestProps } from "./CloudSuggest.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
@@ -209,16 +209,23 @@ export function DesktopFrame(p: DesktopFrameProps) {
   /* What today's views take that the contract does not carry: the Screener's own suggest control, by door, and the
      name of the desktop's pane. */
   const suggestDoor = suggestDoorFor(status, session);
+  /* The hosted control's run is handed its two readers: bound here, where a hook may be called. */
+  const tScreener = useTranslations("screener");
+  const tAiRefusal = useTranslations("aiRefusal");
+  const suggestText = useMemo(
+    () => ({ screener: tScreener, aiRefusal: tAiRefusal }) as unknown as CloudSuggestProps["text"],
+    [tScreener, tAiRefusal],
+  );
   const todays = useMemo((): TodaysNodes => ({
     screenerSuggest: suggestDoor === "local"
       ? ({ senders, absorb }) => <LocalSuggest senders={senders} absorb={absorb} ai={ai} onConfigure={() => goSettings("desktop")} />
       : suggestDoor === "cloud"
         ? ({ senders, resuggestable, unanswered, absorb, absorbStanding }) => (
-          <CloudSuggest senders={senders} resuggestable={resuggestable} unanswered={unanswered} absorb={absorb} absorbStanding={absorbStanding} />
+          <CloudSuggest senders={senders} resuggestable={resuggestable} unanswered={unanswered} absorb={absorb} absorbStanding={absorbStanding} text={suggestText} />
         )
         : NONE,
     desktopPane: { label: desktopPaneLabel() },
-  }), [suggestDoor, ai]);
+  }), [suggestDoor, ai, suggestText]);
 
   return <TodaysFrame host={host} todays={todays} />;
 }

@@ -1042,6 +1042,24 @@
       "node": "./dist/screener/impersonation-filed.js",
       "default": "./src/screener/impersonation-filed.ts"
     },
+    "./screener/junk-answers": {
+      "types": "./src/screener/junk-answers.ts",
+      "ohmail-source": "./src/screener/junk-answers.ts",
+      "node": "./dist/screener/junk-answers.js",
+      "default": "./src/screener/junk-answers.ts"
+    },
+    "./screener/junk-window": {
+      "types": "./src/screener/junk-window.ts",
+      "ohmail-source": "./src/screener/junk-window.ts",
+      "node": "./dist/screener/junk-window.js",
+      "default": "./src/screener/junk-window.ts"
+    },
+    "./screener/no-suggestion": {
+      "types": "./src/screener/no-suggestion.ts",
+      "ohmail-source": "./src/screener/no-suggestion.ts",
+      "node": "./dist/screener/no-suggestion.js",
+      "default": "./src/screener/no-suggestion.ts"
+    },
     "./screener/screener-given-up": {
       "types": "./src/screener/screener-given-up.ts",
       "ohmail-source": "./src/screener/screener-given-up.ts",
@@ -1060,11 +1078,23 @@
       "node": "./dist/screener/screener-state.js",
       "default": "./src/screener/screener-state.ts"
     },
+    "./screener/screener-suggest": {
+      "types": "./src/screener/screener-suggest.ts",
+      "ohmail-source": "./src/screener/screener-suggest.ts",
+      "node": "./dist/screener/screener-suggest.js",
+      "default": "./src/screener/screener-suggest.ts"
+    },
     "./screener/spam-row": {
       "types": "./src/screener/spam-row.ts",
       "ohmail-source": "./src/screener/spam-row.ts",
       "node": "./dist/screener/spam-row.js",
       "default": "./src/screener/spam-row.ts"
+    },
+    "./screener/suggest-answers": {
+      "types": "./src/screener/suggest-answers.ts",
+      "ohmail-source": "./src/screener/suggest-answers.ts",
+      "node": "./dist/screener/suggest-answers.js",
+      "default": "./src/screener/suggest-answers.ts"
     },
     "./screener/suggestion-overlay": {
       "types": "./src/screener/suggestion-overlay.ts",
@@ -1251,6 +1281,12 @@
       "ohmail-source": "./src/text/index.ts",
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
+    },
+    "./text/ai-refusal-copy": {
+      "types": "./src/text/ai-refusal-copy.ts",
+      "ohmail-source": "./src/text/ai-refusal-copy.ts",
+      "node": "./dist/text/ai-refusal-copy.js",
+      "default": "./src/text/ai-refusal-copy.ts"
     },
     "./text/format": {
       "types": "./src/text/format.ts",

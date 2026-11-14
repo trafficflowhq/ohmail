@@ -43,6 +43,8 @@ export function letter(id: string, over: Partial<EngineMessage> = {}): EngineMes
 
 /** One object for the engine's verdict on the copy's age: a reader that subscribes to it needs the same one back. */
 const COPY_AGE_UNKNOWN = { state: "unknown", asOf: null } as const;
+/** One list for every read: the model keeps what it was last answered by identity. */
+const NOTHING_ABANDONED: readonly never[] = [];
 
 export interface FakeMail {
   readonly engine: OhmailEngine;
@@ -121,6 +123,14 @@ export function fakeMail(
     sentFolderAsks: () => 0,
     /* It opens no file: the ground's file door stands over it as no door. */
     attachmentsAvailable: () => false,
+    /* And what the Screener's model, which the ground stands, reads at rest: no change the server refused, a queue
+       this device cannot page, and its asks at the mount, answered with nothing. */
+    abandoned: () => NOTHING_ABANDONED,
+    screenerWaitingAvailable: () => false,
+    refreshScreenerWaiting: async () => undefined,
+    refreshHeldReleases: async () => undefined,
+    refreshUnscreened: async () => undefined,
+    autoFiled: async () => null,
     setCutline: (cutline: unknown) => {
       told.cutlines.push(cutline);
     },

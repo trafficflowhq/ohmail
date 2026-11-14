@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine, MemoryMirrorStore,
   type EngineMessage, type SyncChange,
@@ -129,6 +130,7 @@ async function mount(
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   // (api-client reads API_BASE at load — the module top sets it, and every shell import stays dynamic.)
   const { KeymapProvider } = await import("@ohmail/app/keys");
 
@@ -138,6 +140,8 @@ async function mount(
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const suggestions = useScreenerSuggestions({
+      text: useSuggestText(),
+      wire: CLOUD_WIRE,
       active: withSuggest,
       toast: (() => {}) as never,
     });

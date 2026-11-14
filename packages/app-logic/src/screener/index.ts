@@ -2,6 +2,7 @@
 export type { DecisionDestination, DecisionScope } from "./decision.js";
 export { DECISION_KEY, DECISION_ORDER, DECISION_QUIET, PILE_KEY, PILE_VERB_KEY } from "./decision.js";
 export { useScreenerModel, type ScreenerModelInput } from "./model.js";
+export { useScreenerLive, type ScreenerLive, type ScreenerLiveInput } from "./live.js";
 export {
   acceptDestOf,
   activeFilterOf,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { useSuggestText } from "../app/shell/suggest-text";
 import {
   OhmailEngine, MemoryMirrorStore,
   type EngineMessage, type Folder, type SyncChange,
@@ -371,6 +372,7 @@ async function mountLive(): Promise<Live> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(TWELVE);
@@ -381,7 +383,7 @@ async function mountLive(): Promise<Live> {
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const suggestions = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
+    const suggestions = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, toast: (() => {}) as never });
     const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     live = state;
     // Bound exactly as `AppShell` binds it — both halves of the queue.
@@ -508,12 +510,13 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
     const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
     const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+    const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
     const engine = await engineWith(TWELVE);
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       // OPTED IN. The path that spends with no press at all.
-      const s = useScreenerSuggestions({ active: true, autoSuggest: true, toast: (() => {}) as never });
+      const s = useScreenerSuggestions({ text: useSuggestText(), wire: CLOUD_WIRE, active: true, autoSuggest: true, toast: (() => {}) as never });
       const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       s.forSenders(st.unsuggestedSenders, st.suggestedSenders);
       return null;
