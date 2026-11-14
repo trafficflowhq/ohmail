@@ -148,7 +148,7 @@ const FRAMED =
 
 describe("a message's links are on the shell's list while it is on screen", () => {
   it("a framed message reports the frame's links at mount, before any open, and takes them back", async () => {
-    const el = await mount(h(MessageBody, { messageId: "m1", text: "one two three", html: FRAMED }));
+    const el = await mount(h(MessageBody, { owner: null, messageId: "m1", text: "one two three", html: FRAMED }));
     expect(el.querySelector("iframe"), "this fixture must render in its frame").not.toBeNull();
     const [first, ...rest] = reports();
     expect(first, "the frame's links never reached the shell").toBeDefined();
@@ -165,7 +165,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
   });
 
   it("a prose link opens with the exact bytes its renderer reported, and the report came first", async () => {
-    const el = await mount(h(MessageBody, { messageId: "m2", text: "see https://example.test/a?b=1&c=2 and <https://bücher.example/ü>", html: null }));
+    const el = await mount(h(MessageBody, { owner: null, messageId: "m2", text: "see https://example.test/a?b=1&c=2 and <https://bücher.example/ü>", html: null }));
     const [report] = reports();
     expect(report?.urls).toEqual(["https://example.test/a?b=1&c=2", "https://xn--bcher-kva.example/%C3%BC"]);
     for (const a of el.querySelectorAll<HTMLAnchorElement>("a.msg-link")) await press(a);
@@ -175,7 +175,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
 
   it("an html letter set in the app's own type reports its anchors the same way", async () => {
     const html = '<p>Hello, <a href="https://example.test/letter?x=1">the page</a>.</p>';
-    const el = await mount(h(MessageBody, { messageId: "m3", text: "Hello, the page.", html }));
+    const el = await mount(h(MessageBody, { owner: null, messageId: "m3", text: "Hello, the page.", html }));
     expect(el.querySelector("iframe"), "a letter renders in the app's type").toBeNull();
     const a = el.querySelector<HTMLAnchorElement>("a.msg-link");
     expect(a, "the letter's anchor is not on screen").not.toBeNull();
@@ -238,7 +238,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
        across the bridge, in and out. Mutations: flush per report → five calls; flush the removals
        one by one → five more; drop the removal → the last batch keeps the links. */
     const el = await mount(h("div", null, ...[1, 2, 3, 4, 5].map((i) =>
-      h(MessageBody, { key: i, messageId: `b${i}`, text: "one two three", html: FRAMED.replace("/a?b=1", `/a${i}?b=1`) }))));
+      h(MessageBody, { owner: null, key: i, messageId: `b${i}`, text: "one two three", html: FRAMED.replace("/a?b=1", `/a${i}?b=1`) }))));
     expect(el.querySelectorAll("iframe").length).toBe(5);
     expect(batches().length, "the five frames' reports were not one call").toBe(1);
     expect(batches()[0]!.surfaces.length).toBe(5);
@@ -273,8 +273,8 @@ describe("a message's links are on the shell's list while it is on screen", () =
        the web's (no address on a marked link) → the press would open nothing. */
     const marked = FRAMED.replace(">one</a>", ">bank.example</a>");
     const el = await mount(h("div", null,
-      h(MessageBody, { key: 1, messageId: "k1", text: "one two three", html: marked }),
-      h(MessageBody, { key: 2, messageId: "k2", text: "one two three", html: FRAMED })));
+      h(MessageBody, { owner: null, key: 1, messageId: "k1", text: "one two three", html: marked }),
+      h(MessageBody, { owner: null, key: 2, messageId: "k2", text: "one two three", html: FRAMED })));
     const [batch, ...more] = batches();
     expect(more).toEqual([]);
     expect(batch!.urls.map((u) => u.length)).toEqual([3, 3]);
@@ -294,6 +294,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
     const html = '<p>Your session ended. Sign in again at <a href="https://example.net/r/a1?u=7">https://example.com/account/login</a> ' +
       'or read <a href="https://example.net/help">our help pages</a>.</p>';
     const el = await mount(h(MessageBody, {
+      owner: null,
       messageId: "m6", text: "Your session ended. Sign in again at https://example.com/account/login or read our help pages.", html,
     }));
     expect(el.querySelector("iframe"), "this letter must render in the app's type").toBeNull();
@@ -311,9 +312,9 @@ describe("a message's links are on the shell's list while it is on screen", () =
 
   it("with no sink armed — the web app's state — nothing is reported", async () => {
     setRenderedLinksSink(null);
-    await mount(h(MessageBody, { messageId: "m4", text: "x", html: FRAMED }));
+    await mount(h(MessageBody, { owner: null, messageId: "m4", text: "x", html: FRAMED }));
     await unmount();
-    await mount(h(MessageBody, { messageId: "m5", text: "see https://example.test/plain", html: null }));
+    await mount(h(MessageBody, { owner: null, messageId: "m5", text: "see https://example.test/plain", html: null }));
     await unmount();
     expect(reports()).toEqual([]);
   });

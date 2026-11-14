@@ -38,14 +38,16 @@ function panelVerbs(
   toggle: (which: Exclude<Open, null>) => (at: HTMLElement) => void,
   room: PanelRoom,
 ): Placed[] {
-  const { act, readSlot } = verbs;
+  const { act, readSlot, filed } = verbs;
   const compact = room === "phone" || room === "fold";
+  /* The three that file the letter are toggles: each says whether the letter is in its pile, as today's bar does. */
   const file = (id: "later" | "aside", icon: "later" | "parked", rank: number): Placed => ({
     id,
     label: t(`verb.${id}`),
     icon,
     segment: "file",
     rank,
+    pressed: filed === (id === "later" ? "reply_later" : "set_aside"),
     onPress: () => act(id),
   });
   return [
@@ -87,6 +89,7 @@ function panelVerbs(
       icon: "resurface",
       segment: "file",
       rank: 4,
+      pressed: filed === "bubbled_up",
       onPress: toggle("resurface"),
     },
     ...(tagged

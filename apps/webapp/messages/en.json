@@ -2202,11 +2202,15 @@
     "goneShort": "Moved or deleted elsewhere",
     "hint": "to return",
     "back": "Back",
+    "latest": "Latest message",
     "pane": "Open message",
     "closeColumn": "Close",
     "hintReturn": "to return",
     "blank": {
       "none": "Nothing open"
+    },
+    "key": {
+      "reply": "Reply inside the message"
     },
     "verb": {
       "reply": "Reply",
@@ -2259,7 +2263,9 @@
     "panel": "Actions",
     "head": {
       "to": "to",
+      "cc": "cc",
       "you": "you",
+      "youSender": "You",
       "yesterday": "yesterday {time}",
       "menu": "Message"
     }

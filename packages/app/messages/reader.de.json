@@ -5,11 +5,15 @@
     "goneShort": "Anderswo verschoben oder gelöscht",
     "hint": "zum Zurückgehen",
     "back": "Zurück",
+    "latest": "Neueste Nachricht",
     "pane": "Geöffnete Nachricht",
     "closeColumn": "Schließen",
     "hintReturn": "zum Zurückgehen",
     "blank": {
       "none": "Nichts geöffnet"
+    },
+    "key": {
+      "reply": "In der Nachricht antworten"
     },
     "verb": {
       "reply": "Antworten",
@@ -62,7 +66,9 @@
     "panel": "Aktionen",
     "head": {
       "to": "an",
+      "cc": "cc",
       "you": "dich",
+      "youSender": "Du",
       "yesterday": "gestern {time}",
       "menu": "Nachricht"
     }

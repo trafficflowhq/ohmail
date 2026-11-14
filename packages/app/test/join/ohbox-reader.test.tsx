@@ -99,6 +99,7 @@ function join(o: Joined) {
       files: "none",
       pictures: "none",
       look: "none",
+      sentCopy: "none",
       reply: "none",
     }),
     window: fakeWindow("desktop"),

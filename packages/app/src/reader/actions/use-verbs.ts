@@ -57,6 +57,11 @@ export interface Verbs {
   readonly moves: readonly MoveTarget[];
   /** More than one person besides the sender has the letter: Reply all is a verb of its own. */
   readonly replyAll: boolean;
+  /**
+   * The pile the letter is filed in, of the three the panel's Later, Park and Resurface put it in and take it out of;
+   * null in none (a letter brought back to the top is in none of them).
+   */
+  readonly filed: "reply_later" | "set_aside" | "bubbled_up" | null;
 }
 
 export function useVerbs(
@@ -141,6 +146,8 @@ export function useVerbs(
     message !== null &&
     new Set([...message.to, ...message.cc].map((p) => p.address.toLowerCase()).filter((a) => a !== sender))
       .size > 1;
+  const pile = message?.triage?.state;
+  const filed = pile === "reply_later" || pile === "set_aside" || pile === "bubbled_up" ? pile : null;
   return {
     act,
     readSlot,
@@ -149,5 +156,6 @@ export function useVerbs(
     tagged: message?.labels ?? [],
     moves,
     replyAll,
+    filed,
   };
 }

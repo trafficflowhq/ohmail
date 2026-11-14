@@ -17,6 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { EngineContext } from "@ohmail/app-logic/engine";
+import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useShellDispatch, type ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import {
   mailboxLabelKey,
@@ -84,15 +85,6 @@ interface Room {
 }
 
 const RoomContext = createContext<Room | null>(null);
-
-const editable = (t: EventTarget | null): boolean =>
-  t instanceof HTMLElement &&
-  (t.isContentEditable ||
-    t.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]') !==
-      null ||
-    t.tagName === "INPUT" ||
-    t.tagName === "TEXTAREA" ||
-    t.tagName === "SELECT");
 
 /** The seam itself: mounted only while the room is on, so `useShellDispatch` runs once per frame or not at all. */
 type Facts = Parameters<typeof rosterStateOf>[1];
@@ -198,20 +190,14 @@ function Seam({
   const places = seam.routing.places;
   useEffect(() => holds.set({ held, places }), [holds, held, places]);
   useEffect(() => () => holds.set(NO_HOLDS), [holds]);
-  /* `z` takes back the armed Undo, wherever the person is in the room but a field: the room's own window. */
-  const [mark, setMark] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    const win = mark?.ownerDocument.defaultView;
-    if (!win) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== "z" || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || editable(e.target))
-        return;
-      if (into.current?.runArmedUndo()) e.preventDefault();
-    };
-    win.addEventListener("keydown", onKey);
-    return () => win.removeEventListener("keydown", onKey);
-  }, [mark, into]);
-  return <span hidden ref={setMark} />;
+  /* `z` takes back the armed Undo, wherever the person is in the room but a field: a binding of the key map's
+     registry for as long as this seam stands, named in the frame's own word. */
+  const tf = useText("frame");
+  useOptionalKeyBindings(
+    [{ chord: "z", group: "app", label: tf("report.undo"), run: () => void into.current?.runArmedUndo() }],
+    "view",
+  );
+  return null;
 }
 
 export function RoomGate({ on, children }: { on: boolean; children: ReactNode }): ReactNode {

@@ -23,15 +23,19 @@ export interface ThreadWalkInput {
   readonly onEnter: () => void;
   readonly names?: ThreadDomNames;
   /**
-   * Open the conversation AT the opened letter: its top on the reading line, kept there while bodies land above it,
-   * without entering the visit. Let go for good at the person's first gesture, a hand scroll, a square's press, or
-   * after {@link ANCHOR_CEILING_MS}.
+   * Open the conversation AT the opened letter, as today's reader opens it: its top {@link OPEN_GAP_PX} under what
+   * stays over the column's top, kept there while bodies land above it, without entering the visit. Let go for good
+   * at the person's first gesture, a hand scroll, a square's press, or after {@link ANCHOR_CEILING_MS}.
    */
   readonly anchor?: boolean;
 }
 
 /** A ceiling, not a schedule: a conversation still growing after this has something else wrong with it. */
 export const ANCHOR_CEILING_MS = 6000;
+/** How far under the column's top (under its head, where one stays there) an open puts the opened letter's top. */
+export const OPEN_GAP_PX = 14;
+/** Far from the conversation's last letter: this far above its landing, or half the view where that is more. */
+export const END_FAR_PX = 240;
 /** What may be a person's intent, heard first (capture) on the column's own window. */
 const HANDOVER = ["wheel", "touchmove", "keydown", "pointerdown"] as const;
 
@@ -40,6 +44,8 @@ export interface ThreadWalk {
   readonly here: number;
   /** Put letter `index` on the reading line and hold it: false while the column is not laid out. */
   readonly jump: (index: number) => boolean;
+  /** The column stands far above where a jump to the conversation's last letter would land it. */
+  readonly endFar: boolean;
 }
 
 export function useThreadWalk({
@@ -59,6 +65,7 @@ export function useThreadWalk({
   const view = useRef(0);
   const pin = useRef<string | null>(openedId);
   const [here, setHere] = useState<string | null>(null);
+  const [endFar, setEndFar] = useState(false);
   const latest = useRef({ onEnter, names });
   latest.current = { onEnter, names };
   /* The open's anchor, live from the open until it is let go. */
@@ -75,6 +82,9 @@ export function useThreadWalk({
     const at = pin.current === null ? -1 : list.current.indexOf(pin.current);
     const i = w.current(scroller.scrollTop, at >= 0 ? { index: at } : null);
     if (i >= 0) setHere(list.current[i] ?? null);
+    const last = list.current.length - 1;
+    const far = Math.max(END_FAR_PX, scroller.clientHeight / 2);
+    setEndFar(last > 0 && view.current > 0 && w.scrollFor(last) - scroller.scrollTop > far);
   }, [scroller]);
 
   const measure = useCallback((): void => {
@@ -85,15 +95,20 @@ export function useThreadWalk({
       at.set(p.dataset.convId ?? "", cssRect(p).top - top0 + scroller.scrollTop);
     const v = viewOf(scroller, latest.current.names);
     view.current = Math.max(0, v.bottom - v.top);
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     walk.current = threadWalk({
       tops: list.current.map((id) => at.get(id) ?? Number.NaN),
-      max: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+      max,
       view: view.current,
       opened: pin.current === null ? -1 : list.current.indexOf(pin.current),
     });
     const opened = pin.current === null ? -1 : list.current.indexOf(pin.current);
-    if (anchored.current && opened >= 0 && list.current.length > 1 && view.current > 0)
-      scrollProgrammatically(scroller, walk.current.scrollFor(opened));
+    const top = at.get(pin.current ?? "") ?? Number.NaN;
+    const anchoring = anchored.current && opened >= 0 && list.current.length > 1 && view.current > 0;
+    if (anchoring && Number.isFinite(top)) {
+      const under = top - coverOf(scroller, latest.current.names) - OPEN_GAP_PX;
+      scrollProgrammatically(scroller, Math.min(max, Math.max(0, under)));
+    }
     look();
   }, [scroller, look]);
 
@@ -134,7 +149,7 @@ export function useThreadWalk({
   const shown = here !== null && ids.includes(here) ? here : null;
   useWalkChannel(channel, messages, shown, openedId, land);
 
-  return { here: shown === null ? -1 : ids.indexOf(shown), jump: land };
+  return { here: shown === null ? -1 : ids.indexOf(shown), jump: land, endFar };
 }
 
 /** Measured on every layout change, a frame after it; a scroll reads only the offset. */
@@ -183,6 +198,14 @@ function useLayoutWatch(
       win.removeEventListener("resize", soon);
     };
   }, [scroller, key, measure, look, landOwed, onHand]);
+}
+
+/** How much of the scroller's top its head covers while it stays there; nothing where it scrolls away with the rest. */
+function coverOf(scroller: HTMLElement, names: ThreadDomNames): number {
+  const head = names.head === undefined ? null : scroller.querySelector<HTMLElement>(names.head);
+  const win = scroller.ownerDocument.defaultView;
+  if (head === null || win === null) return 0;
+  return win.getComputedStyle(head).position === "sticky" ? cssRect(head).height : 0;
 }
 
 /** The open's anchor is let go at the person's first gesture, wherever it lands, or at the ceiling. */

@@ -78,6 +78,7 @@ describe("the body's words", () => {
     try {
       await act(async () => {
         root.render(React.createElement(MessageBody, {
+          owner: null,
           text: "fallback",
           html: `<p>Sign in again at <a href="https://example.net/r/a1">https://example.com/login</a>.</p>`,
         }));

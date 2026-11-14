@@ -100,6 +100,12 @@ export interface ReaderParts {
   readonly pictures: PictureSeam | "none";
   /** The shell's one look at a file's bytes; `none`: a press saves. */
   readonly look: ((messageId: string, attachmentId: string) => void) | "none";
+  /**
+   * What the shell says of the copy in Sent of a letter the account sent, where that copy is missing or still owed:
+   * its sentence in `write`'s words, drawn as a note under the letter's recipients; null where there is nothing to
+   * say. Read while the letter is drawn: a shell whose notes change hands a new one. `none`: nothing is said.
+   */
+  readonly sentCopy: ((messageId: string) => string | null) | "none";
   /** The reply's sheet and open (`write`'s); `none`: the reader hands a linked draft to the place `write`. */
   readonly reply: ReaderReply | "none";
 }

@@ -215,6 +215,7 @@ describe("the reader in the frame", () => {
       files: "none",
       pictures: "none",
       look: "none",
+      sentCopy: "none",
       reply: "none",
     });
     const acted: string[] = [];
