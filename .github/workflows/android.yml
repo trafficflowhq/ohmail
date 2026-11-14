@@ -214,6 +214,10 @@ jobs:
           # artifact nobody measured.
           node apps/mobile/scripts/verify-phone-engine-repro.mjs
 
+      # The shell's page, which plugins/shell-assets.js copies into the app and refuses to build without.
+      - name: Build the shell's page
+        run: node apps/mobile/scripts/build-shell.mjs
+
       - name: Generate the native Android project
         working-directory: apps/mobile
         env:
@@ -463,6 +467,10 @@ jobs:
           # censuses over the result. The APK this job hands to the sign job carries it, so the
           # check belongs here as much as in the build check above.
           node apps/mobile/scripts/verify-phone-engine-repro.mjs
+
+      # The shell's page, which plugins/shell-assets.js copies into the app and refuses to build without.
+      - name: Build the shell's page
+        run: node apps/mobile/scripts/build-shell.mjs
 
       - name: Generate the native Android project
         working-directory: apps/mobile

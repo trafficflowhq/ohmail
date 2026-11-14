@@ -55,6 +55,10 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       textSize: NONE, fold: NONE, liveTheme: NONE,
       address: frame.address, window: frame.window, appearance: frame.appearance,
     },
-    signals: { hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE },
+    signals: {
+      hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+      // A page in a browser: the browser owns the window's edges, its keyboard and its back.
+      posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
+    },
   };
 }

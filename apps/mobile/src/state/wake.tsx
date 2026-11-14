@@ -2,8 +2,8 @@ import {
   createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode,
 } from "react";
 import { useConnection } from "../net/connection";
-import { dropWakeRowOrOwe, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeState } from "../net/push";
-import type { ConnectedSession } from "../net/pairing";
+import { dropWakeRowOrOwe, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeSession, type WakeState } from "../net/push";
+import { wakeShell } from "../shell/doors";
 import { nativeServerProfiles } from "./servers-native";
 import {
   chooseDistributor, listDistributors, onWake, requestNotificationPermission, savedDistributor,
@@ -51,7 +51,10 @@ export function useWake(): Wake {
 
 export function WakeProvider({ children }: { children: ReactNode }) {
   const conn = useConnection();
-  const session = conn.state.k === "live" ? conn.state.session : null;
+  /* THE SHELL'S SESSION REGISTERS TOO: the registration rides the session's own transport, and its wake reaches the
+     shell's page rather than a drain on this side, where no engine runs. */
+  const session = conn.state.k === "live" || conn.state.k === "shell" ? conn.state.session : null;
+  const shell = conn.state.k === "shell";
 
   const [state, setState] = useState<WakeState>({ k: "no_distributor" });
   const [choices, setChoices] = useState<DistributorChoice[]>([]);
@@ -85,7 +88,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    * land somewhere durable rather than in a discarded promise.
    */
   const owedDrop = useCallback(
-    (on: ConnectedSession, id: string): Promise<void> =>
+    (on: WakeSession, id: string): Promise<void> =>
       dropWakeRowOrOwe(on, id, nativeServerProfiles()).then(() => undefined),
     [],
   );
@@ -271,9 +274,10 @@ export function WakeProvider({ children }: { children: ReactNode }) {
        * the connection layer, whose own guard is the other half.
        */
       if (liveSession.current !== subscribedFor) return;
-      void conn.syncNow();
+      if (shell) wakeShell("push");
+      else void conn.syncNow();
     });
-  }, [session, conn]);
+  }, [session, conn, shell]);
 
   /**
    * A stable handle on the newest `attempt`, so the superseded arm above can re-run it without

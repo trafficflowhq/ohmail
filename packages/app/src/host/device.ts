@@ -7,7 +7,7 @@ import type { Signal } from "./signals.js";
  * pane exists"; whether the pane exists is the feature `help`. Every shell knows its build.
  */
 export interface DeviceBuild {
-  readonly surface: "web" | "desktop" | "pairedPage";
+  readonly surface: "web" | "desktop" | "pairedPage" | "phone";
   readonly version: string | null;
   readonly commit: string | null;
   /** Whether a `mailto:` link leaves the app. */

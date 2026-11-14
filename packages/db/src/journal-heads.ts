@@ -48,6 +48,25 @@ export function inTransitionWindow(journal: ServerJournal, tag: string): boolean
   return n !== null && n >= LINE_2_0_START[journal] && n <= last;
 }
 
+/**
+ * Does this open owe the device journal's first entry of the 2.0 line? True when the journal's lowest
+ * entry numbered at or above `start` is among `owed`: the first migration that crosses into 2.0 is
+ * about to run, and a phone takes a copy of its store before it. A store that has crossed already, or
+ * a journal with no 2.0 entry yet, owes no copy.
+ */
+export function owesFirstOfLine(
+  owed: readonly string[],
+  journalNames: readonly string[],
+  start: number = LINE_2_0_START.device,
+): boolean {
+  let first: { name: string; n: number } | null = null;
+  for (const name of journalNames) {
+    const n = entryNumber(name);
+    if (n !== null && n >= start && (first === null || n < first.n)) first = { name, n };
+  }
+  return first !== null && owed.includes(first.name);
+}
+
 /** The window's entries of one journal, in journal order. */
 export function windowEntries<T extends { tag: string }>(journal: ServerJournal, entries: readonly T[]): T[] {
   return entries.filter((e) => inTransitionWindow(journal, e.tag));

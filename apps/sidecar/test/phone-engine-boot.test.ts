@@ -1318,6 +1318,58 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       expect(SQLITE_JOURNAL.slice(-2).map((e) => e.name)).toContain(boot!.slowestMigration);
     }, 120_000);
 
+    describe("the copy before the store crosses into 2.0", () => {
+      const ONE_LINE = SQLITE_JOURNAL.filter((e) => Number(e.name.slice(0, 4)) < 200);
+      const FIRST_OF_TWO = SQLITE_JOURNAL.find((e) => Number(e.name.slice(0, 4)) >= 200)!;
+      const later = { ...SQLITE_JOURNAL[0]!, name: "0299_planted_later.sql", statements: ["CREATE TABLE planted_later (id INTEGER)"] };
+      const ledgerOf = async (path: string): Promise<string[]> => {
+        const exec = nodeExecutor(recorder(), path);
+        const names = (await exec.all("SELECT name FROM ohmail_sqlite_migrations ORDER BY name", [])).rows.map((r) => String(r[0]));
+        await exec.close();
+        return names;
+      };
+      /** A store a 1.0 release left: brought up to the 1.0 line's head and no further. */
+      async function storeAtOneHead(): Promise<string> {
+        const path = join(mkdtempSync(join(tmpdir(), "ohmail-phone-one-")), "engine.db");
+        await (await openPhoneStore(nodeExecutor(recorder(), path), 1_000, undefined, ONE_LINE)).close();
+        return path;
+      }
+
+      it("is asked for once, before anything is written, by a store at a 1.0 head", async () => {
+        const path = await storeAtOneHead();
+        const asked: string[][] = [];
+        const opened = await openPhoneStore(nodeExecutor(recorder(), path), 1_000, undefined, undefined,
+          undefined, async () => { asked.push(await ledgerOf(path)); });
+        await opened.close();
+        expect(asked).toHaveLength(1);
+        expect(asked[0]).not.toContain(FIRST_OF_TWO.name);
+        expect(await ledgerOf(path)).toContain(FIRST_OF_TWO.name);
+      }, 120_000);
+
+      it("is not asked for by a fresh store, nor by one past the line's first entry", async () => {
+        let asked = 0;
+        const fresh = join(mkdtempSync(join(tmpdir(), "ohmail-phone-fresh-copy-")), "engine.db");
+        await (await openPhoneStore(nodeExecutor(recorder(), fresh), 1_000, undefined, undefined, undefined,
+          async () => { asked += 1; })).close();
+        // Owes only a later 2.0 entry: its copy was taken when it crossed.
+        await (await openPhoneStore(nodeExecutor(recorder(), fresh), 1_000, undefined, [...SQLITE_JOURNAL, later], undefined,
+          async () => { asked += 1; })).close();
+        expect(asked).toBe(0);
+        expect(await ledgerOf(fresh)).toContain(later.name);
+      }, 120_000);
+
+      it("refuses the open with the store untouched when the copy could not be taken", async () => {
+        const path = await storeAtOneHead();
+        const exec = nodeExecutor(recorder(), path);
+        const verdict = await openPhoneStore(exec, 1_000, undefined, undefined, undefined,
+          async () => { throw new Error("no room for the copy"); })
+          .then(() => "opened", (e: unknown) => (e as Error).message);
+        await exec.close();
+        expect(verdict).toContain("no room for the copy");
+        expect(await ledgerOf(path)).not.toContain(FIRST_OF_TWO.name);
+      }, 120_000);
+    });
+
     it("a failing entry refuses the open BY NAME", async () => {
       const path = await storeOwing(0);
       const bad = { ...SQLITE_JOURNAL[0]!, name: "9999_fix026_planted", statements: ["SELECT nope FROM nowhere"] };

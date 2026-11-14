@@ -78,6 +78,7 @@ const UNWIRED_VERBS = {
 };
 const NO_SIGNAL = {
   hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+  posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
 };
 const DESKTOP_DEVICE = {
   ...UNWIRED_VERBS,

@@ -27,7 +27,7 @@ import {
   INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
   dialect, type LogMark,
 } from "@trafficflow/db/dialect";
-import { migrateSqlite, SQLITE_MIGRATIONS_TABLE } from "@trafficflow/db/sqlite-migrate";
+import { migrateSqlite, owesFirstOfLine, SQLITE_JOURNAL, SQLITE_MIGRATIONS_TABLE } from "@trafficflow/db/sqlite-migrate";
 import { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
 import { statementKind, storeWriteGauge } from "./store-writes.js";
 import type { LeasePeek, LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
@@ -194,6 +194,12 @@ export interface PhoneEngineDeps {
    * shipped one; a guard plants a failing entry here to watch the refusal name it.
    */
   journal?: Parameters<typeof migrateSqlite>[1];
+  /**
+   * THE COPY BEFORE A STORE CROSSES INTO 2.0: called once, before anything is written, when this
+   * open owes the device journal's first entry of the 2.0 line on a store that is not fresh. A throw
+   * refuses the open with the store untouched. Absent, nothing is copied.
+   */
+  beforeMajorUpgrade?: () => Promise<void>;
 }
 
 /**
@@ -880,6 +886,8 @@ export async function openPhoneStore(
   journal?: PhoneEngineDeps["journal"],
   /** Hears a transaction that held the store past a waiter's wait. */
   log?: Diagnostic,
+  /** See {@link PhoneEngineDeps.beforeMajorUpgrade}. */
+  beforeMajorUpgrade?: PhoneEngineDeps["beforeMajorUpgrade"],
 ): Promise<OpenLocalDb> {
   /* THE UPGRADE COUNTS ITSELF: how many this open owed, how many ran and which one paid, the
      desktop's `MigrationCensus` read off the migrator's own hooks, never off the journal's length. */
@@ -898,6 +906,11 @@ export async function openPhoneStore(
       return rows.map((row) => Object.fromEntries(columns.map((c, i) => [c, row[i]])) as T);
     },
   }, journal, {
+    beforeApply: async ({ owed, fresh }) => {
+      if (!fresh && beforeMajorUpgrade && owesFirstOfLine(owed, (journal ?? SQLITE_JOURNAL).map((e) => e.name))) {
+        await beforeMajorUpgrade();
+      }
+    },
     onEntry: (done, owed, _name, fresh) => {
       pending = owed;
       onMigrating?.({ applied: done, pending: owed, fresh });
@@ -1262,7 +1275,7 @@ async function composePhoneEngine(
      specifier is the shim the mail client's socket is built by. */
   (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
-  const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal, log);
+  const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal, log, deps.beforeMajorUpgrade);
   /**
    * ══ ONE MAILBOX PER PHONE STORE, AND THE STORE'S ROWS DECIDE ════════════════════════════════
    *
