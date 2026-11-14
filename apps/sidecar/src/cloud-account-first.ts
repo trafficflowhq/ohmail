@@ -1,4 +1,5 @@
 import { ServiceError, type ServiceContext } from "@trafficflow/services/mail";
+import type { AnswerOf } from "@ohmail/wire";
 import { offlineResponse } from "./cloud-auth.js";
 import { runsStorePass } from "./composition-passes.js";
 import type { ReadRoute } from "./cloud-read.js";
@@ -65,7 +66,8 @@ async function fromMirror(req: Request, hit: Hit, ctx: ServiceContext): Promise<
   const { indexed, ...rest } = (await res.json()) as Record<string, unknown>;
   const body = MIRROR_INDEX_FILLS && indexed !== undefined ? { ...rest, indexed } : rest;
   const next = typeof body.nextCursor === "string" ? { nextCursor: `${MIRROR_CURSOR_TAG}${body.nextCursor}` } : {};
-  return json({ ...body, ...next, answeredFrom: "mirror" });
+  // The stamp is the wire's own name for it: renamed there alone, or here alone, this line does not compile.
+  return json({ ...body, ...next, answeredFrom: "mirror" } satisfies Pick<AnswerOf<"GET /search">, "answeredFrom">);
 }
 
 /** Which part of a search this request asks for: the timed line's `kind`, never the query. */

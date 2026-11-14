@@ -78,7 +78,7 @@ const leaseUnreadable = (): ServiceError => new ServiceError(
  * it", but under its own code: `meta_folder_full` (too full to read) and `meta_undeletable` (the
  * server keeps refusing our deletes). Every other lease fault stays `organizer_unreadable`.
  */
-const NAMED_LEASE_REFUSALS: Readonly<Record<string, string>> = {
+const NAMED_LEASE_REFUSALS: Readonly<Record<string, string>> & Readonly<Record<NamedLeaseRefusal, string>> = {
   meta_folder_full: "The mailbox could not be checked for other ohmail installs: the ohmail/_meta folder on that "
     + "server holds more messages than ohmail can read. Move mail that was filed into it to another folder and "
     + "leave the messages ohmail wrote.",
@@ -86,11 +86,15 @@ const NAMED_LEASE_REFUSALS: Readonly<Record<string, string>> = {
     + "remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider.",
 };
 
+/** The two lease operations whose refusal has a sentence of its own, and is answered under its own word. */
+type NamedLeaseRefusal = "meta_folder_full" | "meta_undeletable";
+
 /** What a failed look answers: a named lease refusal, `organizer_unreadable`, or `null` (rethrow). */
 export function organizerPeekRefusal(err: unknown): ServiceError | null {
   if (err instanceof LeaseUnavailableError) {
     const said = NAMED_LEASE_REFUSALS[err.op];
-    return said === undefined ? leaseUnreadable() : new ServiceError(err.op, 502, said);
+    // Found in the table above, so the operation is one of its two names.
+    return said === undefined ? leaseUnreadable() : new ServiceError(err.op as NamedLeaseRefusal, 502, said);
   }
   return isImapDoorTimeout(err) ? leaseUnreadable() : null;
 }

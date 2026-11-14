@@ -45,6 +45,7 @@ import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { dropWakeRow, type UnifiedPushDistributor } from "./push.js";
 import { resolveApiBase } from "./server-base.js";
+import type { HelloAnswer as WireHelloAnswer, Untrusted } from "@ohmail/wire";
 
 import { apiBaseOf } from "./request-base";
 /** The hosted service — the managed picker card negotiates against this and nothing else. */
@@ -138,10 +139,7 @@ export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<N
     return { kind: "unreachable", detail: faultDetail(err) };
   }
   if (!res.ok) return { kind: "unreachable", detail: refuse("helloStatus", res.status) };
-  let body: {
-    product?: unknown; flavor?: unknown; apiVersion?: unknown; needsSetup?: unknown;
-    features?: { pairing?: unknown };
-  };
+  let body: Untrusted<WireHelloAnswer>;
   try {
     body = (await res.json()) as typeof body;
   } catch {

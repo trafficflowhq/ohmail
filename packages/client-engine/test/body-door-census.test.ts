@@ -39,8 +39,11 @@ const ROOTS = [
   ["apps", "mobile", "src"],
 ].map((p) => join(REPO, ...p));
 
-/** A single-body route CONSTRUCTION: an interpolated id between /messages/ and /body. */
-const SINGLE_BODY = /\/messages\/\$\{[^}]+\}\/body/;
+/**
+ * A single-body route CONSTRUCTION: an interpolated id between /messages/ and /body, or the
+ * route's own name as the wire spells it, quoted, which is how a typed call asks for it.
+ */
+const SINGLE_BODY = /\/messages\/\$\{[^}]+\}\/body|"GET \/messages\/:id\/body"/;
 /** The batch route's literal. */
 const BATCH_BODY = "/messages/bodies";
 

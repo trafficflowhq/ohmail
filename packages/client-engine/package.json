@@ -16,6 +16,12 @@
       "node": "./dist/durable.js",
       "default": "./src/durable.ts"
     },
+    "./stored-keys": {
+      "types": "./src/stored-keys.ts",
+      "ohmail-source": "./src/stored-keys.ts",
+      "node": "./dist/stored-keys.js",
+      "default": "./src/stored-keys.ts"
+    },
     "./send-fingerprint": {
       "types": "./src/send-fingerprint.ts",
       "ohmail-source": "./src/send-fingerprint.ts",
@@ -32,6 +38,7 @@
   "dependencies": {
     "parse5": "7.3.0",
     "@ohmail/fixtures": "*",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*"
   }
 }

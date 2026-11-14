@@ -1,19 +1,13 @@
 import type { TriageSetBody, TriageState } from "@trafficflow/services/mail";
+import type { RequestOf } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { triage, readBody } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
 
 /** The wire body for a triage set. The resurface time is accepted under either the
  * contract's `bubbleUpAt` or the plan's `untilTs` alias (bubbled_up requires it). */
-interface TriageWireBody {
-  state: TriageState;
-  bubbleUpAt?: string;
-  untilTs?: string;
-  /** An Undo's press-time open read, with `state: "none"` only. */
-  restoreOpenReadAt?: string | null;
-}
 
 /**
  * §5.5 — triage states & views. `POST /messages/:id/triage` upserts the bottom-pile
@@ -26,11 +20,12 @@ export const triageRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/triage",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<TriageWireBody>(req);
+      const body = await readBody<RequestOf<"POST /messages/:id/triage">>(req);
       const setBody: TriageSetBody = {
         state: body.state, bubbleUpAt: body.bubbleUpAt ?? body.untilTs,
         ...(body.restoreOpenReadAt != null ? { restoreOpenReadAt: body.restoreOpenReadAt } : {}),
@@ -38,7 +33,7 @@ export const triageRoutes: Route[] = [
       const dto = await triage(deps).setState(serviceContext(deps, req), params.id!, setBody, {
         idempotency: deps.idempotency ?? null,
       });
-      return jsonResponse(dto);
+      return answer<"POST /messages/:id/triage">()(dto);
     },
   },
   {

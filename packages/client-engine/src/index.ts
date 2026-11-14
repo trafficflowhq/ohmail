@@ -674,6 +674,7 @@ export {
   type HttpAdapterOptions,
   type ServerMessageView,
 } from "./adapters/http-adapter.js";
+export type { WireCall } from "./adapters/route-path.js";
 
 // The retrying read transport: one wrapper over the client's idempotent GETs, shared by the
 // adapter and by the desktop window's roster polls. Exported so a caller wraps the shipped rule

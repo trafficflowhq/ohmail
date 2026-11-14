@@ -319,8 +319,9 @@ describe("the engagement census: an auto-reply is not the person's engagement", 
   });
 
   it("the wire and the mirror both declare the field, and both as OPTIONAL", () => {
-    const dto = FILES.find((f) => f.path === "packages/services/src/dto/types.ts")!;
-    const engine = FILES.find((f) => f.path === "packages/client-engine/src/types.ts")!;
+    // Both are declared in the wire package: the server's record and the device copy's reading of it.
+    const dto = FILES.find((f) => f.path === "packages/wire/src/mail.ts")!;
+    const engine = FILES.find((f) => f.path === "packages/wire/src/mirror.ts")!;
     // Optional on both sides: a required field would be a claim about stored mirror rows and about
     // older servers that neither type can make.
     expect(dto.text).toMatch(/^ {2}autoReplyByUs\?: boolean;$/m);

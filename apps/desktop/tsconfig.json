@@ -73,6 +73,9 @@
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
+      /* The wire's vocabulary: types only, imported by the client engine and erased at build. This
+         install links no workspace package, so this line is what resolves it for `tsc --noEmit`. */
+      "@ohmail/wire": ["../../packages/wire/src/index.ts"],
       /* The calendar reader — one of the two `@trafficflow/*` specifiers the desktop program
          compiles, read by the client engine and by the attachment strip and event card. Same
          fallback argument as the dompurify/tiptap block above: in this tree the workspace

@@ -73,7 +73,7 @@ describe("mailServerUnreachable — which dial failures mean the server could no
     expect(mailServerUnreachable(new TypeError("x is undefined"))).toBe(false);
     expect(mailServerUnreachable("ECONNREFUSED")).toBe(false);
     expect(mailServerUnreachable(null)).toBe(false);
-    expect(mailServerUnreachable(Object.assign(new ServiceError("x", 502, "y"), { code: "ECONNREFUSED" }))).toBe(false);
+    expect(mailServerUnreachable(Object.assign(new ServiceError("upstream_unavailable", 502, "y"), { code: "ECONNREFUSED" }))).toBe(false);
   });
 });
 

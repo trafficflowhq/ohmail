@@ -17,6 +17,7 @@ import {
   encodeReturnKeysetCursor,
 } from "./pagination.js";
 import type { MessageDTO, MessageStateDTO, Page, TriageState } from "./dto/types.js";
+import type { TriageSetBody } from "@ohmail/wire";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -26,25 +27,8 @@ export const POWER_THROUGH_FOLD_HOPS = 20;
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
 
-export interface TriageSetBody {
-  state: TriageState;
-  /**
-   * REQUIRED for `bubbled_up`, and FORCED NULL for every other state — including `resurfaced`,
-   * which is the one where a client might plausibly send one.
-   *
-   * Dropped rather than refused: a client that sends a timestamp with `resurfaced` is not making
-   * a different request, it is over-specifying this one. Storing it would be the harm — the
-   * worker's due-scan selects on `bubble_up_at`, so a resurfaced row carrying a future date is a
-   * second flip waiting to happen, and every surface that renders the column (`triagePiles`'
-   * `resurfaceAt`) would read it as "still scheduled".
-   */
-  bubbleUpAt?: string;
-  /**
-   * An Undo's press-time open read, with `state: "none"` only: restored on a read row with none,
-   * never later than now, and the un-park reset is skipped. Absent or null is an ordinary `none`.
-   */
-  restoreOpenReadAt?: string | null;
-}
+/** A triage press's body: declared with the wire's vocabulary. */
+export type { TriageSetBody };
 
 /** Idempotency handle threaded in by the route; the row is written IN the setState tx. */
 export interface TriageIdempotency {

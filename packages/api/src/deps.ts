@@ -22,6 +22,7 @@ import type {
  * every host may compile: no ceremony, no Cloud schema, no barrel side effects. The hosted
  * `AuthService` extends this class, so a hosted bag's member IS one. */
 import type { SessionLifecycle } from "@trafficflow/services/auth";
+import type { StagedUploadGrantWire } from "@ohmail/wire";
 import type {
   DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider, StorageCap,
 } from "@trafficflow/core/mail";
@@ -70,17 +71,8 @@ export interface ConnectAttemptFacts {
   smtpRefused?: string;
 }
 
-/** What a mint hands the browser: a ticket id and the exact way to put bytes at it. */
-export interface StagedUploadGrantWire {
-  /** The ticket id — what a later send references in place of the bytes. */
-  id: string;
-  uploadUrl: string;
-  uploadMethod: string;
-  /** Sent verbatim on the upload. Opaque: the storage wire is the server's business. */
-  uploadHeaders: Record<string, string>;
-  /** ISO-8601. When the staged bytes stop existing. */
-  expiresAt: string;
-}
+/** What a mint hands the browser, declared with the wire's vocabulary. */
+export type { StagedUploadGrantWire };
 
 /**
  * How a host stages attachment bytes out of the request body — a port, optional, and the

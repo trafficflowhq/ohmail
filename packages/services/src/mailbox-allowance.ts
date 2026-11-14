@@ -4,6 +4,7 @@ import {
   type AccessRefusal, type AccessVerdict, type LedgerTx,
 } from "@trafficflow/db";
 import { ServiceError } from "./errors.js";
+import type { ServiceErrorCode } from "@ohmail/wire";
 
 /**
  * Plan-limit enforcement. "Read the count, refuse at limit" is wrong in production: two `POST
@@ -60,7 +61,7 @@ export interface MailboxAllowance {
 }
 
 /** Refusal → the wire code and status. 402 where the remedy is elsewhere, 409 where it is here. */
-const HTTP: Record<MailboxRefusal, { code: string; status: number }> = {
+const HTTP: Record<MailboxRefusal, { code: ServiceErrorCode; status: number }> = {
   // 402: the remedy is not on this server — it is with whoever operates the service.
   payment_required: { code: "payment_required", status: 402 },
   suspended: { code: "account_suspended", status: 402 },

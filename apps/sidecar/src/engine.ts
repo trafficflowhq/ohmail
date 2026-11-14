@@ -2117,7 +2117,7 @@ export function withPullKick(
         const res = await r.handler(req, deps, params);
         if (res.status === 202) runtimeFor(params.id ?? "")?.ring();
         return res;
-      } };
+      } } as Route;
     }
     /* A RULE WRITTEN HERE RINGS EVERY RUNTIME: the retro walk runs at the start of each drain, so
        the mail a sheet press asked to file is not left to the idle poll. A 202 (another install
@@ -2127,7 +2127,7 @@ export function withPullKick(
         const res = await r.handler(req, deps, params);
         if (res.status === 200 || res.status === 201) for (const rt of runtimesFor()) rt.ring();
         return res;
-      } };
+      } } as Route;
     }
     /* THE GAP PRESS (mail 0151) RINGS ITS OWN MAILBOX: the organizer's next drain files the set. */
     if (r.method === "POST" && r.pattern === "/mailboxes/:id/gap-letters") {
@@ -2135,7 +2135,7 @@ export function withPullKick(
         const res = await r.handler(req, deps, params);
         if (res.status === 202) { onGapPress(params.id ?? ""); runtimeFor(params.id ?? "")?.ring(); }
         return res;
-      } };
+      } } as Route;
     }
     if (r.method !== "POST" || r.pattern !== "/sync/pull") return r;
     return {
@@ -2150,7 +2150,7 @@ export function withPullKick(
         else for (const id of named) runtimeFor(id)?.ring();
         return res;
       },
-    };
+    } as Route;
   });
 }
 
@@ -2171,7 +2171,7 @@ export function withSeenPush(
       const res = await r.handler(req, deps, params);
       if (res.status === 200 || (!batch && res.status === 202)) for (const rt of runtimesFor()) rt.pushSeen();
       return res;
-    } };
+    } } as Route;
   });
 }
 

@@ -6,6 +6,7 @@ import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
+import type { AddressSearchResult, Assert, Complete, Facets, SearchResult, AddressSearchDirection as WireAddressSearchDirection } from "@ohmail/wire";
 import { ServiceError } from "./errors.js";
 import { storeProbe } from "./store-probe.js";
 import { afterSettings, afterSettingsRead } from "./settings-first.js";
@@ -251,37 +252,8 @@ export interface SearchOptions {
   cursor?: string;
 }
 
-export interface SearchResult {
-  items: MessageDTO[];
-  /**
-   * `null` when only the page was asked for (`parts: "page"`), and on a summary past its cap: the
-   * estimate's, over the page's candidates, stand. Over the candidates for `estimate`.
-   */
-  facets: Facets | null;
-  /** How many messages match, over the tier being returned — never over both tiers. */
-  total: number;
-  /** WHICH TIER THIS ANSWER IS: `exact` literal matches, or `similar` typo guesses. Never mixed. */
-  tier: SearchTier;
-  /**
-   * `false` when `total` is a lower bound: an arm was cut, or the summary passed its cap. Then the
-   * facets, when present, count only the page's candidates. No count is ever read from planner
-   * statistics: they cover every account's mail.
-   */
-  totalExact: boolean;
-  /** This answer's server time in milliseconds. */
-  ms: number;
-  /** The next page's cursor, or `null` on the last page (always `null` for `summary`). */
-  nextCursor: string | null;
-  /**
-   * On the last RELEVANCE page: an arm was cut at its top-K, so matches exist past the fused set
-   * and the date orders walk them all.
-   */
-  bounded: boolean;
-  /** Present on a summary while this account's search documents are still being built. */
-  indexed?: { done: number; total: number };
-  /** Present on every part while the store has not taken in the whole mailbox ({@link importOpen}). */
-  importing?: true;
-}
+/** The text search's answer, its facets, and the address arm's answer: declared with the wire's vocabulary. */
+export type { SearchResult, Facets, AddressSearchResult };
 
 /** A part's reading of {@link SearchResult.importing}, taken in the part's own session. */
 interface Coverage { importing?: true }
@@ -318,17 +290,6 @@ interface SearchSummary {
 /** The counts over the fused candidates: the whole match set exactly when no arm was cut. */
 type SearchEstimate = SearchSummary & { facets: Facets };
 
-export interface Facets {
-  /** desiredFolder (else native locator, else INBOX) → count. */
-  folder: Record<string, number>;
-  /** top-N senders by count within the match set. */
-  sender: Array<{ address: string; count: number }>;
-  unread: { true: number; false: number };
-  hasAttachments: { true: number; false: number };
-  /** coarse recency buckets. */
-  date: { today: number; last7: number; last30: number; older: number };
-}
-
 /**
  * THE ADDRESS ARM — one address, an EQUALITY, in a direction. Not a filter on `search`, which
  * requires a `q` — an address query has no words. `from` is `lower(from_address) = $1`, an INDEX
@@ -336,7 +297,8 @@ export interface Facets {
  * expression index (the device store: its trigger-kept side table); `any` is the two as a UNION
  * of index-served branches, never an OR in one predicate (an OR loses both indexes).
  */
-export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
+export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const satisfies readonly WireAddressSearchDirection[];
+type _AddressDirectionsComplete = Assert<Complete<WireAddressSearchDirection, typeof ADDRESS_DIRECTIONS>>;
 export type AddressSearchDirection = (typeof ADDRESS_DIRECTIONS)[number];
 
 /**
@@ -357,22 +319,6 @@ export interface AddressSearchOptions {
   /** Which side of the message. Only the members of {@link ADDRESS_DIRECTIONS_SERVED} are answered. */
   direction: AddressSearchDirection;
   limit?: number;
-}
-
-export interface AddressSearchResult {
-  /** Newest first — `SQL_RANK_ORDER`'s key sequence with the relevance term removed. */
-  items: MessageDTO[];
-  /** How many messages match, over the whole archive rather than over this page. */
-  total: number;
-  /** `false` past {@link ADDRESS_EXACT_CAP}: `total` is then a lower bound. Absent: exact. */
-  totalExact?: false;
-  /**
-   * WHICH DIRECTION THIS ANSWER IS ABOUT — on the wire rather than inferred: a client that fell
-   * back to `from` against an older server labels its rows by this field, not by what it asked.
-   */
-  direction: AddressSearchDirection;
-  /** Present while the store has not taken in the whole mailbox ({@link importOpen}): `total` is of the mail synced so far. */
-  importing?: true;
 }
 
 /** The empty facets — a blank query, or a query nothing matches. */

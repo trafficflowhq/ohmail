@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { StaticKeyProvider, type KeyProvider } from "@trafficflow/core/mail";
 import { eq } from "drizzle-orm";
+import type { AnswerOf } from "@ohmail/wire";
 import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
 import { deleteMailboxRows } from "./local-mirror.js";
 import {
@@ -258,7 +259,8 @@ export async function queueAheadOfTheCopy(
   }
   if (body === null || typeof body !== "object" || !Array.isArray((body as { items?: unknown }).items)) return res;
   mirror.askRulesRefresh();
-  return json({ ...(body as object), copyBehind: true }, res.status);
+  // The mark is the wire's own name for it: renamed there alone, or here alone, this line does not compile.
+  return json({ ...(body as object), copyBehind: true } satisfies Pick<AnswerOf<"GET /screener">, "copyBehind">, res.status);
 }
 
 /**

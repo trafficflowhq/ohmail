@@ -5,6 +5,7 @@ import { invites, waitlist } from "@trafficflow/db/cloud";
 import { hashToken } from "./auth/crypto.js";
 import { normalizeRecipient } from "./mail/port.js";
 import { ServiceError } from "./errors.js";
+import type { ServiceErrorCode } from "@ohmail/wire";
 
 /**
  * The consumable, email-bound, expiring invite. Two functions and a refusal taxonomy, here
@@ -52,7 +53,7 @@ export interface InviteRefused {
 export type InviteOutcome = InviteConsumed | InviteRefused;
 
 /** The wire mapping. Distinct codes, because the UI has to say three different things. */
-const REFUSAL_HTTP: Record<InviteRefusal, { code: string; status: number; message: string }> = {
+const REFUSAL_HTTP: Record<InviteRefusal, { code: ServiceErrorCode; status: number; message: string }> = {
   unknown: {
     code: "invite_invalid", status: 403,
     message:

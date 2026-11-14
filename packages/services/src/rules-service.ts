@@ -19,6 +19,7 @@ import {
   lockFanOutTargets, planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
 } from "./reader-request.js";
 import type { Folder, RuleDTO } from "./dto/types.js";
+import type { CreateRuleBody, PatchRuleBody } from "@ohmail/wire";
 
 /** Materialize inside the ambient tx (reads its uncommitted writes) — same query surface as Db. */
 const asDb = (tx: Tx): Db => bridgeDb(tx);
@@ -39,64 +40,8 @@ const FOLDER_SET = new Set<string>(FOLDERS);
  */
 export { MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS };
 
-export interface CreateRuleBody {
-  kind: string;
-  match: string;
-  destination: string;
-  priority?: number;
-  enabled?: boolean;
-  /**
-   * THE SECOND TERM — from this address AND with this in the subject. Absent or `null` for a
-   * one-term rule (every rule before mail 0050). `kind: "sender"` ONLY; a term on any other kind
-   * is a 400, never silently dropped. Not squeamishness: a domain rule narrowed by subject is
-   * coherent, but nothing composes one — the subject sheet opens from ONE message and offers its
-   * sender — so accepting it would be an untested wire shape reachable only by hand. `header` is
-   * refused as the engine's `rule_create` refuses it: it names no principal. Stored VERBATIM
-   * after trimming, matched case-folded by `core/src/rules.ts#subjectSatisfies` — the typed case
-   * is preserved because the surfaces quote it back.
-   */
-  subjectContains?: string | null;
-  /**
-   * THE THIRD TERM — *from this address AND with this in the message text* (mail 0052). Absent or
-   * `null` for a rule without one. Everything `subjectContains` documents applies verbatim:
-   * `kind: "sender"` only and a 400 anywhere else, stored VERBATIM after trimming, matched
-   * case-folded by `core/src/rules.ts#bodySatisfies` against the message's canonical plain text.
-   * It composes with the subject term — a rule may carry both, and both must then hold.
-   */
-  bodyContains?: string | null;
-  /**
-   * ALSO APPLY THIS RULE TO MAIL ALREADY FILED — defaults to TRUE. A rule applies to ALL
-   * messages, future and previous, by default; `undefined` means yes and only an explicit `false`
-   * declines. Here it is one column: `retro_requested_at` is stamped inside the create/update
-   * transaction and nothing else happens in this process — the worker's retro-apply pass finds
-   * the owed rule on its next per-account cycle and walks the backlog in bounded pages, writing
-   * `folder_state` desired-state the reconciler turns into IMAP moves. A rule matching four
-   * thousand messages must not run inside a request; this is the seam that keeps it out of one.
-   */
-  applyRetro?: boolean;
-}
-export type PatchRuleBody = Partial<CreateRuleBody> & {
-  /**
-   * An undo, not a press: the PATCH names the rule's old place and the stored provenance is KEPT.
-   * It never sets one. Only the phone's way back from a committed Move sends it.
-   */
-  keepProvenance?: boolean;
-  /**
-   * With `keepProvenance` only: the inferred value the undo read before the Move made the rule the
-   * person's. Written only over a `manual` row (`restoredProvenanceSql`); it never makes a claim.
-   */
-  restoreProvenance?: string;
-  /**
-   * A RULES-PAGE CHANGE: re-file the mail the rule filed in its old place to the new one, and nothing
-   * else (`rule-retro.ts`, the refile walk). Only with `applyRetro: false` and a destination.
-   */
-  refile?: boolean;
-  /**
-   * A PUBLISHED RULE'S KEY, only at {@link PUBLISHED_RULE_ID}: a reader-only install's change of a
-   * rule the organizer's copy lists and this install holds no row for. Relayed, never written here.
-   */
-  key?: unknown;
-};
+/** The bodies of a rule's create and of its patch: declared with the wire's vocabulary. */
+export type { CreateRuleBody, PatchRuleBody };
 
 /**
  * Idempotency handle threaded in by the route; the row is written IN the create tx.

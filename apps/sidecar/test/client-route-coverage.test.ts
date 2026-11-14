@@ -38,42 +38,35 @@ interface Call {
 }
 
 /**
- * Every `this.request(...)` in the wire client, as a method and a route pattern.
+ * Every `this.call(...)` in the wire client, as a method and a route pattern.
  *
- * The path argument comes in three shapes — a plain string, a template, and a ternary between two
- * of those — so the parse takes EVERY path-shaped literal in the argument region rather than
- * assuming the first token is the whole answer. A template's `${…}` spans are exactly the
- * parameters, so replacing each with a placeholder segment turns the call site into the pattern a
- * router would match it against; the query string is cut, because routing does not see one.
+ * A call names its route as the wire does, `"METHOD /pattern"`, in one literal that is the call's
+ * first argument, so the read is that literal. Each `:param` becomes the placeholder segment a
+ * router would match the call against. A ternary between two routes is two calls, each with its
+ * own name.
  *
- * The count is checked against the number of call sites by the caller. A parse that quietly
- * skipped a shape it did not recognise is the failure this whole file would be blind to: the one
- * route this test most needs to see is written as a ternary, and a first version of the regex
- * missed exactly that one and reported full coverage.
+ * `named` is counted beside `sites` and the caller holds the two equal. A parse that quietly
+ * skipped a shape it did not recognise is the failure this whole file would be blind to: an
+ * earlier version of the read missed exactly the one route this test most needs to see and
+ * reported full coverage.
  */
-function clientCalls(): { calls: Call[]; sites: number } {
+function clientCalls(): { calls: Call[]; sites: number; named: number } {
   const src = fs.readFileSync(ADAPTER, "utf8");
-  const marker = "this.request(";
+  const marker = "this.call(";
   const calls: Call[] = [];
   let sites = 0;
   for (let at = src.indexOf(marker); at >= 0; at = src.indexOf(marker, at + 1)) {
     sites++;
-    const rest = src.slice(at + marker.length);
-    /* The argument region ends at the options object or at the call's own close, whichever comes
-       first. No interpolation in this file contains either sequence. */
-    const ends = [rest.indexOf(");"), rest.indexOf(", {")].filter((i) => i >= 0);
-    const region = rest.slice(0, Math.min(...ends));
-    const method = /"(GET|POST|PUT|PATCH|DELETE)"/.exec(region)?.[1];
-    if (!method) continue;
-    for (const m of region.matchAll(/`(\/[^`]*)`|"(\/[^"]*)"/g)) {
-      const raw = m[1] ?? m[2]!;
-      calls.push({ method, pattern: raw.replace(/\$\{[^}]*\}/g, "x").split("?")[0]! });
-    }
+    const name = /^\s*"(GET|POST|PUT|PATCH|DELETE) (\/[^"]*)"/.exec(src.slice(at + marker.length));
+    if (!name) continue;
+    calls.push({ method: name[1]!, pattern: name[2]!.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, "x") });
   }
-  // Dedup: several mutations address the same route, and a ternary names one twice.
+  const named = calls.length;
+  // Dedup: several mutations address the same route.
   const seen = new Set<string>();
   return {
     sites,
+    named,
     calls: calls.filter((c) => {
       const key = `${c.method} ${c.pattern}`;
       if (seen.has(key)) return false;
@@ -223,6 +216,11 @@ const FORWARDED_IN_CLOUD_MODE = [
   /* THE HOSTED DOOR'S UPLOAD TICKET — relayed, and its answer rewritten so the signed grant stays
      in this process (`cloud-staged-upload.ts`); see {@link STAGING_HOSTED_DOOR_ONLY}. */
   "POST /attachments/staging",
+  /* WHAT WAITS ON THE ORGANIZER — a read of the hosted account's own ledger of requests, which
+     the mirror does not hold; the relay's allowlist names it. Nothing new is forwarded: the
+     client spelled this path through a constant until it took the wire's name for it, and the
+     read of this file could not see a constant. */
+  "GET /organizer-requests",
 ];
 
 /**
@@ -414,7 +412,7 @@ function stagingIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boo
 }
 
 describe("the client's route list against the local engine", () => {
-  const { calls: allCalls, sites } = clientCalls();
+  const { calls: allCalls, sites, named: namedSites } = clientCalls();
   const { exempt: stagingOnly } = stagingIsHostedOnly();
   const calls = allCalls;
   const named = allCalls.map((c) => `${c.method} ${c.pattern}`);
@@ -423,6 +421,7 @@ describe("the client's route list against the local engine", () => {
     // The harness bites only if it read something, and only if it read ALL of it. A call site the
     // parse cannot see is a route this file silently stops covering.
     expect(sites).toBeGreaterThanOrEqual(20);
+    expect(namedSites, "a call site whose route this read could not name").toBe(sites);
     const parsed = new Set(calls.map((c) => c.method));
     expect(parsed.size).toBeGreaterThan(1);
     expect(named).toContain("GET /sync");

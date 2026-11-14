@@ -3,10 +3,11 @@
  * client. Only the refresh door's own verdict ends a session: a 401 whose envelope names one of
  * {@link SESSION_REFUSAL_CODES}. Anything else — a 403, an uncoded 401, a sign-in page, a proxy's
  * body, a 200 that is not a token pair — is the network's answer: the session stays and the next
- * attempt repeats the same attempt name. No imports, so a host that links the barrel pays one
- * file. The sidecar may not link this package and keeps a twin (`apps/sidecar/src/cloud-auth.ts`),
- * held equal by `test/refresh-answer-one-classifier.test.ts`.
+ * attempt repeats the same attempt name. No import that runs (the one below is types), so a host
+ * that links the barrel pays one file. The sidecar may not link this package and keeps a twin
+ * (`apps/sidecar/src/cloud-auth.ts`), held equal by `test/refresh-answer-one-classifier.test.ts`.
  */
+import type { Assert, Complete, SessionRefusalCode } from "@ohmail/wire";
 
 /** The door's refusal when the jar presented no token at all: every signed-out visit hears it. */
 export const REFRESH_MISSING = "refresh_missing";
@@ -18,9 +19,11 @@ export const REFRESH_MISSING = "refresh_missing";
 export const REFRESH_REVOKED = "refresh_revoked";
 
 /** The door's codes (`packages/services/src/auth/session-lifecycle.ts`), plus the legacy one. */
-export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set([
+const SESSION_REFUSAL_CODE_LIST = [
   REFRESH_MISSING, "refresh_expired", REFRESH_REVOKED, "unauthorized",
-]);
+] as const satisfies readonly SessionRefusalCode[];
+type _SessionRefusalCodesComplete = Assert<Complete<SessionRefusalCode, typeof SESSION_REFUSAL_CODE_LIST>>;
+export const SESSION_REFUSAL_CODES: ReadonlySet<string> = new Set(SESSION_REFUSAL_CODE_LIST);
 
 /**
  * WHY A `refresh_revoked` WAS A REUSE SWEEP: `details.cause` on the sweep's own 401 only

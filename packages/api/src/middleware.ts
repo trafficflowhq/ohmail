@@ -415,7 +415,8 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
      * asserting these strings are the classes' real names.
      */
     if (isOrganizerRefusal(err)) {
-      const e = err as { code: string; httpStatus: number; message: string; details?: unknown };
+      // The two classes' own codes (`packages/db/src/organizer-role.ts`).
+      const e = err as { code: "organized_elsewhere" | "not_found"; httpStatus: number; message: string; details?: unknown };
       return errorResponse(e.code, e.httpStatus, e.message, e.details);
     }
     if (err instanceof ServiceError) {

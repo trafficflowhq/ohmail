@@ -31,6 +31,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   BUNDLE,
+  METAFILE,
   MACHINE_PATH_PREFIXES,
   PACKAGED_DIR,
   REPO,
@@ -261,6 +262,30 @@ describe("the artifact stays small enough to ship", () => {
      * is where that gets noticed instead of never.
      */
     expect(statSync(BUNDLE).size).toBeGreaterThan(SIZE_CEILING * 0.6);
+  });
+});
+
+/* ── 3b. nothing of the wire's vocabulary ────────────────────────────────────────────────── */
+
+/**
+ * `@ohmail/wire` is types only, so importing it adds no byte: the bundler never opens a file of
+ * it. Held on what was BUILT: the bundle's own list of inputs names no file under the package. An
+ * import of it that is not `import type` would put its file there, and with it the first value.
+ */
+const wireInputs = (inputs: readonly string[]): string[] =>
+  inputs.map((i) => i.replace(/\\/g, "/")).filter((i) => i.includes("packages/wire/"));
+
+describe("the artifact carries nothing of the wire's vocabulary", () => {
+  it("no input of the bundle is a file of @ohmail/wire", () => {
+    const meta = JSON.parse(readFileSync(METAFILE, "utf8")) as { inputs: Record<string, unknown> };
+    const inputs = Object.keys(meta.inputs);
+    expect(inputs.length).toBeGreaterThan(500);
+    expect(wireInputs(inputs)).toEqual([]);
+  });
+
+  it("REFUSES a bundle that read one", () => {
+    expect(wireInputs(["apps/sidecar/src/mobile.ts", "packages/wire/src/records.ts", "packages\\wire\\src\\index.ts"]))
+      .toEqual(["packages/wire/src/records.ts", "packages/wire/src/index.ts"]);
   });
 });
 

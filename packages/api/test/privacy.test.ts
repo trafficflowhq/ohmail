@@ -455,7 +455,7 @@ describe("GET /img counts its own faults, as the envelope does", () => {
   });
 
   it("a refusal of ours at 5xx is one row too", async () => {
-    const r = await fetchThrowing(new ServiceError("proxy_broken", 503, "no"));
+    const r = await fetchThrowing(new ServiceError("upstream_unavailable", 503, "no"));
     expect(r.rows.map((x) => x.status)).toEqual([503]);
   });
 

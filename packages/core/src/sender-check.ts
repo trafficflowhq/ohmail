@@ -2,6 +2,7 @@ import { DESTINATIONS, isConsentingDestination, type Destination } from "./types
 import { BRANDS, UMBRELLA_DOMAINS, type Brand } from "./brands.js";
 import { foldForMatch, INVISIBLE, SOFT_HYPHEN } from "./text-fold.js";
 import { isSharedProviderDomain } from "./rule-order.js";
+import type { SenderReasonCode } from "@ohmail/wire";
 
 /**
  * WHO IS THIS MAIL REALLY FROM — a deterministic check that runs BEFORE the model and bounds what
@@ -14,9 +15,8 @@ import { isSharedProviderDomain } from "./rule-order.js";
  * the answer where they decide. Pure: no clock, no store, no network, no node builtin.
  */
 
-/** Which fact decided a capped suggestion. A closed set — the row renders one sentence per code. */
-export type SenderReasonCode =
-  | "impersonation" | "campaign" | "auth_fail" | "brand_mismatch" | "correspondent";
+/** Which fact decided a capped suggestion; declared with the wire's vocabulary. */
+export type { SenderReasonCode };
 
 /**
  * MAY A DENY STORED UNDER THIS REASON STAND AS A RULE ON THE ADDRESS (`routing_decisions.sender_reason`,

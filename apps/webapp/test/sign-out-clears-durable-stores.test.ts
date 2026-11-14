@@ -638,6 +638,9 @@ describe("sign-out clears the durable decision stores", () => {
     const undecided: string[] = [];
     const files = [...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : [])];
     for (const file of files) {
+      // The register of stored names spells every key of every store and keeps none itself; its
+      // rows are held to the tree by `test/stored-keys-registry.test.ts`.
+      if (file.endsWith("/client-engine/src/stored-keys.ts")) continue;
       const src = readFileSync(file, "utf8");
       if (!src.includes("localStorage")) continue;
       for (const m of src.matchAll(/["`](ohmail\.[A-Za-z0-9._:-]*)/g)) {

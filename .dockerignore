@@ -54,6 +54,9 @@
 !packages/core
 !packages/db
 !packages/db-mail
+# Types only, and in the closure because core and db reference it: `tsc -b` reads its sources
+# and emits no JavaScript from them.
+!packages/wire
 
 # …minus anything inside them that must never be copied in. `dist/` and `*.tsbuildinfo` are
 # the important pair: the worker's CLI boots from dist/, dist/ is gitignored, and a laptop

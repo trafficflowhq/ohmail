@@ -1,4 +1,9 @@
-export interface EmailAddress { name: string | null; address: string; }
+import type { Assert, Complete, EmailAddress, Folder } from "@ohmail/wire";
+
+export type { EmailAddress };
+
+/** The six folders ohmail may put mail into: the wire's `Folder`, under the name the rules use. */
+export type Destination = Folder;
 
 export interface CanonicalId {
   /**
@@ -14,14 +19,6 @@ export interface CanonicalId {
   bodyHash: string;                 // sha256 hex, always present
 }
 
-export type Destination =
-  | "INBOX"
-  | "ohmail/Screener"
-  | "ohmail/News"
-  | "ohmail/Receipts"
-  | "ohmail/Screened"
-  | "ohmail/Quarantine";
-
 /**
  * The six {@link Destination} strings as a VALUE — the folders ohmail may put mail into. In the
  * model, not beside `WATCHED_FOLDERS`: the adapter's list is a SCAN LIST (what one `changesSince`
@@ -30,16 +27,19 @@ export type Destination =
  * callers must never pull the IMAP adapter into their import graph —
  * `apps/worker/src/rule-retro.ts` proved it: `rule-retro.no-imap.test.ts` fails on an
  * `adapters/imap` import, because a bulk mover that could dial would be a second organizer for
- * one mailbox. This module has no imports at all, which is what makes it reachable from anywhere.
+ * one mailbox. This module imports nothing that runs (its one import is types, erased at build),
+ * which is what makes it reachable from anywhere.
  */
-export const DESTINATIONS: readonly Destination[] = [
+const DESTINATION_LIST = [
   "INBOX",
   "ohmail/Screener",
   "ohmail/News",
   "ohmail/Receipts",
   "ohmail/Screened",
   "ohmail/Quarantine",
-];
+] as const satisfies readonly Destination[];
+type _DestinationsComplete = Assert<Complete<Destination, typeof DESTINATION_LIST>>;
+export const DESTINATIONS: readonly Destination[] = DESTINATION_LIST;
 
 /** The News pile's canonical folder — what is created, filed into and stored going forward. */
 export const NEWS_FOLDER = "ohmail/News";
@@ -202,7 +202,7 @@ export const REFILE_HOLD_MS = 2 * REFILE_UNDO_WINDOW_MS;
  * User-commanded folder names — the shared validator (FOLDERS-SPEC.md stage 2). Create/rename
  * take a canonical `/`-joined path chosen by the user, and the client (the honest sentence before
  * the wire) and the server (the refusal is the contract) must ask the same question, so the
- * question lives in the one module both import graphs reach — this file has no imports.
+ * question lives in the one module both import graphs reach — this file imports nothing that runs.
  * Deliberately NOT here: the mailbox's REAL hierarchy delimiter, discovered at connect
  * (`imap.ts`) and persisted nowhere — only the worker's folder-op pass can refuse a leaf
  * containing it (`bad_name` through the entity's `op.error`). This validator covers every rule

@@ -29,7 +29,8 @@
     "packages/fixtures",
     "packages/services",
     "packages/tokens",
-    "packages/ui"
+    "packages/ui",
+    "packages/wire"
   ],
   "overrides": {
     "@tiptap/core": "3.31.3",

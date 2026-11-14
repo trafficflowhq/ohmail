@@ -189,10 +189,6 @@ const CLASSIFIED: Record<string, Row> = {
   },
 
   // ── the server's projections and passes ────────────────────────────────────────────────
-  "packages/services/src/dto/types.ts": {
-    terms: ["messageIdHeader"], classes: ["display"],
-    why: "`MessageDTO`'s field declaration",
-  },
   "packages/services/src/dto/materialize.ts": {
     terms: ["ccAddresses", "messageIdHeader", "toAddresses"], classes: ["display"],
     why: "the projection copies the columns onto the DTO",
@@ -301,10 +297,6 @@ const CLASSIFIED: Record<string, Row> = {
   "packages/client-engine/src/engine.ts": {
     terms: ["inReplyTo", "messageIdHeader", "messageIdKey"], classes: ["threading-corroborated"],
     why: "the reconcile retires the engine's OWN optimistic copy when the row it minted arrives",
-  },
-  "packages/client-engine/src/types.ts": {
-    terms: ["inReplyTo", "messageIdHeader"], classes: ["display"],
-    why: "the mirror's row and draft shapes",
   },
   "packages/client-engine/src/send-fingerprint.ts": {
     terms: ["inReplyTo"], classes: ["dedup-content"],

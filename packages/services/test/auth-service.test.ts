@@ -1585,7 +1585,7 @@ describe("AuthService — sessions & refresh reuse", () => {
     expect(classifyRefreshFailure(new ServiceError("unauthorized", 401, "invalid refresh token")))
       .toBe("session_refused");
     // The three names the door answers with now: keyed on the STATUS, so each still clears the jar.
-    for (const code of ["refresh_missing", "refresh_expired", "refresh_revoked"]) {
+    for (const code of ["refresh_missing", "refresh_expired", "refresh_revoked"] as const) {
       expect(classifyRefreshFailure(new ServiceError(code, 401, "refused")), code).toBe("session_refused");
     }
     expect(classifyRefreshFailure(new ServiceError("session_conflict", 409, "a credential for another account")))
