@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { PATH_MAX, PIECE_BYTES, readRequest } from "../src/shell/bridge-kinds";
+import { decodePlace, encodePlace, isSwitchPlace, type SwitchPlace } from "../src/switch/place";
 
 const head = { id: 7, epoch: "e1" };
 const http = (path: unknown, more: object = {}) =>
@@ -47,5 +48,59 @@ describe("the bridge's guard", () => {
   it("never sees a piece: the native module joins them before the guard reads the whole", () => {
     expect(readRequest({ ...head, kind: "piece", seq: 0, chunk: "x".repeat(PIECE_BYTES) })).toEqual({ refused: "unknownKind" });
     expect(readRequest({ ...head, kind: "joined", count: 2 })).toEqual({ refused: "unknownKind" });
+  });
+});
+
+describe("the switch's three kinds", () => {
+  const EVENT = "0b9f2c1e-7d4a-4c1b-9e3f-5a6b7c8d9e0f";
+  const open = (to: unknown, app: "ohmail" | "ohcal" | null) => readRequest({ ...head, kind: "switch.open", to }, app);
+
+  it("admits the presence read and the store, which carry nothing", () => {
+    expect(readRequest({ ...head, kind: "switch.read" })).toMatchObject({ kind: "switch.read" });
+    expect(readRequest({ ...head, kind: "switch.store" })).toMatchObject({ kind: "switch.store" });
+  });
+
+  it("opens the other app only at a place of this app's direction", () => {
+    expect(open({ to: "last" }, "ohmail")).toMatchObject({ kind: "switch.open", to: { to: "last" } });
+    expect(open({ to: "event", id: EVENT }, "ohmail")).toMatchObject({ to: { to: "event", id: EVENT } });
+    expect(open({ to: "message", id: EVENT }, "ohcal")).toMatchObject({ to: { to: "message", id: EVENT } });
+    // The other way round is malformed: ohmail never names a letter to the calendar, nor ohcal an event to the mail.
+    expect(open({ to: "message", id: EVENT }, "ohmail")).toEqual({ refused: "malformed" });
+    expect(open({ to: "event", id: EVENT }, "ohcal")).toEqual({ refused: "malformed" });
+  });
+
+  it("refuses every place when the guard is not told which app it runs in", () => {
+    expect(open({ to: "last" }, null)).toEqual({ refused: "malformed" });
+    expect(readRequest({ ...head, kind: "switch.open", to: { to: "last" } })).toEqual({ refused: "malformed" });
+  });
+
+  it("refuses a place that is not one of the three shapes, or carries anything more", () => {
+    for (const to of [
+      undefined, null, "last", { to: "home" }, { to: "event" }, { to: "event", id: "e1" }, { to: "event", id: `${EVENT}x` },
+      { to: "event", id: "../pair" }, { to: "last", origin: "https://elsewhere.example" },
+      { to: "event", id: EVENT, token: "t".repeat(43) }, [{ to: "last" }],
+    ]) {
+      expect(open(to, "ohmail"), JSON.stringify(to)).toEqual({ refused: "malformed" });
+    }
+  });
+});
+
+describe("the switch's place as one word", () => {
+  const ID = "0b9f2c1e-7d4a-4c1b-9e3f-5a6b7c8d9e0f";
+
+  it("goes and comes back whole, judged as its sender sent it", () => {
+    const places: [SwitchPlace, "ohmail" | "ohcal"][] = [
+      [{ to: "last" }, "ohmail"], [{ to: "event", id: ID }, "ohmail"], [{ to: "message", id: ID }, "ohcal"],
+    ];
+    for (const [place, from] of places) expect(decodePlace(encodePlace(place), from)).toEqual(place);
+    expect(encodePlace({ to: "event", id: ID })).toBe(`event:${ID}`);
+  });
+
+  it("reads anything else as no place", () => {
+    for (const word of ["", "home", `message:${ID}`, "event:", `event:${ID}:x`, "event:../x", 7, null, "x".repeat(65)]) {
+      expect(decodePlace(word, "ohmail"), String(word)).toBeNull();
+    }
+    expect(decodePlace(`event:${ID}`, "ohcal")).toBeNull();
+    expect(isSwitchPlace({ to: "last" }, "ohcal")).toBe(true);
   });
 });

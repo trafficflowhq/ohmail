@@ -429,8 +429,9 @@ describe("ZERO Set-Cookie across the pairing surface — with the cookie surface
     const hosted = hostedDeps(deps);
 
     const pairSurface = apiRoutes.filter((r) => r.pattern.startsWith("/pair"));
-    // Five since the link's state read by its hash (`POST /pair/state`) joined the redeem.
-    expect(pairSurface).toHaveLength(5);
+    // Five since the link's state read by its hash (`POST /pair/state`) joined the redeem; six with a phone app's
+    // handoff to its sibling (`POST /pair/handoff`).
+    expect(pairSurface).toHaveLength(6);
     const presentations: Array<{ name: string; init: { cookie?: string; bearer?: string } }> = [
       { name: "bare", init: {} },
       { name: "session cookie", init: { cookie: "tf_session=not-a-real-token; tf_csrf=x" } },

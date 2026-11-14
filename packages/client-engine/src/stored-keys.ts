@@ -1060,6 +1060,21 @@ export const STORED_KEYS = [
     words: true, erased: "sign-out", mark: "kept",
   },
   {
+    key: "ohmail-switch-pairings", store: "file", owner: "phone",
+    at: ["apps/mobile/modules/ohmail-switch/android/src/main/java/app/ohmail/appswitch/SwitchStore.kt"],
+    holds: "the digests of the Android app's live pairings (SHA-256 of a server's origin and the account), from which its switch provider answers the sibling app; rewritten at each launch and change of pairings, in the no-backup folder",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "ohmail-switch-ask", store: "file", owner: "phone",
+    at: [
+      "apps/mobile/modules/ohmail-switch/android/src/main/java/app/ohmail/appswitch/SwitchStore.kt",
+      "apps/mobile/modules/ohmail-switch/ios/OhmailSwitchModule.swift",
+    ],
+    holds: "the one pending challenge's verifier of a handoff between the two apps (on the iPhone with the digest and the place it was asked for), for at most two minutes, taken once, kept out of backups",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
     key: "ohmail-shell", store: "identifier", owner: "phone",
     at: ["apps/mobile/modules/ohmail-shell/ios/SchemeDoor.swift", "apps/mobile/src/shell/admit.ts"],
     holds: "the scheme the iPhone's shell page is served under: its origin, by which the system keeps the page's storage",

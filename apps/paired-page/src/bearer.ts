@@ -219,6 +219,7 @@ const NEVER_RENEW = [
   "/auth/2fa/",
   "/auth/step-up/",
   "/pair/redeem",
+  "/pair/handoff",
   "/admin/staff/",
   "/auth/desktop-claim",
   "/auth/desktop-approval/claim",

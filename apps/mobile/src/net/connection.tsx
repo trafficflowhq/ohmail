@@ -52,6 +52,7 @@ import {
   drainPendingWakeDrops,
   drainPendingWipes,
   forgetProfile,
+  handoffMinter,
   listHeldStandalone,
   mobileDeviceKind,
   negotiate,
@@ -71,10 +72,18 @@ import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
 import { appRelease } from "./app-release";
-import { MAIL_SURFACE } from "../shell/mail-surface";
+import { mailSurfaceOf } from "../shell/mail-surface";
+import { pairingDigest } from "../switch/digest";
+import { notePairings, switchIntake, switchPlaces, takeUpArrival, type ReceiveDeps } from "../switch/receive";
+import { switchNative } from "../switch/switch-native";
+import { siblingOf } from "../variant";
+import { APP } from "../variant-native";
 import { settleLaunchVerdict } from "../shell/old-copy";
 import { nativeShellStores } from "../shell/shell-stores-native";
 import { keeperRemembers, purgingShellToo } from "../shell/take-back";
+
+/** The surface this app shows mail in, chosen once by the build and the app it is (`mail-surface.ts`). */
+const MAIL_SURFACE = mailSurfaceOf(process.env.EXPO_PUBLIC_OHMAIL_MAIL_SURFACE, APP);
 
 export type ConnectionState =
   /** The launch instant, before the keystore has answered whether a pairing exists. */
@@ -323,6 +332,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
   const gateRef = useRef<TransitionGate | null>(null);
   const gate = (gateRef.current ??= new TransitionGate());
+  /** The switch's native module, or null in a build without it (the switch then neither sends nor receives). */
+  const switcher = useMemo(() => switchNative(), []);
 
   /* A SIGN-OUT A SERVER WAS NOT TOLD goes when the network comes back (and at launch, below). */
   useEffect(
@@ -378,7 +389,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const refreshProfiles = useCallback(async () => {
     setProfiles(await env.profiles.list());
     setActiveId((await env.profiles.active())?.id ?? null);
-  }, [env]);
+    /* EVERY CHANGE OF THE PAIRINGS PASSES HERE, so the switch's provider answers the sibling from today's: this
+       app's live pairings by their digests, never an address or an account. */
+    void notePairings(switcher, env, nativeFamilyDigest);
+  }, [env, switcher]);
 
   /**
    * Leave the live state, then close the mirror once the in-flight drain settles. The round
@@ -634,7 +648,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const row = (await env.profiles.list()).find((p) => p.id === id);
       { const at = live.now(); if (at.k === "live") teardown(at.session); }
       leaveEntered();
-      if (row === undefined) {
+      // An app that organizes no mailbox (the calendar's) never opens the phone's own engine: such a row is not its.
+      if (row === undefined || (!APP.carries.organizes && row.origin === LOCAL_ENGINE_ORIGIN)) {
         if (stillCurrent()) enter({ k: "refused", reason: refuse("notPairedHere") });
         return { ok: false, reason: refuse("notPairedHere") };
       }
@@ -697,6 +712,55 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     },
     [adopt, adoptShell, consentHere, env, leaveEntered, refreshProfiles],
   );
+
+  /**
+   * THE SWITCH'S RECEIVING SIDE (`switch/receive.ts`), one intake for the provider's life, opened by the launch below
+   * once its order has finished. A handoff runs as one transition of this gate and goes live through the same
+   * adoption a confirmed pairing does; a place is held for the shell's page of the session it was judged in (the
+   * screens draw no place). The mint, when the sibling asks, is the session in front's, on a paired door only.
+   */
+  const intake = useRef<ReturnType<typeof switchIntake> | null>(null);
+  const takeArrival = useRef<() => Promise<unknown>>(async () => undefined);
+  takeArrival.current = () => {
+    if (switcher === null) return Promise.resolve();
+    const deps: ReceiveDeps = {
+      env,
+      native: switcher,
+      from: siblingOf(APP).app,
+      surface: MAIL_SURFACE,
+      sha256: nativeFamilyDigest,
+      transition: (op) => gate.run(op),
+      liveDigest: async () => {
+        const at = live.now();
+        if ((at.k !== "live" && at.k !== "shell") || at.session.standalone) return null;
+        return pairingDigest(nativeFamilyDigest, at.session.profile.origin, at.session.profile.accountId);
+      },
+      minter: () => {
+        const at = live.now();
+        return at.k === "live" || at.k === "shell" ? handoffMinter(at.session, siblingOf(APP).app) : undefined;
+      },
+      adopt: (handed) => {
+        { const at = live.now(); if (at.k === "live") teardown(at.session); }
+        leaveEntered();
+        if (handed.kind === "shell") adoptShell(handed.session);
+        else adopt(handed.session);
+        void refreshProfiles();
+      },
+      place: (to) => {
+        const at = live.now();
+        if (at.k === "shell") switchPlaces.hold(at.session.profile.id, to);
+      },
+    };
+    return takeUpArrival(deps);
+  };
+  useEffect(() => {
+    const opened = switchIntake(switcher, () => takeArrival.current());
+    intake.current = opened;
+    return () => {
+      opened.stop();
+      intake.current = null;
+    };
+  }, [switcher]);
 
   // The app launch: whichever profile was active reconnects; none means the connect flow.
   // Through the gate like every other transition, so a fast first tap supersedes it cleanly.
@@ -781,15 +845,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         const active = marked ?? (await env.profiles.list()).find(organizesHere) ?? null;
         if (marked === null && active !== null) await env.profiles.setActive(active.id).catch(() => undefined);
         await refreshProfiles();
-        if (!stillCurrent()) return;
+        if (!stillCurrent()) return true;
         if (active === null) {
           /* ONLY OUT OF `starting`, read from the DECIDED state rather than from React's
              updater: a tap that has already begun connecting must not be dropped back to idle. */
           if (live.now().k === "starting") enter({ k: "idle" });
-          return;
+          return true;
         }
         await runConnect(active.id, stillCurrent);
+        return true;
       })
+      /* THE SWITCH'S ARRIVAL IS TAKEN UP ONLY NOW, once the launch order has finished: never by a launch that stopped
+         on the install's verdict, nor by one whose keystore could not be read. */
+      .then((ordered) => { if (ordered === true) intake.current?.launched(); })
       .catch((err) => {
         /* `starting` only — see the arm above. */
         if (live.now().k === "starting") {
@@ -842,6 +910,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         }),
       openStandalone: (door) =>
         gate.run(async (stillCurrent) => {
+          // The calendar's app organizes no mailbox: its only ways in are a server and a paired computer.
+          if (!APP.carries.organizes) return { ok: false, reason: refuse("notPairedHere") };
           { const at = live.now(); if (at.k === "live") teardown(at.session); }
           leaveEntered();
           if (stillCurrent()) enter({ k: "connecting", origin: LOCAL_ENGINE_ORIGIN });

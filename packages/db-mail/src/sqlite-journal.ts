@@ -814,5 +814,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "DROP INDEX \"sessions_id_account_uq\";",
       "DROP INDEX \"mailbox_folders_id_mailbox_uq\";"
     ]
+  },
+  {
+    "name": "0209_app_handoff.sql",
+    "statements": [
+      "ALTER TABLE \"pairing_tokens\" ADD COLUMN \"challenge_hash\" text;",
+      "ALTER TABLE \"pairing_tokens\" ADD COLUMN \"handoff_from_device_id\" text;",
+      "ALTER TABLE \"devices\" ADD COLUMN \"handed_off_from\" text;"
+    ]
   }
 ] as const;

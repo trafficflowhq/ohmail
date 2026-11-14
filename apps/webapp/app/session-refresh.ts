@@ -1397,6 +1397,8 @@ const NEVER_REFRESH = [
    */
   "/auth/step-up/",
   "/pair/redeem",
+  // A phone app's handoff: a native rotation, whose 401 is the refresh token's verdict.
+  "/pair/handoff",
   // The password change checks the current password on the sign-in lockout: its 401 is a verdict.
   "/auth/password",
   /*

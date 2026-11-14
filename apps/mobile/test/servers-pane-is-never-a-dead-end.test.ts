@@ -55,7 +55,12 @@ vi.mock("expo-router", () => ({
   Stack: { Screen: (p: { options?: { gestureEnabled?: boolean } }) => { scene.options = p.options ?? null; return null; } },
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
-vi.mock("expo", () => ({ requireOptionalNativeModule: () => null }));
+// The mail app, as its switch module names it, with nothing arriving; no other native module is here.
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: (name: string) => (name === "OhmailSwitch"
+    ? { appId: "app.ohmail", addListener: () => ({ remove: () => undefined }), takeArrival: async () => null }
+    : null),
+}));
 vi.mock("expo-blur", () => ({ BlurView: () => null }));
 vi.mock("expo-crypto", () => ({}));
 vi.mock("react-native-svg", () => ({ default: () => null, Defs: () => null, LinearGradient: () => null, Rect: () => null, Stop: () => null }));

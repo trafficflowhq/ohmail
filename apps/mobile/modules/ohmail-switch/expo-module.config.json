@@ -1,0 +1,10 @@
+{
+  "platforms": ["android", "apple"],
+  "android": {
+    "modules": ["app.ohmail.appswitch.OhmailSwitchModule"]
+  },
+  "apple": {
+    "modules": ["OhmailSwitchModule"],
+    "appDelegateSubscribers": ["SwitchArrivalSubscriber"]
+  }
+}

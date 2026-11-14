@@ -47,6 +47,40 @@ function presentedRefreshCookie(jar: Readonly<Record<string, string>>, deps: Api
   return value === "" ? undefined : value;
 }
 
+/**
+ * THE NATIVE ROTATION: a bearer client presenting its own refresh token in the body, rotated with no grace (it
+ * rotates serially, and a re-presentation is theft) on the long rolling window. One helper for both bearer doors
+ * that rotate: `/auth/refresh`'s body branch and `/pair/handoff`, which mints a phone app's handoff on the pair this
+ * answers. A refusal is answered here exactly as `/auth/refresh` answers it (a resume marker cleared where nothing
+ * was presented on a cookie surface, an erased account's refusal by name); anything else travels as it was thrown.
+ */
+export async function rotateNativeRefresh(
+  req: Request, deps: ApiDeps, jar: Readonly<Record<string, string>>, body: { refreshToken?: string; attemptId?: string },
+): Promise<{ tokens: NonNullable<Awaited<ReturnType<SessionLifecycle["refresh"]>>["tokens"]> } | Response> {
+  try {
+    const { tokens } = await sessionLifecycle(deps).refresh(
+      serviceContext(deps, req),
+      { refreshToken: body.refreshToken, attemptId: body.attemptId },
+      { surface: "native" },
+    );
+    return { tokens: tokens! };
+  } catch (err) {
+    // A jar holding the resume marker and no refresh token sends every visit through the splash
+    // until the marker goes, so the answer that finds nothing to rotate takes it with it.
+    if (err instanceof ServiceError && err.code === "refresh_missing" && cookieSurface(deps)
+      && jarCookie(jar, "tf_resume") !== undefined) {
+      return json({ error: { code: err.code, message: err.message } }, err.httpStatus, clearResumeCookie());
+    }
+    // A refused token of an ERASED account is told so — the session door's rule, for the
+    // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
+    if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
+      && await erasedAccountBearer(req, deps, body.refreshToken)) {
+      return accountErasedResponse();
+    }
+    throw err;
+  }
+}
+
 export const sessionLifecycleRoutes: Route[] = [
   {
     // enrollmentOk: abandoning a half-finished enrollment must always be possible. The body's ONE
@@ -194,28 +228,8 @@ export const sessionLifecycleRoutes: Route[] = [
       // older build still take, and that arm is the theft detector. The service bounds it and
       // refuses a malformed one before consuming anything (`readAttemptId`); nothing about it is
       // logged here or there.
-      try {
-        const { tokens } = await sessionLifecycle(deps).refresh(
-          serviceContext(deps, req),
-          { refreshToken: body.refreshToken, attemptId: body.attemptId },
-          { surface: "native" },
-        );
-        return json({ tokens }, 200);
-      } catch (err) {
-        // A jar holding the resume marker and no refresh token sends every visit through the splash
-        // until the marker goes, so the answer that finds nothing to rotate takes it with it.
-        if (err instanceof ServiceError && err.code === "refresh_missing" && cookieSurface(deps)
-          && jarCookie(jar, "tf_resume") !== undefined) {
-          return json({ error: { code: err.code, message: err.message } }, err.httpStatus, clearResumeCookie());
-        }
-        // A refused token of an ERASED account is told so — the session door's rule, for the
-        // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
-        if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
-          && await erasedAccountBearer(req, deps, body.refreshToken)) {
-          return accountErasedResponse();
-        }
-        throw err;
-      }
+      const rotated = await rotateNativeRefresh(req, deps, jar, body);
+      return rotated instanceof Response ? rotated : json({ tokens: rotated.tokens }, 200);
     },
   },
 ];

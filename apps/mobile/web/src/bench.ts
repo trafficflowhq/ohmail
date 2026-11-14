@@ -8,6 +8,8 @@
 import type { EmailAddress, EngineMutation, MirrorStore, OhmailEngine } from "./engine-package";
 import { OUTBOX_TYPE } from "./engine-package";
 import { isKept } from "../../src/shell/kept-families";
+import type { LinkInTarget, SwitchPlace } from "../../src/shell/bridge-kinds";
+import type { OtherAppDoor } from "./other-app";
 
 /** The marker a release page must never carry. */
 export const BENCH_MARKER = "ohmail-bench-door";
@@ -26,10 +28,19 @@ export interface BenchDoor {
   send(letter: { to: string[]; subject: string; body: string; mailboxId: string }): Promise<string>;
   /** Counts only: the queue's sends, and the kept words of this page. */
   counts(): { outbox: number; words: number };
+  /** A press of the switch, as the frame's switch will make it; answers what native did. */
+  switchTo(place: SwitchPlace): Promise<"opened" | "absent">;
+  /** The last place the other app opened this one at, held until a seat takes it; null when none came. */
+  arrival(): LinkInTarget | null;
 }
 
-export function benchDoor(engine: OhmailEngine, store: MirrorStore, storage: StorageLike): BenchDoor {
+export function benchDoor(
+  engine: OhmailEngine, store: MirrorStore, storage: StorageLike,
+  other: { readonly door: OtherAppDoor; readonly arrival: () => LinkInTarget | null },
+): BenchDoor {
   return {
+    switchTo: (place) => other.door.open(place),
+    arrival: other.arrival,
     marker: BENCH_MARKER,
     words(key, text) {
       if (!isKept(key)) throw new Error("the bench types into a kept family only");

@@ -1,0 +1,110 @@
+{
+  "ohmail": {
+    "app": "ohmail",
+    "channel": "release",
+    "sibling": "ohcal",
+    "id": "app.ohmail",
+    "name": "ohmail",
+    "scheme": "ohmail",
+    "links": {
+      "host": "ohmail.app",
+      "path": "/switch"
+    },
+    "permission": "app.ohmail.permission.SWITCH",
+    "authority": "app.ohmail.switch",
+    "carries": {
+      "screens": true,
+      "organizes": true,
+      "mailPush": true
+    },
+    "without": {
+      "plugins": [],
+      "modules": []
+    },
+    "iosAssociatedDomains": false
+  },
+  "ohcal": {
+    "app": "ohcal",
+    "channel": "release",
+    "sibling": "ohmail",
+    "id": "app.ohcal",
+    "name": "ohcal",
+    "scheme": "ohcal",
+    "links": {
+      "host": "ohcal.app",
+      "path": "/switch"
+    },
+    "permission": "app.ohmail.permission.SWITCH",
+    "authority": "app.ohcal.switch",
+    "carries": {
+      "screens": false,
+      "organizes": false,
+      "mailPush": false
+    },
+    "without": {
+      "plugins": [
+        "expo-unified-push",
+        "./plugins/wake-push-renderer"
+      ],
+      "modules": [
+        "organizer-service",
+        "expo-unified-push"
+      ]
+    },
+    "iosAssociatedDomains": false
+  },
+  "ohmail-preview": {
+    "app": "ohmail",
+    "channel": "preview",
+    "sibling": "ohcal-preview",
+    "id": "app.ohmail.preview",
+    "name": "ohmail preview",
+    "scheme": "ohmail-preview",
+    "links": {
+      "host": "ohmail.app",
+      "path": "/switch-preview"
+    },
+    "permission": "app.ohmail.preview.permission.SWITCH",
+    "authority": "app.ohmail.preview.switch",
+    "carries": {
+      "screens": true,
+      "organizes": true,
+      "mailPush": true
+    },
+    "without": {
+      "plugins": [],
+      "modules": []
+    },
+    "iosAssociatedDomains": false
+  },
+  "ohcal-preview": {
+    "app": "ohcal",
+    "channel": "preview",
+    "sibling": "ohmail-preview",
+    "id": "app.ohcal.preview",
+    "name": "ohcal preview",
+    "scheme": "ohcal-preview",
+    "links": {
+      "host": "ohcal.app",
+      "path": "/switch-preview"
+    },
+    "permission": "app.ohmail.preview.permission.SWITCH",
+    "authority": "app.ohcal.preview.switch",
+    "carries": {
+      "screens": false,
+      "organizes": false,
+      "mailPush": false
+    },
+    "without": {
+      "plugins": [
+        "expo-unified-push",
+        "./plugins/wake-push-renderer"
+      ],
+      "modules": [
+        "organizer-service",
+        "expo-unified-push"
+      ]
+    },
+    "iosAssociatedDomains": false
+  }
+}

@@ -22,8 +22,13 @@
  * The facts that cross have the bridge's own shapes below, not an import of the host contract: the
  * contract's door reaches the kit, which the app's own program (Expo's lib) does not type. The page
  * holds each shape equal to the contract's (`web/src/signals.ts`), so the two cannot drift. This
- * file imports nothing.
+ * file imports nothing but the switch's place (`../switch/place`), which imports nothing.
+ *
+ * THE SWITCH BETWEEN THE TWO APPS crosses as three closed kinds and one event, and none of them carries an address,
+ * an account, a code or the other app's sign-in: the page asks whether the other app is here, asks native to open
+ * it at a place, or to open its store page. Native does every part of it; the page only asks.
  */
+import { isSwitchPlace, type SwitchPlace } from "../switch/place";
 
 /** The permission to post notices, as the system reads it. */
 export type NoticePermission = "granted" | "denied" | "default" | "unsupported";
@@ -80,8 +85,23 @@ export type Headers = readonly (readonly [string, string])[];
  */
 export type ShellSetting = "managed" | "selfHosted" | "desktopHost" | "standalone";
 
+/** Which of the two apps this page runs in: the mail or the calendar. */
+export type ShellApp = "ohmail" | "ohcal";
+
+/**
+ * Whether the other app is on this phone, as the system says it now. `unknown` where the system cannot say before a
+ * press (the iPhone): a press then tries, and reads a refusal as `absent`.
+ */
+export type OtherAppState = "here" | "absent" | "unknown";
+
+export type { SwitchPlace };
+
 /** What the page is told once, before it mounts anything. */
 export interface ShellConfig {
+  /** The app the page runs in, read natively from the app's own identifier. */
+  readonly app: ShellApp;
+  /** Whether the other app is here at the page's start; each later reading comes as the `other` event. */
+  readonly other: OtherAppState;
   /** The storage partition and the copy's owner: native mints it, the page never derives one. */
   readonly scope: string;
   /** The account the server names, opaque. A page that answers for another account is refused. */
@@ -191,6 +211,18 @@ export interface Requests {
   };
   readonly "oldCopy.done": { readonly ask: { readonly scope: string }; readonly answer: Record<never, never> };
   readonly note: { readonly ask: { readonly what: NoteWhat; readonly n: number }; readonly answer: Record<never, never> };
+  /** Whether the other app is on this phone now. */
+  readonly "switch.read": { readonly ask: Record<never, never>; readonly answer: { readonly other: OtherAppState } };
+  /**
+   * Open the other app at a place: from ohmail an event or the last place, from ohcal a letter or the last place.
+   * `absent` when the system took no app for it; the page then offers the store.
+   */
+  readonly "switch.open": {
+    readonly ask: { readonly to: SwitchPlace };
+    readonly answer: { readonly went: "opened" | "absent" };
+  };
+  /** Open the other app's store page; native composes where it goes. */
+  readonly "switch.store": { readonly ask: Record<never, never>; readonly answer: { readonly opened: boolean } };
 }
 export type Kind = keyof Requests;
 
@@ -228,6 +260,7 @@ export type Answer<K extends Kind = Kind> =
 /** Where an incoming link leads: a closed set. The raw link never crosses. */
 export type LinkInTarget =
   | { readonly to: "message"; readonly id: string }
+  | { readonly to: "event"; readonly id: string }
   | { readonly to: "compose"; readonly draft: LinkedDraft };
 
 /** Native to page, unasked. */
@@ -242,7 +275,9 @@ export type ShellEvent =
   | { readonly type: "linkAsk"; readonly token: string; readonly url: string }
   /** A `mailto:` the person pressed in the page, handed back for the page's composer to parse once. */
   | { readonly type: "mailto"; readonly url: string }
-  | { readonly type: "session"; readonly state: "live" | "refused" };
+  | { readonly type: "session"; readonly state: "live" | "refused" }
+  /** The other app's presence read again, at each return of this app to the front. */
+  | { readonly type: "other"; readonly state: OtherAppState };
 export type Event = ShellEvent & { readonly epoch: string };
 
 /**
@@ -250,14 +285,18 @@ export type Event = ShellEvent & { readonly epoch: string };
  * known kind whose fields have their types, or a refusal. A path is root-relative: one `/`, then
  * no second `/` at its start, no backslash, no control byte, no dot segment, no encoded slash or
  * backslash, and at most {@link PATH_MAX} characters, counted before anything else reads it.
- * What a path may reach is the door's question, not the guard's.
+ * What a path may reach is the door's question, not the guard's. A switch's place is judged against
+ * `app`, the app the guard runs in: a place that points the other way is malformed, and with no app
+ * named every place is.
  */
-export function readRequest(raw: unknown): Request | { readonly refused: "unknownKind" | "malformed" } {
+export function readRequest(
+  raw: unknown, app: ShellApp | null = null,
+): Request | { readonly refused: "unknownKind" | "malformed" } {
   if (typeof raw !== "object" || raw === null) return MALFORMED;
   const m = raw as Record<string, unknown>;
   if (!isId(m.id) || typeof m.epoch !== "string" || m.epoch.length === 0 || m.epoch.length > 64) return MALFORMED;
   if (typeof m.kind !== "string" || !Object.prototype.hasOwnProperty.call(FIELDS, m.kind)) return UNKNOWN;
-  return FIELDS[m.kind as Kind](m) ? (m as unknown as Request) : MALFORMED;
+  return FIELDS[m.kind as Kind](m, app) ? (m as unknown as Request) : MALFORMED;
 }
 
 const MALFORMED = { refused: "malformed" } as const;
@@ -303,7 +342,7 @@ const isRow = (v: unknown): v is KeptRow => {
 const isPairs = (v: unknown): boolean =>
   Array.isArray(v) && v.every((p) => Array.isArray(p) && p.length === 2 && isStr(p[0], 256) && isStr(p[1], 256));
 
-const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>) => boolean } = {
+const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp | null) => boolean } = {
   config: () => true,
   ready: (m) => isStr(m.place),
   place: (m) => isStr(m.fragment),
@@ -321,4 +360,7 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>) => boolean } 
   "oldCopy.page": (m) => isStr(m.scope, 128) && (m.after === null || isStr(m.after, 512)),
   "oldCopy.done": (m) => isStr(m.scope, 128),
   note: (m) => member(NOTES, m.what) && typeof m.n === "number" && Number.isFinite(m.n),
+  "switch.read": () => true,
+  "switch.open": (m, app) => app !== null && isSwitchPlace(m.to, app),
+  "switch.store": () => true,
 };

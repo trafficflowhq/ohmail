@@ -8,7 +8,7 @@
 import { admitBridgeMessage } from "./admit";
 import {
   ASK_DEADLINE_MS, readRequest, type Kind, type NoteWhat, type Refused, type Request, type Requests, type ShellAct,
-  type ShellConfig, type ShellEvent,
+  type ShellApp, type ShellConfig, type ShellEvent, type SwitchPlace,
 } from "./bridge-kinds";
 import { framesOf } from "./framing";
 import type { HttpDoor } from "./http-door";
@@ -33,7 +33,20 @@ export interface BridgeHostDeps {
   };
   /** Counts of what the bridge refused, by name. */
   readonly count?: (what: string) => void;
+  /** The app this page runs in; the guard judges a switch's place by it, and with none refuses every place. */
+  readonly app?: ShellApp;
+  /** The switch to the other app, native's whole; until a build wires it, every switch kind is not ready. */
+  readonly switch?: SwitchDoor;
 }
+
+/** What the switch's three kinds ask of native. The place has passed the guard, its direction this app's. */
+export interface SwitchDoor {
+  read(): Promise<Requests["switch.read"]["answer"] | { readonly refused: Refused }>;
+  open(to: SwitchPlace): Promise<Requests["switch.open"]["answer"] | { readonly refused: Refused }>;
+  store(): Promise<Requests["switch.store"]["answer"] | { readonly refused: Refused }>;
+}
+
+const NOT_READY = { refused: "notReady" } as const;
 
 type Answer<K extends Kind> = Requests[K]["answer"] | { readonly refused: Refused };
 type Handler<K extends Kind> = (req: Request<K>, signal: AbortSignal) => Promise<Answer<K>> | Answer<K>;
@@ -69,6 +82,9 @@ export class BridgeHost {
       "oldCopy.page": (r) => this.deps.oldCopy.page(r),
       "oldCopy.done": (r) => this.deps.oldCopy.done(r),
       note: (r) => (this.deps.note(r.what, r.n), {}),
+      "switch.read": () => this.deps.switch?.read() ?? NOT_READY,
+      "switch.open": (r) => this.deps.switch?.open(r.to) ?? NOT_READY,
+      "switch.store": () => this.deps.switch?.store() ?? NOT_READY,
     };
   }
 
@@ -91,7 +107,7 @@ export class BridgeHost {
     } catch {
       return count("malformed");
     }
-    const req = readRequest(raw);
+    const req = readRequest(raw, this.deps.app ?? null);
     const id = typeof (raw as { id?: unknown })?.id === "number" ? (raw as { id: number }).id : -1;
     if ("refused" in req) {
       count(req.refused);

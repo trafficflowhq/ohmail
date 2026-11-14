@@ -870,6 +870,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["cal_links", "uid"],
   ["cal_suggestions", "evidence"],
   ["cal_settings", "enabled_at"],
+  // mail 0209_app_handoff — a phone app's handoff of its sign-in to its sibling. LOUD: the handoff's mint writes
+  // both binding columns and every redeem of the grant asks for them, and a device's take-back reads the lineage,
+  // so a host ahead of the migration fails at each. Deploy order migration, then the API.
+  ["pairing_tokens", "handoff_from_device_id"],
+  ["devices", "handed_off_from"],
 ] as const;
 
 /**
@@ -1244,6 +1249,9 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // settles.
   ["organizer_requests_kind_closed", "message.file"],
   ["organizer_requests_refused_reason_closed", "no_such_folder"],
+  // Mail 0209_app_handoff — `app-handoff` joins the pairing grants (0059's constraint, replaced under its name);
+  // against an older database the handoff's mint is refused by the old CHECK.
+  ["pairing_tokens_grant_check", "app-handoff"],
 ];
 
 /**
@@ -1293,7 +1301,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0207_request_folder_moves";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0209_app_handoff";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

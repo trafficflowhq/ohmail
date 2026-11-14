@@ -92,7 +92,7 @@ class ${SCENE_DELEGATE_CLASS}: UIResponder, UIWindowSceneDelegate {
     if let url = connectionOptions.urlContexts.first?.url {
       launchOptions[.url] = url
     }
-    if let activity = connectionOptions.userActivities.first {
+    if let activity = connectionOptions.userActivities.first(where: { !Self.isSwitchLink($0) }) {
       launchOptions[.userActivityDictionary] = [
         "UIApplicationLaunchOptionsUserActivityKey": activity,
         "UIApplicationLaunchOptionsUserActivityTypeKey": activity.activityType
@@ -122,7 +122,23 @@ class ${SCENE_DELEGATE_CLASS}: UIResponder, UIWindowSceneDelegate {
     }
   }
 
+  /// The switch's link for this app (Info.plist \`OhmailSwitch\`, plugins/app-switch.js) is the switch module's alone:
+  /// it is handed over by a notification and never to the app delegate, so neither the linking manager nor the router
+  /// ever holds it, and a cold one is kept out of the launch options.
+  static func isSwitchLink(_ activity: NSUserActivity) -> Bool {
+    guard activity.activityType == NSUserActivityTypeBrowsingWeb, let url = activity.webpageURL,
+          let lands = Bundle.main.object(forInfoDictionaryKey: "OhmailSwitch") as? [String: String] else {
+      return false
+    }
+    return url.scheme == "https" && url.host == lands["ownHost"] && url.path == lands["ownPath"]
+  }
+
   func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    if Self.isSwitchLink(userActivity), let url = userActivity.webpageURL {
+      NotificationCenter.default.post(
+        name: Notification.Name("OhmailSwitchArrival"), object: nil, userInfo: ["url": url.absoluteString])
+      return
+    }
     guard let appDelegate = self.appDelegate else {
       return
     }

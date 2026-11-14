@@ -395,6 +395,8 @@ export {
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
   type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
+  mintAppHandoff, redeemAppHandoff, APP_HANDOFF_GRANT, APP_HANDOFF_TTL_MS, APP_HANDOFF_PER_HOUR, APP_HANDOFF_LIVE_MAX,
+  type AppHandoffAuditor, type AppHandoffTarget, type HandoffConsumed,
 } from "./pairing.js";
 export {
   redeemInviteGrant, PAIRING_INVITE_TTL_MS, type InviteGrantRedeemed,

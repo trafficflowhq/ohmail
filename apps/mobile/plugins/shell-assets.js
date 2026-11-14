@@ -1,8 +1,9 @@
 const {
-  withAndroidManifest, withDangerousMod, withXcodeProject, createRunOncePlugin, AndroidConfig,
+  withAndroidManifest, withDangerousMod, withXcodeProject, createRunOncePlugin, AndroidConfig, IOSConfig,
 } = require("expo/config-plugins");
 const path = require("node:path");
 const fs = require("node:fs");
+const { variantOfAppId } = require("../variant-config");
 
 /**
  * THE SHELL'S PAGE GOES INTO THE APP, OR THE APP IS NOT BUILT.
@@ -22,9 +23,11 @@ const MANIFEST = "shell.manifest.json";
 
 /**
  * The page the app is built with. A page built with the emulator bench's door (`--bench`) is refused unless this
- * build says it is the bench's (`OHMAIL_SHELL_BENCH=1`), so no other build ever carries it.
+ * build says it is the bench's (`OHMAIL_SHELL_BENCH=1`), so no other build ever carries it. A page built for another
+ * app than the one whose identifier this build carries (`--app`, written into the manifest) is refused too: each app
+ * mounts its own places, and a page left from the other app's build would show them.
  */
-function generated(projectRoot, env = process.env) {
+function generated(projectRoot, env = process.env, app = "ohmail") {
   const dir = path.join(projectRoot, "generated", "shell");
   const file = path.join(dir, MANIFEST);
   if (!fs.existsSync(file)) {
@@ -34,6 +37,12 @@ function generated(projectRoot, env = process.env) {
     );
   }
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (manifest.app !== app) {
+    throw new Error(
+      `shell-assets: the shell's page was built for ${manifest.app === undefined ? "no named app" : `"${manifest.app}"`}, `
+        + `and this build is the ${app} app. Run \`node apps/mobile/scripts/build-shell.mjs --app ${app}\` before the native build.`,
+    );
+  }
   if (manifest.bench !== false && env.OHMAIL_SHELL_BENCH !== "1") {
     throw new Error(
       "shell-assets: the shell's page was built for the emulator bench (`--bench`). " +
@@ -41,6 +50,13 @@ function generated(projectRoot, env = process.env) {
     );
   }
   return dir;
+}
+
+/** The app an identifier names; one outside the variant table is a build error. */
+function appOf(id) {
+  const found = variantOfAppId(id);
+  if (found === null) throw new Error(`shell-assets: the app's identifier "${id}" is in no row of variants.json`);
+  return found.row.app;
 }
 
 function copyInto(from, to) {
@@ -65,7 +81,7 @@ function withShellAndroid(config) {
   return withDangerousMod(config, [
     "android",
     (c) => {
-      const from = generated(c.modRequest.projectRoot);
+      const from = generated(c.modRequest.projectRoot, process.env, appOf(c.android?.package));
       copyInto(from, path.join(c.modRequest.platformProjectRoot, "app", "src", "main", "assets", "shell"));
       return c;
     },
@@ -76,17 +92,22 @@ function withShellIos(config) {
   config = withDangerousMod(config, [
     "ios",
     (c) => {
-      const from = generated(c.modRequest.projectRoot);
+      const from = generated(c.modRequest.projectRoot, process.env, appOf(c.ios?.bundleIdentifier));
       copyInto(from, path.join(c.modRequest.platformProjectRoot, c.modRequest.projectName, "shell"));
       return c;
     },
   ]);
   return withXcodeProject(config, (c) => {
     const project = c.modResults;
-    const group = project.findPBXGroupKey({ name: c.modRequest.projectName });
-    const folder = `${c.modRequest.projectName}/shell`;
+    const name = c.modRequest.projectName;
+    const folder = `${name}/shell`;
     if (!project.hasFile(folder)) {
-      project.addResourceFile(folder, { lastKnownFileType: "folder" }, group);
+      // Expo's own placement: the app's group found by its path, the file in the app's resources. The xcode library's
+      // addResourceFile also asks for a group named Resources, which Expo's template has not.
+      IOSConfig.XcodeUtils.addResourceFileToGroup({ filepath: folder, groupName: name, project, isBuildFile: true });
+      // A folder reference, found by its path as the guard above reads it (another group may carry the app's name):
+      // the app carries the folder whole, as `shell`.
+      project.hasFile(folder).lastKnownFileType = "folder";
     }
     return c;
   });

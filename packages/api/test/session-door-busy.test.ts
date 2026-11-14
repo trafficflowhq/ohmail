@@ -46,12 +46,13 @@ async function seedRefresh(
 const app = createApp(apiRoutes);
 
 describe("the session doors under a busy pool", () => {
-  it("exactly the three session doors carry the shorter ceiling, the sign-out door among them", () => {
+  it("exactly the four session doors carry the shorter ceiling, the sign-out door and the handoff's rotation among them", () => {
     const carrying = apiRoutes
       .filter((r) => (r.options?.middleware ?? []).includes(withSessionAcquireCeiling))
       .map((r) => `${r.method} ${r.pattern}`)
       .sort();
-    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh", "POST /auth/refresh/logout"]);
+    // A phone app's handoff rotates the refresh token as the refresh door's native branch does, on its ceiling.
+    expect(carrying).toEqual(["GET /auth/session", "POST /auth/refresh", "POST /auth/refresh/logout", "POST /pair/handoff"]);
   });
 
   it("the sign-out door answers 503 db_busy, Retry-After, sets no cookie, and ends the family on the next ask", async () => {
