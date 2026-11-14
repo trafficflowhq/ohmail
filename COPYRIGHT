@@ -139,9 +139,45 @@ Every other dependency is installed, not copied in:
                   is committed so an installer you download is reproducible
                   from the tree it was built from.
 
-  Fonts           None are distributed here. See below — it is the one
-                  third-party question that deserves a real answer rather than
-                  a pointer.
+  Fonts           Three typefaces are distributed in packages/tokens/fonts,
+                  each under the SIL Open Font License 1.1 and not under the
+                  licence of the code. See below — it is the one third-party
+                  question that deserves a real answer rather than a pointer.
+
+
+The typefaces
+-------------
+packages/tokens/fonts holds six font files of three families, the licence text
+of each family beside them, and FONTS.md with a checksum of every file:
+
+  Bricolage Grotesque 1.001   Copyright 2022 The Bricolage Grotesque Project
+                              Authors, https://github.com/ateliertriay/bricolage
+  Hanken Grotesk 3.013        Copyright 2021 The Hanken Grotesk Project Authors,
+                              https://github.com/marcologous/hanken-grotesk
+  JetBrains Mono 2.211        Copyright 2020 The JetBrains Mono Project Authors,
+                              https://github.com/JetBrains/JetBrainsMono
+
+Why they are here: the apps set their text in them and load nothing from a
+network, so the files travel with the app. They are pinned by checksum in
+packages/tokens/source/fonts.json, and a test holds the files to it.
+
+Each family is licensed under the SIL Open Font License 1.1, and none declares
+a Reserved Font Name. The fonts are not under the AGPL and the AGPL's terms do
+not reach them; the OFL's terms do, and they do not reach the code. The OFL
+allows a font to be bundled and passed on with software under any licence. What
+it asks, and how it is met here:
+
+  - The copyright line and the licence travel with every copy. In this tree
+    they are the three OFL-*.txt files beside the fonts. A build that packs a
+    font file packs that family's licence text with it.
+  - The fonts are not sold by themselves. They are only ever part of the app.
+  - They stay under the OFL. Nothing here relicenses them.
+  - The files are Latin and Latin Extended subsets in WOFF2 form, which the
+    OFL calls Modified Versions. With no Reserved Font Name declared, a
+    Modified Version may keep the family's name, and these do.
+
+The guard check (.github/scripts/assert-pr-guard.sh) knows these six files and
+refuses any other file of a font kind, so one cannot ride along by accident.
 
 
 The "oh." mark and Inter
@@ -150,24 +186,22 @@ The letterforms in the ohmail icon were drawn as outlined paths from Inter Bold
 (Inter 4.1, copyright (c) 2016 The Inter Project Authors,
 https://github.com/rsms/inter), licensed under the SIL Open Font License 1.1.
 
-No font binary is distributed in this repository. The .ttf used to draw the
-mark stayed with the design files, alongside its OFL text, and is not part of
-this tree. The guard check (.github/scripts/assert-pr-guard.sh) refuses any pull
-request whose tree carries a file of a font kind, so one cannot ride along by
-accident.
+Inter's font binary is not distributed in this repository. The .ttf used to
+draw the mark stayed with the design files, alongside its OFL text, and is not
+part of this tree.
 
-That distinction is the whole answer. The OFL's conditions — its copyleft, its
-requirement that the licence travel with the font, and its Reserved Font Name
-rules — attach to redistribution of the Font Software. This repository
-redistributes none, so none of them are triggered here. The icon files are
-artwork whose curves were derived from Inter's outlines; our reading,
-consistent with how the OFL and SIL's own FAQ treat work produced *with* a font
-rather than copies *of* the font software, is that such artwork is not itself
-Font Software and is not encumbered by the OFL. That is our position, stated
-plainly, not a court's ruling.
+That distinction is the whole answer for Inter. The OFL's conditions — its
+copyleft, its requirement that the licence travel with the font, and its
+Reserved Font Name rules — attach to redistribution of the Font Software. This
+repository redistributes none of Inter, so none of them are triggered by it.
+The icon files are artwork whose curves were derived from Inter's outlines; our
+reading, consistent with how the OFL and SIL's own FAQ treat work produced
+*with* a font rather than copies *of* the font software, is that such artwork
+is not itself Font Software and is not encumbered by the OFL. That is our
+position, stated plainly, not a court's ruling.
 
-If a font binary is ever shipped from this repository, this section becomes
-wrong the moment it happens, and stays wrong until the OFL text ships beside it
+If Inter's binary is ever shipped from this repository, this section becomes
+wrong the moment it happens, and stays wrong until its OFL text ships beside it
 and the Reserved Font Name "Inter" is honoured. Credit is given here either
 way, because Inter is excellent and the mark would not look the way it does
 without it.

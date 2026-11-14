@@ -6,7 +6,7 @@
  * They are listed, and the list only gets shorter: a file leaves it when its last view is rebuilt.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readSource } from "../scripts/design-lib.mjs";
@@ -15,7 +15,7 @@ import { generate } from "../scripts/generate-design.mjs";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const SCOPE = ["packages/tokens/src", "packages/ui/src/icons", "packages/ui/src/motion"];
 const WRITTEN_ONCE = [
-  ...Object.keys(generate()).map((name) => `packages/tokens/src/design/${name}`),
+  ...Object.keys(generate()).map((name) => posix.join("packages/tokens/src/design", name)),
   "packages/ui/src/icons/icons.json",
 ];
 const OLD = [
@@ -82,6 +82,6 @@ describe("the design's values are written once", () => {
   it("the list of older files only gets shorter", () => {
     expect(OLD.length).toBeLessThanOrEqual(5);
     expect(OLD.filter((file) => !existsSync(join(root, file)))).toEqual([]);
-    expect(WRITTEN_ONCE.filter((file) => !files.includes(file))).toEqual([]);
+    expect(WRITTEN_ONCE.filter((file) => !existsSync(join(root, file)))).toEqual([]);
   });
 });
