@@ -184,7 +184,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
    */
   it("AppShell adopts only a free row, and the unverified press keeps the row id", async () => {
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     expect(shell, "the reopen adopts a row without asking whether the message is held")
       .toMatch(/\} else \{[\s\S]{0,900}autosave\.adopt\((?:d|handle)\.id, seeded(?:, (?:d\.contentRevision \?\? null|handle\.revision))?\);/);
@@ -228,7 +228,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
    */
   it("a row an unresolved send belongs to is reopened as itself, not recovered", async () => {
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     expect(shell, "the reopen does not ask whether a record is still unresolved for this row")
       .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,200}\}, scope\);\n\s*const parked = hold\.kind !== "free";/);
@@ -267,7 +267,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
        from this module when the resolution learned to release its own record, and a pin on the
        exact line would make every future consumer look like a regression of `holdOf`. */
     expect(shell, "the held-message predicate is not imported, so the question cannot be asked")
-      .toMatch(/import \{[^}]*\bholdOf\b[^}]*\} from "@ohmail\/app-logic\/writing\/send-lock"/);
+      .toMatch(/import \{[^}]*\bholdOf\b[^}]*\} from "\.\/send-lock\.js"/);
     /* THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING. Unconditionally, one
        unresolved send would park every draft in the account; never, a record naming a session and
        a row it never got attached to would not be found at all. */

@@ -67,8 +67,8 @@ async function key(k: string, init: KeyboardEventInit = {}): Promise<void> {
   await settleEditor();
 }
 async function replyOpen(s: DraftShell, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -192,7 +192,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "both notes");
     await unmountAll();
     stubDom();
-    await mountShell("#/ohbox", [message("m1")], [], { handOff: true, store: before.store });
+    await mountShell("#/history", [message("m1")], [], { handOff: true, store: before.store });
     await waitFor(() => footLine().includes(en.sentCopy.missingTooBig) && footLine().includes(en.sentCopy.waitingFull), "both notes after the reload");
     expect(footLine()).toContain("Sent to Mila");
     const dismissMila = dismissFor("Mila")!;
@@ -232,7 +232,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
   }, 40_000);
 
   it("2 — the reply dock closes at once and the foot finishes it", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [], { handOff: true });
     await replyOpen(s, "See you on Thursday");
     const release = gate(s);
     await act(async () => { replySend(s.el)!.click(); });
@@ -245,7 +245,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
   }, 40_000);
 
   it("2c — Send + Done with no copy in Sent: the toast says marked done with its Undo, the foot says why", async () => {
-    const s = await mountShell("#/ohbox", [message("m1", { unread: true })], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1", { unread: true })], [], { handOff: true });
     Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
     await replyOpen(s, "See you on Thursday");
     await press(s.el.querySelector(".reply-actions .reply-send-done"), "Send + Done");
@@ -255,7 +255,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
   }, 40_000);
 
   it("2d — a reply's note stands while its message's dock is open again", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [], { handOff: true });
     Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "full" });
     await replyOpen(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
@@ -267,7 +267,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
   }, 40_000);
 
   it("3 — a refusal after the hand-off stands in the foot with Open, no toast, and Open brings the words back", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await replyOpen(s, "Thursday works for me");
     const release = gate(s);
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
@@ -311,7 +311,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     const held: DraftShell["sendGate"] = { wait: null };
     let release!: () => void;
     held.wait = new Promise<void>((r) => { release = () => { held.wait = null; r(); }; });
-    const after = await mountShell("#/ohbox", [], [], { handOff: true, store: before.store, sendGate: held });
+    const after = await mountShell("#/history", [], [], { handOff: true, store: before.store, sendGate: held });
     await waitFor(() => footLine().includes("Sending to Mila…"), "the restored send in the foot");
     await act(async () => { release(); });
     await waitFor(() => footLine().includes(en.sendingLine.sent), "the restored send finishes in the foot");
@@ -329,7 +329,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     const held: DraftShell["sendGate"] = { wait: null };
     let release!: () => void;
     held.wait = new Promise<void>((r) => { release = () => { held.wait = null; r(); }; });
-    const after = await mountShell("#/ohbox", [], [], { handOff: true, store: before.store, sendGate: held });
+    const after = await mountShell("#/history", [], [], { handOff: true, store: before.store, sendGate: held });
     Object.assign(after.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
     await waitFor(() => footLine().includes("Sending to Mila…"), "the restored send in the foot");
     await act(async () => { release(); });
@@ -360,8 +360,8 @@ async function typeRecipient(el: HTMLElement, label: string, text: string): Prom
   });
 }
 async function openOn(s: DraftShell, k: string, shiftKey = false): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
   await key(k, shiftKey ? { shiftKey: true } : {});
   await waitFor(() => replySurface(s.el) != null, "the editor");
 }
@@ -389,7 +389,7 @@ async function refuseOpenResend(s: DraftShell, words: string): Promise<[string, 
 
 describe("Open after a handed-off refusal brings the audience back", () => {
   it("3b — a readdressed reply goes to whom the press named, not the computed sender", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await openOn(s, "r");
     await act(async () => { dock(s.el).querySelector<HTMLButtonElement>(".reply-head-btn")!.click(); });
     await act(async () => { dock(s.el).querySelector<HTMLElement>(".reply-rcpt .rcp-chip .rcp-chip-x")!.click(); });
@@ -404,7 +404,7 @@ describe("Open after a handed-off refusal brings the audience back", () => {
       to: [{ address: "me@example.invalid", name: "Me" }, { address: "pat@example.invalid", name: "Pat" }],
       cc: [{ address: "kim@example.invalid", name: "Kim" }],
     } as never);
-    const s = await mountShell("#/ohbox", [m1], [], { handOff: true });
+    const s = await mountShell("#/history", [m1], [], { handOff: true });
     await openOn(s, "R", true);
     const [first, second] = await refuseOpenResend(s, "Agreed, let us go ahead");
     expect(first).toContain("kim@example.invalid");
@@ -412,7 +412,7 @@ describe("Open after a handed-off refusal brings the audience back", () => {
   }, 60_000);
 
   it("3d — a forward keeps its recipient", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await openOn(s, "F", true);
     await typeRecipient(s.el, "To", "friend@example.invalid");
     const [first, second] = await refuseOpenResend(s, "Have a look at this");
@@ -429,7 +429,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
   it("6a — a refusal after the hand-off is said over the sheet", async () => {
     stubDom({ narrow: true });
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await sheetReply(s, "Thursday works for me");
     const release = gate(s);
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
@@ -441,7 +441,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
   it("6b — a delivery is said over the sheet", async () => {
     stubDom({ narrow: true });
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await sheetReply(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent. over the sheet");
@@ -449,7 +449,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
   it("6c — a delivery whose Sent copy is missing says why in the same toast", async () => {
     stubDom({ narrow: true });
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "full" });
     await sheetReply(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
@@ -458,7 +458,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
   it("6d — Send + Done whose Sent copy is missing says both in one toast, with the Undo", async () => {
     stubDom({ narrow: true });
-    const s = await mountShell("#/ohbox", [message("m1", { unread: true })], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1", { unread: true })], [], { handOff: true });
     Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
     await sheetReply(s, "See you on Thursday");
     await press(s.el.querySelector(".reply-actions .reply-send-done"), "Send + Done");
@@ -468,7 +468,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
   it("6e — Send + Done whose copy is kept without its files says until when in the same toast, with the Undo", async () => {
     stubDom({ narrow: true });
-    const s = await mountShell("#/ohbox", [message("m1", { unread: true })], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1", { unread: true })], [], { handOff: true });
     const until = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
     Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "unreachable", sentCopyUntil: until });
     await sheetReply(s, "See you on Thursday");
@@ -482,7 +482,7 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
 
 describe("CONTROLS: an unhealthy send keeps its editor and says why", () => {
   it("5a — the outbox held: the dock stays, its line says it, and the foot says nothing", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await replyOpen(s, "Held words");
     const release = gate(s);
     await act(async () => { replySend(s.el)!.click(); });
@@ -494,7 +494,7 @@ describe("CONTROLS: an unhealthy send keeps its editor and says why", () => {
   }, 40_000);
 
   it("5 — offline: the dock stays and its own line says it", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    const s = await mountShell("#/history", [message("m1")], [], { handOff: true });
     await replyOpen(s, "Offline words");
     setOnline(false);
     await act(async () => { window.dispatchEvent(new Event("offline")); });

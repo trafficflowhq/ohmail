@@ -2,7 +2,7 @@
  * ONE LETTER OF THE COLUMN: the kit's message sheet around the body the shell hands in. The wrapper carries the read
  * rule's facts; the text stands in its own block; the body's own controls stand in the head and above the text.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import {
   BlockedImages,
   LetterHistory,
@@ -22,6 +22,7 @@ import {
 import { headStamp, placeOfFolder, readerZone } from "@ohmail/app-logic/reader";
 import { useLiveBody } from "@ohmail/app-logic/reading";
 import { useSessionDead } from "@ohmail/app-logic/session/session-truth";
+import { endOpen } from "@ohmail/app-logic/session/ui-vitals";
 import { useEngineOrNull } from "@ohmail/app-logic/engine";
 import type { EngineMessage, MessageBody } from "@ohmail/client-engine";
 import { useFrame } from "../frame/commands.js";
@@ -61,6 +62,8 @@ const whole = (p: { name: string | null; address: string }): string =>
 
 export interface LetterViewProps {
   readonly message: EngineMessage;
+  /** The letter the column opened at: its text on screen ends the open's measure. */
+  readonly opened: boolean;
   /** Unread as the column presents it. */
   readonly unread: boolean;
   /** `tint`: the sheet is washed and a hidden word says unread; `dot`: the head's dot. */
@@ -74,13 +77,28 @@ export interface LetterViewProps {
   readonly onPerson: (person: ContactOf) => void;
 }
 
-export function Letter({ message, unread, look, reading, presented, narrow, onPerson }: LetterViewProps) {
+export function Letter({
+  message,
+  opened,
+  unread,
+  look,
+  reading,
+  presented,
+  narrow,
+  onPerson,
+}: LetterViewProps) {
   const t = useText("reader");
   const tm = useText("message");
   const parts = useParts();
   const { host } = useFrame();
   const scheme = useSignal(host.device.appearance).scheme;
   const body = useLetterBody(message);
+  /* THE OPEN'S MEASURE ENDS HERE, in the commit that put the opened letter's text in the document: never on a text
+     still owed (its snippet, its loading), which would report the wait as over. Held as on screen until it leaves. */
+  useLayoutEffect(() => {
+    if (!opened || body.state === "snippet" || body.state === "loading") return undefined;
+    return endOpen(message.id);
+  }, [opened, message.id, body.state]);
   const [notice, setNotice] = useState<LetterNotice | null>(null);
   const [controls, setControls] = useState<readonly LetterControl[]>([]);
   const liveWire = host.wires.liveBody;
@@ -88,9 +106,14 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
   const loaded = "kind" in live.live && live.live.kind === "loaded" ? live.live : null;
 
   const kept = body.state === "withheld" && loaded === null;
+  const copy = parts.sentCopy === NONE ? null : parts.sentCopy(message.id);
   const views = controls.filter((c) => c.id !== "history");
   const history = controls.find((c) => c.id === "history");
   const Body = parts.body;
+  const Invitation = parts.invitation;
+  /* What the shell says of the letter's invitation stands over its text and outside it, after the text's views. */
+  const invitation =
+    Invitation === NONE || isProtected(message) ? null : <Invitation messageId={message.id} />;
   const text = isProtected(message) ? (
     <p>{t("protected")}</p>
   ) : (
@@ -121,17 +144,23 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
             message={message}
             unread={look === "dot" && unread}
             notice={notice}
+            copy={copy}
             narrow={narrow ?? false}
             onPerson={onPerson}
           />
         }
         unread={look === "tint" && unread}
         lead={
-          views.length > 0 ? (
-            <LetterViews
-              label={t("views")}
-              views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
-            />
+          views.length > 0 || invitation !== null ? (
+            <>
+              {views.length > 0 ? (
+                <LetterViews
+                  label={t("views")}
+                  views={views.map((c) => ({ id: c.id, label: c.label, onPress: c.onPress }))}
+                />
+              ) : null}
+              {invitation}
+            </>
           ) : undefined
         }
         after={
@@ -152,17 +181,22 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
   );
 }
 
-/** Who wrote it, to whom and when; every name opens the contact card; what the body kept out, as its chip. */
+/**
+ * Who wrote it, to whom and when; every name opens the contact card; what the body kept out, as its chip; what the
+ * shell says of its copy in Sent, as a note under the recipients.
+ */
 function LetterHead({
   message,
   unread,
   notice,
+  copy,
   narrow,
   onPerson,
 }: {
   message: EngineMessage;
   unread: boolean;
   notice: LetterNotice | null;
+  copy: string | null;
   narrow: boolean;
   onPerson: (person: ContactOf) => void;
 }) {
@@ -184,7 +218,7 @@ function LetterHead({
   const mine = (address: string): boolean => own.some((a) => a.toLowerCase() === address.toLowerCase());
   const groups = [
     { word: t("head.to"), people: message.to },
-    { word: tm("ccLabel"), people: message.cc },
+    { word: t("head.cc"), people: message.cc },
   ]
     .filter((g) => g.people.length > 0)
     .map((g) => ({
@@ -213,7 +247,12 @@ function LetterHead({
   return (
     <>
       <MessageHead
-        sender={{ name: nameOf(message.from), address: message.from.address, onPress: person(message.from) }}
+        sender={{
+          name: nameOf(message.from),
+          address: message.from.address,
+          printed: mine(message.from.address) ? t("head.youSender") : undefined,
+          onPress: person(message.from),
+        }}
         unread={unread}
         note={
           notice ? (
@@ -240,6 +279,7 @@ function LetterHead({
           onToggle: () => setDetails((d) => !d),
           lines: details ? detailLines() : [],
         }}
+        marks={copy === null ? undefined : [{ text: copy }]}
       />
       <LetterMenu message={message} anchor={menu} onClose={() => setMenu(null)} />
     </>

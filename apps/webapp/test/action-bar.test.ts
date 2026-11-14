@@ -162,7 +162,11 @@ async function unmount(): Promise<void> {
  * is bound and show nothing when it is not, because that is the difference between reading
  * the registry and printing a string somebody typed.
  */
-type MountOpts = { disabled?: readonly string[]; foldersEnabled?: boolean; mirrorHolds?: boolean; verbHolds?: boolean };
+type MountOpts = {
+  disabled?: readonly string[]; foldersEnabled?: boolean; mirrorHolds?: boolean; verbHolds?: boolean;
+  /** `false`: the chrome of a host that names no drafter. Absent: a drafter at rest, as the shell hands one. */
+  drafter?: boolean;
+};
 
 /** The modules a mount imports, in one place so the warm-up loads exactly these. */
 async function barModules() {
@@ -241,6 +245,13 @@ async function mountBarNow(open: Record<string, unknown>, bound: readonly string
                 conversationOf: () => [],
                 bodyOf: (m: Record<string, unknown>) => ({ text: m.snippet as string, state: "snippet" }),
                 hydrateBody: () => {},
+                ...(opts.drafter === false ? {} : {
+                  draftReply: {
+                    control: { phase: "closed", messageId: null, cost: 15, notice: null, open: () => {}, cancel: () => {}, confirm: () => {} },
+                    pending: null,
+                    resolve: () => {},
+                  },
+                }),
               },
               children: h(MessagePane as never, {
                 message,
@@ -762,6 +773,15 @@ describe("every verb the flat row had is still reachable", () => {
     await openMore();
     await click("Draft reply");
     expect(actions).toEqual(["draft"]);
+  });
+
+  it("a pane whose host names no drafter offers no Draft reply", async () => {
+    // A verb that promises a draft which cannot come is not drawn; the rest of the menu stands.
+    await mountBar(msg(), BAR_CHORDS, { drafter: false });
+    await openMore();
+    expect(item("move"), "More opened no menu of verbs").not.toBeNull();
+    expect(buttons().map((b) => (b.textContent ?? "").trim()), "a host with no drafter was offered a draft")
+      .not.toContain("Draft reply");
   });
 
   it("offers a way back out of both panels", async () => {

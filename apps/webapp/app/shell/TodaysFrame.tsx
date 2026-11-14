@@ -2,8 +2,10 @@
 
 /**
  * THE ONE ADAPTER'S DOOR: what the three entries mount. Inside the entry's `EngineProvider` it reads the old shell's
- * inputs off the host once per host object, provides them to today's views, and mounts the frame, which owns every
- * part of the chrome. Today's views stand in the frame's wide pane (`TodaysViews`, in `AppShell.tsx`).
+ * inputs off the host once per host object, provides them to the old shell, and mounts the frame, which owns every
+ * part of the chrome. The old shell's composition stands above every pane of the frame (`TodaysAbove`, the hosts'
+ * `features.above`), once per mounted frame; today's views stand in the frame's wide pane and draw the stage that
+ * composition makes (`TodaysViews`). Both are in `AppShell.tsx`.
  */
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { Frame } from "@ohmail/app/frame";
@@ -20,7 +22,7 @@ import "./today-tokens.generated.css";
 
 const Fixed = createContext<TodaysInputs | null>(null);
 
-/** The old shell's inputs the adapter read off the host; only `TodaysViews` reads them. */
+/** The old shell's inputs the adapter read off the host; only `TodaysAbove` reads them. */
 export function useTodaysFixed(): TodaysInputs {
   const fixed = useContext(Fixed);
   if (fixed === null) throw new Error("today's views were drawn outside TodaysFrame");

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -30,16 +30,20 @@ vi.mock("../app/api-client", async () => {
   return { ...actual, apiConfigured: () => true, api: (...a: unknown[]) => fetchMock(...a) };
 });
 
-const { useDraftReply } = await import("../app/shell/draft-reply");
+const { useDraftReply } = await import("@ohmail/app-logic/writing/draft-reply");
+/* The wire the web's host hands, over the server client mocked above: the mount hands it as that host does. */
+const { CLOUD_WIRE } = await import("../app/(product)/mailbox/draft-reply-wire");
 const { ApiError } = await import("../app/api-client");
-type Control = ReturnType<typeof useDraftReply>;
+type Control = NonNullable<ReturnType<typeof useDraftReply>>;
 
 function mount(locale: "en" | "de") {
   host = document.createElement("div");
   document.body.appendChild(host);
   let control: Control;
   function Harness() {
-    control = useDraftReply({ onDraft: () => { /* nothing is handed over on a failure */ } });
+    control = useDraftReply({
+      onDraft: () => { /* nothing is handed over on a failure */ }, wire: CLOUD_WIRE, t: useTranslations(),
+    })!;
     return <p data-testid="notice">{control.notice}</p>;
   }
   root = createRoot(host);

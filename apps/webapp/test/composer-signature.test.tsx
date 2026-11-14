@@ -13,7 +13,7 @@ import {
   signatureHtml,
   withSignature,
   type SignatureState,
-} from "../app/shell/signature";
+} from "@ohmail/app-logic/writing/signature";
 import { readReplyMeta, writeReplyMeta } from "@ohmail/app-logic/writing/mail-send";
 import { composePlan, type ComposeFields } from "@ohmail/app-logic/writing/compose";
 
@@ -224,7 +224,7 @@ describe("SignatureBlock — a distinct, removable, editable block", () => {
 /* ══ the send paths go through the pair — the ship-what-is-shown guard ═════════════════════ */
 
 const shellSrc = (): string => {
-  const p = resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts");
+  const p = resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts");
   return readFileSync(p, "utf8");
 };
 

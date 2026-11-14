@@ -785,7 +785,7 @@ export function ScreenerView({
      Work" is one sentence across the product and this surface does not get a second spelling. */
   const tm = useTranslations("message");
   const piles = usePileNames();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   /**
    * The delivery badge for one sender row, or nothing. A sender's mailbox rides the row
    * ({@link ScreenerSenderDTO.mailboxId}); the resolver decides whether there is anything to say.
@@ -2203,7 +2203,7 @@ export function ScreenerPrimer({ state, segments, half }: {
 }) {
   const t = useTranslations("screener");
   const piles = usePileNames();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const none = () => {};
   const reader = readerHolder(state.role);
   return (
@@ -2905,7 +2905,7 @@ function DecidedRow({
   onSelect: () => void;
 }) {
   const t = useTranslations("screener");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const newest = newestHeld(sender);
   return (
     <MessageRow
@@ -3539,7 +3539,7 @@ function JunkRows({
   onSelect: (key: string) => void;
 }) {
   const t = useTranslations("screener");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   if (junk.phase === "loading") {
     return (
       <div className="empty" role="status" aria-busy="true">

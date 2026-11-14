@@ -11,6 +11,7 @@ const noFeature: HostFeatures = {
   places: NO_PLACES,
   stages: NO_STAGES,
   reader: NONE,
+  above: NONE,
   calendar: NONE,
 };
 const still = <T,>(value: T): Signal<T> => ({ read: () => value, subscribe: () => () => undefined });

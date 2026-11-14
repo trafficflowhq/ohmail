@@ -8,7 +8,7 @@ import { createElement as h } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
-import { SIG_FOLLOWING, type SignatureState } from "../app/shell/signature";
+import { SIG_FOLLOWING, type SignatureState } from "@ohmail/app-logic/writing/signature";
 import { publicPath } from "../../../test/support/public-root.mjs";
 import { readChangelogText } from "../../../scripts/changelog-fold.mjs";
 

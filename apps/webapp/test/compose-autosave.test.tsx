@@ -473,7 +473,7 @@ describe("send, adopt and discard", () => {
 
   it("the shell passes the substitution to the hook", async () => {
     const { readFileSync } = await import("node:fs");
-    const shell = readFileSync(`${process.cwd()}/apps/webapp/app/shell/shell-compose.ts`, "utf8");
+    const shell = readFileSync(`${process.cwd()}/packages/app-logic/src/writing/shell-compose.ts`, "utf8");
     expect(shell).toContain("keepRowMailbox: composeFrom.substituted,");
   });
 
@@ -1252,7 +1252,7 @@ describe("the shell is the consumer, not just the harness", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     expect(shell, "the compose form is not autosaved on the live path")
       .toContain("useComposeAutosave(");
@@ -1293,7 +1293,7 @@ describe("the shell is the consumer, not just the harness", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const lines = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     ).split("\n");
 
     const doors = lines
@@ -1413,7 +1413,7 @@ describe("the shell is the consumer, not just the harness", () => {
       readFileSync(`${process.cwd()}/apps/webapp/app/shell/${f}`, "utf8");
     const readWriting = (f: string): string =>
       readFileSync(`${process.cwd()}/packages/app-logic/src/writing/${f}`, "utf8");
-    const shell = read("shell-compose.ts");
+    const shell = read("../../../../packages/app-logic/src/writing/shell-compose.ts");
     const autosave = readWriting("compose-autosave.ts");
     const send = readWriting("mail-send.ts");
     const lock = readWriting("send-lock.ts");
@@ -1712,7 +1712,7 @@ describe("reopening a held row does not write over what is on screen", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     const openDraft = sliceOfDeclaration(shell, "openDraftWithBody");
     expect(
@@ -1730,7 +1730,7 @@ describe("reopening a held row does not write over what is on screen", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const shell = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
     const outer = sliceOfDeclaration(shell, "openDraft");
     expect(

@@ -8,6 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
+import { barVerb, cursorRow, menuItem, openLetter, reportPress } from "./ohbox/_finders.js";
 
 /**
  * SEND IS NOT DONE — through the whole shell (the desktop mounts this same AppShell).
@@ -53,12 +54,17 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  /* The address a key writes is announced by the browser as a task (`hashchange`), and this file's clock is fake:
+     run what is due now, so the seated place, which follows the address, hears it. No time passes. */
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 };
 const click = async (el: Element | null | undefined): Promise<void> => {
   expect(el, "nothing to click").toBeTruthy();
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
+  /* A press that writes the address: let the browser's announcement of it arrive (the clock is fake; none passes). */
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 };
 const drain = async (): Promise<void> => {
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
@@ -91,8 +97,9 @@ async function mountShell(): Promise<void> {
   await key("j");
 }
 
-const barButton = (label: string): HTMLButtonElement | undefined =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
+/** A verb by its name: the seated panel's or its open menu's at the Ohbox, today's bar at a pile. */
+const barButton = (label: string): HTMLElement | undefined =>
+  barVerb(host!, label) ?? menuItem(label) ?? [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
     .find((b) => (b.textContent ?? "").trim().startsWith(label));
 function idsInGroup(label: string): string[] {
   const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
@@ -100,7 +107,7 @@ function idsInGroup(label: string): string[] {
   return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 const editors = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
+  [...(openLetter(host!) ? [openLetter(host!)!] : []), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
     .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
 const doneButton = (): HTMLButtonElement | null =>
   host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
@@ -109,8 +116,16 @@ const sendButton = (): HTMLButtonElement =>
 const replyFor = (): string =>
   host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
 
+/**
+ * The pill's Undo: today's capsule's, or at a seated place the frame's report's press (declared), whose
+ * text carries its key beside the word.
+ */
+const undoPress = (): HTMLButtonElement | undefined =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo")
+  ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress()! : undefined);
+
 async function pinSelected(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -166,7 +181,7 @@ const chord = async (shiftKey: boolean): Promise<void> => {
 const kinds = (): string[] => sent.map((m) => m.kind);
 
 async function openBookedFromThePile(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -236,9 +251,9 @@ describe("a plain Send files nothing", () => {
 /** The reader eases the sent reply into view (`sent-reveal.ts`): every Send door tells it, not only the button. */
 describe("every Send door notes the press for the reader", () => {
   async function openAndReply(): Promise<{ id: string; notes: string[]; off: () => void }> {
-    const { onReplyPress } = await import("../app/shell/sent-reveal.js");
+    const { onReplyPress } = await import("@ohmail/app-logic/writing/sent-reveal");
     await mountShell();
-    const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
+    const id = cursorRow(host!)?.dataset.id;
     expect(id, "no row under the cursor").toBeTruthy();
     await key("Enter");
     await key("r");
@@ -280,7 +295,7 @@ describe("CONTROL: Send + Done still files, and Undo restores", () => {
     expect(seen[0]!.via).toBeUndefined();
     expect(idsInGroup("Resurfaced")).not.toContain(id);
     expect(host!.textContent).toContain("Sent · marked done");
-    const undo = [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo");
+    const undo = undoPress();
     expect(undo, "no Undo on the Send + Done pill").toBeTruthy();
     await act(async () => { undo!.click(); });
     await confirm();

@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-/* @reads: apps/webapp/app/ apps/mobile/src/
-   Walked by path, so a landing selects this file when either root moves. */
+/* @reads: apps/webapp/app/ packages/app-logic/src/ apps/mobile/src/
+   Walked by path, so a landing selects this file when any of these roots moves. */
 
 /**
  * THE ORGANIZER'S PUBLISHED COPY IS NOT A RULES LIST (ARCH-RULES-PAGE-INVARIANT §0, amended): a
@@ -31,7 +31,7 @@ const ADMITTED: Record<string, string> = {
   "packages/app-logic/src/press/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
   "apps/mobile/src/state/live.ts": "`pressOutcome`'s `profiles:`, the consent reading of a press",
   "apps/mobile/src/state/sender-stayed.ts": "why a sender stayed: the decided destination through the consent index",
-  "apps/webapp/app/shell/AppShell.tsx": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
+  "packages/app-logic/src/consent/consent-row.ts": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
 };
 /** Where a published-copy read is refused whatever its reason: the surfaces that list rules. */
 const REFUSED_ZONES = [/^apps\/webapp\/app\/views\//, /^apps\/webapp\/app\/shell\/rules-/, /^apps\/mobile\/src\/ui\//];

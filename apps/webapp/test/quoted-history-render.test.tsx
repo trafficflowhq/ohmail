@@ -35,7 +35,7 @@ async function renderBody(cls: string, props: { text: string; html: string | nul
   host.className = cls;
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { messageId: "m1", ...props })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, messageId: "m1", ...props })); });
   return host;
 }
 

@@ -57,6 +57,10 @@ const DERIVATION_SOURCES = [
   /* The shell's whole-mirror memos left `AppShell.tsx` for this frame (ARCH-022). Both are asked:
      the file that computes the derivations, and the file that still reads the mirror inline. */
   "../app/shell/shell-derivations.ts",
+  /* And two reads cut out of the shell for the mail ground: the settings stamp the consent row re-asks on, and
+     the count of mirrored letters the mail state's mount samples. Both are keyed on the derived stamp. */
+  "../../../packages/app-logic/src/consent/consent-row.ts",
+  "../../../packages/app/src/mail/ground/MailStateMount.tsx",
 ];
 
 describe("the derived stamp ignores only what nothing derives from", () => {

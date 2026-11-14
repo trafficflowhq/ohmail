@@ -106,7 +106,7 @@ async function openTheLetter(by: "row" | "url" | "news" = "row"): Promise<void> 
   await tick(30_000);
   if (by === "row") {
     const row = document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${LETTER}"]`);
-    expect(row, "the Ohbox does not list the letter").not.toBeNull();
+    expect(row, "History does not list the letter").not.toBeNull();
     await act(async () => { row!.click(); });
   } else if (by === "news") {
     await act(async () => {
@@ -120,7 +120,7 @@ async function openTheLetter(by: "row" | "url" | "news" = "row"): Promise<void> 
     await act(async () => { card!.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
   } else {
     await act(async () => {
-      window.location.hash = `#/ohbox/m/${LETTER}`;
+      window.location.hash = `#/history/m/${LETTER}`;
       window.dispatchEvent(new Event("hashchange"));
       await Promise.resolve();
     });

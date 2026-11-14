@@ -91,11 +91,17 @@ export const SHELL_DIR = "apps/webapp/app/shell";
 export const SHELL_FRAMES: readonly string[] = [
   "AppShell.tsx", "shell-dispatch.ts", "shell-derivations.ts", "shell-open-state.ts",
   "shell-compose.ts", "shell-verbs.ts", "shell-keys.tsx",
+  /* The consent row's call and the partition's derivation, cut out of `AppShell.tsx` and `shell-derivations.ts`
+     for the mail ground: the old shell still calls both, once each, so they stay frames of this manifest. */
+  "consent-row.ts", "partition.ts",
 ];
 
 /** A frame that left the shell's folder for app-logic, by where it is now. It stays a frame: the shell composes it. */
 const FRAME_HOMES: Readonly<Record<string, string>> = {
   "shell-dispatch.ts": "packages/app-logic/src/press/shell-dispatch.ts",
+  "shell-compose.ts": "packages/app-logic/src/writing/shell-compose.ts",
+  "consent-row.ts": "packages/app-logic/src/consent/consent-row.ts",
+  "partition.ts": "packages/app-logic/src/consent/partition.ts",
 };
 
 /** Where a frame of the manifest is, from the repository's root. */

@@ -12,7 +12,7 @@ import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ImageQualityLevel } from "@ohmail/
 import en from "../../messages/en.json";
 import { act, message, stubDom } from "../_draft-shell.js";
 import { letter } from "../_handoff-steps.js";
-import type { DraftReplyWire } from "../../app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./writing-world.js";
 
 const W = en.write;

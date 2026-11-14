@@ -12,7 +12,7 @@ import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import type { EngineMessage } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
 import { act, message, replyDraft, stubDom } from "../_draft-shell.js";
-import type { DraftReplyWire } from "../../app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { mountWriting, rounds, unmountWritings, type WritingWorld } from "./writing-world.js";
 
 const W = en.write;

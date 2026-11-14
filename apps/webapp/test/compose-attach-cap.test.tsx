@@ -9,7 +9,7 @@ import {
   ComposeAttach, composeAttachBudgetFor, composeAttachCap, COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
 } from "../app/components/ComposeAttach";
-import { optionsFromFacts, optionsFromMirror, resolveComposeFrom } from "../app/shell/compose-from";
+import { optionsFromFacts, optionsFromMirror, resolveComposeFrom } from "@ohmail/app-logic/writing/compose-from";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**

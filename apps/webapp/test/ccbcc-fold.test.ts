@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { ccBccOpen } from "../app/shell/RecipientField";
-import { formatRecipientChips } from "../app/shell/compose-from";
+import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
 
 /**
  * CC/BCC WAIT BEHIND THE TOGGLE — one rule, every composer instance.

@@ -93,6 +93,7 @@ function Harness() {
       <div className="rf-head" style={{ height: Number(params.get("head") ?? "120") }} />
       <div className="msg-body">
         <MessageBody
+          owner={null}
           messageId={ID}
           text=""
           html={html}

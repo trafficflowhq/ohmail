@@ -4383,10 +4383,10 @@ export interface MessageBodyProps {
   scheme?: "light" | "dark";
   /**
    * THE SCOPE the per-message "original" choice is kept under, handed by whoever mounts the body: today's views
-   * their shell's, the reader its host's. The body looks nobody up: handed none (`null`, or nothing on a bare
-   * mount), the choice holds for the mount alone and nothing is stored.
+   * their shell's, the reader its host's. Every mount hands it, and the body looks nobody up and takes no default:
+   * handed `null`, the choice holds for the mount alone and nothing is stored.
    */
-  owner?: string | null;
+  owner: string | null;
   /**
    * THE HOST DRAWS THE BODY'S CONTROLS. Present, the body draws none of its four controls ("Show images", the dark
    * toggle, the flip, the history) and reports them here instead, from an effect, never during render, and again only

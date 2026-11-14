@@ -14,8 +14,9 @@ import { Button, SettingsNote, SettingsRow, SettingsSection } from "@ohmail/ui";
 import {
   SUPPORT_ADDRESS, supportBlock, supportBody, supportFacts, supportMailto, type SupportSurface,
 } from "@trafficflow/core/diagnostics";
-import { defaultFrom, optionsFromFacts } from "./compose-from";
+import { defaultFrom, optionsFromFacts } from "@ohmail/app-logic/writing/compose-from";
 import { copyRefused, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { SupportSeed } from "@ohmail/app-logic/writing/composer-types";
 
 /** What the host knows about itself: which surface, which build, and the account where there is one. */
 export interface SupportHost {
@@ -31,13 +32,8 @@ export interface SupportHost {
   mailtoLeaves?: boolean;
 }
 
-/** The new message Write to us opens. `diag` is the block, so the composer can offer to remove it. */
-export interface SupportSeed {
-  to: string;
-  subject: string;
-  body: string;
-  diag: string;
-}
+/* The new message Write to us opens: the composer's own type, handed on under the name this pane always had. */
+export type { SupportSeed };
 
 /** The OS class from the browser's own words; the diagnostic builder narrows it again. */
 export function navigatorOs(nav: { platform?: string; userAgent?: string; userAgentData?: { platform?: string } } | undefined): string | null {

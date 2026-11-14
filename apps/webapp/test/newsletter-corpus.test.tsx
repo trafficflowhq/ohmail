@@ -39,7 +39,7 @@ async function render(text: string, html: string): Promise<HTMLDivElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { messageId: "m1", text, html })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, messageId: "m1", text, html })); });
   return host;
 }
 

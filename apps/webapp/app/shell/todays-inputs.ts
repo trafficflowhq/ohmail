@@ -11,7 +11,7 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import type { AwayTransport } from "./AwayResponderRow";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
-import type { DraftReplyWire } from "./draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import type { GapLettersTransport } from "./GapLettersNotice";
 import type { SupportHost } from "./HelpContactPane";
 import type { JunkWire } from "./junk-window";

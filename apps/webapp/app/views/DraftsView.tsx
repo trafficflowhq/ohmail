@@ -26,6 +26,7 @@ import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { ListEmpty } from "../shell/list-view";
+import type { DiscardRefusal } from "@ohmail/app-logic/writing/composer-types";
 
 /**
  * Is the engine still looking for this held send? `updatedAt` is the moment the row was left
@@ -38,12 +39,8 @@ function heldStillChecking(d: EngineDraft, now: Date): boolean {
   return Number.isFinite(at) && now.getTime() - at < HELD_SEND_RECHECK_MS;
 }
 
-/** The refusal a Discard came back with, rendered in its row — never a toast alone. */
-export interface DiscardRefusal {
-  draftId: string;
-  why: "still-sending" | "unknown-jar" | "cancel-unknown";
-  at: number;
-}
+/* The refusal a Discard came back with: the composer's own type, handed on under the name this view always had. */
+export type { DiscardRefusal };
 
 /** "you, and two others" — the recipients, as a line, or the empty-string for none. */
 function recipientLine(d: EngineDraft): string {

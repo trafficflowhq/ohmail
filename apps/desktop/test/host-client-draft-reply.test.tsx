@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
-import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { BearerManager } from "../../paired-page/src/bearer.js";
 import { HostGate } from "../../paired-page/src/HostGate.js";
 

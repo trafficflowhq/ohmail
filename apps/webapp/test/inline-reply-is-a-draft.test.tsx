@@ -8,6 +8,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
 import en from "../messages/en.json";
 import {
   DraftServer, FORWARD_PARTS, NOW, act, fillForward, forwardDock, message, mountShell, openForward, press, pressRestart, replyDraft, replySurface,
@@ -43,8 +44,8 @@ async function key(k: string): Promise<void> {
 }
 
 async function openReplyOn(s: DraftShell, id: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
+  await waitFor(() => s.el.querySelector(`.view-history :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+  await press(s.el.querySelector(`.view-history :is(.row, [role=option])[data-id='${id}']`), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
 }
@@ -73,7 +74,7 @@ const sendButton = (el: HTMLElement): HTMLButtonElement | undefined =>
 
 describe("a reply typed inline is a draft on the account", () => {
   it("the pause writes one row, and the next pause writes that row again", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
 
     const first = await typeAndPause(s, "See you on Thursday", 1);
@@ -87,7 +88,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 30_000);
 
   it("closed and opened again with Reply, it is the same row", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
     await typeAndPause(s, "Thursday works", 1);
     const row = rowsFor(s, "m1")[0]!.id;
@@ -103,7 +104,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 30_000);
 
   it("another device lists it, opens it on Reply, keeps writing it and sends it", async () => {
-    const first = await mountShell("#/ohbox", [message("m1")]);
+    const first = await mountShell("#/history", [message("m1")]);
     await openReplyOn(first, "m1");
     await typeAndPause(first, "Thursday works", 1);
     const written = first.store.list<EngineDraft>("draft");
@@ -119,7 +120,7 @@ describe("a reply typed inline is a draft on the account", () => {
     expect(draftsList(other.store, NOW).map((d) => d.id), "the phone's Drafts would not list it").toContain(row);
 
     await act(async () => {
-      window.location.hash = "#/ohbox";
+      window.location.hash = "#/history";
       window.dispatchEvent(new Event("hashchange"));
     });
     await openReplyOn(other, "m1");
@@ -135,7 +136,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("Send while the first save is in the air leaves no copy of the sent reply", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
@@ -149,7 +150,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 30_000);
 
   it("a reply edited on another device since opens here with that device's text", async () => {
-    const first = await mountShell("#/ohbox", [message("m1")]);
+    const first = await mountShell("#/history", [message("m1")]);
     await openReplyOn(first, "m1");
     await typeAndPause(first, "Thursday works", 1);
     const row = rowsFor(first, "m1")[0]!;
@@ -158,7 +159,7 @@ describe("a reply typed inline is a draft on the account", () => {
     // This browser keeps its storage; the phone has since written the row.
     stubDom();
     const edited = { ...row, body: "Thursday works, the phone says ten", updatedAt: "2026-09-27T09:10:00.000Z" };
-    const back = await mountShell("#/ohbox", [message("m1")], [edited]);
+    const back = await mountShell("#/history", [message("m1")], [edited]);
     await openReplyOn(back, "m1");
     expect(replySurface(back.el)!.textContent, "this browser's older text won over the phone's")
       .toContain("the phone says ten");
@@ -167,7 +168,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("typing this browser never saved, beside a draft written elsewhere, writes over neither", async () => {
-    const first = await mountShell("#/ohbox", [message("m1")]);
+    const first = await mountShell("#/history", [message("m1")]);
     await openReplyOn(first, "m1");
     // Typed and closed inside the pause: the words are in this browser only.
     await act(async () => { typeInto(replySurface(first.el)!, "the words typed here"); });
@@ -176,7 +177,7 @@ describe("a reply typed inline is a draft on the account", () => {
 
     stubDom();
     const phone = { ...replyDraft("d-phone", "m1", "the words typed on the phone"), updatedAt: "2026-09-27T09:10:00.000Z" };
-    const back = await mountShell("#/ohbox", [message("m1")], [phone]);
+    const back = await mountShell("#/history", [message("m1")], [phone]);
     await openReplyOn(back, "m1");
     expect(replySurface(back.el)!.textContent).toContain("the words typed here");
     const saved = await typeAndPause(back, "the words typed here, and more", 1);
@@ -186,7 +187,7 @@ describe("a reply typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("Send before the pause sends the text and leaves no draft behind", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
     await act(async () => { typeInto(replySurface(s.el)!, "On my way"); });
     await act(async () => { sendButton(s.el)!.click(); });
@@ -229,11 +230,11 @@ describe("a forward typed inline is a draft on the account", () => {
     const store = s.store;
     await unmountAll();
     stubDom();
-    return mountShell("#/ohbox", [withFiles("m1")], [], { store, parts: true });
+    return mountShell("#/history", [withFiles("m1")], [], { store, parts: true });
   };
 
   it("the pause writes one forward row, and the next pause writes that row", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the forward's first save", PAUSE_ROUNDS);
     const first = saves(s)[0]!;
@@ -248,7 +249,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("Esc and a reload bring back the To, the note and the trim; typing on writes the same row", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
@@ -266,7 +267,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 60_000);
 
   it("another device lists it, opens it whole on Forward, and Send sends that row with the kept files", async () => {
-    const first = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const first = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(first);
     await waitFor(() => saves(first).length === 1, "the first save", PAUSE_ROUNDS);
     const written = first.store.list<EngineDraft>("draft");
@@ -276,20 +277,27 @@ describe("a forward typed inline is a draft on the account", () => {
     stubDom();
     const other = await mountShell("#/drafts", [withFiles("m1")], written, { parts: true });
     await waitFor(() => other.el.querySelector(`.draft-row[data-id='${row}']`) != null, "the forward listed in Drafts");
-    await act(async () => { window.location.hash = "#/ohbox"; window.dispatchEvent(new Event("hashchange")); });
+    await act(async () => { window.location.hash = "#/history"; window.dispatchEvent(new Event("hashchange")); });
     await forwardOn(other);
     await waitFor(() => listed(other).length === 2, "the trim on the other device");
     expect([surface(other).textContent?.includes(NOTE), shown(other).includes(TO)], "the note and the To there").toEqual([true, true]);
     await rounds(110);
     expect(saves(other), "opening the row wrote it").toEqual([]);
-    await act(async () => { fwdSend(other).click(); });
+    /* The quoted header dates the original on the reader's clock, as it reads at the press. */
+    setActiveFormatZone("Europe/Zurich");
+    try {
+      await act(async () => { fwdSend(other).click(); });
+    } finally {
+      setActiveFormatZone(null);
+    }
     await waitFor(() => sends(other).length === 1, "the send on the wire");
     const m = sends(other)[0]!;
-    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address)]).toEqual([row, "m1", [PART_A, PART_B], [TO]]);
+    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address), m.forwardClock])
+      .toEqual([row, "m1", [PART_A, PART_B], [TO], { zone: "Europe/Zurich", locale: activeFormatLocale() }]);
   }, 60_000);
 
   it("Send while the first save is in the air leaves no forward draft", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
     await fill(s);
@@ -302,7 +310,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("Send before the pause leaves no draft, and Forward again opens empty", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await act(async () => { fwdSend(s).click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
@@ -314,7 +322,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("a reply and a forward on one message are two rows", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the forward's save", PAUSE_ROUNDS);
     await key("Escape");
@@ -326,7 +334,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("a reload inside the pause shows this browser's To and note", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await forwardOn(s);
     await waitFor(() => dock(s) != null, "the forward dock");
     await typeTo(s, `${TO}, `);
@@ -345,7 +353,7 @@ describe("a forward typed inline is a draft on the account", () => {
       subject: "Re-titled plans", body: "Their words", html: null, to: [{ address: TO, name: null }], cc: [], bcc: [],
       rationale: null, status: "draft", createdAt: "2026-09-27T08:40:00.000Z", updatedAt: "2026-09-27T08:40:00.000Z",
     } as unknown as EngineDraft;
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [retitled], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [retitled], { parts: true });
     await forwardOn(s);
     await waitFor(() => dock(s) != null, "the forward dock");
     expect(surface(s).textContent ?? "").not.toContain("Their words");
@@ -356,7 +364,7 @@ describe("a forward typed inline is a draft on the account", () => {
 
   it("with the sensitive ask unanswered nothing is written; once answered, the forward is a row", async () => {
     window.localStorage.setItem("ohmail.ui.reply:fwd:m1", "Seeded note");
-    const s = await mountShell("#/ohbox", [withFiles("m1", {
+    const s = await mountShell("#/history", [withFiles("m1", {
       sensitivity: { sensitive: true, category: "otp", no_ai: true, no_forward: true, no_kb: true, priority: true },
     })], [], { parts: true });
     await forwardOn(s);
@@ -373,7 +381,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 40_000);
 
   it("once the composer holds the forward row, Forward starts a new forward and never writes that row", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
@@ -382,7 +390,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await waitFor(() => s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`) != null, "the forward in Drafts");
     await press(s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`), "the forward draft");
     await waitFor(() => window.location.hash.startsWith("#/compose"), "the composer");
-    await act(async () => { window.location.hash = "#/ohbox"; window.dispatchEvent(new Event("hashchange")); });
+    await act(async () => { window.location.hash = "#/history"; window.dispatchEvent(new Event("hashchange")); });
     await rounds(4);
     const n = saves(s).length;
     await forwardOn(s);
@@ -396,7 +404,7 @@ describe("a forward typed inline is a draft on the account", () => {
 
   it("a forward row the composer edited and left opens on Forward with the composer's words, and keeps them", async () => {
     const other = { ...replyDraft("d-other", "m9", "Another draft"), inReplyToMessageId: null, subject: "Another letter" } as EngineDraft;
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [other], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [other], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
@@ -413,7 +421,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await waitFor(() => saves(s).length > n, "the composer's save", PAUSE_ROUNDS);
     await openFromDrafts("d-other");
     await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Another letter", "the other draft");
-    await route("#/ohbox");
+    await route("#/history");
     await forwardOn(s);
     await waitFor(() => (dock(s) ? surface(s).textContent ?? "" : "").includes("Composer words"), "the composer's words in the dock");
     await act(async () => { typeInto(surface(s), `${surface(s).textContent ?? ""} from the dock`); });
@@ -425,7 +433,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 90_000);
 
   it.each([false, true])("the composer's forward waiting, Cancel in the Forward dock keeps the composer's words and To (hand-off %s)", async (handOff) => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true, handOff, versions: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true, handOff, versions: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
@@ -444,7 +452,7 @@ describe("a forward typed inline is a draft on the account", () => {
       .find((b) => /^Send(?!.*later)/i.test((b.textContent ?? "").trim()))!;
     await act(async () => { send.click(); });
     await waitFor(() => s.engine.waitingSends().some((w) => w.draftId === row), "the composer's send waits", PAUSE_ROUNDS);
-    await route("#/ohbox");
+    await route("#/history");
     await rounds(4);
     await forwardOn(s);
     await waitFor(() => dock(s) != null, "the forward dock");
@@ -460,7 +468,7 @@ describe("a forward typed inline is a draft on the account", () => {
   }, 90_000);
 
   it("a forward sent from another device while its dock is open closes the dock, says so, and is not sent again", async () => {
-    const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
+    const s = await mountShell("#/history", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     await sentElsewhere(s, forwards(s)[0]!.id);
@@ -474,7 +482,7 @@ describe("a forward typed inline is a draft on the account", () => {
 
 describe("a reply's row sent from another device while its editor is open", () => {
   it("closes the editor, says so, and is not sent again", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
     await typeAndPause(s, "See you Thursday", 1);
     await sentElsewhere(s, rowsFor(s, "m1")[0]!.id);
@@ -499,10 +507,10 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
     await waitFor(() => inPlace(s.el) != null, "the reply in place", PAUSE_ROUNDS);
   };
 
-  it.each([["#/ohbox", "m1"], ["#/receipts", "p1"]])("%s: words, Esc, another view at once: the reply's one row holds them", async (at, id) => {
+  it.each([["#/history", "m1"], ["#/receipts", "p1"]])("%s: words, Esc, another view at once: the reply's one row holds them", async (at, id) => {
     const s = await mountShell(at, [message(id, (at === "#/receipts" ? { folder: "ohmail/Receipts" } : {}) as never)]);
-    if (at === "#/ohbox") await openReplyOn(s, id); else await openInPlace(s);
-    await act(async () => { typeInto((at === "#/ohbox" ? replySurface(s.el) : inPlace(s.el))!, BODY); });
+    if (at === "#/history") await openReplyOn(s, id); else await openInPlace(s);
+    await act(async () => { typeInto((at === "#/history" ? replySurface(s.el) : inPlace(s.el))!, BODY); });
     await key("Escape");
     await route("#/screener");
     await waitFor(() => rowsFor(s, id).length === 1, "the reply's row", SOON);
@@ -510,7 +518,7 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
   }, 40_000);
 
   it("a forward closed inside the pause keeps its To, files and note in its row", async () => {
-    const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { parts: true });
+    const s = await mountShell("#/history", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { parts: true });
     await fillForward(s, "colleague@example.net", "Have a look at these two");
     await key("Escape");
     await route("#/screener");
@@ -520,7 +528,7 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
   }, 40_000);
 
   it.each(["the pause fires", "Esc closes it"])("%s while the first save is on the wire: the newer words reach that row", async (how) => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     await openReplyOn(s, "m1");
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
@@ -536,7 +544,7 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
 
   it.each(["reply", "forward"])("a %s sent at once offline, then cancelled: one row holds its words, opened and left again", async (what) => {
     const fwd = what === "forward";
-    const s = await mountShell("#/ohbox", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { parts: fwd });
+    const s = await mountShell("#/history", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { parts: fwd });
     const rows = (): Array<string | null> => s.store.list<EngineDraft>("draft")
       .filter((d) => d.status === "draft" && (fwd ? d.forwardOfMessageId : d.inReplyToMessageId) === "m1").map((d) => d.body);
     const button = (word: string): HTMLButtonElement =>
@@ -599,7 +607,7 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
   ])("a %s, Cancel answered %s: one draft holds the newest words, on another device too", async (what, when) => {
     const fwd = what === "forward";
     const server = new DraftServer();
-    const s = await mountShell("#/ohbox", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { server, parts: fwd });
+    const s = await mountShell("#/history", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { server, parts: fwd });
     sendMakesItsRow(s, server);
     const surface = (): HTMLElement => (fwd ? forwardDock(s.el)?.querySelector<HTMLElement>(".rte-surface") : replySurface(s.el))!;
     if (fwd) await fillForward(s, "colleague@example.net", BODY);
@@ -625,7 +633,7 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     const cancelled = held(server);
     // Later: Reply (or Forward) again, more words, Esc and another view.
-    await route("#/ohbox");
+    await route("#/history");
     if (fwd) await openForward(s); else await openReplyOn(s, "m1");
     await waitFor(() => (surface()?.textContent ?? "").includes(BODY), "the words again");
     await act(async () => { typeInto(surface(), MORE); });
@@ -639,7 +647,7 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
 
   it("a letter, Cancel answered once back online, then closed: the composer keeps it in that one draft", async () => {
     const server = new DraftServer();
-    const s = await mountShell("#/ohbox", [message("m1")], [], { server });
+    const s = await mountShell("#/history", [message("m1")], [], { server });
     sendMakesItsRow(s, server);
     const set = async (sel: string, value: string): Promise<void> => {
       const input = s.el.querySelector<HTMLInputElement>(sel)!;
@@ -673,7 +681,7 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
 
   it("a reply whose Cancel could not be asked, pressed again and answered withdrawn: one draft, no second create", async () => {
     const server = new DraftServer();
-    const s = await mountShell("#/ohbox", [message("m1")], [], { server });
+    const s = await mountShell("#/history", [message("m1")], [], { server });
     sendMakesItsRow(s, server);
     await openReplyOn(s, "m1");
     await act(async () => { typeInto(replySurface(s.el)!, BODY); });
@@ -726,14 +734,14 @@ describe("two windows over one disk: a waiting send cancelled in the window that
     const server = new DraftServer();
     const locks = lockRegistry();
     const msgs = [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)];
-    const A = await mountShell("#/ohbox", msgs, [], { server, parts: fwd, locks });
-    const B = await mountShell("#/ohbox", msgs, [], { server, parts: fwd, locks });
+    const A = await mountShell("#/history", msgs, [], { server, parts: fwd, locks });
+    const B = await mountShell("#/history", msgs, [], { server, parts: fwd, locks });
     windows = [A, B];
     B.syncHeld.on = true;
     sendMakesItsRow(A, server);
     if (fwd) await fillForward(A, "colleague@example.net", BODY);
     else {
-      await press(A.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "A's row");
+      await press(A.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "A's row");
       await press(A.el.querySelector(".read-col .abar-reply"), "A's Reply");
       await waitFor(() => replySurface(A.el) != null, "A's reply editor");
       await act(async () => { typeInto(replySurface(A.el)!, BODY); });
@@ -745,7 +753,7 @@ describe("two windows over one disk: a waiting send cancelled in the window that
       .some((e) => e.entity.key === sendKey && e.entity.createdRow !== undefined), "B reads A's send and its row off the disk", PAUSE_ROUNDS);
     if (fwd) await openForward(B);
     else {
-      await press(B.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "B's row");
+      await press(B.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "B's row");
       await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply");
     }
     await waitFor(() => B.el.querySelector(".reply[data-reply-for]") != null, "B's dock", PAUSE_ROUNDS);

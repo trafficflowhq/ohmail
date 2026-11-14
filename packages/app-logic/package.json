@@ -46,6 +46,12 @@
       "node": "./dist/consent/index.js",
       "default": "./src/consent/index.ts"
     },
+    "./consent/consent-row": {
+      "types": "./src/consent/consent-row.ts",
+      "ohmail-source": "./src/consent/consent-row.ts",
+      "node": "./dist/consent/consent-row.js",
+      "default": "./src/consent/consent-row.ts"
+    },
     "./consent/consent-state": {
       "types": "./src/consent/consent-state.ts",
       "ohmail-source": "./src/consent/consent-state.ts",
@@ -57,6 +63,12 @@
       "ohmail-source": "./src/consent/consent-wire.ts",
       "node": "./dist/consent/consent-wire.js",
       "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/partition": {
+      "types": "./src/consent/partition.ts",
+      "ohmail-source": "./src/consent/partition.ts",
+      "node": "./dist/consent/partition.js",
+      "default": "./src/consent/partition.ts"
     },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
@@ -1042,6 +1054,12 @@
       "node": "./dist/session/confirm-schedule.js",
       "default": "./src/session/confirm-schedule.ts"
     },
+    "./session/day-clock": {
+      "types": "./src/session/day-clock.ts",
+      "ohmail-source": "./src/session/day-clock.ts",
+      "node": "./dist/session/day-clock.js",
+      "default": "./src/session/day-clock.ts"
+    },
     "./session/document-hidden": {
       "types": "./src/session/document-hidden.ts",
       "ohmail-source": "./src/session/document-hidden.ts",
@@ -1174,6 +1192,18 @@
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
     },
+    "./text/ai-refusal-copy": {
+      "types": "./src/text/ai-refusal-copy.ts",
+      "ohmail-source": "./src/text/ai-refusal-copy.ts",
+      "node": "./dist/text/ai-refusal-copy.js",
+      "default": "./src/text/ai-refusal-copy.ts"
+    },
+    "./text/format": {
+      "types": "./src/text/format.ts",
+      "ohmail-source": "./src/text/format.ts",
+      "node": "./dist/text/format.js",
+      "default": "./src/text/format.ts"
+    },
     "./text/idn": {
       "types": "./src/text/idn.ts",
       "ohmail-source": "./src/text/idn.ts",
@@ -1191,6 +1221,12 @@
       "ohmail-source": "./src/text/locale.ts",
       "node": "./dist/text/locale.js",
       "default": "./src/text/locale.ts"
+    },
+    "./text/row-copy": {
+      "types": "./src/text/row-copy.ts",
+      "ohmail-source": "./src/text/row-copy.ts",
+      "node": "./dist/text/row-copy.js",
+      "default": "./src/text/row-copy.ts"
     },
     "./text/translator": {
       "types": "./src/text/translator.ts",
@@ -1240,11 +1276,47 @@
       "node": "./dist/writing/compose-autosave.js",
       "default": "./src/writing/compose-autosave.ts"
     },
+    "./writing/compose-door": {
+      "types": "./src/writing/compose-door.ts",
+      "ohmail-source": "./src/writing/compose-door.ts",
+      "node": "./dist/writing/compose-door.js",
+      "default": "./src/writing/compose-door.ts"
+    },
+    "./writing/compose-from": {
+      "types": "./src/writing/compose-from.ts",
+      "ohmail-source": "./src/writing/compose-from.ts",
+      "node": "./dist/writing/compose-from.js",
+      "default": "./src/writing/compose-from.ts"
+    },
+    "./writing/composer-types": {
+      "types": "./src/writing/composer-types.ts",
+      "ohmail-source": "./src/writing/composer-types.ts",
+      "node": "./dist/writing/composer-types.js",
+      "default": "./src/writing/composer-types.ts"
+    },
     "./writing/draft-creates": {
       "types": "./src/writing/draft-creates.ts",
       "ohmail-source": "./src/writing/draft-creates.ts",
       "node": "./dist/writing/draft-creates.js",
       "default": "./src/writing/draft-creates.ts"
+    },
+    "./writing/draft-reply": {
+      "types": "./src/writing/draft-reply.ts",
+      "ohmail-source": "./src/writing/draft-reply.ts",
+      "node": "./dist/writing/draft-reply.js",
+      "default": "./src/writing/draft-reply.ts"
+    },
+    "./writing/forward-files": {
+      "types": "./src/writing/forward-files.ts",
+      "ohmail-source": "./src/writing/forward-files.ts",
+      "node": "./dist/writing/forward-files.js",
+      "default": "./src/writing/forward-files.ts"
+    },
+    "./writing/forward-send": {
+      "types": "./src/writing/forward-send.ts",
+      "ohmail-source": "./src/writing/forward-send.ts",
+      "node": "./dist/writing/forward-send.js",
+      "default": "./src/writing/forward-send.ts"
     },
     "./writing/mail-send": {
       "types": "./src/writing/mail-send.ts",
@@ -1252,17 +1324,59 @@
       "node": "./dist/writing/mail-send.js",
       "default": "./src/writing/mail-send.ts"
     },
+    "./writing/mail-send-text": {
+      "types": "./src/writing/mail-send-text.ts",
+      "ohmail-source": "./src/writing/mail-send-text.ts",
+      "node": "./dist/writing/mail-send-text.js",
+      "default": "./src/writing/mail-send-text.ts"
+    },
     "./writing/reply-autosave": {
       "types": "./src/writing/reply-autosave.ts",
       "ohmail-source": "./src/writing/reply-autosave.ts",
       "node": "./dist/writing/reply-autosave.js",
       "default": "./src/writing/reply-autosave.ts"
     },
+    "./writing/reply-done": {
+      "types": "./src/writing/reply-done.ts",
+      "ohmail-source": "./src/writing/reply-done.ts",
+      "node": "./dist/writing/reply-done.js",
+      "default": "./src/writing/reply-done.ts"
+    },
     "./writing/rich-text": {
       "types": "./src/writing/rich-text.ts",
       "ohmail-source": "./src/writing/rich-text.ts",
       "node": "./dist/writing/rich-text.js",
       "default": "./src/writing/rich-text.ts"
+    },
+    "./writing/send-line": {
+      "types": "./src/writing/send-line.ts",
+      "ohmail-source": "./src/writing/send-line.ts",
+      "node": "./dist/writing/send-line.js",
+      "default": "./src/writing/send-line.ts"
+    },
+    "./writing/send-release": {
+      "types": "./src/writing/send-release.ts",
+      "ohmail-source": "./src/writing/send-release.ts",
+      "node": "./dist/writing/send-release.js",
+      "default": "./src/writing/send-release.ts"
+    },
+    "./writing/sent-reveal": {
+      "types": "./src/writing/sent-reveal.ts",
+      "ohmail-source": "./src/writing/sent-reveal.ts",
+      "node": "./dist/writing/sent-reveal.js",
+      "default": "./src/writing/sent-reveal.ts"
+    },
+    "./writing/shell-compose": {
+      "types": "./src/writing/shell-compose.ts",
+      "ohmail-source": "./src/writing/shell-compose.ts",
+      "node": "./dist/writing/shell-compose.js",
+      "default": "./src/writing/shell-compose.ts"
+    },
+    "./writing/signature": {
+      "types": "./src/writing/signature.ts",
+      "ohmail-source": "./src/writing/signature.ts",
+      "node": "./dist/writing/signature.js",
+      "default": "./src/writing/signature.ts"
     },
     "./writing/send-lock": {
       "types": "./src/writing/send-lock.ts",

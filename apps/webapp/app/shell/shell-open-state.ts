@@ -35,7 +35,7 @@ import {
   type WaterlineMeta,
 } from "@ohmail/client-engine";
 import type { UndoToastFn } from "@ohmail/app-logic/press/undo-door";
-import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
+import { CURSOR_HINT_MS, placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "@ohmail/app-logic/keys/keymap";
 import type { MessageBarPanel } from "./message-chrome";
 import { createReadSetMemo } from "@ohmail/app-logic/reading/conversation-on-screen";
@@ -67,6 +67,8 @@ import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
  * means the message has left that pile, and looking forever would keep a `requestAnimationFrame`
  * loop alive for the life of the tab.
  */
+/** A seated place's list, where its rows stand: the frame's list section (today's views keep theirs under `.view`). */
+const SEATED_LIST = "section.fr-list";
 const LOCATE_FLASH_MS = 1600;
 const LOCATE_TIMEOUT_MS = 2000;
 
@@ -233,6 +235,13 @@ export interface ShellOpenStateInput {
   /** The derived stamp the mirror-reading effects are keyed on (`useDerivedVersion`). */
   derived: number;
   route: Route;
+  /** Is the place the address names still one of today's views? A seated place's letter is the frame's, not the sheet's. */
+  todaysNow: boolean;
+  /**
+   * Is a SEATED place on screen in ONE column (the frame's plan)? Then a letter stands over the list only while the
+   * address names it, as today's sheet stood there, and the cursor row names none.
+   */
+  seatedOneColumn: boolean;
   t: ReturnType<typeof useTranslations>;
   /** The undo door's toast (`undo-door.ts`): mark-all's Undo is an offer `z` takes back. */
   toast: UndoToastFn;
@@ -263,7 +272,7 @@ export interface ShellOpenStateInput {
 export type ShellOpenState = ReturnType<typeof useShellOpenState>;
 
 export function useShellOpenState({
-  engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
+  engine, reader, derived, route, todaysNow, seatedOneColumn, t, toast, mutateAndReport, mailState, screener,
   allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
   tagGroups, folderMessages, trashRows, decision,
 }: ShellOpenStateInput) {
@@ -302,7 +311,23 @@ export function useShellOpenState({
    * mirror re-issues entities per delta, so a held object would stop
    * tracking read state, tags and triage the moment the reader is open.
    */
-  const [readerFor, setReaderFor] = useState<string | null>(null);
+  const [readerFor, openSheetFor] = useState<string | null>(null);
+  /* TODAY'S SHEET NEVER OPENS OVER A SEATED PLACE: there the letter stands in the frame's reading column. Refused at
+     the one setter every path shares (a narrow open, a pending open, a reply under 700 wide); a close always passes.
+     WHERE THE SEATED PLACE STANDS IN ONE COLUMN, what asked for the sheet asked for the letter over the list: the
+     address names it and the frame draws it there (a row entered, a hit opened, a reply begun on the cursor row). */
+  const setReaderFor = useStableCallback((next: SetStateAction<string | null>): void => {
+    if (next === null || todaysNow) openSheetFor(next);
+    else if (seatedOneColumn && typeof next === "string") reflectMessage(route, next);
+  });
+  /* THE LETTER UP OVER THE LIST, whichever surface holds it: today's sheet, or at a seated place in one column the
+     frame's reading column over the list (the letter the address names). A verb that takes that letter away closes
+     it as it closed the sheet (`shell-verbs.ts`: a delete): there by taking it out of the address. */
+  const letterUp = readerFor ?? (seatedOneColumn ? route.messageId : null);
+  const closeLetterUp = useStableCallback((): void => {
+    if (readerFor !== null) openSheetFor(null);
+    else if (seatedOneColumn && route.messageId !== null) reflectMessage(route, null);
+  });
   /* The sheet the WIDTH raised (`crossNarrow` below), not a press: it takes focus at its own root,
      never on its back control, so the ↵ that would open the message does not close it. */
   const [crossedFor, setCrossedFor] = useState<string | null>(null);
@@ -678,7 +703,8 @@ export function useShellOpenState({
   const enterReader = useStableCallback((messageId: string) => {
     const opened = presented.get<EngineMessage>("message", messageId);
     setRowOpen(opened ? { id: messageId, target: rowOpenTarget(presented, opened, engine.openRowHeld()) } : null);
-    if (readColumnHidden()) setReaderFor(messageId);
+    // A seated place's one column is the frame's plan to say; today's views ask today's rule.
+    if (seatedOneColumn || readColumnHidden()) setReaderFor(messageId);
   });
 
   /**
@@ -1088,7 +1114,18 @@ export function useShellOpenState({
      none. One id at a time, and the bump re-runs the mirror below when it lands. */
   const routeFetch = useRef<{ id: string; found: EngineMessage | false | null } | null>(null);
   const [routeFetched, setRouteFetched] = useState(0);
+  /* Did a seated place stand in one column at the mirror's last pass? Its crossing to two is read below. */
+  const wasSeatedOneColumn = useRef(seatedOneColumn);
   useEffect(() => {
+    /* A SEATED OHBOX CROSSES TO TWO COLUMNS WITH A LETTER OVER ITS LIST: the letter on screen keeps the screen and
+       the cursor comes to it, as today's crossing made the sheet's letter the column's. (On one column `j` may have
+       moved the cursor under the letter; left alone, the pass below would name the cursor's letter instead.) */
+    const widened = wasSeatedOneColumn.current && !seatedOneColumn;
+    wasSeatedOneColumn.current = seatedOneColumn;
+    if (widened && route.view === "ohbox" && route.messageId !== null && ohboxSel !== route.messageId) {
+      setOhboxSel(route.messageId);
+      return;
+    }
     // A VIEW CHANGE is the one commit where `readerFor` may be a value already condemned: the
     // transition effect above queues `setReaderFor(null)` in this same commit, and reflecting
     // the closure's stale reader into the NEW view's bare route would push `m/<old>` and then
@@ -1105,7 +1142,12 @@ export function useShellOpenState({
     // it must take the claim out of the bar with it.
     const openOnScreen: string | null =
       (viewChanged ? null : readerFor)
-      ?? (route.view === "ohbox" && !readColumnHidden() ? ohboxSel : null)
+      /* THE SEATED OHBOX: where two columns stand the selection is the letter beside the list, at every such width.
+         Where one stands the claim is the address's own: the cursor row names no letter there (`j` walks the list
+         and shows none), and a letter stands over the list only because the address says so. */
+      ?? (route.view !== "ohbox" ? null
+        : todaysNow ? (readColumnHidden() ? null : ohboxSel)
+        : seatedOneColumn ? route.messageId : ohboxSel)
       // A column's pick only while its column stands; a stream's card is the reading at any width.
       ?? (!viewChanged && viewPick?.place === placeOf(route)
         && (STREAM_VIEWS.has(route.view) || !readColumnHidden()) ? viewPick.id : null);
@@ -1126,7 +1168,9 @@ export function useShellOpenState({
           // themselves is scroll posture this bar never claimed, and it stays open.
           setReaderFor(null);
           setViewPick(null);
-          if (route.view === "ohbox") setOhboxSel(null);
+          /* Over a seated Ohbox in one column the address claimed the letter over the list, never the cursor row:
+             the letter closes with the claim and the cursor stays on the row read, as it did under today's sheet. */
+          if (route.view === "ohbox" && !seatedOneColumn) setOhboxSel(null);
           if (route.view === "reads") setReadsCur(null);
           if (route.view === "receipts") setReceiptsCur(null);
           if (leftId && (route.view === "reads" || route.view === "receipts")) {
@@ -1180,14 +1224,17 @@ export function useShellOpenState({
         return;
       }
       if (route.view === "ohbox" && held) {
+        /* A ROW PRESS AT THE SEATED OHBOX names its letter in the address in the tick it selects it, so the state
+           already agrees: that press's own echo, no arrival. Its seed stands and nothing is marked as found. */
+        const arrived = ohboxSel !== id;
         setOhboxSel(id);
         // A link, a reload or Back is no row press (`ownFaceFor`).
-        setRowSeed(null);
+        if (arrived) setRowSeed(null);
         // The overlay either IS this reading (narrow) or must not stand over it: at a split
         // width a stale reader left by an earlier off-pile route would sit over the column
         // and re-claim the bar on a later pass.
         setReaderFor(readColumnHidden() ? id : null);
-        setLocated(id);
+        if (arrived) setLocated(id);
       } else if ((route.view === "reads" || route.view === "receipts") && held) {
         (route.view === "reads" ? setReadsCur : setReceiptsCur)(id);
         setJump({ view: route.view, id });
@@ -1211,9 +1258,10 @@ export function useShellOpenState({
       routeMsgAgreed.current = `${route.view}|${openOnScreen ?? ""}`;
       reflectMessage(route, openOnScreen);
     }
-    // `route` is a fresh object per hash: the fields below are the identity that matters.
+    // `route` is a fresh object per hash: the fields below are the identity that matters. The seated place's column
+    // count is one of them: a crossing to two columns stands the cursor row's letter beside the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.messageId, route.view, readerFor, ohboxSel, viewPick, derived, mailState.settled, pileHolds, reader, routeFetched]);
+  }, [route.messageId, route.view, readerFor, ohboxSel, viewPick, derived, mailState.settled, pileHolds, reader, routeFetched, seatedOneColumn]);
 
   /**
    * Locate the row, in whichever view it landed. One DOM effect and not four props: a search hit can land in four
@@ -1253,7 +1301,10 @@ export function useShellOpenState({
         typeof document === "undefined"
           ? null
           : (queryVisible(`.view :is(.row, [role=option])[data-id="${CSS.escape(located)}"]`) ??
-             queryVisible(`.view :is(.row, [role=option])[data-ids~="${CSS.escape(located)}"]`));
+             queryVisible(`.view :is(.row, [role=option])[data-ids~="${CSS.escape(located)}"]`) ??
+             /* …and in a seated place's list, by the same two marks. */
+             queryVisible(`${SEATED_LIST} [role=option][data-id="${CSS.escape(located)}"]`) ??
+             queryVisible(`${SEATED_LIST} [role=option][data-ids~="${CSS.escape(located)}"]`));
       if (row) {
         done = true;
         found = row;
@@ -1309,6 +1360,10 @@ export function useShellOpenState({
      * than to find out then. Coherence, not a fixed bug — nothing observable changes today.
      */
     readerMessage ??
+    /* A SEATED PLACE'S LETTER OVER ITS LIST (one column) is the open reader too, as today's sheet was: a verb the shell
+       still binds there (`s`) acts on the letter being read, never on a cursor row moved under it. No guard fails if
+       this line is deleted either: the two differ only once `j` or `k` moved the cursor under an open letter. */
+    (seatedOneColumn && route.messageId !== null ? presented.get<EngineMessage>("message", route.messageId) : undefined) ??
     (route.view === "ohbox"
       ? selectedOhbox
       : route.view === "reads"
@@ -1354,22 +1409,26 @@ export function useShellOpenState({
   const placeCursor = useStableCallback((label: string): boolean => {
     if (!SHELL_CURSOR_VIEWS.has(route.view)) return false;
     const current = focused?.id ?? null;
+    /* The seated Ohbox's rows stand in the frame's list section, and its line is said where a report is said
+       there: the frame's slot, through this shell's own door. */
+    const ohboxRows = todaysNow ? ".view" : SEATED_LIST;
+    const say = todaysNow ? sayCursorPlaced : (verb: string) => toast(t("cursor.placed", { label: verb }), { duration: CURSOR_HINT_MS });
     /* A folded row carries its open target's `data-id`, not always its newest member's
        (`allOhbox[0]`): seed from the row on screen that holds it. */
     const lead = allOhbox[0];
     const leadRowId = route.view !== "ohbox" || lead == null || typeof document === "undefined"
       ? undefined
-      : queryVisible<HTMLElement>(`.view .row[data-ids~="${CSS.escape(lead.id)}"]`)?.dataset.id;
+      : queryVisible<HTMLElement>(`${ohboxRows} :is(.row, .oh-row)[data-ids~="${CSS.escape(lead.id)}"]`)?.dataset.id;
     const leadTarget = leadRowId === undefined ? undefined : allOhbox.find((m) => m.id === leadRowId);
     const host: CursorHost =
       route.view === "ohbox"
-        ? { rows: leadTarget ? [leadTarget] : allOhbox, current, scope: ".view", select: selectOhboxRow }
+        ? { rows: leadTarget ? [leadTarget] : allOhbox, current, scope: ohboxRows, select: selectOhboxRow }
         : route.view === "reads"
           ? { rows: [...partition.fresh, ...partition.seen], current, scope: ".view", select: setReadsCur }
           : route.view === "receipts"
             ? { rows: receipts, current, scope: ".view", select: setReceiptsCur }
             : { rows: [], current, scope: ".view", select: () => {} };
-    return placeFirstRow(host, label, sayCursorPlaced);
+    return placeFirstRow(host, label, say);
   });
   /* `global`: the claim a VIEW holding its own cursor beats, so a split view places its own row
      rather than this shell declining for a route it holds no cursor for. */
@@ -1382,6 +1441,10 @@ export function useShellOpenState({
     doneSetFor,
     pinsSpentFor,
     selectOhboxRow,
+    /** The Ohbox's cursor row, as this shell holds it: what a seated Ohbox marks where one column stands. */
+    ohboxCursor: ohboxSel,
+    letterUp,
+    closeLetterUp,
     absoluteTime,
     barPanel,
     chipState,

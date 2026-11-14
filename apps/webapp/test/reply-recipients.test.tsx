@@ -13,7 +13,7 @@ import {
   formatRecipientLine,
   replyEnvelopeOnWire,
   replyEnvelopePlan,
-} from "../app/shell/compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 import { parseRecipients } from "@ohmail/app-logic/writing/compose";
 import { canSend } from "@ohmail/app-logic/writing/mail-send";
 
@@ -184,7 +184,7 @@ async function mountShell(): Promise<void> {
     );
   });
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  // Open a message (the resting Ohbox opens none by itself), then its reply editor.
+  // Step to a message with the product's own key, then open its reply editor.
   await key("j");
   await key("r");
 }
@@ -255,7 +255,7 @@ async function settle(): Promise<void> {
 
 beforeEach(() => {
   setViewport();
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/history";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
 });
 
@@ -314,8 +314,8 @@ describe("ONE set of own addresses decides who Reply all offers AND who it sends
      */
     const src = readFileSync(
       [
-        resolve(process.cwd(), "app/shell/shell-compose.ts"),
-        resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"),
+        resolve(process.cwd(), "../../packages/app-logic/src/writing/shell-compose.ts"),
+        resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"),
       ].find(existsSync)!,
       "utf8",
     );

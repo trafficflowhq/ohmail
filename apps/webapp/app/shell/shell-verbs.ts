@@ -44,7 +44,7 @@ import {
 } from "@ohmail/client-engine";
 import { type ToastFn } from "@ohmail/ui";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
-import { replyAllRecipients } from "./compose-from";
+import { replyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
@@ -83,7 +83,7 @@ import {
   type ScreeningToastKey,
   type SenderScreening,
 } from "@ohmail/app-logic/press/sender-screening";
-import type { ShellCompose } from "./shell-compose";
+import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
@@ -194,9 +194,12 @@ export interface ShellVerbsInput {
   doneSetFor?: ShellOpenState["doneSetFor"];
   /** The pins a delete spends at the press (`pinsSpentBy`); the engine spends every other filing's. */
   pinsSpentFor?: ShellOpenState["pinsSpentFor"];
-  /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
-  readerFor: ShellOpenState["readerFor"];
-  setReaderFor: ShellOpenState["setReaderFor"];
+  /**
+   * The letter that is up over the list (today's sheet's, or a seated place's letter over its list on one column),
+   * and its close: a delete or restore closes it only over ITS own message.
+   */
+  letterUp: ShellOpenState["letterUp"];
+  closeLetterUp: ShellOpenState["closeLetterUp"];
   setPicker: ShellOpenState["setPicker"];
   setPickerIds: ShellOpenState["setPickerIds"];
   setSenderMenu: ShellOpenState["setSenderMenu"];
@@ -207,7 +210,7 @@ export interface ShellVerbsInput {
   openForward: ShellCompose["openForward"];
   openReply: ShellCompose["openReply"];
   /** The drafter, opened over the editor the `draft` verb has just raised. */
-  draftReply: Pick<ShellCompose["draftReply"], "open">;
+  draftReply: Pick<NonNullable<ShellCompose["draftReply"]>, "open"> | null;
   /** Whether the open editor already answers everyone — a drafted text may not narrow it. */
   replyAll: boolean;
   /** The inline reply's id, the shell's own state, read only to keep that audience. */
@@ -223,7 +226,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesTravel = false,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, letterUp, closeLetterUp, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -953,7 +956,8 @@ export function useShellVerbs({
    * is `sender-hit.ts` — a pure function of one element, so which elements count as "the sender" can be asserted
    * without standing up an engine and a router.
    */
-  const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement>) => {
+  /* A press as React hands it on the stage, or as the page hands it for a seated list (which stands outside it). */
+  const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement> | MouseEvent) => {
     if (e.shiftKey) return;
     const hit = senderHitOf(e.target as HTMLElement);
     if (!hit) return;
@@ -1140,7 +1144,8 @@ export function useShellVerbs({
           // The open KEEPS the audience an editor already holds on this message — a drafted
           // text bought for a reply-all must not silently narrow the envelope to the sender.
           openReply(m.id, replyTo === m.id && replyAll);
-          draftReply.open(m.id);
+          // A host with no drafter has no control: the editor opens and nothing is offered.
+          if (draftReply !== null) draftReply.open(m.id);
           break;
         /**
          * THE THREE HORIZONS ARE TOGGLES — the way OUT of a pile: The wire has carried `state:"none"` since the
@@ -1259,8 +1264,8 @@ export function useShellVerbs({
              a refused reader delete closed the reading sheet over the very message it had just
              declined to touch — the person is left looking at a list, told nothing moved, with
              the message they were reading gone from the screen (review finding). */
-          if (removeSpending([{ id: m.id, mailboxId: m.mailboxId }]) && readerFor === m.id) {
-            setReaderFor(null);
+          if (removeSpending([{ id: m.id, mailboxId: m.mailboxId }]) && letterUp === m.id) {
+            closeLetterUp();
           }
           break;
         }
@@ -1283,8 +1288,8 @@ export function useShellVerbs({
            * arm's own ordering: reversed, a refused reader restore closed the sheet over the very message it had
            * declined to touch.
            */
-          if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
-            setReaderFor(null);
+          if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && letterUp === m.id) {
+            closeLetterUp();
           }
           break;
         }

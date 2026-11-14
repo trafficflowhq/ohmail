@@ -24,7 +24,7 @@ import {
    close a runtime cycle with `screener-state.ts`, which reads this file's overlay type. */
 import type { PendingDecision } from "@ohmail/app-logic/screener/screener-state";
 import type { SuggestStanding } from "./no-suggestion";
-import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
+import { aiRefusalKey, clearedByAccess } from "@ohmail/app-logic/text/ai-refusal-copy";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 
 /**

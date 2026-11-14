@@ -65,7 +65,7 @@ const estimatedStoredEmails = (storageBytes: number): number =>
  *    count is `storageBytes / BYTES_PER_STORED_EMAIL_ESTIMATE`, and this file is what stops the
  *    copy and the arithmetic parting company — the exact failure mode the mailbox count already
  *    had once.
- *  · **THE CLIENT'S OWN DRAFT PRICE.** `apps/webapp/app/shell/draft-reply.ts` states the price of
+ *  · **THE CLIENT'S OWN DRAFT PRICE.** `packages/app-logic/src/writing/draft-reply.ts` states the price of
  *    a draft to the person about to buy one, as a literal, because the webapp takes no dependency
  *    on `packages/db`. That literal is read out of the source here and compared to
  *    the program's card price for `draft`.
@@ -193,7 +193,7 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
    */
   it("the webapp quotes the price the gate charges for a draft", () => {
     const src = readFileSync(
-      fileURLToPath(new URL("../apps/webapp/app/shell/draft-reply.ts", import.meta.url)), "utf8");
+      fileURLToPath(new URL("../packages/app-logic/src/writing/draft-reply.ts", import.meta.url)), "utf8");
     const m = src.match(/export const DRAFT_REPLY_COST_CREDITS = (\d+);/);
     expect(m, "DRAFT_REPLY_COST_CREDITS is not declared as a plain integer literal").not.toBeNull();
     expect(Number(m![1])).toBe(PLANE_PRICES.draft);

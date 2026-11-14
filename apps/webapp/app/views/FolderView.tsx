@@ -18,7 +18,7 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import { presentsUnread, type EngineMessage, type FolderEntity, type TagDTO } from "@ohmail/client-engine";
-import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner } from "@ohmail/ui";
+import { ListGroupLabel, ListPane, ListRows, MessageRow, Spinner, TAG_HUES } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
@@ -106,7 +106,7 @@ export function FolderView({
 }) {
   const t = useTranslations("folder");
   const { row: senderCheckRow } = useSenderCheckWords();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const to = useTranslations("ohbox");
   /* The reading column's region name — shared with every split view (`ReadColumn`). */
   const tReader = useTranslations("reader");
@@ -354,7 +354,7 @@ export function FolderView({
                       {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                       hasAttachment={m.hasAttachments}
                       protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-                      tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+                      tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
                       onClick={() => openRow(m)}
                     />
                   </div>
@@ -396,7 +396,7 @@ export function FolderView({
                   {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
                   hasAttachment={m.hasAttachments}
                   protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+                  tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
                   onClick={() => openRow(m)}
                 />
               ))}

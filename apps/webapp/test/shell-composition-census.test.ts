@@ -41,6 +41,17 @@ const ORDER: ReadonlyArray<{ hook: string; frame: string }> = [
 ];
 
 /**
+ * THE TWO FRAMES CUT OUT FOR THE MAIL GROUND, each with the frame that makes its one call. The consent row's call
+ * left `AppShell.tsx` and the partition's derivation left `shell-derivations.ts`; the old shell still makes both
+ * calls, where the lines stood. They are frames of the manifest and no part of the ruled order: once each, in the
+ * caller named, and in no other frame.
+ */
+const CUT: ReadonlyArray<{ hook: string; frame: string; caller: string }> = [
+  { hook: "useConsentRow", frame: "consent-row.ts", caller: "AppShell.tsx" },
+  { hook: "usePartitionOf", frame: "partition.ts", caller: "shell-derivations.ts" },
+];
+
+/**
  * THE RULING'S OWN FIGURE (§2, "expected end state"): `ShellInner`'s remaining logic at ≈ 900 +
  * the glue the ruling leaves in it. The whole file's line ceiling is retired: it counted
  * lines four legitimate rows added and measured no behaviour.
@@ -98,6 +109,20 @@ function hookCallsIn(text: string, label: string): Array<{ hook: string; pos: nu
   };
   ts.forEachChild(sf, visit);
   return out.sort((a, b) => a.pos - b.pos);
+}
+
+/** Every call of one named hook in a source, by a parse: a name in a comment or in a declaration is not a call. */
+function callsOf(text: string, label: string, hook: string): number[] {
+  const sf = parseText(text, label);
+  const out: number[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === hook) {
+      out.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return out;
 }
 
 /** The reader under test: the order the shell calls the six hooks in, or a refusal by name. */
@@ -176,17 +201,33 @@ describe("the shell's six hooks are called once each, in the ruled order", () =>
 
 describe("the order list and the frame manifest are one claim", () => {
   it("names the same frames as `SHELL_FRAMES`, less the composition root", () => {
-    const framesInOrder = ORDER.map((o) => o.frame).sort();
+    const framesInOrder = [...ORDER, ...CUT].map((o) => o.frame).sort();
     const manifest = SHELL_FRAMES.filter((f) => f !== "AppShell.tsx").slice().sort();
     expect(framesInOrder).toEqual(manifest);
   });
 
   it("every frame in the order list exports the hook the shell calls", () => {
-    for (const { hook, frame } of ORDER) {
+    for (const { hook, frame } of [...ORDER, ...CUT]) {
       const path = resolve(ROOT, shellFramePath(frame));
       expect(existsSync(path), shellFramePath(frame)).toBe(true);
       expect(readFileSync(path, "utf8")).toContain(`export function ${hook}(`);
     }
+  });
+
+  /**
+   * A cut frame's hook has ONE caller among the frames. A second call is a second consent row (the wire asked
+   * twice) or a second partition (the engine told its cutline twice), in the one composition.
+   */
+  it("calls each cut frame's hook once, in the frame that makes its call, and in no other", () => {
+    for (const { hook, caller } of CUT) {
+      const callers = SHELL_FRAMES.flatMap((frame) => {
+        const text = readFileSync(resolve(ROOT, shellFramePath(frame)), "utf8");
+        return callsOf(text, frame, hook).map(() => frame);
+      });
+      expect(callers, `${hook} among the shell's frames`).toEqual([caller]);
+    }
+    const twice = `function __twice() { return useConsentRow(undefined as never); }\n`;
+    expect(callsOf(`${source}\n${twice}`, "AppShell.tsx.doubled", "useConsentRow")).toHaveLength(2);
   });
 
   /** The manifest resolves — `shellFramePaths` refuses a frame the tree does not have. */

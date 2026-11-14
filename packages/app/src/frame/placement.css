@@ -90,6 +90,11 @@
   min-height: 0;
 }
 
+/* A kept body stays mounted while a place of another body is on screen: its box is hidden and takes no cell. */
+.fr-wide[hidden] {
+  display: none;
+}
+
 /* The list's column is one cell: what stands in it fills it. */
 .fr-list {
   display: grid;

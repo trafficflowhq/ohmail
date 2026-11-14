@@ -4,27 +4,29 @@
  * provider's: the frame writes `data-face` only where it finds none, and takes away only what it wrote. The document
  * is the one the root element was drawn in, never a global.
  */
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, type ReactNode, type RefObject } from "react";
 import { useGlass } from "./glass.js";
 import { ROOT_ATTRIBUTES, type RootAttribute } from "./root-attributes.js";
 
 export function FrameRoot({
+  drawn,
   attributes,
   held,
   children,
 }: {
+  /** The root element, held by the frame: a part that needs its window reads it here and draws no node to find it. */
+  drawn: RefObject<HTMLDivElement | null>;
   attributes: Record<RootAttribute, string | null>;
   held: boolean;
   children: ReactNode;
 }) {
-  const drawn = useRef<HTMLDivElement>(null);
   useGlass(drawn);
   useLayoutEffect(() => {
     const root = drawn.current!.ownerDocument.documentElement;
     if (root.hasAttribute("data-face")) return;
     root.setAttribute("data-face", "paper");
     return () => root.removeAttribute("data-face");
-  }, []);
+  }, [drawn]);
   useLayoutEffect(() => {
     const root = drawn.current!.ownerDocument.documentElement;
     const before = ROOT_ATTRIBUTES.map((name) => [name, root.getAttribute(name)] as const);
@@ -39,7 +41,7 @@ export function FrameRoot({
         else root.setAttribute(name, value);
       }
     };
-  }, [attributes]);
+  }, [drawn, attributes]);
   return (
     <div ref={drawn} className="oh-root fr-root" data-held={held ? "" : undefined}>
       {children}

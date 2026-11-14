@@ -20,7 +20,7 @@ import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImpor
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { OlderBodyWire } from "../../webapp/app/shell/older-body";
 import type { TrashWire } from "../../webapp/app/shell/trash-window";
-import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { olderBodyVia } from "@ohmail/client-engine";
 import { consentVia } from "../../desktop/src/consent-wire.js";
 import { draftReplyVia } from "../../desktop/src/draft-reply-wire.js";

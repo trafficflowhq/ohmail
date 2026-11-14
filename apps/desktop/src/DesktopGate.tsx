@@ -32,7 +32,7 @@ import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
-import { goCompose } from "../../webapp/app/shell/compose-door";
+import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { agoStamp } from "../../webapp/app/shell/format";
 import {
@@ -1578,7 +1578,7 @@ function useUnreadSink(): (unread: number) => void {
 export function runMenuCommand(command: MenuCommand): void {
   switch (command) {
     case "compose":
-      goCompose();
+      goCompose(() => go("compose"));
       return;
     case "settings":
       go("settings");

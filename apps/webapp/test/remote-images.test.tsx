@@ -155,6 +155,7 @@ function Harness({
     "div",
     null,
     h(MessageBody, {
+      owner: null,
       text: "plain",
       html,
       // The THREE-TERM OR the pane uses, copied here on purpose: a harness that only ored the
@@ -1010,6 +1011,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
     const asked: string[][] = [];
     const three = ICONS.slice(0, 3);
     const body = (held: string[]) => h(MessageBody, {
+      owner: null,
       text: "plain", html: canvas(three), remoteLoaded: true, imageProxy: null,
       resolvedRemoteImages: new Map(held.map((u) => [u, PNG_1X1] as const)),
       onRemoteImages: (urls: string[]) => { asked.push(urls); },
@@ -1097,6 +1099,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
     });
     const held = () => new Map(ICONS.map((u) => [u, PNG_1X1] as const));
     const body = () => h(MessageBody, {
+      owner: null,
       text: "plain", html: canvas(ICONS), remoteLoaded: true, imageProxy: null,
       resolvedRemoteImages: held(), onRemoteImages: () => {},
     });
@@ -1141,7 +1144,7 @@ describe("a measurement whose inputs have not moved writes nothing", () => {
       return heights.filter((v) => /height:\s*600px/.test(v)).length;
     };
     await act(async () => {
-      root!.render(h(MessageBody, { text: "plain", html: HTML, remoteLoaded: false, imageProxy: null }));
+      root!.render(h(MessageBody, { owner: null, text: "plain", html: HTML, remoteLoaded: false, imageProxy: null }));
     });
     for (let i = 0; i < 5; i += 1) await settle();
     expect(probes(), "the open probed the frame more than once").toBe(1);

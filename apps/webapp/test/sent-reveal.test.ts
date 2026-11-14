@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
 import {
   REVEAL_MARGIN_PX, REVEAL_MAX_MS, REVEAL_MIN_MS, easeScroll, revealDuration, revealIn,
-} from "../app/shell/sent-reveal";
+} from "@ohmail/app-logic/writing/sent-reveal";
 import { createThreadReadDom } from "@ohmail/app-logic/reading/reader-seen";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 

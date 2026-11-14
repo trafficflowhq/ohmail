@@ -85,6 +85,10 @@ export function useReadWiring(
     }
   };
   const landed = selected != null && landedOn === selected.id;
+  /* A key landed on another letter and the selection has not followed yet (a seated list's selection is the address,
+     named a commit after the key): this letter is being left. Unless it was entered it stays the preview it was, so
+     nothing of a letter only passed is read or asked for in that commit. */
+  const leaving = selected != null && landedOn !== null && landedOn !== selected.id;
   const entered = record?.entered ?? false;
   const wiring = useMemo<ThreadReadWiring | null>(
     () =>
@@ -98,7 +102,7 @@ export function useReadWiring(
             walk,
             hold: unreadHold,
             restMs: landed ? LANDING_REST_MS : undefined,
-            previewing: landed && !entered && stayedOn !== record,
+            previewing: (landed && stayedOn !== record && !entered) || (leaving && !entered),
             onStay: () => setStayedOn(record),
           }
         : null,
@@ -110,6 +114,7 @@ export function useReadWiring(
       walk,
       unreadHold,
       landed,
+      leaving,
       entered,
       stayedOn,
       setStayedOn,
