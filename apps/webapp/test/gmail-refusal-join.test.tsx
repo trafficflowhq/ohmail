@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { launchRefused } from "@trafficflow/services/mail";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 type Messages = typeof en;
 const HINTS = ["app_password_required", "invalid", "web_login", "imap_disabled"] as const;
@@ -76,14 +77,10 @@ async function joinGmail(messages: Messages = en) {
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
   expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_mailbox_title);
-  const tile = [...host.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => (b.textContent ?? "").startsWith("Gmail"));
-  await act(async () => { tile!.click(); });
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
-  };
+  /* The step is the one connect form: its fields by their labels, its tiles by their names, its refusal by its role. */
+  const probes = mailboxProbes(host, messages, act);
+  await probes.choose("Gmail");
+  const { type } = probes;
   await type("join-mb-address", "pat@gmail.test");
   await type("join-mb-pass", "the-google-password");
   const connect = async () => {
@@ -92,7 +89,7 @@ async function joinGmail(messages: Messages = en) {
     await act(async () => { button!.click(); });
     await settle();
   };
-  const refusal = () => host.querySelector(".join-error.at-press")?.textContent ?? null;
+  const { refusal } = probes;
   const helpLinks = () => [...host.querySelectorAll("a")].filter((a) => a.getAttribute("href") === LINKS.help).length;
   return { host, connect, refusal, helpLinks };
 }

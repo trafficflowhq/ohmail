@@ -16,6 +16,7 @@ describe("the demo's host", () => {
 
   it("hands no wire, read, feature or signal to the invented world", () => {
     expect(Object.values(host.wires).every((w) => w === NONE)).toBe(true);
+    expect(host.wires.connect).toBe(NONE);
     expect(host.reads).toEqual({ mailboxes: NONE, copyAge: NONE, access: NONE });
     expect(FEATURE_NAMES.filter((f) => host.features[f] !== NONE)).toEqual([]);
     expect(Object.values(host.signals).every((s) => s === NONE)).toBe(true);

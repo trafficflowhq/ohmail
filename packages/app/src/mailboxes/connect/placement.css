@@ -1,0 +1,9 @@
+/* The connect form's own placement: where its parts stand, never how they look. Own classes: `mbx-`. */
+
+/* The form's parts, one under the other. */
+.mbx-connect-form,
+.mbx-connect-part {
+  display: grid;
+  gap: var(--s4);
+  min-width: 0;
+}

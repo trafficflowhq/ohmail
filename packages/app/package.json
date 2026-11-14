@@ -280,6 +280,30 @@
       "node": "./dist/piles/index.js",
       "default": "./src/piles/index.ts"
     },
+    "./mailboxes": {
+      "types": "./src/mailboxes/index.ts",
+      "ohmail-source": "./src/mailboxes/index.ts",
+      "node": "./dist/mailboxes/index.js",
+      "default": "./src/mailboxes/index.ts"
+    },
+    "./mailboxes/connect": {
+      "types": "./src/mailboxes/connect/index.ts",
+      "ohmail-source": "./src/mailboxes/connect/index.ts",
+      "node": "./dist/mailboxes/connect/index.js",
+      "default": "./src/mailboxes/connect/index.ts"
+    },
+    "./mailboxes/connect/contract": {
+      "types": "./src/mailboxes/connect/contract.ts",
+      "ohmail-source": "./src/mailboxes/connect/contract.ts",
+      "node": "./dist/mailboxes/connect/contract.js",
+      "default": "./src/mailboxes/connect/contract.ts"
+    },
+    "./mailboxes/first-run": {
+      "types": "./src/mailboxes/first-run/index.ts",
+      "ohmail-source": "./src/mailboxes/first-run/index.ts",
+      "node": "./dist/mailboxes/first-run/index.js",
+      "default": "./src/mailboxes/first-run/index.ts"
+    },
     "./doors": {
       "types": "./src/doors/index.ts",
       "ohmail-source": "./src/doors/index.ts",

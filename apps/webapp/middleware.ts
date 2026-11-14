@@ -394,6 +394,9 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // when no session cookie came with it — that is the whole `SameSite=Strict` cross-site
   // case — so a CDN must not be allowed to serve one browser's resume splash to another.
   if (token !== null || marker) response.headers.set("Cache-Control", "private, no-store");
+  // A provider's sign-in returns here with a single-use code in the query. The script takes it out of the address
+  // before its first request, but the document's own requests come first: they carry no referrer.
+  if (request.nextUrl.searchParams.has("oauth")) response.headers.set("Referrer-Policy", "no-referrer");
   return response;
 }
 

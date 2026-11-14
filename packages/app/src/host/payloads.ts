@@ -62,6 +62,16 @@ export type SeedConfirmed = unknown;
 export type FolderSummary = unknown;
 export type OwnModelAutoSuggest = unknown;
 
-/** A mailbox as the Mailboxes pane connects or edits it, and what a verb answers. */
-export type MailboxConnection = unknown;
-export type MailboxVerbAnswer = unknown;
+/**
+ * The Mailboxes pane: a mailbox's row, whether another may be connected, and what its verbs answer. A row's `id` is
+ * a `MailboxId`. Bound to the pane's own declarations through their two-name path, which every shell's bundle
+ * resolves.
+ */
+export type {
+  ConnectAllowance,
+  MailboxErased,
+  MailboxRow,
+  OrganizeAnswer,
+  OrganizerPeek,
+  ReleaseAnswer,
+} from "@ohmail/app-logic/mailboxes/pane-contract";

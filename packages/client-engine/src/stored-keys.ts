@@ -290,7 +290,7 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.ui.seed.notNow.", family: true, store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/shell/seed-offer.ts"],
+    at: ["packages/app-logic/src/mailboxes/first-run/seed-offer.ts"],
     holds: "that the seed offer was put off, per account",
     words: false, erased: "account-erase", mark: "kept",
   },

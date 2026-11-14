@@ -68,6 +68,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       seedReview: NONE,
       folderSummary: NONE,
       ownModelAutoSuggest: NONE,
+      connect: NONE,
       mailboxes: NONE,
       calendar: NONE,
     },

@@ -110,7 +110,7 @@ describe("the desktop on its own", () => {
   });
 
   it("has no account behind it: no live body, no spend, no access answer, no copy to age", () => {
-    expect(withheld(host)).toEqual(["calendar", "folderSummary", "liveBody", "seedReview", "suggest"]);
+    expect(withheld(host)).toEqual(["calendar", "connect", "folderSummary", "liveBody", "seedReview", "suggest"]);
     expect(host.wires.consent).toBe(has.wires.consent.standalone);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: NONE });
     expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
@@ -146,7 +146,7 @@ describe("the desktop signed in to the managed service", () => {
   });
 
   it("carries the account's wires over the pipe, and no first run", () => {
-    expect(withheld(host)).toEqual(["calendar", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
+    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "ownModelAutoSuggest", "seedReview"]);
     expect(host.wires.consent).toBe(has.wires.consent.account);
     expect(host.reads).toEqual(has.reads);
     expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: "live", scope: "a-mailbox", account: null, signOut: has.signOut, recover: FRAME.recover });
@@ -217,7 +217,7 @@ describe("the desktop paired to another computer", () => {
   });
 
   it("has no account behind it, and answers consent as an install on its own does", () => {
-    expect(withheld(host)).toEqual(["calendar", "firstRun", "folderSummary", "liveBody", "ownModelAutoSuggest", "seedReview", "suggest"]);
+    expect(withheld(host)).toEqual(["calendar", "connect", "firstRun", "folderSummary", "liveBody", "ownModelAutoSuggest", "seedReview", "suggest"]);
     expect(host.wires.consent).toBe(has.wires.consent.standalone);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: has.reads.copyAge, access: NONE });
   });
@@ -276,7 +276,7 @@ describe("the page a desktop serves to a phone's browser", () => {
 
   it("hands on the wires its host serves and nothing else", () => {
     expect(withheld(host)).toEqual([
-      "away", "calendar", "firstRun", "folderSummary", "images", "liveBody", "mailboxes", "organizerNotice", "ownModelAutoSuggest",
+      "away", "calendar", "connect", "firstRun", "folderSummary", "images", "liveBody", "mailboxes", "organizerNotice", "ownModelAutoSuggest",
       "screening", "seedReview", "suggest",
     ]);
     expect(host.session).toEqual({ resolve: NONE, confirmed: NONE, state: NONE, scope: "a-pairing", account: null, signOut: supplies.signOut, recover: FRAME.recover });

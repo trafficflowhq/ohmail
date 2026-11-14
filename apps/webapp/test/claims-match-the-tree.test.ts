@@ -69,7 +69,7 @@ const FILES = [
   "apps/webapp/app/api-client.ts",
   "apps/webapp/app/(product)/join/JoinRoute.tsx",
   "apps/webapp/app/(product)/join/use-join-door.ts",
-  "apps/webapp/app/(product)/join/MailboxStep.tsx",
+  "apps/webapp/app/(product)/mailbox/connect-wire.ts",
 ] as const;
 
 describe("what this lane says about the server matches what this tree contains", () => {

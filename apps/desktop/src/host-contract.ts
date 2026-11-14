@@ -123,6 +123,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       seedReview: NONE,
       folderSummary: NONE,
       ownModelAutoSuggest: suggest === "local" ? has.wires.ownModelAutoSuggest : NONE,
+      connect: NONE,
       mailboxes: has.wires.mailboxes,
       // A desktop signed in to a server answers its calendar at the seating; one on its own has none.
       calendar: NONE,

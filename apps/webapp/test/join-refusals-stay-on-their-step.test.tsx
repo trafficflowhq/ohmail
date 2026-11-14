@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 type Messages = typeof en;
 
@@ -83,11 +84,11 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
+  /* The mailbox step is the one connect form: its fields by their labels, its tiles by their names. */
+  const probes = mailboxProbes(host, messages, act);
   const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(probes.input(id), `#${id} is not on screen`).toBeTruthy();
+    await probes.type(id, value);
   };
   /** A button by its words; a door's ink button carries its key after them. */
   const submit = async (label: string) => {
@@ -99,18 +100,15 @@ async function mount(messages: Messages = en, props: { initialCode: string; publ
   };
   const h1 = () => host.querySelector("h1")?.textContent ?? "";
   const alertText = () => [...host.querySelectorAll('[role="alert"]')].map((el) => el.textContent ?? "").join(" | ");
-  const value = (id: string) => host.querySelector<HTMLInputElement>(`#${id}`)?.value ?? null;
-  return { host, type, submit, h1, alertText, value, settle };
+  const value = (id: string) => probes.input(id)?.value ?? null;
+  return { host, type, submit, h1, alertText, value, settle, choose: probes.choose };
 }
 
 /** The generic entry, filled as a person on their own mail server fills it. */
 async function mailboxForm(messages: Messages, imapHost: string) {
   const ui = await mount(messages);
   expect(ui.h1()).toBe(messages.join.step_mailbox_title);
-  const tile = [...ui.host.querySelectorAll('[role="radio"]')]
-    .find((b) => (b.textContent ?? "").startsWith(messages.providerPicker.otherLabel));
-  const React = await import("react");
-  await (React as unknown as { act: (cb: () => void) => Promise<void> }).act(() => { (tile as HTMLElement).click(); });
+  await ui.choose(messages.providerPicker.otherLabel);
   await ui.type("join-mb-address", "pat@family.example");
   await ui.type("join-imap", imapHost);
   await ui.type("join-smtp", "smtp.family.example");

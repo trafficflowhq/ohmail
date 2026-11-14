@@ -112,7 +112,7 @@ describe("the phone shell's answers, per setting", () => {
     }, has);
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk", "trash",
-    "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "mailboxes",
+    "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "connect", "mailboxes",
     "calendar",
   ].map((w) => [w, NONE]));
   const NO_FEATURE = {
