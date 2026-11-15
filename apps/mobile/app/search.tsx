@@ -298,7 +298,7 @@ function SearchBody({ inPane }: { inPane: boolean }) {
             answer.indexing && !store.ready ? (
               /* Not yet ≠ nothing: the index is still filling (`indexingResult`'s whole rule). */
               <Empty title={Copy.searchIndexing} hint={verdict ?? ""} />
-            ) : store.verdict === "searching" ? null : (
+            ) : store.verdict === "searching" || store.verdict === "unfinished" ? null : (
               <>
                 <Empty title={Copy.searchEmptyTitle} hint={store.ready ? Copy.searchDepth : ""} />
                 {partsSaid ? (

@@ -886,6 +886,7 @@ export {
   type TimelineSegment,
 } from "./store-pages.js";
 export {
+  EMPTY_PAGES_FOLLOWED,
   PagedWalk,
   StoreTimelineWalker,
   StoreSearchWalker,

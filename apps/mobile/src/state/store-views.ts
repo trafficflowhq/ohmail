@@ -101,7 +101,8 @@ export function useStoreHistory(): PhoneHistory {
   }, [walker, rev, mirror, w, state]);
 }
 
-export type PhoneSearchVerdict = "idle" | "searching" | "ready" | "unanswered" | "unavailable";
+/** `unfinished`: nothing found in the newest mail and the end not reached — never "nothing matched". */
+export type PhoneSearchVerdict = "idle" | "searching" | "ready" | "unfinished" | "unanswered" | "unavailable";
 
 export interface PhoneStoreSearch {
   verdict: PhoneSearchVerdict;
@@ -129,6 +130,7 @@ export interface PhoneStoreSearch {
   cause: string | null;
   /** Ask for the pages covering `[start, end)` — an evicted page is asked again by its cursor. */
   want(start: number, end: number): void;
+  /** The store's next page; past the walk's bound of empty pages, the next ones (the walker's `further`). */
   loadMore(): void;
   retry(): void;
 }
@@ -195,7 +197,7 @@ export function useStoreSearch(query: string, deviceIds: readonly string[]): Pho
       bounded: info !== null && info.bounded && walker !== null && walker.atEnd(),
       cause: walker?.failureCause() ?? null,
       want: (start, end) => walker?.want(start, end),
-      loadMore: () => walker?.more(),
+      loadMore: () => (walker?.atBound() ? walker.further() : walker?.more()),
       retry: () => setTick((n) => n + 1),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
