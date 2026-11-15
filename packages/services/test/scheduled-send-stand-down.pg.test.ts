@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import {
   changeLog, closeStoodDownAppointments, drafts, mailboxes, outboundSends, scheduledSendFiles,
   STAND_DOWN_SEND_SENTENCES,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -73,9 +71,11 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
+// The factory's handle: the pass binds each appointment's account, and the binder takes a server
+// handle only from the factory that registered its door. `sqlB` is a second session's raw client.
+const owned = makeOwnedDb(PG_TEST_URL);
+const dbA = owned.db;
 const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 /** Twelve minutes out — the measurement's own interval. */
@@ -159,7 +159,7 @@ const standDownRow = async (mailboxId: string, reason: string): Promise<void> =>
 };
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); await sqlB.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
   it("REPRODUCES the measurement — the stood-down side runs no pass, and the row lies for ever", async () => {

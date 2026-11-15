@@ -37,9 +37,11 @@ export {
   POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS, POOLED_IDLE_TIMEOUT_S,
   DbAcquireTimeoutError, isDbAcquireTimeout, DbConnectionCapError, isDbConnectionCap, DbParameterTypeError,
   freshConnectProbe, type FreshConnectReading,
-  BindLimitError, MAX_BIND_PARAMETERS, withBindLimit,
+  BindLimitError, MAX_BIND_PARAMETERS, withBindLimit, FlightClosedError,
   type OwnedDb,
 } from "./client.js";
+/** The two readers a policy calls (`ohmail.current_account()`, `ohmail.current_key()`), for the setup that makes the policies. */
+export { BINDING_READERS_SQL } from "./bound.js";
 
 /**
  * The `/events` per-instance LISTEN fan-out — one session-mode connection, many streams.
@@ -293,6 +295,14 @@ export {
   CONTENT_BLIND_PROBE, CONTENT_BITE_TESTS, DENIED_SQLSTATE,
   type AdminDb, type ContentBlind,
 } from "./admin-db.js";
+/**
+ * The roster handle: the worker's role in the API process, for passes that read across accounts, minted only by its
+ * factory, attested at first use, no fallback.
+ */
+export {
+  rosterDbFor, assertRoster, NotRosterError, ROSTER_ROLE,
+  type RosterDb, type Roster, type RosterExpectation, type RosterVerdict,
+} from "./roster-db.js";
 
 /**
  * The ONE allowlist, and the census that measures a role against it. Imported by the

@@ -9,7 +9,7 @@ import { deleteMailboxRows } from "./local-mirror.js";
 import { wipeCalendarCopy } from "./cloud-mirror-calendar.js";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import {
-  resolveSession, syncService, ServiceError, isUuid,
+  resolveSession, syncService, ServiceError, dbFor, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
@@ -1295,7 +1295,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     }
 
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
-      db,
+      db: dbFor(db, accountId),
       accountId,
       userId,
       sessionId,

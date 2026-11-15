@@ -5,16 +5,13 @@
 import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { learningSignals,
   accounts, mailboxes, messages, messageBodies, folderState, rules,
   unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -37,8 +34,8 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb | undefined;
+let db: OwnedDb["db"];
 
 const PUBLIC_DNS: HostResolver = { async resolve() { return ["93.184.216.34"]; } };
 /**
@@ -173,10 +170,12 @@ const stateRow = async () => (await db.select().from(unsubscribeDrainState)
 describe.skipIf(!PG_UP)("the drain's cursor and its mark, on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    // The factory's handle: the drain binds each account it acts for, and the binder takes a server
+    // handle only from the factory that registered its door.
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 180_000);
-  afterAll(async () => { await tearDown(); await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await tearDown(); await owned?.close(); });
   beforeEach(async () => {
     await tearDown();
     const held = await inWindow();

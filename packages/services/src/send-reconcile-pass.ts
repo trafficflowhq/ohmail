@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, dbFor, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import {
@@ -340,7 +340,8 @@ export async function runSendReconcilePass(
   try {
     for (const row of rows) {
       const ctx: ServiceContext = {
-        db, accountId: row.send.accountId, userId: null, now, requestId: `reconcile:${row.send.id}`,
+        db: dbFor(db, row.send.accountId), accountId: row.send.accountId, userId: null, now,
+        requestId: `reconcile:${row.send.id}`,
       };
       const ageMs = now().getTime() - row.send.createdAt.getTime();
       const givingUp = ageMs > SEND_RECONCILE_GIVE_UP_MS;

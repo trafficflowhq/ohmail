@@ -1,4 +1,5 @@
-import type { ServiceContext } from "@trafficflow/services/mail";
+import { bindDb } from "@trafficflow/db";
+import type { BoundDb, Db, ServiceContext, UnboundDb } from "@trafficflow/services/mail";
 import type { ApiDeps } from "./deps.js";
 
 /**
@@ -33,24 +34,39 @@ export function clientIp(req: Request): string {
   return hops.length > 0 ? hops[hops.length - 1]! : "";
 }
 
+/** The handle each request's context holds, re-minted when the handle or the session's account changes. */
+const contextHandles = new WeakMap<ApiDeps, { readonly db: Db; readonly account: string | null; readonly bound: BoundDb | UnboundDb }>();
+
+/**
+ * The request's handle: bound to the session's account, or to nothing when the request has no
+ * session. Chosen by the session alone, never by an id the request carries; a session whose account
+ * is empty or malformed is refused by the binder. One per request (`withSessionAcquireCeiling`
+ * swaps `deps.db` before the session is read, and a later call sees the swap).
+ */
+function contextDb(deps: ApiDeps): BoundDb | UnboundDb {
+  const session = deps.session;
+  const account = session ? session.accountId : null;
+  const held = contextHandles.get(deps);
+  if (held !== undefined && held.db === deps.db && held.account === account) return held.bound;
+  const bound = session ? bindDb(deps.db, { account: session.accountId }) : bindDb(deps.db, { account: null });
+  contextHandles.set(deps, { db: deps.db, account, bound });
+  return bound;
+}
+
 /**
  * Build the {@link ServiceContext} an AuthService method runs against. Identity comes from
  * `deps.session` (the session row, never the body): protected routes carry
- * accountId/userId/sessionId; public pre-session routes have accountId="" / userId=null.
- * `ip`/`userAgent` are threaded for audit + lockout. `opts.accountId` lets a caller pin an
- * account when there is no session yet. `origin` is the raw `Origin` header, threaded for
- * multi-origin WebAuthn: ceremonies are admitted only from an allow-listed origin and then
- * bound to it; native clients send none, which means the deployment's default origin.
+ * accountId/userId/sessionId and a handle bound to that account; public pre-session routes have
+ * accountId="" / userId=null and a handle bound to nothing. `ip`/`userAgent` are threaded for
+ * audit + lockout. `origin` is the raw `Origin` header, threaded for multi-origin WebAuthn:
+ * ceremonies are admitted only from an allow-listed origin and then bound to it; native clients
+ * send none, which means the deployment's default origin.
  */
-export function serviceContext(
-  deps: ApiDeps,
-  req: Request,
-  opts: { accountId?: string } = {},
-): ServiceContext {
+export function serviceContext(deps: ApiDeps, req: Request): ServiceContext {
   const s = deps.session;
   return {
-    db: deps.db,
-    accountId: opts.accountId ?? s?.accountId ?? "",
+    db: contextDb(deps),
+    accountId: s?.accountId ?? "",
     userId: s?.userId ?? null,
     sessionId: s?.sessionId ?? null,
     now: deps.now,

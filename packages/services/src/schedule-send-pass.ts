@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNotNull, lt, lte, notInArray, sql } from "drizz
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, dbFor, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
   readScheduledFiles, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_UNREADABLE, SCHEDULED_FILES_UNREADABLE_KEPT,
@@ -183,7 +183,7 @@ export async function runScheduledSendPass(
       break;
     }
     const ctx: ServiceContext = {
-      db, accountId: row.accountId, userId: null, now, requestId: `sched:${row.id}`,
+      db: dbFor(db, row.accountId), accountId: row.accountId, userId: null, now, requestId: `sched:${row.id}`,
     };
     // TOO LATE IS ITS OWN ANSWER, decided BEFORE anything dials — see the constant. Only for a
     // row with no reservation; a recovered 'sending' row runs the send below regardless of age,

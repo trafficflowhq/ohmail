@@ -1,10 +1,13 @@
 import { describe, it, expect, afterAll } from "vitest";
 import net from "node:net";
+import { randomUUID } from "node:crypto";
 import { sql as raw } from "drizzle-orm";
 import postgres from "postgres";
+import { bindDb } from "../src/bound.js";
 import {
   makePooledDb, closePooledDbs, POOLED_TIMEOUTS, API_MAX_DURATION_MS, isDbAcquireTimeout,
 } from "../src/client.js";
+import { readFlightOf } from "../src/read-flight.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 
 const AVAILABLE = await realPgAvailable();
@@ -318,6 +321,58 @@ describe.skipIf(!AVAILABLE)("a head the pooler holds", () => {
       expect(isDbAcquireTimeout(await out)).toBe(true);
       expect(called).toBe(false);
       expect(await ran(3)).toBe(false);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  // A bound handle's statement is a flight (begin, the binder, the statement, commit): the pooler's
+  // refusal of its head is the same busy answer, and the same "never ran".
+  type Tx = { transaction: <R>(fn: (tx: object) => Promise<R>) => Promise<R>; execute: (q: unknown) => Promise<unknown> };
+  const view = (db: object): Tx => bindDb(db, { account: randomUUID() }) as unknown as Tx;
+
+  it("a bound statement whose flight the pooler refuses is busy, and the write never ran", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      const bound = view(db);
+      await bound.execute(raw`select 1`);
+      pooler.hold();
+      const out = bound.execute(raw`insert into tf_pooled_head_probe (id) values (${6})`).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(...CHECKOUT_REFUSED), 300);
+      const err = await out;
+      expect(isDbAcquireTimeout(err), "db_busy, not a binding failure").toBe(true);
+      expect((err as Error).message, "a statement, as the plain handle's says").toMatch(/\bthis statement\b/);
+      expect(await ran(6)).toBe(false);
+      await expect(bound.execute(raw`select 2`), "the pool dials again").resolves.toBeDefined();
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it("a bound transaction whose start the pooler refuses is busy, and its callback never runs", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      const bound = view(db);
+      await bound.execute(raw`select 1`);
+      pooler.hold();
+      let called = false;
+      const out = bound.transaction(async (tx) => { called = true; await (tx as Tx).execute(raw`insert into tf_pooled_head_probe (id) values (${7})`); })
+        .then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(...CHECKOUT_REFUSED), 300);
+      const err = await out;
+      expect(isDbAcquireTimeout(err)).toBe(true);
+      expect((err as Error).message).toMatch(/\bthis transaction\b/);
+      expect(called).toBe(false);
+      expect(await ran(7)).toBe(false);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it.each([["the pool's"], ["a bound view's"]])("%s read flight whose start the pooler refuses is busy", async (whose) => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      const flight = readFlightOf((whose === "the pool's" ? db : view(db)) as object) as unknown as Tx;
+      // Dialed and idle (a flight's own close is written after it answers, so it does not warm up).
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      const out = flight.transaction((tx) => (tx as Tx).execute(raw`select ${2}::int`)).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(...CHECKOUT_REFUSED), 300);
+      expect(isDbAcquireTimeout(await out)).toBe(true);
     } finally { pooler.close(); }
   }, 30_000);
 

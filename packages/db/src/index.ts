@@ -110,6 +110,11 @@ export {
 } from "./erasure-fence.js";
 // The pooled handle's one-flight read transaction, asked by the search's session (`read-flight.ts`).
 export { readFlightOf } from "./read-flight.js";
+// The account's binding on a handle: the two types and the one function that mints them (`bound.ts`).
+export {
+  bindDb, rebindTx, carryBinding, bindingOf, poolKeyOf, BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
+  type AccountBound, type NothingBound, type BindTo, type Binding,
+} from "./bound.js";
 
 // THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
 // single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the

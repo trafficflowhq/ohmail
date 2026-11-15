@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, lt, lte } from "drizzle-orm";
 import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -42,10 +39,12 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+// Two of the factory's pools, two sessions: the passes bind each send's account, and the binder
+// takes a server handle only from the factory that registered its door.
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-09-02T12:00:00.000Z");
 const MIN = 60_000;
@@ -99,7 +98,7 @@ const rowOf = async (sendId: string) =>
   (await dbA.select().from(outboundSends).where(eq(outboundSends.id, sendId)))[0]!;
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 /**
  * EMPTY THE PASS'S CANDIDATE WINDOW BEFORE EACH TEST.

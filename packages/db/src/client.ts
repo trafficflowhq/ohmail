@@ -1,4 +1,5 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { PostgresJsSession, PostgresJsTransaction } from "drizzle-orm/postgres-js/session";
 import postgres from "postgres";
 import { schema } from "./schema.js";
 import { onNotice } from "./notices.js";
@@ -6,20 +7,21 @@ import { brandDialect } from "./dialect/index.js";
 import { withPgSocket } from "./pg-socket.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import { registerReadFlight } from "./read-flight.js";
+import { HANDLE_TABLE, type HandleCell, type HandleRole } from "./handle-table.js";
+import {
+  BINDER_SQL, BindingFailedError, bindingOf, refuseBinding, registerBindingDoor, registerTxDoor,
+  type BindingValues,
+} from "./bound.js";
 
-let sql: ReturnType<typeof postgres> | null = null;
+// The handle's numbers live in its one table; their names are this module's exports as before.
+export {
+  WORKER_POOL_MAX, WORKER_TIMEOUTS, POOLED_TIMEOUTS, API_MAX_DURATION_MS, ROLE_DEFAULT_TIMEOUTS,
+  POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS, POOLED_IDLE_TIMEOUT_S,
+} from "./handle-table.js";
 
-/**
- * HOW MANY POSTGRES CONNECTIONS ONE ALWAYS-ON PROCESS MAY HOLD.
- *
- * A number that used to be a literal in two places and is now the input to a third, which is why
- * it is exported: `apps/worker` runs several sync cycles at a time (its lanes) and the number of them
- * is CLAMPED against this value rather than chosen beside it. postgres.js does not error when a
- * pool is exhausted — it QUEUES — so an over-wide scheduler does not fail, it silently converts
- * concurrency back into latency while still paying the memory and IMAP cost of running wide. A
- * derived clamp cannot drift from the pool the day somebody tunes this.
- */
-export const WORKER_POOL_MAX = 5;
+type Sql = ReturnType<typeof postgres>;
+
+let sql: Sql | null = null;
 
 /** The largest bind-parameter count postgres.js 3.4.9 sends: it refuses 65,534 or more. */
 export const MAX_BIND_PARAMETERS = 65_533;
@@ -116,10 +118,64 @@ export function withBindLimit(client: ReturnType<typeof postgres>): ReturnType<t
   return door(client);
 }
 
+/**
+ * THE ONE BUILDER, half one: a postgres.js pool for a cell of the handle's table. Every server
+ * handle's pool is opened here, so a pool's size, prepared statements, idle close, dial and
+ * deadlines are the table's and nowhere else's.
+ */
+function openPool(url: string, cell: HandleCell, max: number = cell.max): Sql {
+  const waiting = new Set<() => void>();
+  const pool = postgres(url, withPgSocket({
+    ...pgTlsOptions(url), max, prepare: cell.prepare,
+    ...(cell.idleTimeoutS === null ? {} : { idle_timeout: cell.idleTimeoutS }),
+    ...(cell.connectTimeoutS === null ? {} : { connect_timeout: cell.connectTimeoutS }),
+    connection: cell.connection, onnotice: onNotice,
+    // Once the driver has handed its first waiting statement to the connection it dials again.
+    onclose: () => { if (waiting.size > 0) queueMicrotask(() => { for (const ask of [...waiting]) ask(); }); },
+  }));
+  reservations.set(pool, waiting);
+  return pool;
+}
+
+/** Each pool's waiting reservations, each asked again after a close (see {@link reserveWithin}). */
+const reservations = new WeakMap<Sql, Set<() => void>>();
+
+/** What a dressed handle was built from: its pool, its cell and its role. Read by `acquireCeilingHandle`. */
+const dressed = new WeakMap<object, { pool: Sql; cell: HandleCell; role: HandleRole }>();
+
+/** A drizzle handle's own session, which a bound session copies its dialect and schema from. */
+const sessionOf = (handle: object): object => (handle as unknown as { session: object }).session;
+
+/**
+ * THE ONE BUILDER, half two: the drizzle handle over a pool, dressed as its cell says. Every pool
+ * handle gets the bind limit, the wait ceiling where its cell (or the caller) names one, one flush
+ * where its cell has no prepared statements, a one-flight read, and a binding door: a view bound
+ * over it (`bound.ts`) runs its statements and transactions in flights that name the account. The
+ * staff handle gets no door, and binding it is refused: its role is its whole binding.
+ */
+function dress(pool: Sql, cell: HandleCell, waitMs: number | null, role: HandleRole): PostgresJsDatabase<typeof schema> {
+  let client: Sql = cell.prepare ? pool : withOneFlush(pool);
+  if (waitMs !== null) client = withAcquireCeiling(client, waitMs);
+  client = withBindLimit(client);
+  const handle = brandDialect(drizzle(client, { schema }), "pg");
+  const flightHandle = brandDialect(drizzle(withReadFlight(pool, client, waitMs), { schema }), "pg");
+  registerReadFlight(handle, flightHandle);
+  if (role === "staff") {
+    refuseBinding(handle);
+    refuseBinding(flightHandle);
+  } else {
+    registerBindingDoor(handle, { sessionFor: (values) => boundSession(sessionOf(handle), pool, waitMs, values, false) });
+    registerBindingDoor(flightHandle, { sessionFor: (values) => boundSession(sessionOf(flightHandle), pool, waitMs, values, true) });
+  }
+  dressed.set(handle, { pool, cell, role });
+  return handle;
+}
+
 /** The long-lived singleton connection — for the always-on worker (one process, one pool). */
 export function makeDb(url: string): PostgresJsDatabase<typeof schema> {
-  sql = postgres(url, withPgSocket({ ...pgTlsOptions(url), max: WORKER_POOL_MAX, onnotice: onNotice }));
-  return brandDialect(drizzle(withBindLimit(sql), { schema }), "pg");
+  const cell = HANDLE_TABLE.worker.session;
+  sql = openPool(url, cell);
+  return dress(sql, cell, cell.waitMs, "worker");
 }
 
 export async function closeDb(): Promise<void> {
@@ -132,7 +188,8 @@ export interface OwnedDb {
 }
 
 /**
- * An INDEPENDENT pool + handle whose lifetime the CALLER owns.
+ * An INDEPENDENT pool + handle whose lifetime the CALLER owns, on a session pool: the worker's
+ * cell unless a role is named (the self-hosted API's process names `api`).
  *
  * `makeDb`/`closeDb` share one module-global `sql`, so `closeDb()` closes whichever pool
  * was created LAST. That is fine for a single always-on process, but it silently breaks
@@ -141,117 +198,15 @@ export interface OwnedDb {
  * test that already called `makeDb`: one owner's teardown closes another owner's LIVE
  * pool. Every worker/cron entry uses this instead.
  */
-export function makeOwnedDb(url: string): OwnedDb {
-  const own = postgres(url, withPgSocket({
-    ...pgTlsOptions(url), max: WORKER_POOL_MAX, connection: WORKER_TIMEOUTS, onnotice: onNotice,
-  }));
+export function makeOwnedDb(url: string, opts: { role?: "api" | "worker" | "roster" } = {}): OwnedDb {
+  const role = opts.role ?? "worker";
+  const cell = HANDLE_TABLE[role].session;
+  const own = openPool(url, cell);
   return {
-    db: brandDialect(drizzle(withBindLimit(own), { schema }), "pg"),
+    db: dress(own, cell, cell.waitMs, role),
     close: async () => { await own.end({ timeout: 5 }); },
   };
 }
-
-/**
- * Server-side deadlines for every worker connection — without them one wedged transaction takes
- * the whole shard down. Observed: a crashed backend left `idle in transaction` holding row locks;
- * restarted workers blocked on it forever while holding the leader lock and writing no heartbeat.
- * Postgres has no default ceiling on a lock wait. `lock_timeout` 30 s (lands as an ordinary sync
- * failure, quarantined by `maxSyncFailures`); `statement_timeout` 60 s (runaway backstop);
- * `idle_in_transaction_session_timeout` 60 s (the fix for BEING the zombie — an OOM-killed
- * process leaves its backend holding locks). NOT applied to `makePooledDb` ({@link
- * POOLED_TIMEOUTS}) nor to the leader-lock session, which must stay open and idle.
- */
-export const WORKER_TIMEOUTS = {
-  lock_timeout: 30_000,
-  statement_timeout: 60_000,
-  idle_in_transaction_session_timeout: 60_000,
-} as const;
-
-/**
- * Server-side deadlines for the serverless request handle, against a DIRECT Postgres — the
- * qualifier matters. A hosted `makePooledDb` dials a transaction-mode pooler, and `connection:`
- * startup parameters were MEASURED inert through it; what reaches a pooled deployment is {@link
- * ROLE_DEFAULT_TIMEOUTS}. NOT dead code: a self-hosted deployment dials its own Postgres
- * directly, where these work (`pooled-db.pg.test.ts`). The database must give up before the
- * platform kill (`maxDuration = 60`): a failed statement is answerable, a killed function is a
- * 504 with no cause. 25 s statement, 10 s lock (≤ statement, or the ceiling masks it), 30 s
- * idle-in-transaction — the one that stops an orphaned backend blocking the next request.
- */
-export const POOLED_TIMEOUTS = {
-  lock_timeout: 10_000,
-  statement_timeout: 25_000,
-  idle_in_transaction_session_timeout: 30_000,
-} as const;
-
-/**
- * The platform ceiling every value in {@link POOLED_TIMEOUTS} is derived from — the
- * `maxDuration` of `apps/api-vercel/app/[[...path]]/route.ts`, in milliseconds.
- *
- * Named so the derivation is a checkable relation rather than a story about three literals:
- * `pooled-db.pg.test.ts` asserts every ceiling is strictly under it, and `host-wiring.test.ts`
- * pins it against the route's own export, so raising the route's `maxDuration` without revisiting
- * these numbers is a red test rather than a silent regression back to "the platform will handle
- * it".
- */
-export const API_MAX_DURATION_MS = 60_000;
-
-/**
- * The mechanism that actually reaches a transaction-mode pooler: a Postgres ROLE-ONLY default,
- * applied by `setupProdDatabase` (`ALTER ROLE … SET …`, NOT `IN DATABASE`) and verified from
- * `pg_db_role_setting`. Client-side `connection:` parameters were measured inert through the
- * pooler on BOTH ports; a role default is read by Postgres itself at backend start. Role-ONLY
- * because the database-scoped ALTER was still inert. The cost is blast radius — every database
- * this role opens — so connections needing more (`migrate.ts`, `setup-prod.ts`, the provisioning
- * CLIs) neutralize it on connect. The values are `WORKER_TIMEOUTS`' with `statement_timeout` at
- * 55 s, strictly inside {@link API_MAX_DURATION_MS} — the measured 504s were waits, not runaways.
- */
-export const ROLE_DEFAULT_TIMEOUTS = {
-  lock_timeout: 30_000,
-  statement_timeout: 55_000,
-  idle_in_transaction_session_timeout: 60_000,
-} as const;
-
-/**
- * How long a request may wait for a pooled connection to begin its statement before it is told
- * no. The only live statement ceiling in a pooled deployment is {@link ROLE_DEFAULT_TIMEOUTS}' 55 s,
- * and 55 s of holder plus any wait exceeds {@link API_MAX_DURATION_MS}. Measured: 47 504s in twenty
- * minutes; `HEAD /health` at 60 012 ms can only have WAITED. Once every connection is busy the
- * driver PIPELINES up to 100 queries onto a busy socket — everyone behind that head waits for it;
- * `connect_timeout` bounds only the dial. 15 s leaves time to RETURN the refusal; a fast 503 with
- * `Retry-After` beats an unattributable 504. Residual: per-QUERY, not a request budget.
- */
-export const POOLED_ACQUIRE_TIMEOUT_MS = 15_000;
-
-/**
- * The same wait, for the two SESSION doors — `GET /auth/session` and `POST /auth/refresh`, which
- * carry `withSessionAcquireCeiling` in `packages/api`. Every caller of those two gives up sooner
- * than 15 s (the edge gate's probe after 1.5 s; the resume splash and the desktop engine retry), so
- * a longer wait only turns a retry into a timeout. Busy answers 503 `db_busy` with `Retry-After`
- * in 5 s. It bounds the wait to BEGIN — a statement's, or a transaction's ({@link beginWithin}) —
- * never the work: a rotation that began runs to its end, in one transaction.
- */
-export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
-
-/**
- * Connections one warm serverless instance holds on the pooled URL. Fluid compute serves several
- * requests from one instance, and at `max: 1` every second request queued behind the first: the
- * `db_busy` the session doors answered. Four, bounded: the transaction-mode pooler multiplexes the
- * server side, and the client connections it admits are instances × 4. A fifth concurrent
- * statement still pipelines behind a busy connection and meets the acquire ceiling. The named
- * hole in {@link PooledQuery} widens with it: up to four heads per instance can wait at the pooler.
- */
-export const POOLED_MAX_CONNECTIONS = 4;
-
-/**
- * How long, in seconds, a pooled connection may sit idle before the client closes it. Inside the
- * hosted API's quiet hold (`QUIET_HOLD_MS` in `apps/api-vercel/src/quiet-hold.ts`), so an instance's
- * idle connections close before the platform suspends it: a suspended instance holds its pooler
- * client slots until it wakes, and at 120 s ~160 cold instances filled the pooler's client cap
- * (2026-10-26). One second because the platform bills the instance's memory for the whole hold.
- * The cost: the first request after 1 s of quiet dials again, measured 134-178 ms against
- * 66-72 ms warm on a 10 ms round trip.
- */
-export const POOLED_IDLE_TIMEOUT_S = 1;
 
 /**
  * Thrown when a statement or a transaction spent its ceiling on the pooled handle without the
@@ -337,11 +292,14 @@ function poolerRefused(err: unknown): boolean {
     || (s.code === "08P01" && s.message === "query_wait_timeout");
 }
 
+/** What a caller waited to begin, in its busy refusal's words: one statement, or a transaction. */
+type Carried = "statement" | "transaction";
+
 /**
  * `err`, or the busy refusal it is: a pooler or server cap on a new connection, or the pooler's refusal
  * of a statement it never forwarded (the acquire ceiling's class, `started` when the wait began).
  */
-function asBusyRefusal(err: unknown, started: number, what?: "transaction"): unknown {
+function asBusyRefusal(err: unknown, started: number, what?: Carried): unknown {
   const cap = connectionCapOf(err);
   if (cap !== null) return new DbConnectionCapError(cap);
   return poolerRefused(err) ? new DbAcquireTimeoutError(Date.now() - started, what) : err;
@@ -685,44 +643,527 @@ function withOneFlush(
   return door(client, lone);
 }
 
+type Reserved = Sql & { release: () => void };
+
+/** A promise's outcome, read without throwing: a flight reads every answer before it decides. */
+type Settled<T> = { ok: true; value: T } | { ok: false; err: unknown };
+const settle = <T>(p: PromiseLike<T>): Promise<Settled<T>> =>
+  Promise.resolve(p).then((value) => ({ ok: true as const, value }), (err: unknown) => ({ ok: false as const, err }));
+
+/** The command tag a statement's result carries (`BEGIN`, `COMMIT`, `ROLLBACK`), or null. */
+function commandOf(result: unknown): string | null {
+  const c = (result as { command?: unknown } | null)?.command;
+  return typeof c === "string" ? c : null;
+}
+
+/** The SQLSTATE a server's answer carries, or null (a connection's own error has none). */
+function sqlstateOf(err: unknown): string | null {
+  const c = (err as { code?: unknown } | null)?.code;
+  return typeof c === "string" && c.length === 5 ? c : null;
+}
+
 /**
- * ONE FLIGHT FOR A READ-ONLY TRANSACTION. `begin` through the driver waits for BEGIN's answer
- * before the first read is written, and the caller waits for COMMIT's before it has its rows: three
- * round trips to the pooler for one read. Here a connection is reserved under the acquire ceiling,
- * `begin read only` is written and not awaited, so the callback's settings and first read follow it
- * in the same write; the answer is the callback's, and COMMIT (ROLLBACK on any error) is written after
- * it. The connection goes back to the pool only once that reply is in: never inside a transaction.
- * A connection whose closing statement got no reply is not handed back (the driver has closed it).
+ * The connection lives after this answer: the server answered, at most with an error that ended no
+ * session. A connection the server closed is never handed back to the pool.
  */
-function withReadFlight(
-  pool: ReturnType<typeof postgres>, client: ReturnType<typeof postgres>, ms: number,
-): ReturnType<typeof postgres> {
-  type Sql = ReturnType<typeof postgres>;
-  type Run = { execute: () => unknown; then: Promise<unknown>["then"]; catch: Promise<unknown>["catch"] };
-  const send = (conn: Sql, text: string): Promise<unknown> => {
-    const q = conn.unsafe(text) as unknown as Run;
-    q.execute();
-    q.catch(() => { /* read where it matters */ });
-    return q as unknown as Promise<unknown>;
+function alive(closed: Settled<unknown>): boolean {
+  if (closed.ok) return true;
+  const e = closed.err as { name?: unknown; severity?: unknown } | null;
+  return e?.name === "PostgresError" && e.severity !== "FATAL" && e.severity !== "PANIC";
+}
+
+/**
+ * A statement sent on a flight that has written its close. The flight's handle is dead from then
+ * on: the driver's would still write on its old connection, which another flight may hold by then.
+ */
+export class FlightClosedError extends Error {
+  constructor() {
+    super("a statement was sent on a transaction that has already closed");
+    this.name = "FlightClosedError";
+  }
+}
+
+/**
+ * The refusal postgres.js 3.4.9 makes while building a statement with a parameter left undefined
+ * (`handleValue`), worded and coded as the driver words it, or null. A flight's doors make it first,
+ * in the caller's own call: the driver throws it inside its write and hands it to the connection's
+ * head, which in a flight is BEGIN.
+ */
+function undefinedValueIn(params: unknown): Error | null {
+  return Array.isArray(params) && params.some((p) => p === undefined)
+    ? Object.assign(new Error("UNDEFINED_VALUE: Undefined values are not allowed"), { code: "UNDEFINED_VALUE" })
+    : null;
+}
+
+/** The driver's connection, as its query option `onexecute` hands it: what the guard compares and what ending a line needs. */
+interface DriverConnection { readonly reserved: unknown; terminate(): void }
+
+/** A postgres.js 3.4.9 query as a line holds it: the driver calls `handler` once, right before it writes it, and refuses it through `reject`. */
+interface DriverQuery {
+  handler: ((q: DriverQuery) => void) & { debug?: unknown };
+  reject: (err: unknown) => void;
+}
+
+/**
+ * A FLIGHT'S LINE: the connection reserved for it, and the only way the flight writes on it.
+ * postgres.js 3.4.9 hands an error it raised itself while writing one statement to whichever
+ * statement heads the connection (from there each answer belongs to another statement), and dials a
+ * closed connection again for the next caller as the same object a reservation writes through.
+ *
+ * THE GUARD stands where the driver writes each statement of the flight, BEGIN, the binder, the
+ * body, savepoints and the close alike: it writes only while the line is whole and the driver's
+ * connection is still this flight's reservation (not closed, not dialed again for another caller).
+ * Else nothing is written, the line is lost, and the statement answers the flight's failure. Once
+ * the flight's close is written, only a close follows it; any other statement is refused unwritten.
+ *
+ * The first refusal of the driver's own that any statement of the flight meets (one it could not
+ * write, a dead connection) loses the line in that same call: every statement of the flight not
+ * answered yet is refused at once, before the driver's refusal, which carries the parameters of the
+ * statement heading the connection (possibly the binder's), reaches it. A statement parked in the
+ * reservation's own queue, which ending the connection never reaches, is among them. Then, once the
+ * driver's call has returned, the connection is ended while it is still this flight's; it is never
+ * handed back, and the pool dials a new one. The server's own errors leave the line whole.
+ */
+interface Line {
+  readonly pool: Sql;
+  /** The flight's client: its `unsafe` is the one way a flight builds a statement, each one under the guard. */
+  readonly client: Sql;
+  /** The refusal that lost the line, or null while it holds. */
+  readonly lost: { readonly err: unknown } | null;
+  /** Write `text` now and read its answer later; `closes` marks the flight's commit or rollback. */
+  send(text: string, closes?: boolean): Promise<unknown>;
+  /** Watch a statement of this flight until it is answered; `also` sees its error first. */
+  watch<Q>(q: Q, also?: (err: unknown) => void): Q;
+  /**
+   * What a lost line answers, a new error each time: the busy refusal where the pooler refused a
+   * statement it never handed on, else the error that lost it, bare.
+   */
+  failure(): unknown;
+  /** Back to the pool once the flight's close was answered: only on a whole line, and only if the connection lives. */
+  release(closed: Settled<unknown>): void;
+}
+
+/** A statement of a flight as the driver holds it: its refusal settles it, once. */
+interface Watched {
+  reject(err: unknown): void;
+  catch(bad: (err: unknown) => void): Promise<unknown>;
+  finally(fn: () => void): Promise<unknown>;
+}
+
+/** Neither the server's answer nor this module's check of a parameter's type: the driver's own refusal. */
+const driversOwn = (err: unknown): boolean => {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name !== "PostgresError" && name !== "DbParameterTypeError";
+};
+
+/**
+ * The driver's error as a plain handle's caller reads it (name, message, code), less what the driver
+ * hangs on it: the text and parameters of the statement heading the connection, which on a flight's
+ * line may be the binder's.
+ */
+function bare(err: unknown): Error {
+  const e = (typeof err === "object" && err !== null ? err : {}) as { name?: unknown; message?: unknown; code?: unknown };
+  const out = new Error(typeof e.message === "string" ? e.message : "the database connection was lost");
+  if (typeof e.name === "string") out.name = e.name;
+  if (typeof e.code === "string") Object.assign(out, { code: e.code });
+  return out;
+}
+
+/**
+ * The guard's finding: the connection this flight reserved closed, or was dialed again for another
+ * caller, before all of the flight was written. Coded as the driver codes a closed connection; it
+ * names no host.
+ */
+const notOurs = (what: Carried): Error => Object.assign(
+  new Error(`the database connection reserved for this ${what} closed before all of it was written`),
+  { code: "CONNECTION_CLOSED" },
+);
+
+/** `started`: when the flight began to wait for its connection; `what`: what it carries, for a busy refusal's words. */
+function lineOf(conn: Reserved, pool: Sql, started: number, what: Carried): Line {
+  let driver: DriverConnection | null = null;
+  let ours: unknown = null;
+  let wrote = false;
+  let closing = false;
+  let lost: { err: unknown } | null = null;
+  const unanswered = new Set<Watched>();
+  // `onexecute` is the driver's own query option; answering true keeps its pipelining as it was.
+  const named = (c: DriverConnection): boolean => {
+    if (driver === null) { driver = c; ours = c.reserved; }
+    return true;
   };
-  const begin = async (...args: unknown[]): Promise<unknown> => {
-    const fn = args[args.length - 1] as (s: Sql) => unknown;
-    const conn = await reserveWithin(pool, ms);
-    const scoped = withBindLimit(withOneFlush(conn, false, pool, true));
-    const close = (text: string): void => {
-      send(conn, text).then(() => conn.release(), () => undefined);
+  /** The driver's connection is still this flight's reservation: not closed, released, nor dialed again for another caller. */
+  const owned = (): boolean => driver !== null && typeof ours === "function" && driver.reserved === ours;
+  const failure = (): unknown => {
+    const err = lost === null ? undefined : lost.err;
+    const busy = asBusyRefusal(err, started, what);
+    return busy !== err ? busy : bare(err);
+  };
+  const lose = (err: unknown): void => {
+    if (lost !== null) return;
+    lost = { err };
+    // The flight's refusals first: what the driver refuses as it ends the connection is answered already.
+    for (const q of unanswered) q.reject(failure());
+    unanswered.clear();
+    // Ended once the driver's call that lost it has returned, and only while it is still this flight's.
+    queueMicrotask(() => { if (owned()) driver!.terminate(); });
+  };
+  /**
+   * THE GUARD, where the driver writes a statement of this flight. The first one (BEGIN) is written on
+   * the reservation just made, with no read of the network between, and names the driver's connection.
+   */
+  const handOff = (q: DriverQuery, write: DriverQuery["handler"], refuse: (err: unknown) => void, closes: boolean): void => {
+    if (lost === null && wrote && !owned()) lose(notOurs(what));
+    if (lost !== null) return refuse(failure());
+    if (closing && !closes) return refuse(new FlightClosedError());
+    wrote = true;
+    if (closes) closing = true;
+    write(q);
+  };
+  const query = (text: string, params: unknown[], options: Record<string, unknown>, closes: boolean): unknown => {
+    const q = conn.unsafe(text, params as never[], options as never) as unknown as DriverQuery;
+    const write = q.handler;
+    const refuse = q.reject;
+    q.handler = Object.assign((self: DriverQuery) => handOff(self, write, refuse, closes), { debug: write.debug });
+    // The driver's own refusal loses the line before it settles this statement, which then reads the flight's failure.
+    q.reject = (err: unknown) => {
+      if (driversOwn(err)) lose(err);
+      refuse(err);
     };
-    const opened = send(conn, "begin read only");
-    let out: unknown;
-    try {
-      out = await fn(scoped);
-      await opened;
-    } catch (err) {
-      close("rollback");
-      throw err;
+    return q;
+  };
+  const client = {
+    unsafe: (text: string, params: unknown[] = [], options: Record<string, unknown> = {}) => query(text, params, options, false),
+  } as unknown as Sql;
+  const line: Line = {
+    pool,
+    client,
+    get lost() { return lost; },
+    send(text, closes = false) {
+      const q = query(text, [], driver === null ? { onexecute: named } : {}, closes) as { execute: () => unknown };
+      q.execute();
+      return line.watch(q) as unknown as Promise<unknown>;
+    },
+    watch(q, also) {
+      const s = q as unknown as Watched;
+      unanswered.add(s);
+      // `catch` and `finally`, never `then`: the answer itself is read once, by the caller.
+      void s.catch((err: unknown) => { also?.(err); });
+      void s.finally(() => { unanswered.delete(s); }).catch(() => undefined);
+      return q;
+    },
+    failure,
+    release(closed) {
+      if (lost === null && alive(closed)) conn.release();
+    },
+  };
+  return line;
+}
+
+/**
+ * THE BINDER ON THE WIRE: its one statement on the flight's line, through the one-flush send on
+ * every pool (never a named prepared statement, never a drizzle session: drizzle hands every
+ * statement's parameters to its logger), dispatched at once. Its answer must echo both values; its
+ * failure is a {@link BindingFailedError}, which carries no parameter.
+ */
+function sendBinder(line: Line, values: BindingValues): Promise<void> {
+  const q = withOneFlush(line.client, false, line.pool, true).unsafe(BINDER_SQL, [values.account, values.key]);
+  (q as unknown as { execute: () => unknown }).execute();
+  return (line.watch(q) as unknown as Promise<Array<{ account?: unknown; key?: unknown }>>).then(
+    (rows) => {
+      const row = rows[0];
+      if (row?.account !== values.account || row.key !== values.key) throw new BindingFailedError(null, false);
+    },
+    (err: unknown) => { throw new BindingFailedError(sqlstateOf(err), false); },
+  );
+}
+
+/** A transaction's configuration, as drizzle hands it to `transaction`. */
+interface TxConfig { isolationLevel?: string; accessMode?: string; deferrable?: boolean }
+
+/** BEGIN's modes, a closed table: a caller's value is a key here and never text on the wire. */
+const ISOLATION: Readonly<Record<string, string>> = {
+  "read uncommitted": "isolation level read uncommitted",
+  "read committed": "isolation level read committed",
+  "repeatable read": "isolation level repeatable read",
+  serializable: "isolation level serializable",
+};
+const ACCESS: Readonly<Record<string, string>> = { "read only": "read only", "read write": "read write" };
+
+/**
+ * The BEGIN a transaction's configuration names. Its modes ride in BEGIN: drizzle would send `set
+ * transaction` after the binder's statement, and Postgres refuses an isolation level after a query.
+ */
+function beginText(config: TxConfig | undefined): string {
+  const own = (table: Readonly<Record<string, string>>, key: string): string => {
+    if (!Object.prototype.hasOwnProperty.call(table, key)) throw new TypeError("a transaction mode outside the closed list");
+    return table[key]!;
+  };
+  const modes: string[] = [];
+  if (config?.isolationLevel !== undefined) modes.push(own(ISOLATION, config.isolationLevel));
+  if (config?.accessMode !== undefined) modes.push(own(ACCESS, config.accessMode));
+  if (config?.deferrable !== undefined) modes.push(config.deferrable ? "deferrable" : "not deferrable");
+  return modes.length === 0 ? "begin" : `begin ${modes.join(", ")}`;
+}
+
+/** What a flight hands its callback: the scoped client, and how to name the transaction again. */
+type FlightBody<T> = (client: Sql, rename: (values: BindingValues) => Promise<void>) => Promise<T>;
+
+/** The driver's answer inside a transaction a statement already aborted. */
+const abortedBy = (err: unknown): boolean =>
+  (err as { name?: unknown; code?: unknown } | null)?.name === "PostgresError" && (err as { code?: unknown }).code === "25P02";
+
+/**
+ * THE SCOPE OF A FLIGHT, ported from the driver's own (`postgres/src/index.js`, `begin`'s scope):
+ * its statements on the reserved connection in one flush, pipelined; savepoints named by a counter,
+ * written without a wait, `rollback to` on failure. A statement error the callback swallowed fails
+ * the scope. Once the flight has written its close, or lost its line, the scope is dead: a statement
+ * throws {@link FlightClosedError} before anything is written.
+ */
+function scopeOf(line: Line): { client: Sql; check(): void; rename(v: BindingValues): Promise<void>; close(): void } {
+  let closed = false;
+  let savepoints = 0;
+  const shut = (): boolean => closed || line.lost !== null;
+  const level = (): { client: Sql; uncaught: () => unknown } => {
+    let uncaught: unknown;
+    const send = withOneFlush(line.client, false, line.pool, true);
+    const client = {
+      unsafe(text: string, params: unknown[] = [], options: Record<string, unknown> = {}) {
+        if (shut()) throw new FlightClosedError();
+        if (Array.isArray(params) && params.length > MAX_BIND_PARAMETERS) throw new BindLimitError(params.length);
+        // Swallowed, it still fails the transaction, as the driver's own refusal would.
+        const undefinedValue = undefinedValueIn(params);
+        if (undefinedValue !== null) { uncaught ??= undefinedValue; throw undefinedValue; }
+        const q = send.unsafe(text, params as never[], options as never);
+        // After the caller's chain (`values()`) is set: the error is noted, and the caller still reads it.
+        queueMicrotask(() => { line.watch(q, (e: unknown) => { uncaught ??= e; }); });
+        return q;
+      },
+      async savepoint(fn: (inner: Sql) => unknown): Promise<unknown> {
+        if (shut()) throw new FlightClosedError();
+        const name = `s${savepoints++}`;
+        const opened = settle(line.send(`savepoint ${name}`));
+        const inner = level();
+        try {
+          const out = await fn(inner.client);
+          const begun = await opened;
+          if (!begun.ok) throw begun.err;
+          const late = inner.uncaught();
+          if (late !== undefined) throw late;
+          return out;
+        } catch (err) {
+          if (!shut()) await settle(line.send(`rollback to ${name}`));
+          const first = inner.uncaught();
+          throw abortedBy(err) && first !== undefined ? first : err;
+        }
+      },
+    };
+    return { client: client as unknown as Sql, uncaught: () => uncaught };
+  };
+  const top = level();
+  return {
+    client: top.client,
+    check() {
+      const e = top.uncaught();
+      if (e !== undefined) throw e;
+    },
+    async rename(values) {
+      if (shut()) throw new FlightClosedError();
+      await sendBinder(line, values);
+    },
+    close() { closed = true; },
+  };
+}
+
+/**
+ * DOOR ONE, A READ-ONLY FLIGHT. `begin` through the driver waits for BEGIN's answer before the
+ * first read is written, and the caller waits for COMMIT's before it has its rows: three waits for
+ * one read. Here a connection is reserved (within the wait ceiling where the handle has one),
+ * `begin read only` and the binder's statement are written and not awaited, so the callback's
+ * first read follows them in the same write. It answers once the body, BEGIN and the binder have
+ * answered; COMMIT (ROLLBACK on any error) follows unawaited, and the connection goes back to the
+ * pool once that reply is in: never inside a transaction. A BEGIN the server refused means the
+ * reads ran alone, bound to nothing: the caller gets {@link BindingFailedError}, never their rows.
+ * A lost line answers {@link Line.failure}. Its statements go in one flush on every pool: on a
+ * session pool a describe would be a wait of its own.
+ */
+async function readFlight<T>(pool: Sql, waitMs: number | null, values: BindingValues | null, fn: FlightBody<T>): Promise<T> {
+  const started = Date.now();
+  const line = lineOf((await reserveWithin(pool, waitMs, "transaction")) as Reserved, pool, started, "transaction");
+  const scope = scopeOf(line);
+  const opened = settle(line.send("begin read only"));
+  const bound = values === null ? null : settle(sendBinder(line, values));
+  const close = (text: string): void => {
+    scope.close();
+    if (line.lost !== null) return;
+    void settle(line.send(text, true)).then((closed) => line.release(closed));
+  };
+  let out: T;
+  try {
+    out = await fn(scope.client, (v) => scope.rename(v));
+    scope.check();
+    const begun = await opened;
+    if (!begun.ok) throw values === null ? begun.err : new BindingFailedError(sqlstateOf(begun.err), true);
+    if (bound !== null) {
+      const named = await bound;
+      if (!named.ok) throw named.err;
     }
-    close("commit");
-    return out;
+    if (line.lost !== null) throw line.failure();
+  } catch (err) {
+    close("rollback");
+    throw line.lost !== null ? line.failure() : err;
+  }
+  close("commit");
+  return out;
+}
+
+/**
+ * DOOR TWO, A READ-WRITE FLIGHT: `begin` with its modes and the binder's statement written
+ * together, and the body only after both answered (BEGIN's tag, the binder's echo) — a body sent
+ * behind a refused start would commit statement by statement, outside its transaction. This is the
+ * driver's own wait for BEGIN, and no more. Then the body; COMMIT is awaited and must answer
+ * `COMMIT`. On any failure ROLLBACK is written and answered before the connection goes back. A lost
+ * line writes nothing more and answers {@link Line.failure}.
+ */
+async function writeFlight<T>(pool: Sql, waitMs: number | null, values: BindingValues, modes: string, fn: FlightBody<T>): Promise<T> {
+  const started = Date.now();
+  const line = lineOf((await reserveWithin(pool, waitMs, "transaction")) as Reserved, pool, started, "transaction");
+  const rollback = async (): Promise<void> => {
+    if (line.lost !== null) return;
+    line.release(await settle(line.send("rollback", true)));
+  };
+  const opened = settle(line.send(modes));
+  const bound = settle(sendBinder(line, values));
+  const begun = await opened;
+  if (line.lost !== null) throw line.failure();
+  const named = await bound;
+  if (line.lost !== null) throw line.failure();
+  if (!begun.ok || commandOf(begun.value) !== "BEGIN" || !named.ok) {
+    await rollback();
+    if (begun.ok && !named.ok) throw named.err;
+    throw new BindingFailedError(begun.ok ? null : sqlstateOf(begun.err), false);
+  }
+  const scope = scopeOf(line);
+  let out: T;
+  try {
+    out = await fn(scope.client, (v) => scope.rename(v));
+    scope.check();
+  } catch (err) {
+    scope.close();
+    await rollback();
+    throw line.lost !== null ? line.failure() : err;
+  }
+  scope.close();
+  const closed = await settle(line.send("commit", true));
+  if (line.lost !== null) throw line.failure();
+  if (!closed.ok) {
+    if (alive(closed)) await rollback();
+    throw closed.err;
+  }
+  line.release(closed);
+  if (commandOf(closed.value) !== "COMMIT") throw new Error("the database rolled this transaction back at its commit");
+  return out;
+}
+
+/**
+ * A LONE STATEMENT ON A BOUND HANDLE IS ONE FLIGHT: begin, the binder's statement, the statement and
+ * commit written before any answer is read, on a connection reserved for it. It answers when commit
+ * has answered: one wait, as a statement alone had. The statement's own error reaches the caller
+ * (the pipelined commit answers ROLLBACK); a commit-time error rejects the statement; a BEGIN the
+ * server refused is {@link BindingFailedError} with `mayHaveRun`, never the statement's value. The
+ * answers are read in the order written, and none after a lost line (it may never come): a lost
+ * line answers {@link Line.failure}.
+ */
+async function loneFlight(pool: Sql, waitMs: number | null, values: BindingValues, issue: (scoped: Sql) => Promise<unknown>): Promise<unknown> {
+  const started = Date.now();
+  const line = lineOf((await reserveWithin(pool, waitMs, "statement")) as Reserved, pool, started, "statement");
+  const opened = settle(line.send("begin"));
+  const bound = settle(sendBinder(line, values));
+  let statement: Promise<Settled<unknown>>;
+  try {
+    statement = settle(line.watch(issue(withOneFlush(line.client, true, pool, true))));
+  } catch (err) {
+    // Not swallowed: the statement could not be written, and this error is its answer, thrown
+    // below once the flight's close has been read and the connection handed back.
+    statement = Promise.resolve({ ok: false as const, err });
+  }
+  const closing = settle(line.send("commit", true));
+  const begun = await opened;
+  if (line.lost !== null) throw line.failure();
+  const named = await bound;
+  if (line.lost !== null) throw line.failure();
+  const result = await statement;
+  if (line.lost !== null) throw line.failure();
+  const closed = await closing;
+  if (line.lost !== null) throw line.failure();
+  line.release(closed);
+  if (!begun.ok) throw new BindingFailedError(sqlstateOf(begun.err), true);
+  if (!named.ok) throw named.err;
+  if (!result.ok) throw result.err;
+  if (!closed.ok) throw closed.err;
+  if (commandOf(closed.value) !== "COMMIT") throw new Error("the database rolled this statement back at its commit");
+  return result.value;
+}
+
+/**
+ * The client a bound view's statements are sent through: each one a lone flight, read as drizzle
+ * reads a driver query (awaited, or through `values()` for row arrays). The binding lives in this
+ * closure, never in a field a log or a walk of the handle could reach.
+ */
+function loneClient(pool: Sql, waitMs: number | null, values: BindingValues): object {
+  return {
+    unsafe(text: string, params: unknown[] = [], options: Record<string, unknown> = {}) {
+      if (Array.isArray(params) && params.length > MAX_BIND_PARAMETERS) throw new BindLimitError(params.length);
+      const undefinedValue = undefinedValueIn(params);
+      if (undefinedValue !== null) throw undefinedValue;
+      let raw = false;
+      let run: Promise<unknown> | null = null;
+      const go = (): Promise<unknown> => (run ??= loneFlight(pool, waitMs, values, (scoped) => {
+        const q = scoped.unsafe(text, params as never[], options as never) as unknown as { values(): unknown; execute(): unknown };
+        if (raw) q.values();
+        q.execute();
+        return q as unknown as Promise<unknown>;
+      }));
+      const answer = {
+        values() { raw = true; return answer; },
+        then<A = unknown, B = never>(ok?: ((v: unknown) => A | PromiseLike<A>) | null, bad?: ((e: unknown) => B | PromiseLike<B>) | null) {
+          return go().then(ok, bad);
+        },
+        catch<B = never>(bad?: ((e: unknown) => B | PromiseLike<B>) | null) { return go().catch(bad); },
+        finally(fn?: (() => void) | null) { return go().finally(fn); },
+      };
+      return answer;
+    },
+  };
+}
+
+/**
+ * THE BOUND SESSION a view of a dressed handle runs through: drizzle's own session over a client
+ * whose every statement is a lone flight, and whose `transaction` opens a flight itself (door two,
+ * or door one for the read-flight handle) and builds drizzle's transaction over the flight's scope.
+ */
+function boundSession(base: object, pool: Sql, waitMs: number | null, values: BindingValues, readOnly: boolean): object {
+  const { dialect, schema, options } = base as unknown as { dialect: never; schema: never; options: never };
+  const session = new PostgresJsSession(loneClient(pool, waitMs, values) as never, dialect, schema, options);
+  const open = <T>(fn: (tx: object) => Promise<T>): FlightBody<T> => (client, rename) => {
+    const tx = new PostgresJsTransaction(dialect, new PostgresJsSession(client as never, dialect, schema, options), schema);
+    registerTxDoor(tx, rename);
+    return fn(tx);
+  };
+  Object.defineProperty(session, "transaction", {
+    value: async <T>(fn: (tx: object) => Promise<T>, config?: TxConfig): Promise<T> => (readOnly
+      ? readFlight(pool, waitMs, values, open(fn))
+      : writeFlight(pool, waitMs, values, beginText(config), open(fn))),
+    enumerable: false, configurable: false, writable: false,
+  });
+  return session;
+}
+
+/** The client a read-flight handle is built on: `begin` opens a read-only flight, the rest is `client`'s. */
+function withReadFlight(pool: Sql, client: Sql, waitMs: number | null): Sql {
+  const begin = (...args: unknown[]): Promise<unknown> => {
+    const fn = args[args.length - 1] as (s: Sql) => Promise<unknown>;
+    return readFlight(pool, waitMs, null, (scoped) => fn(scoped));
   };
   return new Proxy(client, {
     get(target, prop) {
@@ -733,21 +1174,39 @@ function withReadFlight(
   }) as Sql;
 }
 
-/** A reserved connection within `ms`, or {@link DbAcquireTimeoutError}; one reserved too late goes straight back. */
-function reserveWithin(pool: ReturnType<typeof postgres>, ms: number): Promise<ReturnType<typeof postgres> & { release: () => void }> {
-  type Reserved = ReturnType<typeof postgres> & { release: () => void };
+/**
+ * A reserved connection, within `ms` when the handle has a ceiling, or {@link DbAcquireTimeoutError}
+ * naming `what` the caller waited to begin; one reserved too late goes straight back. A reservation
+ * that waits is asked again after each close of one of its pool's connections: postgres.js 3.4.9
+ * hands the first statement waiting for a connection to the one it dials again, and drops it there
+ * when it is a reservation, which then never answers. The first answer is kept; any later one goes
+ * straight back.
+ */
+function reserveWithin(pool: Sql, ms: number | null, what: Carried): Promise<Reserved> {
   const started = Date.now();
+  const waiting = reservations.get(pool);
   return new Promise((resolve, reject) => {
-    let refused = false;
-    const timer = setTimeout(() => {
-      refused = true;
-      reject(new DbAcquireTimeoutError(ms, "transaction"));
-    }, ms);
-    (timer as unknown as { unref?: () => void }).unref?.();
-    (pool.reserve() as Promise<Reserved>).then(
-      (conn) => { clearTimeout(timer); if (refused) conn.release(); else resolve(conn); },
-      (err: unknown) => { clearTimeout(timer); if (!refused) reject(asBusyRefusal(err, started, "transaction")); },
-    );
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settles = (): boolean => {
+      if (settled) return false;
+      settled = true;
+      waiting?.delete(ask);
+      if (timer !== undefined) clearTimeout(timer);
+      return true;
+    };
+    const ask = (): void => {
+      (pool.reserve() as Promise<Reserved>).then(
+        (conn) => { if (settles()) resolve(conn); else conn.release(); },
+        (err: unknown) => { if (settles()) reject(asBusyRefusal(err, started, what)); },
+      );
+    };
+    if (ms !== null) {
+      timer = setTimeout(() => { if (settles()) reject(new DbAcquireTimeoutError(ms, what)); }, ms);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }
+    waiting?.add(ask);
+    ask();
   });
 }
 
@@ -761,45 +1220,44 @@ function reserveWithin(pool: ReturnType<typeof postgres>, ms: number): Promise<R
 // for a pooled deployment is ROLE_DEFAULT_TIMEOUTS. The wait for a connection is bounded
 // client-side by POOLED_ACQUIRE_TIMEOUT_MS, because every server ceiling bounds a statement that
 // already HAS a connection.
-const pools = new Map<string, ReturnType<typeof postgres>>();
+const pools = new Map<string, Sql>();
 /**
- * ONE HANDLE PER POOL AND CEILING, not one per call. Callers memoise facts per handle (the search's
- * pg_trgm probe and backfill marker, the knowledge base's probe), and the host asks for a handle on
- * every request: a fresh one each time re-ran every such probe on every request, a round trip each
- * through the pooler. A handle carries no request state — the drizzle session over the shared pool.
+ * ONE HANDLE PER POOL, CEILING AND ROLE, not one per call. Callers memoise facts per pool (the
+ * search's pg_trgm probe and backfill marker, the knowledge base's probe), and the host asks for a
+ * handle on every request: a fresh one each time re-ran every such probe on every request, a round
+ * trip each through the pooler. A handle carries no request state — the drizzle session over the
+ * shared pool.
  */
 const handles = new Map<string, PostgresJsDatabase<typeof schema>>();
 
 export function makePooledDb(
   url: string,
   /**
-   * `acquireTimeoutMs` overrides {@link POOLED_ACQUIRE_TIMEOUT_MS} for this handle.
+   * `role` picks the cell of the handle's table (`api` unless named); `acquireTimeoutMs`
+   * overrides its wait to begin ({@link POOLED_ACQUIRE_TIMEOUT_MS}) for this handle.
    *
    * A PARAMETER rather than a `process.env` read, for the reason `AdminConfig.readTimeoutMs`
    * already gives one package over: a guard for this ceiling has to watch a caller actually be
    * refused, and it cannot spend the production duration doing it. Production passes nothing.
    * The ceiling is a property of the HANDLE, not of the pool, so two callers may hold different
-   * ones over the same module-cached connection. `max` narrows the pool for a caller whose reads
-   * are serialized anyway (the staff handle) or a guard that needs one connection.
+   * ones over the same module-cached connection. `max` narrows the pool for a guard that needs
+   * one connection.
    */
-  opts: { acquireTimeoutMs?: number; max?: number } = {},
+  opts: { role?: Exclude<HandleRole, "worker">; acquireTimeoutMs?: number; max?: number } = {},
 ): PostgresJsDatabase<typeof schema> {
-  const ceiling = opts.acquireTimeoutMs ?? POOLED_ACQUIRE_TIMEOUT_MS;
-  const key = JSON.stringify([url, ceiling]);
+  const role = opts.role ?? "api";
+  const cell = HANDLE_TABLE[role].pooler;
+  const ceiling = opts.acquireTimeoutMs ?? cell.waitMs;
+  const key = JSON.stringify([url, ceiling, role]);
   const known = handles.get(key);
   if (known) return known;
   let pooled = pools.get(url);
   if (!pooled) {
     // `max` is read when this URL's pool is FIRST built; a later handle over it shares that pool.
-    pooled = postgres(url, withPgSocket({
-      ...pgTlsOptions(url), prepare: false, max: opts.max ?? POOLED_MAX_CONNECTIONS, idle_timeout: POOLED_IDLE_TIMEOUT_S, connect_timeout: 10,
-      connection: POOLED_TIMEOUTS, onnotice: onNotice,
-    }));
+    pooled = openPool(url, cell, opts.max ?? cell.max);
     pools.set(url, pooled);
   }
-  const client = withBindLimit(withAcquireCeiling(withOneFlush(pooled), ceiling));
-  const handle = brandDialect(drizzle(client, { schema }), "pg");
-  registerReadFlight(handle, brandDialect(drizzle(withReadFlight(pooled, client, ceiling), { schema }), "pg"));
+  const handle = dress(pooled, cell, ceiling, role);
   handles.set(key, handle);
   return handle;
 }
@@ -808,11 +1266,15 @@ export function makePooledDb(
  * A handle over the SAME postgres.js pool as `db` whose statements wait at most `ms` to begin: the
  * {@link makePooledDb} ceiling for a pool another factory built — the self-hosted server's
  * {@link makeOwnedDb}. A property of the handle: no connection, and the pool keeps its own
- * timeouts. Refuses a handle with no postgres.js client behind it (PGlite, `drizzle.mock()`).
+ * timeouts. Refuses a handle with no postgres.js client behind it (PGlite, `drizzle.mock()`), and a
+ * bound handle: a binding is made over the pool's handle, never under it.
  */
 export function acquireCeilingHandle(
   db: PostgresJsDatabase<typeof schema>, ms: number,
 ): PostgresJsDatabase<typeof schema> {
+  if (bindingOf(db) !== undefined) throw new TypeError("acquireCeilingHandle: a bound handle is not a pool's handle");
+  const built = dressed.get(db);
+  if (built !== undefined) return dress(built.pool, built.cell, ms, built.role);
   const client = (db as { $client?: unknown }).$client;
   if (typeof client !== "function" || typeof (client as { unsafe?: unknown }).unsafe !== "function") {
     throw new TypeError("acquireCeilingHandle: this handle has no postgres.js pool behind it");
