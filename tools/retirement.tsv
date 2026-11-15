@@ -1194,6 +1194,7 @@ packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (j
 packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/reverse-charge.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/row-security-list.test.ts	data	reads data files (sql): the mail and the Cloud's journals, for an entry a listed view of the lock cannot stand	none	lock	
 packages/db/test/rule-lock-order-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rule-state-delta-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rules-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	

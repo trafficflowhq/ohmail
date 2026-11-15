@@ -3,7 +3,7 @@ import { pgTlsOptions } from "../pg-tls.js";
 import { withPgSocket } from "../pg-socket.js";
 import { assertExpectedHost, assertSessionUrl } from "../setup-prod.js";
 import { READER_SCHEMA } from "./names.js";
-import { lockDrift, lockedOf, markerOf, markerText, readLockFacts, type Exec, type LockFacts, type MarkerWhy } from "./census.js";
+import { VIEWS_UNGRANTED, lockDrift, lockedOf, markerOf, markerText, readLockFacts, type Exec, type LockFacts, type MarkerWhy } from "./census.js";
 
 /**
  * THE SWITCH: the lock off, and on again, as the migrator, in one transaction each way.
@@ -11,8 +11,9 @@ import { lockDrift, lockedOf, markerOf, markerText, readLockFacts, type Exec, ty
  * Off: row security disabled and its forcing taken off on every locked table, and the marker on the
  * readers' schema (`ohmail.lock off since=<UTC> by=<role> why=<word>`, no free text). Forcing alone
  * would release nobody: it binds only a table's owner, and the logins own nothing. On: the census
- * must read the list first (the flags and the marker aside), then every locked table is enabled and
- * forced and the marker cleared. Policies are never dropped. The marker is the schema's comment,
+ * must read the list first (the flags and the marker aside, and the logins' rights on the account's
+ * views, which are the runtime roles' rule's to write and the switch never touches), then every
+ * locked table is enabled and forced and the marker cleared. Policies are never dropped. The marker is the schema's comment,
  * not a database setting: a role that is no superuser may not set an unknown parameter on its
  * database, and the comment needs no table and no grant, commits with the switch, and is read by
  * any role.
@@ -21,6 +22,9 @@ import { lockDrift, lockedOf, markerOf, markerText, readLockFacts, type Exec, ty
  * timeout and is retried whole; a failure changes nothing. Provisioning only: no request reaches it.
  */
 export const SWITCH_LOCK_TIMEOUT_MS = 5_000;
+
+/** A census line the switch neither causes nor mends: a login's right on the account's views not yet written. */
+const notTheSwitchs = (line: string): boolean => line.startsWith(`LOCK_DRIFT ${VIEWS_UNGRANTED} `);
 export const SWITCH_TRIES = 3;
 
 export interface SwitchReport {
@@ -62,7 +66,7 @@ async function once(tx: Exec, to: "off" | "on", why: MarkerWhy | undefined, lock
     const statements = locked.map((t) => `alter table public.${quote(t)} disable row level security, no force row level security`);
     await tx.unsafe([...statements, `comment on schema ${READER_SCHEMA} is '${marker.replace(/'/g, "''")}'`].join(";\n")).simple();
   } else {
-    const drift = lockDrift(facts).filter((l) => !/^LOCK_DRIFT (tables\.flags|marker\.)/.test(l));
+    const drift = lockDrift(facts).filter((l) => !/^LOCK_DRIFT (tables\.flags|marker\.)/.test(l) && !notTheSwitchs(l));
     if (drift.length > 0) throw new LockSwitchRefused(`the census is not the list's (${drift.length} lines, first: ${drift[0]})`);
     const statements = locked.map((t) => `alter table public.${quote(t)} enable row level security, force row level security`);
     await tx.unsafe([...statements, `comment on schema ${READER_SCHEMA} is null`].join(";\n")).simple();
@@ -71,7 +75,7 @@ async function once(tx: Exec, to: "off" | "on", why: MarkerWhy | undefined, lock
   const state = markerOf(after);
   const ok = to === "off"
     ? state !== null && state !== "unreadable" && lockedOf(after).every((t) => !t.rls && !t.forced)
-    : state === null && lockDrift(after).length === 0;
+    : state === null && lockDrift(after).filter((l) => !notTheSwitchs(l)).length === 0;
   if (!ok) throw new LockSwitchRefused(`the lock did not read ${to} after the switch`);
   return { to, tables: locked.length, marker };
 }

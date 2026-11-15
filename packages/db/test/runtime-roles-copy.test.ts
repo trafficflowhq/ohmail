@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { RUNTIME_LOGINS } from "../src/row-security/names.js";
 import { STAFF_TABLES, policyList, type PolicyVerb } from "../src/row-security/policies.js";
 import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
+import { ACCOUNT_VIEWS, viewName } from "../src/row-security/views.js";
+import { READER_SCHEMA } from "../src/row-security/logins.js";
 
 /**
  * THE RUNTIME ROLES' SCRIPT IS A VERBATIM COPY. Its one home is the deploy kit, which makes the two
@@ -37,8 +39,8 @@ const COVERS: Record<PolicyVerb, readonly string[]> = {
 
 describe("the copied roles' script", () => {
   it("is the kit's file and data, byte for byte", () => {
-    expect(sha256(SCRIPT)).toBe("0e21f8e564c21ee77f103283eafa193130ba4c0727cccab26099942cfda1f186");
-    expect(sha256(RULE)).toBe("bb4fda02a9f391a3eb14629caed0039bbb9221c6a9788828feef8e418379caa5");
+    expect(sha256(SCRIPT)).toBe("65f3ff8fefe0af7fad192fb3afeca501abfbfcd43d61e9fd0eb07444c851793a");
+    expect(sha256(RULE)).toBe("09681568b05999d97851693b5b5971303122fce67b235759ff6065c2282bb67b");
   });
 
   it("carries the four markers its sections are cut by, once each and in order", () => {
@@ -55,6 +57,12 @@ describe("the copied roles' script", () => {
 describe("the rule the script writes, against the lock's list", () => {
   it("names the same two logins", () => {
     expect(rows.filter((r) => r[0] === "login").map((r) => r[1])).toEqual([...RUNTIME_LOGINS]);
+  });
+
+  it("grants exactly the lock's three views, to exactly the two logins, to read, and USAGE on their schema", () => {
+    const views = rows.filter((r) => r[0] === "view").map((r) => `${r[1]} ${r[2]} ${r[3]}`).sort();
+    expect(views).toEqual(RUNTIME_LOGINS.flatMap((l) => ACCOUNT_VIEWS.map((v) => `${l} ${viewName(v)} SELECT`)).sort());
+    expect(rows.filter((r) => r[0] === "schema" && r[2] === READER_SCHEMA).map((r) => `${r[1]} ${r[3]}`)).toEqual(RUNTIME_LOGINS.map((l) => `${l} USAGE`));
   });
 
   it("a policy names a login only on a table and verb the rule grants it", () => {

@@ -559,6 +559,10 @@ export interface LockHealthLine {
   forced: number;
   census: "equal" | "drift";
   policies: "equal" | "differ" | "not-judged";
+  /** The account's views of the row lock standing as listed: 3 where the lock stands whole. */
+  views: number;
+  /** Which relations this instance's index-driven reads go through: the views, the tables, or not asked yet. */
+  reads: "views" | "tables" | "unasked";
   since?: string;
   by?: string;
   why?: string;

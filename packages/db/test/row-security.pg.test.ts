@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MIGRATED_DB_SETUP_BUDGET_MS, MIGRATOR_ROLE, PG_MAJORS, ownServersAvailable, startLockGround, type LockGround } from "../src/testing.js";
 import {
-  expectedPolicies, lockCensus, pinSpelling, policyComment, policyDifferences, readLockFacts, type LockFacts,
+  expectedPolicies, lockCensus, pinSpelling, policyComment, policyDifferences, readLockFacts, viewComment, type LockFacts,
 } from "../src/row-security/census.js";
 import { createPolicyStatement } from "../src/row-security/apply.js";
 import { LOCK_READERS } from "../src/row-security/names.js";
 import { policyList, lockedTables, policiesOfTable } from "../src/row-security/policies.js";
 import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
 import { readLock, type LockReading } from "../src/row-security/check.js";
+import { ACCOUNT_VIEWS, INDEX_READS, readerCondition, viewName, viewStatement, type AccountView } from "../src/row-security/views.js";
 import { switchLock } from "../src/row-security/switch.js";
 import { BINDER_SQL, BINDING_READERS_SQL } from "../src/bound.js";
 
@@ -146,7 +147,27 @@ for (const major of PG_MAJORS) {
       }
     }, CASE_MS);
 
-    it("asked: every locked table is forced, exactly the listed policies stand, the deadlines by role, and the census is clean", async () => {
+    /** The rights the runtime roles' rule writes on the account's views, which a login lacks between the lock step and the roles' apply. */
+    const ungrantedLines = (views: readonly string[] = ACCOUNT_VIEWS.map((v) => v.name), usage = true): string[] => [
+      ...(usage ? ["ohmail_api", "ohmail_worker"].map((l) => `LOCK_DRIFT views.ungranted ohmail: ${l} holds no USAGE while a view stands`) : []),
+      ...views.flatMap((v) => ["ohmail_api", "ohmail_worker"].map((l) => `LOCK_DRIFT views.ungranted ohmail.${v}: ${l} holds no SELECT`)),
+    ].sort();
+    /** As `role` on `db`, the binder's own statement naming `account`, then the account's reader called by name: what it answers, or the refusal's code. */
+    const readerByName = async (db: string, role: string, account: string): Promise<string> => {
+      const c = ground.connectAs(db, role);
+      try {
+        return await c.begin(async (tx) => {
+          await tx.unsafe(BINDER_SQL, [account, ""]);
+          return String((await tx.unsafe("select ohmail.current_account()::text as a"))[0]!.a);
+        }) as string;
+      } catch (e) {
+        return String((e as { code?: unknown }).code ?? (e as Error).message);
+      } finally {
+        await c.end({ timeout: 5 });
+      }
+    };
+
+    it("asked: every locked table is forced, exactly the listed policies stand, the deadlines by role, and the census names only the views' rights the roles' apply writes next", async () => {
       const report = await ground.setup("ground", MIGRATOR_ROLE, { lock: "apply" });
       expect(report.lock).toMatchObject({ state: "locked", tables: lockedTables().length, forced: 101, policies: policyList().length, repaired: [] });
       expect(report.lock!.wrote).toBeGreaterThan(policyList().length);
@@ -154,7 +175,7 @@ for (const major of PG_MAJORS) {
         [role, Object.fromEntries(Object.keys(cell).map((guc) => [guc, true]))])));
       const sql = ground.connectAs("ground", MIGRATOR_ROLE);
       try {
-        expect(await lockCensus(sql)).toEqual([]);
+        expect((await lockCensus(sql)).sort()).toEqual(ungrantedLines());
         const [t] = await sql<Array<{ n: number }>>`select count(*)::int as n from pg_tables where schemaname = 'public'`;
         expect(t!.n).toBe(111);
       } finally {
@@ -165,6 +186,121 @@ for (const major of PG_MAJORS) {
     it("a second run writes nothing", async () => {
       const report = await ground.setup("ground", MIGRATOR_ROLE);
       expect(report.lock).toMatchObject({ state: "locked", wrote: 0, repaired: [] });
+    }, CASE_MS);
+
+    /** Who holds what on the readers' schema and the account's views of `db`, as the catalog's entries say. */
+    async function viewRights(db: string): Promise<string[]> {
+      const sql = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        return (await sql.unsafe(`select n.nspname || ':' || pg_get_userbyid(x.grantee) || ':' || x.privilege_type as e
+            from pg_namespace n cross join lateral aclexplode(n.nspacl) x where n.nspname = 'ohmail' and x.grantee <> n.nspowner
+          union all select c.relname || ':' || pg_get_userbyid(x.grantee) || ':' || x.privilege_type from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace cross join lateral aclexplode(c.relacl) x
+           where n.nspname = 'ohmail' and c.relkind = 'v' and x.grantee <> c.relowner order by 1`)).map((r) => String(r.e));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    it("the views stood ungranted through that second run: the step grants nothing, its check before and after cuts the views' grants, and a login naming a reader is refused", async () => {
+      expect(await viewRights("ground")).toEqual([]);
+      expect((await plantAndCensus("ground", [])).sort()).toEqual(ungrantedLines());
+      const a = "00000000-0000-4000-8000-0000000000a1";
+      expect({ api: await readerByName("ground", "ohmail_api", a), worker: await readerByName("ground", "ohmail_worker", a) }).toEqual({ api: "42501", worker: "42501" });
+    }, CASE_MS);
+
+    it("the roles' apply after the lock step writes exactly the eight rights the views take, and the lock stays as listed", async () => {
+      const said = await rolesScript("ground");
+      expect(said.filter((s) => /ROLES_(OK|DRIFT|REFUSED)/.test(s)).map((s) => s.split(" ")[1])).toEqual(["ROLES_OK"]);
+      const want = ["ohmail_api", "ohmail_worker"].flatMap((l) => ["ohmail", ...ACCOUNT_VIEWS.map((v) => v.name)].map((o) => `${o}:${l}:${o === "ohmail" ? "USAGE" : "SELECT"}`)).sort();
+      expect(await viewRights("ground")).toEqual(want);
+      expect(said.filter((s) => /write: [^\n]*ohmail/.test(s))).toHaveLength(8);
+      expect(await plantAndCensus("ground", [])).toEqual([]);
+      for (const role of ["ohmail_api", "ohmail_worker"]) {
+        expect(await verdictOf("ground", role, { role }), role).toMatchObject({ verdict: "locked", why: [], census: 0, views: 3 });
+      }
+      expect((await ground.setup("ground", MIGRATOR_ROLE)).lock).toMatchObject({ state: "locked", wrote: 0, repaired: [], views: 3 });
+      // The lock's first proof case, flipped: with USAGE on the readers' schema a login may call a reader by name, and it answers the binding the login wrote.
+      const a = "00000000-0000-4000-8000-0000000000a1";
+      expect({ api: await readerByName("ground", "ohmail_api", a), worker: await readerByName("ground", "ohmail_worker", a), nothing: await readerByName("ground", "ohmail_api", "") })
+        .toEqual({ api: a, worker: a, nothing: "null" });
+    }, CASE_MS);
+
+    /**
+     * THE POSTCONDITION: the views are born unreachable or not at all. On a store with no lock yet the check
+     * before the step has no view to read who reaches; after the step made them, inside its transaction, the
+     * check runs again on the step's own connection, names who would reach them, and the step rolls back.
+     */
+    const firstLockRefused = async (name: string, plant: { readonly asSuper?: string[]; readonly asMigrator?: string[]; readonly undo?: string[] }):
+      Promise<{ refused: string; lock: object }> => {
+      const db = await ground.clone("unlocked", name);
+      const su = ground.connectAs("postgres");
+      try {
+        for (const s of plant.asSuper ?? []) await su.unsafe(s);
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try { for (const s of plant.asMigrator ?? []) await mig.unsafe(s); } finally { await mig.end({ timeout: 5 }); }
+        const refused = await ground.setup(db, MIGRATOR_ROLE, { lock: "apply" }).then((r) => `not refused: ${JSON.stringify(r.lock)}`, (e: Error) => e.message);
+        return { refused, lock: await lockOf(db) };
+      } finally {
+        for (const s of plant.undo ?? []) await su.unsafe(s);
+        await su.end({ timeout: 5 });
+      }
+    };
+    const NOTHING_MADE = { schema: false, policies: 0, underRls: 0 };
+
+    it("the postcondition: a member of pg_read_all_data on a store with no lock yet; the step names it, rolls back, the readers' schema stays absent, and the member reads nothing", async () => {
+      const db = "post_reader";
+      const got = await firstLockRefused(db, { asSuper: ["create role r_post_reader login in role pg_read_all_data"] });
+      await ground.password("r_post_reader");
+      const member = ground.connectAs(db, "r_post_reader");
+      let read: string;
+      try { read = await member.unsafe("select count(*) from ohmail.messages").then(() => "read", (e: { code?: string }) => String(e.code)); }
+      finally { await member.end({ timeout: 5 }); }
+      const su = ground.connectAs("postgres");
+      try { await su.unsafe("drop role r_post_reader"); } finally { await su.end({ timeout: 5 }); }
+      expect({
+        names: /lock: the runtime roles' check, after the step made the views, refused: ROLES_DRIFT [^\n]*r_post_reader[^\n]*; nothing was written/.test(got.refused),
+        lock: got.lock, read,
+      }).toEqual({ names: true, lock: NOTHING_MADE, read: "42P01" });
+    }, CASE_MS);
+
+    // The views born granted by the migrator's default privilege: a grant on them is the lock's own census's line, inside the
+    // step's transaction, so it refuses there first; USAGE for a role the census does not read is the postcondition's alone.
+    it("the migrator's default privilege on tables in every schema, for the staff role: the views born granted are named, rolled back, nothing made", async () => {
+      const got = await firstLockRefused("post_default_tables", { asMigrator: ["alter default privileges for role ohmail_migrator grant select on tables to ohmail_admin"] });
+      expect({ names: ACCOUNT_VIEWS.every((v) => got.refused.includes(`lock: LOCK_DRIFT views.grants ${viewName(v)}: ohmail_admin holds SELECT; nothing was written`)),
+        lock: got.lock }).toEqual({ names: true, lock: NOTHING_MADE });
+    }, CASE_MS);
+
+    it("the postcondition: the migrator's default privilege on schemas, for a role of its own: the schema born usable to it is named after the step made the views, rolled back, nothing made", async () => {
+      const got = await firstLockRefused("post_default_schemas", {
+        asSuper: ["create role r_post_schema login"],
+        // The role stays: its default privilege lives in that database alone, and it reaches nothing anywhere else.
+        asMigrator: ["alter default privileges for role ohmail_migrator grant usage on schemas to r_post_schema"],
+      });
+      expect({ names: /lock: the runtime roles' check, after the step made the views, refused: ROLES_DRIFT [^\n]*r_post_schema[^\n]*; nothing was written/.test(got.refused),
+        lock: got.lock }).toEqual({ names: true, lock: NOTHING_MADE });
+    }, CASE_MS);
+
+    it("both default privileges for the billing plane, which would read the views from the commit: named, rolled back, nothing made", async () => {
+      const got = await firstLockRefused("post_default_both", { asMigrator: ["alter default privileges for role ohmail_migrator grant select on tables to plane_runtime",
+        "alter default privileges for role ohmail_migrator grant usage on schemas to plane_runtime"] });
+      expect({ names: got.refused.split("\n").filter((l) => /^ {2}- lock: [^\n]*plane_runtime[^\n]*; nothing was written$/.test(l)).length >= 2, lock: got.lock })
+        .toEqual({ names: true, lock: NOTHING_MADE });
+    }, CASE_MS);
+
+    it("all three views dropped by hand, the logins' USAGE left: the census names it, and the next setup makes them again and the roles' apply grants them", async () => {
+      const db = await ground.clone("ground", "views_dropped");
+      expect((await plantAndCensus(db, [...ACCOUNT_VIEWS].reverse().map((v) => `drop view ${viewName(v)}`))).sort()).toEqual([
+        ...ACCOUNT_VIEWS.map((v) => `LOCK_DRIFT views.missing ${viewName(v)}`),
+        drift("schema.usage", "ohmail", "ohmail_api holds USAGE"), drift("schema.usage", "ohmail", "ohmail_worker holds USAGE"),
+      ].sort());
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      expect({ repaired: [...report.lock!.repaired].sort(), views: report.lock!.views })
+        .toEqual({ repaired: ACCOUNT_VIEWS.map((v) => `view ${viewName(v)} was missing: made`).sort(), views: 3 });
+      expect((await plantAndCensus(db, [])).sort()).toEqual(ungrantedLines(ACCOUNT_VIEWS.map((v) => v.name), false));
+      expect((await rolesScript(db)).filter((s) => /write: [^\n]*ohmail\./.test(s))).toHaveLength(6);
+      expect(await plantAndCensus(db, [])).toEqual([]);
     }, CASE_MS);
 
     /**
@@ -454,6 +590,8 @@ for (const major of PG_MAJORS) {
       readonly setup: { readonly repaired: readonly string[] } | { readonly refused: RegExp };
       /** Statements, as the superuser, that undo a plant the whole server holds. */
       readonly undo?: readonly string[];
+      /** The census after the setup mended it, where that is not clean: the views it made again stand ungranted until the roles' apply. */
+      readonly after?: readonly string[];
     }
     const CLAUSES: Clause[] = [
       { arm: "tables.column, a column the map does not name", plant: () => ["alter table public.waitlist add column account_id uuid"],
@@ -496,20 +634,25 @@ for (const major of PG_MAJORS) {
         // A row of the list that changed is made again as the list's, not as a repair.
         setup: { repaired: [] } },
       { arm: "schema.missing", plant: () => ["drop schema ohmail cascade"],
-        lines: () => ["LOCK_DRIFT schema.missing ohmail", ...missingLines([...new Set([...calling("current_account"), ...calling("current_key")])])],
+        lines: () => ["LOCK_DRIFT schema.missing ohmail", ...ACCOUNT_VIEWS.map((v) => `LOCK_DRIFT views.missing ${viewName(v)}`),
+          ...missingLines([...new Set([...calling("current_account"), ...calling("current_key")])])],
         setup: { repaired: ["schema ohmail was missing: made", "reader ohmail.current_account was missing: made", "reader ohmail.current_key was missing: made",
-          ...madeLines([...new Set([...calling("current_account"), ...calling("current_key")])])] } },
-      { arm: "schema.usage", plant: () => ["grant usage on schema ohmail to ohmail_api"],
-        lines: () => [drift("schema.usage", "ohmail", "ohmail_api holds USAGE")],
-        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT USAGE on schema ohmail/ } },
+          ...ACCOUNT_VIEWS.map((v) => `view ${viewName(v)} was missing: made`), ...madeLines([...new Set([...calling("current_account"), ...calling("current_key")])])] },
+        after: ungrantedLines() },
+      // USAGE on the readers' schema: the two logins' is the rule's while one of the account's views stands there; no other role's is.
+      { arm: "schema.usage", plant: () => ["grant usage on schema ohmail to ohmail_admin"],
+        lines: () => [drift("schema.usage", "ohmail", "ohmail_admin holds USAGE")],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*ohmail_admin/ } },
       { arm: "schema.objects, a routine, and one of a reader's name that takes an argument",
         plant: () => ["create function ohmail.extra() returns int language sql as 'select 1'",
           "create function ohmail.current_account(x int) returns uuid language sql stable as 'select null::uuid'"],
         lines: () => [drift("schema.objects", "ohmail", "routine current_account(x integer)"), drift("schema.objects", "ohmail", "routine extra()")],
-        setup: { refused: /lock: LOCK_DRIFT schema\.objects ohmail: routine/ } },
+        // A login may run them: the runtime roles' check refuses them before the step writes.
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT EXECUTE on the routine ohmail\.extra\(\): role ohmail_api may run it in schema ohmail/ } },
       { arm: "schema.objects, a relation and a type", plant: () => ["create table ohmail.extra (id int)", "create type ohmail.mood as enum ('calm')"],
         lines: () => [drift("schema.objects", "ohmail", "relation extra"), drift("schema.objects", "ohmail", "type mood")],
-        setup: { refused: /lock: LOCK_DRIFT schema\.objects ohmail: (relation|type)/ } },
+        // A relation the rule does not name there: the runtime roles' check refuses it before the step writes.
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*ohmail\.extra/ } },
       { arm: "marker.unreadable", plant: () => ["comment on schema ohmail is 'the lock is off, trust me'"],
         lines: () => [drift("marker.unreadable", "ohmail", "its comment is no marker")],
         setup: { refused: /lock: LOCK_DRIFT marker\.unreadable ohmail/ } },
@@ -527,9 +670,10 @@ for (const major of PG_MAJORS) {
         lines: () => [drift("readers.differ", "ohmail.current_account", "volatility")], setup: { repaired: ["reader ohmail.current_account made again: volatility"] } },
       { arm: "readers.differ, parallel", plant: () => ["alter function ohmail.current_account() parallel unsafe"],
         lines: () => [drift("readers.differ", "ohmail.current_account", "parallel")], setup: { repaired: ["reader ohmail.current_account made again: parallel"] } },
+      // The logins hold USAGE on the readers' schema while the views stand: a definer there is one they may run by name, and the roles' check refuses it first.
       { arm: "readers.differ, security definer", plant: () => ["alter function ohmail.current_account() security definer"],
         lines: () => [drift("readers.differ", "ohmail.current_account", "security definer")],
-        setup: { repaired: ["reader ohmail.current_account made again: security definer"] } },
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine ohmail\.current_account\(\): role ohmail_api can run it/ } },
       { arm: "readers.differ, settings", plant: () => ["alter function ohmail.current_account() set search_path = pg_catalog"],
         lines: () => [drift("readers.differ", "ohmail.current_account", "settings")], setup: { repaired: ["reader ohmail.current_account made again: settings"] } },
       { arm: "readers.differ, language",
@@ -617,7 +761,7 @@ for (const major of PG_MAJORS) {
           } else {
             const report = await ground.setup(db, MIGRATOR_ROLE);
             expect([...report.lock!.repaired].sort()).toEqual([...c.setup.repaired].sort());
-            expect(await plantAndCensus(db, [])).toEqual([]);
+            expect((await plantAndCensus(db, [])).sort()).toEqual([...(c.after ?? [])].sort());
           }
         } finally {
           for (const s of c.undo ?? []) await su.unsafe(s);
@@ -625,6 +769,250 @@ for (const major of PG_MAJORS) {
         }
       }, CASE_MS);
     }
+
+    /**
+     * THE ACCOUNT'S VIEWS, AS THE STEP MAKES THEM: in the readers' schema, the migrator's, each carrying the
+     * account's condition and the reader's (the two runtime logins by `current_user`, as the catalog stores
+     * it) and the check option alone, recorded as a policy is, and born with no grant.
+     */
+    it("the step made the account's three views as listed: the migrator's, the reader's condition and the check option alone in the catalog, and recorded", async () => {
+      const sql = ground.connectAs("ground", MIGRATOR_ROLE);
+      try {
+        const got = await sql.unsafe(`select c.relname::text as name, c.relkind::text as kind, pg_get_userbyid(c.relowner)::text as owner,
+            c.reloptions::text[] as options, c.relacl::text as acl, pg_get_viewdef(c.oid) as text, obj_description(c.oid, 'pg_class') as comment
+          from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'ohmail' and c.relkind = 'v' order by 1`);
+        expect(got.map((r) => ({ name: r.name, kind: r.kind, owner: r.owner, options: r.options, recorded: String(r.comment).startsWith("ohmail-lock ") })))
+          .toEqual(ACCOUNT_VIEWS.map((v) => ({ name: v.name, kind: "v", owner: MIGRATOR_ROLE, options: ["check_option=cascaded"], recorded: true }))
+            .sort((x, y) => (x.name < y.name ? -1 : 1)));
+        for (const r of got) {
+          expect(String(r.text), String(r.name)).toContain("(CURRENT_USER = ANY (ARRAY['ohmail_api'::name, 'ohmail_worker'::name]))");
+          expect(String(r.text), String(r.name)).not.toMatch(/SESSION_USER/i);
+        }
+        expect(String(got.find((r) => r.name === "message_search_words")!.text)).toContain("((account_id)::text = (ohmail.current_account())::text)");
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }, CASE_MS);
+
+    /** A listed view made again by hand over itself, its record kept: another reader's condition, no check option, or options of its own. */
+    const remakeView = (name: string, change: { readonly reader?: string; readonly key?: string; readonly option?: string; readonly with?: string } = {}): string => {
+      const v = ACCOUNT_VIEWS.find((x) => x.name === name)!;
+      const where = [change.key ?? v.key, change.reader ?? readerCondition()].filter((x) => x !== "").join(" and ");
+      return `create or replace view ${viewName(v)}${change.with ?? ""} as select ${v.columns.map((c) => `"${c}"`).join(", ")} from public."${v.table}"`
+        + `${where === "" ? "" : ` where ${where}`}${change.option ?? " with check option"}`;
+    };
+    /**
+     * EVERY WAY ONE OF THE ACCOUNT'S VIEWS IS NOT AS LISTED, each planted on a clone of the locked ground: the
+     * census's exact lines, the check for each login, and what the next setup does.
+     */
+    interface ViewPlant {
+      readonly name: string;
+      readonly asSuper?: boolean;
+      readonly plant: string[];
+      readonly lines: readonly string[];
+      /** The check's reasons, the same for both logins; none is `locked`. */
+      readonly why: readonly string[];
+      readonly setup: { readonly repaired: readonly string[] } | { readonly refused: RegExp };
+      /** The census after the setup mended it, where that is not clean (a view it made again stands ungranted until the roles' apply). */
+      readonly after?: readonly string[];
+      /** Statements, as the superuser on the plant's database, that undo what the whole server holds (a role the plant made). */
+      readonly undo?: readonly string[];
+    }
+    const viewDiffers = (name: string, words: string): { lines: string[]; why: string[] } =>
+      ({ lines: [drift("views.differ", `ohmail.${name}`, words)], why: [`the view ohmail.${name} differs: ${words}`] });
+    /** Every verb `grant all` gives on a view on this major (17 adds MAINTAIN), in the order the census reads them: by name. */
+    const ALL_VERBS = ["DELETE", "INSERT", ...(major >= 17 ? ["MAINTAIN"] : []), "REFERENCES", "SELECT", "TRIGGER", "TRUNCATE", "UPDATE"];
+    /** The check's reason for a right on a listed view beyond the two logins' SELECT, up to what is held. */
+    const BEYOND = (name: string): string => `the view ohmail.${name} is granted beyond the two logins' SELECT: `;
+    const VIEW_PLANTS: ViewPlant[] = [
+      { name: "the reader's condition taken out", plant: [remakeView("messages", { reader: "" })], ...viewDiffers("messages", "text"),
+        setup: { repaired: ["view ohmail.messages is not as it was made: made again (text)"] } },
+      { name: "the account's condition taken out", plant: [remakeView("message_search", { key: "" })], ...viewDiffers("message_search", "text"),
+        setup: { repaired: ["view ohmail.message_search is not as it was made: made again (text)"] } },
+      { name: "another role named beside a login", plant: [remakeView("message_search", { reader: "current_user in ('ohmail_api', 'ohmail_admin')" })],
+        ...viewDiffers("message_search", "text"), setup: { repaired: ["view ohmail.message_search is not as it was made: made again (text)"] } },
+      { name: "session_user in place of current_user", plant: [remakeView("message_search_words", { reader: "session_user in ('ohmail_api', 'ohmail_worker')" })],
+        ...viewDiffers("message_search_words", "text"), setup: { repaired: ["view ohmail.message_search_words is not as it was made: made again (text)"] } },
+      { name: "the check option taken out", plant: [remakeView("messages", { option: "" })], ...viewDiffers("messages", "options"),
+        setup: { repaired: ["view ohmail.messages is not as it was made: made again (options)"] } },
+      { name: "a barrier", plant: [remakeView("message_search_words", { with: " with (security_barrier)" })], ...viewDiffers("message_search_words", "options"),
+        setup: { repaired: ["view ohmail.message_search_words is not as it was made: made again (options)"] } },
+      { name: "an invoker's rights", plant: ["alter view ohmail.messages set (security_invoker = true)"], ...viewDiffers("messages", "options"),
+        setup: { repaired: ["view ohmail.messages is not as it was made: made again (options)"] } },
+      { name: "its record taken away", plant: ["comment on view ohmail.messages is null"], ...viewDiffers("messages", "unrecorded"),
+        setup: { repaired: ["view ohmail.messages is not as it was made: made again (unrecorded)"] } },
+      { name: "made from another version of the list", plant: [`do $plant$ declare c text := obj_description('ohmail.messages'::regclass, 'pg_class');
+          begin execute format('comment on view ohmail.messages is %L', split_part(c, ' ', 1) || ' ' || repeat('0', 64) || ' ' || split_part(c, ' ', 3)); end $plant$`],
+        ...viewDiffers("messages", "listed"), setup: { repaired: [] } },
+      { name: "one dropped", plant: ["drop view ohmail.message_search_words"],
+        lines: [drift("views.missing", "ohmail.message_search_words", "").replace(/: $/, "")], why: [],
+        setup: { repaired: ["view ohmail.message_search_words was missing: made"] }, after: ungrantedLines(["message_search_words"], false) },
+      // The list's first columns alone, in order and type: `create or replace view` adds the rest, as a repair here.
+      { name: "its columns the list's first ones alone", plant: ["drop view ohmail.message_search", `create view ohmail.message_search as select message_id, account_id
+          from public.message_search where account_id = ohmail.current_account() and ${readerCondition()} with check option`],
+        lines: [drift("views.differ", "ohmail.message_search", "fewer columns, unrecorded"), ...ungrantedLines(["message_search"], false)],
+        why: ["the view ohmail.message_search differs: fewer columns, unrecorded"],
+        setup: { repaired: ["view ohmail.message_search is not as it was made: made again (fewer columns, unrecorded)"] },
+        after: ungrantedLines(["message_search"], false) },
+      // Columns in another order: Postgres cannot make it again over itself; the refusal says the remedy.
+      { name: "its columns another list", plant: ["drop view ohmail.message_search", `create view ohmail.message_search as select account_id, message_id
+          from public.message_search where account_id = ohmail.current_account() and ${readerCondition()} with check option`],
+        lines: [drift("views.differ", "ohmail.message_search", "columns, unrecorded"), ...ungrantedLines(["message_search"], false)],
+        why: ["the view ohmail.message_search differs: columns, unrecorded"],
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.message_search: columns, unrecorded; Postgres cannot make it again over other columns: drop it first \(DROP VIEW IF EXISTS ohmail\.message_search, in the release's journal or by hand\), in a closed window; the step then makes it again and the roles' apply grants it; nothing was written/ } },
+      { name: "its name taken by a table", plant: ["drop view ohmail.messages", "create table ohmail.messages (id int)"], ...viewDiffers("messages", "kind"),
+        setup: { refused: /ROLES_DRIFT [^\n]*ohmail\.messages|lock: LOCK_DRIFT views\.differ ohmail\.messages: kind; nothing was written/ } },
+      { name: "owned by another role", asSuper: true, plant: ["alter view ohmail.message_search owner to ohmail_admin"], ...viewDiffers("message_search", "owner"),
+        setup: { refused: /ROLES_DRIFT [^\n]*ohmail\.message_search|lock: LOCK_DRIFT views\.differ ohmail\.message_search: owner; nothing was written/ } },
+      { name: "a view the list does not name", plant: ["create view ohmail.side_view as select 1 as x"],
+        lines: [drift("views.foreign", "ohmail.side_view", "a view the list does not name")], why: [],
+        setup: { refused: /ROLES_DRIFT [^\n]*ohmail\.side_view|lock: LOCK_DRIFT views\.foreign ohmail\.side_view: a view the list does not name; nothing was written/ } },
+      { name: "granted to another role", plant: ["grant select on ohmail.messages to ohmail_admin"],
+        lines: [drift("views.grants", "ohmail.messages", "ohmail_admin holds SELECT")], why: [`${BEYOND("messages")}ohmail_admin holds SELECT`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*ohmail_admin/ } },
+      { name: "granted to PUBLIC", plant: ["grant select on ohmail.message_search to public"],
+        lines: [drift("views.grants", "ohmail.message_search", "public holds SELECT")], why: [`${BEYOND("message_search")}public holds SELECT`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT / } },
+      { name: "a column granted to another role", plant: ["grant select (account_id) on ohmail.messages to plane_runtime"],
+        lines: [drift("views.grants", "ohmail.messages", "plane_runtime holds SELECT on its column account_id")],
+        why: [`${BEYOND("messages")}plane_runtime holds SELECT on its column account_id`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*plane_runtime/ } },
+      // Any right on a listed view beyond the rule's is broken whoever reads: through a
+      // view an insert ... on conflict do update by a login holding both verbs takes another account's row, and a holder of the
+      // grant option hands the view to anybody. The roles' check refuses each grant before the step.
+      { name: "a write verb to a login", plant: ["grant update on ohmail.messages to ohmail_api"],
+        lines: [drift("views.grants", "ohmail.messages", "ohmail_api holds UPDATE")], why: [`${BEYOND("messages")}ohmail_api holds UPDATE`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT UPDATE on ohmail\.messages: a direct grant to role ohmail_api outside the rule/ } },
+      { name: "a login's grant option", plant: ["grant select on ohmail.messages to ohmail_api with grant option"],
+        lines: [drift("views.grants", "ohmail.messages", "ohmail_api holds SELECT with the grant option")],
+        why: [`${BEYOND("messages")}ohmail_api holds SELECT with the grant option`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*ohmail_api/ } },
+      { name: "a column granted to a login", plant: ["grant update (subject) on ohmail.messages to ohmail_api"],
+        lines: [drift("views.grants", "ohmail.messages", "ohmail_api holds UPDATE on its column subject")],
+        why: [`${BEYOND("messages")}ohmail_api holds UPDATE on its column subject`],
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT [^\n]*ohmail_api/ } },
+      // A role whose name holds a colon, every verb on a view and USAGE on the schema: its rights
+      // are another role's, never a login's, however its name reads. The census names each, quoted, and both logins read broken.
+      { name: "every verb to a role named like a login's right", asSuper: true,
+        plant: ["create role \"ohmail_api:SELECT\" login", "grant usage on schema ohmail to \"ohmail_api:SELECT\"", "grant all on ohmail.messages to \"ohmail_api:SELECT\""],
+        lines: ALL_VERBS.map((p) => drift("views.grants", "ohmail.messages", `"ohmail_api:SELECT" holds ${p}`)),
+        why: [`${BEYOND("messages")}${ALL_VERBS.map((p) => `"ohmail_api:SELECT" holds ${p}`).join("; ")}`],
+        setup: { refused: /ROLES_DRIFT [^\n]*ohmail_api:SELECT/ },
+        undo: ["drop owned by \"ohmail_api:SELECT\"", "drop role \"ohmail_api:SELECT\""] },
+      // CODE ON A LISTED VIEW (and the class beside it): a rule beside _RETURN, a trigger
+      // and a default on a column. A rule or an INSTEAD OF trigger voids the check option for every holder of a verb; a definer
+      // routine a trigger or a default calls runs with its owner's rights. `create or replace view` keeps each (seen on 16 and
+      // 17), so the step refuses before it writes: by hand, drop it.
+      { name: "a rule on insert, no write verb granted to anybody",
+        plant: ["create rule riso_ins as on insert to ohmail.messages do instead update public.messages set subject = 'REWRITTEN BY A RULE'"],
+        ...viewDiffers("messages", "code (the rule riso_ins on INSERT)"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.messages: code \(the rule riso_ins on INSERT\)[^\n]*; nothing was written/ } },
+      { name: "a rule on update, no write verb granted to anybody",
+        plant: ["create rule riso_upd as on update to ohmail.message_search do instead update public.message_search set source = new.source"],
+        ...viewDiffers("message_search", "code (the rule riso_upd on UPDATE)"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.message_search: code \(the rule riso_upd on UPDATE\)[^\n]*; nothing was written/ } },
+      { name: "an INSTEAD OF trigger calling a SECURITY DEFINER routine nobody may run, in a schema no login may use", asSuper: true,
+        plant: ["create schema riso_t authorization ohmail_migrator", "set role ohmail_migrator",
+          "create function riso_t.f() returns trigger language plpgsql security definer as $$ begin update public.messages set subject = 'TRIGGERED' where account_id <> new.account_id; return new; end $$",
+          "revoke execute on function riso_t.f() from public", "create trigger riso_tr instead of insert on ohmail.messages for each row execute function riso_t.f()"],
+        ...viewDiffers("messages", "code (the trigger riso_tr)"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.messages: code \(the trigger riso_tr\)[^\n]*; nothing was written/ } },
+      { name: "a statement trigger", asSuper: true,
+        plant: ["create schema riso_s authorization ohmail_migrator", "set role ohmail_migrator",
+          "create function riso_s.f() returns trigger language plpgsql as $$ begin return null; end $$",
+          "create trigger riso_st before delete on ohmail.message_search_words for each statement execute function riso_s.f()"],
+        ...viewDiffers("message_search_words", "code (the trigger riso_st)"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.message_search_words: code \(the trigger riso_st\)[^\n]*; nothing was written/ } },
+      { name: "a default on one of its columns", plant: ["alter view ohmail.messages alter column snippet set default 'by hand'"],
+        ...viewDiffers("messages", "code (the default of snippet)"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.messages: code \(the default of snippet\)[^\n]*; nothing was written/ } },
+    ];
+
+    for (const [i, c] of VIEW_PLANTS.entries()) {
+      it(`one of the account's views, ${c.name}: the census's lines, the check for each login, and the next setup ${"refused" in c.setup ? "refuses" : "mends it"}`, async () => {
+        const db = await ground.clone("ground", `view_plant_${i}`);
+        try {
+          const planter = ground.connectAs(db, c.asSuper === true ? undefined : MIGRATOR_ROLE);
+          try { for (const s of c.plant) await planter.unsafe(s).simple(); } finally { await planter.end({ timeout: 5 }); }
+          const judged = async (role: string): Promise<object> => verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+          const want = { verdict: c.why.length === 0 ? "locked" : "broken", why: [...c.why] };
+          expect({ census: (await plantAndCensus(db, [])).sort(), api: await judged("ohmail_api"), worker: await judged("ohmail_worker") })
+            .toEqual({ census: [...c.lines].sort(), api: want, worker: want });
+          if ("refused" in c.setup) {
+            await expect(ground.setup(db, MIGRATOR_ROLE)).rejects.toThrow(c.setup.refused);
+            return;
+          }
+          const report = await ground.setup(db, MIGRATOR_ROLE);
+          expect({ repaired: [...report.lock!.repaired].sort(), views: report.lock!.views }).toEqual({ repaired: [...c.setup.repaired].sort(), views: ACCOUNT_VIEWS.length });
+          expect({ census: (await plantAndCensus(db, [])).sort(), api: await judged("ohmail_api") }).toEqual({ census: [...(c.after ?? [])].sort(), api: { verdict: "locked", why: [] } });
+        } finally {
+          if (c.undo !== undefined) {
+            const su = ground.connectAs(db);
+            try { for (const s of c.undo) await su.unsafe(s); } finally { await su.end({ timeout: 5 }); }
+          }
+        }
+      }, CASE_MS);
+    }
+
+    /**
+     * EVERYTHING ELSE POSTGRES LETS HANG ON A VIEW, OR WOULD CHANGE HOW IT ANSWERS (the class of the code above: something on a
+     * listed view the census did not read). Read as drift, each above: a rule beside `_RETURN`, a trigger (INSTEAD OF or for each
+     * statement), a default on a column, its owner, options, columns and text, and every right beyond the two logins' SELECT
+     * (another verb, the grant option, a column grant, any other role). Read as drift and not made here, its case in the list
+     * test: a security label (no provider is loaded on these images, so the statement is refused). Refused by Postgres on a view,
+     * as the view's owner: what follows. Taken and harmless: a comment on one of its columns, and USAGE on its row type (PUBLIC's
+     * already): neither gives a row or a write, the census is equal and both logins read locked.
+     */
+    /** A trigger's routine of the migrator's, in a schema of its own, made inside the statement's transaction. */
+    const RISO_TRIGGER_FN = ["create schema riso_k", "create function riso_k.t() returns trigger language plpgsql as $$ begin return null; end $$"];
+    const NOT_ON_A_VIEW: ReadonlyArray<{ what: string; asSuper?: boolean; before?: readonly string[]; statement: string; refused: RegExp }> = [
+      { what: "a policy", statement: "create policy riso_p on ohmail.messages using (true)", refused: /"messages" is not a table/ },
+      { what: "row security", statement: "alter table ohmail.messages enable row level security", refused: /cannot be performed on relation "messages"/ },
+      { what: "forced row security", statement: "alter table ohmail.messages force row level security", refused: /cannot be performed on relation "messages"/ },
+      { what: "a security label (no provider is loaded)", statement: "security label on view ohmail.messages is 'x'", refused: /no security label providers have been loaded/ },
+      { what: "a security label on a column", statement: "security label on column ohmail.messages.subject is 'x'", refused: /no security label providers have been loaded/ },
+      { what: "an index", statement: "create index riso_i on ohmail.messages (subject)", refused: /cannot create index on relation "messages"/ },
+      { what: "extended statistics", statement: "create statistics riso_s on subject, snippet from ohmail.messages", refused: /cannot define statistics for relation "messages"/ },
+      { what: "a publication", asSuper: true, statement: "create publication riso_pub for table ohmail.messages", refused: /cannot add relation "messages" to publication/ },
+      { what: "a table inheriting it", statement: "create table public.riso_child () inherits (ohmail.messages)", refused: /inherited relation "messages" is not a table or foreign table/ },
+      { what: "a column's statistics target", statement: "alter table ohmail.messages alter column subject set statistics 100", refused: /cannot be performed on relation "messages"/ },
+      { what: "a column's options", statement: "alter table ohmail.messages alter column subject set (n_distinct = 5)", refused: /cannot be performed on relation "messages"/ },
+      { what: "a column's storage", statement: "alter table ohmail.messages alter column subject set storage external", refused: /cannot be performed on relation "messages"/ },
+      { what: "a replica identity", statement: "alter table ohmail.messages replica identity full", refused: /cannot be performed on relation "messages"/ },
+      { what: "a constraint trigger", before: RISO_TRIGGER_FN, statement: "create constraint trigger riso_ct after insert on ohmail.messages for each row execute function riso_k.t()",
+        refused: /"messages" is a view/ },
+      { what: "a trigger disabled", before: [...RISO_TRIGGER_FN, "create trigger riso_tr instead of insert on ohmail.messages for each row execute function riso_k.t()"],
+        statement: "alter table ohmail.messages disable trigger riso_tr", refused: /cannot be performed on relation "messages"/ },
+      { what: "a rule disabled", statement: "alter table ohmail.messages disable rule \"_RETURN\"", refused: /cannot be performed on relation "messages"/ },
+      { what: "a rule enabled always", statement: "alter table ohmail.messages enable always rule \"_RETURN\"", refused: /cannot be performed on relation "messages"/ },
+      { what: "its _RETURN rule dropped", statement: "drop rule \"_RETURN\" on ohmail.messages", refused: /view ohmail\.messages requires it/ },
+      { what: "a second rule on select", statement: `do $$ begin execute 'create rule riso_sel as on select to ohmail.messages do instead '
+          || pg_catalog.rtrim(pg_catalog.pg_get_viewdef('ohmail.messages'::pg_catalog.regclass), ';'); end $$`, refused: /"messages" is already a view/ },
+    ];
+
+    it("the rest of what Postgres lets hang on a view: each refused on a view, as its owner; a comment on a column and USAGE on its row type taken and harmless", async () => {
+      const db = await ground.clone("ground", "not_on_a_view");
+      const refused: Record<string, string> = {};
+      for (const n of NOT_ON_A_VIEW) {
+        const c = ground.connectAs(db, n.asSuper === true ? undefined : MIGRATOR_ROLE);
+        try {
+          refused[n.what] = await c.begin(async (tx) => { for (const b of n.before ?? []) await tx.unsafe(b); await tx.unsafe(n.statement); return "taken"; })
+            .then((t) => String(t), (e: Error) => (n.refused.test(e.message) ? "refused" : `refused otherwise: ${e.message}`));
+        } finally {
+          await c.end({ timeout: 5 });
+        }
+      }
+      expect(refused).toEqual(Object.fromEntries(NOT_ON_A_VIEW.map((n) => [n.what, "refused"])));
+      // Taken: a comment on a column of a view, and USAGE on a view's row type for a role of the host's. Neither reaches a row.
+      await plantAndCensus(db, ["comment on column ohmail.messages.subject is 'by hand'", "grant usage on type ohmail.messages to ohmail_admin"]);
+      const judged = async (role: string): Promise<object> => verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+      const admin = ground.connectAs(db, "ohmail_admin");
+      let staffReads: string;
+      try { staffReads = await admin.unsafe("select count(*) from ohmail.messages").then(() => "read", (e: { code?: string }) => String(e.code)); }
+      finally { await admin.end({ timeout: 5 }); }
+      expect({ census: await plantAndCensus(db, []), api: await judged("ohmail_api"), worker: await judged("ohmail_worker"), staffReads })
+        .toEqual({ census: [], api: { verdict: "locked", why: [] }, worker: { verdict: "locked", why: [] }, staffReads: "42501" });
+    }, CASE_MS);
 
     /**
      * THE RECHECK'S DATABASE PLANTS (2026-11-15), each on a clone of the locked ground that holds a
@@ -695,16 +1083,20 @@ for (const major of PG_MAJORS) {
       { name: "the_account_reader_a_definer", plant: () => ["alter function ohmail.current_account() security definer"],
         reads: [1, 0, 1, 0], census: [drift("readers.differ", "ohmail.current_account", "security definer")],
         api: ["the reader ohmail.current_account differs: security definer"], worker: ["the reader ohmail.current_account differs: security definer"],
-        setup: { repaired: ["reader ohmail.current_account made again: security definer"] } },
+        // The logins may run it by name (their USAGE while the views stand): the roles' check refuses it before the step could mend it.
+        setup: { refused: /the runtime roles' check refused: ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine ohmail\.current_account\(\): role ohmail_api can run it/ } },
       { name: "the_account_reader_owned_by_another", asSuper: true, plant: () => [`alter function ohmail.current_account() owner to ${ground.server.superuser}`],
         reads: [1, 0, 1, 0], census: [drift("readers.differ", "ohmail.current_account", "owner")],
         api: ["the reader ohmail.current_account differs: owner"], worker: ["the reader ohmail.current_account differs: owner"],
         setup: { refused: /lock: LOCK_DRIFT readers\.differ ohmail\.current_account: owner; nothing was written/ } },
       { name: "the_schema_and_readers_owned_by_the_plane", asSuper: true, plant: () => ["alter schema ohmail owner to plane_runtime",
         "alter function ohmail.current_account() owner to plane_runtime", "alter function ohmail.current_key() owner to plane_runtime"],
-        reads: [1, 0, 1, 0], census: [drift("schema.usage", "ohmail", "plane_runtime holds USAGE")],
-        api: ["plane_runtime holds USAGE on the schema ohmail"], worker: ["plane_runtime holds USAGE on the schema ohmail"],
-        setup: { refused: /lock: LOCK_DRIFT schema\.usage ohmail: plane_runtime holds USAGE; nothing was written/ } },
+        // The account's views stay the migrator's in a schema that is no longer: not as listed, and refused, by hand.
+        reads: [1, 0, 1, 0], census: [drift("schema.usage", "ohmail", "plane_runtime holds USAGE"),
+          ...ACCOUNT_VIEWS.map((v) => drift("views.differ", viewName(v), "owner"))],
+        api: ["plane_runtime holds USAGE on the schema ohmail", ...ACCOUNT_VIEWS.map((v) => `the view ${viewName(v)} differs: owner`)],
+        worker: ["plane_runtime holds USAGE on the schema ohmail", ...ACCOUNT_VIEWS.map((v) => `the view ${viewName(v)} differs: owner`)],
+        setup: { refused: /ROLES_DRIFT [^\n]*plane_runtime|LOCK_DRIFT views\.differ ohmail\.messages: owner; nothing was written/ } },
       // PUBLIC, and the table's own flags.
       { name: "the_listed_policy_to_public", plant: () => ["alter policy lock_account on public.cal_settings to public"],
         reads: [1, 0, 1, 0],
@@ -735,13 +1127,31 @@ for (const major of PG_MAJORS) {
       { name: "a_view_of_public_for_the_worker", plant: () => ["create view public.all_settings as select account_id from public.cal_settings",
         "grant select on public.all_settings to ohmail_worker"],
         reads: [1, 0, 1, 0], extra: [["ohmail_worker", "none", "select count(*)::int as n from public.all_settings", 2]], census: [],
-        api: [], worker: ["ohmail_worker may read a view or a foreign table of public"],
+        api: [], worker: ["ohmail_worker may reach a view or a foreign table of public"],
         setup: { refused: /ROLES_DRIFT SELECT on the view public\.all_settings: role ohmail_worker reaches it/ } },
       { name: "a_materialized_view_of_public_for_the_api", plant: () => ["create materialized view public.mv_settings as select account_id from public.cal_settings",
         "grant select on public.mv_settings to ohmail_api"],
         reads: [1, 0, 1, 0], extra: [["ohmail_api", "none", "select count(*)::int as n from public.mv_settings", 2]], census: [],
-        api: ["ohmail_api may read a view or a foreign table of public"], worker: [],
+        api: ["ohmail_api may reach a view or a foreign table of public"], worker: [],
         setup: { refused: /ROLES_DRIFT SELECT on the materialized view public\.mv_settings: role ohmail_api reaches it/ } },
+      // The third recheck's L1: a view of public reached by a column grant, or by a write verb alone, reads past the lock too.
+      { name: "a_view_of_public_by_a_column_grant", plant: () => ["create view public.all_settings as select account_id from public.cal_settings",
+        "grant select (account_id) on public.all_settings to ohmail_api, ohmail_worker"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "none", "select count(*)::int as n from public.all_settings", 2],
+          ["ohmail_worker", "none", "select count(*)::int as n from public.all_settings", 2]], census: [],
+        api: ["ohmail_api may reach a view or a foreign table of public"], worker: ["ohmail_worker may reach a view or a foreign table of public"],
+        setup: { refused: /ROLES_DRIFT [^\n]*public\.all_settings[^\n]*ohmail_api/ } },
+      { name: "a_view_of_public_with_update_alone", plant: () => ["create view public.all_settings as select account_id, second_zone from public.cal_settings",
+        "grant update on public.all_settings to ohmail_api"],
+        // Bound to A, the API rewrites B's row through it as well as its own.
+        reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "with w as (update public.all_settings set second_zone = 'rewritten' returning 1) select count(*)::int as n from w", 2]],
+        census: [], api: ["ohmail_api may reach a view or a foreign table of public"], worker: [],
+        setup: { refused: /ROLES_DRIFT [^\n]*public\.all_settings[^\n]*ohmail_api/ } },
+      { name: "a_materialized_view_of_public_by_a_column_grant", plant: () => ["create materialized view public.mv_settings as select account_id from public.cal_settings",
+        "grant select (account_id) on public.mv_settings to ohmail_worker"],
+        reads: [1, 0, 1, 0], extra: [["ohmail_worker", "none", "select count(*)::int as n from public.mv_settings", 2]], census: [],
+        api: [], worker: ["ohmail_worker may reach a view or a foreign table of public"],
+        setup: { refused: /ROLES_DRIFT [^\n]*public\.mv_settings[^\n]*ohmail_worker/ } },
       { name: "a_view_in_another_schema", plant: () => [...SIDE, "create view side.all_settings as select account_id from public.cal_settings",
         "grant select on side.all_settings to ohmail_api, ohmail_worker"],
         reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "select count(*)::int as n from side.all_settings", 2],
@@ -874,7 +1284,7 @@ for (const major of PG_MAJORS) {
           "create foreign table public.settings_elsewhere (account_id uuid) server loopback options (schema_name 'public', table_name 'cal_settings')",
           `alter foreign table public.settings_elsewhere owner to ${MIGRATOR_ROLE}`, "grant select on public.settings_elsewhere to ohmail_api, ohmail_worker"],
         reads: [["ohmail_api", "A", ["select count(*)::int as n from public.settings_elsewhere"], 2], ["ohmail_worker", "none", ["select count(*)::int as n from public.settings_elsewhere"], 2]],
-        census: [], api: ["ohmail_api may read a view or a foreign table of public"], worker: ["ohmail_worker may read a view or a foreign table of public"],
+        census: [], api: ["ohmail_api may reach a view or a foreign table of public"], worker: ["ohmail_worker may reach a view or a foreign table of public"],
         setup: /ROLES_DRIFT SELECT on the foreign table public\.settings_elsewhere: role ohmail_api reaches it/ },
     ];
 
@@ -914,6 +1324,255 @@ for (const major of PG_MAJORS) {
         });
       }, CASE_MS);
     }
+
+    it("a view the step cannot mend beside a drift it would: refused before it writes, and no repair is said", async () => {
+      const db = await ground.clone("ground", "view_unmendable_beside");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("drop view ohmail.message_search");
+        // Its columns in another order: no list's first columns, so Postgres cannot make it again over itself.
+        await mig.unsafe(`create view ohmail.message_search as select account_id, message_id from public.message_search
+          where account_id = ohmail.current_account() and ${readerCondition()} with check option`);
+        await mig.unsafe("drop policy lock_account on public.messages");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const before = await catalogOf(db);
+      const said: string[] = [];
+      const refused = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) })
+        .then((r) => `not refused: ${JSON.stringify(r.lock)}`, (e: Error) => e.message);
+      expect({
+        refused: refused.includes("lock: LOCK_DRIFT views.differ ohmail.message_search: columns, unrecorded; Postgres cannot make it again over other columns: "
+          + "drop it first (DROP VIEW IF EXISTS ohmail.message_search, in the release's journal or by hand), in a closed window; the step then makes it again and "
+          + "the roles' apply grants it; nothing was written"),
+        repairsSaid: said.filter((m) => m.startsWith("lock: repair:")),
+        unchanged: await catalogOf(db) === before,
+      }).toEqual({ refused: true, repairsSaid: [], unchanged: true });
+    }, CASE_MS);
+
+    it("a column two views name dropped by a journal, the views with it: the census names the gap, and the next setup refuses before it writes", async () => {
+      const db = await ground.clone("ground", "view_column_gone");
+      expect((await plantAndCensus(db, ["alter table public.message_search drop column source cascade"])).sort()).toEqual([
+        "LOCK_DRIFT views.missing ohmail.message_search", "LOCK_DRIFT views.missing ohmail.message_search_words",
+        drift("views.columns", "ohmail.message_search", "public.message_search holds no column source"),
+        drift("views.columns", "ohmail.message_search_words", "public.message_search holds no column source"),
+      ].sort());
+      for (const role of ["ohmail_api", "ohmail_worker"]) expect((await verdictOf(db, role, { role })).verdict, role).toBe("locked");
+      const before = await catalogOf(db);
+      await expect(ground.setup(db, MIGRATOR_ROLE)).rejects
+        .toThrow("lock: LOCK_DRIFT views.columns ohmail.message_search: public.message_search holds no column source; nothing was written");
+      expect(await catalogOf(db)).toBe(before);
+    }, CASE_MS);
+
+    /**
+     * A VIEW AN EARLIER RELEASE MADE FROM ANOTHER LIST OF COLUMNS, on a clone of the locked and granted ground:
+     * the view dropped and made again by that release's own statement and record, and granted as the roles' apply grants it.
+     */
+    async function earlierView(db: string, name: string, columns: (listed: readonly string[]) => readonly string[]): Promise<AccountView> {
+      const listed = ACCOUNT_VIEWS.find((x) => x.name === name)!;
+      const earlier: AccountView = { ...listed, columns: columns(listed.columns) };
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.begin(async (tx) => {
+          await pinSpelling(tx);
+          await tx.unsafe(`drop view ${viewName(listed)}`);
+          await tx.unsafe(viewStatement(earlier));
+          const [printed] = await tx.unsafe(`select pg_catalog.pg_get_viewdef('${viewName(listed)}'::pg_catalog.regclass) as text`);
+          await tx.unsafe(`comment on view ${viewName(listed)} is '${viewComment(earlier, String(printed!.text))}'`);
+          await tx.unsafe(`grant select on ${viewName(listed)} to ohmail_api, ohmail_worker`);
+        });
+      } finally {
+        await mig.end({ timeout: 5 }).catch(() => undefined);
+      }
+      return earlier;
+    }
+
+    /**
+     * Reads through `view` as the API's login, bound, one flight after another while `during` runs: how many ran, and every
+     * error one met (a flight that waits behind a lock is no error).
+     */
+    async function readsBeside(db: string, view: string, during: () => Promise<unknown>): Promise<{ flights: number; errors: string[]; answer: unknown }> {
+      const api = ground.connectAs(db, "ohmail_api");
+      let running = true;
+      let flights = 0;
+      const errors: string[] = [];
+      const loop = (async () => {
+        while (running) {
+          try {
+            await api.begin(async (tx) => {
+              await tx.unsafe(BINDER_SQL, ["00000000-0000-4000-8000-0000000000a1", ""]);
+              await tx.unsafe(`select count(*) from ${view}`);
+            });
+            flights += 1;
+          } catch (e) {
+            errors.push(String((e as { code?: string }).code ?? (e as Error).message));
+          }
+        }
+      })();
+      try {
+        await new Promise((r) => setTimeout(r, 150));
+        const answer = await during().then((r) => r, (e: Error) => e.message);
+        await new Promise((r) => setTimeout(r, 150));
+        return { flights, errors, answer };
+      } finally {
+        running = false;
+        await loop;
+        await api.end({ timeout: 5 });
+      }
+    }
+
+    it("a release whose list names one more column at the end of a view: the setup makes the view again over itself (two statements, no repair said), the logins' rights kept, and a read beside it never fails", async () => {
+      const db = await ground.clone("ground", "list_grown");
+      await earlierView(db, "messages", (c) => c.slice(0, -1));
+      const rightsBefore = await viewRights(db);
+      const census = (await plantAndCensus(db, [])).sort();
+      const why = { api: (await verdictOf(db, "ohmail_api", { role: "ohmail_api" })).why, worker: (await verdictOf(db, "ohmail_worker", { role: "ohmail_worker" })).why };
+      const beside = await readsBeside(db, "ohmail.messages", () => ground.setup(db, MIGRATOR_ROLE));
+      const report = (beside.answer as { lock?: { wrote: number; repaired: string[]; views: number } }).lock;
+      const differs = ["the view ohmail.messages differs: fewer columns, listed"];
+      expect({ census, why, errors: beside.errors, ran: beside.flights > 0,
+        lock: report === undefined ? beside.answer : { wrote: report.wrote, repaired: report.repaired, views: report.views } })
+        .toEqual({ census: [drift("views.differ", "ohmail.messages", "fewer columns, listed")], why: { api: differs, worker: differs },
+          errors: [], ran: true, lock: { wrote: 2, repaired: [], views: 3 } });
+      expect({ rights: await viewRights(db), census: await plantAndCensus(db, []), api: (await verdictOf(db, "ohmail_api", { role: "ohmail_api" })).verdict,
+        worker: (await verdictOf(db, "ohmail_worker", { role: "ohmail_worker" })).verdict, again: (await ground.setup(db, MIGRATOR_ROLE)).lock?.wrote })
+        .toEqual({ rights: rightsBefore, census: [], api: "locked", worker: "locked", again: 0 });
+    }, CASE_MS);
+
+    it("a view whose columns Postgres cannot make again over itself (one missing in the middle, or one more than the list names): refused before it writes, and the refusal names the remedy", async () => {
+      const remedy = "Postgres cannot make it again over other columns: drop it first (DROP VIEW IF EXISTS ohmail.messages, in the release's "
+        + "journal or by hand), in a closed window; the step then makes it again and the roles' apply grants it";
+      const listed = ACCOUNT_VIEWS.find((x) => x.name === "messages")!;
+      const got: Record<string, object> = {};
+      // An earlier release that did not list a column the list now names in the middle (the review's listcol case, snippet).
+      const middle = await ground.clone("ground", "list_middle");
+      await earlierView(middle, "messages", (c) => c.filter((x) => x !== "snippet"));
+      // A later release's view, met by this one after a rollback: one column more than this list names, at its end.
+      const longer = await ground.clone("ground", "list_longer");
+      const later: AccountView = { ...listed, columns: [...listed.columns, "a_later_column"] };
+      const mig = ground.connectAs(longer, MIGRATOR_ROLE);
+      try {
+        await mig.begin(async (tx) => {
+          await pinSpelling(tx);
+          await tx.unsafe("drop view ohmail.messages");
+          await tx.unsafe(`create view ohmail.messages as select ${listed.columns.map((c) => `"${c}"`).join(", ")}, "id" as "a_later_column" from public."messages"
+            where ${listed.key} and ${readerCondition()} with check option`);
+          const [printed] = await tx.unsafe("select pg_catalog.pg_get_viewdef('ohmail.messages'::pg_catalog.regclass) as text");
+          await tx.unsafe(`comment on view ohmail.messages is '${viewComment(later, String(printed!.text))}'`);
+          await tx.unsafe("grant select on ohmail.messages to ohmail_api, ohmail_worker");
+        });
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      for (const db of [middle, longer]) {
+        const before = await catalogOf(db);
+        const refused = await ground.setup(db, MIGRATOR_ROLE).then((r) => `not refused: ${JSON.stringify(r.lock)}`, (e: Error) => e.message);
+        got[db] = { census: await plantAndCensus(db, []), refused: refused.includes(`lock: LOCK_DRIFT views.differ ohmail.messages: columns, listed; ${remedy}; nothing was written`),
+          unchanged: await catalogOf(db) === before };
+      }
+      const want = { census: [drift("views.differ", "ohmail.messages", "columns, listed")], refused: true, unchanged: true };
+      expect(got).toEqual({ [middle]: want, [longer]: want });
+    }, CASE_MS);
+
+    /**
+     * A JOURNAL'S STATEMENTS OVER THE STANDING VIEWS: no test database holds the views, so nothing
+     * else replays an entry over them. As the migrator on clones of the locked and granted ground: a listed column dropped or
+     * retyped is refused by Postgres (the deploy stops at its journal), and passes after DROP VIEW IF EXISTS of the view, the
+     * next setup making it again and the roles' apply granting it; a column renamed passes and leaves the view reading it under
+     * its old name, both logins broken and every setup refused until the list changes; a column added passes and no view shows it.
+     */
+    it("a journal's statements over the standing views: refused by Postgres where a view names the column, taken after DROP VIEW IF EXISTS and made again by the next setup; a rename reads broken; an added column changes nothing", async () => {
+      const ROLLED_BACK = "rolled back";
+      const tried = async (db: string, statements: readonly string[]): Promise<string> => {
+        const mig = ground.connectAs(db, MIGRATOR_ROLE);
+        try {
+          return await mig.begin(async (tx) => { for (const t of statements) await tx.unsafe(t); throw new Error(ROLLED_BACK); })
+            .then(() => "committed", (e: Error & { code?: string }) => (e.message === ROLLED_BACK ? "passes" : String(e.code)));
+        } finally {
+          await mig.end({ timeout: 5 });
+        }
+      };
+      const judged = async (db: string, role: string): Promise<object> => verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+      const db = await ground.clone("ground", "journal_over_views");
+      const statements = {
+        dropListed: await tried(db, ["alter table public.message_search drop column source"]),
+        retypeListed: await tried(db, ["alter table public.messages alter column snippet type varchar(4000)"]),
+        dropAfterTheViews: await tried(db, ["drop view if exists ohmail.message_search", "drop view if exists ohmail.message_search_words",
+          "alter table public.message_search drop column source"]),
+        retypeAfterTheView: await tried(db, ["drop view if exists ohmail.messages", "alter table public.messages alter column snippet type varchar(4000)"]),
+      };
+      // The retype after its DROP VIEW IF EXISTS, committed: the next setup makes the view again over the new type, the roles' apply grants it.
+      await plantAndCensus(db, ["drop view if exists ohmail.messages", "alter table public.messages alter column snippet type varchar(4000)"]);
+      const report = await ground.setup(db, MIGRATOR_ROLE);
+      const retyped = { repaired: report.lock!.repaired, views: report.lock!.views, census: (await plantAndCensus(db, [])).sort(),
+        writes: (await rolesScript(db)).filter((t) => /write: [^\n]*ohmail\.messages/.test(t)).length, after: await plantAndCensus(db, []) };
+      // A column renamed: Postgres takes it, and the view reads the column under its old name.
+      const renamed = await ground.clone("ground", "journal_rename");
+      const renameCensus = (await plantAndCensus(renamed, ["alter table public.messages rename column snippet to preview"])).sort();
+      const before = await catalogOf(renamed);
+      const renameSetup = await ground.setup(renamed, MIGRATOR_ROLE).then(() => "not refused", (e: Error) => e.message);
+      // A column added: no view shows it, and nothing reads otherwise.
+      const added = await ground.clone("ground", "journal_add");
+      const addCensus = await plantAndCensus(added, ["alter table public.message_search add column added_later text"]);
+      const differs = ["the view ohmail.messages differs: columns, text"];
+      expect({ statements, retyped, renamed: { census: renameCensus, api: await judged(renamed, "ohmail_api"), worker: await judged(renamed, "ohmail_worker"),
+        refused: renameSetup.includes("lock: LOCK_DRIFT views.columns ohmail.messages: public.messages holds no column snippet; nothing was written"),
+        unchanged: await catalogOf(renamed) === before }, added: { census: addCensus, api: await judged(added, "ohmail_api") } }).toEqual({
+        statements: { dropListed: "2BP01", retypeListed: "0A000", dropAfterTheViews: "passes", retypeAfterTheView: "passes" },
+        retyped: { repaired: ["view ohmail.messages was missing: made"], views: 3, census: ungrantedLines(["messages"], false), writes: 2, after: [] },
+        renamed: { census: [drift("views.columns", "ohmail.messages", "public.messages holds no column snippet"), drift("views.differ", "ohmail.messages", "columns, text")].sort(),
+          api: { verdict: "broken", why: differs }, worker: { verdict: "broken", why: differs }, refused: true, unchanged: true },
+        added: { census: [], api: { verdict: "locked", why: [] } },
+      });
+    }, CASE_MS);
+
+    /**
+     * EVERY INDEX THE LOCK COULD TAKE FROM A READ, FROM THE CATALOG (the search ruling's first part): each index on a
+     * locked table that is no btree or hash, or whose key or predicate is an expression, against the lock's typed table of how it
+     * is read. An index with no row is red, and so is a row with no index: a new expression index is a decision.
+     */
+    async function expressionIndexes(db: string): Promise<string[]> {
+      const sql = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        return (await sql.unsafe(`select c.relname || '.' || i.relname as n from pg_catalog.pg_index ix
+            join pg_catalog.pg_class i on i.oid = ix.indexrelid join pg_catalog.pg_class c on c.oid = ix.indrelid
+            join pg_catalog.pg_am am on am.oid = i.relam join pg_catalog.pg_namespace ns on ns.oid = c.relnamespace
+           where ns.nspname = 'public' and c.relname = any($1::text[])
+             and (am.amname not in ('btree', 'hash') or ix.indexprs is not null or ix.indpred is not null) order by 1`, [lockedTables()]))
+          .map((r) => String(r.n));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    const typedIndexes = (): string[] => Object.entries(INDEX_READS).map(([n, r]) => `${r.table}.${n}`).sort();
+
+    it("every expression, predicate or GIN index on a locked table has its row in the lock's typed table of index reads, and every row its index; a new one is red", async () => {
+      const unread = (catalog: readonly string[]): { rowless: string[]; indexless: string[] } => ({
+        rowless: catalog.filter((n) => !typedIndexes().includes(n)), indexless: typedIndexes().filter((n) => !catalog.includes(n)),
+      });
+      expect(unread(await expressionIndexes("ground"))).toEqual({ rowless: [], indexless: [] });
+      const db = await ground.clone("ground", "index_reads_new");
+      await plantAndCensus(db, ["create index riso_tags_lower_idx on public.tags (account_id, lower(name))",
+        "create index riso_drafts_open_idx on public.drafts (account_id) where status = 'draft'"]);
+      expect(unread(await expressionIndexes(db))).toEqual({ rowless: ["drafts.riso_drafts_open_idx", "tags.riso_tags_lower_idx"], indexless: [] });
+    }, CASE_MS);
+
+    it("a relation of the readers' schema a login may reach beside the views: the census names it, and the check reads broken for that login alone", async () => {
+      const db = await ground.clone("ground", "ohmail_reach");
+      const mig = ground.connectAs(db, MIGRATOR_ROLE);
+      try {
+        await mig.unsafe("create table ohmail.beside (id int)");
+        await mig.unsafe("grant select on ohmail.beside to ohmail_worker");
+      } finally {
+        await mig.end({ timeout: 5 });
+      }
+      const judged = async (role: string): Promise<object> => verdictOf(db, role, { role }).then((v) => ({ verdict: v.verdict, why: v.why }));
+      expect({ census: await plantAndCensus(db, []), api: await judged("ohmail_api"), worker: await judged("ohmail_worker") }).toEqual({
+        census: [drift("schema.objects", "ohmail", "relation beside")],
+        api: { verdict: "locked", why: [] },
+        worker: { verdict: "broken", why: ["ohmail_worker may reach a relation of the schema ohmail beside the account's views, or run a SECURITY DEFINER routine there"] },
+      });
+    }, CASE_MS);
 
     it("code that runs with its owner's rights beside a drift the step would mend: refused before it writes, and no repair is said", async () => {
       const db = await ground.clone("ground", "owners_code_beside");
@@ -1018,7 +1677,7 @@ for (const major of PG_MAJORS) {
             databaseReset: { logins: LOCKED, setup: NOTHING },
             migratorsRole: { setup: NOTHING, logins: LOCKED, census: 0 },
             loginsRole: { logins: LOCKED, setup: "refused by the roles' check" },
-            firstLock: { made: { state: "locked", repaired: 0 }, logins: LOCKED, census: 0, again: NOTHING },
+            firstLock: { made: { state: "locked", repaired: 0 }, logins: LOCKED, census: ungrantedLines().length, again: NOTHING },
             firstReset: { logins: LOCKED, setup: NOTHING },
           });
         } finally {
@@ -1129,6 +1788,17 @@ for (const major of PG_MAJORS) {
       expect(await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "on")).toMatchObject({ to: "on", tables: 101, marker: null });
       expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
       expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("locked");
+    }, CASE_MS);
+
+    it("the switch off and on again over a view the setup made again and the roles' apply has not granted yet: the logins' rights are not the switch's", async () => {
+      const db = await ground.clone("ground", "switch_view_ungranted");
+      await plantAndCensus(db, ["drop view ohmail.message_search_words"]);
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock!.repaired).toEqual(["view ohmail.message_search_words was missing: made"]);
+      const ungranted = ["ohmail_api", "ohmail_worker"].map((l) => `LOCK_DRIFT views.ungranted ohmail.message_search_words: ${l} holds no SELECT`);
+      expect(await plantAndCensus(db, [])).toEqual(ungranted);
+      await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "off", { why: "test" });
+      expect(await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "on")).toMatchObject({ to: "on", marker: null });
+      expect({ verdict: (await verdictOf(db, MIGRATOR_ROLE)).verdict, census: await plantAndCensus(db, []) }).toEqual({ verdict: "locked", census: ungranted });
     }, CASE_MS);
 
     it("forcing alone taken off, as the switch was first written, releases nobody: the logins own nothing", async () => {
@@ -1266,7 +1936,7 @@ for (const major of PG_MAJORS) {
     it("a view of public, or a SECURITY DEFINER routine there, reads past the lock with its owner's rights: the check reads broken, and the setup refuses", async () => {
       for (const [name, plant, read, why, refused] of [
         ["past_view", ["create view public.all_accounts as select id from public.accounts", "grant select on public.all_accounts to ohmail_api"],
-          "select count(*)::int as n from public.all_accounts", "ohmail_api may read a view or a foreign table of public", /ROLES_DRIFT SELECT on the view public\.all_accounts: role ohmail_api reaches it/],
+          "select count(*)::int as n from public.all_accounts", "ohmail_api may reach a view or a foreign table of public", /ROLES_DRIFT SELECT on the view public\.all_accounts: role ohmail_api reaches it/],
         ["past_definer", ["create function public.all_accounts() returns int language sql security definer as 'select count(*)::int from public.accounts'"],
           "select public.all_accounts() as n", "ohmail_api may run a SECURITY DEFINER routine of public", /ROLES_DRIFT EXECUTE on the SECURITY DEFINER routine all_accounts\(\): role ohmail_api can run it/],
       ] as const) {

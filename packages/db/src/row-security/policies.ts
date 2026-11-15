@@ -14,7 +14,18 @@ import {
  * Classes are derived, not typed twice. `MAP_2_0` lists every table of a server with its account
  * flag; three lists here name the tables that are not the account's, and every other table must
  * carry the account. So a new table with the column gets its policy with no edit here, and a new
- * table without it and in no list turns this file's test and the census red.
+ * table without it and in no list turns this file's test and the census red. This is the one list
+ * of a table's class: nothing else in the tree states one.
+ */
+/**
+ * A table's class for row security.
+ * - `account`: row security on and forced; one policy for the API's and the worker's logins, the
+ *   row's account is the one named for the transaction.
+ * - `keyed`: read before sign-in. Row security on and forced; a look-up by the token, code or
+ *   address named for the transaction ({@link KEYED_TABLES}), and the account's own policy where
+ *   the table carries the account.
+ * - `staff`: row security on and forced; the API's login reaches them only through the staff door.
+ * - `operations`: nothing of one account; grants only, no row security.
  */
 export type TableClass = "account" | "keyed" | "staff" | "operations";
 

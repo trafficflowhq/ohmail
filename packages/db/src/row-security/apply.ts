@@ -5,15 +5,19 @@ import {
 import { ROLE_DEADLINES, deadlineText } from "./deadlines.js";
 import { lockedTables, type PolicyRow } from "./policies.js";
 import {
-  catalogDigest, codeLines, expectedPolicies, listDigest, lockDrift, lockedOf, markerOf, partitionLines, policyComment, readLockFacts,
-  readerDifferences, readerOf, type Exec, type LockFacts,
+  VIEW_REMADE, VIEWS_UNGRANTED, catalogDigest, codeLines, expectedPolicies, listDigest, lockDrift, lockedOf, markerOf, partitionLines, policyComment,
+  readLockFacts, readerDifferences, readerOf, viewComment, viewDifferences, viewOf, viewRemedy, viewTableLines, type Exec, type LockFacts,
 } from "./census.js";
-import { runRolesCheck, RUNTIME_ROLES_SCRIPT } from "./roles-check.js";
+import { ACCOUNT_VIEWS, viewName, viewStatement } from "./views.js";
+import { runRolesCheck, runRolesPostcondition, RUNTIME_ROLES_SCRIPT, type HearNotices } from "./roles-check.js";
 
 /**
- * THE SETUP'S LOCK STEP: on a server whose runtime logins exist, make the readers, put every locked
- * table under forced row security, make exactly the listed policies, and set the deadlines by role
- * name; then take the census, inside the same transaction, and roll everything back on any drift.
+ * THE SETUP'S LOCK STEP: on a server whose runtime logins exist, make the readers and the account's
+ * three views (`views.ts`), put every locked table under forced row security, make exactly the
+ * listed policies, and set the deadlines by role name; then take the census, inside the same
+ * transaction, and roll everything back on any drift. It grants nothing: the views are born with
+ * no grant, and the runtime roles' rule grants them after the step (SELECT to the two logins, and
+ * USAGE on their schema).
  *
  * WHEN IT ACTS. On a server without the logins (a self-hosted server, every test database) it asks
  * one question of the catalog and does nothing else: no report field, no log line; only a locked
@@ -46,6 +50,8 @@ export interface LockReport {
   readonly forced: number;
   /** Policies standing on them. */
   readonly policies: number;
+  /** The account's views standing as listed. */
+  readonly views: number;
   /** Statements this run wrote: 0 on a run over a lock as listed. */
   readonly wrote: number;
   /** What this run undid: a policy outside the list, one altered by hand, a deadline that drifted. */
@@ -109,11 +115,21 @@ class LockRefused extends Error {
 
 /**
  * THE STEP. `url` is the setup's own address (the roles' check dials it on a connection of its own);
- * `session` runs the transaction. Never throws for a refusal: its lines come back as problems.
+ * `session` runs the transaction; `hear` hears what that session's one connection says (its
+ * notices), so that the postcondition's refusal names the roles it refuses, not their count alone.
+ * Never throws for a refusal: its lines come back as problems.
+ *
+ * THE POSTCONDITION (the dispatcher's ruling): the account's views are born unreachable or not at
+ * all. After the step made them, and after its own census, inside its transaction and on its own
+ * connection, the runtime roles' read-only check runs again (its shape and census sections, without
+ * `census.relations` and `census.views-grants`): a role that would reach a view (by a membership, an
+ * ADMIN option, the migrator's default privilege at the views' birth, an entry) is named, and the
+ * step rolls back with nothing written. The check before the step reads a store without the views,
+ * and cannot see who would reach them.
  */
 export async function ensureLock(
   url: string, session: LockSession,
-  opts: { readonly asked: boolean; readonly log?: (m: string) => void; readonly rolesScript?: string },
+  opts: { readonly asked: boolean; readonly hear: HearNotices; readonly log?: (m: string) => void; readonly rolesScript?: string },
 ): Promise<LockStep> {
   const log = opts.log ?? (() => {});
   const found = await presence(session);
@@ -129,7 +145,7 @@ export async function ensureLock(
         + `Serve it where its runtime roles exist, or take the lock off by hand: its policies, the schema ${READER_SCHEMA} and row security on those tables`],
     };
   }
-  const base = { roles: found.roles, tables: 0, forced: 0, policies: 0, wrote: 0, repaired: [], deadlines: {} } as const;
+  const base = { roles: found.roles, tables: 0, forced: 0, policies: 0, views: 0, wrote: 0, repaired: [], deadlines: {} } as const;
   // The lock stands only by its own work: a policy it made, or a listed table it forced. The
   // readers' schema alone is no lock.
   const standing = found.made > 0 || found.forced > 0;
@@ -158,12 +174,31 @@ export async function ensureLock(
         const differs = f === undefined ? [] : readerDifferences(f, r, before.schema!.owner);
         return differs.some((d) => !REMADE.has(d)) ? [`LOCK_DRIFT readers.differ ${READER_SCHEMA}.${r.name}: ${differs.join(", ")}`] : [];
       });
-      const refused = [...partitionLines(before), ...codeLines(before), ...unmendable];
+      // So is one of the account's views `create or replace view` cannot mend (its kind, owner or
+      // columns other than the list's first ones, code on it, a label: a relation of its name that is
+      // no view, a release whose list changed a column a view holds, a rule or a trigger on it), a
+      // view its table cannot answer (it could not be made), and a view the list does not name in the
+      // readers' schema: a person drops it, or the list names it. The refusal says the remedy.
+      const listedViews = new Set<string>(ACCOUNT_VIEWS.map((v) => v.name));
+      const unmendableViews = [
+        ...ACCOUNT_VIEWS.flatMap((v) => {
+          const f = viewOf(before, v);
+          const differs = f === undefined || before.schema === null ? [] : viewDifferences(f, v, before.schema.owner, before);
+          const remedy = viewRemedy(v, differs);
+          return differs.some((d) => !VIEW_REMADE.has(d))
+            ? [`LOCK_DRIFT views.differ ${viewName(v)}: ${differs.join(", ")}${remedy === "" ? "" : `; ${remedy}`}`] : [];
+        }),
+        ...before.views.filter((f) => !listedViews.has(f.name)).map((f) => `LOCK_DRIFT views.foreign ${READER_SCHEMA}.${f.name}: a view the list does not name`),
+      ];
+      const refused = [...partitionLines(before), ...codeLines(before), ...unmendable, ...viewTableLines(before), ...unmendableViews];
       if (refused.length > 0) throw new LockRefused(refused);
       const { wrote, repaired } = await write(tx, before, standing, log);
       const after = await readLockFacts(tx);
-      const drift = lockDrift(after);
+      // The rights the roles' rule writes on the views come after the step: they are not demanded here.
+      const drift = lockDrift(after).filter((l) => !l.startsWith(`LOCK_DRIFT ${VIEWS_UNGRANTED} `));
       if (drift.length > 0) throw new LockRefused(drift);
+      const post = await runRolesPostcondition(tx, opts.hear, opts.rolesScript ?? RUNTIME_ROLES_SCRIPT);
+      if (!post.ok) throw new LockRefused(post.refusals.map((r) => `the runtime roles' check, after the step made the views, refused: ${r}`));
       return reportOf(after, wrote, repaired, await readDeadlines(tx, Object.keys(after.roles)));
     });
     log(`lock: ${report.state}, ${report.forced}/${report.tables} tables forced, ${report.policies} policies, ${report.wrote} statements written`
@@ -211,6 +246,27 @@ async function write(tx: Exec, facts: LockFacts, stood: boolean, log: (m: string
       repaired.push(`reader ${READER_SCHEMA}.${r.name} made again: ${differs.join(", ")}`);
       ddl.push(readerStatement(r));
     }
+  }
+  // The account's views, after the readers they call: made where missing (with no grant; the roles'
+  // rule grants them), made again over themselves where their text, options or record differ, or
+  // where the list added columns at its end (`create or replace view` keeps the grants).
+  const madeViews: typeof ACCOUNT_VIEWS[number][] = [];
+  for (const v of ACCOUNT_VIEWS) {
+    const f = facts.schema === null ? undefined : viewOf(facts, v);
+    if (f === undefined) {
+      if (stood) repaired.push(`view ${viewName(v)} was missing: made`);
+      ddl.push(viewStatement(v));
+      madeViews.push(v);
+      continue;
+    }
+    const differs = viewDifferences(f, v, facts.schema!.owner, facts);
+    if (differs.length === 0 || !differs.every((d) => VIEW_REMADE.has(d))) continue;
+    // A view of another version of the list (a list that grew at its end among them) is made again as
+    // the list's, not as a repair.
+    const listChanged = differs.includes("listed") && differs.every((d) => d === "listed" || d === "text" || d === "fewer columns");
+    if (!listChanged) repaired.push(`view ${viewName(v)} is not as it was made: made again (${differs.join(", ")})`);
+    ddl.push(viewStatement(v, true));
+    madeViews.push(v);
   }
   // Under forced row security, unless the switch has turned the lock off: then the flags are its.
   const off = markerOf(facts);
@@ -271,8 +327,18 @@ async function write(tx: Exec, facts: LockFacts, stood: boolean, log: (m: string
     });
     await tx.unsafe(comments.join(";\n")).simple();
   }
+  if (madeViews.length > 0) {
+    // Each view's record: the list's row it was made from, and the catalog's own spelling of it,
+    // read back under the same pinned settings the census reads it under.
+    const printed = await tx.unsafe(`select c.relname::text as name, pg_catalog.pg_get_viewdef(c.oid) as text
+        from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = $1 and c.relkind = 'v' and c.relname = any($2::text[])`,
+    [READER_SCHEMA, madeViews.map((v) => v.name)]) as unknown as Array<{ name: string; text: string }>;
+    await tx.unsafe(madeViews.map((v) => `comment on view ${viewName(v)} is '${viewComment(v, printed.find((x) => x.name === v.name)!.text)}'`)
+      .join(";\n")).simple();
+  }
   if (repaired.length > 0) for (const r of repaired) log(`lock: repair: ${r}`);
-  return { wrote: statements.length + made.length, repaired };
+  return { wrote: statements.length + made.length + madeViews.length, repaired };
 }
 
 /** Each role's own settings (no database scope), as `guc → text`. */
@@ -297,6 +363,10 @@ function reportOf(facts: LockFacts, wrote: number, repaired: string[], deadlines
     tables: locked.length,
     forced: locked.filter((t) => t.rls && t.forced).length,
     policies: facts.policies.length,
+    views: ACCOUNT_VIEWS.filter((v) => {
+      const f = viewOf(facts, v);
+      return f !== undefined && facts.schema !== null && viewDifferences(f, v, facts.schema.owner, facts).length === 0;
+    }).length,
     wrote,
     repaired,
     deadlines,

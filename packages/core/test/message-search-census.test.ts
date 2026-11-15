@@ -199,6 +199,13 @@ const READERS = new Set([
   // names this one. Counts and a name: neither reads a document's text.
   "packages/db/src/transition/before.ts",
   "packages/db/src/transition/expected-counts.ts",
+  // The row lock's account views over the document, and the names its reads go through. Neither reads a
+  // row: `views.ts` is the list the setup's lock step writes the views' statements from (its schema import
+  // is a type), and `account-rows.ts` is a relation's names, which one catalog read answers with (sent by
+  // `row-security/account-road.ts`, which names none). Whoever takes the document's name from that answer
+  // writes `messageSearch` or `messageSearchWords`, and is held here.
+  "packages/db/src/row-security/views.ts",
+  "packages/db/src/account-rows.ts",
 ]);
 
 /** The AI, knowledge-base and embedding graph, by path shape — none of it may be a reader. */
@@ -207,7 +214,7 @@ const MODEL_GRAPH = /(^|\/)(ai|kb|embed\w*|redact\w*|classify\w*|draft-prompt|cl
 function namesTheDocument(text: string): boolean {
   // The identifier or the table name in code — a comment naming it is prose.
   const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
-  return /\bmessageSearch\b|\bmessage_search\b/.test(code);
+  return /\bmessageSearch\b|\bmessage_search\b|\bmessageSearchWords\b|\bmessage_search_words\b/.test(code);
 }
 
 describe("the search document is read by a closed set of modules, none of them a model's", () => {
@@ -221,6 +228,14 @@ describe("the search document is read by a closed set of modules, none of them a
 
   it("no module outside the closed set names it", () => {
     expect(readers.filter((f) => !READERS.has(f))).toEqual([]);
+  });
+
+  it("a source whose code names only messageSearchWords names the document", () => {
+    expect(namesTheDocument(`export async function read(db) { const r = await accountRows(db); return r.messageSearchWords; }`)).toBe(true);
+  });
+
+  it("a source whose code names only ohmail.message_search_words names the document", () => {
+    expect(namesTheDocument("export const READ = sql`select message_id from ohmail.message_search_words where terms is not null`;")).toBe(true);
   });
 
   it("no member of the closed set is on the model or knowledge-base graph", () => {
