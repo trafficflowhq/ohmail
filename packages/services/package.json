@@ -27,6 +27,12 @@
       "ohmail-source": "./src/calendar/index.ts",
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
+    },
+    "./invitation-answer": {
+      "types": "./src/invitation-answer-service.ts",
+      "ohmail-source": "./src/invitation-answer-service.ts",
+      "node": "./dist/invitation-answer-service.js",
+      "default": "./src/invitation-answer-service.ts"
     }
   },
   "dependencies": {

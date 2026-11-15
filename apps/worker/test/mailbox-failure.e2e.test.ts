@@ -416,7 +416,9 @@ describe("a mailbox mid-first-sync is visible, not invisible", () => {
     // ── THE ASSERTION THE OLD VERSION OF THIS TEST DID NOT HAVE ────────────────────────────
     //
     // Attempts grow ⇒ 300, 600, 1200 … A reset gives 300, 300, 300 — same `retryCount`, same
-    // status, same code. This is the only line that tells them apart.
+    // status, same code. This is the only line that tells them apart. Written once the row's write
+    // returns, so it is waited for as the row was.
+    await waitFor(() => backoffs.length >= 3, 15000, "three quarantines logged");
     expect(backoffs.length, "at least three quarantines were logged").toBeGreaterThanOrEqual(3);
     expect(backoffs, `the backoff did not grow: ${backoffs.join(", ")}`)
       .toEqual([...backoffs].sort((a, b) => a - b));

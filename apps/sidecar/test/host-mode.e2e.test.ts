@@ -14,7 +14,7 @@ const BAKED = vi.hoisted(() => {
 });
 afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 import { freshDataDir } from "./_datadir.js";
-import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../desktop/src/host-client/bearer.js";
+import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 import { BearerManager as ShippedBearerManager } from "../../desktop/test/fixtures/host-bearer-0.30.13.js";
 
 /* The engine's own devDependency, reached through its package: neither app carries one. */
@@ -213,6 +213,8 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
       remoteImages: true, accountHeader: true, forwardParts: true,
+      // An invitation may be answered by mail here (mail 0204); a fact of this build, as `accountHeader` is.
+      invitationAnswer: true,
       // Same store and the same pass: a scheduled letter's files wait here (mail 0179).
       scheduleFiles: true,
     });

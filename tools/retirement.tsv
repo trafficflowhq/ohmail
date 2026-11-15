@@ -13,7 +13,6 @@ apps/desktop/test/desktop-boot-status.test.tsx	source-text	reads source as text 
 apps/desktop/test/desktop-build-id.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
 apps/desktop/test/desktop-change-says-where.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
 apps/desktop/test/desktop-cloud-session.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	desktop-layer	
-apps/desktop/test/desktop-devices.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
 apps/desktop/test/desktop-diagnostic-file.test.tsx	source-text	reads source as text (rs, tsx)	layer 2	desktop-layer	
 apps/desktop/test/desktop-distribution.test.tsx	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	desktop-layer	
 apps/desktop/test/desktop-door-copy.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
@@ -428,6 +427,7 @@ apps/sidecar/test/idle-drain-cadence.test.ts	source-text	reads source as text (t
 apps/sidecar/test/idle-drain-is-a-comparison.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/idle-drain-statement-ratchet.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/impersonation-filing-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/invitation-copy.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	cal-invite	
 apps/sidecar/test/launch-arm-shrinks-meta.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/launch-bearer-renewal.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/launch-drain-first-page.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
@@ -604,6 +604,7 @@ apps/webapp/test/claims-match-the-tree.test.ts	source-text	reads source as text 
 apps/webapp/test/closed-drawer-inert.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/cloud-draft-disclosure.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
 apps/webapp/test/column-geometry.test.ts	source-text	reads source as text (css, mjs)	layer 2	removals	
+apps/webapp/test/column-handles.test.tsx	behaviour	the column separators: focusable, labelled, a drag and a key move the rail and list and persist once, a double press resets	layer 1: red with the handle's double press resetting nothing	frame	held:packages/app/test/frame/frame.test.tsx#keeps a width set on the desktop's handle once the drag rests, in the store every reader shares
 apps/webapp/test/compose-and-held-polish.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
 apps/webapp/test/compose-autosave.test.tsx	source-text	reads source as text (ts)	layer 2	write	
 apps/webapp/test/compose-cancel.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
@@ -648,7 +649,9 @@ apps/webapp/test/first-run-stale-holder.test.tsx	source-text	reads source as tex
 apps/webapp/test/fold-band-ladder-polish.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/folders-rail.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/forward-always-offered.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
-apps/webapp/test/freshness-label.test.tsx	source-text	reads source as text (tsx): the mail state provider and the desktop gate	layer 2	removals	
+apps/webapp/test/frame/seam-in-a-browser.test.ts	source-text	reads source as text (css): the shipped sheets, laid out in Chromium	layer 2	frame	
+apps/webapp/test/frame/todays-selection-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the demo's page and the product's sheets, run in Chromium	layer 2	frame	
+apps/webapp/test/freshness-first-frame.test.tsx	behaviour	a copy stale by days says so at the first frame; on a desktop whose host is quiet the host's line speaks instead	layer 1: red with catching up ranked above the host's silence	frame	held:packages/app/test/frame/connection.test.tsx#lets the host's silence quiet the catching up
 apps/webapp/test/header-menu-class-unshared.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
 apps/webapp/test/held-release-one-door-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
 apps/webapp/test/held-send-recheck-window.test.ts	source-text	reads source as text (ts)	layer 2	write	
@@ -660,12 +663,13 @@ apps/webapp/test/history-window.test.tsx	source-text	reads source as text (css, 
 apps/webapp/test/html-tree-budget-pin.test.ts	data	reads data files (json)	none	removals	
 apps/webapp/test/ics-event-card.test.tsx	data	reads data files (json): the message catalogue	none	removals	
 apps/webapp/test/idle-polls-hidden-guard.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
-apps/webapp/test/idle-renderer-animations.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/idle-renderer-animations.test.tsx	source-text	the sync strip's animations rest while nothing happens	none	frame	gone:apps/webapp/app/shell/SyncBar.tsx
 apps/webapp/test/inline-pictures-frame-mechanism.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	removals	
 apps/webapp/test/join-finishing-details.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/join-plan-hint.test.tsx	source-text	reads source as text (ts)	layer 2	account	
 apps/webapp/test/junk-rescue-claims.test.ts	source-text	reads source as text (ts, tsx): the route, its client and its view; and the message catalogue	layer 2	removals	
 apps/webapp/test/junk-window-hook.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/keymap-enter-on-link.test.tsx	behaviour	Enter on the where-line's link follows it	none	frame	gone:apps/webapp/app/shell/OhboxWhereLine.tsx
 apps/webapp/test/lazy-view-retries.test.tsx	source-text	reads source as text (js, tsx)	layer 2	removals	
 apps/webapp/test/letter-focus-browser.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	reader	
 apps/webapp/test/list-older-wired.test.ts	source-text	reads source as text (ts)	layer 2	ohbox	
@@ -698,6 +702,7 @@ apps/webapp/test/message-body-viewing.test.ts	data	through packages/client-engin
 apps/webapp/test/message-verb-cursor-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/modal-suspends-keymap.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/more-menu-fit.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/narrow-title-names-trash.test.tsx	behaviour	the narrow top bar's title and back chip name Trash	none	frame	gone:apps/webapp/app/shell/AppShell.tsx#className="topbar
 apps/webapp/test/newsletter-corpus.test.tsx	data	reads data files (html)	none	removals	
 apps/webapp/test/not-organizing-yet-says-so.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
@@ -705,8 +710,8 @@ apps/webapp/test/notifications-gate-census.test.ts	source-text	reads source as t
 apps/webapp/test/ohbox-header-counts.test.ts	source-text	reads source as text (css, mjs, ts, tsx)	layer 2	ohbox	
 apps/webapp/test/ohbox-undo-puts-the-row-back.test.tsx	source-text	reads source as text (ts)	layer 2	ohbox	
 apps/webapp/test/ohbox-visit-mark.test.tsx	source-text	reads source as text (tsx)	layer 2	ohbox	
-apps/webapp/test/ohbox-where-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
-apps/webapp/test/ohbox-where-line.test.tsx	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/ohbox-where-geometry.test.tsx	source-text	the where-line's geometry over the Ohbox	none	frame	gone:apps/webapp/app/shell/OhboxWhereLine.tsx
+apps/webapp/test/ohbox-where-line.test.tsx	source-text	the where-line over the Ohbox	none	frame	gone:apps/webapp/app/shell/OhboxWhereLine.tsx
 apps/webapp/test/onboarding-claims.test.ts	data	reads data files (reads)	none	removals	
 apps/webapp/test/onboarding.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
 apps/webapp/test/one-composer-per-draft.test.tsx	source-text	reads source as text (ts)	layer 2	write	
@@ -728,7 +733,8 @@ apps/webapp/test/proxy.e2e.test.ts	source-text	reads source as text (mjs, ts)	la
 apps/webapp/test/quoted-history-a11y.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
 apps/webapp/test/quoted-history-render.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
 apps/webapp/test/quoted-history-thread.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
-apps/webapp/test/rail-notice-on-screen.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
+apps/webapp/test/rail-notice-on-screen.test.tsx	source-text	a notice on screen where the old rail's slot stood	layer 1: red with the notice's bar drawn at no height	frame	held:packages/app/test/frame/notice-bar-in-a-browser.test.tsx#${room}, ${width} by ${height}: the notice lies inside its bar and its title is on screen
+apps/webapp/test/rail-notice-under-the-piles.test.tsx	behaviour	the old rail's notice slot stood under the piles	none	frame	gone:apps/webapp/app/shell/AppShell.tsx#<RailNav
 apps/webapp/test/rail-row-template.test.ts	source-text	reads source as text (css, tsx)	layer 2	ohbox	
 apps/webapp/test/rail-sync-readable.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/rail-tags-persist.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
@@ -761,7 +767,7 @@ apps/webapp/test/row-menu-fit.test.tsx	source-text	reads source as text (css)	st
 apps/webapp/test/row-participants-wiring.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
 apps/webapp/test/row-stamp-wiring.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
 apps/webapp/test/row-thread-count.test.ts	source-text	reads source as text (tsx)	layer 2	reader	
-apps/webapp/test/scheme-control.test.tsx	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/scheme-control.test.tsx	data	the scheme control in the old rail's dock	none	frame	gone:apps/webapp/app/shell/AppShell.tsx#<RailNav
 apps/webapp/test/screen-press-verdict-actions.test.ts	source-text	reads source as text (ts): the shell's verbs; and the message catalogue	layer 2	screener	
 apps/webapp/test/screener-decision-durable.test.tsx	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	removals	
 apps/webapp/test/screener-dim-wiring.test.ts	source-text	reads source as text (css, tsx)	layer 2	screener	
@@ -804,13 +810,13 @@ apps/webapp/test/session-verdict-guard.test.ts	source-text	reads source as text 
 apps/webapp/test/settings-390-reflow.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	settings	
 apps/webapp/test/settings-account-layout.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	settings	
 apps/webapp/test/settings-copy-i18n.test.tsx	data	reads data files (json): the message catalogue	none	removals	
-apps/webapp/test/settings-devices-pane.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
 apps/webapp/test/settings-pane-rearms-wake.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
 apps/webapp/test/settings-polish-geometry.test.tsx	source-text	reads source as text (css, ts)	layer 2	settings	
 apps/webapp/test/settings-press-refusal-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	settings	
 apps/webapp/test/settings-section-parity.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
 apps/webapp/test/shell-boot-reconciles-wake.test.ts	source-text	reads source as text (js)	layer 2	removals	
 apps/webapp/test/shell-composition-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/shell-golden.test.tsx	behaviour	the old chrome's frozen markup, the sync strip's included	none	frame	gone:apps/webapp/app/shell/SyncBar.tsx
 apps/webapp/test/shell-hands-the-mailbox-label.test.ts	source-text	reads source as text (tsx)	layer 2	mailboxes	
 apps/webapp/test/shell-verdict-sentence.test.ts	source-text	reads source as text (ts): the shell's verbs	layer 2	screener	
 apps/webapp/test/short-viewport-and-touch-targets.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
@@ -832,6 +838,10 @@ apps/webapp/test/stream-bar.test.tsx	source-text	reads source as text (tsx): the
 apps/webapp/test/stream-mount-window.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/stream-scroll.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	removals	
 apps/webapp/test/subject-rule.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/sync-bar-announce.test.tsx	behaviour	the first sync's sentence said once, then not faster than the count's cadence and its 5 percent steps	layer 1: red with every count said at once	frame	held:packages/app/test/frame/connection.test.tsx#speaks the first sync's count once a poll and once a twentieth of the way, not at every step
+apps/webapp/test/sync-bar-door.test.ts	behaviour	signed out: Sign in where the door can, the restart sentence where it cannot; no mailbox: Connect leads where this door connects one	layer 1: red with Connect led to the mailboxes whatever the door fed	frame	held:packages/app/test/frame/connection.test.tsx#follows the setup link today's views feed, and goes to Settings' Mailboxes where none is fed
+apps/webapp/test/sync-bar-loader.test.ts	behaviour	the busy states show a count, the pair n of total, never a percentage	layer 1: red with the first sync said without its total (the table's firstSync row)	frame	held:packages/app/test/frame/connection.test.tsx#%s says its sentence in English and in German
+apps/webapp/test/sync-bar-offline.test.tsx	behaviour	offline outranks a stale or failing read, calmly; a server's own sentence outranks offline	layer 1: red with reconnecting ranked before offline	frame	held:packages/app/test/frame/connection.test.tsx#holds 'could not look' apart from 'nothing there': a failing read is reconnecting
 apps/webapp/test/sync-notice-one-copy.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
 apps/webapp/test/sync-owner-gate.test.ts	source-text	reads source as text (ts)	layer 2	doors	
 apps/webapp/test/tags-admin.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
@@ -851,7 +861,7 @@ apps/webapp/test/viewport-reads-census.test.ts	source-text	reads source as text 
 apps/webapp/test/visible-dom-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/warm-open.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/waterline-word.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
-apps/webapp/test/width-ladder-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/width-ladder-geometry.test.tsx	source-text	the width ladder: one column under the fold's line, two columns beside a rail of icons above it	layer 1: red with the fold's line moved to 900	frame	held:packages/app/test/frame/layout-plan.test.ts#draws the line at 600 and at 840, and calls a window under 480 high short
 apps/webapp/test/withheld-copy-key-census.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/wordmark.test.ts	source-text	through test/support/wordmark.ts: reads the product folders, for the wordmark's spelling	layer 2	removals	
 apps/webapp/test/zero-layout-purity.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
@@ -872,6 +882,7 @@ apps/worker/test/blank-repair-worker-mode.e2e.test.ts	data	through apps/worker/t
 apps/worker/test/box-journal-drift.pg.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
 apps/worker/test/bubble-up-inline.e2e.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/bubble-up.concurrency.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/calendar-providers.pg.test.ts	data	reads data files (json): recorded Google answers	none	cal-sync	
 apps/worker/test/ceiling-named-in-log.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/classifier-outage.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/cli-lease-wiring.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
@@ -1019,6 +1030,11 @@ packages/api/test/staleness-coverage.test.ts	source-text	reads source as text (t
 packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
+packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	
+packages/app/test/frame/own-classes.test.tsx	source-text	reads source as text (css): the classes the kit's and today's sheets style	stylelint:selector-disallowed-list	frame	
+packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	frame	
+packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	
 packages/cal-core/test/pure.test.ts	artifact	reads what was built: the bundle of its own source; and its manifest	layer 5	cal-core	
 packages/cal-providers/test/bundle.test.ts	artifact	reads what was built: the bundle of its own source, its source folder's list and its manifest	layer 5	cal-read	
@@ -1044,6 +1060,7 @@ packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads sour
 packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
 packages/client-engine/test/outbox-lifecycle.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/outbox-owner-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/outbox-records-1-0-replay.test.ts	data	reads data files (json): the queue records release 1.0.12 wrote and the requests it sent replaying them	none	move-server	
 packages/client-engine/test/own-address-never-a-queue-row.test.ts	source-text	reads source as text (js, ts)	layer 1	engine	
 packages/client-engine/test/pending-outcome-census.test.ts	source-text	reads source as text (mjs, ts)	layer 1	engine	
 packages/client-engine/test/press-import-census.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
@@ -1260,6 +1277,10 @@ packages/tokens/test/omarchy-mapping.test.ts	source-text	reads source as text (j
 packages/tokens/test/omarchy-settings.test.ts	data	reads data files (toml)	none	tokens	
 packages/ui/test/avatar-theme.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/banner-form.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	kit	
+packages/ui/test/base/drawn-in-a-browser.test.tsx	artifact	through the comparison's harness: reads what the bundler builds from the kit's stylesheets, and the typefaces, and draws the parts in Chromium	layer 5	kit	
+packages/ui/test/base/scheme-under-the-stamp.test.ts	artifact	through the comparison's harness and the bundler: reads what the bundler builds from the kit's and today's stylesheets, and reads the colour scheme in Chromium with and without the frame's stamp	layer 5	kit	
+packages/ui/test/base/under-text-size.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives the parts in Chromium under the web door's Text size	layer 5	kit	
+packages/ui/test/base/under-todays-sheets.test.ts	artifact	through the comparison's harness: reads what the bundler builds from the kit's and today's stylesheets, and draws every state in Chromium beside them	layer 5	kit	
 packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/date-picker.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/doorbell-stack.test.ts	source-text	reads source as text (css, mjs)	layer 2	kit	

@@ -539,7 +539,7 @@ describe("the readers of this tree", () => {
 
   it("select the readers that name a file in a route group", () => {
     expect(hit("apps/mobile/app/(tabs)/screener.tsx").has("apps/mobile/test/screener-row-names-the-claim.test.ts")).toBe(true);
-    expect(hit("apps/webapp/app/(product)/mailbox/CloudShell.tsx").has("apps/webapp/test/ai-off-switch.test.tsx")).toBe(true);
+    expect(hit("apps/webapp/app/(product)/mailbox/CloudShell.tsx").has("apps/webapp/test/session-verdict-guard.test.ts")).toBe(true);
   });
 
   it("select the built worker's loader for package source, and a child's spawner for what the child loads", () => {

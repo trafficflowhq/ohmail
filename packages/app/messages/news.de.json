@@ -1,0 +1,18 @@
+{
+  "reads": {
+    "title": "News",
+    "waterline": "Bis hierher gesehen",
+    "waterlineMeta": "letzter Besuch · {stamp}",
+    "tail": "Ein Beitrag gilt als gelesen, sobald er im Strom auf dem Bildschirm stehen bleibt. Schnelles Vorbeiscrollen lässt ihn ungelesen.",
+    "streamTail": "Keine älteren ungelesenen Beiträge.",
+    "aiApprove": "Passt",
+    "aiCorrect": "Korrigieren",
+    "streamAria": "News-Strom",
+    "keyNext": "Weiter im Strom",
+    "keyPrev": "Zurück im Strom",
+    "keyExpand": "Auf- oder zuklappen"
+  },
+  "stream": {
+    "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
+  }
+}

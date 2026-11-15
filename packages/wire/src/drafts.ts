@@ -196,3 +196,8 @@ export interface AttachmentWire {
   contentId?: string | null;
   messageId: string;
 }
+
+/** A draft the server wrote and stored: the id of its row, which `/sync` then carries. */
+export interface DraftWrittenAnswer {
+  draftId: string;
+}

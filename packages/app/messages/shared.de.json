@@ -1,0 +1,13 @@
+{
+  "place": {
+    "ohbox": "Ohbox",
+    "reads": "News",
+    "receipts": "Belege",
+    "screener": "Screener",
+    "screened": "Aussortiert",
+    "spam": "Spam"
+  },
+  "relativeTime": {
+    "justNow": "gerade eben"
+  }
+}

@@ -218,13 +218,17 @@ async function decideToOhbox(c: HTMLElement, id: string): Promise<void> {
   await tick(200);
 }
 
-/** The shell's Unsaved changes strip, opened: its rows. */
+/** The shell's Unsaved changes strip, opened: in the frame, the notice's Show opens today's list in a dialog. */
 async function stripRows(c: HTMLElement): Promise<HTMLElement[]> {
-  const strip = c.querySelector<HTMLElement>(".unsaved-shell");
-  if (strip === null) return [];
-  const toggle = strip.querySelector<HTMLButtonElement>(".unsaved-toggle");
-  if (toggle?.getAttribute("aria-expanded") === "false") { await act(async () => { toggle.click(); }); await tick(0); }
-  return [...(c.querySelector(".unsaved-shell")?.querySelectorAll<HTMLElement>(".unsaved-row") ?? [])];
+  const rowsNow = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>("[role='dialog'] .unsaved-row")];
+  if (document.querySelector("[role='dialog'] .unsaved") === null) {
+    const show = [...c.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.closest("[role='dialog']") === null && (b.textContent ?? "").trim() === messages.sync.unsavedShow);
+    if (!show) return [];
+    await act(async () => { show.click(); });
+    await tick(0);
+  }
+  return rowsNow();
 }
 const buttonIn = (el: HTMLElement, label: string): HTMLButtonElement | null =>
   [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim() === label) ?? null;

@@ -81,6 +81,8 @@ export const helloRoutes: Route[] = [
           forwardParts: true,
           // Only where the composition keeps a calendar: absent, the answer is the one it always was.
           ...(hello.features.calendar === true ? { calendar: true } : {}),
+          // `POST /messages/:id/invitation/answer` is mounted in every table; a fact of this build.
+          invitationAnswer: true,
         },
       });
     },

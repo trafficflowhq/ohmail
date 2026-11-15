@@ -14,6 +14,8 @@ export interface MenuItemProps {
   keyHint?: string;
   /** One of a few choices: whether this is the taken one. Left out: a verb. */
   checked?: boolean;
+  /** With `checked`: one of several that may all be taken (a tag), not one of a few. */
+  many?: boolean;
   disabled?: boolean;
   /** A tag of the person's own under a place: indented, with the tag's dot in this hue. */
   hue?: number;
@@ -29,6 +31,7 @@ export function MenuItem({
   note,
   keyHint,
   checked,
+  many,
   disabled,
   hue,
   dot,
@@ -38,7 +41,7 @@ export function MenuItem({
     <button
       type="button"
       className="oh-control oh-menu-item"
-      role={checked === undefined ? "menuitem" : "menuitemradio"}
+      role={checked === undefined ? "menuitem" : many ? "menuitemcheckbox" : "menuitemradio"}
       aria-checked={checked}
       disabled={disabled}
       data-sub={hue === undefined ? undefined : ""}

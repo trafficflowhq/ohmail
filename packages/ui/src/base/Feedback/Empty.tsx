@@ -11,8 +11,10 @@ export interface EmptyProps {
   hot?: boolean;
   /** The product's mark over the label, as its letters: only on the welcome and where everything is decided. */
   mark?: string;
-  /** At most one button. */
-  act?: { label: string; icon?: IconName; onPress: () => void };
+  /** At most one button: it runs on a press, or it goes to an address as a link (a place that works before any script). */
+  act?: { label: string; icon?: IconName } & (
+    { onPress: () => void; href?: never } | { href: string; onPress?: never }
+  );
 }
 
 /** A place with nothing in it says so, once: a label, a label and one button, or the mark with a label. */
@@ -37,9 +39,15 @@ export function Empty({ label, hot, mark, act }: EmptyProps) {
       </p>
       {act ? (
         <div className="oh-empty-acts">
-          <Button kind="two" icon={act.icon} onPress={act.onPress}>
-            {act.label}
-          </Button>
+          {act.href !== undefined ? (
+            <Button kind="two" icon={act.icon} href={act.href}>
+              {act.label}
+            </Button>
+          ) : (
+            <Button kind="two" icon={act.icon} onPress={act.onPress}>
+              {act.label}
+            </Button>
+          )}
         </div>
       ) : null}
     </div>

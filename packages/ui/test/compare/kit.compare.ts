@@ -10,6 +10,7 @@ import {
   type StateVerdict,
 } from "../../../../test/compare/compare.js";
 import { launch, TOLERANCE } from "../../../../test/compare/render.mjs";
+import { folded, PLAIN_ROLE } from "./cut.mjs";
 import type { Scene } from "../../../../test/compare/scene.d.mts";
 import {
   draw,
@@ -51,8 +52,11 @@ const SUBJECTS: Record<Entry, () => Promise<{ subjects: KitSubject[] }>> = {
 };
 
 interface KitDeclared extends Declared {
-  /** Left out: every question. `picture`: the picture alone, the first three questions still bind. */
-  question?: "picture";
+  /**
+   * Left out: every question. `picture`: the picture alone, the first three questions still bind.
+   * `names`, `drawn` or `boxes`: that question alone, the other three still bind.
+   */
+  question?: "picture" | "names" | "drawn" | "boxes";
   /**
    * Roles, names and states the reference says otherwise, read as the same node so that its box, its
    * words and its drawn values still bind: `as` reads a role as another, `unnamed` leaves the name of
@@ -60,6 +64,27 @@ interface KitDeclared extends Declared {
    * does not say.
    */
   alike?: { role: string; as?: string; unnamed?: true; unstated?: string[] }[];
+  /**
+   * Nodes of the part, by selector inside the stage, that the reference draws as plain boxes: no role, a
+   * paragraph, bold words. They are read without their role, so their words and surfaces stand where the
+   * reference's stand and every question still binds them; only the role and name are not read.
+   */
+  plain?: string[];
+  /**
+   * Nodes of the reference, by role and name, that the part draws as plain boxes: the reference's are
+   * read so, their words and surfaces folded into what holds them, and every question but the role binds.
+   */
+  plainThere?: { role: string; name: string }[];
+}
+
+/** The reference with the nodes a row names as plain boxes read so. */
+function plainThere<S extends Scene>(scene: S, rows: KitDeclared[]): S {
+  const named = rows.flatMap((d) => d.plainThere ?? []);
+  if (!named.length) return scene;
+  const nodes = scene.nodes.map((n) =>
+    named.some((d) => d.role === n.role && d.name === n.name) ? { ...n, role: PLAIN_ROLE } : n,
+  );
+  return folded({ ...scene, nodes }) as S;
 }
 
 /** A scene with the declared likenesses applied: to the reference and to what was drawn alike. */
@@ -169,27 +194,37 @@ for (const entry of ENTRIES.filter((e) => !process.env.KIT_ENTRY || process.env.
       const subject = subjectOf.get(name);
       if (!subject) throw new Error(`${name} has no subject in subjects/${entry}`);
       const reference = referenceOf(entry, manifest, key);
-      const drew = await draw(browser!, entry, subject, reference.data);
       const rows = declared.filter(
         (d) => d.key === key || d.key === name || d.key === name.slice(0, name.indexOf("/")),
       );
+      const drew = await draw(
+        browser!,
+        entry,
+        subject,
+        reference.data,
+        rows.flatMap((d) => d.plain ?? []),
+      );
       const verdict = compareState({
         key,
-        reference: { scene: likened(reference.data, rows), png: reference.png },
+        reference: { scene: likened(plainThere(reference.data, rows), rows), png: reference.png },
         actual: { ...drew, scene: likened(drew.scene, rows) },
         tolerance: TOLERANCE,
-        declared: rows.find((d) => !d.question && !d.alike),
+        declared: rows.find((d) => !d.question && !d.alike && !d.plain && !d.plainThere),
         accepted: true,
       });
-      /* A picture declared on its own reports; a picture of another size never does. */
+      /* A picture declared on its own reports; a picture of another size never does. So do names, drawn values or boxes declared on their own. */
       if (
         verdict.picture.verdict === "red" &&
         verdict.picture.sized &&
         rows.some((d) => d.question === "picture")
-      ) {
+      )
         verdict.picture.verdict = "reported";
-        verdict.green = [verdict.names, verdict.boxes, verdict.drawn].every((r) => r.verdict !== "red");
-      }
+      for (const q of ["names", "drawn", "boxes"] as const)
+        if (verdict[q].verdict === "red" && rows.some((d) => d.question === q))
+          verdict[q] = { ...verdict[q], verdict: "reported" };
+      verdict.green = [verdict.names, verdict.boxes, verdict.drawn, verdict.picture].every(
+        (r) => r.verdict !== "red",
+      );
       console.log(describeVerdict(verdict));
       if (!verdict.green || verdict.picture.verdict !== "green") keep(key, verdict, drew, reference.png);
       expect(verdict.green, describeVerdict(verdict, 40)).toBe(true);

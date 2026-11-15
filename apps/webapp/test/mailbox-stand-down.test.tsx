@@ -332,7 +332,7 @@ vi.mock("../app/api-client", () => ({
 }));
 
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: mockMailState, refresh: () => {} }),
+  useMailState: () => ({ state: mockMailState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
@@ -384,7 +384,7 @@ afterEach(async () => { mockMailState = QUIET; await unmount(); });
 async function strip(state: MailState): Promise<string> {
   await unmount();
   mockMailState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

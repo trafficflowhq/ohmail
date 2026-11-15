@@ -101,7 +101,7 @@ async function world(seedRich?: string, reply = false) {
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
   const rows = async () => db.select().from(drafts);
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   container = document.createElement("div");
   document.body.appendChild(container);

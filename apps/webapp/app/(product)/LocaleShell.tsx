@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlErrorCode, NextIntlClientProvider, type IntlError } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
 import { LocaleContext, type LocaleControls } from "../shell/LocaleContext";
 import {
   LOCALES, normalizeLocale, rememberLocale, setActiveCatalog, type AppLocale,
@@ -178,7 +179,10 @@ export function LocaleShell({
         timeZone={zone}
         {...(state.complete ? {} : PENDING)}
       >
-        {children}
+        {/* The frame's reader, over the same catalogue, language and zone as the intl provider (`@ohmail/app/text`). */}
+        <TextProvider locale={state.locale} messages={state.messages} timeZone={zone} pending={!state.complete}>
+          {children}
+        </TextProvider>
       </NextIntlClientProvider>
     </LocaleContext.Provider>
   );

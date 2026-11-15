@@ -1,0 +1,365 @@
+/**
+ * THE HOST-CLIENT GATE — which of two things this browser is looking at. Either it holds a
+ * pairing (a refresh token the BearerManager found), and the answer is the mail client — the
+ * SAME `AppShell` the desktop window and app.ohmail.app render, over the shared `HttpAdapter`
+ * in bearer mode — or it does not, and the answer is the pairing landing, which is also where
+ * a session that DIES mid-use lands: rendering mail past a revocation would be a mailbox that
+ * silently stopped being live. `baseUrl: ""` (root-relative on the served origin); the
+ * `headers` seam injects Authorization; the `fetch` is the manager's, with its single 401
+ * recovery; no cookie option is touched — bearer-only in both directions, by construction.
+ */
+
+/*
+ * The mirror is in memory, rebuilt per page load from the computer this page is served FROM —
+ * a persistent mirror needs a server-confirmed owner id, which this door cannot read. Only the
+ * queued changes stay in this browser, keyed by the pairing (`host-engine.ts`). A
+ * `sendSurfaceMaxTotalBytes` IS passed ({@link HOST_SEND_MAX_TOTAL_BYTES}): a send here rides
+ * the host door's adapter and the door declares exactly this ceiling on its service bag
+ */
+
+/*
+ * (`apps/sidecar/src/host-listener.ts`) — absent, the compose form would promise the strict
+ * hosted constant, under-selling the door.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
+import { NONE, type FeatureEntry, type HostContract } from "@ohmail/app/host";
+import { EngineProvider } from "../../webapp/app/shell/engine";
+import { browserNotificationHost } from "../../webapp/app/shell/notification-settings";
+import { ScreeningSection } from "../../webapp/app/shell/ScreeningSection";
+import { TodaysFrame } from "../../webapp/app/shell/TodaysFrame";
+import { NO_TODAYS } from "../../webapp/app/shell/todays-inputs";
+import { useTodaysSupplies } from "../../webapp/app/shell/todays-supplies";
+import { dropLocalStorageKeys, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
+import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../webapp/app/shell/compose";
+import {
+  OWNED_REPLY_DRAFT_PREFIX,
+  OWNED_REPLY_META_PREFIX,
+  REPLY_DRAFT_PREFIX,
+  REPLY_META_PREFIX,
+  SENT_COPY_NOTES_PREFIX,
+} from "../../webapp/app/shell/mail-send";
+import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
+import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
+import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
+import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { BearerManager, type SignOutOutcome } from "./bearer.js";
+import { HostAccountPane } from "./HostAccountPane.js";
+import { createHostClientEngine } from "./host-engine.js";
+import { pairedHost } from "./host.js";
+import { discardHostOutbox, type HostOutboxDiscard } from "./outbox-store.js";
+import { PairScreen } from "./PairScreen.js";
+import {
+  consentOverBearer,
+  draftReplyOverBearer,
+  gapLettersOverBearer,
+  junkOverBearer,
+  mailboxFactsOverBearer,
+  olderBodyOverBearer,
+  profileImportOverBearer,
+  trashOverBearer,
+} from "./transports.js";
+
+/**
+ * The host door's send-surface ceiling in raw attachment bytes — the FORM-side twin of
+ * `HOST_SEND_MAX_TOTAL_BYTES` in `apps/sidecar/src/host-listener.ts`. A literal rather than an
+ * import, because that module is the engine's (node-only: it imports node:http machinery) and
+ * this bundle is a browser artifact; the two are held together by the suite instead.
+ */
+export const HOST_CLIENT_SEND_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+
+/**
+ * THE DURABLE-DECISION STORES THIS DOOR LEAVES AT REST, and what must reach them when the
+ * pairing ends. The shared shell keeps five things in `localStorage` past a reload — the
+ * compose scratch, the per-message reply body and its editor metadata, the durable send
+ * lanes, the Screener's intent journal — and three are MAIL TEXT: a phone signed out of this
+ * door must not still hold somebody's half-written message. The same rule and prefix list
+ * `apps/webapp/app/sign-out.ts` applies on the hosted door. By PREFIX and not by scope,
+ * deliberately: ending a pairing means this browser forgets, and a key left under a retired
+ * scope is unreachable rather than gone; an exact key is a prefix of itself, which is how the
+ */
+
+/*
+ * legacy un-owned compose key rides along.
+ */
+export const HOST_SCRATCH_PREFIXES: readonly string[] = [
+  COMPOSE_DRAFT_PREFIX,
+  LEGACY_COMPOSE_DRAFT_KEY,
+  SEND_LOCKS_PREFIX,
+  // The letters' Sent copy notes: a recipient and a subject each.
+  SENT_COPY_NOTES_PREFIX,
+  SCREENER_INTENTS_PREFIX,
+  // The two journals beside it, and the delete one was MISSING: each is a scheduled write
+  // against a mailbox, owner-keyed, and a pairing that ends without them leaves a delete or a
+  // filing rule to be carried out for whoever pairs this browser next.
+  DELETE_INTENTS_PREFIX,
+  ROUTING_INTENTS_PREFIX,
+  REPLY_DRAFT_PREFIX,
+  REPLY_META_PREFIX,
+  // …and the same two under the pairing scope they were typed in.
+  OWNED_REPLY_DRAFT_PREFIX,
+  OWNED_REPLY_META_PREFIX,
+];
+
+/**
+ * WHAT THE SWEEP COULD NOT DO IS A FACT, NOT A SHRUG. `dropLocalStorageKeys` returns a
+ * verdict — which matched keys are still present, and whether the jar could be walked —
+ * because a browser that refuses proves nothing by naming no survivors. Both departure paths
+ * discarded it, so a private window or a refusing storage layer produced a signed-out screen
+ * over mail text still on the device. This door has no toast host at the moment either path
+ * runs, so the verdict goes to the console — the weakest useful thing: on record, greppable,
+ * and not pretending the sweep succeeded. A visible sentence beside this door's own sign-out
+ * copy is the named follow-up rather than invented here.
+ */
+function reportSweep(sweep: LocalSweep): void {
+  if (sweep.enumerated && sweep.survivors.length === 0) return;
+  console.warn("ohmail host client: the scratch sweep did not complete", {
+    enumerated: sweep.enumerated,
+    survivors: sweep.survivors.length,
+  });
+}
+
+/** The queued changes go with the pairing; a database that refused is on record, not done. */
+function reportDiscard(verdict: HostOutboxDiscard): void {
+  if (verdict === "discarded") return;
+  console.warn("ohmail host client: the queued changes kept in this browser could not be discarded");
+}
+
+/** How the CURRENT unpaired state came about, for the landing: ended at the computer, or signed out here. */
+type Ended = { kind: "revoked" } | { kind: "signed-out"; outcome: SignOutOutcome | null };
+
+export function HostGate({ bearer }: { bearer: BearerManager }) {
+  const [paired, setPaired] = useState(bearer.paired());
+  /** `null` until the session ends in this page; the landing says which way it ended. */
+  const [ended, setEnded] = useState<Ended | null>(null);
+  /** Set across this page's own Sign out, so the death it causes is said as a sign-out. */
+  const signingOut = useRef(false);
+  /** `/pair` opens the landing even while paired — that is what a fresh QR scan is. */
+  const [onPairPath, setOnPairPath] = useState(
+    typeof window !== "undefined" && window.location.pathname === "/pair",
+  );
+
+  useEffect(
+    () =>
+      bearer.onSessionDead(() => {
+        // WHAT IS LEFT AT REST GOES WITH THE PAIRING. `bearer.die()` has already dropped the
+        // refresh token and the pairing scope, so nothing on this page can read these keys again
+        // — but unreachable is not gone, and three of them are mail text on a device somebody
+        // just signed out of. See HOST_SCRATCH_PREFIXES.
+        reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
+        // The changes this browser kept for the pairing go with it too, every pairing's.
+        void discardHostOutbox().then(reportDiscard);
+        // Land on /pair with the plain sentence — the ruled shape for a rotation failure. The
+        // path is replaced (not pushed) so Back cannot return to a dead mailbox.
+        window.history.replaceState(null, "", "/pair");
+        setEnded(signingOut.current ? { kind: "signed-out", outcome: null } : { kind: "revoked" });
+        setPaired(false);
+        setOnPairPath(true);
+      }),
+    [bearer],
+  );
+
+  /** This page's own Sign out: the death above sweeps, and the landing says what the computer heard. */
+  const signOut = useCallback(async (): Promise<void> => {
+    signingOut.current = true;
+    try {
+      const outcome = await bearer.signOut();
+      setEnded({ kind: "signed-out", outcome });
+    } finally {
+      signingOut.current = false;
+    }
+  }, [bearer]);
+
+  /**
+   * ONE engine per pairing, built only once this browser holds one. `paired` is the dependency
+   * that matters: a re-pair after a death builds a fresh engine rather than reviving one whose
+   * in-flight drains were refused.
+   */
+  /**
+   * WHICH PAIRING THIS PAGE IS SERVING — read every render, because a re-pair changes it under us.
+   *
+   * `paired` is a boolean and `bearer` is one long-lived object, so neither of them CHANGES when a
+   * `/pair` redeem swaps the credential while the tab is already paired — the explicitly supported
+   * gesture one branch below. The engine memo therefore kept account A's in-memory mirror and
+   * served it under account B's session: two accounts' mail in one mirror, which is the
+   * cross-account lesson this door's own header cites as the reason it has no persistent one.
+   */
+  const scope = bearer.pairScope();
+
+  /** WHICH PAIRING THIS BROWSER SAID IT CANNOT KEEP CHANGES FOR — said once, dismissible. */
+  const [unkept, setUnkept] = useState<{ scope: string | null; dismissed: boolean } | null>(null);
+
+  const engine = useMemo(
+    () =>
+      paired
+        ? createHostClientEngine(bearer, {
+            scope,
+            onUnkept: () =>
+              setUnkept((u) => (u !== null && u.scope === scope ? u : { scope, dismissed: false })),
+          })
+        : null,
+    // `scope` is the dependency that matters on a RE-PAIR: a fresh redeem mints a new one, so the
+    // engine (and the mirror inside it) is rebuilt for the account that is now being served.
+    [paired, bearer, scope],
+  );
+  /* AN ENGINE THE PAGE REPLACES LETS GO OF ITS OUTBOX ROWS (`OhmailEngine.dispose`), so the next one
+     adopts them. Disposed when the memo moves on, never in the effect's own cleanup: StrictMode
+     replays that cleanup over the engine still in use. */
+  const previous = useRef<OhmailEngine | null>(null);
+  useEffect(() => {
+    if (previous.current !== null && previous.current !== engine) previous.current.dispose();
+    previous.current = engine;
+  }, [engine]);
+
+  /* Stable identities: the shared hooks (`useProfileImport`, the mail-state probe) treat their
+     transport as a dependency, and a fresh object per render would re-run them per render. */
+  const mailboxFacts = useMemo(() => mailboxFactsOverBearer(bearer), [bearer]);
+  const profileImport = useMemo(() => profileImportOverBearer(bearer), [bearer]);
+  const olderBody = useMemo(() => olderBodyOverBearer(bearer), [bearer]);
+  /* The two live windows' wires, memoised for the reason above: both hooks treat the wire as the
+     dependency that decides whether the section is supported at all. */
+  const junk = useMemo(() => junkOverBearer(bearer), [bearer]);
+  const trash = useMemo(() => trashOverBearer(bearer), [bearer]);
+  /* The account's consent row, memoised for the reason above and for one more: `useConsentState`
+     treats the wire as the dependency that decides whether it fetches at all, so a fresh object
+     per render would re-ask `GET /consent` on every paint. */
+  const consent = useMemo(() => consentOverBearer(bearer), [bearer]);
+  /* The gap offer's answer, memoised for the reason above: the shell draws the offer only with it. */
+  const gapLetters = useMemo(() => gapLettersOverBearer(bearer), [bearer]);
+  /* The draft reply's two calls, memoised: the shared control reads the wire as a dependency. */
+  const draftReply = useMemo(() => draftReplyOverBearer(bearer), [bearer]);
+  /* The Account pane, memoised: the shell's settings read it as a dependency. */
+  const accountPane = useMemo(() => <HostAccountPane onSignOut={signOut} />, [signOut]);
+  /* THIS BROWSER WILL NOT KEEP A CHANGE MADE WHILE THE HOST IS AWAY: said once for the pairing, in the notice slot. */
+  const unkeptHere = unkept !== null && unkept.scope === scope && !unkept.dismissed;
+  const dismissUnkept = useCallback(() => setUnkept((u) => (u ? { ...u, dismissed: true } : u)), []);
+  const features = useMemo(
+    () => ({
+      account: { name: "account", render: () => accountPane } satisfies FeatureEntry,
+      accountStrip: {
+        name: "accountStrip",
+        render: () => null,
+        notice: unkeptHere ? () => [useUnkeptNotice(dismissUnkept)] : undefined,
+      } satisfies FeatureEntry,
+      screener: { name: "screener", render: () => <ScreeningSection /> } satisfies FeatureEntry,
+    }),
+    [accountPane, unkeptHere, dismissUnkept],
+  );
+
+  /**
+   * WHOSE `localStorage` PARTITION THE SHARED SHELL USES ON THIS DOOR — established in
+   * render, above the `AppShell` below, for `storage-owner.ts`'s ordering reason: the shell
+   * reads the compose scratch in its own effect, and a child's effects run before its
+   * parent's. No cookie exists here, so until this line every pairing this origin ever held
+   * shared one key — and addresses are reused: the same phone, paired to a second computer at
+   * an address the first one used, restored the first computer's unfinished message. `null`
+   * while unpaired — correct, not a fallback: the branch below renders the pairing landing,
+   * which stores nothing per account.
+   */
+  setStorageOwner(paired ? scope : null);
+
+  if (onPairPath || !paired || engine === null) {
+    return (
+      <PairScreen
+        bearer={bearer}
+        ended={ended?.kind ?? null}
+        signedOut={ended?.kind === "signed-out" ? ended.outcome : null}
+        onPaired={() => {
+          // A FRESH PAIRING IS ALSO A DEPARTURE, and only the death path used to say so.
+          // `/pair` opens this landing while still paired — the case just above — so a person can
+          // move this browser from one computer to another without ever signing out. `adopt`
+          // retires the old scope, which makes the previous pairing's records unreachable; it does
+          // not make them GONE, and three of them are mail text. Swept here for the same reason
+          // and by the same list as the death path.
+          reportSweep(dropLocalStorageKeys(HOST_SCRATCH_PREFIXES));
+          // Every earlier pairing's queued changes; the new one keeps its own.
+          void discardHostOutbox({ except: bearer.pairScope() }).then(reportDiscard);
+          window.history.replaceState(null, "", "/");
+          setEnded(null);
+          setOnPairPath(false);
+          setPaired(true);
+        }}
+      />
+    );
+  }
+
+  /* The wires over the bearer socket, each memoized above: today's hooks treat a wire as a dependency. */
+  const has: PairedHas = {
+    signOut,
+    mailboxes: mailboxFacts,
+    wires: { gapLetters, profileImport, consent, olderBody, junk, trash, draftReply, autoFiled: NONE },
+    features,
+  };
+  return (
+    /**
+     * KEYED BY THE PAIRING, for the reason `DesktopGate` states: partitioning the storage does not move the SHELL STATE
+     * that writes into it. A tab whose pairing changes underneath it (another tab redeems a new QR on this origin, and
+     * this tab's next rotation adopts the stored token) would otherwise keep the previous pairing's compose in state
+     * while the storage owner beneath it has already become the new one. On the outermost element, so scope B's frame
+     * never mounts for one commit over scope A's engine.
+     */
+    <EngineProvider key={scope ?? "unpaired"} demo={false} engine={engine}>
+      <PairedFrame engine={engine} scope={scope} has={has} />
+    </EngineProvider>
+  );
+}
+
+type PairedHas = Omit<Parameters<typeof pairedHost>[2], "notifications" | "frame">;
+
+/** The frame over this page's host, held to one record while its parts stand. */
+function PairedFrame({
+  engine,
+  scope,
+  has,
+}: {
+  engine: HostContract["engine"];
+  scope: string | null;
+  has: PairedHas;
+}) {
+  /* What every browser shell hands the frame: made where the frame mounts, under the page's theme. */
+  const frame = useTodaysSupplies(NONE);
+  const { signOut, mailboxes, wires, features } = has;
+  const host = useMemo(
+    () =>
+      pairedHost(
+        engine,
+        { scope, sendCeiling: HOST_CLIENT_SEND_MAX_TOTAL_BYTES, build: { version: null, commit: null } },
+        {
+          signOut,
+          mailboxes,
+          wires,
+          features,
+          notifications: browserNotificationHost,
+          frame,
+        },
+      ),
+    [
+      engine,
+      scope,
+      signOut,
+      mailboxes,
+      wires.gapLetters,
+      wires.profileImport,
+      wires.consent,
+      wires.olderBody,
+      wires.junk,
+      wires.trash,
+      wires.draftReply,
+      features,
+      frame,
+    ],
+  );
+  return <TodaysFrame host={host} todays={NO_TODAYS} />;
+}
+
+/** The page's own sentence for a browser that refused the outbox's database, with its one answer. */
+function useUnkeptNotice(dismiss: () => void) {
+  const t = useTranslations("pairLanding");
+  return {
+    kind: "notKept" as const,
+    title: t("outboxNotKept"),
+    acts: [{ label: t("outboxNotKeptDismiss"), onPress: dismiss }] as const,
+  };
+}

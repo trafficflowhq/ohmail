@@ -1,0 +1,18 @@
+{
+  "reads": {
+    "title": "News",
+    "waterline": "Seen up to here",
+    "waterlineMeta": "last visit · {stamp}",
+    "tail": "An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.",
+    "streamTail": "No older unread items.",
+    "aiApprove": "Approve",
+    "aiCorrect": "Correct",
+    "streamAria": "News stream",
+    "keyNext": "Next in the stream",
+    "keyPrev": "Previous in the stream",
+    "keyExpand": "Expand or collapse"
+  },
+  "stream": {
+    "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
+  }
+}

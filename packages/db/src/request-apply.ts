@@ -75,6 +75,80 @@ export interface ValidatedMovePayload {
 }
 
 /**
+ * The longest folder name a move into a person's own folder may carry, in UTF-16 units. Longer
+ * than any path a mail server lists in practice, and short enough that a record can never be
+ * mostly name.
+ */
+export const FOLDER_MOVE_NAME_MAX = 1000;
+
+/**
+ * A `message.file` request's payload, validated — a move into one of the person's own folders.
+ * `folder` is the name AS RECEIVED, its shape checked and nothing else: it is a destination only
+ * once the organizer has found it in its own list of that mailbox's folders ({@link InventoryFolder}).
+ */
+export interface ValidatedFolderMovePayload {
+  /** `messages.dedup_key` — the name both installs have for one message. */
+  dedupKey: string;
+  /** The canonical (`/`-joined) path as the request named it. Not yet a destination. */
+  folder: string;
+  /** When the reader's press was made, on the reader API's clock; absent = not stated. */
+  pressedAt?: Date;
+}
+
+/**
+ * A person's own folder as THIS store lists it for one mailbox: the `mailbox_folders.folder` value
+ * of a row the destination check found, never the string a request or a client sent. The only
+ * folder path a move writes as a destination besides the six places. Made in one place, the
+ * destination check (`resolveFolderDestination`, `folder-destination.ts` beside this file).
+ */
+export type InventoryFolder = string & { readonly __inventoryFolder: unique symbol };
+
+/** Why a folder name cannot travel or be looked up. Never the name itself. */
+export type FolderMoveNameError = "not_text" | "empty" | "too_long" | "control" | "broken_surrogate";
+
+/**
+ * Whether a folder name can be a destination AT ALL, by its shape alone: text of 1 to
+ * {@link FOLDER_MOVE_NAME_MAX} UTF-16 units, no control character (below U+0020, or U+007F), and
+ * no half of a surrogate pair standing alone. One pass, no pattern. Nothing is done to the name:
+ * no trim, case fold or normalization — a name that is not spelt exactly as the mailbox lists it
+ * simply finds no folder.
+ */
+export function folderMoveNameError(name: unknown): FolderMoveNameError | null {
+  if (typeof name !== "string") return "not_text";
+  if (name.length === 0) return "empty";
+  if (name.length > FOLDER_MOVE_NAME_MAX) return "too_long";
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return "control";
+    if (c >= 0xdc00 && c <= 0xdfff) return "broken_surrogate";
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const low = i + 1 < name.length ? name.charCodeAt(i + 1) : 0;
+      if (low < 0xdc00 || low > 0xdfff) return "broken_surrogate";
+      i++;
+    }
+  }
+  return null;
+}
+
+/**
+ * Validate a `message.file` payload, as {@link validateMovePayload} validates a `message.move`:
+ * untrusted, checked again here before any write, `null` for any failure and never coerced. A
+ * payload that also names a `destination` word is refused rather than read as either kind.
+ */
+export function validateFolderMovePayload(payload: unknown): ValidatedFolderMovePayload | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const o = payload as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(o, "destination")) return null;
+  const { dedupKey, folder } = o;
+  if (typeof dedupKey !== "string" || dedupKey.length === 0 || dedupKey.length > MOVE_DEDUP_KEY_MAX) return null;
+  if (folderMoveNameError(folder) !== null) return null;
+  if (o.pressedAt === undefined) return { dedupKey, folder: folder as string };
+  const pressedAt = typeof o.pressedAt === "string" ? new Date(o.pressedAt) : null;
+  if (pressedAt === null || Number.isNaN(pressedAt.getTime())) return null;
+  return { dedupKey, folder: folder as string, pressedAt };
+}
+
+/**
  * Validate a `message.move` payload that arrived through an RFC822 header. Untrusted: the writing
  * door validated it, then it crossed an install boundary through a mailbox another machine wrote
  * to, so it is validated again here, independently, before a single write. Returns `null` for ANY
@@ -109,11 +183,10 @@ export function validateMovePayload(payload: unknown): ValidatedMovePayload | nu
  */
 export type MoveRefusal = "no_such_message" | "no_trash_folder" | "stale_press";
 
-export interface ApplyMessageMoveInput {
+interface ApplyMoveBase {
   accountId: string;
   /** The mailbox the record named — already checked against the folder it was read FROM. */
   mailboxId: string;
-  payload: ValidatedMovePayload;
   now: Date;
   /**
    * The record's own `decided_at`: when the reader's door WROTE the request (its creation, which
@@ -121,6 +194,16 @@ export interface ApplyMessageMoveInput {
    */
   decidedAt?: Date | null;
 }
+
+/**
+ * A move to one of the six places by its word (`message.move`), or into a person's own folder
+ * (`message.file`) — the latter only with the {@link InventoryFolder} the destination check found
+ * in this same transaction, so a path a request merely named can never be written as a destination.
+ */
+export type ApplyMessageMoveInput = ApplyMoveBase & (
+  | { payload: ValidatedMovePayload; folder?: never }
+  | { payload: ValidatedFolderMovePayload; folder: InventoryFolder }
+);
 
 export type ApplyMessageMoveResult =
   | {
@@ -181,8 +264,9 @@ export async function applyMessageMove(
 
   /* RESOLVE THE WORD. `trash` is the one member the map cannot answer; everything else is a
      canonical path. A word absent from the map cannot reach here — `validateMovePayload` refused
-     it — so this is a resolution rather than a second validation. */
-  let to = MOVE_DESTINATIONS.get(payload.destination) ?? null;
+     it — so this is a resolution rather than a second validation. A person's own folder arrives
+     already found in this mailbox's list ({@link InventoryFolder}) and is never Trash. */
+  let to = input.folder !== undefined ? input.folder : MOVE_DESTINATIONS.get(input.payload.destination) ?? null;
   /* `trash` is the ONE word the map answers with null (see it), and the payload was validated
      against that map, so this is the destination-is-Trash question already answered. */
   const toTrash = to === null;

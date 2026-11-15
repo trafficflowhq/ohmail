@@ -100,6 +100,15 @@ describe.skipIf(!PG_UP)("a store that kept the old columns: the same answers bef
     "lighthouse", "lighthouse keeper", "lighth", '"lighthouse keeper"', "lighthouse -storm", "axa", "lighthuose",
     "lanternfsh", "lanternfsh -survey",
   ];
+  /** The words beside a person filter: each letter went to reader0 or reader1 (`readerOf`). */
+  const PERSON_SHAPES: ReadonlyArray<readonly [string, string, { to?: string; party?: string }]> = [
+    ["lighthouse to:reader1", "lighthouse", { to: "reader1@vector.example" }],
+    ["keeper party:writer0", "keeper", { party: "writer0@vector.example" }],
+    ["keeper party:reader0", "keeper", { party: "READER0@vector.example" }],
+    ["to:reader1 alone", "", { to: "reader1@vector.example" }],
+    ["party:writer4 alone", "", { party: "writer4@vector.example" }],
+  ];
+  const readerOf = (i: number): string => `reader${i % 2}@vector.example`;
   const letterOf = new Map<string, number>();
   const owedIds: string[] = [];
   const dateOf = (i: number): Date => new Date(NOW.getTime() - i * 3_600_000);
@@ -117,6 +126,9 @@ describe.skipIf(!PG_UP)("a store that kept the old columns: the same answers bef
     const svc = new SearchService();
     const out: Record<string, number[]> = {};
     for (const q of SHAPES) out[q] = (await svc.search(ctxOf(handle, accountId), { q, parts: "page" })).items.map((m) => letterOf.get(m.id)!);
+    for (const [name, q, filters] of PERSON_SHAPES) {
+      out[name] = (await svc.search(ctxOf(handle, accountId), { q, filters, parts: "page" })).items.map((m) => letterOf.get(m.id)!).sort();
+    }
     return out;
   };
 
@@ -129,9 +141,9 @@ describe.skipIf(!PG_UP)("a store that kept the old columns: the same answers bef
         const [mb] = await plant<{ id: string }[]>`insert into mailboxes (account_id, provider, address)
           values (${OWED}, 'imap', 'owed@vector.example') returning id`;
         for (const [i, l] of LETTERS.entries()) {
-          const [m] = await plant<{ id: string }[]>`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator)
+          const [m] = await plant<{ id: string }[]>`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator, to_addresses)
             values (${OWED}, ${mb!.id}, 'h', ${`sf:${randomUUID()}`}, ${l.subject}, ${`writer${i}@vector.example`}, ${dateOf(i)},
-                    ${JSON.stringify({ folder: "INBOX", ref: `1:${i}` })}::jsonb) returning id`;
+                    ${JSON.stringify({ folder: "INBOX", ref: `1:${i}` })}::jsonb, ${plant.json([{ name: null, address: readerOf(i) }])}) returning id`;
           await plant`insert into message_bodies (message_id, text) values (${m!.id}, ${l.body})`;
           await plant`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by) values (${m!.id}, 'INBOX', 'INBOX', 'us')`;
           letterOf.set(m!.id, i);
@@ -153,6 +165,7 @@ describe.skipIf(!PG_UP)("a store that kept the old columns: the same answers bef
       const [m] = await d.insert(messages).values({
         accountId: BUILT, mailboxId: mb!.id, bodyHash: "h", dedupKey: `sf:${randomUUID()}`, subject: l.subject,
         fromAddress: `writer${i}@vector.example`, date: dateOf(i), nativeLocator: { folder: "INBOX", ref: `1:${i}` },
+        toAddresses: [{ name: null, address: readerOf(i) }],
       }).returning();
       await d.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: l.body });
       await d.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
@@ -177,6 +190,12 @@ describe.skipIf(!PG_UP)("a store that kept the old columns: the same answers bef
       // A guess at a subject's word, and the same guess with a word of that letter's body excluded.
       expect(before[who].lanternfsh, `${who}: the guess`).toEqual([5]);
       expect(before[who]["lanternfsh -survey"], `${who}: no guess holds the excluded word`).toEqual([]);
+      // The person filters: To, and either side, by the letters' places.
+      expect(before[who]["lighthouse to:reader1"], `${who}: words to one address`).toEqual([1, 3]);
+      expect(before[who]["keeper party:writer0"], `${who}: words from one address`).toEqual([0]);
+      expect(before[who]["keeper party:reader0"], `${who}: words to one address, either side`).toEqual([0, 2]);
+      expect(before[who]["to:reader1 alone"], `${who}: no words, to one address`).toEqual([1, 3, 5]);
+      expect(before[who]["party:writer4 alone"], `${who}: no words, from one address`).toEqual([4]);
     }
 
     // The setup's step while the account is owed: the old search is kept, and no answer changes.

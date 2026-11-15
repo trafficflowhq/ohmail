@@ -37,6 +37,7 @@ const ROOTS = [
   ["apps", "webapp", "app"],
   ["packages", "app-logic", "src"],
   ["apps", "desktop", "src"],
+  ["apps", "paired-page", "src"],
   ["apps", "mobile", "src"],
 ].map((p) => join(REPO, ...p));
 

@@ -49,6 +49,25 @@ const open = () => fireEvent.click(screen.getByRole("button", { name: "More" }))
 const items = () => [...screen.queryAllByRole("menuitem"), ...screen.queryAllByRole("menuitemradio")];
 
 describe("Menu", () => {
+  it("offers several choices that may all be taken as checkboxes of the menu, each saying whether it is taken", () => {
+    render(
+      <Menu open onClose={() => {}} anchor={{ x: 10, y: 10 }} label="Tags">
+        <MenuItem checked many hue={25} onPress={() => {}}>
+          Pottery
+        </MenuItem>
+        <MenuItem checked={false} many hue={150} onPress={() => {}}>
+          Travel
+        </MenuItem>
+      </Menu>,
+    );
+    const boxes = screen.getAllByRole("menuitemcheckbox");
+    expect(boxes.map((b) => [b.textContent, b.getAttribute("aria-checked")])).toEqual([
+      ["Pottery", "true"],
+      ["Travel", "false"],
+    ]);
+    expect(screen.queryAllByRole("menuitemradio")).toEqual([]);
+  });
+
   it("draws nothing until it is open, then a named menu with its items", () => {
     render(<Opened />);
     expect(screen.queryByRole("menu")).toBeNull();
@@ -263,6 +282,37 @@ describe("Dialog", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
+
+  it("holds its other ways under its answers, inside it: the keys start on the answer and reach them last", () => {
+    const passkey = vi.fn();
+    render(
+      <Dialog
+        open
+        onClose={() => {}}
+        title="Confirm with a one-time code"
+        confirm={{ label: "Verify code", onPress: () => {} }}
+        cancel={{ label: "Cancel" }}
+        under={
+          <Button kind="quiet" size="s" onPress={passkey}>
+            Use a passkey instead
+          </Button>
+        }
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    expect([...dialog.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Verify code",
+      "Cancel",
+      "Use a passkey instead",
+    ]);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Verify code" }));
+    const way = screen.getByRole("button", { name: "Use a passkey instead" });
+    fireEvent.click(way);
+    expect(passkey).toHaveBeenCalledTimes(1);
+    way.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Verify code" }));
+  });
 });
 
 describe("a dialog that starts on the answer that does nothing", () => {
@@ -391,6 +441,138 @@ describe("Overlay", () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.keyDown(part, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Escape over an open overlay", () => {
+  /* The keys left the overlay: its confirm turned disabled while it works, and the browser dropped them on the body. */
+  const outside = () => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    return fireEvent.keyDown(document.body, { key: "Escape" });
+  };
+
+  it.each([
+    [
+      "a dialog",
+      (onClose: () => void) => (
+        <Dialog
+          open
+          onClose={onClose}
+          title="Delete it?"
+          line="It cannot be undone."
+          confirm={{ label: "Delete", onPress: () => {}, disabled: true }}
+          cancel={{ label: "Cancel", keyHint: "Esc" }}
+        />
+      ),
+    ],
+    [
+      "an overlay",
+      (onClose: () => void) => (
+        <Overlay open onClose={onClose} label="Keys" className="oh-test">
+          <Button kind="quiet">Close</Button>
+        </Overlay>
+      ),
+    ],
+    [
+      "a menu",
+      (onClose: () => void) => (
+        <Menu open onClose={onClose} label="More" anchor={{ x: 10, y: 10 }}>
+          <MenuItem onPress={() => {}}>Reply</MenuItem>
+        </Menu>
+      ),
+    ],
+    [
+      "an ask",
+      (onClose: () => void) => (
+        <Menu open onClose={onClose} label="Sure?" kind="ask" anchor={{ x: 10, y: 10 }}>
+          <Button onPress={() => {}}>Yes</Button>
+        </Menu>
+      ),
+    ],
+    [
+      "a sheet",
+      (onClose: () => void) => (
+        <PhoneSheet open onClose={onClose} label="More">
+          <MenuItem onPress={() => {}}>Reply</MenuItem>
+        </PhoneSheet>
+      ),
+    ],
+  ])("closes %s when the keys are outside it, and the page underneath never hears it", (_, part) => {
+    const onClose = vi.fn();
+    const page = vi.fn();
+    document.addEventListener("keydown", page);
+    try {
+      render(<>{part(onClose)}</>);
+      expect(outside()).toBe(false);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(page).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener("keydown", page);
+    }
+  });
+
+  it("closes the topmost first, once, wherever the keys are; the one beneath with the next", () => {
+    const [dialog, menu] = [vi.fn(), vi.fn()];
+    const { rerender } = render(
+      <>
+        <Dialog
+          open
+          onClose={dialog}
+          title="Move"
+          confirm={{ label: "Move", onPress: () => {} }}
+          cancel={{ label: "Cancel", keyHint: "Esc" }}
+        />
+        <Menu open onClose={menu} label="Folders" anchor={{ x: 10, y: 10 }}>
+          <MenuItem onPress={() => {}}>Paperwork</MenuItem>
+        </Menu>
+      </>,
+    );
+    outside();
+    expect([dialog.mock.calls.length, menu.mock.calls.length]).toEqual([0, 1]);
+    /* A finger leaves the keys where they were: in the dialog, under the menu. */
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Move" }), { key: "Escape" });
+    expect([dialog.mock.calls.length, menu.mock.calls.length]).toEqual([0, 2]);
+    rerender(
+      <Dialog
+        open
+        onClose={dialog}
+        title="Move"
+        confirm={{ label: "Move", onPress: () => {} }}
+        cancel={{ label: "Cancel", keyHint: "Esc" }}
+      />,
+    );
+    outside();
+    expect([dialog.mock.calls.length, menu.mock.calls.length]).toEqual([1, 2]);
+  });
+
+  it("is heard once where the keys are inside it, and a field in it that keeps its Escape keeps it open", () => {
+    const onClose = vi.fn();
+    render(
+      <Overlay open onClose={onClose} label="Find" className="oh-test">
+        <input aria-label="Find" onKeyDown={(e) => e.key === "Escape" && e.stopPropagation()} />
+        <Button kind="quiet">Close</Button>
+      </Overlay>,
+    );
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Find" }), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Escape to the page once nothing is open", () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <Overlay open onClose={onClose} label="Keys" className="oh-test">
+        <Button kind="quiet">Close</Button>
+      </Overlay>,
+    );
+    rerender(
+      <Overlay open={false} onClose={onClose} label="Keys" className="oh-test">
+        <Button kind="quiet">Close</Button>
+      </Overlay>,
+    );
+    expect(outside()).toBe(true);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

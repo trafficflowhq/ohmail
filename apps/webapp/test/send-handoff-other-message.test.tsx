@@ -11,7 +11,7 @@ import {
 } from "./_draft-shell.js";
 import {
   attach, composeLine, composeSend, composeSubject, composerOn, footButton, footLine, holdTheWire, letter, navigate, openDraftRow,
-  rounds, sends, toasts,
+  railCompose, rounds, sends, toasts,
 } from "./_handoff-steps.js";
 
 /**
@@ -226,7 +226,7 @@ describe("Compose while a letter's send waits", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
   });
   const doors: Record<string, () => Promise<void>> = {
-    "the rail's Compose": () => press(document.querySelector(".compose-cta"), "Compose"),
+    "the rail's Compose": () => press(railCompose(), "Compose"),
     "the c key": () => keydown({ key: "c" }),
     "the palette's New message": async () => {
       await keydown({ key: "k", ctrlKey: true });

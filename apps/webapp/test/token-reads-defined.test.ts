@@ -28,10 +28,12 @@ const walk = (dir: string, out: string[] = []): string[] => {
   }
   return out;
 };
-/* The new design's files are not loaded beside the views this census reads (the tokens package's
-   design-not-yet-imported test holds that), so what they declare defines nothing here. Their own
-   reads are held by the tokens package's design-one-source test: the design's folders, and the kit's
-   three, whose stylesheets read the design's tokens. */
+/* The new design's files load beside the views this census reads only inside the frame, and there each design keeps
+   its own meaning under its own root (the tokens package's design-not-yet-imported test holds who may meet and that
+   both seam sheets load; packages/app/test/frame/seam.test.ts holds the sheets). Every other page loads today's
+   sheets alone. So what the new design declares defines nothing here: a sheet of today's views reads today's names.
+   The design's own reads are held by the tokens package's design-one-source test: the design's folders, and the
+   kit's three, whose stylesheets read the design's tokens. */
 const NEW_DESIGN = [
   "packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/",
   "packages/ui/src/base/", "packages/ui/src/mail/", "packages/ui/src/calendar/",

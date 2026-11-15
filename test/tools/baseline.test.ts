@@ -7,6 +7,7 @@ import {
   parseBaseline,
   renderBaseline,
   rowRule,
+  rulingLines,
 } from "../../tools/lib/baseline.mjs";
 import { inNewTree, parseNewTree, renderPrettierIgnore } from "../../tools/lib/new-tree.mjs";
 
@@ -193,6 +194,56 @@ describe("a crossing that moves between the border rules and the declared depend
     expect(compareWithBase(head, base)).toEqual([
       `the baseline grew: ${FAMILY} for the task ${TASK} gained 1 and lost 0 in its files' sums: apps/desktop/src/Y.tsx (0 → 1)`,
     ]);
+  });
+});
+
+describe("a row that stands by a ruling", () => {
+  const base = [row("a.ts", BORDERS, 2, "engine")];
+  const RULED = "ruling:frame-hosts";
+
+  it("refuses a new row under a task's name, and admits the same row under ruling:<id>, printed", () => {
+    expect(compareWithBase([...base, row("c.ts", BORDERS, 1, "engine")], base)).toHaveLength(1);
+    const head = [...base, row("c.ts", BORDERS, 1, RULED)];
+    expect(compareWithBase(head, base)).toEqual([]);
+    expect(rulingLines(head, base)).toEqual([`${RULED}: 1 findings in 1 rows now; 0 in 0 at the base`]);
+  });
+
+  it("refuses a task's row that grows while a ruling's row shrinks", () => {
+    const before = [...base, row("r.ts", BORDERS, 3, RULED)];
+    const head = [row("a.ts", BORDERS, 3, "engine"), row("r.ts", BORDERS, 1, RULED)];
+    expect(compareWithBase(head, before)).toEqual([
+      expect.stringMatching(/engine gained 1 and lost 0: a\.ts/),
+    ]);
+  });
+
+  it("refuses a ruling's row that passes to a task's name: what stood by a ruling pays for nothing", () => {
+    const before = [row("r.ts", BORDERS, 2, RULED)];
+    expect(compareWithBase([row("r.ts", BORDERS, 2, "engine")], before)).toEqual([
+      expect.stringMatching(/engine gained 2 and lost 0: r\.ts \(0 → 2\)/),
+    ]);
+  });
+
+  it("refuses a task's growth that a row taken under a ruling would seem to pay for", () => {
+    const DECLARED = "ohmail/declared-dependency";
+    const before = [row("D.tsx", DECLARED, 2, "engine")];
+    const head = [row("D.tsx", DECLARED, 4, RULED), row("E.tsx", DECLARED, 2, "engine")];
+    const refusals = compareWithBase(head, before);
+    expect(refusals).toHaveLength(2);
+    expect(refusals.join("\n")).toMatch(/engine gained 2 and lost 0: E\.tsx/);
+    expect(refusals.join("\n")).not.toMatch(/D\.tsx/);
+  });
+
+  it("leaves a file whose family rows stand under a ruling out of the family's sum", () => {
+    const WEB = "ohmail/package-borders:apps/webapp";
+    const DECLARED = "ohmail/declared-dependency";
+    const before = [row("F.tsx", WEB, 1, RULED), row("G.tsx", WEB, 1, "engine")];
+    const head = [
+      row("F.tsx", DECLARED, 2, RULED),
+      row("F.tsx", WEB, 3, RULED),
+      row("G.tsx", WEB, 1, "engine"),
+    ];
+    expect(compareWithBase(head, before)).toEqual([]);
+    expect(rulingLines(head, before)).toEqual([`${RULED}: 5 findings in 2 rows now; 1 in 1 at the base`]);
   });
 });
 

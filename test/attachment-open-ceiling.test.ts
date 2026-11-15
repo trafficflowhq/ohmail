@@ -31,7 +31,7 @@ const SEND_CEILINGS: ReadonlyArray<readonly [string, number]> = [
   ["desktop DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES",
     mibConstant("apps/desktop/src/desktop-send-surface.ts", "DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES")],
   ["desktop HOST_CLIENT_SEND_MAX_TOTAL_BYTES",
-    mibConstant("apps/desktop/src/host-client/HostGate.tsx", "HOST_CLIENT_SEND_MAX_TOTAL_BYTES")],
+    mibConstant("apps/paired-page/src/HostGate.tsx", "HOST_CLIENT_SEND_MAX_TOTAL_BYTES")],
   ["sidecar HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/sidecar/src/host-listener.ts", "HOST_SEND_MAX_TOTAL_BYTES")],
   ["phone host HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/sidecar/src/phone/host-listener.ts", "HOST_SEND_MAX_TOTAL_BYTES")],
   ["self-host SELF_HOST_SEND_MAX_TOTAL_BYTES", mibConstant("apps/server/src/config.ts", "SELF_HOST_SEND_MAX_TOTAL_BYTES")],

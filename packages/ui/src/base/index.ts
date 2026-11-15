@@ -98,6 +98,6 @@ export { RefusalLine } from "./Feedback/RefusalLine.js";
 export type { RefusalLineProps } from "./Feedback/RefusalLine.js";
 
 export { Page } from "./Pages/Page.js";
-export type { PageProps } from "./Pages/Page.js";
+export type { PageLinePart, PageProps } from "./Pages/Page.js";
 export { Opening } from "./Pages/Opening.js";
 export type { OpeningProps } from "./Pages/Opening.js";

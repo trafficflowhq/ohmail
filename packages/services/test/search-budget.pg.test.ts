@@ -12,7 +12,7 @@ import {
 import { pgTestUrl, throwawayDb } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
-import type { ServiceContext } from "@trafficflow/services";
+import type { SearchFilters, ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 import {
   D, D_SALT, MATRIX_DELETED, MATRIX_REST, NOISE, NOISE_SALT, autovacuum, coldReads, draw, idOf, isExplain, isSession, matrixCells, matrixOldest,
@@ -34,6 +34,14 @@ import {
  * search ({@link backfillA}). Real Postgres with pg_trgm and the reading-order index, parallel
  * workers off (this server cannot grow a parallel query's shared memory). Alone: it seeds a large
  * corpus of messages.
+ *
+ * OVER THE RULED BOUND, NAMED: a common word beside the account's own address (To, either side, and
+ * with a flag) asks the recipients' key function of more than 2,500 letters a page and reads more
+ * than 30,000 buffers: the address is on every letter, so each of the word's letters is asked its
+ * recipients, a function call apiece. Each such case states its own ceilings ({@link WORDS_BESIDE}),
+ * just over what a run on a database made from empty read, so the class is judged by its worst member
+ * and cannot grow. They stay over the bound until a stored recipient key with its index lands
+ * (FOR-THE-SEARCH-RULING.md, the search's open questions); every other case keeps 2,500 and 30,000.
  */
 // Refused at collection where this checkout has no database of its own: the store is made on the server it names.
 pgTestUrl(import.meta.url);
@@ -47,6 +55,8 @@ const N = 74_000;
 const A = "5eed0000-0000-4000-8000-00000000000a";
 const A_SALT = "budget-a";
 
+/** The store {@link connect} dials: the file's, and last Q's ({@link qStore}). */
+let dialled = store.url;
 /** Every statement the service sends, as `search-budget-fixture`'s recorder sees it. */
 const seen: SQL[] = [];
 let db: BudgetHandle;
@@ -54,9 +64,10 @@ let db: BudgetHandle;
  * A new connection to the store, and a handle no search has asked yet, as an API's is at its start:
  * the service reads once a handle what the store carries.
  */
-async function connect(): Promise<void> {
+async function connect(url?: string): Promise<void> {
+  if (url !== undefined) dialled = url;
   await client?.end({ timeout: 5 });
-  client = postgres(store.url, { max: 1, onnotice: () => { /* quiet */ } });
+  client = postgres(dialled, { max: 1, onnotice: () => { /* quiet */ } });
   base = brandDialect(drizzle(client, { schema }), "pg");
   db = recording(base, seen);
   await base.execute(sql`set max_parallel_workers_per_gather = 0`);
@@ -199,6 +210,79 @@ async function backfillA(): Promise<void> {
   await settle();
   await connect();
 }
+
+/**
+ * P, a mailbox of 60,000 letters, and Q, one of 300,000 ({@link seedPeople}), with no search document
+ * (no case of theirs has words). Q has a store of its own ({@link qStore}), as a server with one
+ * account has: beside the file's other accounts the planner's estimate of Q's own address under the
+ * account is a half, and it reads the count off the recipients' index whatever the statement's shape.
+ */
+const qStore = throwawayDb("search_budget_q");
+const P = "5eed0000-0000-4000-8000-00000000000b";
+const P_N = 60_000;
+const Q = "5eed0000-0000-4000-8000-00000000000c";
+const Q_N = 300_000;
+const P_OWN = "me@own.example";
+const P_OLD = "old@contact.example";
+const P_OLDER = "older@contact.example";
+const P_FEW = "few@contact.example";
+const P_COLLEAGUE = "colleague@contact.example";
+const P_NEWS = "news@contact.example";
+const P_THIRD = "third@contact.example";
+/** From the newest letter's date to the 1,000th's ({@link seedPeople}: a minute between letters). */
+const NEWEST_1000 = new Date(Date.UTC(2026, 8, 1) - 999 * 60_000).toISOString();
+/**
+ * A mailbox of `n` letters, letter `g` a minute older than `g - 1`: its own address in To of every
+ * letter and From of every second; From a colleague the odd letters among the oldest 6,000 (3,000,
+ * none recent), from one sender one odd letter in 15 and from a list one in 7 of the rest (3,600 at
+ * 60,000); an old contact To of the oldest 10,500 only, an older one To of the oldest 25,000 only, a
+ * third To of every third letter; a rare contact To of one in 2,000, each from the own address; one
+ * in 500 unread. The recheck's mailbox of round 1, whose figures before and after it the cases hold.
+ */
+async function seedPeople(acct: string, n: number): Promise<void> {
+  await base.execute(sql`set statement_timeout = '600s'`);
+  const [mb] = (await base.execute(sql`insert into mailboxes (account_id, provider, address)
+    values (${acct}::uuid, 'imap', ${`people-${acct.slice(-1)}@tf.example`}) returning id`)) as unknown as Array<{ id: string }>;
+  const one = (a: string): SQL => sql`jsonb_build_array(jsonb_build_object('name', null, 'address', ${a}::text))`;
+  await base.execute(sql`
+    insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator, unread, to_addresses)
+    select ${acct}::uuid, ${mb!.id}::uuid, 'h', 'people:' || g, 'bulk ' || g,
+      case when g % 2 = 0 then ${P_OWN}::text when g >= ${n - 6_000} then ${P_COLLEAGUE}::text when g % 15 = 1 then 'spread@x.example'
+           when g % 7 = 0 then ${P_NEWS}::text else 'sender' || (g % 500) || '@x.example' end,
+      timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g), jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g), g % 500 = 3,
+      ${one(P_OWN)}
+        || case when g >= ${n - 10_500} then ${one(P_OLD)} else '[]'::jsonb end
+        || case when g >= ${n - 25_000} then ${one(P_OLDER)} else '[]'::jsonb end
+        || case when g % 3 = 0 then ${one(P_THIRD)} else '[]'::jsonb end
+        || case when g % 2000 = 10 then ${one(P_FEW)} else '[]'::jsonb end
+    from generate_series(0, ${n - 1}) g`);
+  await base.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
+  for (const t of ["messages", "folder_state"]) await base.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
+  await base.execute(sql`reset statement_timeout`);
+  await connect();
+}
+
+/**
+ * THE PERSON CASES' BOUNDS ({@link personCases}), and the stated ceilings of the cases over them:
+ * words beside the account's own address, read on a database made from empty (the most of the two
+ * generations) and set just over it; the file's head says why. A ceiling never rises to make a run green.
+ */
+const PERSON_BUFFERS = 30_000;
+const PERSON_KEYS = 2_500;
+/** `w40` To the own address: 4,340 letters asked before the backfill, 4,974 after. */
+const KEYS_W40_OWN = 5_100;
+/** `w40` To the own address, unread: 6,007 before, 6,641 after (27,256 buffers, within the bound). */
+const KEYS_W40_OWN_UNREAD = 6_800;
+/** `w1` To or on either side of the own address: 209 letters and 6,266 buffers before, 7,292 and 36,442 after. */
+const KEYS_W1_OWN = 7_500;
+const BUFFERS_W1_OWN = 37_500;
+/**
+ * A person case: a query and its filters, in A's mailbox unless `account` names another; `keys` and
+ * `buffers` are its own ceilings, over the bound where the class is (the head says why) or under it
+ * where a case is held to what it read before; `rows` the fewest rows its first page holds.
+ */
+interface PersonCase { name: string; q: string; filters: SearchFilters; account?: string; keys?: number; buffers?: number; rows?: number }
 
 function ctx(accountId: string = A): ServiceContext {
   return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
@@ -424,8 +508,149 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
    * of words, two words together, the round trip, and its totals. `before` leads the names and the
    * printed figures of the run before the backfill.
    */
+  /**
+   * THE PERSON FILTERS AND A FILTER WITH NO WORDS, judged as A's words are: each case found, its
+   * first page inside the budget at p95, and each of its statements read as it ran: no table
+   * scanned, at most {@link PERSON_BUFFERS} buffers, the recipients' key function asked of at most
+   * {@link PERSON_KEYS} letters (it cannot be inlined, so every letter it is asked of costs a call),
+   * and at most four statements a page (begin, settings, rows, commit), five where a walk's page is
+   * short and reads where it stopped. A case over the bound states its own ceilings (`keys`, `buffers`).
+   */
+  const personCases = (label: string, cases: ReadonlyArray<PersonCase>): void => {
+    it(`${label}the person filters and a filter alone: inside ${BUDGET_MS} ms at p95, no table scanned, the key function asked of few letters`, async () => {
+      const svc = new SearchService();
+      const count = { n: 0 };
+      const over: string[] = [];
+      for (const c of cases) {
+        const at = { ...ctx(c.account), db: latent(base as object, 0, count) as never };
+        await svc.search(at, { q: c.q, filters: c.filters, parts: "page" });
+        count.n = 0;
+        const r = await svc.search(at, { q: c.q, filters: c.filters, parts: "page" });
+        expect({ name: c.name, found: r.items.length > 0 || r.nextCursor !== null }).toEqual({ name: c.name, found: true });
+        const short = r.items.length < 50 && r.nextCursor !== null;
+        expect(count.n, `${c.name} statements`).toBeLessThanOrEqual(short ? 5 : 4);
+        seen.length = 0;
+        await svc.search(ctx(c.account), { q: c.q, filters: c.filters, parts: "page" });
+        const session = seen.filter(isSession);
+        const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+        expect(reads.length, `${c.name}: the page's statements were not recorded`).toBeGreaterThan(0);
+        if (c.rows !== undefined && r.items.length < c.rows) over.push(`${c.name} ${r.items.length} rows on the first page, ${c.rows} held`);
+        for (const [k, st] of reads.entries()) {
+          expect(await seqScans(st, session), c.name).toEqual([]);
+          const buffers = await buffersOf(st, session);
+          const nodes = await planNodes(st, session, base);
+          const keys = nodes.filter((p) => String(p["Filter"] ?? "").includes("messages_recipient_keys"))
+            .reduce((n, p) => n + (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]), 0);
+          // THE LETTER WHERE A SHORT PAGE'S WALK STOPPED, read after the page (the only statement of a wordless page that
+          // reads `messages` alone), by the shape the page picked: it counts nothing.
+          const after = c.q === "" && short && nodes.every((p) => p["Relation Name"] === undefined || p["Relation Name"] === "messages");
+          const counts = after ? nodes.filter((p) => p["Node Type"] === "Aggregate").length : 0;
+          console.log(`search-budget ${label}${c.name}: ${buffers} buffers, the key function asked of ${keys} letters, ${count.n} statements, `
+            + `${r.items.length} rows${after ? `, after the page: ${counts} counts` : ""}`);
+          if (buffers > (c.buffers ?? PERSON_BUFFERS)) over.push(`${c.name} ${buffers} buffers`);
+          if (keys > (c.keys ?? PERSON_KEYS)) over.push(`${c.name} the key function asked of ${keys} letters`);
+          if (counts > 0) over.push(`${c.name} statement ${k + 1} counts again (${counts})`);
+        }
+      }
+      const best = await bestOfRounds(`${label}person`, async (tick) => {
+        const figures: Record<string, number> = {};
+        for (const c of cases) {
+          const ms: number[] = [];
+          for (let i = 0; i < 20; i++) {
+            ms.push((await svc.search(ctx(c.account), { q: c.q, filters: c.filters, parts: "page" })).ms);
+            await tick();
+          }
+          figures[c.name] = p95Of(ms);
+        }
+        return figures;
+      });
+      for (const c of cases) judge(best[c.name]!, `${label}${c.name} page`);
+      expect(over).toEqual([]);
+    }, 900_000);
+  };
+  /**
+   * Words beside a person: To a rare, a mid and the own address, either side of the rare one, and
+   * From one sender. BESIDE THE OWN ADDRESS the plan reads the word's letters and asks each its
+   * recipients (the address is on every letter): a common word (`w1`), To and either side, and a rarer
+   * one with a flag are over the ruled bound and carry their own ceilings, set just over a run on a
+   * database made from empty (the file's head says why, and until when).
+   */
+  const WORDS_BESIDE: ReadonlyArray<PersonCase> = [
+    { name: "w1 to rare", q: "w1", filters: { to: RARE } },
+    { name: "w40 to mid", q: "w40", filters: { to: MID } },
+    { name: "w40 to own", q: "w40", filters: { to: OWN }, keys: KEYS_W40_OWN },
+    { name: "w40 to own unread", q: "w40", filters: { to: OWN, unread: true }, keys: KEYS_W40_OWN_UNREAD },
+    { name: "w1 to own", q: "w1", filters: { to: OWN }, keys: KEYS_W1_OWN, buffers: BUFFERS_W1_OWN },
+    { name: "w1 party own", q: "w1", filters: { party: OWN }, keys: KEYS_W1_OWN, buffers: BUFFERS_W1_OWN },
+    { name: "w1 party rare", q: "w1", filters: { party: RARE } },
+    { name: "w40 sender", q: "w40", filters: { sender: "news@axa.example" } },
+  ];
+  /** No words: one filter alone, and a sender with a flag. */
+  const ALONE: ReadonlyArray<PersonCase> = [
+    { name: "unread alone", q: "", filters: { unread: true } },
+    { name: "files alone", q: "", filters: { hasAttachments: true } },
+    { name: "dates alone", q: "", filters: { dateFrom: "2020-01-01T00:00:00Z", dateTo: "2020-06-30T23:59:59Z" } },
+    { name: "to rare alone", q: "", filters: { to: RARE } },
+    { name: "to own alone", q: "", filters: { to: OWN } },
+    { name: "party mid alone", q: "", filters: { party: MID } },
+    { name: "sender unread alone", q: "", filters: { sender: "news@axa.example", unread: true } },
+  ];
+  /**
+   * No words in P's mailbox ({@link seedPeople}): an address past ten thousand letters with none
+   * among the newest 49,500, one past what one walk asks with none among the newest 35,000, the own
+   * address (From 30,000 letters, To every one) beside one with few letters or with many, and the own
+   * address To with a flag.
+   *
+   * EITHER SIDE OF THE OWN ADDRESS, alone and beside each person of round 1's recheck, at or under what
+   * each page asked before round 1 (51, 101, 3,600 and 3,000 letters; the last two read 51 now and are
+   * held just over it): counting a person costs index reads on this store, never a letter asked. That holds while the count's bitmap fits the server's working
+   * memory; past it the server asks the letters of its lossy pages, which this measure (a filter naming
+   * the key function) does not see.
+   *
+   * A PERSON WITHIN 20,000 LETTERS BESIDE A RECIPIENT FILTER answers on its first page: 3,000 old
+   * letters from a colleague beside To the own address (one statement and 50 rows before round 1, 21
+   * empty pages after it), and either side of the colleague beside To a third.
+   *
+   * A DATE RANGE BESIDE A DENSE PERSON (the newest 1,000 letters, To, either side and From the own
+   * address): a person is counted without the dates, which no index of a person carries, so the count
+   * stays index reads (while its bitmap fits the working memory) and the range is the mailbox's walk inside it. Each holds what it read so.
+   */
+  const PEOPLE_ALONE: ReadonlyArray<PersonCase> = [
+    { name: "to old alone", q: "", filters: { to: P_OLD }, account: P },
+    { name: "to older alone", q: "", filters: { to: P_OLDER }, account: P },
+    { name: "sender own, to few", q: "", filters: { sender: P_OWN, to: P_FEW }, account: P },
+    { name: "party own, to few", q: "", filters: { party: P_OWN, to: P_FEW }, account: P },
+    { name: "to own, party old", q: "", filters: { to: P_OWN, party: P_OLD }, account: P },
+    { name: "to own unread", q: "", filters: { to: P_OWN, unread: true }, account: P },
+    { name: "party own alone", q: "", filters: { party: P_OWN }, account: P },
+    { name: "to own, party own", q: "", filters: { to: P_OWN, party: P_OWN }, account: P, keys: 51 },
+    { name: "sender own, party own", q: "", filters: { sender: P_OWN, party: P_OWN }, account: P, keys: 101 },
+    // Each reads 51 letters asked now (3,600 and 3,000 before round 1).
+    { name: "sender news, party own", q: "", filters: { sender: P_NEWS, party: P_OWN }, account: P, keys: 60 },
+    { name: "sender colleague, party own", q: "", filters: { sender: P_COLLEAGUE, party: P_OWN }, account: P, keys: 60, rows: 50 },
+    { name: "sender colleague, to own", q: "", filters: { sender: P_COLLEAGUE, to: P_OWN }, account: P, rows: 50 },
+    { name: "party colleague, to third", q: "", filters: { party: P_COLLEAGUE, to: P_THIRD }, account: P, rows: 50 },
+    // On a database made from empty, with the dates in the count: 7,238 buffers; 16,080 and 1,000 letters asked; 6,520 buffers.
+    // Without: 4,679; 4,679 and 51; 4,899.
+    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 5_000 },
+    { name: "party own, the newest 1,000", q: "", filters: { party: P_OWN, dateFrom: NEWEST_1000 }, account: P, keys: 60, buffers: 5_000 },
+    { name: "sender own, the newest 1,000", q: "", filters: { sender: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 5_200 },
+  ];
+  /**
+   * PAST 150,000 LETTERS (Q, 300,000): the server's planner reads a dense address's count by an
+   * account index and asks each letter its recipients where the recipients' index was read below
+   * it. The own address To and either side, alone, To with a flag, and To beside the newest 1,000.
+   */
+  const LARGE_ALONE: ReadonlyArray<PersonCase> = [
+    { name: "to own alone", q: "", filters: { to: P_OWN }, account: Q },
+    { name: "party own alone", q: "", filters: { party: P_OWN }, account: Q },
+    { name: "to own unread", q: "", filters: { to: P_OWN, unread: true }, account: Q },
+    // On a database made from empty, with the dates in the count: 12,682 buffers and 1,000 letters asked; without: 2,216 and 51.
+    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: Q, keys: 60, buffers: 2_500 },
+  ];
   const WORDS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
   const aCases = (before: string): void => {
+    personCases(before, WORDS_BESIDE);
     for (const q of WORDS) {
       it(`${before}"${q}": the first page inside ${BUDGET_MS} ms at p95, and no statement scans a table`, async () => {
         const svc = new SearchService();
@@ -1002,5 +1227,29 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   describe("after A's backfill, through its documents alone", () => {
     beforeAll(backfillA, 900_000);
     aCases("");
+    personCases("no words, ", ALONE);
+  });
+
+  // After every case of A and D: P's letters are a third account in their tables.
+  describe("a person's letters with no words, in P's mailbox", () => {
+    beforeAll(() => seedPeople(P, P_N), 900_000);
+    personCases("P, ", PEOPLE_ALONE);
+  });
+
+  // Last: Q's store, made from the template once every other case has read the file's own.
+  describe("past 150,000 letters, in Q's mailbox, a store of its own", () => {
+    beforeAll(async () => {
+      await qStore.createFromTemplate();
+      await connect(qStore.url);
+      await ensureSearchExtensions(base, { concurrently: false });
+      await ensureHotPathIndexes(base, { concurrently: false });
+      await seedPeople(Q, Q_N);
+    }, 900_000);
+    afterAll(async () => {
+      await client?.end({ timeout: 5 });
+      client = undefined;
+      await qStore.drop();
+    }, 900_000);
+    personCases("Q, ", LARGE_ALONE);
   });
 });

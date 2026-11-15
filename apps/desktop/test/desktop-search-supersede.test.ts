@@ -20,7 +20,7 @@ describe("the search lane option", () => {
   });
 
   it("CONTROL: the paired device's, the web's and the phone's engines leave it off", () => {
-    for (const p of ["../src/host-client/host-engine.ts", "../../webapp/app/shell/engine-config.ts", "../../mobile/src/engine/boot.ts"]) {
+    for (const p of ["../../paired-page/src/host-engine.ts", "../../webapp/app/shell/engine-config.ts", "../../mobile/src/engine/boot.ts"]) {
       expect(read(p), p).not.toContain("searchSupersede");
     }
   });

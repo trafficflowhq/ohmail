@@ -8,21 +8,58 @@ import type { ComposeAttachment, EmailAddress, EngineDraft, EngineMutation, Sync
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { act, press, replySurface, waitFor, type DraftShell } from "./_draft-shell.js";
+import en from "../messages/en.json";
 
 export const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
 export const discards = (s: DraftShell): string[] => s.sent
   .filter((m): m is Extract<EngineMutation, { kind: "draft_discard" }> => m.kind === "draft_discard")
   .map((m) => m.draftId);
 
-/** Every row the rail's foot line holds, as one string. */
-export const footLine = (): string =>
-  [...document.querySelectorAll(".rail-sync.sending-line")].map((n) => n.textContent ?? "").join(" | ");
+/**
+ * TODAY'S SENDING LIST, REACHED AS A PERSON REACHES IT NOW. The rail's foot line became the frame's one notice: its
+ * "Open" (Show) opens today's unchanged list in a dialog, which closes itself when the list empties. Every read below
+ * opens it first where the notice stands and the list is not open, so the cases read the same list they always read.
+ */
+/** The list was opened by a glance (below), not for a press: the glance puts it away again once it has read it. */
+let glanced = false;
+function showSendingList(): Element | null {
+  const open = document.querySelector(".rail-sync.sending-line");
+  if (open) return open;
+  const show = [...document.querySelectorAll<HTMLButtonElement>("[role='status'][data-place] button")]
+    .find((b) => b.textContent === en.sendingLine.open);
+  /* Drawn before this returns, as a person's press is: the reads below are synchronous. */
+  if (show) void act(() => { show.click(); });
+  return document.querySelector(".rail-sync.sending-line");
+}
+/** Today's sending list, opened for a press on one of its rows' buttons, and left open for it. */
+export function sendingList(): Element | null {
+  glanced = false;
+  return showSendingList();
+}
+/** Read today's sending list as a glance does: opened where only the notice stood, and put away again. */
+export function readSendingList<T>(read: (list: Element | null) => T): T {
+  if (!document.querySelector(".rail-sync.sending-line")) glanced = true;
+  const list = showSendingList();
+  const out = read(list);
+  if (glanced && list) {
+    glanced = false;
+    const hide = [...(list.closest("[role='dialog']")?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+      .find((b) => b.textContent === en.sync.unsavedHide);
+    if (hide) void act(() => { hide.click(); });
+  }
+  return out;
+}
+/** Every row today's sending list holds, as one string. */
+export const footLine = (): string => readSendingList((list) => list?.textContent ?? "");
 export const toasts = (): string =>
   [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
-/** A button of the rail's foot line, by its label. */
+/** A button of today's sending list, by its label. */
 export const footButton = (label: string): HTMLButtonElement | null =>
-  [...document.querySelectorAll<HTMLButtonElement>(".rail-sync.sending-line .sl-act")]
-    .find((b) => b.textContent === label) ?? null;
+  [...(sendingList()?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])].find((b) => b.textContent === label) ?? null;
+
+/** The rail's Compose: the frame's rail, which today's views feed. */
+export const railCompose = (): HTMLButtonElement | null =>
+  [...document.querySelectorAll<HTMLButtonElement>("nav button")].find((b) => (b.textContent ?? "").trim().startsWith(en.rail.compose)) ?? null;
 
 export const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
   [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]

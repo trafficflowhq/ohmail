@@ -211,7 +211,7 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2", "m3", "m4"]));
   const container = document.createElement("div");
@@ -413,12 +413,14 @@ const railButton = (label: string): HTMLButtonElement => {
 };
 
 describe("Enter opens what the list cursor is on after a digit go-to", () => {
-  it("← ↓ ↵ to News, 1, j, ↵: the letter opens and the Ohbox stays", async () => {
+  /* ← lands on the rail's first button now (the zone model is the keys task's), so News is reached as a person reaches
+     a rail row from the keyboard: focused on the rail, then ↵. What follows is the case as it was. */
+  it("rail ↵ to News, 1, j, ↵: the letter opens and the Ohbox stays", async () => {
     await setWidth(1880);
     const container = await shell();
     await key("ArrowLeft");
     expect(inRail(), "← put no focus in the rail").toBe(true);
-    await key("ArrowDown");
+    await act(async () => { railButton("News").focus(); });
     await enter();
     await waitFor(() => container.querySelector(".view-ohbox") === null, "News opening");
     expect(inRail(), "the pressed rail row keeps focus").toBe(true);
@@ -434,8 +436,7 @@ describe("Enter opens what the list cursor is on after a digit go-to", () => {
   it("the same through g o", async () => {
     await setWidth(1880);
     const container = await shell();
-    await key("ArrowLeft");
-    await key("ArrowDown");
+    await act(async () => { railButton("News").focus(); });
     await enter();
     await waitFor(() => container.querySelector(".view-ohbox") === null, "News opening");
     await key("g");

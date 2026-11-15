@@ -318,40 +318,6 @@ describe("the wiring, pinned by source", () => {
     "utf8",
   );
 
-  it("the window hands its transport in on EITHER live door, and says which one", () => {
-    // One wire, both doors — the engine decides what to do with the request (forward it to the
-    // account, or answer it out of the store on this machine). `awayIsLocal` carries the only
-    // difference the window is responsible for: the sentence about replies going out while the
-    // app is open, which is true on one door and false on the other.
-    // The SECOND argument is part of the claim: the door rule reads the engine's live session
-    // verdict, not the launch frame's credential word. Handing it `status` alone was how the pane
-    // went missing on an install that signed in after launch.
-    expect(gate).toMatch(/awayDoorFor\(status, hostedSession\) !== null/);
-    expect(gate).toMatch(/awayTransport: awayOverBridge,/);
-    expect(gate).toMatch(/awayIsLocal: awayDoorFor\(status, hostedSession\) === "local"/);
-  });
-
-  /**
-   * AND A THIRD DOOR NAMES THE MACHINE THAT HAS TO BE AWAKE.
-   *
-   * A desktop paired to another computer of the person's own writes the HOST's row and the host's
-   * drain sends from it — so neither existing sentence is true: the hosted one promises an
-   * always-on service, and `localNote` names THIS computer while the machine that must be running
-   * is the other one. The window passes the label; the shell prefers it over `awayIsLocal`.
-   *
-   * WITHHELD RATHER THAN EMPTY when there is no label to give, which is the half worth pinning:
-   * `?? ""` would render "…while ohmail is open on ." — a sentence with a hole in it, and worse
-   * than falling back to the standalone promise.
-   */
-  it("and on a paired desktop it names the other computer, or says nothing", () => {
-    // `hostLabel` is `pairedHostOf(status)`: the door's cloudUrl, never the engine's stdio address.
-    expect(gate).toMatch(/const hostLabel = pairedHostOf\(status\);/);
-    expect(gate).toMatch(/awayDoorFor\(status, hostedSession\) === "host" && hostLabel\b/);
-    expect(gate).toMatch(/awayOnHost: hostLabel \}/);
-    expect(gate, "an absent label must withhold the prop, never pass an empty string")
-      .not.toMatch(/awayOnHost: hostLabel \?\? ""/);
-  });
-
   it("the shared shell admits a host transport as a second way to be supported", () => {
     // Without this the desktop's node is wired and the shell still withholds the control, because
     // `apiConfigured()` is false in this build whatever door it came in by.

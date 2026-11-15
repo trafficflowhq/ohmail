@@ -460,7 +460,7 @@ describe("the send-later field says which hour it will send at", () => {
    *  picker open — send later wears the same lock as Send, so nothing less opens it. */
   async function openSendLater(): Promise<void> {
     await unmount();
-    const { AppShell } = await import("../app/shell/AppShell.js");
+    const { AppShell } = await import("./_todays-shell.js");
     const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
     const { typeInto } = await import("./fixtures/rich-editor-driver.js");
     host = document.createElement("div");

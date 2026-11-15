@@ -467,8 +467,9 @@ describe("the warm mirror survives the ladder", () => {
     await tick(60_000);
     expect(syncCalls(), "the tab kept merging another account's log into this mirror")
       .toBe(before);
-    expect(el.textContent, "the strip did not say the loop had stopped")
-      .toContain(messages.sync.stopped);
+    // Said in the frame's one notice slot now, where the strip said it.
+    expect(el.textContent, "the notice did not say the loop had stopped")
+      .toContain(messages.frame.connection.signedOut.title);
     // A strip line is allowed here; a dialog is not — the mail on screen is still this
     // device's own copy of A's mailbox, and nothing about it has been disproved.
     expect(showsEnded(el)).toBe(false);

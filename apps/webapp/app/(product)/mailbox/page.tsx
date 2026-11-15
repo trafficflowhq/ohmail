@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../../shell/locale";
 import { CloudShell } from "./CloudShell";
@@ -26,7 +27,10 @@ export default async function Page(props: { searchParams?: Promise<SearchParamsL
   // `CloudShell` is `AppShell` plus the one thing the shared shell may not import: how this
   // deployment asks the API whose mailbox it is holding. See its header — the account id
   // names the persistent mirror, and the shell refuses to render one without it.
-  if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} />;
+  // The edge's word for the first frame. Only the exact word `now` draws a remembered mailbox before the browser's own
+  // session check; absent, forged or unknown is `wait` (`middleware.ts` deletes any the client sent).
+  const drawMail = (await headers()).get("x-ohmail-first-page") === "now" ? "now" : "wait";
+  if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} drawMail={drawMail} />;
 
   /* English explicitly — the request config resolves `requestLocale` since the bilingual
      marketing slice, and no layout pins one for this route. Same string as before. */

@@ -75,6 +75,25 @@ function tsFiles(dir: string): string[] {
  */
 const FORBIDDEN_IN_SRC = ["@trafficflow/services", "@trafficflow/api", "@ohmail/"];
 
+/**
+ * THE ONE EXCEPTION TO `@ohmail/`: the calendar's passes read their providers through
+ * `@ohmail/cal-providers` and keep times by `@ohmail/cal-core`, and only the files that are the
+ * calendar's may name either. Any other client package stays out of the worker everywhere.
+ */
+const CALENDAR_PACKAGES = ["@ohmail/cal-core", "@ohmail/cal-providers"];
+const CALENDAR_FILES = (rel: string): boolean =>
+  rel.startsWith("calendar/") || rel === "start/calendar.ts" || rel === "calendar-notices.ts";
+
+/** The forbidden package names a file's code carries, with the calendar's two admitted in the calendar's files. */
+function forbiddenIn(rel: string, code: string): string[] {
+  const named = code.match(/@ohmail\/[A-Za-z0-9._-]+/g) ?? [];
+  const clients = named.filter((n) => !(CALENDAR_FILES(rel) && CALENDAR_PACKAGES.includes(n)));
+  return [
+    ...FORBIDDEN_IN_SRC.filter((bad) => bad !== "@ohmail/" && code.includes(bad)),
+    ...new Set(clients),
+  ];
+}
+
 /** The repo root, for the two files outside this app that also state the worker's closure. */
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -138,15 +157,24 @@ describe("worker dependency boundary", () => {
     }
   });
 
-  it("imports NOTHING from services / api / the client packages anywhere under src/", () => {
+  it("imports NOTHING from services / api / the client packages anywhere under src/, the calendar's two in its own files aside", () => {
     const offenders: string[] = [];
     for (const file of tsFiles(SRC)) {
-      const body = codeOnly(readFileSync(file, "utf8"));
-      for (const bad of FORBIDDEN_IN_SRC) {
-        if (body.includes(bad)) offenders.push(`${file.slice(SRC.length + 1)} → ${bad}`);
-      }
+      const rel = file.slice(SRC.length + 1).split("\\").join("/");
+      for (const bad of forbiddenIn(rel, codeOnly(readFileSync(file, "utf8")))) offenders.push(`${rel} → ${bad}`);
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("admits the calendar's two packages in the calendar's files only, and no other client package anywhere", () => {
+    const providers = 'import { makeCalendarProviders } from "@ohmail/cal-providers";';
+    expect(forbiddenIn("calendar/sync-pass.ts", providers)).toEqual([]);
+    expect(forbiddenIn("start/calendar.ts", 'import { intlZones } from "@ohmail/cal-core";')).toEqual([]);
+    expect(forbiddenIn("calendar-notices.ts", providers)).toEqual([]);
+    expect(forbiddenIn("sync.ts", providers)).toEqual(["@ohmail/cal-providers"]);
+    expect(forbiddenIn("start/cycle-tail.ts", 'import { x } from "@ohmail/cal-core";')).toEqual(["@ohmail/cal-core"]);
+    expect(forbiddenIn("calendar/map.ts", 'import type { RecordKind } from "@ohmail/wire";')).toEqual(["@ohmail/wire"]);
+    expect(forbiddenIn("calendar/map.ts", 'import { x } from "@trafficflow/services";')).toEqual(["@trafficflow/services"]);
   });
 
   /**
@@ -186,12 +214,12 @@ describe("worker dependency boundary", () => {
     expect(codeOnly('const r = a / b; import "@trafficflow/services";')).toContain("@trafficflow/services");
   });
 
-  it("declares only core, db and its two runtime libraries as dependencies", () => {
+  it("declares only core, db, the calendar's two packages and its two runtime libraries as dependencies", () => {
     const pkg = JSON.parse(readFileSync(PKG, "utf8")) as {
       dependencies: Record<string, string>; devDependencies?: Record<string, string>;
     };
     expect(Object.keys(pkg.dependencies).sort()).toEqual([
-      "@trafficflow/core", "@trafficflow/db", "drizzle-orm", "postgres",
+      "@ohmail/cal-core", "@ohmail/cal-providers", "@trafficflow/core", "@trafficflow/db", "drizzle-orm", "postgres",
     ]);
     // TEST-ONLY: never a runtime dependency. The tests reach it through the workspace (this manifest
     // declares no devDependencies; the root's carry the test tooling).

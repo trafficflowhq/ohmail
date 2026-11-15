@@ -52,7 +52,7 @@ function waiting(n: number): EngineMessage[] {
 }
 
 async function launch(n: number): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const s = await storeWith(waiting(n));
   const engine = engineOver(s);

@@ -1,4 +1,4 @@
-import type { KeyProvider, Logger, OAuthTokenProvider } from "@trafficflow/core";
+import type { KeyProvider, Logger, MicrosoftClientCredentials, MicrosoftClientKind, OAuthTokenProvider } from "@trafficflow/core";
 import type { SignatureCheck } from "@trafficflow/core/adapters/dkim";
 import type { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -31,6 +31,7 @@ import type { SyncDeps } from "../sync.js";
 import type { TailOrigin } from "../tail-stage.js";
 import type { ThreadJoinHealWalk } from "../thread-join-heal-walk.js";
 import type { MailboxRuntime, Quarantine } from "../index.js";
+import type { CalendarRunner } from "./calendar.js";
 
 /**
  * Mailboxes on the duty that this process is NOT SERVING, and since when (mail 0029). They were
@@ -90,6 +91,8 @@ export interface WorkerScope {
   repo: DrizzleRepo;
   keyProvider: KeyProvider;
   oauthTokenProvider: OAuthTokenProvider;
+  /** Microsoft's registration for a door, resolved at the moment of a trade: the mail's and the calendar's one reader of it. */
+  msRegistration: (want: MicrosoftClientKind) => Promise<MicrosoftClientCredentials>;
   shards: number;
   shardIndex: number;
   maxMailboxes: number;
@@ -304,6 +307,8 @@ export interface WorkerScope {
   wakeHub: ChangeWakeFanout | null;   // changes
   apiCron: ApiCronHandle | null;   // changes
   signalPoll: PlatformSignalPollHandle | null;   // changes
+  /** The calendar's passes (`start/calendar.ts`), or `null` where this deployment keeps no calendar. */
+  calendar: CalendarRunner | null;   // changes
   handleLockLoss: (err: LockLostError) => void;
   unproven: number;   // changes
   verifying: boolean;   // changes

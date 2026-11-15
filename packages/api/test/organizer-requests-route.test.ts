@@ -100,6 +100,19 @@ describe("GET /organizer-requests", () => {
     expect((await w.list())[0]!.target).toEqual({ messageId: m!.id, folder: "ohmail/News" });
   });
 
+  it("a move into a person's own folder names the message and the folder, refused or not; an unreadable folder is none", async () => {
+    const w = await world();
+    const m = await seedMessage(w.db, { accountId: w.s.accountId, mailboxId: w.mb.id, dedupKey: "mid:k2@x" });
+    await w.add({ kind: "message.file", state: "refused", refusedReason: "no_such_folder", resolvedAt: new Date(FIXED_NOW.getTime() - HOUR),
+      payload: { dedupKey: "mid:k2@x", folder: "Clients/Acme" } });
+    await w.add({ kind: "message.file", payload: { dedupKey: "mid:k2@x", folder: "a\r\nb" } });
+    const items = await w.list();
+    expect(items.map((i) => [i.kind, i.target, i.refusedReason]).sort((a, b) => String(a[2]).localeCompare(String(b[2])))).toEqual([
+      ["message.file", { messageId: m!.id, folder: "Clients/Acme" }, "no_such_folder"],
+      ["message.file", { messageId: m!.id, folder: null }, null],
+    ]);
+  });
+
   it("another account's rows are never in the list (and the list is not empty for nothing)", async () => {
     const w = await world();
     const other = randomUUID();

@@ -54,6 +54,13 @@ const PRODUCT_PATHS = [
 /** The branded 404 is the catch-all: never listed, so it keeps the baseline. */
 const UNKNOWN_PATHS = ["/no-such-page", "/a/b/c"];
 
+/**
+ * The vendored pdf.js worker's path: the product's one constant, which `pdf-worker-version.test.ts`
+ * holds equal to the worker's own content-named file.
+ */
+const workerPath = async (): Promise<string> =>
+  (await import("../app/components/AttachmentPreview")).PDF_WORKER_SRC;
+
 afterEach(() => { vi.resetModules(); });
 
 describe("the measurement id gate", () => {
@@ -98,10 +105,11 @@ describe("withAnalytics adds the Google sources to three directives and changes 
 });
 
 describe("without an id, every route keeps today's policy (the old no-third-party reading)", () => {
-  it("the rules are the two every build had: /demo and the blanket baseline", async () => {
+  it("the rules that carry a policy are the two every build had: /demo and the blanket baseline", async () => {
     const rules = await rulesFor(undefined);
-    expect(rules.map((r) => r.source)).toEqual(["/demo", "/((?!demo).*)"]);
-    for (const p of [...MARKETING_PATHS, ...PRODUCT_PATHS, ...UNKNOWN_PATHS]) {
+    const carriesPolicy = (r: Rule) => r.headers.some((h) => h.key === "Content-Security-Policy");
+    expect(rules.filter(carriesPolicy).map((r) => r.source)).toEqual(["/demo", "/((?!demo).*)"]);
+    for (const p of [...MARKETING_PATHS, ...PRODUCT_PATHS, ...UNKNOWN_PATHS, await workerPath()]) {
       expect(cspsFor(rules, p), p).toEqual([BASELINE_CSP]);
     }
     expect(JSON.stringify(rules)).not.toMatch(/google/);

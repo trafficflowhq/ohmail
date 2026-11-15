@@ -140,7 +140,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const nonce = h.get("x-nonce") ?? undefined;
   return (
     <html lang={locale} suppressHydrationWarning>
-      <body className="mo-canvas app-body">
+      <body className="mo-canvas app-body today">
         <LocaleShell initialLocale={locale} initialMessages={messages}>
           <Providers nonce={nonce}>{children}</Providers>
         </LocaleShell>

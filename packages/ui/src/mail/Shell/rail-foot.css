@@ -78,6 +78,7 @@
 
   .oh-railfoot-end {
     flex: none;
+    margin-left: auto;
     display: flex;
     align-items: center;
     color: var(--ink2);

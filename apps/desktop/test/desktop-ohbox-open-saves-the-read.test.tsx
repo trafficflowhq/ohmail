@@ -74,7 +74,7 @@ const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`.ro
 /** The window as `DesktopGate` mounts it: the web client's shell over an engine the window built. */
 async function mountWindow(store: LaterTaskDisk): Promise<void> {
   const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store, storePolicy: { mode: "full" } });
-  const { AppShell } = await import("../../webapp/app/shell/AppShell");
+  const { AppShell } = await import("../../webapp/test/_todays-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);

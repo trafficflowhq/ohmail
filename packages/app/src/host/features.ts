@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import type { FrameNotice, FramePlaces, FrameStages } from "../frame/contract.js";
 import type { None } from "./contract.js";
 
 /**
@@ -11,10 +13,18 @@ export const FEATURE_NAMES = [
 ] as const;
 export type FeatureName = (typeof FEATURE_NAMES)[number];
 
-declare const entryOf: unique symbol;
-/** A feature's entry. Opaque here: the frame says what an entry is when it takes them. */
+/**
+ * A feature's entry: what it draws where the frame mounts it, and what it has to say in the notice slot. `render` is
+ * called in render, never a component type made inline (an inline type mounts the pane again on every render).
+ */
 export interface FeatureEntry {
-  readonly [entryOf]: FeatureName;
+  readonly name: FeatureName;
+  readonly render: () => ReactNode;
+  /**
+   * What it has to say in the notice slot now; empty when nothing. The frame calls it once per render of a part it
+   * mounts for this entry, so it may use hooks; a view never calls it.
+   */
+  readonly notice?: () => readonly FrameNotice[];
 }
 
 /**
@@ -25,4 +35,9 @@ export interface FeatureEntry {
  * each control withheld where its own wire is `none`). `help` replaces no input: the pane is
  * drawn today wherever `support` is handed in.
  */
-export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>>;
+export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & {
+  /** The places a shell mounts, each the entry it imports or `none` (the frame imports no place). */
+  readonly places: FramePlaces;
+  /** The bodies that stand over the app. */
+  readonly stages: FrameStages;
+};

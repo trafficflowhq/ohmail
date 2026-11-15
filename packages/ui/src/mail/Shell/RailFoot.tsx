@@ -17,8 +17,8 @@ export interface RailFootProps {
   notice?: ReactNode;
   /** Pull new mail: while it works its arrow turns once. */
   pull?: { label: string; keyHint?: string; keyShown?: boolean; busy?: boolean; onPress?: () => void };
-  /** The account: its circle, its name, and one line under it (how many mailboxes). */
-  account: {
+  /** The account: its circle, its name, and one line under it (how many mailboxes). Left out while nobody is known: the tools stand alone. */
+  account?: {
     name: string;
     /** What the circle's colour comes from. */
     address: string;
@@ -52,19 +52,21 @@ export function RailFoot({ notice, pull, account, tools }: RailFootProps) {
         </div>
       ) : null}
       <div className="oh-railfoot-line">
-        <button
-          type="button"
-          className="oh-control oh-railfoot-account"
-          title={account.title}
-          aria-current={account.current ? "page" : undefined}
-          onClick={account.onPress}
-        >
-          <Avatar name={account.name} address={account.address} size="s" />
-          <span className="oh-railfoot-who">
-            <b className="oh-railfoot-name">{account.name}</b>
-            <span className="oh-railfoot-note">{account.note}</span>
-          </span>
-        </button>
+        {account ? (
+          <button
+            type="button"
+            className="oh-control oh-railfoot-account"
+            title={account.title}
+            aria-current={account.current ? "page" : undefined}
+            onClick={account.onPress}
+          >
+            <Avatar name={account.name} address={account.address} size="s" />
+            <span className="oh-railfoot-who">
+              <b className="oh-railfoot-name">{account.name}</b>
+              <span className="oh-railfoot-note">{account.note}</span>
+            </span>
+          </button>
+        ) : null}
         {tools?.length ? (
           <span className="oh-railfoot-end">
             {tools.map((tool) => (

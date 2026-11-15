@@ -23,11 +23,19 @@ const inList = (key: string, node: ReactNode, more: Partial<KitSubject> = {}, wi
   key,
   place: "block",
   width,
-  target: ".oh-sheet",
-  render: () => <Sheet kind="list">{node}</Sheet>,
+  target: "[data-list]",
+  render: (look) =>
+    BARE_ON_PHONE.has(key) && look.device === "phone" ? (
+      <div data-list="">{node}</div>
+    ) : (
+      <div data-list="">
+        <Sheet kind="list">{node}</Sheet>
+      </div>
+    ),
   ...more,
 });
-
+/* The sheet draws these specimens on a phone with no sheet behind them: the list stands on the ground. */
+const BARE_ON_PHONE = new Set(["Row/unread", "ListHead/hot"]);
 /** How wide the list's column is where the reference draws a whole screen. */
 export const listWidth = (look: Look): number =>
   look.device === "desktop"
@@ -298,6 +306,8 @@ export const lists: KitSubject[] = [
   {
     key: "GroupHeading/hot",
     place: "window",
+    /* In the list's column, on its sheet. */
+    on: "sheet",
     target: ".oh-groupheading",
     render: (look) => (
       <div style={{ position: "fixed", ...listCorner(look), width: listWidth(look) }}>

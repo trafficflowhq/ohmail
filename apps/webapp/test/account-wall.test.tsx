@@ -549,7 +549,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       const t = document.body.textContent ?? "";
       if (frames[frames.length - 1] !== t) frames.push(t);
       if (document.querySelector("main.gate[aria-busy=true] .gate-card .mbx-spin")) sawGateCard = true;
-      if (!document.querySelector(".wall-card") && document.querySelector(".app-root")) sawShellBeforeWall = true;
+      if (!document.querySelector(".wall-card") && document.querySelector(".today")) sawShellBeforeWall = true;
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   });
@@ -583,7 +583,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     access = () => new Promise<Response>(() => {});
     await shell.mountCloudShell();
     await shell.tick(2_500);
-    expect(document.body.querySelector(".app-root"), "painted before the bound").toBeNull();
+    expect(document.body.querySelector(".today"), "painted before the bound").toBeNull();
     await shell.tick(1_000);
     // Past the bound the shell mounted, met the roster's 402, and the wall came through the sink.
     await shell.tick(2_000);
@@ -630,7 +630,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(500);
-    expect(document.body.querySelector(".app-root"), "the mailbox never opened").not.toBeNull();
+    expect(document.body.querySelector(".today"), "the mailbox never opened").not.toBeNull();
     expect(sawGateCard, "the ordinary account was shown the verdict's waiting card").toBe(false);
   });
 
@@ -645,8 +645,13 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
     expect(document.body.querySelector(".wall-card"), "the wall stood over an open verdict").toBeNull();
-    expect(document.body.querySelector(".app-root")).not.toBeNull();
-    expect(document.body.querySelector(".acct-note")?.textContent, "no catch-up panel after the lift")
+    expect(document.body.querySelector(".today")).not.toBeNull();
+    // Said in the frame's one notice slot now, where the account's note said it: in front, or behind
+    // its "more" line when a notice of a higher rank stands (here, no mailbox is connected).
+    const more = [...document.body.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
+      .find((b) => /more notice/.test(b.getAttribute("aria-label") ?? ""));
+    if (more) await shell.act(async () => { more.click(); });
+    expect(document.body.textContent, "no catch-up notice after the lift")
       .toContain("catching up on mail");
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBe("open");
     // Another API instance still holds the old refusal for up to a minute: its 402 is disbelieved.
@@ -662,7 +667,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(document.body.querySelector(".app-root")).not.toBeNull();
+    expect(document.body.querySelector(".today")).not.toBeNull();
     expect(liftedAt(), "the first open answer after the wall was not read as the reopening").not.toBeNull();
   });
 
@@ -702,7 +707,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       walled = false;
       await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
       await shell.tick(3_000);
-      expect(document.body.querySelector(".app-root")).not.toBeNull();
+      expect(document.body.querySelector(".today")).not.toBeNull();
       expect(posts, "the lift did not re-announce, or announced twice").toHaveLength(1);
     } finally {
       delete (navigator as unknown as Record<string, unknown>).serviceWorker;
@@ -741,7 +746,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(document.body.querySelector(".app-root")).not.toBeNull();
+    expect(document.body.querySelector(".today")).not.toBeNull();
     expect(document.body.querySelector(".wall-card")).toBeNull();
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBeNull();
   });

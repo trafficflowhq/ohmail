@@ -846,7 +846,7 @@ afterEach(async () => {
  * Cloud path with a Cloud answer, minus the HTTP.
  */
 async function mountShell(facts: MailboxFacts[] | null): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);

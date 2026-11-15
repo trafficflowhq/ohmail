@@ -147,6 +147,8 @@ export default defineConfig({
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
       { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
+      // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
+      { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
       { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },
@@ -192,8 +194,13 @@ export default defineConfig({
       // out of the web app's shell are imported one by one, as they were).
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },
+      // The browser shells' device answers, ABOVE the contract's door (the prefix-match reason above).
+      { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
       // The host contract's types and its two small values.
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
+      { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.

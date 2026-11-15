@@ -77,7 +77,7 @@ export interface JunkWire {
 }
 
 /** The browser's wire: the Cloud client, verbatim. */
-const cloudWire: JunkWire = {
+export const cloudWire: JunkWire = {
   list: (opts) => screenerApi.junkList(opts),
   body: (m, u, v) => screenerApi.junkBody(m, u, v),
   rescue: (m, u, v, opts) => screenerApi.junkRescue(m, u, v, opts),

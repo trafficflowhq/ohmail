@@ -141,12 +141,26 @@
       "ohmail-source": "./src/screener-impersonation.ts",
       "node": "./dist/screener-impersonation.js",
       "default": "./src/screener-impersonation.ts"
+    },
+    "./calendar-sync": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
+    "./calendar-sync-pass": {
+      "types": "./src/calendar/sync-pass.ts",
+      "ohmail-source": "./src/calendar/sync-pass.ts",
+      "node": "./dist/calendar/sync-pass.js",
+      "default": "./src/calendar/sync-pass.ts"
     }
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",
     "postgres": "3.4.9",
     "@trafficflow/core": "*",
-    "@trafficflow/db": "*"
+    "@trafficflow/db": "*",
+    "@ohmail/cal-core": "*",
+    "@ohmail/cal-providers": "*"
   }
 }

@@ -248,6 +248,61 @@ describe("the wrote arm — a Sent copy past the consent point teaches its recip
     }), AFTER), { correspondenceSince: CUT });
     expect(s.repo.senders.has(THEM)).toBe(false);
   });
+
+  /** A Sent copy answering an invitation: its calendar part, and the type that names the method or not. */
+  const answer = (messageId: string, typeMethod: boolean): Buffer => Buffer.from([
+    `Message-ID: <${messageId}>`, `From: ${ME}`, `To: ${THEM}`, "Subject: Declined: Spring sale", "MIME-Version: 1.0",
+    `Content-Type: text/calendar; charset=utf-8${typeMethod ? "; method=REPLY" : ""}`, "",
+    "BEGIN:VCALENDAR", "METHOD:REPLY", "BEGIN:VEVENT", "UID:sale-1@corr.invalid", "DTSTAMP:20260922T151200Z",
+    `ORGANIZER:mailto:${THEM}`, `ATTENDEE;PARTSTAT=DECLINED:mailto:${ME}`, "END:VEVENT", "END:VCALENDAR", "",
+  ].join("\r\n"));
+
+  it("an answer to an invitation is not writing to them: a No to a stranger's invitation does not admit them", async () => {
+    for (const [i, typeMethod] of [true, false].entries()) {
+      const s = setup();
+      const { plan } = await ingest(s, sent(answer(`reply-${i}@own.invalid`, typeMethod), AFTER), { correspondenceSince: CUT });
+      expect(plan.new!.invitation?.method, "the copy is read as the answer it is").toBe("REPLY");
+      expect(s.repo.senders.has(THEM), `method on the type: ${typeMethod}`).toBe(false);
+      const next = await ingest(s, inbox(eml({ from: THEM, to: ME, messageId: `next-${i}@corr.invalid` })));
+      expect(next.plan.new!.desired).toBe("ohmail/Screener");
+    }
+  });
+});
+
+describe("the invitation a letter carries reaches the commit", () => {
+  const request = (messageId: string): Buffer => Buffer.from([
+    `Message-ID: <${messageId}>`, `From: ${THEM}`, `To: ${ME}`, "Subject: Invitation: north elevation", "MIME-Version: 1.0",
+    "Content-Type: text/calendar; charset=utf-8; method=REQUEST", "",
+    "BEGIN:VCALENDAR", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:elevation-1@corr.invalid", "SEQUENCE:1",
+    "DTSTART:20261001T080000Z", `ORGANIZER:mailto:${THEM}`, `ATTENDEE:mailto:${ME}`, "END:VEVENT", "END:VCALENDAR", "",
+  ].join("\r\n"));
+
+  it("the plan carries it, whose it is, and the commit writes it as the winner, the letters it changed owed a change", async () => {
+    const s = setup();
+    s.repo.invitationTouches = ["answered-elsewhere"];
+    const { plan, res } = await ingest(s, inbox(request("inv-1@corr.invalid")));
+    expect(plan.new!.invitation).toMatchObject({ method: "REQUEST", uid: "elevation-1@corr.invalid", sequence: 1, own: false });
+    expect(s.repo.invitations.get(res.messageId)).toEqual(plan.new!.invitation);
+    expect(s.repo.changes.filter((c) => c.entityId === "answered-elsewhere")).toEqual([
+      expect.objectContaining({ entityType: "message", op: "update" }),
+    ]);
+    // From the person's own Sent folder, the plan says it is theirs.
+    const own = await ingest(s, sent(request("inv-2@corr.invalid"), AFTER, "1:11"));
+    expect(own.plan.new!.invitation?.own).toBe(true);
+  });
+
+  it("a letter without one plans none, and a loser of the insert writes none", async () => {
+    const s = setup();
+    const { plan } = await ingest(s, inbox(eml({ from: THEM, to: ME, messageId: "plain-1@corr.invalid" })));
+    expect(plan.new!.invitation).toBeUndefined();
+    const first = await ingest(s, inbox(request("inv-3@corr.invalid"), "1:30"));
+    const before = s.repo.invitations.size;
+    const again = await commitChange(first.plan, {
+      repo: s.repo, routing: s.routing, accountId: "acct-1", mailboxId: "mb-1", storageCap: UNMETERED_STORAGE_CAP,
+    });
+    expect(again.outcome).toBe("duplicate");
+    expect(s.repo.invitations.size).toBe(before);
+  });
 });
 
 /* ══ THE REPLY ARM AND THE IDENTITY FACT (mail 0148), acceptance 5 ══ A reply citing a Sent copy

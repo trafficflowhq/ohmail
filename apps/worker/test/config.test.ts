@@ -223,3 +223,51 @@ describe("the lock's heartbeat and the spare's retry", () => {
     }
   });
 });
+
+describe("the calendar's settings", () => {
+  /** The managed marker: the billing plane's pair, fixture values. */
+  const MANAGED = { ENTITLEMENTS_URL: "https://plane.example", BILLING_PLANE_SECRET: "calendar-policy-fixture-token" };
+  const ON = { OHMAIL_CALENDAR: "1" };
+
+  it("keeps no calendar without the word, and refuses a word that is neither 1 nor 0", () => {
+    expect(loadConfig({ ...BASE }).calendar).toBeNull();
+    expect(loadConfig({ ...BASE, OHMAIL_CALENDAR: "0" }).calendar).toBeNull();
+    expect(refusal({ OHMAIL_CALENDAR: "yes" }).configVar).toBe("OHMAIL_CALENDAR");
+    expect(loadConfig({ ...BASE, ...ON }).calendar).toEqual({ policy: "cloud", google: null, microsoft: null, noticeOrigin: null });
+  });
+
+  it("is `cloud` on a managed worker whatever OHCAL_ALLOW_PRIVATE says, and `own-network` on a person's own only by exactly 1", () => {
+    expect(loadConfig({ ...BASE, ...ON, ...MANAGED, OHCAL_ALLOW_PRIVATE: "1" }).calendar?.policy).toBe("cloud");
+    expect(loadConfig({ ...BASE, ...ON, OHCAL_ALLOW_PRIVATE: "1" }).calendar?.policy).toBe("own-network");
+    for (const loose of ["true", "yes", " 1", "01", ""]) {
+      expect(loadConfig({ ...BASE, ...ON, OHCAL_ALLOW_PRIVATE: loose }).calendar?.policy, JSON.stringify(loose)).toBe("cloud");
+    }
+  });
+
+  it("serves Google with both of its registration's halves, and refuses one alone by the missing one's name", () => {
+    const both = loadConfig({ ...BASE, ...ON, OHCAL_GOOGLE_CLIENT_ID: "id.example", OHCAL_GOOGLE_CLIENT_SECRET: "calendar-google-fixture" });
+    expect(both.calendar?.google).toEqual({ clientId: "id.example", clientSecret: "calendar-google-fixture" });
+    expect(refusal({ ...ON, OHCAL_GOOGLE_CLIENT_ID: "id.example" }).configVar).toBe("OHCAL_GOOGLE_CLIENT_SECRET");
+    expect(refusal({ ...ON, OHCAL_GOOGLE_CLIENT_SECRET: "calendar-google-fixture" }).configVar).toBe("OHCAL_GOOGLE_CLIENT_ID");
+  });
+
+  it("serves Microsoft by its switch alone, at its own address unless a person's own worker names another", () => {
+    expect(loadConfig({ ...BASE, ...ON, OHCAL_MICROSOFT: "1" }).calendar?.microsoft).toEqual({ graphBase: null });
+    expect(loadConfig({ ...BASE, ...ON, OHCAL_MICROSOFT: "1", OHCAL_MS_GRAPH_BASE: "http://127.0.0.1:8822/v1.0" }).calendar?.microsoft)
+      .toEqual({ graphBase: "http://127.0.0.1:8822/v1.0" });
+    expect(refusal({ ...ON, ...MANAGED, OHCAL_MICROSOFT: "1", OHCAL_MS_GRAPH_BASE: "https://graph.example/v1.0" }).configVar)
+      .toBe("OHCAL_MS_GRAPH_BASE");
+    expect(refusal({ ...ON, OHCAL_MS_GRAPH_BASE: "http://127.0.0.1:8822/v1.0" }).configVar).toBe("OHCAL_MS_GRAPH_BASE");
+  });
+
+  it("takes a notice address only as a bare https origin with a public name, never a value in the refusal", () => {
+    expect(loadConfig({ ...BASE, ...ON, OHCAL_NOTICE_ORIGIN: "https://cal.example.org" }).calendar?.noticeOrigin)
+      .toBe("https://cal.example.org");
+    for (const bad of ["http://cal.example.org", "https://cal.example.org/hook", "https://cal.example.org?x=1", "https://u@cal.example.org",
+      "https://127.0.0.1", "https://localhost", "not an address"]) {
+      const e = refusal({ ...ON, OHCAL_NOTICE_ORIGIN: bad });
+      expect(e.configVar, bad).toBe("OHCAL_NOTICE_ORIGIN");
+      expect(`${e.message} ${e.remedy ?? ""}`).not.toContain(bad);
+    }
+  });
+});

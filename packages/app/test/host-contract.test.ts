@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   CANNOT, FEATURE_NAMES, NONE, panesOf,
-  type FeatureEntry, type HostContract, type HostFeatures, type HostWires,
+  type FeatureEntry, type HostContract, type HostFeatures, type HostWires, type Signal,
 } from "../src/host/index.js";
+import { NO_PLACES, NO_STAGES } from "./support/fake-host.js";
 
 const entry = {} as FeatureEntry;
-const noFeature = Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as HostFeatures;
+const noFeature: HostFeatures = {
+  ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Omit<HostFeatures, "places" | "stages">),
+  places: NO_PLACES,
+  stages: NO_STAGES,
+};
+const still = <T,>(value: T): Signal<T> => ({ read: () => value, subscribe: () => () => undefined });
 const noWire: HostWires = {
   organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE, consent: NONE,
   images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
@@ -16,7 +22,7 @@ const noWire: HostWires = {
 function hostThatCannot(over: Partial<Pick<HostContract, "wires" | "features" | "capabilities">> = {}): HostContract {
   return {
     engine: {} as HostContract["engine"],
-    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, signOut: NONE },
+    session: { resolve: NONE, confirmed: NONE, state: NONE, scope: null, account: null, signOut: NONE, recover: NONE },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
     wires: noWire,
     capabilities: { service: "ownComputer", ...CANNOT },
@@ -24,7 +30,10 @@ function hostThatCannot(over: Partial<Pick<HostContract, "wires" | "features" | 
     device: {
       build: { surface: "web", version: null, commit: null, mailtoLeaves: true },
       notifications: NONE, badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE,
-      defaultMail: NONE, appearance: NONE, textSize: NONE, fold: NONE, liveTheme: NONE,
+      defaultMail: NONE, textSize: NONE, fold: NONE, liveTheme: NONE,
+      address: { read: () => "", write: () => undefined, subscribe: () => () => undefined },
+      window: still({ width: 1440, height: 900, pointer: "fine", posture: "flat", reducedMotion: false }),
+      appearance: still({ face: "paper", scheme: "light" }),
     },
     signals: {
       hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE,

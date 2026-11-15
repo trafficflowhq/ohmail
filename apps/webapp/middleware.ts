@@ -7,7 +7,8 @@ import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
 import { OWNER_COOKIE, OWNER_SIGNED_OUT, pendingSignOutCookie } from "@ohmail/app-logic/storage/owner-cookie";
 import {
-  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, resolveSurface,
+  APP_ROUTE, DOOR_ROUTE, RESUME_COOKIE, RESUME_ROUTE, SESSION_COOKIE, SIGNED_OUT_COOKIE, firstPageUnasked,
+  resolveSurface, type Surface,
 } from "./app/session-gate";
 
 /**
@@ -112,6 +113,18 @@ const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
 const API_ORIGIN = SELF_HOST_BUILD
   ? resolveInternalApiOrigin(process.env.OHMAIL_INTERNAL_API_ORIGIN)
   : resolveApiOrigin(process.env.TF_API_ORIGIN);
+
+/**
+ * THE SIGNED-IN FIRST PAGE WITHOUT THE PROBE (`firstPageUnasked`): read here, once, and nowhere else. Off unless the
+ * setting is exactly `1`. It has no twin in the bundle, no query word, no cookie and no client header.
+ */
+const FIRST_PAGE_UNASKED = firstPageUnasked(process.env.OHMAIL_FIRST_PAGE_NO_PROBE);
+
+/**
+ * The page's word for its first frame (`(product)/mailbox/page.tsx`): `now` after a probe that named a full session,
+ * `wait` after none. Set only by {@link strict}, which first deletes any the client sent.
+ */
+const FIRST_PAGE_HEADER = "x-ohmail-first-page";
 
 /**
  * The landing zone, validated against the compiled list like `API_ORIGIN` and for the same reason: a
@@ -326,6 +339,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     search: request.nextUrl.searchParams,
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
+    firstPageUnasked: FIRST_PAGE_UNASKED,
   });
 
   // A SIGN-OUT THE SERVER NEVER CONFIRMED goes to the sign-in page, on both builds: it paints at once
@@ -362,11 +376,15 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  const target = surface === "resume" ? RESUME_ROUTE : APP_ROUTE;
-  const response =
-    surface === "marketing"
-      ? (zone !== null ? zoneRewrite(request, zone, bypass, "/") : NextResponse.next())
-      : strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init));
+  const rewrite = (target: string, word?: "now" | "wait"): NextResponse =>
+    strict(request, (init) => NextResponse.rewrite(withPathname(request, target), init), word);
+  const response = answerFor(surface, {
+    marketing: () => (zone !== null ? zoneRewrite(request, zone, bypass, "/") : NextResponse.next()),
+    resume: () => rewrite(RESUME_ROUTE),
+    demo: () => rewrite(APP_ROUTE),
+    app: () => rewrite(APP_ROUTE, "now"),
+    "app-unasked": () => rewrite(APP_ROUTE, "wait"),
+  });
 
   // Per-user responses must not be cached. A MARKER-bearing request is per-user too even
   // when no session cookie came with it — that is the whole `SameSite=Strict` cross-site
@@ -442,15 +460,29 @@ function holdPendingSignOut(request: NextRequest, response: NextResponse): NextR
 function strict(
   request: NextRequest,
   make: (init: { request: { headers: Headers } }) => NextResponse,
+  firstPage?: "now" | "wait",
 ): NextResponse {
   const nonce = newNonce();
   const csp = nonceCsp(nonce);
   const headers = new Headers(request.headers);
+  headers.delete(FIRST_PAGE_HEADER);
+  if (firstPage !== undefined) headers.set(FIRST_PAGE_HEADER, firstPage);
   headers.set("x-nonce", nonce);
   headers.set("content-security-policy", csp);
   const response = make({ request: { headers } });
   response.headers.set("Content-Security-Policy", csp);
   return response;
+}
+
+/**
+ * The rewrite for each surface the redirects above left, by name. Exhaustive: a new surface is a compile error here,
+ * never a quiet fall-through to the app.
+ */
+function answerFor(
+  surface: Exclude<Surface, "sign-out" | "door">,
+  answers: { readonly [S in Exclude<Surface, "sign-out" | "door">]: () => NextResponse },
+): NextResponse {
+  return answers[surface]();
 }
 
 /**

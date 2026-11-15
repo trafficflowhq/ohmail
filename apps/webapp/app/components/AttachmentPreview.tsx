@@ -153,7 +153,7 @@ let pdfjsPromise: Promise<OpenPdf> | null = null;
  * the worker is a static asset, vendored beside the app and kept in lockstep with `pdfjs-dist` by
  * `test/pdf-worker-version.test.ts`.
  */
-const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
+export const PDF_WORKER_SRC = "/pdf.worker.0613f41490dd6aac.min.mjs";
 
 /**
  * Import pdf.js (≈1 MB) only when a PDF is actually looked at, and open each document over a

@@ -1,0 +1,7 @@
+{
+  "name": "@ohmail/paired-page",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "//": "The page a paired phone's browser loads from the desktop app. It has no install and no build of its own: apps/desktop's `ui:build:host` bundles apps/desktop/host.html, whose entry is src/main.tsx here, into apps/desktop/dist-host, with the desktop's own modules and options."
+}

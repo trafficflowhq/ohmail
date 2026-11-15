@@ -9,7 +9,7 @@ import {
 import {
   ATTACHMENT_MAX_FETCH_BYTES, BODIES_IDS_MAX, CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT,
   DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS, FORWARD_MAX_PARTS,
-  DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
+  DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
   MAILBOX_SIGNATURE_MAX_CHARS, MARK_SEEN_MAX_IDS, MAX_PAGE_LIMIT, OHBOX_BAR_MAX_BYTES,
   PROFILE_IMPORT_MAX, SCHEDULE_MAX_AHEAD_MS, SEARCH_QUERY_MAX_CHARS,
   SEED_MAX_ADDRESSES, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -739,7 +739,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── search ──────────────────────────────────────────────────────────────────────────────
   "GET /search": {
     bounds: [SEARCH_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT],
-    door: "`folder`/`sender` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
+    door: "`folder`/`sender`/`to`/`party` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
   },
 
   // ── privacy ─────────────────────────────────────────────────────────────────────────────
@@ -809,6 +809,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
       DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
+  // A draft from the person's own words: the words, and their own subject; the two ids are equalities.
+  "POST /drafts/from-text": { bounds: [DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS] },
   // Send later with files (mail 0180): the send's two transports with their own bounds, the year,
   // a server's seven days and its per-account quota, each refused before any download.
   "POST /drafts/:id/schedule-with-files": {
@@ -822,6 +824,10 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   /* One body field, `draftId`, shape-checked as an id and recorded only when the account holds that
      draft; the key is the `Idempotency-Key` header, one equality predicate on the reservation. */
   "POST /sends/withdraw": { scalarsOnly: true },
+  /* An invitation's answer: two body fields, each one of three words refused by shape, and the key is
+     the send's own `Idempotency-Key`, bounded as the send's. What it sends is written from the
+     stored row, never from the request. */
+  "POST /messages/:id/invitation/answer": { scalarsOnly: true },
   "POST /drafts/:id/resolve": { door: "the only body field is a two-member enum, bounded by shape; the ids it writes are its own path parameter and the ledger rows already attached to it" },
   "POST /drafts/:id/send": {
     // `forwardZone`/`forwardLocale` name how the quoted header dates the original, capped at the parsers.
@@ -1331,6 +1337,10 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // shape it does not decode to.
   "routes/search.ts#cursor": "length-capped",
   "routes/search.ts#sender": "request-line",
+  // `sender`'s twins on the other side: `to` is an equality on the recipients' keys, `party` that
+  // or `sender`'s, each one comparison a letter whatever its length.
+  "routes/search.ts#to": "request-line",
+  "routes/search.ts#party": "request-line",
   "routes/search.ts#sort": "closed-set",
   "routes/search.ts#unread": "closed-set",
   // ── The ADMIN console's four, invisible until the query extractor resolved local aliases ──

@@ -9,6 +9,8 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
   // throw is the wrong verb here.
   readAccountErasedAt, readMailboxErasedAt, fenceErased, AccountErasedError, MailboxErasedError,
   isCalendarRecordKind,
+  // The one door to `message_invitations` (mail 0204): the copy writes what the record carries.
+  putInvitationCopy,
 } from "@trafficflow/db";
 import {
   calCalendars, calConnections, calEvents, calSettings, calSuggestions,
@@ -1980,6 +1982,10 @@ async function applyUpsert(
       // how the wire delivers them — see {@link applyLabels}.
       await applyLabels(tx, world, m.id, m.labels);
       await mirrorAutoReply(tx, dia, world, m.mailboxId, m, now);
+      /* THE INVITATION THE LETTER CARRIES (mail 0204) rides the message record, as its tags do:
+         written from the field, and gone when a later record carries none. The local door
+         re-derives the field from this row, so the copy shows what Cloud shows. */
+      await putInvitationCopy(tx as never, { accountId: world.accountId, messageId: m.id, mailboxId: m.mailboxId }, m.invitation ?? null);
       gen?.message.add(m.id);
       // Mark the thread STUB too: a surviving message pins its thread via the FK, so the sweep must
       // not treat that thread as a phantom even when the thread's own change never arrives.

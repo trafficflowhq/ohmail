@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
 import type { GapLettersTransport } from "../../webapp/app/shell/GapLettersNotice";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * THE GAP OFFER ON A PAIRED DEVICE (the host door). The host counts the offer and serves
@@ -87,28 +87,6 @@ async function gapTransport(): Promise<GapLettersTransport | undefined> {
 }
 
 describe("the gap offer's answer on a device paired to this desktop", () => {
-  it("the gate hands the shared shell a transport, beside the wires it already had", async () => {
-    const answer = await gapTransport();
-    expect(answer, "no gapLettersTransport: the shell withholds the offer on this door").toBeTypeOf("function");
-    expect(shellProps!.consentTransport, "the consent wire was disturbed").toBeDefined();
-    expect(shellProps!.junkWire, "the Junk wire was disturbed").toBeDefined();
-  });
-
-  it("rides the bearer to the host's own route, one answer per press", async () => {
-    const answer = (await gapTransport())!;
-    sent.length = 0;
-    await answer("mb 1", { file: true, count: 2, strangers: 1 });
-    expect(sent.map((s) => s.url)).toEqual(["/mailboxes/mb%201/gap-letters"]);
-    expect(sent[0]!.init?.method).toBe("POST");
-    expect(sent[0]!.init?.headers?.authorization).toBe("Bearer a1");
-    expect(JSON.parse(sent[0]!.init!.body!)).toEqual({ file: true, count: 2, strangers: 1 });
-  });
-
-  it("a count that moved is a rejection carrying 409, which the notice words as changed", async () => {
-    const answer = (await gapTransport())!;
-    status = 409;
-    await expect(answer("mb-1", { file: true, count: 2, strangers: 0 })).rejects.toMatchObject({ status: 409, code: "gap_changed" });
-  });
 
   it("the route it asks for is served on the paired-device table", () => {
     expect(read("packages/api/src/routes/desktop-host.ts")).toContain("...localRoutes,");

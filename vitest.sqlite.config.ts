@@ -157,6 +157,11 @@ export default defineConfig({
       "packages/services/test/send-offer-state.test.ts",
       // A slow submission's Sent copy, its dropped upload and its dead probe: the phone sends on this store.
       "packages/services/test/send-service.test.ts",
+      // An invitation answered by mail (mail 0204): the standalone phone sends the answer and records
+      // it on this store, through the same draft, reservation and calendar part.
+      "packages/services/test/send-calendar-part.test.ts",
+      "packages/services/test/invitation-answer-service.test.ts",
+      "packages/api/test/invitation-answer-route.test.ts",
       // A forward that met the mailbox's own IMAP cap, through the route and the door the Desktop and
       // phone serve it with: offered again on this store, and its replay sends it once.
       "packages/api/test/send-rearm-forward-cap.test.ts",
@@ -241,6 +246,13 @@ export default defineConfig({
       // …and the ingest that writes the server's section in the first place: the worker's cycle,
       // which the sidecar composes over this store.
       "apps/worker/test/attachment-sections-ingest.test.ts",
+      // An invitation's identity kept at ingest (mail 0204): a phone keeps it on this store, and
+      // runs the pass that gives the letters it stored before their rows.
+      "apps/worker/test/invitation-ingest.test.ts",
+      "apps/worker/test/invitation-backfill.test.ts",
+      // …and neither answers one: no draft, no reservation, without the person's press.
+      "apps/worker/test/invitation-sends-nothing.test.ts",
+      "test/invitation-corpus-one-letter.test.ts",
       // One message over the html cap, ingested with the phone's Buffer: the store's CHECK is the
       // refusal the device met, so the device store is the one this boundary is measured on.
       "apps/worker/test/phone-buffer-one-message.test.ts",
@@ -469,6 +481,8 @@ export default defineConfig({
       // every page this store serves, and they spell `replace`, `trim`, `strpos` and `substr` —
       // one of which (`chr`) is Postgres-only and was caught here before it shipped.
       "packages/services/test/calendar-facts-parity.test.ts",
+      // …and the invitation a letter carries (mail 0204), joined in the same statement on this store.
+      "packages/services/test/dto-invitation.test.ts",
       // The erase arm's advisory lock, which was the last of those sites and the one the census
       // found rather than the burn-down: raw, it was a method this store's handle does not have,
       // so the whole removal threw and rolled back. Watched fail here with that spelling restored.
@@ -559,6 +573,9 @@ export default defineConfig({
       // on this store. Watched fail here with the server's spelling restored in that fragment
       // ("unrecognized token: \":\"", one case) while the same mutation stayed green on the other.
       "packages/db/test/request-apply.test.ts",
+      // Where a move into a person's own folder may go: the desktop and the phone organize over this
+      // store, and the name must match exactly here too (no case folding by the store's collation).
+      "packages/services/test/folder-destination.test.ts",
       // The Screener's act on suggestions, which the local engine runs over this store: its filing
       // is `applyScreenerDecision`, whose mark-read upsert bound a JavaScript boolean raw — this
       // driver refuses one, and the two denying cases failed here while the other store passed.

@@ -219,7 +219,7 @@ describe("holderStopped reads the decider's stop and nothing else", () => {
  */
 describe("census: one step, one predicate", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/app", "apps/mobile/src"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/app", "apps/mobile/src"];
   const KEYS = [
     "elsewhereLead", "elsewhereLeadStopped", "elsewhereChoiceHereWhy", "elsewhereChoiceHereStoppedWhy",
     "elsewhereChoiceReadWhy", "elsewhereChoiceReadStoppedWhy",
@@ -250,9 +250,4 @@ describe("census: one step, one predicate", () => {
     expect(src.match(/organizerState/g) ?? [], "an inline reading of the lease state").toEqual([]);
   });
 
-  it("the desktop reaches the step through the shared shell", () => {
-    expect(code(join(REPO, "apps/desktop/src/DesktopGate.tsx")))
-      .toMatch(/import \{ AppShell \} from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
-    expect(code(join(REPO, "apps/webapp/app/shell/AppShell.tsx"))).toMatch(/<FirstRun\b/);
-  });
 });

@@ -1,6 +1,6 @@
 import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import {
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES,
   type OrganizerIntent,
 } from "@trafficflow/db";
 import { WATCHED_FOLDERS, type ImapAuth } from "./imap-types.js";
@@ -746,7 +746,7 @@ const H = {
  * other way (`packages/core` already imports from db). One definition, in the package that cannot
  * reach the other; the equality test is deleted with the second literal.
  */
-export { CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE };
+export { CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES };
 
 /** Strip CR/LF so a display name can never inject a header. */
 function headerSafe(v: string): string {
@@ -4709,10 +4709,12 @@ export function verifyRequestSignature(key: string, f: RequestSignatureFields, s
 }
 
 /**
- * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same SIX
+ * WHAT AN ORGANIZER DRAINS. Closed by `organizer_requests_kind_closed` in Postgres — the same
  * members, and the two lists must move together in that order: the widening migration ships ahead
  * of the code that writes the new member, so a row an older build wrote still satisfies the CHECK
  * and an older build keeps working against a migrated database (mail 0094's own marker).
+ * `message.file` is the move into one of the person's own folders: a kind of its own, not a second
+ * shape of `message.move`, whose destination stays one of the six words.
  *
  * See {@link isRequestKind} for what a kind this build does not recognise gets: left standing, not
  * refused and not expunged — it is a record for a FUTURE build, written by a newer install on the
@@ -4723,6 +4725,7 @@ export const REQUEST_KINDS = [
   "rule.create", "rule.update", "rule.delete",
   "message.move",
   "profile.update",
+  "message.file",
 ] as const;
 export type RequestKind = (typeof REQUEST_KINDS)[number];
 
@@ -4747,6 +4750,7 @@ export const REQUEST_KIND_CAPABILITY: Readonly<Record<RequestKind, string>> = {
   "rule.delete": CAPABILITY_RULES,
   "message.move": CAPABILITY_MOVES,
   "profile.update": CAPABILITY_PROFILE,
+  "message.file": CAPABILITY_FOLDER_MOVES,
 };
 
 /** The capability {@link REQUEST_KIND_CAPABILITY} names for one kind. */
@@ -5139,6 +5143,12 @@ export const REQUEST_REFUSAL_REASONS = [
    * list says nothing for it; `stale` keeps meaning a request older than the reader's window.
    */
   "superseded",
+  /**
+   * A move into one of the person's own folders named a folder this organizer's mailbox does not
+   * list (renamed or deleted since, in ohmail or another mail app), or one a folder command is still
+   * being carried out on. The letter stays where it is.
+   */
+  "no_such_folder",
 ] as const;
 export type RequestRefusalReason = (typeof REQUEST_REFUSAL_REASONS)[number];
 

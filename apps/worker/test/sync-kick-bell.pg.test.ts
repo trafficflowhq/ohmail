@@ -104,7 +104,9 @@ describe("the doorbell on a live worker", () => {
     process.stdout.write(`[doorbell] stamp -> served ${Date.now() - at} ms\n`);
     expect(served, "the signal rang nothing: the stamp waits for a floor ten minutes away").toBe(true);
     expect(await waitFor(async () => fleet.syncs > before, 5_000), "the kick asked for no cycle").toBe(true);
-    // What an operator reads: the bell said it started, and the scan said what rang it.
+    // What an operator reads: the bell said it started, and the scan said what rang it (written once
+    // the stamp's clearing returns, so it is waited for as the stamp was).
+    await waitFor(async () => said("sync_kick").length > 0, 5_000);
     expect(said("sync_doorbell_started").map((l) => [l.everyMs, l.ms, l.droppedFields])).toEqual([[NO_FLOOR_MS, SYNC_KICK_SIGNAL_GAP_MS, undefined]]);
     expect(said("sync_kick").map((l) => [l.kind, l.count, l.cleared, l.droppedFields])).toEqual([["signal", 1, 1, undefined]]);
   }, 60_000);
@@ -118,6 +120,7 @@ describe("the doorbell on a live worker", () => {
     await stamp(db, m, false);
     expect(await waitFor(async () => (await stampOf(db, m.mailboxId)) === null, 4_000), "the floor never scanned").toBe(true);
     expect(await waitFor(async () => fleet.syncs > before, 5_000), "the kick asked for no cycle").toBe(true);
+    await waitFor(async () => said("sync_kick").length > 0, 5_000);
     expect(said("sync_kick").map((l) => [l.kind, l.count])).toEqual([["floor", 1]]);
   }, 60_000);
 

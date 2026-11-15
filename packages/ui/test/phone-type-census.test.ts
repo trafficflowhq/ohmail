@@ -138,7 +138,8 @@ const FILES = SHEETS.files;
 
 /**
  * Selectors that must NOT take the step.
- *  · `kbd` and its three overrides — a keycap is a glyph sized to its box, not prose.
+ *  · `kbd` and its three overrides — a keycap is a glyph sized to its box, not prose. The bare
+ *    keycap passes over the new design's own (`kbd:where(…)`), the same rule.
  *  · `.av*` — avatar initials are sized to the circle they sit in.
  *  · `.wordmark` — the brand is a mark. A pixel of drift on phones only is worse than none.
  *  · `.rte-b` — 16px, outside the band entirely; named so the reason is on the record.
@@ -147,7 +148,7 @@ const FILES = SHEETS.files;
  *    making anything easier to read — the same reasoning as `.av`. The strip's own copy
  *    beside it (`.unsaved`) IS reading text and does take the step.
  */
-const ALLOW = [/(^|,)\s*kbd\s*$/, /\.abar kbd/, /\.dbtn kbd/, /\.decide \.dbtn kbd/,
+const ALLOW = [/(^|,)\s*kbd(:where\(:not\(\[class\^="oh-"\], \[class\*=" oh-"\]\)\))?\s*$/, /\.abar kbd/, /\.dbtn kbd/, /\.decide \.dbtn kbd/,
   /\.av\b/, /\.wordmark/, /\.rte-b/, /\.unsaved-glyph/];
 /** Text controls: floored, not stepped. */
 /* `select` IS A TEXT CONTROL for this rule's purpose: iOS zooms the page on focus for a select

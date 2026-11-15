@@ -1,0 +1,236 @@
+/* The frame: placement only, from the design's tokens. Unlayered, so it wins over the kit's layer on its own nodes. */
+.fr-root {
+  --fr-rail: var(--rail);
+  --fr-listw: var(--listw);
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+ * An entry that mounts in a document's `#root` (the desktop window, the paired page) stands it at the window's height,
+ * as the web's body stands: the frame's 100% is then the window's, never its content's, so a list is a window over its
+ * rows and not every row drawn.
+ */
+#root:has(> .fr-root) {
+  height: 100%;
+}
+
+/* The person's own widths, on the desktop alone: the stored rail width, and the split the pre-paint stamp writes. */
+:root[data-device="desktop"] .fr-root {
+  --fr-rail: clamp(200px, var(--rail-w, var(--rail)), 360px);
+}
+
+/*
+ * An unfolded phone: the list ends at the window's middle, less half the gap, and is never under 300 px; the
+ * reading column is the other half (the reference's rule: 300 at 719, 327 at 841).
+ */
+:root[data-device="fold"] .fr-root {
+  --fr-listw: max(300px, round(50vw - var(--edge) - var(--rail) - 1.5 * var(--gap), 1px));
+}
+
+/* The frame's two layers, named once as the kit names its own: the reading column over the list, the dock over all. */
+.fr-frame {
+  --fr-layer-over: 2;
+  --fr-layer-dock: 3;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.fr-columns {
+  position: relative;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: var(--fr-rail) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--gap);
+  padding: var(--edge);
+  min-height: 0;
+}
+
+/* The kit's handles stand by the columns' widths: here those are the frame's, on a box of the frame's that draws nothing. */
+.fr-handle {
+  --rail: var(--fr-rail);
+  --listw: var(--fr-listw);
+
+  display: contents;
+}
+
+.fr-columns[data-norail] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.fr-main {
+  display: grid;
+  grid-template-columns: var(--fr-listw) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--gap);
+  min-width: 0;
+  min-height: 0;
+}
+
+:root[data-device="desktop"] .fr-main {
+  grid-template-columns: var(--split-user, var(--fr-listw) minmax(0, 1fr));
+}
+
+.fr-columns[data-wide] > .fr-main,
+.fr-columns[data-columns="1"] > .fr-main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.fr-reading,
+.fr-wide {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The list's column is one cell: what stands in it fills it. */
+.fr-list {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* One column: the reading column stands over the list, which keeps its place under it. */
+.fr-columns[data-columns="1"] {
+  padding: 0;
+}
+
+.fr-columns[data-columns="1"] .fr-main {
+  position: relative;
+}
+
+.fr-reading[data-over] {
+  position: absolute;
+  inset: 0;
+  z-index: var(--fr-layer-over);
+  background: var(--ground);
+}
+
+.fr-noticebar:empty {
+  display: none;
+}
+
+.fr-noticebar {
+  flex: none;
+  padding: var(--s3) var(--edge) 0;
+}
+
+/* The notice on the list's sheet stands inset at its top. */
+.fr-noticebar[data-on-sheet] {
+  padding: var(--s2) var(--s2) 0;
+}
+
+.fr-railfoot {
+  flex: none;
+}
+
+/* The notice in the rail's foot stands a step clear of Pull new mail under it. */
+.fr-railnotice {
+  margin-bottom: var(--s2);
+}
+
+.fr-railnotice:empty {
+  display: none;
+}
+
+/* A phone's dock floats over the foot of the pane, inset from the window's edges. */
+.fr-frame[data-rail="dock"] {
+  position: relative;
+}
+
+.fr-dockbox {
+  position: absolute;
+  left: var(--s3);
+  right: var(--s3);
+  bottom: var(--s4);
+  z-index: var(--fr-layer-dock);
+}
+
+/* One column from 600 wide (an open Duo): the dock keeps a phone's measure, 440, in the middle of the foot. */
+.fr-frame[data-rail="dock"][data-size="medium"] .fr-dockbox {
+  left: max(var(--s3), calc(50% - 220px));
+  right: max(var(--s3), calc(50% - 220px));
+}
+
+/* The whole rail over the app, from the dock's More. */
+/* More's sheet: the kit's overlay part, at the window's leading edge, the whole height, on the kit's scrim. */
+.fr-railsheet {
+  justify-self: start;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  width: min(var(--rail-sheet, 320px), 85%);
+  max-height: none;
+  padding: var(--edge);
+  border-radius: 0;
+  background: var(--ground);
+}
+
+/* The one report: over the list's foot, or over the dock on a phone's width. */
+.fr-report {
+  position: absolute;
+  z-index: var(--oh-layer-over);
+  left: calc(var(--edge) + var(--fr-rail) + var(--gap) + var(--s3));
+  width: calc(var(--fr-listw) - 2 * var(--s3));
+  bottom: calc(var(--edge) + var(--s3));
+  pointer-events: none;
+}
+
+.fr-report > * {
+  pointer-events: auto;
+}
+
+.fr-frame[data-rail="dock"] .fr-report {
+  left: var(--s4);
+  right: var(--s4);
+  width: auto;
+  bottom: calc(var(--s4) + var(--h-xl) + var(--s3));
+}
+
+/* One column from 600 wide: the report keeps a phone's measure with the dock, 440 in the middle of the foot. */
+.fr-frame[data-rail="dock"][data-size="medium"] .fr-report {
+  left: max(var(--s4), calc(50% - 220px));
+  right: max(var(--s4), calc(50% - 220px));
+}
+
+/* A letter open on a phone's width draws no dock: the report stands over the letter's panel at the foot. */
+.fr-frame[data-rail="dock"][data-letter] .fr-report {
+  bottom: calc(var(--s4) + var(--h-m) + var(--s3) + var(--s4));
+}
+
+.fr-stage {
+  position: absolute;
+  inset: 0;
+  z-index: var(--oh-layer-top);
+  overflow: auto;
+  background: var(--ground);
+}
+
+.fr-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A fed entry's drop-target box draws nothing: the kit's entry lays out as if it stood alone. */
+.fr-railtarget {
+  display: contents;
+}
+
+/* A fed rail's box for the feeder's key mark: no box of its own, whatever the mark's classes are styled with. */
+.fr-columns > .fr-railzone,
+.fr-railsheet > .fr-railzone {
+  display: contents;
+}

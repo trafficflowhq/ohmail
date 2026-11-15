@@ -40,8 +40,8 @@ const ids = (label: string): string[] =>
 const unreadCount = (): string | null => /(\d+) unread/.exec(host!.textContent ?? "")?.[1] ?? null;
 /** The rail's Ohbox count — the same number the dock badge is told (`onUnread`). */
 const railCount = (): string | null => {
-  const item = [...host!.querySelectorAll<HTMLElement>("button.ritem")].find((b) => b.textContent?.startsWith("Ohbox"));
-  return item?.querySelector(".cnt")?.textContent ?? null;
+  const item = [...host!.querySelectorAll<HTMLElement>("nav button, nav a")].find((b) => b.textContent?.startsWith("Ohbox"));
+  return item?.querySelector(".oh-railentry-count")?.textContent ?? null;
 };
 
 async function tick(ms: number): Promise<void> {
@@ -57,7 +57,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   layout = stubThreadLayout();
   setViewport();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);

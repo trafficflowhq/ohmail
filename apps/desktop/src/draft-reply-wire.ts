@@ -3,7 +3,7 @@
  * transport and with no door in this module. The shared draft control decides when to spend, mints
  * the press's key and lands the text in the editor; this file only carries its two calls. The
  * desktop window hands in its bridge (`local-draft-reply.ts`), the served host client its bearer
- * socket (`host-client/transports.ts`): no transport is imported here, for `junk-wire.ts`'s reason
+ * socket (`apps/paired-page/src/transports.ts`): no transport is imported here, for `junk-wire.ts`'s reason
  * (`scan:host` refuses the bridge in the bundle a phone is handed).
  */
 

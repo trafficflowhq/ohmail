@@ -6,8 +6,8 @@
  */
 import {
   CANNOT, NONE,
-  type DeviceNotifications, type Entries, type HostConnectionState, type HostContract, type HostReads, type HostSession,
-  type LinkedDraft, type Transports,
+  type DeviceNotifications, type Entries, type FrameSupplies, type HostConnectionState, type HostContract, type HostReads, type HostSession,
+  type LinkedDraft, type MayBeNone, type Transports,
 } from "@ohmail/app/host";
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../../shell/AwayResponderRow";
@@ -52,6 +52,8 @@ export interface WebFacts {
   readonly foldersStorable: boolean;
   /** The account the page has believed, or null before it has. */
   readonly scope: string | null;
+  /** The account the server confirmed, or null until it has. */
+  readonly account: string | null;
   readonly build: { readonly version: string | null; readonly commit: string | null };
 }
 
@@ -63,8 +65,14 @@ export interface WebSupplies {
     readonly signOut: Supplied<HostSession["signOut"]>;
   };
   readonly reads: { readonly mailboxes: Supplied<HostReads["mailboxes"]>; readonly access: Supplied<HostReads["access"]> };
-  /** Every wire but the switch for a person's own model, which only a desktop on its own has. */
-  readonly wires: Transports<Exclude<keyof HostContract["wires"], "ownModelAutoSuggest">>;
+  /**
+   * Every wire but the switch for a person's own model, which only a desktop on its own has. A browser hands in no
+   * picture fetcher, and the five calls today's views still make themselves are `none` until their first caller.
+   */
+  readonly wires: Transports<
+    | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "consent" | "olderBody" | "junk" | "trash"
+    | "suggest" | "draftReply"
+  > & MayBeNone<"images" | "firstRun" | "screening" | "autoFiled" | "seedReview" | "folderSummary" | "mailboxes">;
   /** The account's features. Never the desktop's. */
   readonly features: Entries<
     | "account" | "mailboxes" | "ai" | "subscription" | "storage" | "storageCard" | "accountStrip" | "invites"
@@ -72,6 +80,8 @@ export interface WebSupplies {
   >;
   /** The browser's own notification reader. */
   readonly notifications: DeviceNotifications;
+  /** The places, the address bar, the window, the look and the way back. */
+  readonly frame: FrameSupplies;
 }
 
 export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): HostContract {
@@ -83,7 +93,9 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       confirmed: has.session.confirmed,
       state: "live",
       scope: facts.scope,
+      account: facts.account,
       signOut: has.session.signOut,
+      recover: has.frame.recover,
     },
     reads: { mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access },
     wires: {
@@ -120,6 +132,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       desktop: NONE,
       defaultMail: NONE,
       stageCard: NONE,
+      places: has.frame.places,
+      stages: has.frame.stages,
     },
     device: {
       build: { surface: "web", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: true },
@@ -130,7 +144,9 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       pickFile: NONE,
       saveFile: NONE,
       defaultMail: NONE,
-      appearance: NONE,
+      address: has.frame.address,
+      window: has.frame.window,
+      appearance: has.frame.appearance,
       textSize: NONE,
       fold: NONE,
       liveTheme: NONE,

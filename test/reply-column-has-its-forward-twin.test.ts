@@ -49,6 +49,10 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   // AN AI DRAFT ANSWERS the message it was asked about; nothing drafts a forward.
   [WORKFLOW_RUNTIME, "inReplyToMessageId: messageId", "an AI reply"],
   ["packages/services/src/drafting-service.ts", "inReplyToMessageId: target.id", "an AI reply"],
+  ["packages/services/src/drafting-service.ts", "optionalId(raw.inReplyToMessageId", "an AI reply"],
+  ["packages/services/src/drafting-service.ts", "inReplyToMessageId: letter.id", "an AI reply"],
+  // A draft from the person's own words may answer a letter; it forwards none.
+  ["packages/wire/src/requests.ts", "inReplyToMessageId?: string;", "an AI reply"],
   // The demo world's one reply draft.
   ["packages/testing/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
 ];

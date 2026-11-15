@@ -224,7 +224,7 @@ function engineOver(s: MirrorStore, page: Page): OhmailEngine {
 async function mountShell(opts: {
   hash: string; messages?: string[]; rows?: string[]; store?: MirrorStore;
 }): Promise<Page> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   // The route the page OPENS on, before anything renders: a page does not arrive by navigating.
   window.location.hash = opts.hash;

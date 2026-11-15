@@ -264,6 +264,6 @@ describe("a signed-in user with mail on the server is never told there is none",
     expect(textOf(el), "the empty pane never settled").toContain(OHBOX.emptyPlain);
     // And the reason is on screen, from the one surface entitled to say it.
     expect(textOf(el), "no surface explained why the mirror is frozen")
-      .toContain(messages.sync.failing);
+      .toContain(messages.frame.connection.reconnecting.title /* the strip's retrying sentence, as the notice says the state */);
   });
 });

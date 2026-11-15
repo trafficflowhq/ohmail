@@ -1,0 +1,166 @@
+[
+  {
+    "keys": [
+      "screen=states",
+      "face=ohmarchy&screen=states",
+      "scheme=dark&screen=states",
+      "face=ohmarchy&scheme=dark&screen=states",
+      "screen=states&show=full",
+      "kind=connection&screen=states&show=offline",
+      "kind=reports&say=Parked&screen=states",
+      "device=fold&screen=states"
+    ],
+    "out": [
+      {
+        "role": "group",
+        "name": "Mail or Calendar"
+      },
+      {
+        "role": "button",
+        "name": "ohmail"
+      },
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ],
+    "paint": [
+      {
+        "on": {
+          "role": "navigation"
+        },
+        "property": "maskImage",
+        "keys": ["screen=states&show=full"]
+      }
+    ],
+    "drawn": [
+      {
+        "role": "navigation",
+        "property": "paddingTop",
+        "keys": ["face=ohmarchy&screen=states", "face=ohmarchy&scheme=dark&screen=states"]
+      }
+    ],
+    "picture": [
+      {
+        "part": "rail",
+        "crop": 0,
+        "box": [0, 722, 224, 2],
+        "keys": ["face=ohmarchy&screen=states", "face=ohmarchy&scheme=dark&screen=states"]
+      },
+      {
+        "part": "rail",
+        "crop": 0,
+        "box": [0, 551, 232, 55],
+        "keys": ["screen=states&show=full"]
+      }
+    ],
+    "reason": "No calendar stands in the app: the kit's rail has the switch's place and the frame hands it none. This is why the rail's body is measured from Write. Its two effects beyond its nodes go with it: ohmarchy's rail pads 12 px over its first control with the switch and 10 without, and the foot's top line moves with it (the body's last two rows); and with the switch the full rail scrolls, so the reference fades its last 28 px with a mask and cuts the entry under them (Settings), where the product's rail fits: the mask, and the picture from the fade to that entry's end.",
+    "since": "2026-11-15",
+    "removedBy": "cal-views"
+  },
+  {
+    "keys": [
+      "screen=states",
+      "device=phone&screen=states",
+      "device=fold&screen=states",
+      "device=foldl&screen=states",
+      "face=ohmarchy&screen=states",
+      "scheme=dark&screen=states",
+      "face=ohmarchy&scheme=dark&screen=states",
+      "screen=states&show=full",
+      "kind=connection&screen=states&show=offline",
+      "kind=reports&say=Parked&screen=states"
+    ],
+    "paint": [
+      {
+        "on": "window",
+        "property": "colorScheme"
+      }
+    ],
+    "reason": "The product says color-scheme on the root, so scrollbars and native controls follow the scheme; the reference says none. The new design keeps it, and the reference adds the line.",
+    "since": "2026-11-15",
+    "removedBy": "the reference's next tag"
+  },
+  {
+    "keys": [
+      "screen=states",
+      "face=ohmarchy&screen=states",
+      "scheme=dark&screen=states",
+      "face=ohmarchy&scheme=dark&screen=states",
+      "screen=states&show=full",
+      "kind=connection&screen=states&show=offline",
+      "kind=reports&say=Parked&screen=states"
+    ],
+    "pairs": [
+      {
+        "role": "navigation",
+        "name": "Places",
+        "as": "Main"
+      },
+      {
+        "role": "button",
+        "name": "Ohbox, 5",
+        "as": "Ohbox 5"
+      },
+      {
+        "role": "button",
+        "name": "News, 5",
+        "as": "News 5"
+      },
+      {
+        "role": "button",
+        "name": "Receipts, 2",
+        "as": "Receipts 2"
+      },
+      {
+        "role": "button",
+        "name": "Screener, 6",
+        "as": "Screener 6"
+      },
+      {
+        "role": "button",
+        "name": "Answer Later, 2",
+        "as": "Answer Later 2"
+      },
+      {
+        "role": "button",
+        "name": "Parked, 1",
+        "as": "Parked 1"
+      },
+      {
+        "role": "button",
+        "name": "Resurface, 1",
+        "as": "Resurface 1"
+      },
+      {
+        "role": "button",
+        "name": "Drafts, 1",
+        "as": "Drafts 1"
+      }
+    ],
+    "reason": "Today's names while today's views feed the full rail: the landmark is Main, and a counted entry is named \"Ohbox 5\" for \"Ohbox, 5\" (handover rows 12, 13). Box, state and drawing bind.",
+    "since": "2026-11-15",
+    "removedBy": "removals"
+  },
+  {
+    "keys": ["device=fold&screen=states", "device=foldl&screen=states"],
+    "pairs": [
+      {
+        "role": "button",
+        "name": "",
+        "nth": 0,
+        "as": "History"
+      },
+      {
+        "role": "button",
+        "name": "",
+        "nth": 1,
+        "as": "Settings",
+        "keys": ["device=fold&screen=states"]
+      }
+    ],
+    "reason": "The upright dock's History (719, 841) and Settings (719) are unnamed in the reference; the rest of each binds.",
+    "since": "2026-11-15",
+    "removedBy": "the reference's next tag"
+  }
+]

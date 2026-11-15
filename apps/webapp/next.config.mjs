@@ -515,6 +515,16 @@ const ZONE_PREFIX_SOURCE = ZONE_PATHS.filter((p) => p.endsWith("/:path*"))
   .map((p) => asPattern(p.slice(1, -"/:path*".length))).join("|");
 
 /**
+ * The vendored pdf.js worker, named by the first 16 hex of its SHA-256 (`AttachmentPreview.tsx` asks for it): the one
+ * file this program serves with a year's life, by its exact name. A recopied worker is a new name, so a browser never
+ * holds old bytes under it. Every other rule still reaches it; this one adds the life alone.
+ */
+const PDF_WORKER_RULE = {
+  source: "/pdf.worker.0613f41490dd6aac.min.mjs",
+  headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+};
+
+/**
  * The header rules, for a build with or without a website measurement id (`analytics.mjs`).
  * Without one they are exactly the two rules every build had. With one, the website's documents
  * (`MARKETING_PATHS`) get the baseline plus the Google sources, and the blanket rule EXCLUDES them
@@ -562,6 +572,7 @@ export function headerRules(gaId, zone = null, staging = null) {
         source: `/((?:${ZONE_EXACT_SOURCE})|(?:${ZONE_PREFIX_SOURCE})/.*)`,
         headers: [...STATIC_SECURITY_HEADERS],
       },
+      PDF_WORKER_RULE,
     ];
   }
   if (gaId === null) {
@@ -576,6 +587,7 @@ export function headerRules(gaId, zone = null, staging = null) {
           ...STATIC_SECURITY_HEADERS,
         ],
       },
+      PDF_WORKER_RULE,
     ];
   }
   const site = MARKETING_PATHS.map((p) => p.slice(1)).join("|");
@@ -595,6 +607,7 @@ export function headerRules(gaId, zone = null, staging = null) {
         ...STATIC_SECURITY_HEADERS,
       ],
     },
+    PDF_WORKER_RULE,
   ];
 }
 

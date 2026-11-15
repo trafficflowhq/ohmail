@@ -58,7 +58,7 @@ afterEach(async () => {
 
 async function shell(hash = "", minRows = 3): Promise<void> {
   if (hash) window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -255,32 +255,6 @@ describe("the phone's letter sheet (R21-06)", () => {
   });
 });
 
-describe("Escape gives focus back to what opened the palette and Search (R18-02)", () => {
-  it("the palette, opened from a rail row, returns to that row", async () => {
-    await shell();
-    const opener = await tabTo((el) => el.matches("nav.rail .ritem") && /History/.test(el.textContent ?? ""), "the rail's History row");
-    await key("k", { ctrlKey: true });
-    await settle();
-    expect(document.querySelector(".palette"), "Ctrl+K did not open the palette").not.toBeNull();
-    await key("Escape");
-    await settle();
-    expect(document.querySelector(".palette")).toBeNull();
-    expect(focused(), `after Escape focus is on ${where()}`).toBe(opener);
-  });
-
-  it("Search, opened from the rail, returns to the rail's Search row", async () => {
-    await shell();
-    await tabTo((el) => el.matches("nav.rail .ritem") && /Search/.test(el.textContent ?? ""), "the rail's Search row");
-    await enter();
-    await waitFor(() => document.querySelector(".view-search") !== null, "Search did not open");
-    await key("Escape");
-    await waitFor(() => document.querySelector(".view-search") === null, "Escape did not leave Search");
-    await settle();
-    const now = focused();
-    expect(now?.matches("nav.rail .ritem") && /Search/.test(now.textContent ?? ""), `after Escape focus is on ${where()}`).toBe(true);
-  });
-});
-
 describe("the collapsed Screener doorbell (R18-01)", () => {
   it("is no Tab stop and no node in the tree; standing, it is both (control)", async () => {
     const { Doorbell } = await import("@ohmail/ui");
@@ -319,5 +293,31 @@ describe("a surface that closes after the page has gone (the unhandled errors at
     document.documentElement.appendChild(body);
     vi.unstubAllGlobals();
     expect(errors.map(String)).toEqual([]);
+  });
+});
+
+describe("Escape gives focus back to what opened the palette and Search (R18-02)", () => {
+  it("Search, opened from the rail, returns to the rail's Search row", async () => {
+    await shell();
+    await tabTo((el) => el.matches("[data-rail-id] button") && /Search/.test(el.textContent ?? ""), "the rail's Search row");
+    await enter();
+    await waitFor(() => document.querySelector(".view-search") !== null, "Search did not open");
+    await key("Escape");
+    await waitFor(() => document.querySelector(".view-search") === null, "Escape did not leave Search");
+    await settle();
+    const now = focused();
+    expect(now?.matches("[data-rail-id] button") && /Search/.test(now.textContent ?? ""), `after Escape focus is on ${where()}`).toBe(true);
+  });
+
+  it("the palette, opened from a rail row, returns to that row", async () => {
+    await shell();
+    const opener = await tabTo((el) => el.matches("[data-rail-id] button") && /History/.test(el.textContent ?? ""), "the rail's History row");
+    await key("k", { ctrlKey: true });
+    await settle();
+    expect(document.querySelector(".palette"), "Ctrl+K did not open the palette").not.toBeNull();
+    await key("Escape");
+    await settle();
+    expect(document.querySelector(".palette")).toBeNull();
+    expect(focused(), `after Escape focus is on ${where()}`).toBe(opener);
   });
 });

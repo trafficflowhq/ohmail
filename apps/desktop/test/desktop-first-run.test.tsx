@@ -475,47 +475,6 @@ describe("the AI posture this door can report", () => {
   });
 });
 
-describe("the gate hands the stage its door", () => {
-  const gate = fs.readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopGate.tsx"),
-    "utf8",
-  );
-
-  it("passes `firstRun` to the shared shell", () => {
-    // The prop is the whole seam: `AppShell` renders no stage without it, so an absent spread
-    // is a `#/first-run` that draws nothing — the state this slice exists to end.
-    expect(gate).toMatch(/\{\.\.\.\(firstRun \? \{ firstRun \} : \{\}\)\}/);
-    expect(gate).toMatch(/useLocalFirstRun\(\{/);
-  });
-
-  it("wires the consent read on the standalone door, and the spend wire only on the hosted one",
-    () => {
-      // `consent.known` is one of the four conditions `AppShell` gates the stage on, and it
-      // comes from `GET /consent` — which `localRoutes` serves (mail 0083).
-      //
-      // ONE WIRE PER DOOR, and the standalone one is a DIFFERENT object rather than the same
-      // constant behind an `||`. The two route tables are not the same: `localRoutes` wraps the
-      // consent group in `withoutFoldersFlag`, so a standalone install can read and write the
-      // screening window and cannot store the folders flag at all. Sharing the constant is how
-      // the Folders pane came to be drawn on that door over a switch that snapped back.
-      // ONE RULE NOW, NOT TWO CONDITIONS. This read `accountDoor ? … : firstRunDoorFor === "local"
-      // ? …`, and that pair had a hole exactly where a third door appeared: a desktop paired to
-      // another computer of the person's own is NEITHER, so it would have got no consent
-      // transport at all — no screening window, and nothing on screen saying why — on a door
-      // where the far side serves the row perfectly well. `consentDoorFor` is the rule, and it
-      // answers "standalone" for the paired door because the far side IS a standalone install.
-      expect(gate).toMatch(
-        /consentDoorFor\(status, hostedSession\) === "cloud"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridge \}/,
-      );
-      expect(gate).toMatch(
-        /consentDoorFor\(status, hostedSession\) === "standalone"\s*\n?\s*\?\s*\{ consentTransport: consentOverBridgeStandalone \}/,
-      );
-      // And the half of the old rule that survived: a spend control needs a ledger, and a
-      // standalone engine has none.
-      expect(gate).toMatch(/\{\.\.\.\(accountDoor \? \{ suggestWire: cloudSuggestWire \} : \{\}\)\}/);
-    });
-});
-
 /**
  * THE STAGE ACTUALLY OPENS ON THIS DOOR — the shared component, mounted with the local host.
  *

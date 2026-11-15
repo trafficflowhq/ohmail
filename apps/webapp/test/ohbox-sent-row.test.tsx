@@ -335,7 +335,7 @@ describe("a reply saved to a Sent folder made after connecting", () => {
       reads += 1;
       return [{ id: "mb_1", address: OWN.address, status: "connected", lastSyncAt: at(10), pendingMoves: 0, sentFolder: named }];
     };
-    const { AppShell } = await import("../app/shell/AppShell.js");
+    const { AppShell } = await import("./_todays-shell.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);

@@ -60,10 +60,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "packages/ui/src/composites/FocusReplyOverlay.tsx": [
     { text: "esc", why: "keycap — the run's exit hint names the key" },
   ],
-  "apps/webapp/app/shell/AppShell.tsx": [
-    { text: "oh", why: "wordmark — the first half of the brand" },
-    { text: "mail", why: "wordmark — the second half" },
-  ],
   "apps/webapp/app/shell/engine.tsx": [
     { text: "oh", why: "wordmark — the boot screen's mark" },
     { text: "mail", why: "wordmark — its second half" },
@@ -137,6 +133,9 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/views/SearchView.tsx": [
     { text: ".view-search .search-box input", why: "a CSS selector — how the view reaches its own query box to select the kept text and to put the caret back after Escape" },
   ],
+  "apps/webapp/app/shell/todays-feeds.tsx": [
+    { text: "rail open", why: "machine text — the class names the frame's rail zone carries, which today's keys (`zone-nav`) find it by; no person reads it" },
+  ],
   "apps/webapp/app/shell/zone-nav.tsx": [
     { text: "[role=\"dialog\"], [role=\"alertdialog\"], [role=\"menu\"]", why: "a CSS selector — what counts as a layer above the deck" },
     { text: "{} button:not([disabled])", why: "a CSS selector, composed per zone" },
@@ -161,7 +160,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
       + "`GateNotice`: its title is a success and its footer would be false, so it draws its own "
       + "`.gate-card` and carries its own mark" },
   ],
-  "apps/desktop/src/host-client/PairScreen.tsx": [
+  "apps/paired-page/src/PairScreen.tsx": [
     { text: "oh", why: "wordmark — the pairing screen's mark" },
     { text: "mail", why: "wordmark — its second half" },
   ],
@@ -199,7 +198,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
  * `vite.config.ts`'s `WINDOW_ONLY_NAMESPACES` — window-only for the reason `desktopScreener` is,
  * and provably so: the served client mounts none of these." That is what happened, and the proof
  * is now a case rather than a claim: `apps/desktop/test/desktop-messages.test.ts` walks the
- * served client's import graph from `host-client/main.tsx` and asserts no file in it reads the
+ * served client's import graph from `apps/paired-page/src/main.tsx` and asserts no file in it reads the
  * namespace, next to the assertion that the namespace is on the window-only list and not on the
  * base one.
  *

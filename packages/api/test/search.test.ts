@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { createLogger } from "@trafficflow/core/mail";
+import { createLogger, reindexMessageSearch } from "@trafficflow/core/mail";
 import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
@@ -182,6 +182,23 @@ describe("GET /search — hybrid search endpoint", () => {
     expect(gotIds).not.toContain(theirs.id);
     // Nor is it counted: the total and the facets are this account's alone.
     expect({ total: body.total, inbox: body.facets.folder.INBOX }).toEqual({ total: 1, inbox: 1 });
+
+    // The same under each person filter: both letters are from and to the same people, and a third
+    // of this account's, from and to others, is narrowed away.
+    const elsewhere = await seedMessage(db, { accountId: s.accountId, mailboxId: mb, folder: "INBOX", subject: "Invoice elsewhere", date: FIXED_NOW });
+    await seedBody(db, { messageId: elsewhere.id, text: "invoice body" });
+    await reindexMessageSearch(db as never, s.accountId, elsewhere.id);
+    for (const id of [mine.id, theirs.id]) {
+      await db.update(messages).set({ fromAddress: "ann@shared.test", toAddresses: [{ name: null, address: "ben@shared.test" }] })
+        .where(eq(messages.id, id));
+    }
+    const filters = ["sender=ann@shared.test", "to=ben@shared.test", "party=ann@shared.test", "party=ben@shared.test"];
+    // With words, and with none: the filters alone list what they keep.
+    for (const filter of [...filters.map((f) => `q=invoice&${f}`), ...filters.map((f) => `q=&${f}`)]) {
+      const r = await (await H(req("GET", `/search?${filter}`, { bearer: s.token }), deps)).json();
+      expect({ filter, ids: r.items.map((m: { id: string }) => m.id), total: r.total, inbox: r.facets.folder.INBOX })
+        .toEqual({ filter, ids: [mine.id], total: 1, inbox: 1 });
+    }
   });
 
   it("requires a session (401 without a token)", async () => {

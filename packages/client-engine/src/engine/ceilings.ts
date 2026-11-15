@@ -1,3 +1,4 @@
+import { isOrganizedFolder } from "@trafficflow/core/destinations";
 import type { ScreenerWaitingItemWire } from "../adapters/adapter.js";
 import { senderKey } from "../selectors.js";
 import type { EngineMutation, ScreenerWaitingSenderDTO } from "../types.js";
@@ -55,11 +56,20 @@ const TRAVELLING_VERBS: ReadonlySet<EngineMutation["kind"]> = new Set<EngineMuta
   "screener_decide", "rule_create", "rule_update", "rule_delete", "move", "message_delete",
 ]);
 
-/** The request kind an in-session verb travels as, until the server lists it. */
 const WIRE_KIND: Partial<Record<EngineMutation["kind"], string>> = {
   screener_decide: "screener.decide", rule_create: "rule.create", rule_update: "rule.update",
   rule_delete: "rule.delete", move: "message.move", message_delete: "message.move",
 };
+
+/**
+ * The request kind an in-session verb travels as, until the server lists it. A move into one of the
+ * person's own folders travels as a kind of its own (`message.file`), so a holder that cannot carry
+ * it out refuses it at the door.
+ */
+function wireKindOf(m: EngineMutation): string {
+  if (m.kind === "move" && !isOrganizedFolder(m.folder)) return "message.file";
+  return WIRE_KIND[m.kind] ?? m.kind;
+}
 
 /** A queue row off the wire as the mirror stores it. */
 /** Do two pages name the same left-out mailboxes (`gone`, sorted; absent from an older server)? */
@@ -176,5 +186,5 @@ function sortedJson(v: unknown, ignore: ReadonlySet<string>): string {
 
 export {
   HELD_ARRIVALS_MAX, PAGE_IS_NOT_CONTENT, QUEUE_VERBS, sameGone, sameStoredEntities, SCREENER_PAGE_REPS_MAX,
-  SCREENER_WAITING_PAGE, SCREENER_WALK_LISTED_MAX, SEARCH_INDEX_SYNC_MAX, TRAVELLING_VERBS, waitingRow, WIRE_KIND,
+  SCREENER_WAITING_PAGE, SCREENER_WALK_LISTED_MAX, SEARCH_INDEX_SYNC_MAX, TRAVELLING_VERBS, waitingRow, wireKindOf,
 };

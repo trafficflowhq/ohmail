@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import {
-  folderState, mailboxes, messages, organizerRequests,
-  MOVE_DESTINATIONS, validateMovePayload,
+  folderState, mailboxes, mailboxFolders, messages, organizerRequests,
+  MOVE_DESTINATIONS, validateMovePayload, validateFolderMovePayload,
 } from "@trafficflow/db";
 import {
   formatRequest, REQUEST_PAYLOAD_MAX_BYTES,
@@ -143,11 +143,16 @@ describe("a reader's move becomes a request, and moves nothing here", () => {
     }
   });
 
-  it("a RAW IMAP PATH is refused at the door — the applier's validator is the second line, not the first", async () => {
+  it("a RAW IMAP PATH is never queued — the folder move's own word and this store's own list both stand first", async () => {
+    // A holder without `folder_moves`: the path could only travel as a person's folder, which it cannot take.
     const { db, accountId, mailboxId, ctx } = await readerCtx();
     const id = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     await expect(messageService.move(ctx, id, { folder: "INBOX.Junk" }))
-      .rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+      .rejects.toMatchObject({ code: "organized_elsewhere", httpStatus: 409, details: { reason: "organizer_outdated" } });
+    // A holder with it: still nothing, because this mailbox lists no such folder of the person's own.
+    await db.update(mailboxes).set({ organizedByCapabilities: "requests,moves,folder_moves" }).where(eq(mailboxes.id, mailboxId));
+    await expect(messageService.move(ctx, id, { folder: "INBOX.Junk" }))
+      .rejects.toMatchObject({ code: "no_such_folder", httpStatus: 422 });
     // Nothing queued. A record naming a path would be an instruction to file a person's mail
     // outside ohmail's tree, where nothing in this product would ever look for it again.
     expect(await requestRows(db, accountId)).toEqual([]);
@@ -317,5 +322,60 @@ describe("the organizer's own path is unchanged — the positive control every r
     const other = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     await expect(messageService.delete(ctx, other))
       .rejects.toMatchObject({ code: "no_trash_folder", httpStatus: 422 });
+  });
+});
+
+/**
+ * A READER'S MOVE INTO ONE OF THE PERSON'S OWN FOLDERS travels as `message.file`, which the holder
+ * must advertise (`folder_moves`): a holder without it refuses at this door and nothing is queued.
+ * The folder is checked against THIS store's list first; the organizer checks its own again.
+ */
+describe("a reader's move into a person's own folder becomes a message.file request, or nothing", () => {
+  async function withFolder(caps = "requests,moves,folder_moves") {
+    const r = await readerCtx({ organizedByCapabilities: caps });
+    await r.db.insert(mailboxFolders).values({ mailboxId: r.mailboxId, accountId: r.accountId, folder: "Clients/Acme" });
+    const id = await seedMessage(r.db, r.accountId, r.mailboxId, { folder: "INBOX" });
+    return { ...r, id };
+  }
+
+  it("a holder advertising moves but not folder_moves is 409 organizer_outdated, naming it; nothing is queued", async () => {
+    const { db, accountId, ctx, id } = await withFolder("requests,moves");
+    await expect(messageService.move(ctx, id, { folder: "Clients/Acme" })).rejects.toMatchObject({
+      code: "organized_elsewhere", httpStatus: 409,
+      details: { reason: "organizer_outdated", by: { kind: "local", name: "mila-thinkpad" } },
+    });
+    expect(await requestRows(db, accountId)).toEqual([]);
+  });
+
+  it("a holder that stopped is 409 no_organizer; nothing is queued", async () => {
+    const r = await withFolder();
+    await r.db.update(mailboxes).set({ organizerState: "stopped" }).where(eq(mailboxes.id, r.mailboxId));
+    await expect(messageService.move(r.ctx, r.id, { folder: "Clients/Acme" }))
+      .rejects.toMatchObject({ code: "organized_elsewhere", details: { reason: "no_organizer" } });
+    expect(await requestRows(r.db, r.accountId)).toEqual([]);
+  });
+
+  it("a folder this store does not list, or not the person's own, is 422 here; nothing is queued", async () => {
+    const { db, accountId, ctx, id } = await withFolder();
+    for (const folder of ["Clients/Gone", "clients/acme", "Trash"]) {
+      await expect(messageService.move(ctx, id, { folder }), folder).rejects.toMatchObject({ code: "no_such_folder", httpStatus: 422 });
+    }
+    expect(await requestRows(db, accountId)).toEqual([]);
+  });
+
+  it("with the word and the folder listed: 202 and exactly one message.file row, as the organizer's validator reads it; nothing moved here", async () => {
+    const { db, accountId, mailboxId, ctx, id } = await withFolder();
+    const dedupKey = await dedupKeyOf(db, id);
+    const floor = new Date("2026-07-27T12:00:00.000Z");
+    const result = await messageService.move({ ...ctx, pressFloor: floor, pressAged: true }, id, { folder: "Clients/Acme" }) as MoveRequestResult;
+    expect(result.pending).toBe(true);
+    const rows = await requestRows(db, accountId);
+    expect(rows.map((r) => [r.kind, r.mailboxId, r.state])).toEqual([["message.file", mailboxId, "pending"]]);
+    expect(rows[0]!.payload).toEqual({ dedupKey, folder: "Clients/Acme", pressedAt: floor.toISOString() });
+    expect(validateFolderMovePayload(rows[0]!.payload)).toEqual({ dedupKey, folder: "Clients/Acme", pressedAt: floor });
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, id));
+    expect(fs).toMatchObject({ desiredFolder: "INBOX", observedFolder: "INBOX" });
+    expect(result.dto.folder).toBe("INBOX");
+    expect(await changesFor(db, accountId)).toEqual([]);
   });
 });

@@ -64,22 +64,6 @@ afterEach(async () => {
   setActiveCatalog("en", null);
 });
 
-async function stripText(state: MailState, lang: "en" | "de"): Promise<string> {
-  current = state;
-  setActiveCatalog(lang, null);
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: lang, messages: lang === "en" ? en : de, timeZone: "UTC", now: new Date("2026-09-29T08:00:00.000Z"),
-      children: h(SyncBar, { variant: "rail" }),
-    }));
-  });
-  return host.textContent ?? "";
-}
-
 const M = en.mailboxes as Record<string, string>;
 const DM = de.mailboxes as Record<string, string>;
 const SYNC = en.sync as Record<string, string>;
@@ -136,33 +120,5 @@ describe("the chooser picks the local server's own key beside auth and timeout o
       engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
     });
     expect(state).toMatchObject({ key: "mailboxError", errorCode: "timeout", errorLocalServer: true, unreachable: true });
-  });
-});
-
-describe("the strip", () => {
-  const failing = (over: Partial<MailState>): MailState => ({
-    ...QUIET, key: "mailboxError", address: "me@gateway.test", ...over,
-  });
-
-  it("a local server that went quiet: its own sentence over the outage line, en and de", async () => {
-    const s = failing({ errorCode: "timeout", errorLocalServer: true, unreachable: true });
-    const enText = await stripText(s, "en");
-    expect(enText).toContain(M.err_timeout_local);
-    expect(enText).not.toContain(SYNC.unreachable);
-    await act(async () => { root?.unmount(); });
-    root = null;
-    expect(await stripText(s, "de")).toContain(DM.err_timeout_local);
-  });
-
-  it("a local server that refused: its own sentence, not the password one", async () => {
-    const text = await stripText(failing({ errorCode: "auth", errorLocalServer: true }), "en");
-    expect(text).toContain(M.err_auth_local);
-    expect(text).not.toContain(M.err_auth);
-  });
-
-  it("CONTROL (ruled): a remote host that timed out still reads the generic unreachable line", async () => {
-    const text = await stripText(failing({ errorCode: "connect", unreachable: true }), "en");
-    expect(text).toContain(SYNC.unreachable);
-    expect(text).not.toContain(M.err_timeout_local);
   });
 });

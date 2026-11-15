@@ -84,11 +84,11 @@ async function mount(opts: { managed?: boolean; locale?: "en" | "de"; variant?: 
   const { EngineProvider } = await import("../app/shell/engine.js");
   const { MailStateProvider } = await import("../app/shell/MailStateProvider.js");
   const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  const strip = h(SyncBar, opts.variant ? { variant: opts.variant } : null);
+  const strip = h(SyncBar, null); // one slot: the strip's two placements are the frame's one notice
   const locale = opts.locale ?? "en";
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
@@ -116,6 +116,8 @@ async function nextPoll(): Promise<void> {
 
 const notice = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>('[role="status"]');
 const said = (el: HTMLElement): string => notice(el)?.textContent ?? "";
+/** What the frame's one notice slot says: the strip's sentences stand there now (the frame's own chrome beside it). */
+const slotSays = (el: HTMLElement): string => [...el.querySelectorAll(".oh-notice")].map((n) => n.textContent ?? "").join("");
 const tEn = createTranslator({ locale: "en", messages: en as never, namespace: "sync" as never }) as unknown as
   (key: string, values?: Record<string, string | number>) => string;
 const tDe = createTranslator({ locale: "de", messages: de as never, namespace: "sync" as never }) as unknown as
@@ -131,7 +133,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
     served = [row({ behind: false, since: ago(1 * MIN) })];
     await nextPoll();
     expect(notice(el), "the notice stayed after the server said fetching runs").toBeNull();
-    expect(el.textContent ?? "", "an all-clear sentence was drawn").toBe("");
+    expect(slotSays(el), "an all-clear sentence was drawn").toBe("");
 
     served = [row({ behind: true, since: ago(51 * MIN) })];
     await nextPoll();
@@ -147,7 +149,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
     const el = await mount();
     await nextPoll();
     expect(notice(el)).toBeNull();
-    expect(el.textContent ?? "").toBe("");
+    expect(slotSays(el)).toBe("");
   });
 
   it("is a calm status with nothing to press and no way to dismiss it, in both placements", async () => {
@@ -156,9 +158,9 @@ describe("the strip says new mail is late, for as long as the server says so", (
       const el = await mount(variant ? { variant } : {});
       expect(notice(el), "not a status region").not.toBeNull();
       expect(el.querySelector('[role="alert"]')).toBeNull();
-      expect(el.querySelectorAll("a, button, [role='button']")).toHaveLength(0);
+      expect(notice(el)!.querySelectorAll("a, button, [role='button']")).toHaveLength(0);
       // Standing still: nothing is running, so nothing spins.
-      expect(el.querySelector('[role="progressbar"], svg')).toBeNull();
+      expect(notice(el)!.querySelector('[role="progressbar"], svg')).toBeNull();
       await act(async () => { root!.unmount(); });
       root = null;
     }
@@ -201,7 +203,7 @@ describe("the strip says new mail is late, for as long as the server says so", (
     Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => false });
     served = [row({ behind: true, since: ago(50 * MIN) })];
     const el = await mount();
-    expect(said(el)).toContain(tEn("offline"));
+    expect(said(el)).toContain(en.frame.connection.offline.title); // the frame's offline sentence
     expect(said(el)).not.toContain(tEn("behindTitle"));
   });
 

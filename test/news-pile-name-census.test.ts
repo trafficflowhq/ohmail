@@ -65,12 +65,13 @@ describe("the pile is News in every user-facing catalogue", () => {
     });
   }
 
-  // the desktop's View menu is an English table in Rust, outside every catalogue, and
-  // kept "Reads" through the rename. Each label the client's place catalogue names must match it.
-  it("apps/desktop/src-tauri/src/menu.rs: the View menu names each place as the client does", () => {
-    const raw = fs.readFileSync(path.join(ROOT, "apps/desktop/src-tauri/src/menu.rs"), "utf8");
-    const table = raw.slice(raw.indexOf("pub const VIEWS"), raw.indexOf("];", raw.indexOf("pub const VIEWS")));
-    const rows = [...table.matchAll(/\("([a-z]+)", "([^"]+)", "CmdOrCtrl\+\d"\)/g)].map((m) => [m[1]!, m[2]!] as const);
+  // the desktop's View menu is a table in Rust, outside every catalogue, and kept "Reads"
+  // through the rename. Its labels are the shell's words table (`words.rs`, the English block);
+  // each label the client's place catalogue names must match it.
+  it("apps/desktop/src-tauri/src/words.rs: the View menu names each place as the client does", () => {
+    const raw = fs.readFileSync(path.join(ROOT, "apps/desktop/src-tauri/src/words.rs"), "utf8");
+    const table = raw.slice(raw.indexOf("pub const EN: Words"), raw.indexOf("pub const DE: Words"));
+    const rows = [...table.matchAll(/^\s*view_([a-z]+): "([^"]+)",$/gm)].map((m) => [m[1]!, m[2]!] as const);
     expect(rows.map(([id]) => id)).toEqual(["ohbox", "reads", "receipts", "screener", "triage"]);
     const place = (JSON.parse(fs.readFileSync(path.join(ROOT, "apps/webapp/messages/en.json"), "utf8")) as {
       place: Record<string, string>;

@@ -128,6 +128,25 @@ export const VERB_MATRIX: Record<MutationKind, VerbEntry> = {
         },
       },
       {
+        name: "a move into one of the person's own folders lands there, by its exact name",
+        seed: async (w) => {
+          // The folder entity is what the engine paints by: no listed folder, no paint, nothing sent.
+          await w.enableFolders();
+          await w.seedSettledFolder("Clients/Acme");
+          return { id: await w.seedMail() };
+        },
+        mutation: (_w, c) => ({ kind: "move", messageId: c.id as string, folder: "Clients/Acme" }),
+        landed: (r, c) => {
+          expect(msgOf(r, c.id as string)?.folder).toBe("Clients/Acme");
+        },
+        optimistic: "landed",
+        pass: {
+          none: "the physical IMAP move into the person's folder is reconcileFolders' (fenced, under the lease, never a " +
+            "CREATE) — apps/worker's move-before-the-walk.imap suite owns that half; the folder the route found in the " +
+            "mailbox's own list, written as the letter's place, is the server truth pinned here",
+        },
+      },
+      {
         name: "a junk verdict (move to the spam pile) lands and sticks",
         seed: async (w) => ({ id: await w.seedMail({ fromAddress: "spammer@junk.example" }) }),
         mutation: (_w, c) => ({ kind: "move", messageId: c.id as string, folder: "ohmail/Quarantine" }),

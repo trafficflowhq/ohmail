@@ -177,7 +177,7 @@ const ROSTER: MailboxFacts[] = [{
 async function shell(
   specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [],
 ): Promise<{ container: HTMLElement; store: MirrorStore; engine: OhmailEngine }> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = await storeWith(specs, older);
   const engine = engineOver(store, older);

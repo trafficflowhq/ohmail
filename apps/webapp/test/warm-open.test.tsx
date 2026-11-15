@@ -105,7 +105,7 @@ async function settle(): Promise<void> {
 /** Every account the shell COMMITTED to, in order — see `onConfirmed`. */
 let confirmedOwners: string[] = [];
 
-async function mount(resolveOwner?: OwnerResolver): Promise<HTMLDivElement> {
+async function mount(resolveOwner?: OwnerResolver, drawMail?: "now" | "wait"): Promise<HTMLDivElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -119,6 +119,7 @@ async function mount(resolveOwner?: OwnerResolver): Promise<HTMLDivElement> {
           {
             demo: false,
             ...(resolveOwner ? { resolveOwner } : {}),
+            ...(drawMail ? { drawMail } : {}),
             onConfirmed: (id: string) => { confirmedOwners.push(id); },
             children: h(Probe),
           },
@@ -382,6 +383,61 @@ describe("the check is not weakened by one step", () => {
     expect(mailbox(el)).not.toBeNull();
     expect(seenEngines.length).toBeGreaterThan(1);
     expect(new Set(seenEngines).size, "the engine was replaced when the check came back").toBe(1);
+  });
+});
+
+/**
+ * THE FIRST PAGE THE EDGE DID NOT ASK ABOUT. With the word `wait` (the page's answer when the edge skipped the
+ * session probe, or when no word came at all) the remembered mirror may open, but nothing of it is drawn until the
+ * browser's own check names that account, or until the check has had the edge's own budget and said nothing.
+ */
+describe("under the word wait, a remembered mailbox is opened but not drawn before the check", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("draws nothing while the check is pending, and the mailbox once it names the remembered account", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const check = deferredOwner();
+    const el = await mount(check.fn, "wait");
+    expect(mailbox(el), "a pending check drew the device's copy").toBeNull();
+    check.resolve({ kind: "owner", accountId: ACCOUNT_A });
+    await settle();
+    expect(mailbox(el)).not.toBeNull();
+  });
+
+  it("never draws it when the check answers none, or names another account", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    for (const answer of [{ kind: "none" }, { kind: "owner", accountId: ACCOUNT_B }] as OwnerOutcome[]) {
+      const check = deferredOwner();
+      const el = await mount(check.fn, "wait");
+      expect(mailbox(el)).toBeNull();
+      check.resolve(answer);
+      await settle();
+      expect(mailbox(el), JSON.stringify(answer)).toBeNull();
+      expect(el.textContent).toContain(messages.session.endedTitle);
+      const r = root!;
+      await act(async () => { r.unmount(); });
+      root = null;
+      host?.remove();
+    }
+  });
+
+  it("draws the device's copy once the check has said nothing for the edge's budget, and sends nothing for it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const { SESSION_TIMEOUT_MS } = await import("../app/session-gate");
+    const el = await mount(() => new Promise<OwnerOutcome>(() => {}), "wait");
+    await act(async () => { vi.advanceTimersByTime(SESSION_TIMEOUT_MS - 1); });
+    expect(mailbox(el)).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(mailbox(el), "the copy stayed hidden after the budget").not.toBeNull();
+    await act(async () => { vi.advanceTimersByTime(30_000); });
+    expect(syncUrls, "an unconfirmed mirror asked the server for changes").toBe(0);
+  });
+
+  it("under the word now, draws at once as before", async () => {
+    document.cookie = `${Cookie.OWNER_COOKIE}=${ACCOUNT_A}; Path=/`;
+    const el = await mount(() => new Promise<OwnerOutcome>(() => {}), "now");
+    expect(mailbox(el)).not.toBeNull();
   });
 });
 

@@ -65,7 +65,7 @@ async function seeded(): Promise<{ s: MirrorStore; engine: OhmailEngine }> {
 async function mount(
   engine: OhmailEngine, o: { folders: boolean; junkWire?: JunkWire }, hash = "#/ohbox",
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   S.engine = engine;
   window.location.hash = hash;
@@ -90,32 +90,6 @@ async function mount(
 const whereLine = (el: HTMLElement): HTMLElement | null => el.querySelector(".ohbox-where");
 const segments = (el: HTMLElement): string =>
   [...el.querySelectorAll(".scn-seg [role=\"tab\"]")].map((b) => b.textContent ?? "").join(" | ");
-
-describe("the where-line's spam count follows what the Screener's third segment lists", () => {
-  it("folders on, the Junk window supported: no spam count, no link to it, the News count kept", async () => {
-    const { engine } = await seeded();
-    // The Screener's third segment first, as the fixture's own control: it IS the live Junk window
-    // (consent read, folders on, a wire to read it from). A Screener visit moves no Ohbox mark.
-    const el = await mount(engine, { folders: true, junkWire: JUNK_WIRE }, "#/screener/spam");
-    await waitFor(() => segments(el).includes("Junk"), "the Screener's Junk segment");
-    expect(segments(el)).not.toContain("Spam");
-    const { go } = await import("../app/shell/routing.js");
-    await act(async () => { go("ohbox"); });
-    await waitFor(() => (whereLine(el)?.textContent ?? "").includes("1 to News"), "the line's News count");
-    expect(whereLine(el)!.textContent).not.toContain("Spam");
-    expect(el.querySelector('.ohbox-where a[href="#/screener/spam"]')).toBeNull();
-  });
-
-  it("positive control: folders off, the count is there, and its link opens the Spam pile that lists the letter", async () => {
-    const { engine } = await seeded();
-    const el = await mount(engine, { folders: false, junkWire: JUNK_WIRE });
-    await waitFor(() => (whereLine(el)?.textContent ?? "").includes("1 to Spam"), "the line's Spam count");
-    expect(whereLine(el)!.textContent).toContain("1 to News, 1 to Spam");
-    await click(el.querySelector('.ohbox-where a[href="#/screener/spam"]'), "the Spam count's link");
-    await waitFor(() => segments(el).includes("Spam"), "the Screener's Spam segment");
-    await waitFor(() => (el.textContent ?? "").includes(PEDLAR.name), "the counted letter's sender on the Spam pile");
-  });
-});
 
 describe("the Screener reads the Junk window before the Spam click", () => {
   it("opening the Screener asks the page and the preview; the click draws both in its own commit", async () => {

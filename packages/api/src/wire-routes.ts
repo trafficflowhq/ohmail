@@ -22,7 +22,7 @@ export const WIRE_ROUTES = [
   "POST /folders", "DELETE /folders/:id", "PATCH /folders/:id", "DELETE /folders/:id/op", "GET /hello",
   "GET /messages", "PATCH /messages", "DELETE /messages/:id", "GET /messages/:id", "PATCH /messages/:id",
   "GET /messages/:id/attachments", "POST /messages/:id/attachments/download-all", "GET /messages/:id/body",
-  "POST /messages/:id/move", "POST /messages/:id/restore", "POST /messages/:id/tags",
+  "POST /messages/:id/invitation/answer", "POST /messages/:id/move", "POST /messages/:id/restore", "POST /messages/:id/tags",
   "POST /messages/:id/triage", "POST /messages/:id/unsubscribe", "GET /messages/bodies",
   "GET /messages/timeline", "GET /organizer-requests", "POST /rules", "DELETE /rules/:id", "PATCH /rules/:id",
   "GET /screener", "POST /screener/:id", "GET /screener/auto-filed", "POST /screener/auto-filed/undo",
@@ -83,8 +83,10 @@ type _UnboundCallsComplete = Assert<Complete<UnboundCall, typeof UNBOUND_CALLS>>
  *  · `site`: the public site's form asks it.
  *  · `no-caller-found`: no client's source spells its path. A candidate for removal, once a log
  *    of what running clients ask for agrees.
+ *  · `client-pending`: served ahead of its client, whose change binds it in `Routes`; never a
+ *    candidate for removal.
  */
-export type ServerOnlyReason = "operator" | "platform" | "site" | "no-caller-found";
+export type ServerOnlyReason = "operator" | "platform" | "site" | "no-caller-found" | "client-pending";
 
 /** The routes no client of this tree calls, each with its reason. */
 export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Object.freeze({
@@ -97,6 +99,7 @@ export const SERVER_ONLY_ROUTES: Readonly<Record<string, ServerOnlyReason>> = Ob
   "PATCH /contacts/:id": "no-caller-found",
   "GET /contacts/:id/notes": "no-caller-found",
   "POST /contacts/:id/notes": "no-caller-found",
+  "POST /drafts/from-text": "client-pending",
   "GET /files": "no-caller-found",
   "POST /files/download-all": "no-caller-found",
   "GET /kb": "no-caller-found",

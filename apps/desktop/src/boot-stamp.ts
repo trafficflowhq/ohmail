@@ -55,6 +55,20 @@ try {
   if (layout === "zero") document.documentElement.dataset.layout = "zero";
 }
 
+/* THE FRAME'S THREE STAMPS - the scheme, the device and the pointer - as `@ohmail/app/frame/boot` writes them,
+   written out here because this file may import no package (`first-frame-is-the-scheme.test.ts`). The frame owns
+   them once it mounts; this says the same thing before the first paint. */
+{
+  const root = document.documentElement;
+  const theme = root.getAttribute("data-theme");
+  const dark = theme === "dark" || (theme !== "light" && !!window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  const coarse = !!window.matchMedia?.("(pointer: coarse)").matches;
+  const width = window.innerWidth;
+  root.setAttribute("data-scheme", dark ? "dark" : "light");
+  root.setAttribute("data-device", width < 700 ? "phone" : width < 840 || coarse ? "fold" : "desktop");
+  root.setAttribute("data-touch", coarse ? "1" : "0");
+}
+
 /* THE COLUMN WIDTHS ARE NOT HERE, and that is a measured boundary rather than an oversight:
    `stampColumns` lives in `column-store.ts`, which reaches `persisted-ui.ts`, which imports
    React — the whole framework in the paint-blocking file for three numbers. It stays in

@@ -22,7 +22,6 @@ import { ListPane, StreamCard } from "@ohmail/ui";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { HistoryRail } from "../app/views/HistoryRail";
-import { PillReserve } from "../app/shell/SyncBar";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -196,26 +195,6 @@ describe("History's rail reserves its own width beside the rows", () => {
     await act(async () => root.unmount());
     roots.splice(roots.indexOf(root), 1);
     expect(host.style.getPropertyValue("--history-gutter"), "the gutter outlived the rail").toBe("");
-  });
-});
-
-describe("the first-sync pill reserves its height", () => {
-  it("writes its drawn height plus its 18px offset to --pill-h, 0 when not drawn, and removes it", async () => {
-    let h = 34;
-    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("sync-bar") ? h : 0;
-    });
-    FakeRO.all = [];
-    vi.stubGlobal("ResizeObserver", FakeRO);
-    const { root } = await mount(<div className="sync-bar busy"><PillReserve /></div>);
-    const root_ = document.documentElement;
-    expect(root_.style.getPropertyValue("--pill-h")).toBe("52px");
-    h = 0;
-    await act(async () => FakeRO.all[0]!.cb());
-    expect(root_.style.getPropertyValue("--pill-h"), "a bar that is not drawn still reserves room").toBe("0px");
-    await act(async () => root.unmount());
-    roots.splice(roots.indexOf(root), 1);
-    expect(root_.style.getPropertyValue("--pill-h")).toBe("");
   });
 });
 

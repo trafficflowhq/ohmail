@@ -6,7 +6,7 @@ import { DRAFT_BODY_MAX_BYTES, htmlToPlainText } from "@trafficflow/core/mail";
  * derived from what survives. DOMPurify in `MessageBody.tsx` solves the opposite problem (a
  * stranger's markup in the reader's browser); this runs on the server because `POST /drafts`
  * accepts a string from any client — reduce input to the small grammar the editor may speak, drop
- * the rest. The grammar: bold, italic, strike, links, lists, block quotes, inline/block code. No
+ * the rest. The grammar: bold, italic, underline, strike, links, lists, block quotes, inline/block code. No
  * `img`, so no inline `data:` payloads; small enough that `htmlToPlainText` renders all of it,
  * keeping the `multipart/alternative` promise. Every `sanitize-html` option is stated, defaults
  * included; the list changes only with the editor's grammar, in the same commit.
@@ -34,7 +34,7 @@ export const htmlByteLength = (html: string): number => Buffer.byteLength(html, 
  */
 const ALLOWED_TAGS = [
   "p", "br",
-  "strong", "b", "em", "i", "s", "strike", "del",
+  "strong", "b", "em", "i", "s", "strike", "del", "u",
   "a",
   "ul", "ol", "li",
   "blockquote",

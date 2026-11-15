@@ -80,7 +80,7 @@ async function unmount(): Promise<void> {
 
 async function mountCompose(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -107,7 +107,7 @@ async function mountCompose(): Promise<void> {
 /** The same client, left in the Ohbox — the reply editor opens over a message there. */
 async function mountShellOnly(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

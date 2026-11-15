@@ -65,7 +65,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -189,10 +189,14 @@ async function query(text: string): Promise<void> {
 function railPlaces(): Array<{ id: string; name: string }> {
   return [...host!.querySelectorAll<HTMLElement>("[data-rail-id]")]
     .filter((b) => b.dataset.railId !== "search")
+    // A group's fold (Tags) is no place: it opens and closes, and says so.
+    .filter((b) => b.querySelector("button[aria-expanded]") === null)
     .map((b) => {
+      // The kit's entry: its name, apart from its count and its key.
+      const named = b.querySelector(".oh-railentry-name");
       const clone = b.cloneNode(true) as HTMLElement;
       clone.querySelector(".cnt")?.remove();
-      return { id: b.dataset.railId!, name: (clone.textContent ?? "").trim() };
+      return { id: b.dataset.railId!, name: (named?.textContent ?? clone.textContent ?? "").trim() };
     });
 }
 

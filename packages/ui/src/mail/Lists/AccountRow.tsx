@@ -73,7 +73,7 @@ export function AccountRow(props: AccountRowProps) {
             </span>
           ) : null}
           <span className="oh-accountrow-chevron" aria-hidden="true">
-            <Icon name="down" size={20} />
+            <Icon name="down" size={16} />
           </span>
         </div>
         {expanded ? children : null}

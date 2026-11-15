@@ -104,23 +104,6 @@ describe("the found-settings card is asked for on the drain that carries the fin
     expect(textOf(card(el)!)).toContain("We found your ohmail settings on this mailbox");
   });
 
-  /* IN THE FLOW, ONE CARD AT A TIME: the stage's slot holds the found-settings card before the view, and a
-     host's card (the desktop's default-mail ask) waits behind it, back once the question is answered. */
-  it("the card stands in the stage's slot before the view; a host's card waits behind it", async () => {
-    const el = await booted(React.createElement("p", { className: "host-card" }, "Open email links with ohmail?"));
-    const slot = (): Element | null => el.querySelector("main.stage > .stage-notice:first-child");
-    const before = slot()?.querySelector(".host-card") !== null;
-    question = FOUND;
-    ringNext = true;
-    await tick(30_000);
-    const asked = { card: card(el)?.parentElement === slot(), host: el.querySelector(".host-card") !== null, view: slot()?.nextElementSibling !== null };
-    const notNow = [...card(el)!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Not now");
-    await act(async () => { notNow!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await tick(0);
-    expect({ before, asked, after: slot()?.querySelector(".host-card") !== null && card(el) === null })
-      .toEqual({ before: true, asked: { card: true, host: false, view: true }, after: true });
-  });
-
   it("no ring ⇒ no extra ask: nothing polls tighter than the beat", async () => {
     const el = await booted();
     const before = asks;
@@ -151,5 +134,20 @@ describe("the found-settings card is asked for on the drain that carries the fin
     await tick(30_000);
     expect(asks, "the second ring did not re-ask").toBeGreaterThan(before);
     expect(card(el), "a dismissed card came back on the next ring").toBeNull();
+  });
+
+  it("the card stands in the stage's slot before the view; a host's card waits behind it", async () => {
+    const el = await booted(React.createElement("p", { className: "host-card" }, "Open email links with ohmail?"));
+    const slot = (): Element | null => el.querySelector(".stage > .stage-notice:first-child");
+    const before = slot()?.querySelector(".host-card") !== null;
+    question = FOUND;
+    ringNext = true;
+    await tick(30_000);
+    const asked = { card: card(el)?.parentElement === slot(), host: el.querySelector(".host-card") !== null, view: slot()?.nextElementSibling !== null };
+    const notNow = [...card(el)!.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Not now");
+    await act(async () => { notNow!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await tick(0);
+    expect({ before, asked, after: slot()?.querySelector(".host-card") !== null && card(el) === null })
+      .toEqual({ before: true, asked: { card: true, host: false, view: true }, after: true });
   });
 });

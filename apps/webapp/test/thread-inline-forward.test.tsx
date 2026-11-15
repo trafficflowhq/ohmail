@@ -236,7 +236,7 @@ describe("reply from a sibling panel mounts the editor — the menu is never a d
 async function mountShell(): Promise<void> {
   await unmount();
   setViewport();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -596,7 +596,7 @@ async function mountForwardShell(o: {
       forwardPartsAnnounced: async () => o.supported,
     },
   } as never);
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

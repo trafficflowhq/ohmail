@@ -934,17 +934,13 @@ check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 3)
 /* ── 2 · it drew ───────────────────────────────────────────────────────── */
 check("#root exists", root != null);
 check("#root is not empty", (root?.children.length ?? 0) > 0);
-check("the rail rendered", doc.querySelector(".rail") != null);
-check("the wordmark rendered", doc.querySelector(".rail .wordmark") != null);
-/* THE APP CONTROLS, WHEREVER THEY LIVE — and they moved. They used to be a capsule fixed over
-   the bottom of the window (`.dock`), and they are now rows at the foot of the rail. This check
-   asserted the retired class, so it went red on the runners the moment the move landed and green
-   nowhere: this bundle is only ever smoked in CI. What it is FOR is that the palette and
-   the theme control reached the screen, so it asserts the two controls and not merely their
-   container — a `.rail-dock` that rendered empty is exactly the failure a container check misses. */
-check("the rail's app controls rendered", doc.querySelector(".rail .rail-dock") != null);
-check("the command control rendered", doc.querySelector(".rail-dock .dock-cmd") != null);
-check("the theme control rendered", doc.querySelector(".rail-dock .dock-theme") != null);
+/* THE FRAME'S RAIL. Today's views feed the frame's rail and it stands in a box carrying their key mark (`.rail`),
+   drawn with the kit: its landmark, its Write at the head and its foot (the notice, Pull new mail, the account).
+   The old rail's wordmark and its foot's command and theme controls are not drawn by the frame: the palette is
+   opened by its keys and the scheme is chosen in Settings, so those three reads left with them. */
+check("the rail rendered", doc.querySelector(".rail nav.oh-rail") != null);
+check("the rail's foot rendered", doc.querySelector(".rail .oh-railfoot, .rail .fr-railfoot") != null);
+check("the rail's Write rendered", doc.querySelector(".rail .oh-rail-write button") != null);
 check("a list pane rendered", doc.querySelector(".rows") != null);
 /* The floor follows the dataset — whatever the stub served — and is still far
    above "an empty shell rendered its chrome". */

@@ -167,6 +167,8 @@ export interface SyncKickBellDeps {
   owns?: (accountId: string) => boolean;
   isStopped: () => boolean;
   log?: Logger;
+  /** The word the bell's own two log lines begin with; another pass's bell names itself. Absent: `sync_kick`. */
+  label?: string;
 }
 
 export interface SyncKickBell {
@@ -185,6 +187,7 @@ export interface SyncKickBell {
  */
 export function startSyncKickBell(deps: SyncKickBellDeps): SyncKickBell {
   const log = deps.log ?? silentLogger;
+  const label = deps.label ?? "sync_kick";
   let ended = false;
   let inFlight = false;
   /** A signal was heard that no scan started since has answered. */
@@ -204,7 +207,7 @@ export function startSyncKickBell(deps: SyncKickBellDeps): SyncKickBell {
       try {
         await deps.pass(by);
       } catch (err) {
-        log.warn("sync_kick_failed", { err });
+        log.warn(`${label}_failed`, { err });
       } finally {
         inFlight = false;
         if (owed) serveOwed();
@@ -233,7 +236,7 @@ export function startSyncKickBell(deps: SyncKickBellDeps): SyncKickBell {
     // The payload's sequence number is dropped here: the bell needs to know that something changed, not what.
     unsubscribe = deps.source?.subscribeAll((accountId) => { ring(accountId); }) ?? null;
   } catch (err) {
-    log.warn("sync_kick_signal_unavailable", { err, reason: "the change log's signal could not be subscribed; the floor scan serves alone" });
+    log.warn(`${label}_signal_unavailable`, { err, reason: "the change log's signal could not be subscribed; the floor scan serves alone" });
   }
 
   return {

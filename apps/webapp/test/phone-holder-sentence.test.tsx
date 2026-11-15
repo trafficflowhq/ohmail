@@ -273,7 +273,7 @@ const QUIET: MailState = {
 
 let railState: MailState = QUIET;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: railState, refresh: () => {} }),
+  useMailState: () => ({ state: railState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 /** The `elsewhere` arm, with the holder each case is about. */
@@ -300,7 +300,7 @@ const heldBy = (
 
 async function rail(state: MailState): Promise<HTMLElement> {
   railState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -309,15 +309,15 @@ async function rail(state: MailState): Promise<HTMLElement> {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC",
       /* The RAIL variant, because it is the rail this row is about: the shell variant lays the
-         same sentence out differently and `.rs-line b` is the rail's own title node. */
-      children: h(SyncBar, { variant: "rail" }),
+         same sentence out differently and the notice's title is its first bold node. */
+      children: h(SyncBar),
     }));
   });
   return container;
 }
 
 /** The rail's title, alone — the detail line below it names a count and is not the sentence. */
-const railTitle = (el: HTMLElement): string => (el.querySelector(".rs-line b")?.textContent ?? "").trim();
+const railTitle = (el: HTMLElement): string => (el.querySelector("[role='status'] b")?.textContent ?? "").trim();
 
 describe("SURFACE 1 — the rail says a phone is a phone", () => {
   it("a phone holding the mailbox is named as one, with the clause", async () => {

@@ -76,7 +76,7 @@ async function unmount(): Promise<void> {
 /** The demo shell, cursor on the first row — `shell-screening-bulk.test.ts`'s own harness. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

@@ -107,7 +107,7 @@ async function mountShell(opts: {
   locale?: "en" | "de";
 }): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -379,7 +379,7 @@ describe("one rule, two declarations, and the small number says why", () => {
  * Attached files live in memory only: the scratch buffer and the account's draft row keep the
  * text, never the bytes. A restart from the update line brought the draft back without its
  * file, and sent as it stood it went without the attachment. While the compose or a reply holds
- * a file, or a pick is still being read, the rail's Restart stands greyed and says why.
+ * a file, or a pick is still being read, the update notice draws no Restart and says why.
  */
 describe("a draft's files hold a restart", () => {
   const attach = async (scope: string): Promise<void> => {
@@ -395,26 +395,42 @@ describe("a draft's files hold a restart", () => {
   const remove = async (scope: string): Promise<void> => {
     await act(async () => { host!.querySelector<HTMLButtonElement>(`${scope} .compose-attach-remove`)!.click(); });
   };
-  const restart = (): HTMLButtonElement => host!.querySelector<HTMLButtonElement>(".upd-line .ul-do")!;
+  /** The update notice: the frame's notice whose title names the ready version. */
+  const updateSaid = (): HTMLElement | null =>
+    [...host!.querySelectorAll<HTMLElement>("[role='status'][data-place]")]
+      .find((n) => (n.textContent ?? "").includes("0.30.6")) ?? null;
+  const restart = (): HTMLButtonElement | null =>
+    [...(updateSaid()?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+      .find((b) => b.textContent === messages.update.lineRestart) ?? null;
 
-  it("in the compose: a file being read, then attached, greys the rail's Restart until it is removed", async () => {
+  /* The frame draws no Restart while a draft's file holds it (the line says why), rather than a greyed one. */
+  it("in the compose: a file being read, then attached, holds the notice's Restart until it is removed", async () => {
     await mountShell({ size: 25 * MIB });
     await goCompose();
     const pressed = vi.fn();
     await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: pressed, key: "ready:0.30.6" }));
+    expect(restart(), "the premise: a ready update offers Restart").not.toBeNull();
     await attach(".view-compose");
     expect(restartHold(), "a pick still being read did not hold the restart").toBe("files");
+    expect(restart(), "Restart stood pressable while a pick was being read").toBeNull();
     await drain();
     expect(host!.querySelector(".view-compose .compose-attach-item"), "the file never attached").not.toBeNull();
     expect(restartHold(), "an attached file did not hold the restart").toBe("files");
-    expect(restart().getAttribute("aria-disabled")).toBe("true");
-    expect(host!.querySelector(".upd-line")!.textContent).toContain(messages.update.lineAfterFiles);
-    await act(async () => { restart().click(); });
+    expect(restart(), "Restart stood pressable while the draft held a file").toBeNull();
+    expect(updateSaid()!.textContent).toContain(messages.update.lineAfterFiles);
+    for (const b of updateSaid()!.querySelectorAll<HTMLButtonElement>("button")) {
+      if (b.textContent !== messages.update.lineLater) await act(async () => { b.click(); });
+    }
+    await drain();
     expect(pressed, "Restart dropped the draft's file").not.toHaveBeenCalled();
 
     await remove(".view-compose");
     expect(restartHold()).toBeNull();
-    expect(restart().getAttribute("aria-disabled")).toBeNull();
+    expect(restart(), "Restart did not come back once the file was removed").not.toBeNull();
+    expect(updateSaid()!.textContent).not.toContain(messages.update.lineAfterFiles);
+    await act(async () => { restart()!.click(); });
+    await drain();
+    expect(pressed, "the control: Restart with nothing held restarts").toHaveBeenCalledTimes(1);
   });
 
   it("in a reply: its files hold the restart while the editor holds them", async () => {

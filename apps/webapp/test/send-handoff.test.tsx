@@ -6,6 +6,7 @@ import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { SENT_COPY_NOTES_PREFIX, SENT_LINE_MS } from "../app/shell/mail-send";
+import { readSendingList, sendingList } from "./_handoff-steps.js";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -33,7 +34,7 @@ function setOnline(on: boolean): void {
 }
 
 const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
-const footLine = (): string => document.querySelector(".rail-sync.sending-line")?.textContent ?? "";
+const footLine = (): string => readSendingList((list) => list?.textContent ?? "");
 const toasts = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
 const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
   [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
@@ -50,9 +51,9 @@ const navigate = async (hash: string): Promise<void> => {
   await act(async () => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent("hashchange")); });
 };
 /** The foot line's rows, top to bottom, and one row's Dismiss by whom its letter was for. */
-const footRows = (): string[] => [...document.querySelectorAll(".rail-sync.sending-line .sl-row")].map((r) => r.textContent ?? "");
+const footRows = (): string[] => readSendingList((list) => [...(list?.querySelectorAll(".sl-row") ?? [])].map((r) => r.textContent ?? ""));
 const dismissFor = (name: string): HTMLButtonElement | undefined => {
-  const row = [...document.querySelectorAll<HTMLElement>(".rail-sync.sending-line .sl-row")].find((r) => (r.textContent ?? "").includes(name));
+  const row = [...(sendingList()?.querySelectorAll<HTMLElement>(".sl-row") ?? [])].find((r) => (r.textContent ?? "").includes(name));
   return [...(row?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])].find((b) => b.textContent === en.sendingLine.dismiss);
 };
 /** What this browser keeps of the notes, every owner's entry. */
@@ -127,7 +128,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await act(async () => { await new Promise((r) => setTimeout(r, SENT_LINE_MS + 300)); });
     expect(footLine(), "it settled away before the person read it").toContain(en.sentCopy.missingTooBig);
     expect(toasts()).not.toContain(en.sentCopy.missingTooBig);
-    const dismiss = [...document.querySelectorAll<HTMLButtonElement>(".rail-sync.sending-line .sl-act")]
+    const dismiss = [...(sendingList()?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])]
       .find((b) => b.textContent === en.sendingLine.dismiss);
     await act(async () => { dismiss!.click(); });
     await waitFor(() => footLine() === "", "Dismiss ends it");
@@ -194,12 +195,14 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await mountShell("#/ohbox", [message("m1")], [], { handOff: true, store: before.store });
     await waitFor(() => footLine().includes(en.sentCopy.missingTooBig) && footLine().includes(en.sentCopy.waitingFull), "both notes after the reload");
     expect(footLine()).toContain("Sent to Mila");
-    await act(async () => { dismissFor("Mila")!.click(); });
+    const dismissMila = dismissFor("Mila")!;
+    await act(async () => { dismissMila.click(); });
     await waitFor(() => !footLine().includes("Mila"), "Dismiss ends Mila's note");
     expect(footLine(), "Dismiss took the other note too").toContain("Sent to Jon");
     expect(keptNotes(), "the dismissed note is still kept in this browser").not.toContain("Mila");
     expect(keptNotes()).toContain("Jon");
-    await act(async () => { dismissFor("Jon")!.click(); });
+    const dismissJon = dismissFor("Jon")!;
+    await act(async () => { dismissJon.click(); });
     await waitFor(() => footLine() === "", "Dismiss ends the last note");
     expect(keptNotes()).toBe("");
   }, 60_000);
@@ -274,7 +277,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await waitFor(() => footLine().includes(en.reply.statusUnreachable), "the refusal in the foot");
     expect(toasts(), "a toast said the refusal too").not.toContain(en.reply.statusUnreachable);
     s.refuseSend.on = false;
-    const open = [...document.querySelectorAll<HTMLButtonElement>(".rail-sync.sending-line .sl-act")]
+    const open = [...(sendingList()?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])]
       .find((b) => b.textContent === en.sendingLine.open);
     await press(open ?? null, "Open");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("Thursday works for me"), "the words back");
@@ -372,7 +375,7 @@ async function refuseOpenResend(s: DraftShell, words: string): Promise<[string, 
   await act(async () => { release(); });
   await waitFor(() => footLine().includes(en.reply.statusUnreachable), "the refusal in the foot");
   s.refuseSend.on = false;
-  const open = [...document.querySelectorAll<HTMLButtonElement>(".rail-sync.sending-line .sl-act")]
+  const open = [...(sendingList()?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])]
     .find((b) => b.textContent === en.sendingLine.open);
   await press(open ?? null, "Open");
   await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes(words), "the words back");

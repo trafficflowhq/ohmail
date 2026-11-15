@@ -976,7 +976,10 @@ describe("the route table declares what every handler causes", () => {
     // 261 -> 265 with the storage program (cloud 0057): `GET /internal/storage-mails/run`
     // (`unauthenticated`, on the exempt list above) and three gated ones — Load it now (`connection`:
     // it dials the person's mail server), the storage choices (`work`) and the change door (`paid`).
-    expect(apiRoutes).toHaveLength(265);
+    // 265 -> 266 with a draft from the person's own words, `paid` like Draft reply: gated.
+    // 266 -> 267: `POST /messages/:id/invitation/answer` (mail 0204), a `connection` like the send
+    // it makes, so it joins the gated remainder and no exempt list moves.
+    expect(apiRoutes).toHaveLength(267);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1216,7 +1219,9 @@ describe("the route table declares what every handler causes", () => {
     // 261 -> 260 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
     // 261 -> 265 with the storage program: the storage mails' clock joins `UNAUTHENTICATED`, and Load
     // it now, the storage choices and the change door grow the remainder by three.
-    expect(gated.length).toBe(265 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 265 -> 266 with a draft from the person's own words, `paid`: the remainder grows by one.
+    // 266 -> 267 with an invitation's answer by mail, a `connection`: the remainder grows by one.
+    expect(gated.length).toBe(267 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

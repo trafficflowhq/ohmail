@@ -1,6 +1,6 @@
 import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import {
-  messages, draftAttemptKey, reverseCharge,
+  messages, draftAttemptKey, draftFromTextAttemptKey, reverseCharge,
   type IdempotencyKey, type ReverseChargeFact, type ReverseChargeResult,
 } from "@trafficflow/db";
 // TYPE-ONLY, and it has to stay that way: `import type` is erased, so it creates no module edge
@@ -13,14 +13,15 @@ import type {
   AccessPort, AiUsageHost, RefundObligationPort, SpendPort,
 } from "@trafficflow/db";
 import {
-  createLogger, plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE, ModelDeclinedError,
-  type AiCallOptions, type DraftInput, type DraftPort,
+  createLogger, plainTextToOutboundBody, screenModelInput, MODEL_SINK_REFUSAL_SENTENCE, ModelDeclinedError, NO_LETTER,
+  type AiCallOptions, type DraftInput, type DraftPort, type DraftResult, type ModelSinkReason,
 } from "@trafficflow/core/mail";
+import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
 import { usageLines } from "./ai-usage-lines.js";
 import type { ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { refuseAiSpend } from "./ai-refusal.js";
-import { DraftsService, type DraftCreateIdempotency } from "./drafts-service.js";
+import { DraftsService, DRAFT_SUBJECT_MAX_CHARS, type DraftCreateIdempotency } from "./drafts-service.js";
 import { KbService } from "./kb-service.js";
 import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
 
@@ -54,6 +55,35 @@ function sayDraftRefund(f: ReverseChargeFact, accountId: string, attempt: string
       : "a refund is owed and no obligation store was composed beside the gate, so a lost "
         + "release would leave this charge with nothing to reverse it",
   });
+}
+
+/**
+ * THE LONGEST TEXT A DRAFT FROM THE PERSON'S OWN WORDS TAKES, after trim: a few paragraphs of
+ * what a letter should say, never a letter pasted whole. It travels to a model, priced per token.
+ */
+export const DRAFT_OWN_TEXT_MAX_CHARS = 4_000;
+
+/** The credential door's refusal, said about the person's own text rather than a message. */
+const OWN_WORDS_REFUSAL_SENTENCE: Record<ModelSinkReason, string> = {
+  vocabulary: "your text reads like an authentication mail",
+  credential_shape: "your text contains something that looks like a credential",
+  auth_url_token: "your text carries a sign-in link with a token in it",
+};
+
+/** An optional id of the body: absent, or a string that is not empty. */
+function optionalId(v: unknown, field: string): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v.length === 0) throw new ServiceError("validation_failed", 400, `${field} must be a non-empty string`);
+  return v;
+}
+
+/** The knowledge-base hint of a letter, as {@link DraftingService.draftFromMessage} budgets it. */
+function kbHintOf(target: { subject: string; snippet: string }): string {
+  const snippet = target.snippet.slice(0, KB_HINT_SNIPPET_CHARS);
+  // The joining space is only spent when there IS a snippet — subtracting it unconditionally took a
+  // character off the subject of a message with no snippet at all, for a separator `trim()` removed.
+  const subjectRoom = SEARCH_QUERY_MAX_CHARS - snippet.length - (snippet.length > 0 ? 1 : 0);
+  return `${target.subject.slice(0, Math.max(0, subjectRoom))} ${snippet}`.trim();
 }
 
 /** How many KB entries and thread messages to retrieve as grounding context. */
@@ -189,28 +219,10 @@ export class DraftingService {
     // Measured from the TOP with `Date.now()`, not `ctx.now()`: a frozen test clock would switch
     // the window off silently — the screener's `admissionDeadline` rule.
     const window = draftWindow(this.opts.invocationBudgetMs, Date.now(), this.opts.admission);
-    // 1. Load the target — account-scoped: a cross-account id is a 404.
-    const [target] = await ctx.db
-      .select({
-        id: messages.id,
-        mailboxId: messages.mailboxId,
-        threadId: messages.threadId,
-        subject: messages.subject,
-        fromAddress: messages.fromAddress,
-        snippet: messages.snippet,
-        noAi: messages.noAi,
-        sensitivityCategory: messages.sensitivityCategory,
-      })
-      .from(messages)
-      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
-      .limit(1);
-    if (!target) throw new ServiceError("not_found", 404, "message not found");
-
-    // 2. Refuse a sensitive / no_ai target. We reject BEFORE reading any
-    //    body or assembling context — the sensitive message never reaches the model.
-    if (target.noAi || target.sensitivityCategory !== null) {
-      throw new ServiceError("sensitive_no_ai", 422, "cannot AI-draft a sensitive message");
-    }
+    // 1. Load the target — account-scoped: a cross-account id is a 404. 2. Refuse a sensitive /
+    //    no_ai target BEFORE reading any body or assembling context — the sensitive message never
+    //    reaches the model ({@link letterOf}).
+    const target = await this.letterOf(ctx, messageId);
 
     // 3. Assemble the sensitivity-safe context. We use snippets, never bodies.
     //
@@ -228,12 +240,7 @@ export class DraftingService {
      * share, and the shares SUM to the downstream ceiling, stated as a subtraction: whatever the
      * snippet is allowed, the subject gets the rest, and the total is the ceiling exactly.
      */
-    const snippet = target.snippet.slice(0, KB_HINT_SNIPPET_CHARS);
-    // The joining space is only spent when there IS a snippet — subtracting it unconditionally
-    // took a character off the subject of a message with no snippet at all, for a separator the
-    // `trim()` below then removed.
-    const subjectRoom = SEARCH_QUERY_MAX_CHARS - snippet.length - (snippet.length > 0 ? 1 : 0);
-    const query = `${target.subject.slice(0, Math.max(0, subjectRoom))} ${snippet}`.trim();
+    const query = kbHintOf(target);
     const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K);
     const threadMessages = target.threadId
       ? await this.retrieveThreadContext(ctx, target.threadId, target.id)
@@ -271,6 +278,147 @@ export class DraftingService {
       },
     };
 
+    return this.chargedDraft(ctx, deps, {
+      window, input, mailboxId: target.mailboxId, meta: { messageId: target.id },
+      keyOf: () => this.debitKey(target.id, deps),
+      // The model answers in PROSE; promotion into the outbound grammar makes the eventual send a
+      // genuine `multipart/alternative`. ONLY the html is passed: `DraftsService.create` refuses a
+      // `body` alongside it and derives the text half from the SANITIZED markup — the rule that
+      // makes the two parts unable to disagree. An empty promotion stores a plain draft.
+      store: (result) => {
+        const promoted = plainTextToOutboundBody(result.body);
+        return this.drafts.create(ctx, {
+          mailboxId: target.mailboxId,
+          threadId: target.threadId ?? null,
+          inReplyToMessageId: target.id,
+          subject: result.subject,
+          ...(promoted.html ? { html: promoted.html } : { body: result.body }),
+          rationale: result.rationale,
+        }, { idempotency: deps.idempotency });
+      },
+    });
+  }
+
+  /**
+   * A DRAFT FROM THE PERSON'S OWN WORDS: `text` says what the letter should say; a letter named
+   * by `inReplyToMessageId` is answered, read as context; without one, `mailboxId` names where the
+   * draft is written. The doors in order: the words, the letter (404, a differing mailbox 400, a
+   * sensitive letter 422 before any context), the context, the credential door with the words as
+   * their own document, then {@link chargedDraft}'s: the refund memory, the mailbox, the
+   * admission, the spend, the model, the refund, the store. Stored, never sent.
+   */
+  async draftFromText(
+    ctx: ServiceContext,
+    body: UntrustedBody<DraftFromTextBody>,
+    deps: DraftFromMessageDeps,
+  ): Promise<{ draftId: string; seq: number }> {
+    const window = draftWindow(this.opts.invocationBudgetMs, Date.now(), this.opts.admission);
+    // 1. The words, and the body's other fields, each its type or a 400.
+    const raw = (body ?? {}) as Record<string, unknown>;
+    const text = typeof raw.text === "string" ? raw.text.trim() : "";
+    if (text.length === 0 || text.length > DRAFT_OWN_TEXT_MAX_CHARS) {
+      throw new ServiceError("validation_failed", 400, `text is required: 1 to ${DRAFT_OWN_TEXT_MAX_CHARS} characters`);
+    }
+    if (raw.subject !== undefined && (typeof raw.subject !== "string" || raw.subject.length > DRAFT_SUBJECT_MAX_CHARS)) {
+      throw new ServiceError("validation_failed", 400, `subject must be a string of at most ${DRAFT_SUBJECT_MAX_CHARS} characters`);
+    }
+    const subject = typeof raw.subject === "string" && raw.subject.trim() !== "" ? raw.subject : undefined;
+    const letterId = optionalId(raw.inReplyToMessageId, "inReplyToMessageId");
+    const mailboxId = optionalId(raw.mailboxId, "mailboxId");
+
+    // 2. The letter answered, account-scoped, refused before any context when it may not reach a model.
+    const letter = letterId === undefined ? null : await this.letterOf(ctx, letterId);
+    if (letter !== null && mailboxId !== undefined && mailboxId !== letter.mailboxId) {
+      throw new ServiceError("validation_failed", 400, "mailboxId is not the mailbox of the letter answered");
+    }
+    if (letter === null && mailboxId === undefined) {
+      throw new ServiceError("validation_failed", 400, "mailboxId is required when no letter is answered");
+    }
+    const where = letter?.mailboxId ?? mailboxId!;
+
+    // 3. The context: the knowledge base, asked with the letter's hint or the words, and the thread only with a letter.
+    const kbHits = await this.kb.retrieve(ctx, letter !== null ? kbHintOf(letter) : text.slice(0, SEARCH_QUERY_MAX_CHARS), deps.k ?? DEFAULT_KB_K);
+    const threadMessages = letter?.threadId ? await this.retrieveThreadContext(ctx, letter.threadId, letter.id) : [];
+
+    // 4. THE DOOR, the person's words their own document: a credential in them is said about them.
+    const screened = screenModelInput([
+      { label: "own", fields: [text, subject] },
+      ...(letter !== null ? [{ label: "incoming", fields: [letter.subject, letter.snippet, letter.fromAddress] }] : []),
+      ...kbHits.map((e) => ({ label: "kb", fields: [e.title, e.content] })),
+      ...threadMessages.map((m) => ({ label: "thread", fields: [m.snippet, m.from] })),
+    ]);
+    if (!screened.admitted) {
+      const sentence = screened.where === "own" ? OWN_WORDS_REFUSAL_SENTENCE[screened.reason] : MODEL_SINK_REFUSAL_SENTENCE[screened.reason];
+      throw new ServiceError("credential_screened", 422, `${sentence}, so no draft was generated`, { reason: screened.reason });
+    }
+
+    const input: DraftInput = {
+      incoming: letter !== null ? { subject: letter.subject, from: letter.fromAddress, snippet: letter.snippet } : { ...NO_LETTER },
+      context: {
+        kbEntries: kbHits.map((e) => ({ title: e.title, content: e.content })),
+        threadMessages,
+      },
+      own: { text, replying: letter !== null, ...(subject !== undefined ? { subject } : {}) },
+    };
+    const anchor = letter?.id ?? where;
+    return this.chargedDraft(ctx, deps, {
+      window, input, mailboxId: where,
+      meta: letter !== null ? { messageId: letter.id } : { mailboxId: where },
+      keyOf: () => {
+        if (!deps.attemptKey) throw new ServiceError("internal", 500, "AI drafting is metered on this deployment but no client Idempotency-Key was threaded through");
+        return draftFromTextAttemptKey(anchor, deps.attemptKey);
+      },
+      store: (result) => {
+        const promoted = plainTextToOutboundBody(result.body);
+        return this.drafts.create(ctx, {
+          mailboxId: where,
+          ...(letter !== null ? { inReplyToMessageId: letter.id, threadId: letter.threadId ?? null } : {}),
+          subject: subject ?? result.subject,
+          ...(promoted.html ? { html: promoted.html } : { body: result.body }),
+          rationale: result.rationale,
+        }, { idempotency: deps.idempotency });
+      },
+    });
+  }
+
+  /** The letter a draft answers, account-scoped: another account's id is a 404, and a sensitive one a 422. */
+  private async letterOf(ctx: ServiceContext, id: string) {
+    const [target] = await ctx.db
+      .select({
+        id: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId, subject: messages.subject,
+        fromAddress: messages.fromAddress, snippet: messages.snippet, noAi: messages.noAi, sensitivityCategory: messages.sensitivityCategory,
+      })
+      .from(messages)
+      .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)))
+      .limit(1);
+    if (!target) throw new ServiceError("not_found", 404, "message not found");
+    if (target.noAi || target.sensitivityCategory !== null) {
+      throw new ServiceError("sensitive_no_ai", 422, "cannot AI-draft a sensitive message");
+    }
+    return target;
+  }
+
+  /**
+   * THE PAID TAIL OF EVERY DRAFT, from the charge to the stored row, one path for each route that
+   * writes a draft with a model: the refusal of a metered host with no refund memory, the
+   * admission, the spend, the model call cut at the deadline, the refund of a failed call, the
+   * store and the usage release. `keyOf` names the attempt in the ledger (asked only when metered);
+   * `meta` rides on every ledger call and log line.
+   */
+  private async chargedDraft(
+    ctx: ServiceContext,
+    deps: DraftFromMessageDeps,
+    o: {
+      window: ReturnType<typeof draftWindow>;
+      input: DraftInput;
+      /** The mailbox the draft is stored in, asked before any charge. */
+      mailboxId: string;
+      meta: Record<string, string>;
+      keyOf: () => string;
+      store: (result: DraftResult) => Promise<{ draft: { id: string }; seq: number }>;
+    },
+  ): Promise<{ draftId: string; seq: number }> {
+    const { window, input, meta } = o;
     // 4. CHARGE, immediately before the model and nowhere earlier. Order matters three times:
     // AFTER the refusal check, so a `no_ai`/sensitive target 422s without touching the ledger
     // (zero rows, asserted against the ledger itself); AFTER context assembly, so only fallible
@@ -290,13 +438,16 @@ export class DraftingService {
         "AI drafting is metered on this deployment but no refund-obligation store was composed",
       );
     }
+    // A MAILBOX THAT CANNOT HOLD THE DRAFT, before a credit moves: the store would refuse it after
+    // the charge, and every free retry would refuse again.
+    await this.drafts.validMailbox(ctx, o.mailboxId);
     // THE ADMISSION, before a credit moves: a spend taken with less than the least model time
     // left buys a call the platform kills, and a kill leaves no refund behind. Refused as the
     // retryable unavailable it is, with nothing charged.
     if (window !== null && Date.now() > window.admitUntil) {
       throw new ServiceError("ai_unavailable", 503, "AI drafting is temporarily unavailable; please retry");
     }
-    const attemptKey = deps.credits ? this.debitKey(target.id, deps) : null;
+    const attemptKey = deps.credits ? o.keyOf() : null;
     /** The attempt THIS request charged, or null. The port's `attempt` is the refund memory. */
     let chargedAttempt: string | null = null;
     /** The drafter's usage, carried by whichever release runs — a failed call's line included. */
@@ -312,7 +463,6 @@ export class DraftingService {
     const releaseClaim = async (refund: boolean): Promise<ReverseChargeResult | null> => {
       if (!deps.credits || !attemptKey || released) return null;
       released = true;
-      const meta = { messageId: target.id };
       if (!refund || chargedAttempt === null) {
         const receipt = await deps.credits.release(
           ctx.accountId, { action: "draft", attemptKey, refund: false, meta, ...usage.field() });
@@ -325,8 +475,7 @@ export class DraftingService {
       }, (f) => sayDraftRefund(f, ctx.accountId, attempt));
     };
     if (deps.credits && attemptKey) {
-      const outcome = await deps.credits.spend(
-        ctx.accountId, "draft", attemptKey, { messageId: target.id });
+      const outcome = await deps.credits.spend(ctx.accountId, "draft", attemptKey, meta);
       chargedAttempt = outcome.verdict === "ok" ? outcome.attempt : null;
       if (outcome.verdict === "fault") {
         // A SERVER fault. 503, never 402 — we do not bill someone for our own outage, and we
@@ -442,7 +591,7 @@ export class DraftingService {
     // record a timed-out one writes and the response all fit before the platform's kill. A skip
     // or a fault is a line in the log, never the person's error.
     const unrecorded = (why: string, err?: unknown): void => log.warn("draft_usage_unrecorded", {
-      accountId: ctx.accountId, messageId: target.id, why, ...(err === undefined ? {} : { err }),
+      accountId: ctx.accountId, ...meta, why, ...(err === undefined ? {} : { err }),
     });
     const sendUsage = async (): Promise<void> => {
       if (usage.count === 0 || !deps.credits || !attemptKey) return;
@@ -465,21 +614,9 @@ export class DraftingService {
     // transaction, so a same-key retry replays it instead of storing a second draft. A failure
     // here leaves the charge standing with no draft, deliberately not refunded: the attempt stays
     // OPEN, so the retry is free — bounded to `IDEMPOTENCY_TTL_MS`, never a permanent licence.
-    // The model answers in PROSE; promotion into the outbound grammar makes the eventual send a
-    // genuine `multipart/alternative`. ONLY the html is passed: `DraftsService.create` refuses a
-    // `body` alongside it and derives the text half from the SANITIZED markup — the rule that
-    // makes the two parts unable to disagree. An empty promotion stores a plain draft.
-    const promoted = plainTextToOutboundBody(result.body);
-    let stored: Awaited<ReturnType<DraftsService["create"]>>;
+    let stored: { draft: { id: string }; seq: number };
     try {
-      stored = await this.drafts.create(ctx, {
-        mailboxId: target.mailboxId,
-        threadId: target.threadId ?? null,
-        inReplyToMessageId: target.id,
-        subject: result.subject,
-        ...(promoted.html ? { html: promoted.html } : { body: result.body }),
-        rationale: result.rationale,
-      }, { idempotency: deps.idempotency });
+      stored = await o.store(result);
     } catch (err) {
       // The model call happened and was paid for; the store's own error is what the caller gets.
       if (usage.count > 0 && deps.credits && attemptKey) unrecorded("store_failed");

@@ -1,8 +1,10 @@
 -- THE IDENTITY OF AN INVITATION, kept at ingest. A letter that carries a calendar invitation gets
 -- one row here: which event it speaks of (`uid`, `recurrence_id`), which revision (`sequence`),
 -- what it asks (`method`), when the event starts, who organizes it and which of the account's
--- addresses was invited. No calendar bytes are stored, as before. A side table: no mail table is
--- altered for it.
+-- addresses was invited, and the answer this mailbox gave to it (`answer`, `answered_at`: on a
+-- REQUEST the answer on record, on a REPLY the answer the letter carries). `stamped_at` is the
+-- letter's DTSTAMP, which orders the letters of one revision. No calendar bytes are stored, as
+-- before. A side table: no mail table is altered for it.
 --
 -- A CHILD OF ITS LETTER. `(message_id, account_id)` points onto `messages (id, account_id)` and
 -- the row goes with its letter (ON DELETE CASCADE), as the rows of `message_states` and
@@ -30,6 +32,9 @@ CREATE TABLE "message_invitations" (
   "starts_at" timestamp with time zone,
   "organizer" text,
   "invited_address" text,
+  "answer" text,
+  "answered_at" timestamp with time zone,
+  "stamped_at" timestamp with time zone,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "message_invitations_pk" PRIMARY KEY ("account_id","message_id"),
   CONSTRAINT "message_invitations_message_id_account_fk" FOREIGN KEY ("message_id","account_id") REFERENCES "messages"("id","account_id") ON DELETE CASCADE

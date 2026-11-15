@@ -103,7 +103,7 @@ async function readFirst(el: HTMLElement): Promise<void> {
 /** Anything of the mailbox on this tab's screen. */
 function showsMail(el: HTMLElement, subject = SUBJECT): boolean {
   const text = el.textContent ?? "";
-  return el.querySelector(".app-root") !== null || el.querySelector(".row[data-id]") !== null
+  return el.querySelector(".today") !== null || el.querySelector(".row[data-id]") !== null
     || text.includes(subject) || text.includes(BODY) || text.includes(`snippet of ${subject}`);
 }
 
@@ -145,7 +145,7 @@ const watchers: MutationObserver[] = [];
 function mailEverOn(el: HTMLElement): () => boolean {
   let seen = showsMail(el);
   const isMail = (n: Node): boolean => (n.textContent ?? "").includes(SUBJECT)
-    || (n instanceof Element && (n.matches(".app-root, .row[data-id]") || n.querySelector(".app-root, .row[data-id]") !== null));
+    || (n instanceof Element && (n.matches(".today, .row[data-id]") || n.querySelector(".today, .row[data-id]") !== null));
   const watch = new MutationObserver((records) => {
     for (const r of records) for (const n of r.addedNodes) if (isMail(n)) seen = true;
   });
@@ -205,7 +205,7 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
     /* The tab that signed out does not obey its own post: its pane still has its own sentence to
        say (a wipe another tab blocked), and it navigates itself. */
-    expect(tab0.querySelector(".app-root"), "tab 0 obeyed its own message").not.toBeNull();
+    expect(tab0.querySelector(".today"), "tab 0 obeyed its own message").not.toBeNull();
   });
 
   it("tab 1 drops its rows while tab 0's door is still out", async () => {
@@ -287,7 +287,7 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
     shell.scriptSession(shell.db503);
     const tab1 = await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(tab1.querySelector(".app-root"), "the warm mirror did not open").not.toBeNull();
+    expect(tab1.querySelector(".today"), "the warm mirror did not open").not.toBeNull();
 
     await signOutIn("tab-0");
     await oneTick();
@@ -397,7 +397,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     reply("refused");
     expect(await settle(done), "the sign-out never ended").toBe(true);
     expect((await done).serverRefused, "the door's refusal was read as a sign-out").not.toBeNull();
-    expect(tab0.querySelector(".app-root"), "the pressing tab left").not.toBeNull();
+    expect(tab0.querySelector(".today"), "the pressing tab left").not.toBeNull();
     expect(leaves).toBe(1);
   });
 
@@ -511,7 +511,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
     const tab0 = await shell.mountCloudShell();
     await shell.tick(500);
-    expect(tab0.querySelector(".app-root"), "the warm mirror did not open").not.toBeNull();
+    expect(tab0.querySelector(".today"), "the warm mirror did not open").not.toBeNull();
     shell.scriptLogout(shell.db503);
     const { signOut } = await import("../app/sign-out");
     expect(await settle(signOut(ACCOUNT)), "the refused sign-out never ended").toBe(true);
@@ -519,7 +519,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     confirm();
     await shell.tick(1_000);
     expect(leaves, "the pressing tab left at its own confirm").toBe(0);
-    expect(tab0.querySelector(".app-root")).not.toBeNull();
+    expect(tab0.querySelector(".today")).not.toBeNull();
   });
 
   it("CONTROL: the demo is never sent away by a pending sign-out", async () => {
@@ -530,7 +530,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
       const demo = await shell.mountCloudShell();
       await shell.tick(1_000);
       expect(leaves, "the demo left").toBe(0);
-      expect(demo.querySelector(".app-root"), "the demo drew nothing").not.toBeNull();
+      expect(demo.querySelector(".today"), "the demo drew nothing").not.toBeNull();
     } finally {
       window.history.replaceState(null, "", "/");
     }
@@ -669,7 +669,7 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     await shell.tick(1_000);
     expect(shell.sessionCalls() - asked, "the signing-out tab asked the session door").toBe(0);
     expect(leaves, "the signing-out tab left before its pane could say how the sign-out ended").toBe(0);
-    expect(tab0.querySelector(".app-root")).not.toBeNull();
+    expect(tab0.querySelector(".today")).not.toBeNull();
   });
 
   /* A sign-out earlier in this page, then a sign-in that mounts the mailbox in the same page (a client-side

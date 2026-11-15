@@ -153,6 +153,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuild
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_updater::UpdaterExt;
 
+use crate::words::{fill, Dialog, UpdateFailure, Words};
+
 /// The id the menu item carries and the menu-event handler matches on.
 pub const CHECK_FOR_UPDATES_ID: &str = "check-for-updates";
 
@@ -161,7 +163,10 @@ pub const CHECK_FOR_UPDATES_ID: &str = "check-for-updates";
 /// The label is this module's rather than the menu's because it MOVES: the item is the whole of
 /// the update interface, so it has to be able to say "checking", "downloading" and "restart to
 /// install" as well. `menu.rs` owns where the item sits in the bar and nothing about what it says.
-pub const MENU_LABEL_IDLE: &str = "Check for Updates…";
+/// The words are `words.rs`'s, in the language this run speaks.
+pub fn idle_label(w: &Words) -> &'static str {
+    w.update_check
+}
 
 /// The window that renders download progress, and the event this module emits into it.
 ///
@@ -299,17 +304,21 @@ impl InstallKind {
     /// own label is the right one. The item stays in the bar and is disabled rather than removed:
     /// somebody looking for "Check for Updates…" is asking a question, and an answer beats an
     /// absence.
-    pub fn menu_sentence(self) -> Option<&'static str> {
+    pub fn menu_sentence_in(self, w: &Words) -> Option<&'static str> {
         match self {
             InstallKind::AppImage | InstallKind::WindowsSetup | InstallKind::MacBundle => None,
-            InstallKind::Deb | InstallKind::Rpm | InstallKind::LinuxPackage => {
-                Some("Updates Come from Your Package Manager")
-            }
-            InstallKind::Flatpak => Some("Updates Come from Your Software Centre"),
-            InstallKind::MacAppStore => Some("Updates Come from the App Store"),
-            InstallKind::Preview => Some("Updates Come with the Next Night's Build"),
-            InstallKind::Unpackaged => Some("This Build Does Not Update Itself"),
+            InstallKind::Deb | InstallKind::Rpm | InstallKind::LinuxPackage => Some(w.update_by_package),
+            InstallKind::Flatpak => Some(w.update_by_software_centre),
+            InstallKind::MacAppStore => Some(w.update_by_app_store),
+            InstallKind::Preview => Some(w.update_by_nightly),
+            InstallKind::Unpackaged => Some(w.update_not_self),
         }
+    }
+
+    /// [`Self::menu_sentence_in`], in English.
+    #[cfg(test)]
+    pub fn menu_sentence(self) -> Option<&'static str> {
+        self.menu_sentence_in(&crate::words::EN)
     }
 }
 
@@ -784,13 +793,19 @@ impl Flow {
 
     /// What the menu item says. This is the entire quiet affordance: the app never interrupts to
     /// announce an update, so the bar has to carry the sentence.
-    pub fn menu_label(&self) -> String {
+    pub fn menu_label_in(&self, w: &Words) -> String {
         match &self.stage {
-            Stage::Idle | Stage::Failed => MENU_LABEL_IDLE.to_string(),
-            Stage::Checking => "Checking for Updates…".to_string(),
-            Stage::Downloading(version) => format!("Downloading ohmail {version}…"),
-            Stage::Ready(version) => format!("Restart to Install {version}"),
+            Stage::Idle | Stage::Failed => idle_label(w).to_string(),
+            Stage::Checking => w.update_checking.to_string(),
+            Stage::Downloading(version) => fill(w.update_downloading, version),
+            Stage::Ready(version) => fill(w.update_restart, version),
         }
+    }
+
+    /// [`Self::menu_label_in`], in English.
+    #[cfg(test)]
+    pub fn menu_label(&self) -> String {
+        self.menu_label_in(&crate::words::EN)
     }
 
     /// Whether the item can be picked. False exactly where [`Press::Nothing`] would be a no-op:
@@ -1027,10 +1042,25 @@ pub fn leave_saved() {
 /// Pure, so `updater_tests.rs` drives every pair, and the only place the two are put together:
 /// an install that cannot replace its own files says so in every stage, because on such a copy
 /// no stage but `Idle` is ever reached.
-pub fn menu_text(kind: InstallKind, flow: &Flow, held: bool) -> (String, bool) {
-    match kind.menu_sentence() {
+pub fn menu_text_in(kind: InstallKind, flow: &Flow, held: bool, w: &Words) -> (String, bool) {
+    match kind.menu_sentence_in(w) {
         Some(sentence) => (sentence.to_string(), false),
-        None => (flow.menu_label(), press_now(flow, held) != Press::Nothing),
+        None => (flow.menu_label_in(w), press_now(flow, held) != Press::Nothing),
+    }
+}
+
+/// [`menu_text_in`], in English.
+#[cfg(test)]
+pub fn menu_text(kind: InstallKind, flow: &Flow, held: bool) -> (String, bool) {
+    menu_text_in(kind, flow, held, &crate::words::EN)
+}
+
+/// A dialog's named buttons as the dialog plugin takes them: two, one, or the platform's own OK.
+pub fn dialog_buttons(dialog: &Dialog) -> MessageDialogButtons {
+    match (dialog.accept, dialog.decline) {
+        (Some(accept), Some(decline)) => MessageDialogButtons::OkCancelCustom(accept.into(), decline.into()),
+        (Some(accept), None) => MessageDialogButtons::OkCustom(accept.into()),
+        _ => MessageDialogButtons::Ok,
     }
 }
 
@@ -2552,15 +2582,12 @@ fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
         }
     }
     let deferrer = app.clone();
+    let asked = crate::shell_language::words().update_ready(version);
+    let buttons = dialog_buttons(&asked);
     app.dialog()
-        .message(format!(
-            "ohmail {version} is ready to install. ohmail will restart to finish."
-        ))
-        .title("Update ready")
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Restart now".into(),
-            "Later".into(),
-        ))
+        .message(asked.message)
+        .title(asked.title)
+        .buttons(buttons)
         .show(move |now| {
             if now {
                 start_install(deferrer.clone());
@@ -2590,12 +2617,12 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
         Attempt::FetchFailed(err) => {
             log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
             signal(app, Signal::Failed);
-            say_it_failed(app, "ohmail could not fetch the update. Check your connection and try again.");
+            say_it_failed(app, UpdateFailure::Fetch);
         }
         Attempt::NotPrepared(err) => {
             log_verdict(Verdict::Failed, Some(error_class(&format!("{err:?}"))));
             signal(app, Signal::Failed);
-            say_it_failed(app, "ohmail could not install the update. Try again in a moment.");
+            say_it_failed(app, UpdateFailure::Install);
         }
         // The installer did not start. The person closed the app meanwhile: it goes, silently.
         // Otherwise the release stays on offer and the window says so in its own language.
@@ -3128,13 +3155,8 @@ fn unverifiable_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
     record(app, CheckResult::Refused, None);
     signal(app, Signal::NothingOffered);
     if user_initiated {
-        app.dialog()
-            .message(
-                "ohmail could not confirm which version the available update is, so nothing \
-                 was installed. The version you have is unchanged.",
-            )
-            .title("Update not installed")
-            .show(|_| {});
+        let said = crate::shell_language::words().update_unverified();
+        app.dialog().message(said.message).title(said.title).show(|_| {});
     }
 }
 
@@ -3144,10 +3166,8 @@ fn nothing_to_offer<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
     signal(app, Signal::NothingOffered);
     if user_initiated {
         // One button, and it is not a dead end: it is the answer to a question the user asked.
-        app.dialog()
-            .message("ohmail is up to date.")
-            .title("No updates")
-            .show(|_| {});
+        let said = crate::shell_language::words().update_none();
+        app.dialog().message(said.message).title(said.title).show(|_| {});
     }
 }
 
@@ -3156,10 +3176,7 @@ fn failed<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
     record(app, CheckResult::Failed, None);
     signal(app, Signal::Failed);
     if user_initiated {
-        say_it_failed(
-            app,
-            "ohmail could not fetch the update. Check your connection and try again.",
-        );
+        say_it_failed(app, UpdateFailure::Fetch);
     }
 }
 
@@ -3168,15 +3185,14 @@ fn failed<R: Runtime>(app: &AppHandle<R>, user_initiated: bool) {
 /// Deliberately carries no library error text: "error sending request for url (…): dns error" is a
 /// developer's sentence in a user's dialog, and it makes the box longer without making it more
 /// actionable. What a person can do about any of these is try again, so that is the button.
-fn say_it_failed<R: Runtime>(app: &AppHandle<R>, sentence: &str) {
+fn say_it_failed<R: Runtime>(app: &AppHandle<R>, failure: UpdateFailure) {
     let retry = app.clone();
+    let said = crate::shell_language::words().update_failed(failure);
+    let buttons = dialog_buttons(&said);
     app.dialog()
-        .message(sentence)
-        .title("ohmail update")
-        .buttons(MessageDialogButtons::OkCancelCustom(
-            "Try again".into(),
-            "Close".into(),
-        ))
+        .message(said.message)
+        .title(said.title)
+        .buttons(buttons)
         .show(move |again| {
             if again {
                 check(retry, true);
@@ -3215,7 +3231,7 @@ fn relabel<R: Runtime>(app: &AppHandle<R>) {
             let last = *lock(&state.last);
             let kind = install_kind();
             let standing = standing(app, &flow);
-            let (label, enabled) = menu_text(kind, &flow, standing.held);
+            let (label, enabled) = menu_text_in(kind, &flow, standing.held, crate::shell_language::words());
             (label, enabled, told(&flow, last, kind, standing))
         };
         // A bar that has not been built yet (this runs before `menu.rs` hands the item over on a
@@ -3295,7 +3311,7 @@ fn show_progress_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::Webview
         WebviewWindowBuilder::new(app, PROGRESS_WINDOW_LABEL, WebviewUrl::App("updater.html".into())),
         app.config(),
     )
-    .title("Updating ohmail")
+    .title(crate::shell_language::words().progress_title)
     .inner_size(420.0, 210.0)
     .resizable(false)
     .minimizable(false)

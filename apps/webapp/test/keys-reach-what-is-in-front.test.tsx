@@ -222,7 +222,7 @@ const rowIds = (el: HTMLElement): string[] =>
 
 let engineNow: OhmailEngine | null = null;
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(IDS));
   engineNow = engine;

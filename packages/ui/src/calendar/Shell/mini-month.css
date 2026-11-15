@@ -54,7 +54,8 @@
     z-index: var(--oh-mini-z);
     border-radius: var(--dot-r);
   }
-  .oh-mini-day[data-out] {
+  .oh-mini-day[data-out],
+  .oh-mini-day[data-off] {
     color: var(--ink2);
   }
   .oh-mini-day[data-busy] {
@@ -71,7 +72,8 @@
     border-radius: var(--dot-r);
     transition: background-color var(--d-fade) var(--e-std);
   }
-  .oh-mini-day:hover .oh-mini-disc {
+  /* A day that cannot be picked does not answer the pointer. */
+  .oh-mini-day:not(:disabled):hover .oh-mini-disc {
     background: var(--hover-ground);
   }
   /* The week on screen stands on one band. */
@@ -92,7 +94,7 @@
   .oh-mini-day[data-band="only"]::before {
     border-radius: var(--r-pill);
   }
-  .oh-mini-day[data-band]:hover .oh-mini-disc {
+  .oh-mini-day[data-band]:not(:disabled):hover .oh-mini-disc {
     background: var(--sheet);
   }
   .oh-mini-day[data-today] .oh-mini-disc,

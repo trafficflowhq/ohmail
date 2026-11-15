@@ -184,11 +184,11 @@ export class DraftsService {
     return dto;
   }
 
-  async create(
-    ctx: ServiceContext,
-    body: CreateDraftBody,
-    opts: { idempotency?: DraftCreateIdempotency } = {},
-  ): Promise<DraftMutation> {
+  /**
+   * `create`'s validations, for both doors that make a draft: the row's values, every one checked
+   * before the transaction opens.
+   */
+  private async draftValues(ctx: ServiceContext, body: CreateDraftBody) {
     const mailboxId = await this.validMailbox(ctx, body.mailboxId);
     const subject = this.validSubject(body.subject);
     const rich = this.richBody(body.html, body.body);
@@ -198,10 +198,43 @@ export class DraftsService {
     const cc = this.validAddresses(body.cc, "cc");
     const bcc = this.validAddresses(body.bcc, "bcc");
     this.boundRecipientTotal([to, cc, bcc]);
-    const rationale = body.rationale ?? null;
     const forwardOf = body.forwardOfMessageId ?? null;
     this.refuseReplyAndForward(body.inReplyToMessageId ?? null, forwardOf);
     const forwardParts = body.forwardParts == null ? null : readForwardParts(body.forwardParts, forwardOf)!.sort();
+    return {
+      mailboxId, threadId: body.threadId ?? null, inReplyToMessageId: body.inReplyToMessageId ?? null,
+      forwardOfMessageId: forwardOf, forwardParts, subject, body: text, html, to, cc, bcc,
+      rationale: body.rationale ?? null,
+    };
+  }
+
+  /** `create`'s ownership reads, inside the write and before the row exists: thread, reply and forward targets. */
+  private async requireOwnedTargets(
+    tx: Tx, ctx: ServiceContext, v: { threadId: string | null; inReplyToMessageId: string | null; forwardOfMessageId: string | null },
+  ): Promise<void> {
+    // Same order and same ownership rule as `update`: the reply-target thread is read
+    // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
+    if (v.threadId) {
+      // KEY SHARE, and the strength travels with the call: it blocks a DELETE of the parent
+      // without blocking ordinary updates to it, which is the whole reason this read is not the
+      // exclusive lock. Promoting it while porting would serialize traffic this deliberately
+      // lets past.
+      const t = await dialect(ctx.db).forUpdate(
+        tx.select({ id: threads.id }).from(threads)
+          .where(and(eq(threads.id, v.threadId), eq(threads.accountId, ctx.accountId))),
+        { mode: "key share" });
+      if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
+    }
+    await this.requireOwnedReplyTarget(tx, ctx, v.inReplyToMessageId);
+    await this.requireOwnedReplyTarget(tx, ctx, v.forwardOfMessageId, "forwarded message not found");
+  }
+
+  async create(
+    ctx: ServiceContext,
+    body: CreateDraftBody,
+    opts: { idempotency?: DraftCreateIdempotency } = {},
+  ): Promise<DraftMutation> {
+    const v = await this.draftValues(ctx, body);
     const now = ctx.now();
 
     /* THROUGH THE SEAM, WITH THE MAILBOX. `validMailbox` above ran before this transaction — a
@@ -209,33 +242,14 @@ export class DraftsService {
        mailbox sweep LEAVES standing, so the key accepts the insert and the draft's body and
        recipients come back under a mailbox the person removed. */
     const { id, seq, stored } = await withAccountTx(ctx, async (tx) => {
-      // Same order and same ownership rule as `update`: the reply-target thread is read
-      // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
-      if (body.threadId) {
-        // KEY SHARE, and the strength travels with the call: it blocks a DELETE of the parent
-        // without blocking ordinary updates to it, which is the whole reason this read is not the
-        // exclusive lock. Promoting it while porting would serialize traffic this deliberately
-        // lets past.
-        const t = await dialect(ctx.db).forUpdate(
-          tx.select({ id: threads.id }).from(threads)
-            .where(and(eq(threads.id, body.threadId), eq(threads.accountId, ctx.accountId))),
-          { mode: "key share" });
-        if (t.length === 0) throw new ServiceError("not_found", 404, "thread not found");
-      }
-      await this.requireOwnedReplyTarget(tx, ctx, body.inReplyToMessageId ?? null);
-      await this.requireOwnedReplyTarget(tx, ctx, forwardOf, "forwarded message not found");
+      await this.requireOwnedTargets(tx, ctx, v);
       const [row] = await tx.insert(drafts).values({
-        accountId: ctx.accountId,
-        mailboxId,
-        threadId: body.threadId ?? null,
-        inReplyToMessageId: body.inReplyToMessageId ?? null,
-        forwardOfMessageId: forwardOf, forwardParts,
-        subject, body: text, html, to, cc, bcc, rationale,
+        accountId: ctx.accountId, ...v,
         status: "draft",
         createdAt: now, updatedAt: now,
       }).returning({ id: drafts.id });
       const s = await this.recordDraftChange(
-        tx, ctx.accountId, row!.id, "create", body.inReplyToMessageId ?? forwardOf,
+        tx, ctx.accountId, row!.id, "create", v.inReplyToMessageId ?? v.forwardOfMessageId,
       );
       // The stored response commits atomically with the draft, closing the
       // commit-then-crash window in which a retry would store a SECOND draft.
@@ -263,11 +277,44 @@ export class DraftsService {
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
       }
       return { id: row!.id, seq: s, stored: inTx };
-    }, { mailboxId });
+    }, { mailboxId: v.mailboxId });
 
     // The idempotent path answers with the SNAPSHOT IT STORED â first response ≡ every replay.
     if (stored) return { draft: stored, seq: Number(seq) };
     return this.finish(ctx, id, seq);
+  }
+
+  /**
+   * A DRAFT MADE ONCE PER KEY — an invitation's answer (`invitation-answer-draft.ts`): `create`'s
+   * validations and its mailbox seam, the insert resolved on `drafts.workflow_dedup_key`. A second
+   * call under the key makes nothing and answers the draft the first one made, as it now stands.
+   * `createdAt` is read inside the write, after the targets are held, and stamps a new row (the
+   * answer's own instant, under the caller's own lock); an existing row keeps its own.
+   */
+  async createOnce(
+    ctx: ServiceContext, body: CreateDraftBody, onceKey: string,
+    opts: { createdAt?: (tx: Tx) => Promise<Date> } = {},
+  ): Promise<{ id: string; status: string; createdAt: Date; created: boolean }> {
+    const v = await this.draftValues(ctx, body);
+    const now = ctx.now();
+    return withAccountTx(ctx, async (tx) => {
+      await this.requireOwnedTargets(tx, ctx, v);
+      const createdAt = opts.createdAt === undefined ? now : await opts.createdAt(tx);
+      const [made] = await tx.insert(drafts).values({
+        accountId: ctx.accountId, ...v, status: "draft", workflowDedupKey: onceKey, createdAt, updatedAt: now,
+      }).onConflictDoNothing({ target: drafts.workflowDedupKey })
+        .returning({ id: drafts.id, status: drafts.status, createdAt: drafts.createdAt });
+      if (made !== undefined) {
+        await this.recordDraftChange(tx, ctx.accountId, made.id, "create", v.inReplyToMessageId ?? v.forwardOfMessageId);
+        return { ...made, created: true };
+      }
+      const [held] = await tx.select({ id: drafts.id, status: drafts.status, createdAt: drafts.createdAt }).from(drafts)
+        .where(and(eq(drafts.workflowDedupKey, onceKey), eq(drafts.accountId, ctx.accountId)))
+        .limit(1);
+      // The key names its account, so another account's row under it is a collision of digests.
+      if (held === undefined) throw new ServiceError("conflict", 409, "this draft's key is held elsewhere");
+      return { ...held, created: false };
+    }, { mailboxId: v.mailboxId });
   }
 
   /** PUT/PATCH /drafts/:id â full/partial edit of the composable fields. */
@@ -704,7 +751,7 @@ export class DraftsService {
    * send. The same reasoning excludes `sync_blocked_reason`. Only `'disabled'` — the state a
    * human or a billing/lease decision put the row in — refuses.
    */
-  private async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
+  async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
     if (typeof v !== "string" || v.length === 0) {
       throw new ServiceError("validation_failed", 400, "mailboxId is required");
     }

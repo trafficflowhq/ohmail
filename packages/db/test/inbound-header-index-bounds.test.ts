@@ -114,6 +114,11 @@ const BOUND = {
   calendarOccurrence: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(r\.recurrenceId, CALENDAR_OCCURRENCE_KEY_MAX_BYTES\)/ },
   calendarProviderId: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(r\.id, CALENDAR_PROVIDER_ID_MAX_BYTES\)/ },
   calendarAddress: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(p\.address, CALENDAR_ADDRESS_MAX_BYTES\)/ },
+  invitationUid: { file: "packages/db/src/message-invitations.ts", code: /Buffer\.byteLength\(row\.uid, "utf8"\) > INVITATION_UID_MAX_BYTES\) return false/ },
+  invitationOccurrence: {
+    file: "packages/db/src/message-invitations.ts",
+    code: /Buffer\.byteLength\(row\.recurrenceId, "utf8"\) > INVITATION_RECURRENCE_ID_MAX_BYTES\) return false/,
+  },
 } as const;
 type Bound = keyof typeof BOUND;
 
@@ -236,9 +241,9 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "unsubscribe_drain_state.pass": { not: "a pass name the product writes" },
   "pass_progress.job": { not: "a pass name the product writes, from the door's closed list" },
   // mail 0204. An invitation's UID and the instance it names are the sender's own text, read out
-  // of the letter's calendar part.
-  "message_invitations.uid": { unwritten: "the ingest that stores an invitation's identity bounds its UID in bytes" },
-  "message_invitations.recurrence_id": { unwritten: "the same door bounds the instance's id in bytes" },
+  // of the letter's calendar part; the one door that writes the table bounds both in bytes.
+  "message_invitations.uid": { inbound: "invitationUid" },
+  "message_invitations.recurrence_id": { inbound: "invitationOccurrence" },
   // mail 0205, the calendar's tables (`_unwritten-tables.ts`). A provider's ids, an event's UID and
   // an attendee's address are another party's text; each is bounded in bytes where the calendar's
   // store writes it. A credential's kind and a write's idempotency key are the product's own.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { MessageService, SearchService, SyncService, ServiceError, type ServiceContext } from "../src/index.js";
 import { changesFor, makeCtx, movedHere, otherAccount, seedMessage, seedSearchDocuments } from "./helpers.js";
 
@@ -156,6 +157,22 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
     // Not listed and not counted: the page's rows are read apart from the count beside them.
     expect({ ids: after.items.map((m) => m.id), total: after.total, inbox: after.facets?.folder.INBOX })
       .toEqual({ ids: [keep], total: 1, inbox: 1 });
+
+    // The same under each person filter: both letters are from and to the same people, and a third,
+    // from and to others, is narrowed away.
+    const other = await seedMessage(db, accountId, mailboxId, { folder: "INBOX", subject: "kingfisher other" });
+    await db.insert(messageBodies).values({ messageId: other, accountId, text: "kingfisher" });
+    await reindexMessageSearch(db as never, accountId, other);
+    await db.update(messages).set({ fromAddress: "ann@shared.test", toAddresses: [{ name: null, address: "ben@shared.test" }] })
+      .where(inArray(messages.id, [keep, gone]));
+    for (const filters of [{ sender: "ann@shared.test" }, { to: "ben@shared.test" }, { party: "ann@shared.test" }, { party: "ben@shared.test" }]) {
+      // With words, and with none: the filters alone list what they keep.
+      for (const q of ["kingfisher", ""]) {
+        const r = await new SearchService().search(ctx, { q, filters });
+        expect({ q, filters, ids: r.items.map((m) => m.id), total: r.total, inbox: r.facets?.folder.INBOX })
+          .toEqual({ q, filters, ids: [keep], total: 1, inbox: 1 });
+      }
+    }
   });
 
   it("the folder list is a living view too: a tombstoned row drops out of its former view", async () => {

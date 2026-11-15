@@ -99,6 +99,8 @@ describe("verb-parity census", () => {
     // 39 → 40 (SCREENER-020 item 3): `screener_decide` gained the two-mailbox account-wide
     // scenario — the widened verb's own leg, no new verb, so `covered` stands at 23.
     // 40 → 42: `screener_decide` gained a removed mailbox's letter and a list address's claim.
-    expect(coveredScenarios().length).toBe(42);
+    // 42 → 43: `move` gained a move into one of the person's own folders — the same verb naming a
+    // folder by its listed path, no new verb, so `covered` stands at 23.
+    expect(coveredScenarios().length).toBe(43);
   });
 });

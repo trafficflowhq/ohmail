@@ -47,7 +47,7 @@ export interface ToastOptions {
 
 export type ToastFn = (message: string, options?: ToastOptions) => void;
 
-const ToastContext = createContext<ToastFn | null>(null);
+export const ToastContext = createContext<ToastFn | null>(null);
 
 interface ActiveToast {
   message: string;

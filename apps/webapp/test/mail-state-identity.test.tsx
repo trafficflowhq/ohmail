@@ -154,7 +154,7 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
     } as never,
   });
 
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);

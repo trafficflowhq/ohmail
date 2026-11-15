@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn, PgInsertValue } from "drizzle-orm/pg-core";
-import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress, accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
+import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress, accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock, writeInvitation as writeInvitationDoor, invitationBackfillPage, settleInvitationBackfill, type InvitationBackfillPage, type InvitationWrite } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -8,6 +8,7 @@ import type {
   Rule, NativeLocator, EmailAddress,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput, KnownSenders, ContactSource,
+  InvitationWritten,
   // `../mail.js`, not `../index.js`: the repository adapter needs the mail vocabulary, and the
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
@@ -17,6 +18,8 @@ import {
   messageSearchUpsert, reindexMessageSearch, storedSearchInputWith, upsertMessageSearch, type MessageSearchInput,
 } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
+import type { PlannedInvitation } from "../invitation-mail.js";
+import { valueFaultOf, type MessageFailureCode } from "../statement-fault.js";
 import {
   refillStorageCapBody as refillStorageCapBodyTx, unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome, type StorageCapRefill,
@@ -425,6 +428,12 @@ export interface IngestRunContext {
 /** The first `persisted` letters were stored, as these rows, in letter order; the rest are the caller's to commit alone. */
 export interface IngestRunResult { persisted: number; messageIds: string[] }
 
+/** What one place of the invitation pass came to: the letters changed, and the word when the row's value was refused. */
+export interface InvitationBackfillSettled {
+  changed: string[];
+  refused?: MessageFailureCode;
+}
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
@@ -793,6 +802,22 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   refillStorageCapBody?(
     accountId: string, mailboxId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number,
   ): Promise<StorageCapRefill>;
+  /**
+   * The invitation pass's place and next page (mail 0204, `@trafficflow/db#invitationBackfillPage`):
+   * this mailbox's letters after the cursor, and the candidates among them. OPTIONAL, as above: a
+   * repo without it runs no pass and marks nothing done.
+   */
+  invitationBackfillPage?(
+    accountId: string, mailboxId: string, opts: { after?: string | null; limit: number },
+  ): Promise<InvitationBackfillPage>;
+  /**
+   * The invitation pass's settle (the cursor, the row, the changes), on this repo's connection: the
+   * letters changed, and the word when the store refused the row for its value (the place is then
+   * settled without it). Any other fault of the store is thrown.
+   */
+  invitationBackfillSettle?(a: {
+    accountId: string; mailboxId: string; cursor: string | null; finished?: boolean; at: Date; invitation?: InvitationWrite;
+  }): Promise<InvitationBackfillSettled>;
   /** One primary-key read of the account's counter row; `null` when it has none. */
   storageRefillCounter?(accountId: string): Promise<StorageRefillCounter | null>;
   /** Why the storage refill must wait for this account, or `null` when it need not. */
@@ -2030,6 +2055,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return unhuskJunkFiledBodyTx(this.db, { accountId, husk, fresh, capBytes });
   }
 
+  /** See the interface doc: `@trafficflow/db#invitationBackfillPage` on this repo's connection. */
+  async invitationBackfillPage(
+    accountId: string, mailboxId: string, opts: { after?: string | null; limit: number },
+  ): Promise<InvitationBackfillPage> {
+    return invitationBackfillPage(this.db as unknown as Tx, accountId, mailboxId, opts);
+  }
+
+  /**
+   * See the interface doc: `@trafficflow/db#settleInvitationBackfill` on this repo's connection, a
+   * row in a SAVEPOINT under {@link writeInvitation}'s rule: a refusal of the row's value settles the
+   * place without it (the cursor alone, its word returned), any other fault is thrown on.
+   */
+  async invitationBackfillSettle(a: {
+    accountId: string; mailboxId: string; cursor: string | null; finished?: boolean; at: Date; invitation?: InvitationWrite;
+  }): Promise<InvitationBackfillSettled> {
+    if (a.invitation === undefined) return { changed: await settleInvitationBackfill(this.db as unknown as Tx, a) };
+    try {
+      return { changed: await this.db.transaction((sp) => settleInvitationBackfill(sp as unknown as Tx, a)) };
+    } catch (err) {
+      const refused = valueFaultOf(err);
+      if (refused === null) throw err;
+      const { invitation: _refusedRow, ...place } = a;
+      return { changed: await settleInvitationBackfill(this.db as unknown as Tx, place), refused };
+    }
+  }
+
   /** See the interface doc. Each page seeks the walk's key from where the last one stopped. */
   async listStorageCapHusks(
     accountId: string, mailboxId: string, opts: { limit: number; before?: StorageCapHuskKey },
@@ -2371,6 +2422,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async insertAttachments(messageId: string, accountId: string, rows: AttachmentMeta[]): Promise<void> {
     for (let at = 0; at < rows.length; at += MESSAGE_ROWS_CHUNK) {
       await this.db.insert(attachmentsTbl).values(attachmentRowsOf(messageId, accountId, rows.slice(at, at + MESSAGE_ROWS_CHUNK)));
+    }
+  }
+
+  /**
+   * {@link RepoPort.writeInvitation}, through the table's one door, in a SAVEPOINT of the letter's
+   * transaction. The door holds every value to its column before any statement; the savepoint is
+   * the layer under that, for a value nobody foresaw the store refusing: it rolls back to its own
+   * start and the letter is kept without the row, its word returned to be said. A fault that is the
+   * store's own (a lock wait cut short, a deadlock, a timeout, a busy device store, our own code) is
+   * thrown on after the rollback, as from every other statement of the commit: the letter's
+   * transaction fails and the next cycle reads the letter again, never kept without its row.
+   */
+  async writeInvitation(messageId: string, accountId: string, _mailboxId: string, planned: PlannedInvitation): Promise<InvitationWritten> {
+    try {
+      return { touched: await this.db.transaction(async (sp) => (await writeInvitationDoor(sp as unknown as Db, { ...planned, accountId, messageId })).touched) };
+    } catch (err) {
+      const refused = valueFaultOf(err);
+      if (refused === null) throw err;
+      return { touched: [], refused };
     }
   }
 

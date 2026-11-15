@@ -6290,6 +6290,14 @@ export function outboundToMail(msg: OutboundMessage, messageId: string, date: Da
           })),
         }
       : {}),
+    // ── A CALENDAR PART: an invitation's answer, an alternative of the body ──────────────────
+    //
+    // Literal keys onto nodemailer's `alternatives`, never the caller's object: a `path`, `href`
+    // or `raw` there would have nodemailer read a file or fetch an address. Not `icalEvent`, which
+    // also attaches the text as a file. Omitted when absent: every other letter is unchanged.
+    ...(msg.calendar !== undefined
+      ? { alternatives: [{ contentType: "text/calendar; charset=utf-8; method=REPLY", content: msg.calendar.text }] }
+      : {}),
   };
 }
 

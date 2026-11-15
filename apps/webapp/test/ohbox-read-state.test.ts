@@ -368,7 +368,7 @@ async function mountLive(rows: Msg[]): Promise<void> {
    no network at all. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);

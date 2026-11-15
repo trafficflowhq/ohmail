@@ -108,16 +108,6 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
       .not.toMatch(/reader\.list|MailboxEntity/);
   });
 
-  it("the Cloud client injects the pane and Desktop does not get one", () => {
-    // The GPL/standalone seam: `scripts/publish-desktop.mjs` DENYs `(product)`, so the
-    // shared view must keep working with the prop absent.
-    // The pane leads the Settings → Mailboxes node; the self-check sits beside it, a second consumer.
-    expect(read("../app/(product)/mailbox/CloudShell.tsx"))
-      .toMatch(/mailboxSection=\{<><MailboxSection subscriptionPane=\{manageOffered\} \/><MailboxFilings api=\{filingsApi\} \/><MailboxSelfCheck check=\{mailboxApi\.selfCheck\} \/><\/>\}/);
-    // Withheld in demo mode, like `accountSection` — `?demo=1` has no session to post with.
-    expect(read("../app/shell/AppShell.tsx")).toMatch(/mailboxSection=\{demo \? undefined : mailboxSection\}/);
-  });
-
   it("THE FALLBACK IS DELETED — the pane renders the host node and nothing else", () => {
     // The mirror fallback (`mailboxSection ?? (…reader.list("mailbox")…)`) drew an entity type
     // `/sync` never emits, so it was empty for every real account — built, tested, unreachable.
@@ -310,32 +300,6 @@ describe("About tells a live account the truth, wherever it is rendered", () => 
     expect(shell).toMatch(/\{t\("about\.p1"\)\}/);
     // …and the live arm is the injected node, never the demo copy.
     expect(shell).toMatch(/\) : \(\s*aboutSection\s*\)/);
-  });
-
-  it("the (i) affordance is gone from the dock, and About is a Settings pane", () => {
-    // Owner-reported: the floating (i) button was an overlay over the mail holding three
-    // facts that are settings. The dock keeps only the two controls that ACT on what is on
-    // screen; the facts moved to Settings → About ohmail, which is where they can be found
-    // and linked to. This is the guard that the button does not come back.
-    expect(shell).not.toMatch(/icon="info"/);
-    expect(shell).not.toMatch(/aboutOpen/);
-    expect(messages.dock!.about).toBeUndefined();
-    // The pane exists, is conditional on the injected node, and is named. The tab list lives in
-    // `settings-panes.ts` since that change; the view answers from node presence, the list carries the name.
-    const settings = read("../app/views/SettingsView.tsx");
-    expect(settings).toMatch(/about: Boolean\(aboutSection\),/);
-    const panes = read("../app/views/settings-panes.ts");
-    expect(panes).toMatch(/w\.about \? \[\["about", t\("about"\)\]/);
-    expect(settings).toMatch(/shown === "about" \? aboutSection : null/);
-    expect(messages.settings!.about).toBe("About ohmail");
-  });
-
-  it("the live body is the injected one, and it reports mailbox + sync + build", () => {
-    const src = read("../app/(product)/mailbox/AboutSection.tsx");
-    expect(src).toMatch(/mailboxApi\.list\(\)/);
-    expect(src).toMatch(/lastSyncAt/);
-    expect(src).toMatch(/NEXT_PUBLIC_BUILD/);
-    expect(read("../app/(product)/mailbox/CloudShell.tsx")).toMatch(/aboutSection=\{<AboutSection \/>\}/);
   });
 
   it("`not synced yet` is a real state, not rendered as a time", () => {

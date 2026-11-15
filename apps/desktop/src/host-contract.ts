@@ -8,7 +8,7 @@
 import {
   CANNOT, NONE,
   type DeviceNotifications, type Entries, type HostContract, type HostDevice, type HostReads, type HostSession,
-  type HostSignals, type Transports,
+  type FrameSupplies, type HostSignals, type MayBeNone, type Transports,
 } from "@ohmail/app/host";
 import type { EngineStatus } from "./bridge-fetch.js";
 import { desktopSendSurface } from "./desktop-send-surface.js";
@@ -40,24 +40,33 @@ export interface DesktopFacts {
   readonly takesMailLinks: boolean;
   /** The mounted mailbox, account or pairing: the partition of what the window keeps. */
   readonly scope: string | null;
+  /** The hosted account behind a signed-in door, or null. */
+  readonly account: string | null;
   readonly build: { readonly version: string | null; readonly commit: string | null };
 }
 
 /** What the window has to hand in: its calls over the pipe, the entries it imports, its shell's verbs. */
 export interface DesktopSupplies {
-  readonly signOut: Supplied<HostSession["signOut"]>;
-  readonly reads: { readonly [R in keyof HostReads]: Supplied<HostReads[R]> };
+  /** No caller today: the window signs out in its own Settings pane. `none` until the first caller arrives. */
+  readonly signOut: HostSession["signOut"];
+  /** The account's access answer is read by the window's own panes today; `none` until its first caller. */
+  readonly reads: { readonly mailboxes: Supplied<HostReads["mailboxes"]>; readonly copyAge: Supplied<HostReads["copyAge"]>; readonly access: HostReads["access"] };
   /**
    * The wires the pipe carries. Two for consent: the account's, and the one an install on its
    * own answers, which stores no choice of folders. Nothing is behind the review of who you
    * write to or a folder's count on any door.
    */
-  readonly wires: Transports<Exclude<keyof HostContract["wires"], "consent" | "seedReview" | "folderSummary">> & {
+  readonly wires: Transports<
+    | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "images" | "olderBody" | "junk" | "trash"
+    | "suggest" | "draftReply"
+  > & MayBeNone<"firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
   /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. */
-  readonly features: Entries<Exclude<keyof HostContract["features"], "invites">>;
+  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages">>;
   readonly notifications: DeviceNotifications;
+  /** The places, the address bar, the window, the look and the way back. */
+  readonly frame: FrameSupplies;
   readonly badge: Supplied<HostDevice["badge"]>;
   readonly hostConnection: Supplied<HostSignals["hostConnection"]>;
   readonly linkIn: Supplied<HostSignals["linkIn"]>;
@@ -86,7 +95,9 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       confirmed: NONE,
       state: !cloud ? NONE : facts.sessionRefused ? "refused" : "live",
       scope: facts.scope,
+      account: facts.account,
       signOut: has.signOut,
+      recover: has.frame.recover,
     },
     reads: {
       mailboxes: has.reads.mailboxes,
@@ -145,6 +156,8 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       devices: hostMode || account ? has.features.devices : NONE,
       defaultMail: facts.takesMailLinks ? has.features.defaultMail : NONE,
       invites: NONE,
+      places: has.frame.places,
+      stages: has.frame.stages,
     },
     device: {
       build: { surface: "desktop", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: false },
@@ -155,7 +168,9 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       pickFile: NONE,
       saveFile: NONE,
       defaultMail: NONE,
-      appearance: NONE,
+      address: has.frame.address,
+      window: has.frame.window,
+      appearance: has.frame.appearance,
       textSize: NONE,
       fold: NONE,
       liveTheme: NONE,

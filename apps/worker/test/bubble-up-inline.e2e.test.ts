@@ -154,6 +154,8 @@ describe("bubble-up runs INLINE in the worker cycle", () => {
     expect(changes[1]!.seq > setSeq).toBe(true);
 
     // ── THE LINE, AS BYTES ──────────────────────────────────────────────────────────────
+    // Written once the flip's write returns, so it is waited for as the row was.
+    await waitFor(() => lines.some((l) => l.event === "bubble_up_flipped"), 15000, "the flip's line");
     const flips = lines.filter((l) => l.event === "bubble_up_flipped");
     expect(flips).toHaveLength(1);
     expect(flips[0]!.flipped).toBe(1);

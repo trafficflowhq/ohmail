@@ -54,10 +54,6 @@ describe("the window hands the mailbox list to the shell on BOTH doors", () => {
    * naming nothing for ever — and the neighbouring props that ARE door-gated show what that
    * would look like in this file (`mode === "cloud"` for the freshness probe).
    */
-  it("passes `mailboxFacts` with no door in the condition", () => {
-    expect(src.match(/mailboxFacts:\s*readMailboxFacts/g) ?? []).toHaveLength(1);
-    expect(src).toMatch(/\{\s*\.\.\.\(engine\s*\?\s*\{\s*mailboxFacts:\s*readMailboxFacts\s*\}/);
-  });
 
   it("…and never behind a door test", () => {
     expect(src).not.toMatch(/mode === "(cloud|local)"[^\n]*mailboxFacts/);

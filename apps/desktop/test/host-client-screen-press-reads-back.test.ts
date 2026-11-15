@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   HttpAdapter, OhmailEngine, encodeSeqCursor, type EngineMessage, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
-import { BearerManager } from "../src/host-client/bearer";
+import { BearerManager } from "../../paired-page/src/bearer";
 import { screeningVerdict } from "@ohmail/app-logic/press/press-verdict";
 import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 

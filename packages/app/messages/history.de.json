@@ -1,0 +1,18 @@
+{
+  "history": {
+    "loading": "Deine Mails werden geladen.",
+    "title": "Historie",
+    "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "explainer": "Jede Nachricht, die dir gehört, die neueste zuerst — bis zur ersten zurück.",
+    "explainerMore": "Verschoben wurde nichts: Jede Nachricht liegt weiter dort, wo dein Mailserver sie hat, und ihre Zeile nennt diesen Ordner. Die Monate und Jahre rechts springen an jede Stelle.",
+    "explainerMoreLabel": "Was in der Historie liegt, und wo es liegt",
+    "emptyTitle": "Noch nichts da.",
+    "emptyHint": "Deine Mails erscheinen, sobald sie synchronisiert sind.",
+    "storeUnavailable": "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
+    "storeRetry": "Erneut versuchen",
+    "railLabel": "Zu einem Monat springen",
+    "railUndated": "Ohne Datum",
+    "railCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "placeChip": "Historie"
+  }
+}

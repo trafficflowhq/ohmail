@@ -484,7 +484,7 @@ export const showsUnconfirmed = (el: HTMLElement): boolean =>
 
 /** The mailbox itself. `AppShell`'s root node, which `isSameNode` comparisons hang off. */
 export const shellRoot = (el: HTMLElement): HTMLElement | null =>
-  el.querySelector<HTMLElement>(".app-root");
+  el.querySelector<HTMLElement>(".today");
 
 /** The blocking overlay's node, `SessionEnded`'s markup — present only at `unconfirmed`. */
 export const overlay = (el: HTMLElement): HTMLElement | null =>

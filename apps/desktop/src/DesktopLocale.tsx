@@ -15,6 +15,7 @@
  */
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlProvider } from "use-intl";
+import { TextProvider } from "@ohmail/app/text";
 
 import { LocaleContext, type LocaleControls } from "../../webapp/app/shell/LocaleContext.js";
 import {
@@ -109,14 +110,18 @@ export function DesktopLocale({ children }: { children: ReactNode }) {
     [locale, apply, adopt],
   );
 
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
     <LocaleContext.Provider value={controls}>
       <IntlProvider
         locale={locale}
         messages={messages}
-        timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+        timeZone={zone}
       >
-        {children}
+        {/* The frame's reader, over the same catalogue, language and zone as the intl provider (`@ohmail/app/text`). */}
+        <TextProvider locale={locale} messages={messages} timeZone={zone}>
+          {children}
+        </TextProvider>
       </IntlProvider>
     </LocaleContext.Provider>
   );

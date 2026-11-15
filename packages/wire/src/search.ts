@@ -10,6 +10,15 @@ export type SearchTier = "exact" | "similar";
 /** Which side of a letter an address search looks at. */
 export type AddressSearchDirection = "any" | "from" | "to";
 
+/**
+ * THE FILTERS A TEXT SEARCH TAKES, by their query parameter. `sender` is an exact From address,
+ * `to` an exact To or Cc address, `party` an exact address on either side (From, To or Cc); each
+ * compared without case, never a substring. With no words (`q` blank) and at least one filter, the
+ * answer is every letter the filters keep, newest first.
+ */
+export type SearchFilterParam =
+  "folder" | "sender" | "to" | "party" | "unread" | "hasAttachments" | "dateFrom" | "dateTo";
+
 export interface SearchResult {
   items: MessageDTO[];
   /**
@@ -29,7 +38,11 @@ export interface SearchResult {
   totalExact: boolean;
   /** This answer's server time in milliseconds. */
   ms: number;
-  /** The next page's cursor, or `null` on the last page (always `null` for `summary`). */
+  /**
+   * The next page's cursor, or `null` on the last page (always `null` for `summary`). For a search
+   * with no words a page may hold fewer rows than asked and still carry a cursor: the read is
+   * bounded, and the letters past its bound are read by the next page.
+   */
   nextCursor: string | null;
   /**
    * On the last RELEVANCE page: an arm was cut at its top-K, so matches exist past the fused set

@@ -15,6 +15,8 @@ export interface MiniMonthDay {
   picked?: boolean;
   /** A day of the month before or after. */
   outside?: boolean;
+  /** A day that cannot be picked here: in the second ink of a day outside the month, answering no pointer, and said to be unavailable. */
+  disabled?: boolean;
   /** A day with something: its date is bold. */
   busy?: boolean;
   /** The week on screen stands on one band: where this day lies in it. */
@@ -82,6 +84,8 @@ export function MiniMonth({
             type="button"
             className="oh-control oh-mini-day"
             data-out={d.outside ? "" : undefined}
+            data-off={d.disabled ? "" : undefined}
+            disabled={d.disabled}
             data-today={d.today ? "" : undefined}
             data-picked={d.picked && !d.today ? "" : undefined}
             data-busy={d.busy ? "" : undefined}

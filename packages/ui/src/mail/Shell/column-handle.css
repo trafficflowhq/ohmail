@@ -4,6 +4,8 @@
     --oh-columnhandle-w: 10px;
     --oh-columnhandle-half: -5px;
     --oh-columnhandle-layer: 4;
+    /* The short line: its width, and the radius that rounds its ends in either face, as the sheet draws it. */
+    --oh-columnhandle-line: 2px;
 
     position: absolute;
     top: var(--edge);
@@ -27,8 +29,8 @@
     top: 25%;
     bottom: 25%;
     left: 4px;
-    width: 2px;
-    border-radius: var(--r-sq);
+    width: var(--oh-columnhandle-line);
+    border-radius: var(--oh-columnhandle-line);
     background: var(--ctl-ring);
     opacity: 0;
     transition: opacity var(--d-fade) var(--e-std);

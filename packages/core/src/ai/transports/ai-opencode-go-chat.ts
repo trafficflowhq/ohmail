@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, ModelDeclinedError,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA, ModelDeclinedError,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload,
+  draftSystemPrompt, draftUserPayload,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -169,7 +169,7 @@ export function opencodeGoTransport(opts: AiKeyTransportOptions): AiTransport {
     async draft(input: DraftInput): Promise<DraftResult> {
       const payload = draftUserPayload(input);
       const raw = await call(
-        opts.draftModel, 2048, DRAFT_PREFIX, payload,
+        opts.draftModel, 2048, draftSystemPrompt(input), payload,
         "reply_draft", DRAFT_RESULT_SCHEMA, "drafter",
       );
       return coerceDraftResult(raw);

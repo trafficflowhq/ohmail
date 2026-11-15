@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
-import { AppShell } from "../../shell/AppShell";
+import { DemoShell } from "./DemoShell";
+
+/** The demo shows the managed service, and a send from it carries what a strict ceiling allows. */
+const SAYS = { service: "managed", sendCeiling: "strict" } as const;
 
 /**
- * The public demo, as the REAL client — not a mockup. This route renders the same `AppShell` a signed-in `/` becomes,
+ * The public demo, as the REAL client — not a mockup. This route renders the same frame and views a signed-in `/` becomes,
  * forced into demo mode, drawn from the FixturesAdapter's fictional mailbox with zero network — the same decision
  * `?demo=1` boots through `CloudShell`, on a STANDALONE, FRAMABLE url the landing embeds (`DemoSection.tsx`).
  */
@@ -19,5 +22,5 @@ export const metadata: Metadata = {
 };
 
 export default function DemoPage() {
-  return <AppShell demo />;
+  return <DemoShell serverDemo says={SAYS} />;
 }

@@ -19,7 +19,7 @@ const REPO = fileURLToPath(new URL("..", import.meta.url));
 const DOORS: Readonly<Record<string, string>> = {
   "apps/webapp/app/shell/engine-config.ts": "web: the adapter's headers seam and the session transport, with the API client and the refresh",
   "apps/desktop/src/bridge-fetch.ts": "desktop window: bridgeFetch names every request, engine and wires alike",
-  "apps/desktop/src/host-client/host-engine.ts": "paired page: the bearer manager's transport names every request",
+  "apps/paired-page/src/host-engine.ts": "paired page: the bearer manager's transport names every request",
   "apps/mobile/src/engine/boot.ts": "phone: the bearer manager's headers and transport",
 };
 

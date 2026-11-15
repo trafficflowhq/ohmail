@@ -526,7 +526,7 @@ rather than carried over, and the audit runs on the bundle the installers carry.
 ```
 apps/desktop/
 ├── index.html            document CSP, favicon, #root (the window)
-├── host.html             the served host client's own document
+├── host.html             the served host client's own document; its entry is ../paired-page/src/main.tsx
 ├── vite.config.ts        the aliases, base "./", modulePreload off, the two artifacts
 ├── src/
 │   ├── main.tsx          providers + theme stamp + mount the gate
@@ -535,8 +535,7 @@ apps/desktop/
 │   ├── DesktopDefaultMail.tsx  the ask-once card + the Settings → General row
 │   ├── offline-guard.ts  fetch/XHR/WebSocket/EventSource/sendBeacon → throw
 │   ├── bridge-fetch.ts   the local engine's transport
-│   ├── no-fixtures-adapter.ts  the sample world, absent
-│   └── host-client/      the served bundle's entry, bearer manager, pair landing
+│   └── no-fixtures-adapter.ts  the sample world, absent
 ├── scripts/smoke.mjs     the render + offline audit over dist/
 ├── scripts/scan-artifact.mjs  what the emitted bytes contain, both directions
 ├── test/                 the config drift guard (runs in the monorepo suite)

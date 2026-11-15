@@ -44,6 +44,7 @@ export function MessageHead({ sender, unread, note, menu, stamp, to, details, ma
       <button
         type="button"
         className="oh-control oh-messagehead-sender"
+        data-sender-line=""
         aria-haspopup="dialog"
         onClick={(event) => sender.onPress?.(event.currentTarget)}
       >

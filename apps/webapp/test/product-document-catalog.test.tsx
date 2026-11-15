@@ -152,7 +152,7 @@ async function firstScreens(): Promise<Array<[string, () => unknown]>> {
   const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen");
   const { AuthorizeDesktopScreen } = await import("../app/(product)/authorize-desktop/AuthorizeDesktopScreen");
   const { CloudShell } = await import("../app/(product)/mailbox/CloudShell");
-  const { AppShell } = await import("../app/shell/AppShell");
+  const { AppShell } = await import("./_todays-shell.js");
   const { default: ProductError } = await import("../app/(product)/error");
   return [
     ["login", () => h(LoginScreen, { publicSignup: false })],

@@ -140,7 +140,7 @@ describe("the event card", () => {
     expect(screen.getByText("departs 08:02").tagName).toBe("MARK");
   });
 
-  it("as a sheet from the foot it closes when pulled down far enough, and stays when let go before", () => {
+  it("as a sheet from the foot it closes when pulled down far enough by its grabber, and stays when let go before", () => {
     const onPress = vi.fn();
     render(
       <EventCard
@@ -152,14 +152,34 @@ describe("the event card", () => {
       />,
     );
     const sheet = screen.getByRole("dialog", { name: "Poster review" });
-    fireEvent.pointerDown(sheet, { clientY: 300 });
-    fireEvent.pointerMove(sheet, { clientY: 340 });
-    fireEvent.pointerUp(sheet, { clientY: 340 });
+    /* The grabber is drawn, not named: the sheet's first child, above its head. */
+    const grabber = sheet.firstElementChild!;
+    fireEvent.pointerDown(grabber, { clientY: 300 });
+    fireEvent.pointerMove(grabber, { clientY: 340 });
+    fireEvent.pointerUp(grabber, { clientY: 340 });
     expect(onPress).not.toHaveBeenCalled();
-    fireEvent.pointerDown(sheet, { clientY: 300 });
-    fireEvent.pointerMove(sheet, { clientY: 390 });
-    fireEvent.pointerUp(sheet, { clientY: 390 });
+    fireEvent.pointerDown(grabber, { clientY: 300 });
+    fireEvent.pointerMove(grabber, { clientY: 390 });
+    fireEvent.pointerUp(grabber, { clientY: 390 });
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("as a sheet it is pulled by its grabber only: a pull on its words leaves it open", () => {
+    const onPress = vi.fn();
+    render(
+      <EventCard
+        frame="sheet"
+        title="Poster review"
+        tone={153}
+        when="14:30–15:30"
+        close={{ label: "Close", onPress }}
+      />,
+    );
+    const words = screen.getByText("14:30–15:30");
+    fireEvent.pointerDown(words, { clientY: 300 });
+    fireEvent.pointerMove(words, { clientY: 420 });
+    fireEvent.pointerUp(words, { clientY: 420 });
+    expect(onPress).not.toHaveBeenCalled();
   });
 
   it("as a sheet it leaves Edit to the verbs at its foot and still says why there is none", () => {

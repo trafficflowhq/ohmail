@@ -543,16 +543,12 @@
     "pileTitle": "{count, plural, one {1 Eintrag} other {# Einträge}}",
     "tagTitle": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "draftsTitle": "{count, plural, one {1 Entwurf} other {# Entwürfe}}",
-    "openNav": "Navigation öffnen",
-    "closeNav": "Navigation schließen",
     "getDesktop": "ohmail für den Desktop holen",
-    "getDesktopDismiss": "Ausblenden"
+    "getDesktopDismiss": "Ausblenden",
+    "getDesktopOpen": "Herunterladen"
   },
   "ohbox": {
     "title": "Ohbox",
-    "whereChecked": "Geprüft <time>{when}</time>",
-    "whereSince": "{lead, select, true {Seit deinem letzten Besuch:} other {seit deinem letzten Besuch:}}",
-    "whereTo": "{count, number} in {pile}",
     "meta": "{count, number} ungelesen",
     "metaCounting": "Ungelesene werden gezählt…",
     "newForYou": "Neu",
@@ -1957,16 +1953,6 @@
     "footRun": "ausführen",
     "footClose": "schließen",
     "ariaLabel": "Befehlspalette"
-  },
-  "dock": {
-    "command": "Befehl",
-    "theme": "Erscheinungsbild: {state}. Drücken für {next}",
-    "themeNow": "Erscheinungsbild: {state}",
-    "themeLight": "Hell",
-    "themeDark": "Dunkel",
-    "themeAuto": "Automatisch ({resolved})",
-    "schemeLight": "hell",
-    "schemeDark": "dunkel"
   },
   "help": {
     "write": "Schreib uns",
@@ -3627,10 +3613,6 @@
   "cursor": {
     "placed": "Erste Nachricht ausgewählt. Noch einmal drücken: {label}"
   },
-  "columns": {
-    "railHandle": "Breite der Seitenleiste",
-    "listHandle": "Breite der Liste"
-  },
   "viewError": {
     "updated": "ohmail wurde aktualisiert. Neu laden, um weiterzumachen.",
     "loadFailed": "Dieser Teil von ohmail konnte nicht geladen werden. Prüfe die Verbindung und versuche es erneut.",
@@ -4960,5 +4942,100 @@
     "left": "{count, plural, =0 {Hier war nichts mehr festzulegen.} one {1 Nachricht bleibt, wo sie ist.} other {# Nachrichten bleiben, wo sie sind.}}",
     "failed": "Das ging nicht durch. Es wurde nichts geändert.",
     "elsewhere": "Eine andere Installation organisiert dieses Postfach jetzt. Es wurde nichts geändert."
+  },
+  "frame": {
+    "landmark": {
+      "places": "Orte",
+      "fedRail": "Hauptnavigation",
+      "list": "Nachrichten",
+      "reading": "Lesen",
+      "stage": "ohmail"
+    },
+    "rail": {
+      "counted": "{place} {count}"
+    },
+    "columns": {
+      "railWidth": "Breite der Seitenleiste",
+      "listWidth": "Breite der Liste"
+    },
+    "dock": {
+      "more": "Mehr",
+      "search": "Suche",
+      "write": "Schreiben"
+    },
+    "notice": {
+      "more": "{count} weitere",
+      "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}"
+    },
+    "report": {
+      "undo": "Rückgängig"
+    },
+    "connection": {
+      "act": {
+        "signIn": "Anmelden",
+        "reload": "Neu laden",
+        "connect": "Postfach verbinden",
+        "mailboxes": "Postfächer",
+        "writeToUs": "Schreib uns"
+      },
+      "signedOut": {
+        "title": "Abgemeldet",
+        "line": "Melde dich wieder an, um neue Mails zu bekommen.",
+        "restart": "Starte ohmail neu, um dich anzumelden."
+      },
+      "ownerLost": {
+        "title": "Hier wird nichts synchronisiert",
+        "line": "Dieses Fenster weiß nicht mehr, zu welchem Account es gehört."
+      },
+      "noMailbox": {
+        "title": "Kein Postfach verbunden",
+        "line": "Bis eines verbunden ist, kommt nichts an."
+      },
+      "offline": {
+        "title": "Offline",
+        "since": "Offline seit {time, date, ::HHmm}",
+        "sinceDay": "Offline seit {time, date, ::MMMd}"
+      },
+      "mailServerDown": {
+        "title": "Mailserver nicht erreicht",
+        "named": "{address} nicht erreicht"
+      },
+      "mailboxPassword": {
+        "title": "Das Passwort wurde abgelehnt",
+        "named": "{address} lehnt das Passwort ab"
+      },
+      "mailboxSync": {
+        "title": "Ein Postfach synchronisiert nicht",
+        "named": "{address} synchronisiert nicht"
+      },
+      "reconnecting": {
+        "title": "Verbindung wird wiederhergestellt"
+      },
+      "late": {
+        "title": "Neue Mails haben Verspätung"
+      },
+      "behind": {
+        "title": "Wird nachgeholt",
+        "asOf": "Stand {time, date, ::HHmm}, wird nachgeholt"
+      },
+      "firstSync": {
+        "title": "Erste Synchronisierung",
+        "count": "Erste Synchronisierung, {count, number} bisher",
+        "of": "Erste Synchronisierung, {count, number} von {total, number}"
+      },
+      "filing": {
+        "title": "Wird auf deinem Mailserver einsortiert",
+        "count": "{count, number} werden auf deinem Mailserver einsortiert"
+      },
+      "filingElsewhere": {
+        "title": "Ein anderes ohmail sortiert ein"
+      },
+      "filingStuck": {
+        "title": "Das Einsortieren hängt"
+      },
+      "filingWaits": {
+        "title": "Das Einsortieren wartet auf den nächsten Versuch"
+      }
+    }
   }
 }

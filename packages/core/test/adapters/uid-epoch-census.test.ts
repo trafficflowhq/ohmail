@@ -108,6 +108,10 @@ type Kind =
 const PINS: Record<string, { kind: Kind; with?: string; why: string }> = {
   "ics.ts IcsEventPreview.uid":
     { kind: "not-a-stored-uid", why: "an iCalendar event's UID (RFC 5545), compared within one message; no IMAP uid" },
+  "invitation-mail.ts LetterInvitation.uid":
+    { kind: "not-a-stored-uid", why: "an iCalendar event's UID (RFC 5545) a letter's calendar part names; no IMAP uid" },
+  "invitation-reply.ts InvitationReplyInput.uid":
+    { kind: "not-a-stored-uid", why: "the iCalendar event's UID a reply echoes; no IMAP uid" },
   "adapters/drizzle-repo.ts PersistedFolderCursor.uidNext":
     { kind: "epoch-beside-it", with: "uidValidity", why: "the folder cursor's own epoch" },
   "adapters/drizzle-repo.ts KnownLocator.uid":

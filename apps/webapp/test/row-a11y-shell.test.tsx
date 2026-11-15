@@ -53,7 +53,7 @@ async function unmount(): Promise<void> {
 /** The demo shell — `selection-pill.test.tsx`'s harness, without its cursor-priming keystroke. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
