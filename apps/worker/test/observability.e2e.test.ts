@@ -157,7 +157,12 @@ describe("worker observability wiring", () => {
     expect(body.source).toBe("worker");
     expect(body.alerts.map((a) => a.kind)).toContain("sync_lag");
 
-    // The state row exists, so the next pass will NOT page again inside the repeat window.
+    // The state row exists, so the next pass will NOT page again inside the repeat window. Its
+    // confirm is written after the delivery returns, so it is waited for as the post was.
+    await waitFor(async () => {
+      const [row] = await db.select().from(alertState).where(eq(alertState.alertKey, "sync_lag"));
+      return row?.notifiedAt ? row : null;
+    }, 8000);
     const [state] = await db.select().from(alertState).where(eq(alertState.alertKey, "sync_lag"));
     expect(state).toBeDefined();
     expect(state!.notifiedAt).not.toBeNull();
@@ -265,6 +270,7 @@ describe("worker observability wiring", () => {
     closers.push(() => worker.stop());
     const dead = await waitFor(async () => (worker.stats().pager === "dead" ? true : null), 10_000);
     expect(dead, "three refused passes and the pager reports itself dead").toBe(true);
+    await waitFor(async () => (events().includes("alerts_undeliverable") ? true : null), 10_000);
     expect(events()).toContain("alerts_undeliverable");
   }, 30_000);
 
