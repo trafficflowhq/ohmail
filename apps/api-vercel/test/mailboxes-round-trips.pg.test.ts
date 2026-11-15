@@ -18,13 +18,17 @@ import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
  * the deployed host over its pooled client, counted off the protocol bytes on the wire, at 1, 3 and
  * 10 mailboxes, each with a credential, two folders, a filing and a failure. It read four facts per
  * mailbox (3 + 4N statements); now the session, the list, the organizer's last pass and four
- * statements for all of the facts. Round trips equal statements, as on every hot route.
+ * statements for all of the facts. Round trips equal statements, as on every hot route. A statement
+ * on the request's bound handle is begin, the binder's statement, it and commit in one burst: the
+ * waits are the bursts, pinned at their record.
  */
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const KEK = "ab".repeat(32);
-/** Statements one poll may cost, at any number of mailboxes: a ceiling that may only fall. */
-const STATEMENTS = 7;
+/** Statements one poll may cost, at any number of mailboxes, begin, binder and commit included: a ceiling that may only fall. */
+const STATEMENTS = 25;
+/** Bursts one poll waits on, at any number of mailboxes: the record before the binding. */
+const BURSTS = 7;
 
 function install(): void {
   for (const k of ["TF_SSE_POLL_MS", "TF_SSE", "TF_COOKIE_HOSTS", "VERCEL_ENV", "ENTITLEMENTS_URL",
@@ -122,22 +126,29 @@ describe.skipIf(!PG_UP)("GET /mailboxes on the deployed host costs the same at a
     await settled();
     const r = wire.read();
     const items = res.status === 200 ? (JSON.parse(body) as { items: unknown[] }).items.length : -1;
-    return { status: res.status, items, statements: r.statements, roundTrips: r.roundTrips, shape: r.flushes.join(" | ") };
+    return {
+      status: res.status, items, statements: r.statements, roundTrips: r.roundTrips, bursts: r.bursts,
+      shape: r.burstShapes.join(" | "),
+    };
   }
 
   it(`at 1, 3 and 10 mailboxes: the same statements, at most ${STATEMENTS}, one round trip each`, async () => {
     const cost: number[] = [];
+    const waits: number[] = [];
     let have = 0;
     for (const n of [1, 3, 10]) {
       while (have < n) await addMailbox(have++);
       const r = await counted();
-      console.log(`mailboxes-round-trips N=${n}: status=${r.status} statements=${r.statements} round_trips=${r.roundTrips}`);
+      console.log(`mailboxes-round-trips N=${n}: status=${r.status} statements=${r.statements} round_trips=${r.roundTrips} bursts=${r.bursts}`);
       expect(r.status, r.shape).toBe(200);
       expect(r.items).toBe(n);
       expect(r.roundTrips, r.shape).toBe(r.statements);
       cost.push(r.statements);
+      waits.push(r.bursts);
     }
     expect(cost, "statements at 1, 3 and 10 mailboxes").toEqual([cost[0], cost[0], cost[0]]);
     expect(cost[0]).toBeLessThanOrEqual(STATEMENTS);
+    expect(waits, "bursts at 1, 3 and 10 mailboxes").toEqual([waits[0], waits[0], waits[0]]);
+    expect(waits[0]).toBeLessThanOrEqual(BURSTS);
   }, 120_000);
 });

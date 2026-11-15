@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { jsonResponse, type Route } from "@trafficflow/api/local";
 import { accountSettings } from "@trafficflow/db";
-import { ServiceError, setAutoSuggest, type ServiceContext } from "@trafficflow/services/mail";
+import { ServiceError, dbFor, setAutoSuggest, type ServiceContext } from "@trafficflow/services/mail";
 import type { AiProviderKind, LocalAi } from "./ai-provider.js";
 import type { LocalDb } from "./db.js";
 
@@ -105,7 +105,7 @@ export function localAutoSuggestRoutes(deps: {
         // the local API mints one bearer per launch for the shell that spawned it, and the account
         // is this install's own. `userId` is null for the same reason every local pass leaves it so.
         const ctx: ServiceContext = {
-          db, accountId, userId: null, now, requestId: "local-auto-suggest",
+          db: dbFor(db, accountId), accountId, userId: null, now, requestId: "local-auto-suggest",
         };
         await setAutoSuggest(ctx, body.on);
         // Re-READ rather than compose the answer from what was asked for, so the window renders

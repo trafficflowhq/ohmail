@@ -192,6 +192,14 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
       next[i] = (handle: Record<string, unknown>) => { arm(handle); return fn(handle); };
       return origBegin(...next);
     };
+    // A statement on the request's bound handle runs on a connection RESERVED for its flight, the
+    // same reason as `begin` above: that connection's handle is armed as it is handed out.
+    const origReserve = (client.reserve as (...a: unknown[]) => Promise<Record<string, unknown>>).bind(client);
+    client.reserve = async (...args: unknown[]) => {
+      const handle = await origReserve(...args);
+      arm(handle);
+      return handle;
+    };
     arm(client);
   }, 180_000);
 

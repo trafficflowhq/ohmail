@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, gt, isNotNull, isNull, lt, lte, notInArray, 
 import { dialect } from "@trafficflow/db/dialect";
 import { mailboxes, outboundSentCopies } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeDb, bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { bridgeDb, bridgeTx, dbFor, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, TransientDialRefusal } from "./errors.js";
 import { SEND_RECONCILE_BATCH, SEND_RECONCILE_CLOSE_CEILING_MS } from "./send-reconcile-pass.js";
 import {
@@ -245,7 +245,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
     if (breached.has(mailboxId) || held.get(mailboxId)?.isLive?.() === false) forget(mailboxId);
   };
   const contextOf = (row: DueRow): ServiceContext => (
-    { db, accountId: row.accountId, userId: null, now, requestId: `sent-copy:${row.sendId}` }
+    { db: dbFor(db, row.accountId), accountId: row.accountId, userId: null, now, requestId: `sent-copy:${row.sendId}` }
   );
   /** One row's filing; null when it is left for a later pass with no verdict (parked, late, no login left, a fault). */
   const fileRow = async (row: DueRow): Promise<(OwedCopyFiling & { admissionRefused: boolean }) | null> => {

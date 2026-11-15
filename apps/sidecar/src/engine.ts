@@ -76,7 +76,7 @@ import {
   fenceSignedOutMailbox, signedOutMidWrite, launchRefused, type CredentialOrigin,
   // What a sign-out keeps of where a mailbox lives (mail 0127): the one builder the column takes
   // and the reader that re-applies its allow-list.
-  signedOutMetaOf, signedOutTransportMeta,
+  signedOutMetaOf, signedOutTransportMeta, dbFor,
   type MailboxProbeVerdict,
 } from "@trafficflow/services/mail";
 /* The session LIFECYCLE — the machinery half of the hosted auth service (establish, refresh
@@ -10437,7 +10437,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               const body = (await req.json()) as Record<string, unknown>;
               const deps = depsFor();
               const ctx = {
-                db, accountId: core.accountId, userId: core.userId,
+                db: dbFor(db, core.accountId), accountId: core.accountId, userId: core.userId,
                 now, requestId: "", sessionId: core.sessionId ?? null,
               };
 
@@ -10646,7 +10646,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             try {
               const dto = await depsFor().services!.mailbox.update(
                 {
-                  db, accountId: core.accountId, userId: core.userId,
+                  db: dbFor(db, core.accountId), accountId: core.accountId, userId: core.userId,
                   now, requestId: "", sessionId: core.sessionId ?? null,
                 },
                 mailboxId,
@@ -10817,7 +10817,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               };
               const write = (b: Record<string, unknown>) => deps.services!.mailbox.update(
                 {
-                  db, accountId: core.accountId, userId: core.userId,
+                  db: dbFor(db, core.accountId), accountId: core.accountId, userId: core.userId,
                   now, requestId: "", sessionId: core.sessionId ?? null,
                 },
                 mailboxId,
@@ -10988,7 +10988,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               // the assertion is a statement about this door and not a hope.
               const out = await depsFor().services!.mailbox.delete(
                 {
-                  db, accountId: core.accountId, userId: core.userId,
+                  db: dbFor(db, core.accountId), accountId: core.accountId, userId: core.userId,
                   now, requestId: "", sessionId: core.sessionId ?? null,
                 },
                 mailboxId,

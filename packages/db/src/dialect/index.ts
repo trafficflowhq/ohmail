@@ -38,15 +38,36 @@ export const IN_TRANSACTION_BRAND: unique symbol = Symbol.for("ohmail.db.inTrans
  */
 export const ERASURE_FENCE_BRAND: unique symbol = Symbol.for("ohmail.db.erasureFence") as never;
 
+/**
+ * The account a handle is bound to (`bound.ts` mints and reads it). A transaction inherits it from
+ * the handle it was opened on, and a savepoint from its transaction, as the fence's mark travels.
+ */
+export const BINDING_BRAND: unique symbol = Symbol.for("ohmail.db.binding") as never;
+
+/** Set on a transaction opened inside another one: a savepoint, never the outermost handle. */
+export const SAVEPOINT_BRAND: unique symbol = Symbol.for("ohmail.db.savepoint") as never;
+
 /** What the wrapper below stamps on every handle it hands out, beside the dialect brand. */
 function intoTransaction<T extends object>(tx: T, parent: object): T {
+  const from = parent as Record<symbol, unknown>;
+  if (from[IN_TRANSACTION_BRAND] === true) {
+    Object.defineProperty(tx, SAVEPOINT_BRAND, {
+      value: true, enumerable: false, configurable: true, writable: false,
+    });
+  }
   Object.defineProperty(tx, IN_TRANSACTION_BRAND, {
     value: true, enumerable: false, configurable: true, writable: false,
   });
-  const fence = (parent as Record<symbol, unknown>)[ERASURE_FENCE_BRAND];
+  const fence = from[ERASURE_FENCE_BRAND];
   if (typeof fence === "string") {
     Object.defineProperty(tx, ERASURE_FENCE_BRAND, {
       value: fence, enumerable: false, configurable: true, writable: false,
+    });
+  }
+  const binding = from[BINDING_BRAND];
+  if (binding !== undefined) {
+    Object.defineProperty(tx, BINDING_BRAND, {
+      value: binding, enumerable: false, configurable: true, writable: false,
     });
   }
   return tx;
@@ -73,8 +94,11 @@ export function brandDialect<T extends object>(db: T, name: DialectName): T {
   if (typeof original === "function"
     && (original as unknown as Record<symbol, unknown>)[TRANSACTION_WRAPPED] !== true) {
     const wrapped = function (this: unknown, fn: (tx: object, ...i: unknown[]) => unknown, ...rest: unknown[]) {
+      // The parent is the handle the call was made on: a bound view inherits this method from
+      // its pool handle, and its transaction must carry the view's binding, not the pool's none.
+      const parent = typeof this === "object" && this !== null ? this : db;
       return original.call(this, (tx: object, ...inner: unknown[]) =>
-        fn(intoTransaction(brandDialect(tx, name), db), ...inner), ...rest);
+        fn(intoTransaction(brandDialect(tx, name), parent), ...inner), ...rest);
     } as TxFn;
     Object.defineProperty(wrapped, TRANSACTION_WRAPPED, { value: true, enumerable: false });
     Object.defineProperty(db, "transaction", {

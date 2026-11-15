@@ -7,7 +7,7 @@ import type { AnswerOf } from "@ohmail/wire";
 import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
 import { deleteMailboxRows } from "./local-mirror.js";
 import {
-  resolveSession, syncService, ServiceError, isUuid,
+  resolveSession, syncService, ServiceError, dbFor, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
@@ -1293,7 +1293,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     }
 
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
-      db,
+      db: dbFor(db, accountId),
       accountId,
       userId,
       sessionId,

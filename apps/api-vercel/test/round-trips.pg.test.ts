@@ -23,15 +23,20 @@ import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
  * the rules, `/health` and an unchanged `/sync` poll, through the deployed host over its pooled
  * client, counted off the protocol bytes on the wire. Statements are pinned as ceilings; round
  * trips equal statements — a parameter's describe before its bind is the second trip this pins
- * out. The recorder is installed before the first connection; the host's own warm-up request
- * precedes each count (for `/sync`, the first empty tail, which takes the due sync stamp).
+ * out. Bursts, what the host wrote before it heard back, are the waits, pinned at their record: a
+ * statement on the request's bound handle is begin, the binder's statement, it and commit, four
+ * statements written in one burst. The recorder is installed before the first connection; the
+ * host's own warm-up request precedes each count (for `/sync`, the first empty tail, which takes
+ * the due sync stamp).
  */
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const KEK = "ab".repeat(32);
 
-/** The statements each route issues today, begin and commit included: a ceiling, not a target. */
-const STATEMENTS = { list: 9, body: 3, bodies: 6, search: 14, rules: 3, health: 1, syncHorizon: 2 } as const;
+/** The statements each route issues today, begin, the binder and commit included: a ceiling, not a target. */
+const STATEMENTS = { list: 9, body: 9, bodies: 6, search: 14, rules: 9, health: 1, syncHorizon: 5 } as const;
+/** The bursts each route waits on: the record before the binding, a ceiling that may only fall. */
+const BURSTS = { list: 3, body: 3, bodies: 6, search: 3, rules: 3, health: 1, syncHorizon: 2 } as const;
 /**
  * The waits a search page costs on the host's own handle factory: the session, begin, the search
  * settings in the page's flush, commit. A probe the service keeps per handle is not one of them.
@@ -131,7 +136,7 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
     resetServices();
   }, 60_000);
 
-  async function counted(path: string, bearer: boolean): Promise<{ status: number; statements: number; roundTrips: number; waits: number; shape: string }> {
+  async function counted(path: string, bearer: boolean): Promise<{ status: number; statements: number; roundTrips: number; waits: number; bursts: number; shape: string }> {
     const req = (): Request => new Request(`https://api.ohmail.app${path}`, {
       headers: bearer ? { authorization: `Bearer ${token}` } : {},
     });
@@ -144,7 +149,7 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
     const r = wire.read();
     // A flush the client waits after ends a round trip; statements written together share one.
     const waits = r.flushes.filter((k) => /[SHQ]/.test(k)).length;
-    return { status: res.status, statements: r.statements, roundTrips: r.roundTrips, waits, shape: r.flushes.join(" | ") };
+    return { status: res.status, statements: r.statements, roundTrips: r.roundTrips, waits, bursts: r.bursts, shape: r.burstShapes.join(" | ") };
   }
 
   const routes: Array<[keyof typeof STATEMENTS, () => string, boolean]> = [
@@ -161,11 +166,12 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
   for (const [name, path, bearer] of routes) {
     it(`${name}: every statement one round trip, at most ${STATEMENTS[name]} statements`, async () => {
       const r = await counted(path(), bearer);
-      console.log(`round-trips ${name}: status=${r.status} statements=${r.statements} round_trips=${r.roundTrips} waits=${r.waits}`);
+      console.log(`round-trips ${name}: status=${r.status} statements=${r.statements} round_trips=${r.roundTrips} waits=${r.waits} bursts=${r.bursts}`);
       expect(r.status, r.shape).toBeLessThan(400);
       expect(r.statements, r.shape).toBeGreaterThan(0);
       expect(r.statements, r.shape).toBeLessThanOrEqual(STATEMENTS[name]);
       expect(r.roundTrips, r.shape).toBe(r.statements);
+      expect(r.bursts, r.shape).toBeLessThanOrEqual(BURSTS[name]);
       if (name === "search") expect(r.waits, r.shape).toBeLessThanOrEqual(SEARCH_WAITS);
     }, 60_000);
   }

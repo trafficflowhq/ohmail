@@ -11,7 +11,7 @@ import {
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
   type AuthVerdict, type Destination, type Logger, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
-import { bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, dbFor, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
@@ -1147,7 +1147,7 @@ export class UnsubscribeService {
       // excludes a blocked account too, and that one is an optimisation: it can only remove an
       // account, never admit one, and removing the seam's read would move a decision into a query.
       const one = await this.postEach(
-        { db, accountId, userId: null, now: opts.now, requestId: opts.requestId },
+        { db: dbFor(db, accountId), accountId, userId: null, now: opts.now, requestId: opts.requestId },
         ids, { count: perAccount, budget },
       );
       sweep.considered += one.considered;

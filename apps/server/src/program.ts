@@ -48,7 +48,7 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
   // connection string and therefore never held here.
   let owned: OwnedDb | null = null;
   const db = cfg.database.kind === "owned"
-    ? ownedDbPort((owned = makeOwnedDb(cfg.database.url)).db)
+    ? ownedDbPort((owned = makeOwnedDb(cfg.database.url, { role: "api" })).db)
     : pooledDbPort(cfg.database.url);
 
   // ONE customer mailer for the program: auth's ceremonies, the funnel and the lifecycle mails share it.

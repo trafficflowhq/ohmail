@@ -220,9 +220,9 @@ export function adminDbFor(url: string): () => Promise<AdminDb> {
     const held = handles.get(url);
     if (held) return held;
     const pending = (async (): Promise<AdminDb> => {
-      // One connection: `routes/admin.ts` serializes every staff read per instance, and its
-      // deadlock note is written against a single-connection blind pool.
-      const db = makePooledDb(url, { max: 1 });
+      // The staff cell of the handle's table: one connection, because `routes/admin.ts` serializes
+      // every staff read per instance and its deadlock note is written against a one-connection pool.
+      const db = makePooledDb(url, { role: "staff" });
       await assertContentBlind(db);
       return db as AdminDb;
     })();

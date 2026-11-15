@@ -738,11 +738,21 @@ export async function dropPgTemplate(serverUrl: string, name: string): Promise<v
  * two. Installed once per process over `net.Socket#write`, before the first connection it is to
  * see; a socket whose first packet is no protocol opener is not Postgres, and a TLS session is not
  * read (a lane database dials in the clear). `binds` keeps each Bind message's bytes.
+ *
+ * A BURST is what the client wrote on one connection before it heard from the server: the writes
+ * between two receipts. It is the measure of waits, which a count of Sync and Flush is not: a
+ * flight that writes begin, its statements and commit before reading an answer is one burst and
+ * several round trips by that count. `burstShapes` holds each burst's message kinds.
  */
-export interface PgWireReading { statements: number; roundTrips: number; flushes: string[]; binds: Buffer[] }
+export interface PgWireReading {
+  statements: number; roundTrips: number; flushes: string[]; binds: Buffer[];
+  bursts: number; burstShapes: string[];
+  /** Each Parse and simple Query message's bytes: the statements' text as written. */
+  texts: Buffer[];
+}
 export interface PgWireRecorder { start(): void; read(): PgWireReading; connections(): number }
 
-type WireSeen = (kinds: string, binds: Buffer[]) => void;
+interface WireSeen { wrote(sock: object, kinds: string, binds: Buffer[], texts: Buffer[]): void; heard(sock: object): void }
 let wireSeen: Set<WireSeen> | null = null;
 let wireOpened = 0;
 
@@ -751,6 +761,14 @@ export function recordPgWire(): PgWireRecorder {
     const seen = new Set<WireSeen>();
     wireSeen = seen;
     const state = new WeakMap<object, { buf: Buffer; opened: boolean } | "skip">();
+    const emit = net.Socket.prototype.emit;
+    net.Socket.prototype.emit = function (this: net.Socket, event: string | symbol, ...args: unknown[]): boolean {
+      if (event === "data") {
+        const st = state.get(this);
+        if (st !== undefined && st !== "skip" && st.opened) for (const s of seen) s.heard(this);
+      }
+      return (emit as (...a: unknown[]) => boolean).apply(this, [event, ...args]);
+    } as typeof emit;
     const write = net.Socket.prototype.write;
     net.Socket.prototype.write = function (this: net.Socket, chunk: unknown, ...rest: unknown[]): boolean {
       if (chunk instanceof Uint8Array) {
@@ -767,6 +785,7 @@ export function recordPgWire(): PgWireRecorder {
       st.buf = st.buf.length === 0 ? chunk : Buffer.concat([st.buf, chunk]);
       let kinds = "";
       const binds: Buffer[] = [];
+      const texts: Buffer[] = [];
       for (;;) {
         if (!st.opened) {
           if (st.buf.length < 8 || st.buf.length < st.buf.readInt32BE(0)) break;
@@ -780,21 +799,38 @@ export function recordPgWire(): PgWireRecorder {
         const len = st.buf.readInt32BE(1);
         const kind = String.fromCharCode(st.buf[0]!);
         if (kind === "B") binds.push(Buffer.from(st.buf.subarray(0, len + 1)));
+        if (kind === "P" || kind === "Q") texts.push(Buffer.from(st.buf.subarray(0, len + 1)));
         kinds += kind;
         st.buf = st.buf.subarray(len + 1);
       }
-      if (kinds !== "") for (const s of seen) s(kinds, binds);
+      if (kinds !== "") for (const s of seen) s.wrote(sock, kinds, binds, texts);
     };
   }
   let flushes: string[] = [];
   let binds: Buffer[] = [];
-  wireSeen.add((k, b) => { flushes.push(k); binds.push(...b); });
+  let texts: Buffer[] = [];
+  let bursts: string[] = [];
+  /** Per connection since `start()`: the burst it is writing, or none once the server answered. */
+  let open = new WeakMap<object, number>();
+  wireSeen.add({
+    wrote(sock, k, b, t) {
+      flushes.push(k);
+      binds.push(...b);
+      texts.push(...t);
+      const at = open.get(sock);
+      if (at === undefined) { open.set(sock, bursts.length); bursts.push(k); } else bursts[at] += k;
+    },
+    heard(sock) { open.delete(sock); },
+  });
   const count = (all: string, of: string): number => [...all].filter((c) => of.includes(c)).length;
   return {
-    start() { flushes = []; binds = []; },
+    start() { flushes = []; binds = []; texts = []; bursts = []; open = new WeakMap(); },
     read() {
       const all = flushes.join("");
-      return { statements: count(all, "PQ"), roundTrips: count(all, "SHQ"), flushes: [...flushes], binds: [...binds] };
+      return {
+        statements: count(all, "PQ"), roundTrips: count(all, "SHQ"), flushes: [...flushes], binds: [...binds],
+        bursts: bursts.length, burstShapes: [...bursts], texts: [...texts],
+      };
     },
     connections: () => wireOpened,
   };
