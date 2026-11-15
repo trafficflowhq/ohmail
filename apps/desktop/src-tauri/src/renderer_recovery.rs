@@ -181,22 +181,32 @@ pub fn line(reason: &str, action: Action, ctx: &Context) -> String {
     )
 }
 
-pub const RELAUNCH_TITLE: &str = "ohmail's window stopped";
-pub const RELAUNCH_MESSAGE: &str = "ohmail's window stopped again. Relaunch ohmail to open it.";
-pub const RELAUNCH_BUTTON: &str = "Relaunch";
+/// The relaunch question's English sentence and button (`words.rs` holds every language's).
+#[cfg(test)]
+pub const RELAUNCH_MESSAGE: &str = crate::words::EN.relaunch_message;
+#[cfg(test)]
+pub const RELAUNCH_BUTTON: &str = crate::words::EN.relaunch_button;
 
 /// One button. The dialog plugin hands Escape and the close button back as the cancel button, so a
 /// Quit there was the answer a stray key gave; quitting stays the app's menu, tray and window close.
-pub fn relaunch_buttons() -> tauri_plugin_dialog::MessageDialogButtons {
-    tauri_plugin_dialog::MessageDialogButtons::OkCustom(RELAUNCH_BUTTON.into())
+pub fn relaunch_buttons_in(w: &crate::words::Words) -> tauri_plugin_dialog::MessageDialogButtons {
+    tauri_plugin_dialog::MessageDialogButtons::OkCustom(w.relaunch_button.into())
 }
 
-/// How the question ended, as a fixed word: the button, or Escape and the close (both relaunch).
+/// [`relaunch_buttons_in`], in English.
+#[cfg(test)]
+pub fn relaunch_buttons() -> tauri_plugin_dialog::MessageDialogButtons {
+    relaunch_buttons_in(&crate::words::EN)
+}
+
+/// How the question ended, as a fixed word: the button in whichever language the run spoke, or
+/// Escape and the close (both relaunch).
 pub fn relaunch_answer(result: &tauri_plugin_dialog::MessageDialogResult) -> &'static str {
+    use crate::words::{Language, Words};
     use tauri_plugin_dialog::MessageDialogResult as R;
     match result {
         R::Ok => "relaunch",
-        R::Custom(label) if label == RELAUNCH_BUTTON => "relaunch",
+        R::Custom(label) if Language::ALL.iter().any(|l| label == Words::of(*l).relaunch_button) => "relaunch",
         _ => "dismissed",
     }
 }
@@ -222,10 +232,12 @@ fn emit(line: &str) {
 fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri_plugin_dialog::DialogExt;
     let answer = app.clone();
+    let w = crate::shell_language::words();
+    let asked = w.relaunch();
     app.dialog()
-        .message(RELAUNCH_MESSAGE)
-        .title(RELAUNCH_TITLE)
-        .buttons(relaunch_buttons())
+        .message(asked.message)
+        .title(asked.title)
+        .buttons(relaunch_buttons_in(w))
         // Every answer relaunches; the log says which one it was.
         .show_with_result(move |result| {
             emit(&answered_line(&result));
