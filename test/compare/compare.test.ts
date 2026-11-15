@@ -842,6 +842,12 @@ describe("in a real browser", () => {
     expect((await ask2(`<input aria-label="Search" value="ben tom">`, `<input aria-label="Search" value="bent om">`)).names).toEqual(['textbox "Search": reads "bent om", the reference "ben tom"']);
     expect((await ask2(`<input aria-label="Title" value="Lunch with Anna">`, `<input aria-label="Title" value="Lunchwith Anna">`)).verdicts).toEqual(["red", "green", "green"]);
     expect((await ask2(`<p>Lunch <span>with</span> Anna</p>`, `<p>Lunch with Anna</p>`)).verdicts).toEqual(["green", "green", "green"]);
+    expect((await ask2(`<input aria-label="Title" value="Offers">`, `<input aria-label="Title" value="Offers ">`)).names).toEqual(['textbox "Title": reads "Offers ", the reference "Offers"']);
+    // A field's value on one side and page words in a box with a field's role on the other: both are held without their white space.
+    const BOX = `<div role="textbox" aria-label="Title">Lunch with Anna</div>`, FIELD = `<input aria-label="Title" value="Lunch with Anna">`;
+    expect((await ask2(BOX, FIELD)).names).toEqual([]);
+    expect((await ask2(FIELD, BOX)).names).toEqual([]);
+    expect((await ask2(BOX, `<input aria-label="Title" value="Lunch with Ana">`)).names).toEqual(['textbox "Title": reads "LunchwithAna", the reference "LunchwithAnna"']);
     expect((await ask2(`<input aria-label="Search" placeholder="Search">`, `<input aria-label="Search" value="Search">`)).names).toEqual(['textbox "Search": is in no state, the reference shows its hint']);
     expect((await ask2(`<select aria-label="Sort"><option selected>Newest<option>Oldest</select>`, `<select aria-label="Sort"><option>Newest<option selected>Oldest</select>`)).names).toEqual(['combobox "Sort": reads "Oldest", the reference "Newest"']);
     expect((await ask2(`<input type="checkbox" aria-label="Agree" checked>`, `<input type="checkbox" aria-label="Agree">`)).names).toEqual(['checkbox "Agree": is in no state, the reference checked']);
