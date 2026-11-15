@@ -79,6 +79,8 @@ export const helloRoutes: Route[] = [
           accountHeader: true,
           // The send route takes `forwardParts`; a fact of this build, as `accountHeader` is.
           forwardParts: true,
+          // Only where the composition keeps a calendar: absent, the answer is the one it always was.
+          ...(hello.features.calendar === true ? { calendar: true } : {}),
         },
       });
     },

@@ -4,10 +4,12 @@ import { messageBodies, messages } from "@trafficflow/db/mail";
 import {
   messageService, threadService, searchService, mailboxService, tagsService, rulesService,
   syncService, SEARCH_SORTS, isSearchSort, SEARCH_PARTS, isSearchParts, ServiceError,
-  ADDRESS_DIRECTIONS, isAddressSearchDirection,
+  ADDRESS_DIRECTIONS, isAddressSearchDirection, namedCalendarSpan,
   type AddressSearchOptions,
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
+import { calendarFeed } from "@trafficflow/services/calendar";
+import { isCalendarRecordKind } from "@trafficflow/db";
 import type { AnswerOf, OnlyNamesOf, RouteName } from "@ohmail/wire";
 
 /**
@@ -144,12 +146,20 @@ export const READ_ROUTES: ReadRoute[] = [
       const limit = num(limitRaw);
       // The labelled tail alone, a closed set at the read exactly as the local door's route reads
       // it; anything else is the ordinary walk. Dropped, the window's tail rehydrate ran that walk.
-      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
+      // And the calendar's phase alone: this copy keeps the hosted account's calendar.
+      const asked = url.searchParams.get("phase");
+      const phase = asked === "tail" ? "tail" as const : asked === "calendar" ? "calendar" as const : undefined;
+      // The kinds named matter only to the calendar's gate, so only the calendar's are kept.
+      const types = (url.searchParams.get("types") ?? "").split(",").map((t) => t.trim()).filter(isCalendarRecordKind);
+      const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
       return answer<"GET /sync/snapshot">()(
         await syncService.getSnapshot(ctx, {
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
           ...(phase ? { phase } : {}),
+          ...(types.length > 0 ? { types } : {}),
+          calendar: calendarFeed,
+          ...(span ? { span } : {}),
         }),
       );
     },

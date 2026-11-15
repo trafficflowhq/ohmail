@@ -1,6 +1,6 @@
 import { eq, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
-import type { ChangeOp, RecordKind } from "@ohmail/wire";
+import type { Assert, CalendarRecordKind, ChangeOp, Complete, RecordKind } from "@ohmail/wire";
 /* THE MAIL HALF DIRECTLY, never `./schema.js`. `schema.ts` re-exports both halves, so naming it
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
@@ -8,7 +8,7 @@ import { accountSettings, accountSyncState, changeLog, mailboxes } from "./schem
 import { dialect } from "./dialect/index.js";
 /* The seam owns the erasure class, and its own import of this file is TYPE-ONLY, so this edge
  * is one-way at runtime. */
-import { MailboxErasedError, fenceErased } from "./erasure-fence.js";
+import { MailboxErasedError, fenceErased, fencedAccountOf } from "./erasure-fence.js";
 
 /**
  * A Drizzle query runner: either a top-level db handle (postgres-js in prod, PGlite in tests) or
@@ -330,6 +330,70 @@ export async function recordRuleDelta(
   return recordChanges(tx, ruleIds.map((entityId) => ({
     accountId, entityType: "rule" as const, entityId, op, meta: null,
   })));
+}
+
+/**
+ * THE CALENDAR'S KINDS AS A VALUE, proven against the wire's union: a kind added there does not
+ * compile here until it is listed, and a word listed here that the union lacks does not either.
+ */
+export const CALENDAR_RECORD_KINDS = [
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
+] as const satisfies readonly CalendarRecordKind[];
+type _CalendarKindsComplete = Assert<Complete<CalendarRecordKind, typeof CALENDAR_RECORD_KINDS>>;
+
+const CALENDAR_KIND_SET: ReadonlySet<string> = new Set(CALENDAR_RECORD_KINDS);
+
+/** Is `kind` one of the calendar's? What the feed's reader asks of every row it is about to build. */
+export function isCalendarRecordKind(kind: string): kind is CalendarRecordKind {
+  return CALENDAR_KIND_SET.has(kind);
+}
+
+/**
+ * How many calendar changes one transaction may record. A calendar's first read is written in
+ * pages, each its own transaction, because every change holds the account's counter row until
+ * commit and the person's mail waits on that row meanwhile. A first value: the sync's own readings
+ * settle it.
+ */
+export const CALENDAR_CHANGES_PER_TRANSACTION = 200;
+
+/** One calendar change, as a writer names it. */
+export interface CalendarChange {
+  readonly kind: CalendarRecordKind;
+  readonly id: string;
+  readonly op: ChangeOp;
+}
+
+/** Why {@link recordCalendarChanges} refused: no change was recorded and nothing of the caller's commits. */
+export class CalendarChangeRefused extends Error {
+  constructor(readonly reason: "too_many" | "not_fenced") {
+    super(reason === "too_many"
+      ? `recordCalendarChanges: more than ${CALENDAR_CHANGES_PER_TRANSACTION} changes in one transaction; write the read in pages`
+      : "recordCalendarChanges: the transaction did not take the account's erasure fence first");
+    this.name = "CalendarChangeRefused";
+  }
+}
+
+/** The same delta as a ROW, for a writer that appends one ordered batch across kinds itself. */
+export function calendarDelta(accountId: string, kind: CalendarRecordKind, id: string, op: ChangeOp): ChangeInput {
+  return { accountId, entityType: kind, entityId: id, op, meta: null };
+}
+
+/**
+ * THE ONE DOOR FOR A CALENDAR ROW THAT MOVED.
+ *
+ * Inside the write's own transaction, which took the account's erasure fence first (`withAccountTx`
+ * or `fencedAccountWrite`): a page that started before an erasure must not bring rows back after
+ * it. The last statement of that transaction, so the counter row is held for the shortest time. A
+ * removal records a delete for EVERY record it removes, children first (events, then calendars,
+ * then the connection): a device that applies pages twice or out of order converges by each
+ * record's own tombstone, and its cascade under a connection or a calendar is a second net only.
+ */
+export async function recordCalendarChanges(
+  tx: LedgerTx, accountId: string, changes: readonly CalendarChange[],
+): Promise<bigint[]> {
+  if (changes.length > CALENDAR_CHANGES_PER_TRANSACTION) throw new CalendarChangeRefused("too_many");
+  if (fencedAccountOf(tx) !== accountId) throw new CalendarChangeRefused("not_fenced");
+  return recordChanges(tx, changes.map((c) => calendarDelta(accountId, c.kind, c.id, c.op)));
 }
 
 /**

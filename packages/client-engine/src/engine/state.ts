@@ -17,7 +17,7 @@ import {
   type StoreTimelineOutcome,
 } from "../store-pages.js";
 import { type EntityReader, MemoryMirrorStore, type MirrorStore, type OutboxNotices } from "../store.js";
-import { type EngineMutation, OUTBOX_ABANDONED_TYPE, type WaitingRequestWire } from "../types.js";
+import { type EngineMutation, NAMED_FEED_KINDS, OUTBOX_ABANDONED_TYPE, type WaitingRequestWire } from "../types.js";
 import type { AttachmentItem, AttachmentsOutcome } from "./attachment-items.js";
 import type { KeptAsNewDraft, MutationResult, PendingMutation } from "./mutation-views.js";
 import {
@@ -676,7 +676,8 @@ export abstract class EngineState {
     }
     this.eagerBodiesOn = opts.eagerBodies === true;
     this.store = opts.store ?? new MemoryMirrorStore();
-    this.types = opts.types;
+    // Named always: the calendar's kinds and the settings record reach only a request that names them.
+    this.types = opts.types ?? [...NAMED_FEED_KINDS];
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;

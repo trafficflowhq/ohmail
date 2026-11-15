@@ -1193,7 +1193,7 @@ export const calPushChannels = pgTable("cal_push_channels", {
   fkConnection: foreignKey({
     name: "cal_push_channels_connection_id_account_fk",
     columns: [t.connectionId, t.accountId], foreignColumns: [calConnections.id, calConnections.accountId],
-  }),
+  }).onDelete("cascade"),
   uqChannel: uniqueIndex("cal_push_channels_channel_uq").on(t.provider, t.channelId),
   ixAccount: index("cal_push_channels_account_idx").on(t.accountId, t.connectionId),
   ixExpires: index("cal_push_channels_expires_idx").on(t.expiresAt),

@@ -1,5 +1,10 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
+// The calendar's tables by name: this sweep is outside the phone's engine, whose schema has none.
+import {
+  calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calLinks, calSettings,
+  calSuggestions, calWrites,
+} from "@trafficflow/db/mail";
 import {
   accountSettings,
   accountStorage,
@@ -236,6 +241,9 @@ export async function deleteAccount(
      * forms.
      */
     await drop("account_settings", tx.delete(accountSettings).where(eq(accountSettings.accountId, accountId)));
+    // The calendar's settings beside the account's own, and for the same reason: a switch's write
+    // takes the settings stamp first, so the settings rows go before the counter.
+    await drop("cal_settings", tx.delete(calSettings).where(eq(calSettings.accountId, accountId)));
 
     /**
      * The user- and mailbox-keyed predicates are SUBQUERIES, not materialized id lists. Both
@@ -269,6 +277,14 @@ export async function deleteAccount(
     await tx.select({ id: mailboxes.id }).from(mailboxes)
       .where(eq(mailboxes.accountId, accountId))
       .orderBy(asc(mailboxes.id))
+      .for("update");
+    // THE CALENDAR'S CONNECTIONS, FOR UPDATE, after the mailboxes: a calendar writer's fence
+    // (`@trafficflow/db/calendar` `holdCalendarConnection`) holds the account's row, its mailbox's
+    // and its connection's FOR SHARE in that order, so one in flight commits first and is swept
+    // below, and a later one finds the stamp.
+    await tx.select({ id: calConnections.id }).from(calConnections)
+      .where(eq(calConnections.accountId, accountId))
+      .orderBy(asc(calConnections.id))
       .for("update");
 
     // ── 0. THE THREAD-FIRST FENCE. Every live writer of a thread takes thread rows before
@@ -431,6 +447,18 @@ export async function deleteAccount(
     // waited for that write by the time it gets here, and a write that comes later finds no
     // mailbox and an erased account (`pass-progress.ts`).
     await drop("pass_progress", tx.delete(passProgress).where(eq(passProgress.accountId, accountId)));
+
+    // ── THE CALENDAR (mail 0205), children before the rows they hang on. Rows first, then the
+    // counter below, as every writer takes them: below the counter this would deadlock with one.
+    await drop("cal_attendees", tx.delete(calAttendees).where(eq(calAttendees.accountId, accountId)));
+    await drop("cal_alarms", tx.delete(calAlarms).where(eq(calAlarms.accountId, accountId)));
+    await drop("cal_writes", tx.delete(calWrites).where(eq(calWrites.accountId, accountId)));
+    await drop("cal_suggestions", tx.delete(calSuggestions).where(eq(calSuggestions.accountId, accountId)));
+    await drop("cal_links", tx.delete(calLinks).where(eq(calLinks.accountId, accountId)));
+    await drop("cal_events", tx.delete(calEvents).where(eq(calEvents.accountId, accountId)));
+    await drop("cal_calendars", tx.delete(calCalendars).where(eq(calCalendars.accountId, accountId)));
+    await drop("cal_credentials", tx.delete(calCredentials).where(eq(calCredentials.accountId, accountId)));
+    await drop("cal_connections", tx.delete(calConnections).where(eq(calConnections.accountId, accountId)));
 
     // ── 5. Automation, knowledge, preferences ───────────────────────────────────
     await drop("workflow_runs", tx.delete(workflowRuns).where(eq(workflowRuns.accountId, accountId)));

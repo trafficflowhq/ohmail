@@ -146,7 +146,9 @@ export default defineConfig({
       // standing ordering reason: the table is scanned in order and a string `find` is a prefix
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
+      { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
+      { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },
       { find: "@trafficflow/api/relay-allowlist", replacement: r("./packages/api/src/relay-allowlist.ts") },
       { find: "@trafficflow/api/match-path", replacement: r("./packages/api/src/match-path.ts") },
@@ -172,6 +174,7 @@ export default defineConfig({
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
       // Above the bare name, for the prefix reason the tokens entries give.
       { find: "@ohmail/testing/adapter", replacement: r("./packages/testing/src/adapter.ts") },
+      { find: "@ohmail/testing/calendar-span-twin", replacement: r("./packages/testing/src/calendar-span-twin.ts") },
       { find: "@ohmail/testing", replacement: r("./packages/testing/src/index.ts") },
       { find: /^@ohmail\/cal-core$/, replacement: r("./packages/cal-core/src/index.ts") }, // anchored: a subpath resolves by the package's own exports
       { find: /^@ohmail\/cal-providers$/, replacement: r("./packages/cal-providers/src/index.ts") }, // anchored, for the same reason
@@ -183,6 +186,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine/durable", replacement: r("./packages/client-engine/src/durable.ts") },
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("./packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("./packages/client-engine/src/html-tree-budget.ts") },
+      { find: "@ohmail/client-engine/calendar-span", replacement: r("./packages/client-engine/src/engine/calendar-span.ts") },
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
       // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
       // out of the web app's shell are imported one by one, as they were).
@@ -252,6 +256,7 @@ export default defineConfig({
       { find: "@trafficflow/db/admin", replacement: r("./packages/db/src/admin.ts") },
       { find: "@trafficflow/db/journal", replacement: r("./packages/db/src/journal.ts") },
       { find: "@trafficflow/db/cloud", replacement: r("./packages/db/src/cloud.ts") },
+      { find: "@trafficflow/db/calendar", replacement: r("./packages/db/src/calendar/index.ts") },
       /* The ledger-source VOCABULARY on its own — pure string construction over `node:crypto`, no
          table, no connection. It has its own door because the mail half calls these names from
          inside the desktop engine, and reaching them through `/cloud` (or through the root barrel,

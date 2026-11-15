@@ -33,7 +33,7 @@ CREATE TABLE "cal_push_channels" (
   "resource_id" text,
   "expires_at" timestamp with time zone NOT NULL,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  CONSTRAINT "cal_push_channels_connection_id_account_fk" FOREIGN KEY ("connection_id","account_id") REFERENCES "cal_connections"("id","account_id")
+  CONSTRAINT "cal_push_channels_connection_id_account_fk" FOREIGN KEY ("connection_id","account_id") REFERENCES "cal_connections"("id","account_id") ON DELETE CASCADE
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "cal_push_channels_channel_uq" ON "cal_push_channels" USING btree ("provider","channel_id");

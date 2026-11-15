@@ -22,6 +22,12 @@
       "node": "./dist/cloud.js",
       "default": "./src/cloud.ts"
     },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
     "./journal": {
       "types": "./src/journal.ts",
       "ohmail-source": "./src/journal.ts",

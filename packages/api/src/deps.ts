@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService, ScheduledFilesKeeping,
-  WorkflowsService, ProfileImportService, HostResolver, SendDeps,
+  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarFeedPort,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -158,6 +158,12 @@ export interface StorageNoticeInput {
  */
 export interface ApiServices {
   sync?: SyncService;
+  /**
+   * The calendar's builders for the sync feed, handed in by a composition that keeps a calendar
+   * (`@trafficflow/services/calendar`). ABSENT is a first-class state, and the default: the feed
+   * then sends no calendar record and turns none into a deletion.
+   */
+  calendar?: CalendarFeedPort;
   /**
    * The session lifecycle — refresh rotation with reuse detection, logout, the device list
    * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence
@@ -763,6 +769,11 @@ export interface HelloConfig {
      * as `features.scheduleFilesDays` instead, which `/hello` derives from `ApiServices.scheduledFiles`.
      */
     scheduleFiles: boolean;
+    /**
+     * This composition keeps a calendar: it hands `ApiServices.calendar` in and mounts the calendar's
+     * routes. Optional, and absent is off: `/hello` then says nothing of a calendar, as it never did.
+     */
+    calendar?: boolean;
   };
 }
 

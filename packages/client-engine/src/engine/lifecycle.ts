@@ -925,6 +925,8 @@ export abstract class EngineLifecycle extends EngineTrash {
       // `full` policy returns immediately.
       // A removal's short window is refilled BEFORE the settle prune trims it back to the policy.
       await this.refillWindow();
+      // What the calendar's switch owes (`calendar.ts`), before the prune trims what it read.
+      await this.settleCalendarSwitch();
       await this.pruneToPolicy();
       // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
       // in for — retire any copy the mirror now holds under the same header (or that has aged out),
@@ -1133,6 +1135,9 @@ export abstract class EngineLifecycle extends EngineTrash {
     }
     this.notify();
   }
+
+  // Written in a later file of the engine (`calendar.ts`); named here because this one calls it.
+  protected abstract settleCalendarSwitch(): Promise<void>;
 }
 
 /** The engine's class as this file's bodies name it: the statics they read are declared here. */

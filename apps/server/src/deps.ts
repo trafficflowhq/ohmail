@@ -43,6 +43,7 @@ import {
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
 import type { MailboxAllowancePolicy } from "@trafficflow/services/mail";
+import { calendarFeed } from "@trafficflow/services/calendar";
 import type { PairingTokenMinted } from "@trafficflow/services";
 import {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
@@ -397,6 +398,10 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
   // The stateless singletons: naming them is free, so they are plain properties.
   const bag: Record<string, unknown> = {
     sync: syncService,
+    // THE CALENDAR, only where the operator keeps one (`OHMAIL_CALENDAR=1`). The feed, the routes
+    // and `/hello` all read THIS member, so the three cannot disagree; absent, nothing calendar
+    // leaves this program and every answer is the one it gave before there was a calendar.
+    ...(cfg.calendar.enabled ? { calendar: calendarFeed } : {}),
     // UnifiedPush wake registrations, with this program's endpoint policy: https-only and public
     // addresses only. A self-hosted server may relax it for a distributor on its own LAN
     // (`TF_PUSH_ALLOW_PRIVATE=1`); the managed service never does, whatever its environment holds.
@@ -1057,6 +1062,8 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
         remoteImages: true,
         // False for clients that predate the horizon; `/hello` adds `scheduleFilesDays` from `scheduledFiles`.
         scheduleFiles: false,
+        // Reads the BAG: the routes are mounted and the feed is handed the port from the same member.
+        ...(rt.services.calendar !== undefined ? { calendar: true } : {}),
       },
     },
     logger: rt.logger,

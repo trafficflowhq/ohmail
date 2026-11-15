@@ -259,7 +259,7 @@ describe("a snapshot route that fails on its FIRST page", () => {
       sync: async (p: { since: string; types?: string[] }): Promise<SyncResponse> => {
         // Each ask, with its type filter — the degraded bootstrap now opens with the rules-first
         // pass (`types=rule`), so the bare `since` alone would conflate two different requests.
-        rec.syncSince.push(p.types ? `${p.since}[${p.types.join(",")}]` : p.since);
+        rec.syncSince.push(p.types?.join(",") === "rule" ? `${p.since}[rule]` : p.since);
         return {
           changes: { creates: [], updates: [], moves: [], deletes: [] },
           cursor: p.since, hasMore: false, serverTime: NOW.toISOString(),

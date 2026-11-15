@@ -261,6 +261,9 @@ export {
   // beside `LedgerTx` because that is the type it enforces at runtime; it used to reach callers
   // through the hosted barrel, which put a mail-side guard behind a hosted import.
   NotInTransactionError, assertLedgerTx,
+  // The calendar's kinds and its one delta door: words and a door, no table of the calendar's.
+  CALENDAR_RECORD_KINDS, isCalendarRecordKind, calendarDelta, recordCalendarChanges,
+  CALENDAR_CHANGES_PER_TRANSACTION, CalendarChangeRefused, type CalendarChange,
   type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
   type MailboxMustBeLive,
 } from "./change-log.js";

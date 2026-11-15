@@ -15,6 +15,7 @@ import { eraseIdempotentResponses } from "./idempotency.js";
 import { SETTINGS_HASH_KEYS, settingsHashRows } from "./profile-import-ask.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { rowsAffected as n } from "./rows-affected.js";
+import { sweepMailboxCalendarStep } from "./calendar/erasure.js";
 import { lockAccountStorage, recomputeAccountStorage, releaseBodyBytes } from "./storage.js";
 
 /**
@@ -157,6 +158,16 @@ export async function sweepMailboxStep(
     .where(and(eq(messages.accountId, accountId), eq(messages.mailboxId, mailboxId)))
     .limit(ERASE_BATCH);
   if (page.length > 0) return out({ ...(await eraseMessages(tx, d, accountId, mailboxId, page, drop)), done: false });
+
+  /* THE CALENDAR THAT RIDES THIS MAILBOX, a step at a time until it answers done, so the finish
+     stamp below means the calendar too (`calendar/erasure.ts`). A store of the Postgres dialect
+     holds the calendar's tables; a phone's own store holds none, and its build substitutes a twin
+     for that module which answers done at once. */
+  if (d.name === "pg") {
+    const calendar = await sweepMailboxCalendarStep(tx, d, { accountId, mailboxId });
+    for (const [table, rows] of Object.entries(calendar.deleted)) await drop(table, Promise.resolve({ rowCount: rows }));
+    if (!calendar.done) return out({ seq: calendar.seq, done: false });
+  }
 
   /* ── THE MAILBOX'S OWN STATE, AND THE FINISH ──
    * These tables scale with a mailbox's folders, lists and correspondents, not with its messages.

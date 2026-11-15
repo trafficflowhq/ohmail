@@ -15,6 +15,12 @@
       "ohmail-source": "./src/adapter.ts",
       "node": "./dist/adapter.js",
       "default": "./src/adapter.ts"
+    },
+    "./calendar-span-twin": {
+      "types": "./src/calendar-span-twin.ts",
+      "ohmail-source": "./src/calendar-span-twin.ts",
+      "node": "./dist/calendar-span-twin.js",
+      "default": "./src/calendar-span-twin.ts"
     }
   },
   "dependencies": {

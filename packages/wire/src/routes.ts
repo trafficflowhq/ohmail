@@ -13,6 +13,7 @@
  */
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
+import type { CalendarSettingsBody, CalendarSettingsWire } from "./calendar.js";
 import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
 import type { MessageDTO, MessageStateDTO, TrashRowDTO } from "./mail.js";
@@ -139,6 +140,11 @@ export interface Routes {
   // ── the feed ────────────────────────────────────────────────────────────────
   "GET /sync": { params: None; body: never; answer: SyncResponse };
   "GET /sync/snapshot": { params: None; body: never; answer: SnapshotResponse };
+
+  // ── the calendar, where a server keeps one (`/hello` says so) ───────────────
+  "GET /calendar/settings": { params: None; body: never; answer: CalendarSettingsWire };
+  /** `X-Sync-Seq` names the settings change when a field changed; a request that changes nothing carries none. */
+  "PATCH /calendar/settings": { params: None; body: CalendarSettingsBody; answer: CalendarSettingsWire };
   /** Ring the worker's doorbell. `mailboxIds` narrows the ring; absent, every connected mailbox. */
   "POST /sync/pull": {
     params: None;

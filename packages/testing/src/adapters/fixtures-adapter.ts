@@ -39,6 +39,8 @@ const FIXTURE_FOLDER: Record<MessageFixture["folder"], Folder> = {
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_MS = 86_400_000;
+/** The kinds only this world sends, which no server has: kept whatever kinds a client names. */
+const DEMO_WORLD_KINDS = ["screener_sender", "triage_item", "view_meta"];
 
 /**
  * Turn a prototype display time ("09:12", "yesterday", "Mon") into a real
@@ -377,7 +379,9 @@ export class FixturesAdapter implements EngineAdapter {
     const since = decodeSeqCursor(params.since);
     if (since === null) throw new CursorExpiredError();
     const limit = Math.min(Math.max(1, params.limit ?? 500), 2000);
-    const types = params.types ? new Set(params.types) : null;
+    // A named list filters the kinds a server sends; the demo world's own kinds are no server's, so
+    // no list a client names leaves them out (an engine names its kinds on every request).
+    const types = params.types ? new Set([...params.types, ...DEMO_WORLD_KINDS]) : null;
 
     const pending = this.log.filter((c) => c.seq > since && (!types || types.has(c.type)));
     const page = pending.slice(0, limit);

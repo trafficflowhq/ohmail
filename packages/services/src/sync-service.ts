@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
-  rules, tags, rulesTheActWrote, type EntityType,
+  rules, tags, rulesTheActWrote, isCalendarRecordKind, type EntityType,
 } from "@trafficflow/db";
+import type { CalendarRecordKind, CalendarWindow, SettingsDTO } from "@ohmail/wire";
+import type { CalendarFeedPort, CalendarKeyset, CalendarSpanMs } from "./calendar-port.js";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { arrivalKeyOf } from "./arrival-key.js";
@@ -183,6 +185,74 @@ export interface GetChangesOptions {
   since?: string;
   limit?: number;
   types?: EntityType[];
+  /**
+   * The calendar's builders, from a composition that keeps a calendar. ABSENT: no calendar
+   * change is built, sent or turned into a deletion; the cursor moves past them.
+   */
+  calendar?: CalendarFeedPort;
+}
+
+/**
+ * WHO IS SENT A CALENDAR RECORD: a request that names one of its kinds and the settings record
+ * (a client older than the calendar names none, and a browser tab that names nothing must not
+ * keep records it cannot read), on a server that keeps a calendar, for an account that switched
+ * it on. The settings record is what tells a device the switch went off; nothing is sent while it
+ * is off, deletions included, so a client that does not hear the switch could never let go of
+ * what it held, nor of what an erasure took meanwhile. Asked only of a page that holds a calendar
+ * change, so the mail feed pays nothing for it.
+ */
+async function servesCalendar(
+  port: CalendarFeedPort | undefined, types: readonly EntityType[] | undefined,
+  enabledAt: () => Promise<Date | null>,
+): Promise<CalendarFeedPort | null> {
+  if (port === undefined || types === undefined || !types.includes("settings")) return null;
+  if (!types.some((t) => isCalendarRecordKind(t))) return null;
+  return (await enabledAt()) === null ? null : port;
+}
+
+/**
+ * THE SWITCH ON THE SETTINGS RECORD, where a composition keeps a calendar: `null` while it is off,
+ * the instant it went on. With no calendar here the key is absent, and a client reads that as off.
+ * `materializeSettings` is in the phone's own engine and names no calendar table, so the reader
+ * adds it from the port.
+ */
+function withCalendarSwitch(settings: SettingsDTO | null, enabledAt: Date | null | undefined): SettingsDTO | null {
+  if (settings === null || enabledAt === undefined) return settings;
+  return { ...settings, calendarEnabledAt: enabledAt === null ? null : enabledAt.toISOString() };
+}
+
+/**
+ * The longest span a calendar cursor may carry: the served window is a little over three years,
+ * and a named span is clamped to one at the route. A bound against a cursor no server issued.
+ */
+const SNAPSHOT_CALENDAR_SPAN_MAX_MS = 4 * 366 * 86_400_000;
+
+/** The longest span `?phase=calendar` loads at once: a year. A longer one is cut to a year from its start. */
+export const NAMED_CALENDAR_SPAN_MAX_MS = 366 * 86_400_000;
+/** An instant's longest spelling here: `+275760-09-13T00:00:00.000Z` and some room. */
+const SPAN_INSTANT_MAX_CHARS = 40;
+/** The years a calendar names, 0001 to 9999, well inside what the column holds. */
+const SPAN_INSTANT_MIN_MS = -62_135_596_800_000;
+const SPAN_INSTANT_MAX_MS = 253_402_300_799_999;
+
+/**
+ * `?from=&to=` beside `?phase=calendar`: the span a device loads besides the window, two instants,
+ * both or neither, the first before the second, at most a year apart. Absent: the window around
+ * today. Every door that serves the snapshot reads them with this.
+ */
+export function namedCalendarSpan(from: string | null, to: string | null): CalendarSpanMs | undefined {
+  if (from === null && to === null) return undefined;
+  const instant = (raw: string | null): number => {
+    const ms = raw !== null && raw.length <= SPAN_INSTANT_MAX_CHARS ? Date.parse(raw) : Number.NaN;
+    if (!(ms >= SPAN_INSTANT_MIN_MS && ms <= SPAN_INSTANT_MAX_MS)) {
+      throw new ServiceError("validation_failed", 400, "from and to must both be instants");
+    }
+    return ms;
+  };
+  const fromMs = instant(from);
+  const toMs = instant(to);
+  if (toMs <= fromMs) throw new ServiceError("validation_failed", 400, "from must come before to");
+  return { fromMs, toMs: Math.min(toMs, fromMs + NAMED_CALENDAR_SPAN_MAX_MS) };
 }
 
 export interface GetSnapshotOptions {
@@ -198,8 +268,21 @@ export interface GetSnapshotOptions {
    * the mail such a client already holds. Cost is bounded by how much mail carries a tag, which
    * is what somebody tagged by hand. Absent — and any phase this build has never heard of, which
    * the route drops at the read — is the ordinary walk, byte for byte.
+   *
+   * `"calendar"` on page 1 is the calendar's phase alone (a device that switched its calendar on,
+   * or asks for an earlier span); the route reads it only where a composition keeps a calendar.
    */
-  phase?: "tail";
+  phase?: "tail" | "calendar";
+  /** The kinds the request names. The snapshot serves the calendar only to a request that names one. */
+  types?: readonly EntityType[];
+  /**
+   * The calendar's builders, from a composition that keeps a calendar. ABSENT: the snapshot has
+   * no calendar phase, and a cursor naming one is refused as this build always refused a word it
+   * does not know.
+   */
+  calendar?: CalendarFeedPort;
+  /** With `phase: "calendar"`: the span to serve instead of the window around today. */
+  span?: CalendarSpanMs;
 }
 
 /**
@@ -260,7 +343,23 @@ interface DraftsSnapshotCursor {
   draft: DraftKeyset;
 }
 
-type SnapshotCursor = MessageSnapshotCursor | DraftsSnapshotCursor;
+/**
+ * The calendar's phase, after every mail phase: the account's calendar as it stands, its events
+ * keyset-paged on `(starts_at, id)` ascending within one span. `event` absent: the phase's first
+ * page, which leads with the connections, the calendars and the newest open suggestions. `span`
+ * absent: the served window, fixed (and narrowed to its row ceiling) by that first page, which
+ * then carries it in every later cursor. `emitted` counts the events served so far.
+ */
+interface CalendarSnapshotCursor {
+  asOfSeq: bigint;
+  generation: number | null;
+  emitted: number;
+  phase: "calendar";
+  event?: CalendarKeyset;
+  span?: CalendarSpanMs;
+}
+
+type SnapshotCursor = MessageSnapshotCursor | DraftsSnapshotCursor | CalendarSnapshotCursor;
 
 /**
  * The delta `/sync` reader. Reads `change_log` ascending by seq, re-materializes the CURRENT DTO
@@ -361,14 +460,23 @@ export class SyncService {
 
   /** Opaque base64url of the snapshot's consistent point plus this page's keyset position. */
   encodeSnapshotCursor(c: SnapshotCursor): string {
-    const payload = {
-      v: SNAPSHOT_CURSOR_VERSION, s: c.asOfSeq.toString(10), n: c.emitted,
-      ...(c.generation === null ? {} : { g: c.generation }),
-      // A drafts-phase cursor carries no message keyset; every other phase carries one.
-      ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
-      ...(c.phase ? { p: c.phase } : {}),
-      ...(c.draft ? { da: c.draft.updatedAt, di: c.draft.id } : {}),
-    };
+    const payload = c.phase === "calendar"
+      ? {
+        v: SNAPSHOT_CURSOR_VERSION, s: c.asOfSeq.toString(10), n: c.emitted,
+        ...(c.generation === null ? {} : { g: c.generation }),
+        // The event keyset, `(starts_at, id)`: the message keyset's two fields, read by this phase's rule.
+        ...(c.event ? { d: c.event.startsAtMs, i: c.event.id } : {}),
+        p: c.phase,
+        ...(c.span ? { f: c.span.fromMs, t: c.span.toMs } : {}),
+      }
+      : {
+        v: SNAPSHOT_CURSOR_VERSION, s: c.asOfSeq.toString(10), n: c.emitted,
+        ...(c.generation === null ? {} : { g: c.generation }),
+        // A drafts-phase cursor carries no message keyset; every other phase carries one.
+        ...(c.phase === "drafts" ? {} : { d: c.date, i: c.id }),
+        ...(c.phase ? { p: c.phase } : {}),
+        ...(c.draft ? { da: c.draft.updatedAt, di: c.draft.id } : {}),
+      };
     return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   }
 
@@ -387,7 +495,7 @@ export class SyncService {
       if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n, p, da, di, g } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p, da, di, g, f, t } = raw as Record<string, unknown>;
       if (v !== SNAPSHOT_CURSOR_VERSION) throw new Error("unknown cursor version");
       if (g !== undefined && (typeof g !== "number" || !Number.isSafeInteger(g) || g < 0)) {
         throw new Error("bad store run");
@@ -404,7 +512,8 @@ export class SyncService {
       if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > MAX_EMITTED) {
         throw new Error("bad emitted count");
       }
-      if (p !== undefined && p !== "tail" && p !== "drafts") throw new Error("bad phase");
+      if (p !== undefined && p !== "tail" && p !== "drafts" && p !== "calendar") throw new Error("bad phase");
+      if (p === "calendar") return this.decodeCalendarCursor(BigInt(s), generation, n, { d, i, da, di, f, t });
       // THE DRAFT KEYSET, both halves or neither: one half alone is a position nothing can
       // resume from, and reading it as absent would silently declare the drafts finished.
       // Same range rules as the message keyset below, for the same reason.
@@ -445,6 +554,34 @@ export class SyncService {
         "snapshot cursor is malformed or expired; restart the snapshot with no cursor",
       );
     }
+  }
+
+  /**
+   * The calendar phase's cursor, by the same rules as the mail shapes: the event keyset and the
+   * span each whole or absent, every number inside what the column holds, and no draft keyset.
+   * A later page always carries its span; only the phase's first page may leave it to the window.
+   * Throws plain errors, which {@link decodeSnapshotCursor} answers 410.
+   */
+  private decodeCalendarCursor(
+    asOfSeq: bigint, generation: number | null, emitted: number,
+    raw: { d: unknown; i: unknown; da: unknown; di: unknown; f: unknown; t: unknown },
+  ): CalendarSnapshotCursor {
+    const { d, i, da, di, f, t } = raw;
+    const instant = (x: unknown): x is number =>
+      typeof x === "number" && Number.isFinite(x) && x <= MAX_EPOCH_MS && x >= MIN_EPOCH_MS;
+    if (da !== undefined || di !== undefined) throw new Error("a calendar cursor with a draft keyset");
+    if ((d === undefined) !== (i === undefined)) throw new Error("half an event keyset");
+    if ((f === undefined) !== (t === undefined)) throw new Error("half a span");
+    if (i !== undefined && (!isUuid(i) || !instant(d))) throw new Error("bad event keyset");
+    if (f !== undefined && (!instant(f) || !instant(t) || f >= t || t - f > SNAPSHOT_CALENDAR_SPAN_MAX_MS)) {
+      throw new Error("bad span");
+    }
+    if (i !== undefined && f === undefined) throw new Error("an event keyset with no span");
+    return {
+      asOfSeq, generation, emitted, phase: "calendar",
+      ...(i !== undefined ? { event: { startsAtMs: d as number, id: i as string } } : {}),
+      ...(f !== undefined ? { span: { fromMs: f as number, toMs: t as number } } : {}),
+    };
   }
 
   /**
@@ -678,6 +815,30 @@ export class SyncService {
       () => materializeTags(db, accountId, idsOf("tag")),
     ] as const);
     const settingsMemo = new Map<string, unknown | null>();
+    /* The account's switch, read at most once a page and only by a page that asks: one holding a
+       calendar change, or a settings change on a server that keeps a calendar. */
+    const port = opts.calendar;
+    let enabledAtRead: Promise<Date | null> | undefined;
+    const enabledAt = (): Promise<Date | null> => (enabledAtRead ??= port!.enabledAt(db, accountId));
+
+    /* THE CALENDAR'S ROWS, behind their gate ({@link servesCalendar}): built in one call per kind
+       present, or skipped whole. A page without one asks nothing. */
+    const calendarRows = rows.filter((r) => isCalendarRecordKind(r.entityType));
+    const calendarPort = calendarRows.length === 0
+      ? null
+      : await servesCalendar(port, opts.types, enabledAt);
+    const builtCalendar = new Map<CalendarRecordKind, ReadonlyMap<string, unknown>>();
+    if (calendarPort !== null) {
+      const liveIds = new Map<CalendarRecordKind, string[]>();
+      for (const r of calendarRows) {
+        if (r.op === "delete") continue;
+        const kind = r.entityType as CalendarRecordKind;
+        const ids = liveIds.get(kind) ?? [];
+        ids.push(r.entityId);
+        liveIds.set(kind, ids);
+      }
+      for (const [kind, ids] of liveIds) builtCalendar.set(kind, await calendarPort.build(db, accountId, kind, ids));
+    }
 
     const prefetched2 = new Map<EntityType, Map<string, unknown>>([
       ["message_state", prefetchedStates],
@@ -721,6 +882,10 @@ export class SyncService {
       const seq = Number(row.seq);
       const op = row.op as ChangeOp;
 
+      // Not this request's, or not this account's yet: neither built, sent nor a deletion. The
+      // cursor still moves past it, which is the point: a client that may not read it never will.
+      if (isCalendarRecordKind(type) && calendarPort === null) continue;
+
       if (op === "delete") {
         if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
         continue;
@@ -730,20 +895,25 @@ export class SyncService {
       // instead — regardless of the original op. A message or thread absent from its
       // prefetch is absent for the same reason the per-row call returned null.
       const batched = prefetched2.get(type);
-      const entity = type === "message"
-        ? (prefetched.get(id) ?? null)
-        : type === "thread"
-          ? (prefetchedThreads.get(id) ?? null)
-          : type === "folder"
-            ? (() => { const f = prefetchedFolders.get(id); return f ? folderRowToDTO(f) : null; })()
-            : batched
-              ? (batched.get(id) ?? null)
-              : type === "settings"
-                ? await (async () => {
-                  if (!settingsMemo.has(id)) settingsMemo.set(id, await materializeSettings(db, accountId, id));
-                  return settingsMemo.get(id) ?? null;
-                })()
-                : await materialize(db, accountId, type, id);
+      const entity = isCalendarRecordKind(type)
+        ? (builtCalendar.get(type)?.get(id) ?? null)
+        : type === "message"
+          ? (prefetched.get(id) ?? null)
+          : type === "thread"
+            ? (prefetchedThreads.get(id) ?? null)
+            : type === "folder"
+              ? (() => { const f = prefetchedFolders.get(id); return f ? folderRowToDTO(f) : null; })()
+              : batched
+                ? (batched.get(id) ?? null)
+                : type === "settings"
+                  ? await (async () => {
+                    if (!settingsMemo.has(id)) {
+                      const settings = await materializeSettings(db, accountId, id);
+                      settingsMemo.set(id, withCalendarSwitch(settings, settings !== null && port ? await enabledAt() : undefined));
+                    }
+                    return settingsMemo.get(id) ?? null;
+                  })()
+                  : await materialize(db, accountId, type, id);
       if (entity === null) {
         if (!carry(deletes, at, { type, op: "delete", id, seq, updatedAt: row.createdAt.toISOString() })) break;
         continue;
@@ -830,18 +1000,51 @@ export class SyncService {
         "snapshot cursor belongs to another run of this store; restart the snapshot with no cursor",
       );
     }
-    // TAIL-ONLY: page 1 of a walk that starts IN the tail. PRESENCE and not a second spelling
-    // test — the option's type admits the one phase there is, and the route decides the
-    // vocabulary at the read (where `input-bounds-census` asks for it). A later phase would widen
-    // the type and this line with it, which is the point: one comparison, in one place.
-    // Only ever true on page 1; later pages carry `phase: "tail"` in the cursor itself.
-    const tailOnly = cursor === null && opts.phase !== undefined;
+    /* THE CALENDAR'S PHASE EXISTS ONLY WHERE A COMPOSITION KEEPS A CALENDAR. Elsewhere its cursor is
+       a word this build does not serve, refused as an unknown phase always was. */
+    const port = opts.calendar;
+    if (cursor !== null && cursor.phase === "calendar" && port === undefined) {
+      throw new ServiceError(
+        "cursor_expired", 410,
+        "snapshot cursor names a phase this server does not serve; restart the snapshot with no cursor",
+      );
+    }
+    // TAIL-ONLY: page 1 of a walk that starts IN the tail. Only ever true on page 1; later pages
+    // carry `phase: "tail"` in the cursor itself. The route decides the vocabulary at the read
+    // (where `input-bounds-census` asks for it).
+    const tailOnly = cursor === null && opts.phase === "tail";
 
     // THE GAP-FREE SEQ IS FIXED BEFORE ANY ENTITY READ. See `highWaterSeq` for what depends on
     // this line
     // running first and nothing depending on it running at all if a cursor already fixed the point.
     const asOfSeq = cursor ? cursor.asOfSeq : await this.highWaterSeq(db, accountId);
     const seq = Number(asOfSeq);
+
+    /* The account's switch, read at most once a page: by the settings record on page 1 and by the
+       gate where the calendar's phase would begin or goes on. */
+    let enabledAtRead: Promise<Date | null> | undefined;
+    const enabledAt = (): Promise<Date | null> => (enabledAtRead ??= port!.enabledAt(db, accountId));
+    const servedCalendar = (): Promise<CalendarFeedPort | null> => servesCalendar(port, opts.types, enabledAt);
+
+    // THE CALENDAR'S PHASE: a page of it, or the phase alone (`?phase=calendar`, page 1), which is
+    // named once like `tailOnly`: the mail's page 1 stays the one `cursor === null` block.
+    const calendarOnly = cursor === null && opts.phase === "calendar" && port !== undefined;
+    if (cursor !== null && cursor.phase === "calendar") {
+      return this.calendarSnapshotPage(ctx, { served: await servedCalendar(), cursor, span: null, asOfSeq, gen, limit });
+    }
+    if (calendarOnly) {
+      return this.calendarSnapshotPage(ctx, {
+        served: await servedCalendar(), cursor: null, span: opts.span ?? null, asOfSeq, gen, limit,
+      });
+    }
+    /** Where the mail's walk would end: the calendar's phase begins, for a request it serves. */
+    const calendarNext = async (): Promise<{ nextCursor: string; calendarWindow: CalendarWindow } | null> => {
+      const served = await servedCalendar();
+      return served === null ? null : {
+        nextCursor: this.encodeSnapshotCursor({ asOfSeq, generation: gen, emitted: 0, phase: "calendar" }),
+        calendarWindow: served.window,
+      };
+    };
 
     const changes: SyncChange[] = [];
     /**
@@ -916,7 +1119,9 @@ export class SyncService {
       // the tab held stale consent until the next settings write, however far away that was.
       // With the entity on page 1 the mirror's stamp starts at the row's own instant and the
       // client's re-ask covers the gap.
-      const settings = await materializeSettings(db, accountId, accountId);
+      const settings = withCalendarSwitch(
+        await materializeSettings(db, accountId, accountId), port ? await enabledAt() : undefined,
+      );
       if (settings !== null) emit("settings", accountId, settings, settings.updatedAt);
     }
 
@@ -989,6 +1194,13 @@ export class SyncService {
       // page carries drafts and nothing else — there is no message keyset left to walk, so the
       // whole budget is theirs.
       await emitDrafts();
+      const calendarAfter = draftNext === undefined ? await calendarNext() : null;
+      if (calendarAfter !== null) {
+        return {
+          asOfSeq: seq, changes, nextCursor: calendarAfter.nextCursor, window: SNAPSHOT_WINDOW,
+          ...(gen === null ? {} : { storeGeneration: gen }), calendarWindow: calendarAfter.calendarWindow,
+        };
+      }
       return {
         asOfSeq: seq,
         changes,
@@ -1226,12 +1438,75 @@ export class SyncService {
         asOfSeq, generation: gen, emitted, phase: "drafts", draft: draftNext,
       });
     }
+    // And where the mail ends, the calendar's phase, for a request it serves.
+    const calendarAfter = nextCursor === null ? await calendarNext() : null;
+    if (calendarAfter !== null) nextCursor = calendarAfter.nextCursor;
 
     /* Spread, not `?? undefined`: a store with no generation must leave the field ABSENT, which
        is the answer a client reads as "mint the shape you always did". */
     return {
       asOfSeq: seq, changes, nextCursor, window: SNAPSHOT_WINDOW,
       ...(gen === null ? {} : { storeGeneration: gen }),
+      ...(calendarAfter !== null ? { calendarWindow: calendarAfter.calendarWindow } : {}),
+    };
+  }
+
+  /**
+   * ONE PAGE OF THE CALENDAR'S PHASE: on its first page the account's connections, calendars and
+   * newest open suggestions, then the span's events in `(starts_at, id)` order under the page's
+   * byte budget, every row at `asOfSeq`, the first event always riding so the walk advances. The
+   * port reads and builds; this charges and cuts, as the message walk does. A request the calendar
+   * does not serve (the switch went off, or it names no calendar kind) gets an empty last page.
+   */
+  private async calendarSnapshotPage(ctx: ServiceContext, p: {
+    served: CalendarFeedPort | null;
+    cursor: CalendarSnapshotCursor | null;
+    span: CalendarSpanMs | null;
+    asOfSeq: bigint;
+    gen: number | null;
+    limit: number;
+  }): Promise<SnapshotResponse> {
+    const { served, cursor, asOfSeq, gen } = p;
+    const seq = Number(asOfSeq);
+    const generation = gen === null ? {} : { storeGeneration: gen };
+    if (served === null) return { asOfSeq: seq, changes: [], nextCursor: null, window: SNAPSHOT_WINDOW, ...generation };
+    const slice = await served.snapshotPage(ctx.db, ctx.accountId, {
+      now: ctx.now(), window: served.window, span: cursor?.span ?? p.span, after: cursor?.event ?? null, limit: p.limit,
+    });
+    const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
+    const changes: SyncChange[] = [];
+    const changeOf = (type: EntityType, id: string, entity: unknown, updatedAt: string): SyncChange =>
+      ({ type, op: "create", id, seq, updatedAt, entity });
+    // The lead is the calendar's small state, bounded by what the person connected: charged, never refused.
+    for (const r of slice.lead) {
+      const change = changeOf(r.kind, r.id, r.entity, r.updatedAt);
+      budget.charge(weighChange(change));
+      changes.push(change);
+    }
+    let sent = 0;
+    let last: CalendarKeyset | undefined;
+    let cut = false;
+    for (const r of slice.events) {
+      const change = changeOf(r.kind, r.id, r.entity, r.updatedAt);
+      const bytes = weighChange(change);
+      if (sent > 0 && !budget.admits(bytes)) {
+        cut = true;
+        break;
+      }
+      budget.charge(bytes);
+      changes.push(change);
+      last = r.keyset;
+      sent += 1;
+    }
+    // A page the bytes cut resumes after its last event; a full read after the last row it read.
+    const resume = cut ? last : slice.full ? (slice.readTo ?? undefined) : undefined;
+    return {
+      asOfSeq: seq, changes,
+      nextCursor: resume === undefined ? null : this.encodeSnapshotCursor({
+        asOfSeq, generation: gen, emitted: (cursor?.emitted ?? 0) + sent, phase: "calendar",
+        event: resume, span: slice.span,
+      }),
+      window: SNAPSHOT_WINDOW, ...generation, calendarWindow: served.window,
     };
   }
 }

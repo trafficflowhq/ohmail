@@ -16,19 +16,15 @@
  */
 export interface UnwrittenTable { readonly name: string; readonly why: string; readonly cloud?: true }
 
-const CALENDAR = "the calendar's store is not built yet: no account holds a row";
+const CALENDAR = "the calendar's sync and acts are not built yet: no account holds a row";
 
+/* The calendar's records, its six record tables, are written by a desktop's copy of a Cloud
+   account (`cloud-mirror-calendar.ts`) and left this list with that writer; `cal_settings` left it
+   with the switch (`settings-service.ts`, and the copy's `storeCalendarSwitch`). */
 export const UNWRITTEN_TABLES: Readonly<Record<string, UnwrittenTable>> = {
-  cal_connections: { name: "calConnections", why: CALENDAR },
   cal_credentials: { name: "calCredentials", why: CALENDAR },
-  cal_calendars: { name: "calCalendars", why: CALENDAR },
-  cal_events: { name: "calEvents", why: CALENDAR },
-  cal_attendees: { name: "calAttendees", why: CALENDAR },
-  cal_alarms: { name: "calAlarms", why: CALENDAR },
   cal_writes: { name: "calWrites", why: CALENDAR },
   cal_links: { name: "calLinks", why: CALENDAR },
-  cal_suggestions: { name: "calSuggestions", why: CALENDAR },
-  cal_settings: { name: "calSettings", why: CALENDAR },
   cal_push_channels: { name: "calPushChannels", cloud: true, why: CALENDAR },
   account_closures: { name: "accountClosures", cloud: true, why: "the staff act that closes an account is not built yet: no account is closed" },
 };

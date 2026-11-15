@@ -1,6 +1,6 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { devices, sessions } from "@trafficflow/db";
-import type { EntityType } from "@trafficflow/services/mail";
+import { namedCalendarSpan, type EntityType } from "@trafficflow/services/mail";
 import type { Assert, Complete, RecordKind } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
 import { answer } from "../responses.js";
@@ -42,6 +42,9 @@ export const VALID_TYPE_LIST = ([
   // The organizer's arrangement of a mailbox this install only reads (`change-log.ts`). The
   // phone names its types, so a member missing here would leave its reader Screener unsplit.
   "mailbox_profile",
+  // The calendar's four kinds (`@ohmail/wire`, `calendar.ts`). Named or not sent: the reader
+  // serves them only to a request that names one, on an account that switched its calendar on.
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const) satisfies readonly RecordKind[];
 const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
 
@@ -128,10 +131,12 @@ export const syncRoutes: Route[] = [
       const limit = pagingNumber(url.searchParams.get("limit"));
       const types = parseTypes(url.searchParams.get("types"));
 
+      const calendar = deps.services?.calendar;
       const result = await sync(deps).getChanges(serviceContext(deps, req), {
         since,
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(types ? { types } : {}),
+        ...(calendar ? { calendar } : {}),
       });
       // The COMMITTED horizon is the stamp's whole meaning: only the empty tail — the client
       // presenting a cursor that is already the horizon — proves a committed drain. A page
@@ -162,16 +167,25 @@ export const syncRoutes: Route[] = [
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limit = pagingNumber(url.searchParams.get("limit"));
+      const calendar = deps.services?.calendar;
       // `?phase=tail` — the labeled tail alone, for a client re-hydrating mail its own retention
       // policy once evicted. A CLOSED SET AT THE READ, which is where `input-bounds-census` asks
       // for a caller-chosen value's bound: anything else is the ordinary walk, the safe direction
-      // for a parameter a future client might spell differently.
-      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
+      // for a parameter a future client might spell differently. `?phase=calendar` — the
+      // calendar's phase alone — is a word only where a composition keeps a calendar.
+      const asked = url.searchParams.get("phase");
+      const phase = asked === "tail" ? "tail" as const : asked === "calendar" && calendar ? "calendar" as const : undefined;
+      // The kinds named, read only for the calendar's gate; the mail phases serve every kind as before.
+      const types = calendar ? parseTypes(url.searchParams.get("types")) : undefined;
+      const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
 
       const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
         ...(cursor ? { cursor } : {}),
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(phase ? { phase } : {}),
+        ...(types ? { types } : {}),
+        ...(calendar ? { calendar } : {}),
+        ...(span ? { span } : {}),
       });
       return answer<"GET /sync/snapshot">()(result);
     },

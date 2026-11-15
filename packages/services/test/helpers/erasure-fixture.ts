@@ -40,6 +40,13 @@ import {
   graduations,
   junkRescues,
   messageInvitations,
+  calAlarms,
+  calAttendees,
+  calCalendars,
+  calConnections,
+  calEvents,
+  calSettings,
+  calSuggestions,
   accountPass,
   mailboxPass,
   writePassProgress,
@@ -652,6 +659,33 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     email, tier: "solo", source: "landing", invitedAt: NOW, registeredAt: NOW,
   }).returning();
   const waitlistId = listed!.id;
+
+  // THE CALENDAR (mail 0205): a connection riding the mailbox, its calendar with a default
+  // reminder, an event with an invitee and its own reminder, and a suggestion a letter made. The
+  // account's sweep takes every one of them.
+  const [conn] = await db.insert(calConnections).values({
+    accountId, provider: "caldav", label: "Mila's work", serverUrl: "https://dav.lichtgrat.example/cal/",
+    principal: "/principals/mila/", mailboxId,
+  }).returning();
+  const [cal] = await db.insert(calCalendars).values({
+    accountId, connectionId: conn!.id, providerId: `/cal/mila/${u}/`, name: "Clinic appointments",
+  }).returning();
+  await db.insert(calAlarms).values({ accountId, calendarId: cal!.id, minutesBefore: 30 });
+  const [ev] = await db.insert(calEvents).values({
+    accountId, calendarId: cal!.id, providerId: `/cal/mila/${u}/1.ics`, uid: `appt-${u}@lichtgrat.example`,
+    title: "Oncologist", notes: "bring the scans", startKind: "instant", startLocal: "20260801T080000Z",
+    startsAt: new Date("2026-08-01T08:00:00Z"), endsAt: new Date("2026-08-01T09:00:00Z"),
+  }).returning();
+  await db.insert(calAttendees).values({ accountId, eventId: ev!.id, address: email, name: "Mila" });
+  await db.insert(calAlarms).values({ accountId, eventId: ev!.id, minutesBefore: 60 });
+  await db.insert(calSuggestions).values({
+    accountId, messageId, mailboxId, evidence: "dates",
+    proposed: { title: "Follow-up", start: { kind: "date", value: "20260810" }, end: null, place: null },
+  });
+  // And the account's calendar settings: the switch on, a second zone, new events into the clinic.
+  await db.insert(calSettings).values({
+    accountId, enabledAt: new Date("2026-07-01T08:00:00Z"), secondZone: "America/New_York", newEventsCalendarId: cal!.id,
+  });
 
   return {
     accountId, userId, email, mailboxId, messageId, threadId, contactId,

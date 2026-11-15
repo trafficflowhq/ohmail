@@ -45,6 +45,12 @@
       "ohmail-source": "./src/match-path.ts",
       "node": "./dist/match-path.js",
       "default": "./src/match-path.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
     }
   },
   "dependencies": {

@@ -46,6 +46,8 @@ import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import type { AddressSearchResult, AnswerOf, MessageDTO, RequestOf, RouteName, SearchResult, Untrusted } from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
+import { calendarWindowOf } from "../calendar-window.js";
+import type { SnapshotParams } from "../engine/server-wire.js";
 
 /**
  * The pull answer's `fetching`, as the wire gave it: `null` stays null (this server does not say),
@@ -893,13 +895,17 @@ export class HttpAdapter implements EngineAdapter {
   /**
    * No 410 branch: a snapshot has no client-supplied cursor to expire.
    */
-  async snapshot(params: { cursor?: string; limit?: number; phase?: "tail" } = {}): Promise<SyncSnapshotPage> {
+  async snapshot(params: SnapshotParams = {}): Promise<SyncSnapshotPage> {
     const q = new URLSearchParams();
     if (params.cursor) q.set("cursor", params.cursor);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     // `phase=tail` asks for the labeled tail alone. A server too old to read it answers the
     // ordinary walk, which carries the same rows a few pages later and still converges.
     if (params.phase) q.set("phase", params.phase);
+    // The kinds named, which the calendar's phase is served to; and the span it loads, if any.
+    if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
+    if (params.from !== undefined) q.set("from", params.from);
+    if (params.to !== undefined) q.set("to", params.to);
     const qs = q.toString();
     const wire = await this.underSyncDeadlines(async (signal, answered) => {
       const res = await this.call("GET /sync/snapshot", { ...(qs ? { query: qs } : {}), ...(signal ? { signal } : {}) });
@@ -929,6 +935,8 @@ export class HttpAdapter implements EngineAdapter {
       // cursor it commits, and a local store past its first run refuses a cursor naming none —
       // dropping it here was a 410 on every drain for any install whose store ever ended uncleanly.
       ...(typeof wire.storeGeneration === "number" ? { storeGeneration: wire.storeGeneration } : {}),
+      // The calendar's span, only where the server serves this account its calendar; whole or absent.
+      ...(calendarWindowOf(wire.calendarWindow) ?? {}),
     };
   }
 

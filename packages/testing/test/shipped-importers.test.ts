@@ -26,6 +26,16 @@ const DEMO_ARM: Record<string, string> = {
 /** The one manifest that may declare it: the app that carries the demo. */
 const DECLARED_BY = ["apps/webapp"];
 
+/**
+ * Whether a member's manifest declares it. An app, in any field: its build takes whatever its files
+ * import, whichever field names it. A package, in any field but `devDependencies`: there it is its
+ * tests' dependency, and the walk below holds that no file of the package's `src/` imports it.
+ */
+export const declaresTesting = (member: string, pkg: Record<string, Record<string, string> | undefined>): boolean =>
+  ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]
+    .filter((k) => member.startsWith("apps/") || k !== "devDependencies")
+    .some((k) => pkg[k]?.["@ohmail/testing"] !== undefined);
+
 /** `from "…"`, `import("…")`, `require("…")` and a bare `import "…"`, of the package or a path into it. */
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(["'`])(@ohmail\/testing(?:\/[^"'`]*)?|[^"'`]*packages\/testing\/[^"'`]*)\1/;
 export const importsTesting = (src: string): boolean => IMPORT.test(withoutComments(src));
@@ -76,10 +86,22 @@ describe("the sample world's importers", () => {
     expect(importers).toEqual(Object.keys(DEMO_ARM).sort());
   });
 
+  it("controls: an app's manifest declares it in any field, a package's in any field but devDependencies", () => {
+    const at = (k: string) => ({ [k]: { "@ohmail/testing": "*" } });
+    for (const k of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+      expect(declaresTesting("apps/sidecar", at(k)), `apps/sidecar ${k}`).toBe(true);
+    }
+    expect(declaresTesting("packages/services", at("dependencies"))).toBe(true);
+    expect(declaresTesting("packages/services", at("peerDependencies"))).toBe(true);
+    expect(declaresTesting("packages/services", at("optionalDependencies"))).toBe(true);
+    expect(declaresTesting("packages/services", at("devDependencies"))).toBe(false);
+    expect(declaresTesting("packages/services", { devDependencies: { "@ohmail/testing-library": "*" } })).toBe(false);
+  });
+
   it("no app or package declares it but the one that carries the demo", () => {
     const declaring = [...members("apps"), ...members("packages")].filter((m) => {
       const pkg = JSON.parse(readFileSync(join(REPO, m, "package.json"), "utf8")) as Record<string, Record<string, string> | undefined>;
-      return ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].some((k) => pkg[k]?.["@ohmail/testing"] !== undefined);
+      return declaresTesting(m, pkg);
     });
     expect(declaring).toEqual(DECLARED_BY);
   });

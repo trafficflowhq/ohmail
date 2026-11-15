@@ -319,6 +319,7 @@ apps/sidecar/test/blank-repair-mode.test.ts	data	through apps/sidecar/test/_data
 apps/sidecar/test/boot-host-contract.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/boot-phase-narration.test.ts	data	reads data files (json)	none	desktop-engine	
 apps/sidecar/test/bound-breach-redial.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/calendar-every-kind-walks.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	cal-store	
 apps/sidecar/test/calendar-facts-keyed.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/ceiling-named-in-log.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/client-route-coverage.test.ts	source-text	reads source as text (ts, tsx)	layer 1	desktop-engine	

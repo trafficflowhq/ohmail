@@ -307,6 +307,9 @@ export {
   type StaffCapability,
 } from "./staff-grants.js";
 
+/** Each table's class for row security, as data: the policies are generated from it. */
+export { TABLE_CLASSES, type TableClass, type TableClassRow } from "./row-classes.js";
+
 /**
  * CRYPTO-4 — the KEK re-wrap pass, and the census that licenses retiring a version.
  *

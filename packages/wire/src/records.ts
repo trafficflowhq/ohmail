@@ -3,13 +3,14 @@
  * snapshot a cold start reads instead. The server builds these; every client applies them.
  */
 import type { Cursor, Folder, ISODateTime } from "./base.js";
-import type { CalendarRecordKind } from "./calendar.js";
+import type { CalendarRecordKind, CalendarWindow } from "./calendar.js";
 
 // The client-visible entity kinds that flow through `/sync`. Growing this union is not free: a
-// type here without a matching case in `materialize` is worse than none — the materializer falls
-// through to `null`, `SyncService` reads a null entity as a TOMBSTONE, and every row of the new
-// kind drains to the client as a `delete`. Add a kind together with its materializer
-// (`packages/services/src/dto/materialize.ts`) in the same change. Tag ASSIGNMENTS are not a type
+// kind the reader cannot build is worse than none — `SyncService` reads a null entity as a
+// TOMBSTONE, so every row of it would drain to the client as a `delete`. `materialize` switches
+// over this union with no default, so a mail kind without its case does not compile; a calendar
+// kind's builder is a mapped type over `CalendarRecordKind`, which refuses one left out the same
+// way. Add a kind together with its builder in the same change. Tag ASSIGNMENTS are not a type
 // here: they ride the existing `message` entity — one change per toggle; a separate `message_tag`
 // entity would mean two changes at two seqs, with a window where the client has the assignment
 // but not the tag it names.
@@ -146,6 +147,8 @@ export interface SnapshotResponse {
    * the shape it always did. See `SyncService.decodeCursor`.
    */
   storeGeneration?: number;
+  /** The calendar's span, stated only when this snapshot serves the calendar to this account. */
+  calendarWindow?: CalendarWindow;
 }
 
 /**
@@ -183,6 +186,8 @@ export interface SyncSnapshotPage {
    * minted without it is the shape this client has always sent.
    */
   storeGeneration?: number;
+  /** The calendar's span, stated only when this snapshot serves the calendar to this account. */
+  calendarWindow?: CalendarWindow;
 }
 
 /**
