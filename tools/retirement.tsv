@@ -1185,6 +1185,7 @@ packages/db/test/reverse-charge.test.ts	source-text	reads source as text (ts)	la
 packages/db/test/rule-lock-order-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rule-state-delta-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rules-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/runtime-roles-copy.test.ts	data	reads data files (sql, tsv): the runtime roles' script and its rule, pinned as a byte-for-byte copy	none	lock	
 packages/db/test/schema-split.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
 packages/db/test/screener-apply-lift.test.ts	source-text	reads source as text (ts): the worker's screener act	layer 1	services-proof	
 packages/db/test/screening-baseline-backfill.pg.test.ts	data	reads data files (execute, json)	none	services-proof	
