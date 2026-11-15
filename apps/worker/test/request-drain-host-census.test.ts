@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 // comment can satisfy certifies a host by prose, which is worse than having no census: a file
 // mentioning `runSyncCycle(` in a doc line was read as a fifth host the day one was written.
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -106,7 +107,7 @@ function tsFilesIn(dir: string): string[] {
 
 function organizerCycleHosts(): string[] {
   const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
-  return files.filter((f) => callsSyncCycle(readFileSync(f, "utf8")));
+  return files.filter((f) => callsSyncCycle(readSource(f)));
 }
 
 describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle", () => {
@@ -156,7 +157,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
     const hosts = organizerCycleHosts().filter((f) => !NO_PRODUCTION_CALLER.has(f));
     expect(hosts.length).toBeGreaterThan(0);
     for (const f of hosts) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
       expect(DRAIN_NEEDLE.test(src), `${f} calls runSyncCycle but never applyMetaRequests — a reader's ` +
         "decision would sit in ohmail/_meta for ever on this host").toBe(true);
     }
@@ -170,7 +171,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
     const hosts = organizerCycleHosts().filter((f) => !NO_PRODUCTION_CALLER.has(f));
     expect(hosts.length).toBeGreaterThan(0);
     for (const f of hosts) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
       const cycleAt = firstSyncCycleCall(src);
       const drainAt = src.search(DRAIN_NEEDLE);
       expect(cycleAt).toBeGreaterThanOrEqual(0);
@@ -184,7 +185,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
     const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
     expect(files.length).toBeGreaterThan(0);
     const offenders = files
-      .filter((f) => RETIRED_NEEDLE.test(readFileSync(f, "utf8")))
+      .filter((f) => RETIRED_NEEDLE.test(readSource(f)))
       .map((f) => f.split(sep).slice(-3).join(sep));
     expect(offenders, "the containment flag and its unguarded twins are retired — the gate is now " +
       "the account's request key, which is a fact rather than a switch").toEqual([]);
@@ -195,7 +196,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
    * repeated at each call site — a fourth host added later inherits it by construction.
    */
   it("the drain gates on the mailbox's request key, in the one function each host calls", () => {
-    const src = readFileSync(join(WORKER_SRC, "request-drain.ts"), "utf8");
+    const src = readSource(join(WORKER_SRC, "request-drain.ts"));
     expect(src).toMatch(/export async function applyMetaRequests\(/);
     expect(src).toMatch(/export async function driveOutstandingRequests\(/);
     // BOTH halves stop without a key — the one that APPLIES records and the one that WRITES them.
@@ -216,7 +217,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
   it("no host reads a stored request key or fetches one", () => {
     const files = [...tsFilesIn(WORKER_SRC), ...tsFilesIn(SIDECAR_SRC)];
     const offenders = files
-      .filter((f) => /readRequestKey|readOrMintRequestKey|request_key|requestKeyRotatedAt/.test(readFileSync(f, "utf8")))
+      .filter((f) => /readRequestKey|readOrMintRequestKey|request_key|requestKeyRotatedAt/.test(readSource(f)))
       .map((f) => f.split(sep).slice(-3).join(sep));
     expect(offenders, "the request key is derived from the mailbox password, never stored or fetched")
       .toEqual([]);
@@ -224,7 +225,7 @@ describe("every organizer runSyncCycle host drains ohmail/_meta, after the cycle
 
   it("the no-production-caller exemption is real — it still calls runSyncCycle and still lacks the drain", () => {
     for (const f of NO_PRODUCTION_CALLER) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
       expect(callsSyncCycle(src), `${f} no longer calls runSyncCycle — the exemption has gone stale`).toBe(true);
       expect(DRAIN_NEEDLE.test(src),
         `${f} now calls applyMetaRequests — if it has gained a production caller, remove the exemption instead`)
@@ -272,7 +273,7 @@ describe("a mail cycle that throws still reaches the drain, on every host", () =
     const hosts = organizerCycleHosts().filter((f) => !NO_PRODUCTION_CALLER.has(f));
     expect(hosts.length).toBeGreaterThan(0);
     for (const f of hosts) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
 
       expect(HOLD_NEEDLE.test(src),
         `${f} lets its sync cycle's throw escape instead of holding it — a mailbox with a `
@@ -322,7 +323,7 @@ describe("a mail cycle that throws still reaches the drain, on every host", () =
     const hosts = organizerCycleHosts().filter((f) => !NO_PRODUCTION_CALLER.has(f));
     expect(hosts.length).toBeGreaterThan(0);
     for (const f of hosts) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
       // The gate's own expression, up to its terminating `;` — not merely the file mentioning the
       // class somewhere, which every one of these hosts does for unrelated reasons.
       const gate = /(?:cycleM|\bm)ayStillWrite = [^;]*;/.exec(src);
@@ -343,7 +344,7 @@ describe("a mail cycle that throws still reaches the drain, on every host", () =
     const hosts = organizerCycleHosts().filter((f) => !NO_PRODUCTION_CALLER.has(f));
     expect(hosts.length).toBeGreaterThan(0);
     for (const f of hosts) {
-      const src = readFileSync(f, "utf8");
+      const src = readSource(f);
       expect(src.match(/applyMetaRequests\(/g)?.length ?? 0,
         `${f} applies records from more than one place — a second call inside a catch would satisfy `
         + "every ordering assertion above and apply a decision twice").toBe(1);

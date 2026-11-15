@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE WORKER COUNTS ITS FAILED CALLS TO THE ENTITLEMENTS PROGRAM, AND READS WHO IS AT A CAP.
@@ -11,7 +11,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const read = (p: string): string => withoutComments(readFileSync(`${REPO}/${p}`, "utf8"));
+const read = (p: string): string => withoutComments(readSource(`${REPO}/${p}`));
 const RECORDER = /entitlementsFaultRecorder\(\(\) => db as unknown as Tx, "worker"/;
 
 describe("the worker's entitlements clients record what fails", () => {

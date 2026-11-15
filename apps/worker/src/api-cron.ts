@@ -3,14 +3,19 @@ import { UNSUB_DRAIN_CEILING_MS } from "@trafficflow/core/mail";
 
 /**
  * THE SCHEDULE FOR THE API HOST'S INTERNAL PASSES — driven from HERE, the always-on process, because
- * the platform layer that was supposed to drive them measurably does not. Three API routes run on a
- * clock (billing reconciliation hourly, `/internal/sessions/reap` daily, `/internal/mailboxes/smtp-size`
+ * the platform layer that was supposed to drive them measurably does not. The API routes of the table
+ * below run on a clock (`/internal/sessions/reap` daily, `/internal/mailboxes/smtp-size`
  * daily — it MUST run on the API host, whose SMTP egress works; measured in `./smtp-size.ts`). Scheduled
  * as Vercel Cron in the API's `vercel.json`, that layer was DARK: an entry from 2026-08-01 still read
  * "not deployed" on 2026-08-22 (`vercel crons ls`), no run ever fired, nothing errored. This process is
  * always on, its timers fire, it holds a leader lock (one driver per route), and `/health` makes a
  * stopped schedule VISIBLE (`apiCron`). `/internal/alerts/run` is NOT here (in-process every minute; a
- * dead worker cannot report its own death). Cadence restarts with leadership (all three passes idempotent and self-bounding); `AlertSinkHealth` is a closed set and the body is never quoted. */
+ * dead worker cannot report its own death). Cadence restarts with leadership (every pass idempotent and self-bounding); `AlertSinkHealth` is a closed set and the body is never quoted.
+ *
+ * ONE CLOCK PER PASS. An API program that runs its own clocks drives the rows marked
+ * {@link ApiCronTarget.apiDrives} itself, and while one leads them this schedule leaves those rows
+ * alone: {@link ApiCronDeps.apiLeads} is asked before each of their fires. Every other row, and
+ * every row whenever no API program leads or that cannot be read, is poked from here as before. */
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
@@ -18,6 +23,12 @@ export interface ApiCronTarget {
     | "account_lifecycle" | "security_notices" | "sent_copies" | "storage_mails";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
+  /**
+   * Whether an API program that runs its own clocks drives this pass itself: its clock table
+   * (`CLOCK_ROWS` in `apps/server/src/clocks.ts`) holds the row with nothing held back. False for a
+   * pass that dials a mail provider or makes follow-up calls: those stay here whoever leads.
+   */
+  apiDrives: boolean;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
   everyMs: number;
   /** Delay after leadership before the first poke — staggered so the targets never land together. */
@@ -60,6 +71,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
   {
     target: "sessions_reap",
     route: "/internal/sessions/reap",
+    apiDrives: true,
     everyMs: 24 * 60 * 60 * 1000,
     firstDelayMs: 4 * 60 * 1000,
     timeoutMs: 60 * 1000,
@@ -67,6 +79,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
   {
     target: "smtp_size",
     route: "/internal/mailboxes/smtp-size",
+    apiDrives: false,
     everyMs: 24 * 60 * 60 * 1000,
     // Latest: it opens sockets to third-party SMTP servers (bounded batch, API-side deadline)
     // and is the least urgent of the three.
@@ -84,6 +97,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // runtime dependency set (see package.json), and the pass IS the send service.
     target: "scheduled_send",
     route: "/internal/sends/scheduled/run",
+    apiDrives: false,
     everyMs: 60 * 1000,
     // Early — an appointment due during a deploy should not wait out a long stagger — but
     // still past the takeover window, and overlap with an outgoing leader's in-flight poke is
@@ -109,6 +123,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // that alarm fire on healthy reconciliation.
     target: "send_reconcile",
     route: "/internal/sends/reconcile/run",
+    apiDrives: false,
     everyMs: 60 * 1000,
     // Its own stagger, DISTINCT from the sender's 45 s: the two run on the same host and both
     // may dial the same person's mailbox, so landing them together would be two clocks competing
@@ -140,6 +155,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // so an idle minute is one indexed read.
     target: "away_responder",
     route: "/internal/away/run",
+    apiDrives: false,
     everyMs: 60 * 1000,
     // Its OWN first delay, deliberately not sharing `scheduled_send`'s 45 s: two targets that fire
     // together on every leader takeover would put two SMTP-dialling invocations on the same host at
@@ -161,6 +177,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // read.
     target: "unsubscribe_drain",
     route: "/internal/unsubscribe/drain",
+    apiDrives: true,
     everyMs: 60 * 60 * 1000,
     // Its own stagger, past the takeover window and distinct from every other target's, so a
     // leader takeover does not land this on the same instant as a dialling one.
@@ -181,6 +198,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // anchors (the notices PK), so a missed poke costs a day of latency and never a double mail.
     target: "account_lifecycle",
     route: "/internal/account-lifecycle/run",
+    apiDrives: false,
     everyMs: 24 * 60 * 60 * 1000,
     // Its own stagger, past the takeover window, distinct from every sibling's.
     firstDelayMs: 11 * 60 * 1000,
@@ -196,6 +214,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // at an hour. An idle run is one indexed read; each row is claimed before its send.
     target: "security_notices",
     route: "/internal/security-notices/run",
+    apiDrives: true,
     everyMs: 5 * 60 * 1000,
     // Its own stagger, distinct from every sibling's (the table refuses two alike).
     firstDelayMs: 6 * 60 * 1000,
@@ -208,6 +227,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // first due a minute after the request's deadline, and they wait days, not seconds: FIVE MINUTES.
     target: "sent_copies",
     route: "/internal/sends/sent-copies/run",
+    apiDrives: false,
     everyMs: 5 * 60 * 1000,
     // Its own stagger, distinct from every sibling's.
     firstDelayMs: 2 * 60 * 1000,
@@ -223,6 +243,7 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // missed or doubled poke from a second mail.
     target: "storage_mails",
     route: "/internal/storage-mails/run",
+    apiDrives: true,
     everyMs: 60 * 60 * 1000,
     // Its own stagger, distinct from every sibling's.
     firstDelayMs: 13 * 60 * 1000,
@@ -233,6 +254,16 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
 
 /** Up to this much is added to every wait, uniformly — thundering-herd hygiene, never drift backwards. */
 export const API_CRON_JITTER_MS = 5 * 60 * 1000;
+
+/**
+ * The advisory lock an API program holds while it leads its own clocks: `API_CLOCK_LOCK_KEY` in
+ * `apps/server/src/clock-lock.ts`, repeated here because an app imports no other app. Its being
+ * held is the one fact this schedule reads about the API's clocks (`api-clocks-lead.ts`).
+ */
+export const API_CLOCKS_LEADER_KEY = 4207278001n;
+
+/** The longest one reading of {@link ApiCronDeps.apiLeads} may take; past it the row is poked. */
+export const API_LEADS_READ_TIMEOUT_MS = 10 * 1000;
 
 /**
  * The closed outcome set. `http_401` and `http_404` are named apart from `http_error` because
@@ -274,6 +305,13 @@ export interface ApiCronDeps {
   secret: string;
   log?: Logger;
   targets?: readonly ApiCronTarget[];
+  /**
+   * Whether an API program leads its own clocks right now, asked before each fire of a row it
+   * drives ({@link ApiCronTarget.apiDrives}). `true`: the row is left to it, no request is made.
+   * `false`, and `null` or a thrown read (it cannot be told): the row is poked. Absent: every row is
+   * poked, always.
+   */
+  apiLeads?: () => Promise<boolean | null>;
   /** Seams for tests — the scheduler must be provable without real clocks or sockets. */
   fetchImpl?: typeof fetch;
   now?: () => Date;
@@ -283,9 +321,15 @@ export interface ApiCronDeps {
 }
 
 export interface ApiCronHandle {
-  /** Memory read — `/health` touches no database, and this keeps that true. */
+  /**
+   * Memory read — `/health` touches no database, and this keeps that true. A row left to the API's
+   * own clock at its last fire is not in it: nothing here drives that row, so nothing here reports it.
+   */
   health(): ApiCronTargetHealth[];
-  /** When this schedule started: the age `api_cron_stale` counts a never-answered target from. */
+  /**
+   * When this schedule started, or last took a row back from the API's clocks: the age
+   * `api_cron_stale` counts a never-answered target from.
+   */
   since(): Date;
   /** Idempotent. Clears every armed timer and aborts every in-flight request. */
   stop(): void;
@@ -298,6 +342,8 @@ interface TargetState {
   lastOkAt: Date | null;
   lastAttemptAt: Date | null;
   remaining: number | null;
+  /** The row's last fire found an API program leading its clocks, and made no request. */
+  leftToApi: boolean;
   inFlight: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   controller: AbortController | null;
@@ -360,11 +406,15 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
 
   let stopped = false;
   const startedAt = now();
+  /** When a row was last taken back from the API's clocks; see {@link ApiCronHandle.since}. */
+  let takenBackAt: Date | null = null;
+  /** The reading of who leads could not be had, and that was said: once per streak. */
+  let leadUnreadSaid = false;
   const states = new Map<string, TargetState>();
   for (const t of targets) {
     states.set(t.target, {
       outcome: null, consecutiveFailures: 0, attempts: 0,
-      lastOkAt: null, lastAttemptAt: null, remaining: null,
+      lastOkAt: null, lastAttemptAt: null, remaining: null, leftToApi: false,
       inFlight: false, timer: null, controller: null,
     });
   }
@@ -389,6 +439,9 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
       const res = await fetchImpl(`${baseUrl}${path}`, {
         method: "GET",
         headers: { authorization: `Bearer ${deps.secret}` },
+        // A redirect is an answer, never an instruction: the bearer goes to the route this table
+        // names and nowhere an answer points. A 3xx is recorded as the failure it is.
+        redirect: "manual",
         signal: controller.signal,
       });
       status = res.status;
@@ -410,6 +463,36 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
   }
 
   /**
+   * Whether an API program leads its own clocks, bounded and never thrown: `null` when it cannot
+   * be told (the read failed, or outlasted {@link API_LEADS_READ_TIMEOUT_MS}), said once per streak.
+   */
+  async function apiLeadsNow(read: () => Promise<boolean | null>): Promise<boolean | null> {
+    let late: ReturnType<typeof setTimeout> | null = null;
+    let answer: boolean | null = null;
+    let failure: unknown;
+    try {
+      answer = await Promise.race([
+        read(),
+        new Promise<null>((resolve) => { late = setTimer(() => { resolve(null); }, API_LEADS_READ_TIMEOUT_MS); }),
+      ]);
+    } catch (err) {
+      // Not thrown on: a reading that fails is "cannot tell", named in the line below, and the row is poked.
+      failure = err;
+    } finally {
+      if (late !== null) clearTimer(late);
+    }
+    if (answer !== null) { leadUnreadSaid = false; return answer; }
+    if (!leadUnreadSaid) {
+      leadUnreadSaid = true;
+      log.warn("api_cron_lead_unread", {
+        ...(failure === undefined ? {} : { err: failure }),
+        reason: "whether an API program leads its own clocks could not be read; every pass is poked from here until it can",
+      });
+    }
+    return null;
+  }
+
+  /**
    * Never throws — this runs off a timer, and an unhandled rejection here would take down a
    * worker that is syncing mail perfectly well over a scheduling convenience. Every exit arm
    * re-arms the chain (unless stopped), so one bad pass never kills the cadence.
@@ -423,6 +506,30 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
     // is exactly what this module exists to make unrepresentable.
     if (state.inFlight) return;
     state.inFlight = true;
+    if (t.apiDrives && deps.apiLeads !== undefined) {
+      const leads = await apiLeadsNow(deps.apiLeads);
+      if (stopped) { state.inFlight = false; return; }
+      if (leads === true) {
+        // THE API'S OWN CLOCK DRIVES THIS ROW: no request, and asked again at the row's cadence,
+        // so a lock let go is noticed by the next fire and the row is poked from here again.
+        if (!state.leftToApi) {
+          state.leftToApi = true;
+          log.info("api_cron_left_to_api", { route: t.route });
+        }
+        state.inFlight = false;
+        arm(t, t.everyMs, t.jitterMs ?? API_CRON_JITTER_MS);
+        return;
+      }
+      if (state.leftToApi) {
+        // TAKEN BACK, as a schedule that starts: what the row remembered is from before the API
+        // drove it, and a last 2xx that old would read as a pass that stopped long ago.
+        state.leftToApi = false;
+        state.outcome = null; state.consecutiveFailures = 0; state.attempts = 0;
+        state.lastOkAt = null; state.lastAttemptAt = null; state.remaining = null;
+        takenBackAt = now();
+        log.info("api_cron_resumed", { route: t.route });
+      }
+    }
     state.attempts += 1;
     state.lastAttemptAt = now();
     const started = Date.now();
@@ -499,7 +606,7 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
 
   return {
     health(): ApiCronTargetHealth[] {
-      return targets.map((t) => {
+      return targets.filter((t) => !states.get(t.target)!.leftToApi).map((t) => {
         const s = states.get(t.target)!;
         return {
           target: t.target,
@@ -515,7 +622,7 @@ export function startApiCron(deps: ApiCronDeps): ApiCronHandle {
       });
     },
     since(): Date {
-      return startedAt;
+      return takenBackAt ?? startedAt;
     },
     stop(): void {
       stopped = true;

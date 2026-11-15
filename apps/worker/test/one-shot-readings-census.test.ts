@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { withoutComments, span, lineOf } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * EVERY ROLE CHANGE NAMES THE READING IT DECIDED FROM.
@@ -23,7 +24,7 @@ interface Site { file: string; fn: string; line: number; args: string }
 function sites(): Site[] {
   const found: Site[] = [];
   for (const file of readdirSync(SRC).filter((f) => f.endsWith(".ts"))) {
-    const src = withoutComments(readFileSync(join(SRC, file), "utf8"));
+    const src = withoutComments(readSource(join(SRC, file)));
     for (const fn of WRITERS) {
       const needle = `${fn}(`;
       for (let at = src.indexOf(needle); at !== -1; at = src.indexOf(needle, at + 1)) {

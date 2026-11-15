@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { readSource } from "./_start-function.js";
 
 /**
  * ═══ EVERY DESTRUCTIVE IMAP WRITE ASKS ONE FUNCTION ════════════════════════════════════════
@@ -126,7 +127,7 @@ function collectSites(): Site[] {
   for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           // `a.move(…)`, `a.move!(…)` and `a?.move(…)` all reach the same server verb.
@@ -200,7 +201,7 @@ function collectCycleCalls(): CycleCall[] {
   for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)
           && n.expression.getText() === "runSyncCycle") {
@@ -257,7 +258,7 @@ describe("every destructive IMAP write asks one function", () => {
     const defs: string[] = [];
     for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        const text = readFileSync(file, "utf8");
+        const text = readSource(file);
         if (new RegExp(`(export )?(async )?function ${PREDICATE}\\b`).test(text)) {
           defs.push(file.slice(REPO.length + 1));
         }
@@ -288,7 +289,7 @@ describe("every destructive IMAP write asks one function", () => {
 
   it("the cycle's `writeAuthority` is REQUIRED — the compiler is the first refusal", () => {
     const file = join(REPO, "apps/worker/src/sync.ts");
-    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
     let seen: { optional: boolean } | null = null;
     const walk = (n: ts.Node): void => {
       if (ts.isInterfaceDeclaration(n) && n.name.getText() === "SyncDeps") {
@@ -355,7 +356,7 @@ function collectChannelSites(): Site[] {
   for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           let callee: ts.Node = n.expression;
@@ -414,7 +415,7 @@ describe("every post-pass organizer write asks whether the permit stood down", (
     const defs: string[] = [];
     for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        const text = readFileSync(file, "utf8");
+        const text = readSource(file);
         if (new RegExp(`(export )?(async )?function ${STOOD_DOWN}\\b`).test(text)) {
           defs.push(file.slice(REPO.length + 1));
         }
@@ -442,7 +443,7 @@ function collectDoorCalls(): Array<{ key: string; line: number; ok: boolean }> {
   for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           let callee: ts.Node = n.expression;
@@ -490,7 +491,7 @@ describe("every organizer write hands the adapter the one door", () => {
     const defs: string[] = [];
     for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        if (new RegExp(`(export )?function ${DOOR_FN}\\b`).test(readFileSync(file, "utf8"))) {
+        if (new RegExp(`(export )?function ${DOOR_FN}\\b`).test(readSource(file))) {
           defs.push(file.slice(REPO.length + 1));
         }
       }

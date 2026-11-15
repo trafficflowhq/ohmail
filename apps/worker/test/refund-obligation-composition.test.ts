@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE MEMORY IS COMPOSED WHEREVER THE MONEY IS — the census that makes "a metered host with no
@@ -19,7 +19,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const read = (p: string): string => withoutComments(readFileSync(`${REPO}/${p}`, "utf8"));
+const read = (p: string): string => withoutComments(readSource(`${REPO}/${p}`));
 
 describe("a host that can charge can remember what it owes", () => {
   it("the worker derives the store from `spend` itself, so the pair cannot drift", () => {

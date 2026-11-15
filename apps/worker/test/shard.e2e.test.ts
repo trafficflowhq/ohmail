@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { mailboxes, mailboxCredentials, messages, messageStates } from "@trafficflow/db";
+import { accounts, mailboxes, mailboxCredentials, messageBodies, messages, messageStates } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { loadEnabledMailboxes, accountInShard } from "../src/mailboxes.js";
@@ -150,6 +150,37 @@ describe("shard seam", () => {
     expect(set1.size).toBeGreaterThan(0);
     expect([...set0].some((id) => set1.has(id))).toBe(false);      // disjoint
     expect(set0.size + set1.size).toBe(12);                        // complete
+  }, 60000);
+
+  it("a shard leader's tail tidies its own accounts' gone letters and leaves the other shard's to its leader", async () => {
+    const db = makeDb(DB);
+    const mine = await accountWithHash((h) => ((h % 2) + 2) % 2 === 0);
+    const theirs = await accountWithHash((h) => ((h % 2) + 2) % 2 === 1);
+    await db.insert(accounts).values([{ id: mine, name: "shard-0" }, { id: theirs, name: "shard-1" }]);
+    /** A letter that left the server and still holds its preview: what the tail's tidy scrubs. */
+    const goneLetter = async (accountId: string): Promise<string> => {
+      const mailboxId = await seedMailbox(db, accountId);
+      const [m] = await db.insert(messages).values({
+        accountId, mailboxId, bodyHash: randomUUID(), dedupKey: `gone:${randomUUID()}`, subject: "ledger",
+        fromAddress: "a@ex.example", snippet: "a preview left behind", deletedAt: new Date(),
+        nativeLocator: { folder: "INBOX", ref: "1:1" },
+      }).returning();
+      await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, withheldReason: "expunged" });
+      return m!.id;
+    };
+    const snippetOf = async (id: string): Promise<string | null> =>
+      (await db.select({ s: messages.snippet }).from(messages).where(eq(messages.id, id)))[0]!.s;
+    const own = await goneLetter(mine);
+    const other = await goneLetter(theirs);
+
+    const fleet = new FakeAdapterFleet();
+    const w0 = await runWorkerSupervised(cfgFor(fleet, { shards: 2, shardIndex: 0 }));
+    closers.push(() => w0.stop());
+    await waitFor(async () => (await snippetOf(own)) === "", 30_000, "shard 0's tail to tidy its own gone letter");
+    // The tidy visits every account of one tail in turn: a tail that read past its shard reaches the other by now.
+    const cycles = fleet.syncs;
+    await waitFor(() => fleet.syncs >= cycles + 4, 15_000, "four more cycles");
+    expect(await snippetOf(other), "shard 0's tail scrubbed a letter of shard 1").toBe("a preview left behind");
   }, 60000);
 
   it("scopes the bubble-up backstop to its OWN shard's accounts", async () => {

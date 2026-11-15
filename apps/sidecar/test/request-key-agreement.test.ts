@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
+import { readSource } from "../../worker/test/_start-function.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -133,9 +134,8 @@ describe("the request key agrees across the doors that share a mailbox", () => {
 
   /** The hosted door's own call site, pinned for the same reason and against the same rule. */
   it("the worker derives from the per-mailbox credential it decrypted", () => {
-    const src = readFileSync(
+    const src = readSource(
       fileURLToPath(new URL("../../worker/src/index.ts", import.meta.url)),
-      "utf8",
     );
     expect(src).toContain("deriveRequestKey({ auth: creds.imap.auth, address: mb.address })");
   });

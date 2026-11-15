@@ -1,10 +1,11 @@
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readdirSync, existsSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { WORKER_PASSES } from "../src/pass-registry.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE PASS CENSUS — a pass cannot exist unregistered, and a registry row cannot outlive its pass.
@@ -143,7 +144,7 @@ function tsFilesUnder(dir: string, prefix = ""): string[] {
 function detectedExports(): Map<string, string[]> {
   const found = new Map<string, string[]>();
   for (const rel of tsFilesUnder(SRC)) {
-    const src = readFileSync(join(SRC, rel), "utf8");
+    const src = readSource(join(SRC, rel));
     const entries = [...exportedNames(src, rel)].filter((n) => PASS_SHAPED.test(n));
     if (entries.length > 0) found.set(rel, entries);
   }
@@ -521,7 +522,7 @@ describe("the worker pass registry", () => {
     for (const r of rows) {
       const p = join(REPO, r.module);
       expect(existsSync(p), `${r.module} (row '${r.name}') does not exist`).toBe(true);
-      const src = readFileSync(p, "utf8");
+      const src = readSource(p);
       // A comment-stripped export DECLARATION, not `includes`: prose that names a deleted
       // function would otherwise keep its row green (review round 1).
       expect(declaresExport(src, r.entry), `${r.module} does not export '${r.entry}' (row '${r.name}')`).toBe(true);
@@ -631,7 +632,7 @@ describe("the worker pass registry", () => {
     const runFiles = readdirSync(SRC).filter((n) => n.startsWith("run-") && n.endsWith(".ts"));
     const importedBySrc = (name: string): boolean => readdirSync(SRC)
       .filter((o) => o.endsWith(".ts") && o !== name)
-      .some((o) => readFileSync(join(SRC, o), "utf8").includes(`${name.replace(/\.ts$/, "")}.js`));
+      .some((o) => readSource(join(SRC, o)).includes(`${name.replace(/\.ts$/, "")}.js`));
     const cliFiles = runFiles.filter((n) => !importedBySrc(n));
     expect(runFiles.length, "no run-*.ts at all — the arm would pass by measuring nothing")
       .toBeGreaterThan(0);
@@ -649,7 +650,7 @@ describe("the worker pass registry", () => {
   });
 
   it("every sidecar-drain row is backed by a real subpath export — the dual-mode rule, cross-checked", () => {
-    const pkg = JSON.parse(readFileSync(join(SRC, "../package.json"), "utf8")) as {
+    const pkg = JSON.parse(readSource(join(SRC, "../package.json"))) as {
       exports: Record<string, string | { default?: string }>;
     };
     const exported = new Set(

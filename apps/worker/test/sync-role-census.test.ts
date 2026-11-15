@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { readSource } from "./_start-function.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -118,7 +119,7 @@ function found(): Map<string, string> {
   const out = new Map<string, string>();
   for (const root of rootsOf()) {
     for (const file of walk(root)) {
-      const src = withoutComments(readFileSync(file, "utf8"));
+      const src = withoutComments(readSource(file));
       if (CYCLE_NEEDLES.some((n) => n.test(src))) out.set(relative(REPO, file), src);
     }
   }
@@ -189,7 +190,7 @@ describe("every composition that runs the pipeline names the role", () => {
       checked++;
     }
     expect(checked).toBe(3);
-    const read = (rel: string) => withoutComments(readFileSync(join(REPO, rel), "utf8"));
+    const read = (rel: string) => withoutComments(readSource(join(REPO, rel)));
     expect(read("apps/sidecar/src/main.ts")).toMatch(/\bdkimKeys:\s*makeDnsDkimKeys\(/);
     expect(read("apps/sidecar/src/mobile.ts")).toMatch(/\bdkimKeys:\s*null\b/);
     expect(read("apps/sidecar/src/mobile.ts"), "the phone names no DNS lookup").not.toMatch(/dkim-keys/);

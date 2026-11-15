@@ -9,7 +9,7 @@ import { makeDb, workerHeartbeats } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, type LogFields } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
-  formatClaim, LeaseUnavailableError, META_RECORDS_MAX_PER_FETCH, MetaEnumRefusedError, META_ENUM_RECORDS_MAX,
+  formatClaim, isMalformed, parseClaim, LeaseUnavailableError, META_RECORDS_MAX_PER_FETCH, MetaEnumRefusedError, META_ENUM_RECORDS_MAX,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { startWorker } from "../src/index.js";
 import { readMailboxLease, cloudInstallId, releaseMailboxClaim, hasLeaseIo } from "../src/lease.js";
@@ -867,6 +867,34 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     server.misbehave({ quota: { limit: server.usage() + 4_096 } });
     expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).syncBlockedReason === null && fleet.syncs > 0),
       "the block outlived the room that cured it").toBe(true);
+  }, 60_000);
+
+  /* THE NAME IN THE CLAIM is the deployment's own: a server somebody runs says its name in its people's
+     mailboxes, and only a deployment that names none is "ohmail Cloud". */
+  it("the claim a worker writes carries the name its deployment was given, and the Cloud's name only without one", async () => {
+    const namesClaimed = async (displayName: string | undefined): Promise<string[]> => {
+      await truncateAll(DB);
+      const fleet = new FakeAdapterFleet();
+      await seedMailbox(makeDb(DB), undefined, { consented: true });
+      const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", REAL_META] });
+      const worker = await startWorker({
+        databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, rosterIntervalMs: 600, syncBlockGraceMs: 0,
+        sentDomain: "trafficflow.test", adapterFactory: realMetaFactory(fleet, server), mailboxRetryMs: 100,
+        maxSyncFailures: 1,
+        organizer: { installId: "cloud-test", staleAfterMs: 60_000, ...(displayName === undefined ? {} : { displayName }) },
+      });
+      try {
+        expect(await waitFor(async () => oursIn(server) > 0 && fleet.syncs > 0), "the worker never claimed the mailbox").toBe(true);
+      } finally {
+        await worker.stop();
+      }
+      return server.tree.get(REAL_META)!.messages.map((m) => parseClaim(m.raw))
+        .flatMap((c) => (c !== null && !isMalformed(c) && c.installId === "cloud-test" ? [c.displayName] : []));
+    };
+    const named = await namesClaimed("Lichtgrat Post");
+    expect(named.length).toBeGreaterThan(0);
+    expect(new Set(named)).toEqual(new Set(["Lichtgrat Post"]));
+    expect(new Set(await namesClaimed(undefined))).toEqual(new Set(["ohmail Cloud"]));
   }, 60_000);
 
   it("CONTROL: a server whose read-back fails is never named undeletable", async () => {
