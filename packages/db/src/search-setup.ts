@@ -371,6 +371,8 @@ export const ARRIVAL_ORDER_0139_PREBUILD_SPEC: ConcurrentIndexSpec = {
 /**
  * Mail 0154's recipient keys, spelled ONCE: the function and its index, byte-equal to the journal
  * (a test). The function is frozen once shipped: another meaning is a new name and a new index.
+ * Since mail 0208 the function is what `messages.recipient_keys` is generated from, and that column's
+ * index ({@link RECIPIENT_KEYS_COLUMN_INDEX}) replaces this one.
  */
 export const RECIPIENT_KEYS_FUNCTION_DDL = sql`CREATE OR REPLACE FUNCTION messages_recipient_keys(account_id uuid, to_addresses jsonb, cc_addresses jsonb)
 RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
@@ -384,9 +386,10 @@ $$`;
 export const RECIPIENT_KEYS_INDEX_DDL = sql`create index concurrently if not exists "messages_recipient_keys_idx" on public.messages using gin (messages_recipient_keys("account_id","to_addresses","cc_addresses")) with (gin_pending_list_limit = 256)`;
 
 /**
- * Mail 0154's index, built CONCURRENTLY ahead of the migrator on 0139's pattern. On a database at
- * 0153 the function does not exist yet, so the prelude creates it first under the lock; without it
- * the build is 42883 and the setup stops before the migrator.
+ * Mail 0154's index, once built CONCURRENTLY ahead of the migrator on 0139's pattern. On a database at
+ * 0153 the function does not exist yet, so the prelude created it first under the lock; without it
+ * the build is 42883 and the setup stops before the migrator. Mail 0208 drops the index; nothing
+ * builds it any more ({@link RETIRED_PREBUILD_SPECS}).
  */
 export const RECIPIENT_KEYS_PREBUILD_SPEC: ConcurrentIndexSpec = {
   name: "messages_recipient_keys_idx",
@@ -394,6 +397,15 @@ export const RECIPIENT_KEYS_PREBUILD_SPEC: ConcurrentIndexSpec = {
   prelude: [RECIPIENT_KEYS_FUNCTION_DDL],
   ddl: RECIPIENT_KEYS_INDEX_DDL,
 };
+
+/**
+ * THE RECIPIENTS' KEY BY ITS COLUMN (mail 0208): the GIN over `messages.recipient_keys`, which the
+ * database generates from {@link RECIPIENT_KEYS_FUNCTION_DDL}'s function. Built by the entry itself,
+ * inside the 2.0 transition's window, and by the ordinary migrator on a store made from empty: no
+ * setup builds it. Its statement as the entry writes it (a test holds the two equal).
+ */
+export const RECIPIENT_KEYS_COLUMN_INDEX = "messages_recipient_keys_column_idx";
+export const RECIPIENT_KEYS_COLUMN_INDEX_DDL = sql`CREATE INDEX "messages_recipient_keys_column_idx" ON "messages" USING gin ("recipient_keys") WITH (gin_pending_list_limit = 256)`;
 
 /**
  * Mail 0157's sender-date index: the Screener cutline probe's own key, a held sender's mail dated by
@@ -483,22 +495,23 @@ export const FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
 
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
-  RECIPIENT_KEYS_PREBUILD_SPEC,
   SENDER_DATE_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
 ];
 
 /**
  * WHAT A SETUP ONCE BUILT AHEAD OF THE 1.0 ROAD AND BUILDS NO MORE: an index a 2.0 entry drops or
  * builds again on another column. A setup that still ran one would put back what the entry took at
- * its next run: mail 0200 drops the 0139 arrival index, and mail 0201 drops the two columns the
- * three queue specs add in their preludes and key their indexes on (the indexes keep their names,
- * on `account_id`, built by 0201 itself). Kept as the record of how the 1.0 road's entries were
- * written: each carries its statement minus `concurrently`, and the lock-cost census reads the
- * old entries against these spellings too.
+ * its next run: mail 0200 drops the 0139 arrival index, mail 0201 drops the two columns the three
+ * queue specs add in their preludes and key their indexes on (the indexes keep their names, on
+ * `account_id`, built by 0201 itself), and mail 0208 drops 0154's recipient keys index for the
+ * column's own. Kept as the record of how the 1.0 road's entries were written: each carries its
+ * statement minus `concurrently`, and the lock-cost census reads the old entries against these
+ * spellings too.
  */
 export const RETIRED_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   ARRIVAL_ORDER_0139_PREBUILD_SPEC,
   FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
+  RECIPIENT_KEYS_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

@@ -24,7 +24,9 @@ const URL = pgTestUrl(import.meta.url);
  * shared database diluted the word's frequency and the control read 49 to 140 for 300 matches. The
  * four tables the estimate plans over are shadowed by session TEMP copies (same columns, defaults,
  * indexes and triggers), so this run's rows are all the statistics see. ONE connection: temp tables
- * belong to the session that made them.
+ * belong to the session that made them. The copies leave out the tables' extended statistics objects:
+ * Postgres 17.6 copies one by the column numbers of the table it copies from, and where that table
+ * dropped a column before them (`folder_state`, mail 0201) it fails (`cache lookup failed for attribute`).
  */
 const client = postgres(URL, { max: 1 });
 const OWN_TABLES = ["messages", "message_search", "message_bodies", "folder_state"] as const;
@@ -43,7 +45,7 @@ describe("what a search says about its reach (real Postgres)", () => {
     await runMigrations(URL);
     await ensureSearchExtensions(db, { concurrently: false });
     for (const t of OWN_TABLES) {
-      await client.unsafe(`create temp table ${t} (like public.${t} including all)`);
+      await client.unsafe(`create temp table ${t} (like public.${t} including all excluding statistics)`);
       const triggers = await client.unsafe(
         `select pg_get_triggerdef(oid) as d from pg_trigger where tgrelid = 'public.${t}'::regclass and not tgisinternal`);
       for (const { d } of triggers as unknown as Array<{ d: string }>) {

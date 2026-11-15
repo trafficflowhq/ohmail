@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  ARRIVAL_ORDER_INDEX_DDL, MAILBOXES_ACCOUNT_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
-  SENDER_DATE_PREBUILD_SPEC,
+  ARRIVAL_ORDER_INDEX_DDL, MAILBOXES_ACCOUNT_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC,
 } from "./search-setup.js";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
@@ -98,10 +97,6 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
     table: "messages",
     ddl: ARRIVAL_ORDER_INDEX_DDL,
   },
-  // THE ARCHIVE BY RECIPIENT (mail 0154): the address search's `to` and `any`, keyed by account.
-  // The prebuild's own spec, function prelude and all, so setup-prod's read-back checks it valid
-  // and a database at any position can build it.
-  RECIPIENT_KEYS_PREBUILD_SPEC,
   // THE SCREENER CUTLINE PROBE (mail 0157): a held sender's mail dated by the cutline's own key.
   SENDER_DATE_PREBUILD_SPEC,
   // THE MAILBOX LIST READ (mail 0161): the caller's mailboxes by account. The mailbox poll's

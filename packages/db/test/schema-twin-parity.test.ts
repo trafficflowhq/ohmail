@@ -116,18 +116,21 @@ const WIDENABLE_SET_CHECKS = new Set(
 
 /**
  * The ONE difference the two twins are allowed, and it is a difference of storage, not of data:
- * the server's word vectors. The device's word index is FTS5 over the rows themselves, so the
- * generated columns and mail 0125's two search-document vectors have no twin there.
+ * the server's search keys. The device's word index is FTS5 over the rows themselves, so the
+ * generated columns and mail 0125's two search-document vectors have no twin there; and its
+ * recipients' keys are the side table below, so mail 0208's stored key has none either.
  */
 const GENERATED_SEARCH_COLUMNS: Record<string, readonly string[]> = {
   kb_entries: ["kb_tsv"],
   message_search: ["head_tsv", "text_tsv"],
+  messages: ["recipient_keys"],
 };
 
 /**
  * Tables only the device declares, each standing in for a server index this store cannot spell:
  * mail 0154's `message_recipients`, the side table its triggers keep in place of the server's
- * expression GIN over To and Cc. It holds no data of its own; the server has no table to compare.
+ * key over To and Cc (mail 0154's expression GIN, since mail 0208 a stored column and its GIN). It
+ * holds no data of its own; the server has no table to compare.
  */
 const DEVICE_ONLY_TABLES = new Set(["messageRecipients"]);
 
@@ -173,6 +176,7 @@ const SERVER_ONLY_UNIQUE_INDEXES = new Set([
 const GENERATED_SEARCH_INDEXES = new Set([
   "kb_entries_kb_tsv_idx",
   "message_search_head_tsv_idx", "message_search_text_tsv_idx",
+  "messages_recipient_keys_column_idx",
 ]);
 
 /**

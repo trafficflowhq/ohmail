@@ -184,7 +184,7 @@ export async function ensureLock(
         ...ACCOUNT_VIEWS.flatMap((v) => {
           const f = viewOf(before, v);
           const differs = f === undefined || before.schema === null ? [] : viewDifferences(f, v, before.schema.owner, before);
-          const remedy = viewRemedy(v, differs);
+          const remedy = viewRemedy(v, differs, before);
           return differs.some((d) => !VIEW_REMADE.has(d))
             ? [`LOCK_DRIFT views.differ ${viewName(v)}: ${differs.join(", ")}${remedy === "" ? "" : `; ${remedy}`}`] : [];
         }),

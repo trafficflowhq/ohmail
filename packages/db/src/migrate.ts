@@ -373,7 +373,7 @@ export async function runMigrations(
     // both journals whole, as it always did, and a store past the 2.0 window carries on. A store
     // on the 1.0 road walks to 1.0.11's heads first, as two passes, exactly as 1.0 migrates; at
     // those heads the 2.0 window is not the ordinary migrator's to apply (it would commit the mail
-    // journal's six entries and then the Cloud's, and a failure between leaves a store neither
+    // journal's entries and then the Cloud's, and a failure between leaves a store neither
     // release starts on): the transition applies it, in one transaction, or nothing.
     let state = await transitionState(db, { cloud: true });
     if (state === "below-old-head") {

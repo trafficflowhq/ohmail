@@ -25,6 +25,8 @@ import { ACCOUNT_READER, READER_SCHEMA, RUNTIME_LOGINS } from "./logins.js";
  * view's columns is refused: a release that drops, renames or retypes a column a view names, or drops
  * or renames its table, starts its journal entry with `DROP VIEW IF EXISTS` of each view over that
  * table, in a closed window, and the step makes them again (the list test reads both journals for it).
+ * A prepared read through a view names its columns: a named prepared `select *` through one fails
+ * once a connection when the step makes the view again over a grown list (0A000).
  *
  * THEY ARE NOT A BARRIER. A statement run as a login may have its own function, operator or cast
  * given a row of another account in any shape of statement (a plain WHERE is enough); any other role
@@ -60,7 +62,7 @@ const MESSAGES_COLUMNS: readonly SqlNamesOf<typeof messages>[] = [
   "date", "native_locator", "no_ai", "no_forward", "no_kb", "priority", "created_at", "thread_id", "unread", "last_read_at",
   "deleted_at", "snippet", "to_addresses", "cc_addresses", "has_attachments", "attachment_count", "sensitivity_category",
   "auth_verdict", "updated_at", "arrived_at", "open_read_at", "sender_check", "sender_check_brand", "sender_check_by",
-  "server_missing_at", "unconfirmed_hold",
+  "server_missing_at", "unconfirmed_hold", "recipient_keys",
 ];
 
 /** Every column of `message_search` the 2.0 schema declares, in the order a store's views hold them: a new one goes at the end. */
@@ -152,7 +154,7 @@ export const INDEX_READS: Readonly<Record<string, IndexRead>> = {
   messages_account_from_addr_idx: { table: "messages", read: "view", through: "messages" },
   messages_account_from_domain_idx: { table: "messages", read: "view", through: "messages" },
   messages_account_sender_date_idx: { table: "messages", read: "view", through: "messages" },
-  messages_recipient_keys_idx: { table: "messages", read: "view", through: "messages" },
+  messages_recipient_keys_column_idx: { table: "messages", read: "view", through: "messages" },
   // The letters otherwise: a plain order, a NULL test, an ordered walk.
   messages_account_date_order_idx: { table: "messages", read: "kept",
     why: "the storage eviction's walk, oldest first: the account is its condition and the index gives the order, with no condition on the expression" },

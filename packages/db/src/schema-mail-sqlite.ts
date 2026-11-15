@@ -673,9 +673,10 @@ export const messages = sqliteTable("messages", {
 
 /**
  * DEVICE-ONLY (mail 0154): each message's To and Cc addresses, lowercased, one row per pair — the
- * twin of the server's `messages_recipient_keys` expression index. Written only by the triggers
- * on `messages`; read only by `Dialect.search.recipient`. No foreign key: the delete trigger owns
- * removal, as the full-text tables' triggers do.
+ * twin of the server's recipients' key (mail 0154's expression index; since mail 0208 the stored
+ * column `messages.recipient_keys` and its GIN, which this store does not carry: `0208.noop`).
+ * Written only by the triggers on `messages`; read only by `Dialect.search.recipient`. No foreign
+ * key: the delete trigger owns removal, as the full-text tables' triggers do.
  */
 export const messageRecipients = sqliteTable("message_recipients", {
   accountId: text("account_id").notNull(),

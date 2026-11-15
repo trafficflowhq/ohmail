@@ -11,11 +11,13 @@ import { ensureWithheldProvenanceIndex, RECIPIENT_KEYS_PREBUILD_SPEC } from "../
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 
 /**
- * MAIL 0154's INDEX IS BUILT AHEAD OF THE MIGRATOR, ON REAL POSTGRES. The prebuild runs before
- * `runMigrations`, so on a database at 0153 the function its index names does not exist yet: the
- * spec's prelude creates it under the migration lock, the index builds CONCURRENTLY, and the
- * journal's `if not exists` then finds it. Without the prelude the build is 42883 and the setup
- * stops ahead of the migrator — the control below shows exactly that.
+ * MAIL 0154's INDEX, AS 1.0's SETUP BUILT IT AHEAD OF THE MIGRATOR, ON REAL POSTGRES. The prebuild
+ * ran before `runMigrations`, so on a database at 0153 the function its index names did not exist
+ * yet: the spec's prelude creates it under the migration lock, the index builds CONCURRENTLY, and
+ * the journal's `if not exists` then finds it. Without the prelude the build is 42883 and the setup
+ * stops ahead of the migrator — the control below shows exactly that. Mail 0208 drops the index for
+ * its stored column's own, so 2.0's setup builds it no more: the spec is the 1.0 road's record
+ * (`RETIRED_PREBUILD_SPECS`), held here as that road ran it.
  */
 const SUFFIX = randomUUID().replace(/-/g, "").slice(0, 12);
 const PG_UP = await realPgAvailable(PG_TEST_URL);
@@ -55,11 +57,11 @@ describe.skipIf(!PG_UP)("mail 0154's prebuild on a database at 0153", () => {
     await admin?.end({ timeout: 5 }).catch(() => {});
   }, 60_000);
 
-  it("the prebuild creates the function and builds the index; the migrator then leaves one valid index", async () => {
+  it("the 1.0 road's prebuild creates the function and builds the index; the migrator then leaves one valid index", async () => {
     const { url, db, client } = await at0153("ok");
     try {
       const logs: string[] = [];
-      await ensureWithheldProvenanceIndex(db, { log: (m) => logs.push(m) });
+      await ensureConcurrentIndexes(db, [RECIPIENT_KEYS_PREBUILD_SPEC], { label: "the 1.0 road's prebuild", log: (m) => logs.push(m) });
       expect(logs).toContain("messages_recipient_keys_idx: building concurrently on messages");
       expect(await state(db)).toEqual([{ valid: true }]);
       await migrateToOldHeads(url);
@@ -67,10 +69,24 @@ describe.skipIf(!PG_UP)("mail 0154's prebuild on a database at 0153", () => {
       const applied = (await db.execute(sql`select count(*)::int as n from drizzle_mail.__drizzle_migrations
         where created_at = ${ENTRY!.when}`)) as unknown as Array<{ n: number }>;
       expect(applied[0]!.n).toBe(1);
-      // A second setup run finds it present and valid and builds nothing.
+      // A second run finds it present and valid and builds nothing.
       const again: string[] = [];
-      await ensureWithheldProvenanceIndex(db, { log: (m) => again.push(m) });
+      await ensureConcurrentIndexes(db, [RECIPIENT_KEYS_PREBUILD_SPEC], { label: "the 1.0 road's prebuild", log: (m) => again.push(m) });
       expect(again.filter((m) => m.startsWith("messages_recipient_keys_idx"))).toEqual([]);
+    } finally {
+      await client.end({ timeout: 5 });
+    }
+  }, 120_000);
+
+  it("2.0's setup builds it no more: its prebuild leaves a database at 0153 without the index, and 0154's own statement makes it", async () => {
+    const { url, db, client } = await at0153("retired");
+    try {
+      const logs: string[] = [];
+      await ensureWithheldProvenanceIndex(db, { log: (m) => logs.push(m) });
+      expect(logs.filter((m) => m.startsWith("messages_recipient_keys_idx"))).toEqual([]);
+      expect(await state(db)).toEqual([]);
+      await migrateToOldHeads(url);
+      expect(await state(db)).toEqual([{ valid: true }]);
     } finally {
       await client.end({ timeout: 5 });
     }

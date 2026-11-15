@@ -1,0 +1,7 @@
+0208_recipient_keys_column — NOT CARRIED AS A STEP: THIS STORE KEEPS ITS SIDE TABLE.
+
+The shared entry stores the recipients' key as a generated column on `messages` and replaces mail
+0154's expression index with that column's GIN. This store never had the expression index: its twin
+of 0154 made the side table `message_recipients`, which its triggers keep for every To and Cc
+address, and the device's recipient filter reads that table by plain equality. It stays as it is,
+triggers and all; nothing calls a function a letter here. Nothing to carry.

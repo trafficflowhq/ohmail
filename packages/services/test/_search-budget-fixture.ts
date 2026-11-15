@@ -89,11 +89,15 @@ export const isSession = (st: SQL): boolean => textOf(st).includes("set_config")
 export const isExplain = (st: SQL): boolean => /^\s*explain\b/i.test(textOf(st));
 
 export type PlanNode = Record<string, unknown>;
-/** Every node of a statement's plan, as it ran (or, `analyze: false`, as planned), under the session settings. */
-export async function planNodes(st: SQL, session: SQL[], h: BudgetHandle, analyze = true): Promise<PlanNode[]> {
+/**
+ * Every node of a statement's plan, as it ran (or, `analyze: false`, as planned), under the session settings.
+ * `verbose` adds each node's output list, where an expression of a select list is written.
+ */
+export async function planNodes(st: SQL, session: SQL[], h: BudgetHandle, analyze = true, verbose = false): Promise<PlanNode[]> {
+  const options = sql.raw([...(analyze ? ["analyze"] : []), ...(verbose ? ["verbose"] : []), "format json"].join(", "));
   const r = (await h.transaction(async (tx) => {
     for (const s of session) await tx.execute(s);
-    return tx.execute(analyze ? sql`explain (analyze, format json) ${st}` : sql`explain (format json) ${st}`);
+    return tx.execute(sql`explain (${options}) ${st}`);
   })) as unknown as Array<Record<string, unknown>>;
   const out: PlanNode[] = [];
   const walk = (p: PlanNode) => {

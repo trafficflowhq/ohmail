@@ -155,8 +155,8 @@ describe.skipIf(!PG_UP)("what the production spec table declares", () => {
       "messages_account_msg_order_idx",
       // Mail 0157's sender-date index — the Screener cutline probe's key.
       "messages_account_sender_date_idx",
-      // Mail 0154's recipient keys — the prebuild's own spec, so the read-back checks it valid.
-      "messages_recipient_keys_idx",
+      // (Mail 0154's recipient keys are not here: mail 0208 dropped that expression index for its
+      // stored column's own GIN, which the entry builds itself.)
       // Mail 0148's never-checked rows — the identity backfill's set, every row NULL at the column's
       // birth, so built CONCURRENTLY here and never in the journal.
       "messages_sender_check_owed_idx",
