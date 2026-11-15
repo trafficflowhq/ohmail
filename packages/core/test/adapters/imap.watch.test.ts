@@ -5,6 +5,7 @@ import { ImapAdapter } from "../../src/adapters/imap.js";
 import type { ImapConfig } from "../../src/adapters/imap-types.js";
 import { CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, eml, probeCondstore, seedInbox, waitFor } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
+import { connectedWithOwnClient } from "./_own-client.js";
 
 describe("ImapAdapter.watch (GreenMail IDLE)", () => {
   let adapter: ImapAdapter | undefined;
@@ -69,16 +70,21 @@ for (const server of SERVERS) {
       const c = await flow(cfg);
       try { return (await c.status("INBOX", { messages: true })).messages ?? -1; } finally { await c.logout(); }
     };
+    const clients = new WeakMap<ImapAdapter, ImapFlow>();
+    const connected = async (cfg: ImapConfig): Promise<ImapAdapter> => {
+      const { adapter, client } = await connectedWithOwnClient(cfg);
+      clients.set(adapter, client);
+      return adapter;
+    };
     const clientCount = (adapter: ImapAdapter): number => {
-      const mb = (adapter as unknown as { client: ImapFlow }).client.mailbox;
+      const mb = clients.get(adapter)!.mailbox;
       return mb ? mb.exists : -1;
     };
 
     it("after filing the one INBOX mail, the next arrival rings and the count is the server's", async () => {
       const cfg = server.config();
-      const adapter = new ImapAdapter(cfg);
+      const adapter = await connected(cfg);
       open.push(() => adapter.close());
-      await adapter.connect();
       await adapter.ensureFolders(FIXTURE_DOOR);
       const seed = await seedInbox(cfg, `seed-${randomUUID()}@x`);
       let fired = 0;
@@ -96,9 +102,8 @@ for (const server of SERVERS) {
     it("after another client deletes the one INBOX mail, the next arrival rings", async () => {
       const cfg = server.config();
       await seedInbox(cfg, `seed-${randomUUID()}@x`);
-      const adapter = new ImapAdapter(cfg);
+      const adapter = await connected(cfg);
       open.push(() => adapter.close());
-      await adapter.connect();
       let fired = 0;
       const stop = await adapter.watch(() => { fired += 1; });
       open.push(stop);

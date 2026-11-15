@@ -69,7 +69,9 @@ async function decide(cfg: ImapConfig) {
   await adapter.connect();
   try {
     const special = await adapter.findSpecialFolders();
-    const sent = await (adapter as unknown as { resolveSentFolder(): Promise<string> }).resolveSentFolder();
+    // The Sent a send files into: the send path resolves it before it looks for a copy there.
+    await adapter.messageInSent("<probe@roles.invalid>");
+    const sent = (await adapter.capabilities()).sentFolder;
     return { sent, junk: special.junk, trash: special.trash };
   } finally {
     await adapter.close();

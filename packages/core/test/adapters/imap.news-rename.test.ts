@@ -4,6 +4,7 @@ import { ImapAdapter, SameFolderMoveError, parseRef } from "../../src/adapters/i
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "../../src/types.js";
 import { greenmailConfig, eml, seedInbox } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
+import { connectedWithOwnClient } from "./_own-client.js";
 
 /**
  * THE 0.22 NEWS RENAME ON A REAL SERVER (GreenMail) — the four mailbox shapes plus the refused
@@ -161,12 +162,12 @@ describe("the News rename on a live mailbox (GreenMail)", () => {
   it("REFUSED RENAME: the mailbox is left exactly as found, every read resolves to Reads, the next cycle retries", async () => {
     const cfg = greenmailConfig();
     await appendTo(cfg, "ohmail.Reads", 1, "rr");
-    adapter = new ImapAdapter(cfg);
-    await adapter.connect();
+    const own = await connectedWithOwnClient(cfg);
+    adapter = own.adapter;
 
     // The server says NO. Patched on the INSTANCE so deleting it restores the real verb — the
     // "next cycle" below is the same adapter asking again against a server that now permits it.
-    const client = (adapter as unknown as { client: { mailboxRename?: unknown } }).client;
+    const client: { mailboxRename?: unknown } = own.client;
     (client as { mailboxRename: () => never }).mailboxRename = () => {
       throw new Error("NO Rename refused by test");
     };

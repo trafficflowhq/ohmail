@@ -5,6 +5,7 @@ import { ImapAdapter, IMAP_QUIET_FULL_READ_MS, parseRef } from "../../src/adapte
 import type { ChangeBatch, ImapConfig, ImapCursor, KnownEntry } from "../../src/adapters/imap-types.js";
 import { CONDSTORE_HOST, CONDSTORE_PORT, greenmailConfig, probeCondstore } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
+import { connectedWithOwnClient } from "./_own-client.js";
 
 /**
  * AN IDLE DRAIN COSTS WORK PER FOLDER, NOT PER MESSAGE (PERF-026). Every pass used to fetch every
@@ -55,9 +56,8 @@ class Caller {
 }
 
 /** Every `FETCH` the adapter's connection issues, with the folder it was issued in. */
-function recordFetches(adapter: ImapAdapter): Array<{ path: string; range: string; flags: boolean }> {
+function recordFetches(client: ImapFlow): Array<{ path: string; range: string; flags: boolean }> {
   const seen: Array<{ path: string; range: string; flags: boolean }> = [];
-  const client = (adapter as unknown as { client: ImapFlow }).client;
   const real = client.fetch.bind(client);
   client.fetch = ((range: unknown, ...rest: unknown[]) => {
     const mb = client.mailbox;
@@ -84,12 +84,11 @@ async function other(cfg: ImapConfig, run: (c: ImapFlow) => Promise<void>): Prom
 /** The whole sequence against one real server. `condstore` is what the server is expected to have. */
 async function scenario(cfg: ImapConfig, condstore: boolean): Promise<void> {
   const now = 1_000_000;
-  const adapter = new ImapAdapter(cfg, { nowMs: () => now });
-  await adapter.connect();
+  const { adapter, client } = await connectedWithOwnClient(cfg, { nowMs: () => now });
   try {
     await adapter.ensureFolders(FIXTURE_DOOR);
     expect((await adapter.capabilities()).condstore).toBe(condstore);
-    const fetches = recordFetches(adapter);
+    const fetches = recordFetches(client);
     const caller = new Caller();
     const pass = async (): Promise<ChangeBatch> => {
       const b = await adapter.changesSince(caller.cursor);
@@ -102,13 +101,13 @@ async function scenario(cfg: ImapConfig, condstore: boolean): Promise<void> {
     // INBOX left SELECTED between passes, as the watch's IDLE leaves it: imapflow then grants the
     // next pass's lock with no SELECT, and the keys it holds are the last SELECT's.
     const holdInbox = async (): Promise<void> => {
-      await (adapter as unknown as { client: ImapFlow }).client.mailboxOpen("INBOX");
+      await client.mailboxOpen("INBOX");
     };
     const uidsOf = (b: ChangeBatch, kind: "creates" | "deletes" | "flagChanges"): number[] =>
       b[kind].map((c) => parseRef(c.locator.ref).uid);
 
     // The server's own spelling of the folder (GreenMail nests under INBOX with its delimiter).
-    const news = (adapter as unknown as { toServerPath(f: string): string }).toServerPath("ohmail/News");
+    const news = adapter.toServerPath("ohmail/News");
     await other(cfg, async (c) => {
       for (const id of ["q-a", "q-b", "q-c"]) await c.append("INBOX", eml(`${id}-${randomUUID()}@x`));
       await c.append(news, eml(`q-news-${randomUUID()}@x`));
@@ -209,8 +208,7 @@ describe("an idle pass reads per folder, and still finds every change — GreenM
 describe("a flag set elsewhere on a server without CONDSTORE — GreenMail", () => {
   it("is seen on the next drain, however quiet the folder was", async () => {
     const cfg = greenmailConfig();
-    const adapter = new ImapAdapter(cfg);
-    await adapter.connect();
+    const { adapter, client } = await connectedWithOwnClient(cfg);
     try {
       await adapter.ensureFolders(FIXTURE_DOOR);
       await other(cfg, async (c) => { await c.append("INBOX", eml(`q-f-${randomUUID()}@x`)); });
@@ -224,7 +222,7 @@ describe("a flag set elsewhere on a server without CONDSTORE — GreenMail", () 
       await pass();
       expect((await pass()).unchanged, "the folder never went quiet — the case measures nothing").toBe(true);
       const uid = caller.cursor.folders["INBOX"]!.known[0]!.uid;
-      await (adapter as unknown as { client: ImapFlow }).client.mailboxOpen("INBOX");
+      await client.mailboxOpen("INBOX");
       await other(cfg, async (c) => {
         const lock = await c.getMailboxLock("INBOX");
         try { await c.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } finally { lock.release(); }

@@ -22,7 +22,10 @@ const locator: NativeLocator = { folder: "INBOX", ref: "1:42" };
 
 /** A message delivered as `chunks`, recording what the adapter asked the driver for. `uidSearch`
     is the server's answer to `UID SEARCH UID n`: an array, or `false` for a refused one. */
-function fakeAdapter(chunks: Buffer[], expectedSize?: number, uidSearch: number[] | false = []) {
+/** Each adapter's stand-in client, kept by the test that built it. */
+const fakes = new WeakMap<ImapAdapter, Record<string, unknown>>();
+
+async function fakeAdapter(chunks: Buffer[], expectedSize?: number, uidSearch: number[] | false = []) {
   const state = {
     pulled: 0,
     released: 0,
@@ -33,13 +36,10 @@ function fakeAdapter(chunks: Buffer[], expectedSize?: number, uidSearch: number[
   const content = (async function* () {
     for (const c of chunks) { state.pulled += 1; yield c; }
   })();
-  const adapter = new ImapAdapter({
-    host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-  });
   const total = chunks.reduce((n, c) => n + c.length, 0);
-  (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-  (adapter as unknown as { established: boolean }).established = true;
-  (adapter as unknown as { client: unknown }).client = {
+  // Its LIST names no folder, so `connect()` learns the flat server's `/`.
+  const client: Record<string, unknown> = {
+    list: async () => [],
     search: async () => { state.searched += 1; return uidSearch; },
     getMailboxLock: async () => ({ release: () => { state.released += 1; } }),
     // The SELECTED mailbox, as every real server reports it: `[UIDVALIDITY n]` is required on a
@@ -52,12 +52,17 @@ function fakeAdapter(chunks: Buffer[], expectedSize?: number, uidSearch: number[
       return { content, meta: { expectedSize: expectedSize ?? total, contentType: "message/rfc822" } };
     },
   };
-  return { adapter, state };
+  const adapter = new ImapAdapter({
+    host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
+  }, { client });
+  await adapter.connect();
+  fakes.set(adapter, client);
+  return { adapter, state, client };
 }
 
 describe("fetchRaw — a read-only re-read of one whole message", () => {
   it("asks for the SOURCE, which is what makes the wire form BODY.PEEK[]", async () => {
-    const { adapter, state } = fakeAdapter([Buffer.from("From: a@b\r\n\r\nhi")]);
+    const { adapter, state } = await fakeAdapter([Buffer.from("From: a@b\r\n\r\nhi")]);
 
     await adapter.fetchRaw(locator);
 
@@ -69,7 +74,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
 
   it("returns the bytes UNCHANGED — a re-parse has to see what the server holds", async () => {
     const raw = "From: a@b\r\nSubject: x\r\n\r\nline one\r\nline two\r\n";
-    const { adapter } = fakeAdapter([Buffer.from(raw, "utf8")]);
+    const { adapter } = await fakeAdapter([Buffer.from(raw, "utf8")]);
 
     const out = await adapter.fetchRaw(locator);
 
@@ -80,7 +85,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
     // The contrast with `fetchPart` is the whole design: that one throws out of its own
     // `for await`, which kills the connection. This one must leave the socket usable, so the
     // limit has to be the driver's — every chunk it stops before is a request never issued.
-    const { adapter, state } = fakeAdapter([Buffer.alloc(10)]);
+    const { adapter, state } = await fakeAdapter([Buffer.alloc(10)]);
 
     await adapter.fetchRaw(locator, { maxBytes: 4096 });
 
@@ -88,7 +93,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
   });
 
   it("defaults the ceiling rather than reading unbounded", async () => {
-    const { adapter, state } = fakeAdapter([Buffer.alloc(10)]);
+    const { adapter, state } = await fakeAdapter([Buffer.alloc(10)]);
 
     await adapter.fetchRaw(locator);
 
@@ -99,7 +104,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
     // The driver truncates silently at its limit, so "what came back" cannot detect this. The
     // server's RFC822.SIZE can, and it is a real number rather than a guess precisely because
     // nothing was abandoned.
-    const { adapter, state } = fakeAdapter([Buffer.alloc(200)], 9_000_000);
+    const { adapter, state } = await fakeAdapter([Buffer.alloc(200)], 9_000_000);
 
     const err = await adapter.fetchRaw(locator, { maxBytes: 200 }).catch((e: unknown) => e);
 
@@ -112,7 +117,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
   it("REFUSES a short read even when no ceiling explains it", async () => {
     // A transfer that ended early for any other reason. Returning these bytes would hand the
     // caller a message whose tail is missing, with nothing to notice it by.
-    const { adapter } = fakeAdapter([Buffer.alloc(100)], 500);
+    const { adapter } = await fakeAdapter([Buffer.alloc(100)], 500);
 
     const err = await adapter.fetchRaw(locator, { maxBytes: 4096 }).catch((e: unknown) => e);
 
@@ -120,7 +125,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
   });
 
   it("accepts a read that MATCHES the declared size", async () => {
-    const { adapter, state } = fakeAdapter([Buffer.alloc(100), Buffer.alloc(400)], 500);
+    const { adapter, state } = await fakeAdapter([Buffer.alloc(100), Buffer.alloc(400)], 500);
 
     const out = await adapter.fetchRaw(locator, { maxBytes: 4096 });
 
@@ -130,8 +135,8 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
   });
 
   it("tolerates a server that declares no size — there is nothing to compare against", async () => {
-    const { adapter, state } = fakeAdapter([Buffer.alloc(64)]);
-    (adapter as unknown as { client: { download: unknown } }).client.download = async () => ({
+    const { adapter, state } = await fakeAdapter([Buffer.alloc(64)]);
+    fakes.get(adapter)!.download = async () => ({
       content: (async function* () { yield Buffer.alloc(64); })(),
       meta: { contentType: "message/rfc822" },
     });
@@ -143,8 +148,8 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
   });
 
   it("raises MessageGoneError when the locator no longer resolves", async () => {
-    const { adapter, state } = fakeAdapter([]);
-    (adapter as unknown as { client: { download: unknown } }).client.download = async () => ({});
+    const { adapter, state } = await fakeAdapter([]);
+    fakes.get(adapter)!.download = async () => ({});
 
     const err = await adapter.fetchRaw(locator).catch((e: unknown) => e);
 
@@ -161,7 +166,7 @@ describe("fetchRaw — a read-only re-read of one whole message", () => {
  */
 describe("an empty read is asked again by UID before it is called gone", () => {
   const empty = (adapter: ImapAdapter): void => {
-    const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+    const client = fakes.get(adapter)!;
     client.download = async () => ({});
     client.fetchOne = async () => false;
   };
@@ -181,7 +186,7 @@ describe("an empty read is asked again by UID before it is called gone", () => {
   for (const [name, call] of Object.entries(read) as Array<[keyof typeof read, (a: ImapAdapter) => Promise<unknown>]>) {
     for (const [answer, search] of [["absent", []], ["present", [42]], ["unanswered", false]] as const) {
       it(`${name}, the UID search ${answer}: ${outcomes[name][answer]}`, async () => {
-        const { adapter, state } = fakeAdapter([], undefined, search as number[] | false);
+        const { adapter, state } = await fakeAdapter([], undefined, search as number[] | false);
         empty(adapter);
         const got = await call(adapter).then((v) => v, (e: unknown) => e);
         expect({ said: said(got), searched: state.searched, released: state.released })
@@ -192,8 +197,8 @@ describe("an empty read is asked again by UID before it is called gone", () => {
 
   it("a whole part whose witness fetch comes back empty: the search decides, never the empty answer", async () => {
     for (const [search, want] of [[false, "not now"], [[], "gone"], [[42], "whole"]] as const) {
-      const { adapter } = fakeAdapter([], undefined, search as number[] | false);
-      const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+      const { adapter } = await fakeAdapter([], undefined, search as number[] | false);
+      const client = fakes.get(adapter)!;
       client.download = async () => ({ content: (async function* () { yield Buffer.alloc(8 * 1024); })(), meta: {} });
       client.fetchOne = async () => false;
       const got = await adapter.fetchPart(locator, "2").then(() => "whole", (e: unknown) => said(e));
@@ -211,8 +216,8 @@ describe("an empty read is asked again by UID before it is called gone", () => {
       ["the section is not in the tree", tree(4, 1), "gone"],
       ["the section is declared empty", tree(0), "gone"],
     ] as const) {
-      const { adapter, state } = fakeAdapter([], undefined, [42]);
-      const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+      const { adapter, state } = await fakeAdapter([], undefined, [42]);
+      const client = fakes.get(adapter)!;
       client.download = async () => ({});
       client.fetchOne = async (_r: string, query: Record<string, unknown>) => (query.bodyStructure ? { uid: 42, bodyStructure: structure } : false);
       const got = await adapter.fetchPart(locator, "2").then(() => "whole", (e: unknown) => said(e));
@@ -221,9 +226,9 @@ describe("an empty read is asked again by UID before it is called gone", () => {
   });
 
   it("no mailbox selected is a lost connection, not an answer", async () => {
-    const { adapter, state } = fakeAdapter([], undefined, []);
+    const { adapter, state } = await fakeAdapter([], undefined, []);
     empty(adapter);
-    const client = (adapter as unknown as { client: Record<string, unknown> }).client;
+    const client = fakes.get(adapter)!;
     // The lock was granted, then the selection went: the epoch guard reads `mailbox` first.
     let reads = 0;
     Object.defineProperty(client, "mailbox", { get: () => (reads++ === 0 ? { path: "INBOX", uidValidity: 1n } : false) });
