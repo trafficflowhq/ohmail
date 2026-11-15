@@ -22,6 +22,6 @@
   { "key": "device=book&open=sug-winternacht&posture=open&product=cal&screen=frommail", "what": "the found event's card is placed a pixel apart from draw to draw" },
   { "key": "device=book&posture=table&screen=onboarding&step=decide", "what": "a line of the page's words is placed a pixel apart from draw to draw" },
   { "key": "face=ohmarchy&open=draft-nadja&screen=drafts", "what": "the open draft's subject is drawn a pixel of its line apart in one draw of three" },
-  { "key": "face=ohmarchy&open=draft-nadja&scheme=dark&screen=drafts", "what": "the open draft's subject is drawn a pixel of its line apart; the archive holds the rarer draw" },
+  { "key": "face=ohmarchy&open=draft-nadja&scheme=dark&screen=drafts", "what": "the open draft's subject is drawn a pixel of its line apart" },
   { "key": "device=duo&posture=table&screen=news&show=open", "what": "the open letter turns read a moment after the page stands still: the picture is of one of the two moments" }
 ]

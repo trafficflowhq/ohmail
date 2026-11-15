@@ -112,13 +112,14 @@ const typeKeys = (a: TextType, b: TextType): string[] => [...new Set([...Object.
 /**
  * A node's words as one string, and the style each character stands in. A page's words lose their white
  * space, so how a page cut them into pieces does not show; what a control shows (`shown`) keeps it as the
- * control draws it, so `ben tom` for `bent om` in a field is other words.
+ * control draws it, so `ben tom` for `bent om` in a field is other words. `keep` is false where only one of
+ * the two sides shows a control's words: a field against page words in a box with a field's role.
  */
-function letters(runs: Run[] | undefined): { text: string; type: number[] } {
+function letters(runs: Run[] | undefined, keep: boolean): { text: string; type: number[] } {
   let text = "";
   const type: number[] = [];
   for (const r of runs ?? []) {
-    const s = r.shown ? r.said : r.said.replace(/\s+/g, "");
+    const s = keep && r.shown ? r.said : r.said.replace(/\s+/g, "");
     text += s;
     for (let i = 0; i < s.length; i++) type.push(r.type);
   }
@@ -127,7 +128,9 @@ function letters(runs: Run[] | undefined): { text: string; type: number[] } {
 
 /** The words inside one node: other words are a matter of names, the same words in another style of how they are drawn. */
 function compareText(who: string, ref: { runs?: Run[]; types: TextType[] }, got: { runs?: Run[]; types: TextType[] }, names: string[], drawn: string[]): void {
-  const r = letters(ref.runs), g = letters(got.runs);
+  const shows = (runs?: Run[]): boolean => !!runs?.some((x) => x.shown);
+  const keep = shows(ref.runs) === shows(got.runs);
+  const r = letters(ref.runs, keep), g = letters(got.runs, keep);
   if (r.text !== g.text) {
     let at = 0;
     while (at < r.text.length && r.text[at] === g.text[at]) at++;

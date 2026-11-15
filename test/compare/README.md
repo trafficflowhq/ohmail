@@ -66,8 +66,11 @@ What a control shows is its words: a text field's or text area's value, or its h
 shows; the option a closed select shows; the words on a button written as an input. They are runs of
 words of the control, so the names question reads them letter by letter and the drawn values read their
 type, as for any other words: `ben` for `tom` in the search field is another screen. Their white space
-is read as the control draws it, so `ben tom` for `bent om` is another screen too, where a page's words
-are held together without theirs, however the page cut them into pieces. A field's kind is the one the
+is read as the control holds it, so `ben tom` for `bent om` is another screen too, and so is a space at
+the end of a value (`Offers ` for `Offers`), though the picture is the same. A page's words are held
+together without theirs, however the page cut them into pieces, and so are both sides where only one
+shows a control's words: a field's value against the same words in a box with a field's role is the
+same screen. A field's kind is the one the
 browser made of it: a type it does not know is a text field and says what it shows. A password field,
 and any field drawn as discs, never says its value: it says that it is filled, and with how many
 characters.
@@ -179,7 +182,8 @@ pixels measured) and none in the reference:
   Accepted because the reference styles no such part, and one the product brings in is a new thing to
   accept by its picture;
 - the picture of an image button (`<input type="image">`), which is no `img` and says no `shows`.
-  Accepted because the reference has none; its name and its box are read;
+  Accepted because the reference has none; its box is read, and its name where `aria-label` gives
+  it (named by its `alt` alone, it reads as a text field with no name);
 - where a long value is scrolled inside its field: the whole value is read, which part of it shows is
   not. Accepted because the value and the field's box are read, and only its scrolled place can move
   unread.
