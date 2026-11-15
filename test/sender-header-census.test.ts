@@ -42,6 +42,8 @@ const EXTRA_SCANNED = [
   // The contact-only held set, which the gate release's own-sent engagement read moved into.
   "packages/db/src/contact-only-held.ts",
   "packages/db/src/we-answered.ts",
+  // The sample world's adapter, which left the engine's package for the testing one.
+  "packages/testing/src/adapters/fixtures-adapter.ts",
 ];
 
 /**
@@ -294,9 +296,13 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["inReplyTo", "messageIdHeader", "messageIdKey"], classes: ["display"],
     why: "the optimistic Sent overlay carries the id the send answered with, and the reply names its parent",
   },
-  "packages/client-engine/src/engine.ts": {
+  "packages/client-engine/src/engine/optimistic-mutations.ts": {
     terms: ["inReplyTo", "messageIdHeader", "messageIdKey"], classes: ["threading-corroborated"],
     why: "the reconcile retires the engine's OWN optimistic copy when the row it minted arrives",
+  },
+  "packages/client-engine/src/engine/reads.ts": {
+    terms: ["inReplyTo"], classes: ["threading-corroborated"],
+    why: "the engine's row, for the read in this file: a held row is let go by the person's OWN confirmed answer to it",
   },
   "packages/client-engine/src/send-fingerprint.ts": {
     terms: ["inReplyTo"], classes: ["dedup-content"],
@@ -306,7 +312,7 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["inReplyTo"], classes: ["display"],
     why: "a draft's parent id crosses the wire as written",
   },
-  "packages/client-engine/src/adapters/fixtures-adapter.ts": {
+  "packages/testing/src/adapters/fixtures-adapter.ts": {
     terms: ["messageIdHeader"], classes: ["display"],
     why: "the demo world mints rows with no id",
   },

@@ -35,7 +35,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { OhmailEngine, type EngineMutation, type MutationResult } from "@ohmail/client-engine";
-import { triage } from "@ohmail/fixtures";
+import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";

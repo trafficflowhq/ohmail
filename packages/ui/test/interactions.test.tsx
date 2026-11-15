@@ -18,7 +18,7 @@ import {
   useTheme,
   useToast,
 } from "@ohmail/ui";
-import { reads } from "@ohmail/fixtures";
+import { reads } from "@ohmail/testing";
 
 afterEach(() => {
   cleanup();

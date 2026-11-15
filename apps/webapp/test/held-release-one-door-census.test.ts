@@ -15,7 +15,10 @@ import { bracketSpan, withoutComments } from "../../../scripts/lib/source-scan.m
  */
 
 const ROOT = resolve(__dirname, "../../..");
-const ENGINE = "packages/client-engine/src/engine.ts";
+/** The engine: its door and every file of its folder (the door stands in one, the drain that rings in another). */
+const ENGINE = ["packages/client-engine/src/engine.ts", "packages/client-engine/src/engine"];
+const engineText = (): string => [join(ROOT, ENGINE[0]!), ...readdirSync(join(ROOT, ENGINE[1]!)).sort().map((n) => join(ROOT, ENGINE[1]!, n))]
+  .map((f) => readFileSync(f, "utf8")).join("\n");
 const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src"];
 /** The adapter wrapper that FORWARDS the capability; forwarding is not a read. */
 const FORWARDER = "packages/app-logic/src/session/sync-scheduler.ts";
@@ -25,7 +28,7 @@ const call = (name: string) => new RegExp(`\\b${name}\\s*\\(`);
 /** The body of the class method `name`, comments blanked, or null when it is not declared. */
 export function methodBody(src: string, name: string): string | null {
   const code = withoutComments(src);
-  const m = new RegExp(`\\n\\s*(?:private\\s+|async\\s+)*${name}\\s*\\([^)]*\\)[^{;]*\\{`).exec(code);
+  const m = new RegExp(`\\n\\s*(?:private\\s+|protected\\s+|async\\s+)*${name}\\s*\\([^)]*\\)[^{;]*\\{`).exec(code);
   if (!m) return null;
   const s = bracketSpan(code, m.index + m[0].length - 1, "{", "}");
   return s.closed ? code.slice(s.start, s.end) : null;
@@ -75,7 +78,7 @@ function walk(dir: string, acc: string[] = []): string[] {
 
 describe("the engine keeps one held-release door with a bell", () => {
   it("the real engine is admitted", () => {
-    expect(engineRefusals(readFileSync(join(ROOT, ENGINE), "utf8"))).toEqual([]);
+    expect(engineRefusals(engineText())).toEqual([]);
   });
 
   const door = "  async refreshHeldReleases(): Promise<void> {\n    const w = await this.adapter.heldReleases();\n  }\n";

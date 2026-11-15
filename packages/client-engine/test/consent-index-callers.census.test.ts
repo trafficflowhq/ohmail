@@ -20,9 +20,9 @@ const SKIP = new Set(["node_modules", "dist", ".next", "coverage"]);
 const LOCAL_ONLY: Record<string, string> = {
   "packages/client-engine/src/consent-cutline.ts|consentIndex|p.rules":
     "the per-mailbox index itself, built from one document's rules",
-  "packages/client-engine/src/engine.ts|consentIndex|rulesList(this.read())":
+  "packages/client-engine/src/engine/bodies.ts|consentIndex|rulesList(this.read())":
     "the held-release bell: that offer is served only for mailboxes this install organizes",
-  "packages/client-engine/src/engine.ts|decidedDestination|index, address":
+  "packages/client-engine/src/engine/bodies.ts|decidedDestination|index, address":
     "the same bell, over the same local index",
   "packages/app-logic/src/press/sender-screening.ts|consentIndex|[...wide, mine]":
     "a press planner asking the order of two rules the press itself writes",

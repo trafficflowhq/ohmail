@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   CursorExpiredError,
-  DEMO_NOW,
-  FixturesAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
   OhmailEngine,
@@ -17,6 +15,7 @@ import {
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { sqlWorld } from "./helpers/node-sql-executor.js";
 
 /**

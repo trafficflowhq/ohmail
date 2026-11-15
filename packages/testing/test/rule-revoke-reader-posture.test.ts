@@ -3,7 +3,7 @@ import { mailboxes, mailboxProfileMirror, organizerRequests } from "@trafficflow
 import {
   HttpAdapter, OUTBOX_TYPE, OhmailEngine, heldRuleId, heldRuleKey, planScreenCommit, pressRules,
   type EngineMutation, type RuleDTO, type ScreenIntent,
-} from "../src/index.js";
+} from "@ohmail/client-engine";
 import { verbWorld, type VerbWorld } from "./verb-parity/world.js";
 
 /**

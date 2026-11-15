@@ -4,7 +4,6 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  FixturesAdapter,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
@@ -13,6 +12,7 @@ import {
   type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { useOlderMail, type OlderMail } from "@ohmail/app-logic/lists/older-mail";
 import { KeymapProvider } from "../app/shell/keymap";

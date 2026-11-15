@@ -1,0 +1,23 @@
+{
+  "name": "@ohmail/testing",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./adapter": {
+      "types": "./src/adapter.ts",
+      "ohmail-source": "./src/adapter.ts",
+      "node": "./dist/adapter.js",
+      "default": "./src/adapter.ts"
+    }
+  },
+  "dependencies": {
+    "@ohmail/client-engine": "*"
+  }
+}

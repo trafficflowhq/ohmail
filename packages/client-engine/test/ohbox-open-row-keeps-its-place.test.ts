@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   ohboxView,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { threadedEngine } from "./fixtures/threaded-demo.js";
 
 /**

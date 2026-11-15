@@ -29,7 +29,7 @@ import {
   triage,
   waiting,
   type GuardLists,
-} from "@ohmail/fixtures";
+} from "@ohmail/testing";
 import { GUARD_LIST_ENV, maskEntries, PRIVATE_MODE, privateGuardText, privateModeIt } from "../../../test/support/guard-list.js";
 
 describe("screener world", () => {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   bodyOf,
@@ -12,6 +11,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ═══ THREE WAYS A BODY WENT MISSING, AND THE BATCH THAT REPLACES THE LOOP ══════════════════

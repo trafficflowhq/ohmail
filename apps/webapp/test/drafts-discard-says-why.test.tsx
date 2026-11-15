@@ -5,9 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import {
-  FixturesAdapter, MutationRejectedError,
+  MutationRejectedError,
   type EngineMutation, type MutationAnswer, type MutationOutcome,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { composeRowKey } from "../app/shell/compose";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";

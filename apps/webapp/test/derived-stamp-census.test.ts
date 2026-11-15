@@ -116,7 +116,7 @@ describe("a derivation that reads a body by id rides the placement stamp", () =>
     expect(cutline, "the census lost its subject: the partition no longer reads a body").toMatch(/\.get<[^>]*>\("message_body"/);
     expect(code(read("../../../packages/app-logic/src/engine/context.ts")), "the window's stamp ignores the bodies that place mail")
       .toMatch(/stampExcept\(NOT_DERIVED_FROM\),\s*engine\.placementStamp\(\)/);
-    const engine = code(read("../../../packages/client-engine/src/engine.ts"));
+    const engine = code(read("../../../packages/client-engine/src/engine/bodies.ts"));
     const noted = [...engine.matchAll(/this\.notePlacementBodies\(/g)].length;
     expect(noted, "putBody, putBodies and the trim each move the stamp").toBe(3);
   });

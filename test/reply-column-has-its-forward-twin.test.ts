@@ -50,7 +50,7 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   [WORKFLOW_RUNTIME, "inReplyToMessageId: messageId", "an AI reply"],
   ["packages/services/src/drafting-service.ts", "inReplyToMessageId: target.id", "an AI reply"],
   // The demo world's one reply draft.
-  ["packages/client-engine/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
+  ["packages/testing/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
 ];
 
 interface Site { file: string; line: number; text: string }

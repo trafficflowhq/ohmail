@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  FixturesAdapter,
   IndexedDbMirrorStore,
   OhmailEngine,
   flattenResponse,
   messagesByDateDesc,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** IndexedDB persistence: hydrate-on-load, atomic page+cursor, wipe on re-bootstrap. */
 

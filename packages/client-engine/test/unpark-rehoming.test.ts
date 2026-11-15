@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   ohboxView,
   type EngineMessage,
   type EntityReader,
   type MessageStateDTO,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * UN-PARKING RE-HOMES A READ ROW AT ITS OWN DATE — not at the top of "Earlier", not lost.

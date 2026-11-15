@@ -5,7 +5,7 @@
  *
  *  1. **Zero real identity, zero real brands.** The banned terms are the privacy
  *     guard's own list, read through `guardFrom`: the private list where the
- *     run names it (OHMAIL_GUARD_LIST), else the synthetic set in `packages/fixtures/src/privacy.ts`
+ *     run names it (OHMAIL_GUARD_LIST), else the synthetic set in `packages/testing/src/privacy.ts`
  *     — never a second list kept here that could quietly diverge.
  *  2. **Network access is CONFINED to the engine seam** — the files enumerated
  *     below as {@link ENGINE_SEAM}. Everything else — every screen, the theme —
@@ -14,14 +14,14 @@
  *     scan fails it.
  *  3. **No demo data ships** (owner ruling, 2026-08-20: demo data lives on the
  *     product's website alone; every app opens empty and connects). The shipped
- *     source imports nothing from `@ohmail/fixtures` — the scan below fails the
+ *     source imports nothing from `@ohmail/testing` — the scan below fails the
  *     first file that reaches for the demo corpus again.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { guardFrom, PUBLIC_GUARD, type GuardLists } from "@ohmail/fixtures";
+import { guardFrom, PUBLIC_GUARD, type GuardLists } from "@ohmail/testing";
 import { maskEntries, privateGuardText, privateModeIt } from "../../../test/support/guard-list.js";
 
 const APP_DIR = fileURLToPath(new URL("..", import.meta.url));
@@ -720,14 +720,14 @@ describe("network: confined to the engine seam", () => {
 });
 
 describe("no demo data ships (owner ruling 2026-08-20)", () => {
-  it("no shipped source imports @ohmail/fixtures — the demo corpus stays out of the app", () => {
+  it("no shipped source imports @ohmail/testing — the demo corpus stays out of the app", () => {
     // The ruling's structural half: demo data is the website's alone. Type-only imports are
     // banned with the rest — a type pulled from the corpus package is one refactor away from
     // a value, and the app's own row types live in src/state/model.ts. (package.json is
     // covered by the dependency test below; this one scans for the import/require forms.)
     const hits: string[] = [];
     for (const { path, body } of shipped) {
-      if (/(?:from\s+["']|require\(\s*["']|import\(\s*["'])@ohmail\/fixtures/.test(body)) hits.push(path);
+      if (/(?:from\s+["']|require\(\s*["']|import\(\s*["']|import\s+["'])@ohmail\/testing/.test(body)) hits.push(path);
     }
     expect(hits).toEqual([]);
   });
@@ -736,7 +736,7 @@ describe("no demo data ships (owner ruling 2026-08-20)", () => {
     const pkg = JSON.parse(sources.find((f) => f.path === "package.json")!.body) as {
       dependencies?: Record<string, string>;
     };
-    expect(Object.keys(pkg.dependencies ?? {})).not.toContain("@ohmail/fixtures");
+    expect(Object.keys(pkg.dependencies ?? {})).not.toContain("@ohmail/testing");
   });
 
   it("the state layer holds no sample mail — no inline corpus replaced the import", () => {

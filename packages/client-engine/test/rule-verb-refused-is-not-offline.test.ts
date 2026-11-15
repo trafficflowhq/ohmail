@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter, MemoryMirrorStore, MutationRejectedError, OhmailEngine, pressVerdict, rulesAsRun, rulesList,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, pressVerdict, rulesAsRun, rulesList,
   type EngineAdapter, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A RULE VERB THE SERVER REFUSED IS NOT OFFLINE. The server answered a revoke 500

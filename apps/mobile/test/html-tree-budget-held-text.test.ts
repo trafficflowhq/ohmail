@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { Parser, Tokenizer, defaultTreeAdapter, parse, type DefaultTreeAdapterMap, type Token, type TreeAdapter } from "parse5";
 import { treeStepper, treeWithin, type TreeReading } from "@ohmail/client-engine/html-tree-budget";
-import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK } from "../../../apps/mobile/src/mail/frame-budget.js";
+import { FRAME_BUDGET, FRAME_STEP_CHARS, FRAME_STEP_WORK } from "../src/mail/frame-budget.js";
 
 type Patched = { restore: () => void; work: () => number; chars: () => number };
 
@@ -298,7 +298,7 @@ describe("parse5's in-table-text internals are the ones the counter takes over",
   // The parse5 this package resolves, the one the counter imports: its own node_modules entry where it
   // has one, else the nearest parent's (npm hoists it to the workspace root).
   const dir = (() => {
-    for (let d = join(dirname(fileURLToPath(import.meta.url)), ".."); ; d = dirname(d)) {
+    for (let d = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "client-engine"); ; d = dirname(d)) {
       const p = join(d, "node_modules", "parse5");
       if (existsSync(join(p, "package.json"))) return p;
       if (dirname(d) === d) throw new Error("no parse5 resolvable from packages/client-engine");

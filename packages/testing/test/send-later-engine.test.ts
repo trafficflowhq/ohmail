@@ -8,13 +8,13 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/helpers.js";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   scheduledSendsList,
   type FetchLike,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * SEND LATER, END TO END THROUGH THE REAL BACKEND (mail 0077) — the engine's `mail_send`

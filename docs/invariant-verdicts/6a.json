@@ -1,0 +1,21 @@
+{
+  "id": "6a",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "npx vitest run packages/testing/test/shape.test.ts",
+  "tests": [
+    "packages/testing/test/shape.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/testing/src/data.ts",
+      "line": "subject: \"Willkommen — 10% auf die erste Bestellung\",",
+      "to": "subject: \"Willkommen bei Zqmarrow — 10% auf die erste Bestellung\",",
+      "failed": 2
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 40
+  }
+}

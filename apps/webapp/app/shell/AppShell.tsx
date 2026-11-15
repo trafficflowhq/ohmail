@@ -17,7 +17,6 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import {
-  DEMO_NOW,
   FOLDER_OF_VIEW,
   addressBook,
   bodyOf,
@@ -48,6 +47,7 @@ import {
   unsubscribeLetterOf,
   rulesShown,
 } from "@ohmail/client-engine";
+import { DEMO_NOW } from "@ohmail/testing/adapter";
 import {
   Button,
   CommandPalette,

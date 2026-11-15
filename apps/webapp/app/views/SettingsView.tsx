@@ -74,7 +74,7 @@ export { PANE_IDS, type PaneId } from "../shell/routing";
 
 /**
  * The notification channels, and why this list is here rather than in the fixtures. It used to be
- * `notificationSettings` from `@ohmail/fixtures`, rendered unconditionally. The channel labels were merely misfiled —
+ * `notificationSettings` from `@ohmail/testing`, rendered unconditionally. The channel labels were merely misfiled —
  * ordinary product copy, moved to `messages/en.json`; the ids below are their keys. The VIP list and the "you usually
  * open Petra's mail within 5 minutes" suggestion were the real defect: Mila's people, invented for the demo, read by
  * paying customers — they reach this view through the MIRROR now ({@link NotificationsMeta}). Since SET-M1 the

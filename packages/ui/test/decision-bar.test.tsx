@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { DecisionBar } from "@ohmail/ui";
-import { waiting } from "@ohmail/fixtures";
+import { waiting } from "@ohmail/testing";
 import { enDecisionCopy } from "./decision-copy.js";
 
 afterEach(cleanup);

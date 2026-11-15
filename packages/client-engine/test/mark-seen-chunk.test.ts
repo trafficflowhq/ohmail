@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter, MARK_SEEN_CHUNK, MutationRejectedError, OhmailEngine, chunkMarkSeen, inverseMutations, type EngineMutation,
+  MARK_SEEN_CHUNK, MutationRejectedError, OhmailEngine, chunkMarkSeen, inverseMutations, type EngineMutation,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { MemoryMirrorStore } from "../src/store.js";
 
 /**

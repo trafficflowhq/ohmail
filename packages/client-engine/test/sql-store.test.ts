@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   OhmailEngine,
   SqlMirrorStore,
   flattenResponse,
@@ -9,6 +8,7 @@ import {
   type SqlStatement,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { newDb, nodeSqlExecutor, sqlWorld } from "./helpers/node-sql-executor.js";
 
 /**

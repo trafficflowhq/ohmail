@@ -61,7 +61,7 @@ const judge = (files: Array<{ rel: string; src: string }>): string[] => files.fl
   const at = profileReads(src);
   if (at.length === 0) return [];
   if (REFUSED_ZONES.some((z) => z.test(rel))) return at.map((l) => `${rel}:${l} (a rules surface)`);
-  if (rel === "packages/client-engine/src/engine.ts") return at.map((l) => `${rel}:${l} (the engine)`);
+  if (rel === "packages/client-engine/src/engine.ts" || rel.startsWith("packages/client-engine/src/engine/")) return at.map((l) => `${rel}:${l} (the engine)`);
   return rel in ADMITTED ? [] : at.map((l) => `${rel}:${l} (not named)`);
 });
 
