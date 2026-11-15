@@ -164,8 +164,10 @@ describe("the message screen carries the webapp's verbs", () => {
 
 describe("the move destinations are the webapp's", () => {
   it("MOVE_TARGETS match the webapp's own vocabulary", () => {
-    const m = pane.match(/export const MOVE_TARGETS[^=]*= \[([^\]]+)\]/);
-    expect(m, "MessagePane.tsx no longer declares MOVE_TARGETS").not.toBeNull();
+    // Declared with the web's verbs in the behaviour's own file since the Ohbox's lift; the pane imports it.
+    const actions = read("../../../packages/app-logic/src/press/actions.ts");
+    const m = actions.match(/export const MOVE_TARGETS[^=]*= \[([^\]]+)\]/);
+    expect(m, "packages/app-logic/src/press/actions.ts no longer declares MOVE_TARGETS").not.toBeNull();
     const webappTargets = [...m![1]!.matchAll(/"([a-z]+)"/g)].map((x) => x[1]!);
     expect([...MOVE_TARGETS]).toEqual(webappTargets);
   });

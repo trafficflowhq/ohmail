@@ -28,38 +28,16 @@ import { useCallback, useEffect, useRef } from "react";
 import { FOLDER_OF_VIEW, type EngineMessage } from "@ohmail/client-engine";
 import { cssPoint, cssRect } from "@ohmail/ui";
 import type { MoveTarget } from "./MessagePane";
-
-/** How far the pointer must travel before a press becomes a drag. */
-export const DRAG_SLOP_PX = 6;
+import { DRAG_SLOP_PX } from "@ohmail/app-logic/lists/drag-slop";
+export { DRAG_SLOP_PX } from "@ohmail/app-logic/lists/drag-slop";
+import type { DragSource, PileDropAction, RailDropTarget } from "@ohmail/app-logic/lists/drag-source";
+export type { DragSource, PileDropAction, RailDropTarget } from "@ohmail/app-logic/lists/drag-source";
 
 /** How long the landed target keeps its confirmation before releasing. */
 const DROP_HIT_MS = 360;
 
 /** The spring-back's travel time — matches the row-settle register (`SETTLE_MS` is 280). */
 const SPRING_MS = 220;
-
-/**
- * A pile drop's action, in the EXISTING vocabulary: every member is both a `MessageAction`
- * and a `BulkAction`, which is the structural half of "one semantic, new gesture" — there is
- * no drop verb the pill and the bulk bar cannot already say.
- */
-export type PileDropAction = "later" | "aside" | "resurface" | `move:${MoveTarget}`;
-
-export type RailDropTarget =
-  | { kind: "pile"; action: PileDropAction }
-  | { kind: "tag"; tagId: string };
-
-/** What travels with a drag: the messages it stands for, and what the ghost says. */
-export interface DragSource {
-  /** The message ids the drop will act on — the whole selection when the row is in it. */
-  ids: string[];
-  /** The same messages, for legality — folder, triage state, labels. */
-  messages: EngineMessage[];
-  /** The ghost's two lines — what the ROW shows, so the ghost is the row in hand. */
-  label: { from: string; subject: string };
-  /** True when `ids` is a live multi-select (the drop then also clears it). */
-  selection: boolean;
-}
 
 /** The rail rows that file, and what filing there says. See the header for the exclusions. */
 const PILE_ACTION_OF_RAIL: Record<string, PileDropAction> = {

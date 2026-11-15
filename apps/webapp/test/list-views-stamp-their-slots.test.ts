@@ -67,13 +67,17 @@ function componentsOf(file: ts.SourceFile): ts.Node[] {
   return out;
 }
 
+/** The window, called where it is: by a view, or by the Ohbox's behaviour hook its view calls (held below). */
+const WINDOW_CALLS = new Set(["useListWindow", "useOhboxList"]);
+const OHBOX_LIST = resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts");
+
 function readComponent(file: ts.SourceFile, root: ts.Node): Reading {
   let callsWindow = false;
   let stamps = 0;
   const bare: Reading["bare"] = [];
   const unplaced: number[] = [];
   const walk = (node: ts.Node, slotted: boolean, receiver: string | null): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "useListWindow") {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && WINDOW_CALLS.has(node.expression.text)) {
       callsWindow = true;
     }
     let inSlot = slotted;
@@ -195,6 +199,7 @@ describe("every windowed list stamps its slots", () => {
   });
 
   it("reads the lists it is about", () => {
+    expect(readFileSync(OHBOX_LIST, "utf8"), "useOhboxList mounts no window").toMatch(/useListWindow\(\{ scrollerRef: listScrollerRef/);
     for (const f of ["ReceiptsView.tsx", "ReadsView.tsx", "FolderView.tsx", "TrashView.tsx", "RulesView.tsx", "OhboxView.tsx"]) {
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow — the census reads nothing there`).toBe(true);
       expect(readings.get(f)?.stamps ?? 0, `${f} stamps no slot`).toBeGreaterThan(0);

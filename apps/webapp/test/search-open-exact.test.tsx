@@ -235,7 +235,7 @@ describe("the windowed lists reveal an externally-set cursor", () => {
     // rows times one height where rows are equal, and the window's own prefix sum where they
     // are not (the Ohbox — see `useListWindow`'s height cache).
     for (const view of ["OhboxView", "ReadsView", "ReceiptsView"]) {
-      const src = read(`../app/views/${view}.tsx`);
+      const src = read(`../app/views/${view}.tsx`) + (view === "OhboxView" ? read("../../../packages/app-logic/src/ohbox/window.ts") : "");
       expect(src, `${view} reveals an unmounted cursor row`).toMatch(
         /scrollTop = Math\.max\(0, [^)]*win\.(rowHeight|offsetOf\()/,
       );

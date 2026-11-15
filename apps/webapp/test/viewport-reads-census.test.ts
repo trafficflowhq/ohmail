@@ -25,7 +25,7 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 6,
     why: "the drag's slop compares two pointer reads, and the hit test `elementFromPoint` takes viewport px",
   },
-  "apps/webapp/app/views/OhboxView.tsx": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
+  "packages/app-logic/src/ohbox/pointer.ts": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
   "packages/app-logic/src/lists/list-window.ts": {
     count: 2,
     why: "the page-scroll half: the ROOT scroller's scrollTop is viewport px under the zoom (measured)",
