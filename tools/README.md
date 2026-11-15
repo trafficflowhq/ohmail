@@ -49,6 +49,9 @@ and the task that removes it. A border row also names the package the import rea
 - a row beyond the violations is refused as stale, so the change that fixes a file edits its row;
 - a row without a task is refused;
 - against the base branch, no rule's count may grow for any task. A file that moves takes its row along.
+  Within one task, a crossing may pass between `ohmail/package-borders:<unit>` and `ohmail/declared-dependency`
+  in the same file without being growth, as long as the file's sum over those rules does not grow. Where that
+  sum grew, each rule is judged as above, and so is the sum against what other files' sums lost.
 
 So a new violation cannot be added to the baseline. Nor is a rule switched off in a file: a finding under an
 `eslint-disable` comment counts like any other, a comment that sets a rule is refused in every file, and the
@@ -71,13 +74,32 @@ refused its violation and passed its clean file. A rule that is switched on with
 
 `retirement.tsv` has a row for every test file that reads a file, by a call of its own or through a helper (a
 module under a test folder that is no test, reached by its local imports): what it reads, its kind, the rule or
-test that takes its place (`home`), the task that retires it, and the verdict once it has been retired. The check
-refuses
+test that takes its place (`home`), the task that retires it, and the proof once it has been retired (the column
+keeps its name, `verdict`). A test that reads no file has no row until it leaves; then its row has the kind
+`behaviour`. The last column takes one of four forms:
+
+| Last column                                                    | When                                                                                                       | `home`                  |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------- |
+| a file under `docs/tool-verdicts` or `docs/invariant-verdicts` | a lint rule took its place, or a migration removed its subject from a store and a named test goes red      | the rule or the test    |
+| `held:<test>#<case title>`                                     | another test holds what it asserted: the old test's fault planted, that case seen red, then green restored | the layer and the plant |
+| `gone:<path>`                                                  | the change deleted its subject, a source file, from the tree                                               | `none`                  |
+| `gone:<path>#<text>`                                           | the change took a piece out of a file that stays                                                           | `none`                  |
+
+Each is read in words: it begins with `held:` or `gone:`, the first `#` ends the path, and what follows it is
+kept as written, upper and lower case, no pattern. The check refuses
 
 - a test file that reads a file and has no row;
 - a row that reads source as text and names no home;
 - a row that does not say what the file reads;
-- a deleted test file whose row carries no verdict.
+- a last column of any other form, and `gone:`, `held:` or the kind `behaviour` on a test file that is still there;
+- `gone:` with a home other than `none`, on a path that is a test or lies under a folder named `test`, or on a
+  file that is still in the tree (with a piece: a file that still contains it), on every run;
+- `held:` with the home `none`;
+- a test file the change deletes without a row and a proof; with `gone:`, a path the base did not have or a
+  piece the base's file did not contain; with `held:`, a test that is not in the tree or does not contain the
+  case title as written.
+
+A case removed from a test file that stays has no row: the table's grain is the file.
 
 What a `home` says:
 

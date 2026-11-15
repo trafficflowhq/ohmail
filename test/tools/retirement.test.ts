@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import { fixtureText, judgeControls, ruleSlug, verdictOf } from "../../tools/lib/controls.mjs";
 import { checkReferences, explicitTypechecks } from "../../tools/lib/references.mjs";
 import {
@@ -7,6 +11,7 @@ import {
   parseRetirement,
   READS_A_FILE,
   readingTests,
+  readProof,
   renderRetirement,
   RETIREMENT_HEADER,
 } from "../../tools/lib/retirement.mjs";
@@ -27,6 +32,7 @@ const world = (over: Partial<Parameters<typeof checkRetirement>[0]> = {}) => ({
   present: new Set(["test/a.test.ts", "test/quiet.test.ts"]),
   deleted: [] as string[],
   verdictExists: (path: string) => path === "docs/tool-verdicts/ohmail-package-borders.json",
+  tree: () => null,
   ...over,
 });
 const VERDICT = "docs/tool-verdicts/ohmail-package-borders.json";
@@ -115,17 +121,17 @@ describe("the retirement table", () => {
     ]);
   });
 
-  it("refuses a deleted test file unless its row carries a verdict", () => {
+  it("refuses a deleted test file unless its row carries a proof", () => {
     const gone = { reading: new Set<string>(), present: new Set<string>(), deleted: ["test/a.test.ts"] };
     expect(checkRetirement(world(gone))).toEqual([
-      "retirement: test/a.test.ts: the file is gone and its row has no verdict",
-      "retirement: test/a.test.ts is deleted without a row that carries a verdict",
+      "retirement: test/a.test.ts: the file is gone and its row has no proof",
+      "retirement: test/a.test.ts is deleted without a row that carries a proof",
     ]);
     expect(checkRetirement(world({ ...gone, rows: [row("test/a.test.ts", { verdict: VERDICT })] }))).toEqual(
       [],
     );
     expect(checkRetirement(world({ ...gone, rows: [] }))).toEqual([
-      "retirement: test/a.test.ts is deleted without a row that carries a verdict",
+      "retirement: test/a.test.ts is deleted without a row that carries a proof",
     ]);
   });
 
@@ -133,11 +139,156 @@ describe("the retirement table", () => {
     const elsewhere = checkRetirement(
       world({ rows: [row("test/a.test.ts", { verdict: "notes/it-was-fine.json" })] }),
     );
-    expect(elsewhere).toEqual([expect.stringMatching(/the verdict "notes\/it-was-fine\.json"/)]);
+    expect(elsewhere).toEqual([expect.stringMatching(/the last column "notes\/it-was-fine\.json"/)]);
     const missing = checkRetirement(
       world({ rows: [row("test/a.test.ts", { verdict: "docs/tool-verdicts/none.json" })] }),
     );
     expect(missing).toHaveLength(1);
+  });
+
+  describe("the proof of a deleted test", () => {
+    // The change deleted test/old.test.ts. The base still drew the rail in Shell.tsx and had SyncBar.tsx.
+    const now: Record<string, string> = {
+      "apps/web/app/Shell.tsx": '<main className="frame">',
+      "test/holder.test.ts": 'it("the notice names the offline state", () => {});',
+    };
+    const before: Record<string, string> = {
+      "apps/web/app/Shell.tsx": '<RailNav />\n<main className="frame">',
+      "apps/web/app/SyncBar.tsx": "export const SyncBar = () => null;",
+      "test/holder.test.ts": now["test/holder.test.ts"],
+      "test/old.test.ts": "it('draws the bar', () => {});",
+    };
+    const old = (verdict: string, over: Partial<ReturnType<typeof row>> = {}) =>
+      row("test/old.test.ts", {
+        kind: "behaviour",
+        holds: "the strip drew its bar",
+        home: "none",
+        task: "frame",
+        verdict,
+        ...over,
+      });
+    const deleting = (rows: ReturnType<typeof row>[], tree: Record<string, string> = now) =>
+      checkRetirement(
+        world({
+          rows: [row("test/a.test.ts"), ...rows],
+          present: new Set(["test/a.test.ts", "test/holder.test.ts"]),
+          deleted: ["test/old.test.ts"],
+          tree: (path: string) => tree[path] ?? null,
+          base: (path: string) => before[path] ?? null,
+        }),
+      );
+
+    it("refuses a deleted behaviour test without a row, and with a row whose proof is empty", () => {
+      expect(deleting([])).toEqual([
+        "retirement: test/old.test.ts is deleted without a row that carries a proof",
+      ]);
+      expect(deleting([old("")])).toEqual([
+        "retirement: test/old.test.ts: the file is gone and its row has no proof",
+        "retirement: test/old.test.ts is deleted without a row that carries a proof",
+      ]);
+    });
+
+    it("refuses gone: a file still in the tree, and passes it once the file is gone", () => {
+      const tree = { ...now, "apps/web/app/SyncBar.tsx": before["apps/web/app/SyncBar.tsx"] };
+      expect(deleting([old("gone:apps/web/app/SyncBar.tsx")], tree)).toEqual([
+        "retirement: test/old.test.ts: gone:apps/web/app/SyncBar.tsx is still in the tree",
+      ]);
+      expect(deleting([old("gone:apps/web/app/SyncBar.tsx")])).toEqual([]);
+    });
+
+    it("refuses gone: a piece its file still contains, and passes it once the piece left", () => {
+      const tree = { ...now, "apps/web/app/Shell.tsx": before["apps/web/app/Shell.tsx"] };
+      expect(deleting([old("gone:apps/web/app/Shell.tsx#<RailNav")], tree)).toEqual([
+        'retirement: test/old.test.ts: gone:apps/web/app/Shell.tsx#<RailNav is still in the tree: apps/web/app/Shell.tsx contains "<RailNav"',
+      ]);
+      expect(deleting([old("gone:apps/web/app/Shell.tsx#<RailNav")])).toEqual([]);
+      // The characters as written: another case is another piece, and the base never held it.
+      expect(deleting([old("gone:apps/web/app/Shell.tsx#<railnav")])).toEqual([
+        'retirement: test/old.test.ts: gone:apps/web/app/Shell.tsx#<railnav: the base\'s apps/web/app/Shell.tsx does not contain "<railnav"',
+      ]);
+    });
+
+    it("refuses gone: a path the base never had, and a piece the base's file never contained", () => {
+      expect(deleting([old("gone:apps/web/app/NeverWas.tsx")])).toEqual([
+        "retirement: test/old.test.ts: gone:apps/web/app/NeverWas.tsx is not in the base",
+      ]);
+      expect(deleting([old('gone:apps/web/app/Shell.tsx#className="topbar')])).toEqual([
+        'retirement: test/old.test.ts: gone:apps/web/app/Shell.tsx#className="topbar: the base\'s apps/web/app/Shell.tsx does not contain "className="topbar"',
+      ]);
+    });
+
+    it("refuses gone: a path that is a test or lies under a test folder", () => {
+      expect(deleting([old("gone:apps/web/test/support/strip.ts")])).toEqual([
+        "retirement: test/old.test.ts: gone:apps/web/test/support/strip.ts is a test or under a folder named test; gone: names what left the product",
+        "retirement: test/old.test.ts: gone:apps/web/test/support/strip.ts is not in the base",
+      ]);
+    });
+
+    it("refuses held: a test not in the tree, and a title the test does not contain; passes the right one", () => {
+      const held = (proof: string) =>
+        old(proof, { home: "layer 1: red with the strip's offline line removed" });
+      expect(deleting([held("held:test/elsewhere.test.ts#the notice names the offline state")])).toEqual([
+        "retirement: test/old.test.ts: held:test/elsewhere.test.ts is not a test of the suite in the tree",
+      ]);
+      expect(deleting([held("held:test/holder.test.ts#the notice names the online state")])).toEqual([
+        'retirement: test/old.test.ts: held:test/holder.test.ts does not contain the case title "the notice names the online state"',
+      ]);
+      expect(deleting([held("held:test/holder.test.ts#the notice names the offline state")])).toEqual([]);
+    });
+
+    it("refuses gone with a home, held with none, behaviour on a present file, and a last column of another word", () => {
+      expect(deleting([old("gone:apps/web/app/SyncBar.tsx", { home: "layer 1" })])).toEqual([
+        'retirement: test/old.test.ts: a gone: proof has the home none, not "layer 1"',
+      ]);
+      expect(deleting([old("held:test/holder.test.ts#the notice names the offline state")])).toEqual([
+        "retirement: test/old.test.ts: a held: proof names the layer and the plant in home, not none",
+      ]);
+      expect(checkRetirement(world({ rows: [row("test/a.test.ts", { kind: "behaviour" })] }))).toEqual([
+        "retirement: test/a.test.ts: the kind behaviour is for a test that reads no file; it gets its row when it leaves",
+      ]);
+      expect(deleting([old("deleted")])).toEqual([
+        'retirement: test/old.test.ts: the last column "deleted" is none of the four proofs: a file under docs/tool-verdicts or docs/invariant-verdicts, held:<test>#<case title>, gone:<path>, gone:<path>#<text>',
+      ]);
+    });
+
+    it("refuses gone: or held: on a row whose test file is still there", () => {
+      expect(
+        checkRetirement(
+          world({
+            rows: [row("test/a.test.ts", { verdict: "gone:apps/web/app/SyncBar.tsx", home: "none" })],
+          }),
+        ),
+      ).toEqual([
+        "retirement: test/a.test.ts: the test file is still there, so its row carries no gone: or held: proof",
+      ]);
+    });
+  });
+
+  it("reads the last column in its four forms, and nothing else", () => {
+    expect(readProof("")).toEqual({ form: "empty" });
+    expect(readProof(VERDICT)).toEqual({ form: "verdict", path: VERDICT });
+    expect(readProof("gone:apps/web/app/SyncBar.tsx")).toEqual({
+      form: "gone",
+      path: "apps/web/app/SyncBar.tsx",
+    });
+    expect(readProof("gone:a/B.tsx#<Rail #2")).toEqual({ form: "gone", path: "a/B.tsx", piece: "<Rail #2" });
+    expect(readProof("held:test/h.test.ts#a case # two")).toEqual({
+      form: "held",
+      test: "test/h.test.ts",
+      title: "a case # two",
+    });
+    for (const unknown of [
+      "gone:",
+      "gone:a b.tsx",
+      "gone:a.tsx#",
+      "gone:#x",
+      "held:test/h.test.ts",
+      "held:#x",
+      "held:t.test.ts#",
+      "Gone:a.tsx",
+      "chrome deleted",
+    ])
+      expect(readProof(unknown)).toEqual({ form: "unknown" });
   });
 
   it("refuses a row whose file reads no file any more, an unknown kind and an empty task", () => {
@@ -150,6 +301,61 @@ describe("the retirement table", () => {
     expect(checkRetirement(world({ rows: [row("test/a.test.ts", { task: "" })] }))).toEqual([
       expect.stringMatching(/the task ""/),
     ]);
+  });
+});
+
+describe("the check's reader of the base, on a repository of its own", () => {
+  const made: string[] = [];
+  afterAll(() => made.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const CHECK = path.join(import.meta.dirname, "..", "..", "tools", "check.mjs");
+  const git = (root: string, ...args: string[]) =>
+    execFileSync(
+      "git",
+      ["-c", "user.name=tools", "-c", "user.email=", "-c", "commit.gpgsign=false", ...args],
+      {
+        cwd: root,
+        stdio: "ignore",
+      },
+    );
+  /** Two commits: a shell file and a behaviour test, then the test deleted, its row proving it by `proof`. */
+  const deletedWith = (proof: string, shellAfter = "export const AppShell = () => <RailNav />;\n") => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "ohmail-retirement-"));
+    made.push(root);
+    const write = (rel: string, text: string) => {
+      mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      writeFileSync(path.join(root, rel), text);
+    };
+    write("app/shell/AppShell.tsx", "export const AppShell = () => <RailNav />;\n");
+    write("test/old.test.ts", "it('draws the rail', () => {});\n");
+    write("tools/retirement.tsv", `${RETIREMENT_HEADER}\n`);
+    git(root, "init", "-q");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    rmSync(path.join(root, "test/old.test.ts"));
+    write("app/shell/AppShell.tsx", shellAfter);
+    write(
+      "tools/retirement.tsv",
+      `${RETIREMENT_HEADER}\ntest/old.test.ts\tbehaviour\tdraws the rail\tnone\tframe\t${proof}\n`,
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "two");
+    return spawnSync(process.execPath, [CHECK, "--root", root, "--retirement", "--base", "HEAD~1"], {
+      encoding: "utf8",
+    });
+  };
+
+  it("refuses gone: a folder that still stands, alone and with a piece", () => {
+    for (const proof of ["gone:app/shell", "gone:app/shell#AppShell.tsx"]) {
+      const run = deletedWith(proof);
+      expect(run.stderr, proof).toContain("gone:app/shell is not in the base");
+      expect(run.status, proof).toBe(1);
+    }
+  });
+
+  it("passes gone: a piece the change took out of a file that stays", () => {
+    const run = deletedWith("gone:app/shell/AppShell.tsx#<RailNav", "export const AppShell = () => null;\n");
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
   });
 });
 

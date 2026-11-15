@@ -85,13 +85,30 @@ export function compareWithTree(rows, findings) {
   return refusals;
 }
 
+/** The import family: every `ohmail/package-borders:<unit>` rule, and `ohmail/declared-dependency`. */
+export const inImportFamily = (rule) =>
+  rule.startsWith("ohmail/package-borders:") || rule === "ohmail/declared-dependency";
+const FAMILY = "the import family (ohmail/package-borders:*, ohmail/declared-dependency)";
+
 /**
  * Growth against the base branch: per rule and task the count never grows, so a row appears only
- * where the same task lost as much under another path (a move).
+ * where the same task lost as much under another path (a move). Within one task, a crossing may pass
+ * between the rules of the import family in one file: where a file's sum over the family did not grow,
+ * its family rows are not judged for growth; where it grew, each rule is judged, and so is the family's
+ * sum over the files, against what other files' sums lost.
  */
 export function compareWithBase(rows, baseRows) {
   const base = new Map(baseRows.map((row) => [keyOf(row), row]));
   const head = new Map(rows.map((row) => [keyOf(row), row]));
+  const sums = new Map(); // "task\tpath" → the file's sum over the family, before and now
+  const sumOf = (row) => {
+    const key = `${row.task}\t${row.path}`;
+    if (!sums.has(key)) sums.set(key, { task: row.task, path: row.path, before: 0, now: 0 });
+    return sums.get(key);
+  };
+  for (const row of baseRows) if (inImportFamily(row.rule)) sumOf(row).before += row.count;
+  for (const row of rows) if (inImportFamily(row.rule)) sumOf(row).now += row.count;
+  const judged = (row) => !inImportFamily(row.rule) || sumOf(row).now > sumOf(row).before;
   const moved = new Map(); // "rule\ttask" → { grew, lost, where }
   const slot = (rule, task) => {
     const key = `${rule}\t${task}`;
@@ -100,7 +117,7 @@ export function compareWithBase(rows, baseRows) {
   };
   for (const row of rows) {
     const before = base.get(keyOf(row))?.count ?? 0;
-    if (row.count > before) {
+    if (row.count > before && judged(row)) {
       const s = slot(row.rule, row.task);
       s.grew += row.count - before;
       s.where.push(`${row.path} (${before} → ${row.count})`);
@@ -110,12 +127,30 @@ export function compareWithBase(rows, baseRows) {
     const now = head.get(keyOf(row))?.count ?? 0;
     if (now < row.count) slot(row.rule, row.task).lost += row.count - now;
   }
-  return [...moved.values()]
-    .filter((s) => s.grew > s.lost)
-    .map(
-      (s) =>
-        `the baseline grew: ${s.rule} for the task ${s.task} gained ${s.grew} and lost ${s.lost}: ${s.where.join(", ")}`,
-    );
+  const family = new Map(); // task → what the files' family sums gained and lost
+  for (const s of sums.values()) {
+    if (!family.has(s.task)) family.set(s.task, { task: s.task, grew: 0, lost: 0, where: [] });
+    const f = family.get(s.task);
+    if (s.now > s.before) {
+      f.grew += s.now - s.before;
+      f.where.push(`${s.path} (${s.before} → ${s.now})`);
+    } else f.lost += s.before - s.now;
+  }
+  const grew = (s) => s.grew > s.lost;
+  return [
+    ...[...moved.values()]
+      .filter(grew)
+      .map(
+        (s) =>
+          `the baseline grew: ${s.rule} for the task ${s.task} gained ${s.grew} and lost ${s.lost}: ${s.where.join(", ")}`,
+      ),
+    ...[...family.values()]
+      .filter(grew)
+      .map(
+        (f) =>
+          `the baseline grew: ${FAMILY} for the task ${f.task} gained ${f.grew} and lost ${f.lost} in its files' sums: ${f.where.join(", ")}`,
+      ),
+  ];
 }
 
 /** Totals for the run's summary and for a pull request's text. */

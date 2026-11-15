@@ -136,6 +136,66 @@ describe("the baseline against its base", () => {
   });
 });
 
+describe("a crossing that moves between the border rules and the declared dependency in one file", () => {
+  const WEB = "ohmail/package-borders:apps/webapp";
+  const DECLARED = "ohmail/declared-dependency";
+  const TASK = "desktop-layer";
+  // Ten crossings in eight files pass from the border rule to the undeclared import: each file's sum stays.
+  const moves: [string, number][] = [
+    ["apps/desktop/src/main.tsx", 1],
+    ["apps/desktop/src/DesktopSubscription.tsx", 1],
+    ["apps/desktop/src/LinkAsk.tsx", 1],
+    ["apps/desktop/test/command-channel-egress.test.ts", 1],
+    ["apps/desktop/test/desktop-link-refused.test.tsx", 1],
+    ["apps/desktop/test/rigs/preview-memory-entry.ts", 1],
+    ["apps/desktop/test/desktop-remote-images.test.ts", 2],
+    ["apps/desktop/test/desktop-rendered-links.test.tsx", 2],
+  ];
+  const before = moves.map(([path, n]) => row(path, WEB, n + 1, TASK));
+  const after = moves.flatMap(([path, n]) => [row(path, DECLARED, n, TASK), row(path, WEB, 1, TASK)]);
+  const FAMILY = "the import family (ohmail/package-borders:*, ohmail/declared-dependency)";
+
+  it("admits the ten crossings that moved within their files, the sums equal", () => {
+    expect(compareWithBase(after, before)).toEqual([]);
+  });
+
+  it("refuses a real new undeclared import in a desktop file beside them, and names only that file", () => {
+    const grown = [...after, row("apps/desktop/src/App.tsx", DECLARED, 1, TASK)];
+    expect(compareWithBase(grown, before)).toEqual([
+      `the baseline grew: ${DECLARED} for the task ${TASK} gained 1 and lost 0: apps/desktop/src/App.tsx (0 → 1)`,
+      `the baseline grew: ${FAMILY} for the task ${TASK} gained 1 and lost 0 in its files' sums: apps/desktop/src/App.tsx (0 → 1)`,
+    ]);
+  });
+
+  it("refuses a crossing that moves to another file: the sum is per file", () => {
+    const head = [...after, row("apps/desktop/src/New.tsx", DECLARED, 1, TASK)];
+    const base = [...before, row("apps/desktop/src/Old.tsx", WEB, 1, TASK)];
+    expect(compareWithBase(head, base)).toEqual([
+      `the baseline grew: ${DECLARED} for the task ${TASK} gained 1 and lost 0: apps/desktop/src/New.tsx (0 → 1)`,
+    ]);
+  });
+
+  it("refuses a count that passes to a rule outside the family", () => {
+    const head = [...after, row("apps/desktop/src/Door.tsx", "ohmail/platform-name", 1, TASK)];
+    const base = [...before, row("apps/desktop/src/Door.tsx", WEB, 1, TASK)];
+    expect(compareWithBase(head, base)).toEqual([
+      `the baseline grew: ohmail/platform-name for the task ${TASK} gained 1 and lost 0: apps/desktop/src/Door.tsx (0 → 1)`,
+    ]);
+  });
+
+  it("refuses a new border crossing that a move within another file would seem to pay for", () => {
+    const head = [
+      ...after,
+      row("apps/desktop/src/X.tsx", DECLARED, 1, TASK),
+      row("apps/desktop/src/Y.tsx", WEB, 1, TASK),
+    ];
+    const base = [...before, row("apps/desktop/src/X.tsx", WEB, 1, TASK)];
+    expect(compareWithBase(head, base)).toEqual([
+      `the baseline grew: ${FAMILY} for the task ${TASK} gained 1 and lost 0 in its files' sums: apps/desktop/src/Y.tsx (0 → 1)`,
+    ]);
+  });
+});
+
 describe("the list of the new tree", () => {
   it("refuses a missing or empty list: the formatter would check nothing", () => {
     expect(() => parseNewTree(null)).toThrow(/missing or empty/);
