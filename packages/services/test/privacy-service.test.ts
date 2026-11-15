@@ -983,6 +983,19 @@ describe("nodeRemoteFetch: a 3xx is a refusal, never a second request", () => {
     for (const code of ["ECONNRESET", "ENOTFOUND", "ECONNREFUSED", "EAI_AGAIN", "CERT_HAS_EXPIRED", "ETIMEDOUT"]) {
       expect(isTransportFailure(Object.assign(new Error("boom"), { code }))).toBe(true);
     }
+    // An answer no HTTP parser takes, and on an https address bytes that are no TLS: the sender's bytes, not ours.
+    for (const code of ["HPE_INVALID_CONSTANT", "HPE_INVALID_HEADER_TOKEN", "HPE_HEADER_OVERFLOW", "EPROTO"]) {
+      expect(isTransportFailure(Object.assign(new Error("boom"), { code })), code).toBe(true);
+    }
+    // A certificate chain the sender's server presents and the platform does not accept.
+    for (const code of [
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+    ]) {
+      expect(isTransportFailure(Object.assign(new Error("boom"), { code })), code).toBe(true);
+    }
+    // …and one whose fault the platform's table does not name (a weak signature, an excluded name, an unknown critical
+    // extension): the platform's code for it is this one word, and the sender chose that chain too.
+    expect(isTransportFailure(Object.assign(new Error("boom"), { code: "UNSPECIFIED" }))).toBe(true);
     expect(isTransportFailure(Object.assign(new Error("aborted"), { name: "AbortError" }))).toBe(true);
     // …and everything that is US.
     expect(isTransportFailure(new TypeError("cannot read properties of undefined"))).toBe(false);

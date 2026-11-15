@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { getEventListeners } from "node:events";
-import { pinnedHttpRequest } from "../src/net/index.js";
-import { farSide, SWITCH } from "./far-side.js";
+import { createServer } from "node:net";
+import tls from "node:tls";
+import { pinnedHttpRequest, type PinnedResponse } from "../src/net/index.js";
+import { answerEach, farSide, localhostIdentity, onOnePort, SWITCH } from "./far-side.js";
 
 /**
  * THE PINNED REQUEST SETTLES, WHATEVER THE FAR SIDE ANSWERS. A letter's sender names the host, so the far side may
@@ -27,11 +29,18 @@ async function answering(act: Parameters<typeof farSide>[0]): Promise<string> {
 }
 
 /** The request as a caller makes it, under the caller's deadline. */
-function ask(url: string, method = "GET", deadlineMs = DEADLINE_MS) {
+function ask(url: string, method = "GET", deadlineMs = DEADLINE_MS, pin = ["127.0.0.1"]) {
   const caller = new AbortController();
   timers.push(setTimeout(() => caller.abort(), deadlineMs));
   const body = method === "POST" ? "a=1" : undefined;
-  return { signal: caller.signal, asked: pinnedHttpRequest(url, { method, pin: ["127.0.0.1"], signal: caller.signal, body }) };
+  return { signal: caller.signal, asked: pinnedHttpRequest(url, { method, pin, signal: caller.signal, body }) };
+}
+
+/** An answer's body, read to its end. */
+async function text(res: PinnedResponse): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of res.stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** How `p` settles and when, or `never` once three deadlines have passed. */
@@ -50,6 +59,9 @@ async function left(signal: AbortSignal): Promise<typeof NOTHING_LEFT> {
 }
 
 describe("pinnedHttpRequest settles inside the caller's deadline and leaves nothing open", () => {
+  // No case tells the upgrade listener from the close listener: without the first, Node ends the handed-over
+  // connection itself and the second refuses the request with the same code at the same moment; only the message
+  // differs, and no caller reads it.
   it.each(["GET", "POST"])("%s: a change of protocol (101), then a close, is refused at once", async (method) => {
     const { asked, signal } = ask(await answering((socket) => socket.end(SWITCH)), method);
     const out = await settle(asked);
@@ -98,5 +110,64 @@ describe("pinnedHttpRequest settles inside the caller's deadline and leaves noth
     const out = await settle(asked);
     expect(out).toMatchObject({ settled: "resolved", value: { status: 101 } });
     expect(out.ms).toBeLessThan(DEADLINE_MS);
+  });
+});
+
+/**
+ * EVERY REQUEST DIALS THE ADDRESS IT WAS PINNED TO. Two far sides answer on one port of this machine, at two of its
+ * addresses, each with its own address, and keep every connection open. One name and one port: a connection kept for
+ * them would carry a later request to an address that request's own check never saw.
+ */
+describe("every request dials its own pin, whatever went to the same name and port before it", () => {
+  /** Two raw far sides on one port, closed after the case; `null` where this machine has one address only. */
+  async function twoAddresses(identity?: { key: string; cert: string }) {
+    const far = await onOnePort((address) => identity
+      ? tls.createServer(identity, (socket) => answerEach(socket, address))
+      : createServer((socket) => answerEach(socket, address)));
+    if (far !== null) closers.push(far.close);
+    return far;
+  }
+
+  /** The first request read to its end, then the second, at once: what the second read, and what was left open. */
+  async function inTurn(url: string, [first, second]: readonly [string, string]) {
+    const one = await ask(url, "GET", DEADLINE_MS, [first]).asked;
+    expect(await text(one)).toBe(first);
+    const two = ask(url, "GET", DEADLINE_MS, [second]);
+    return { second: await text(await two.asked), left: await left(two.signal) };
+  }
+
+  it("a second request inside the kept-alive window, pinned elsewhere, is answered at its own address", async (ctx) => {
+    const far = await twoAddresses();
+    if (far === null) return ctx.skip();
+    const out = await inTurn(`http://localhost:${far.port}/x`, far.addresses);
+    // The far sides keep their ends open, so only the requests can have ended the connections.
+    expect(out, "the second request rode the first one's connection, or a connection outlived its request")
+      .toEqual({ second: far.addresses[1], left: NOTHING_LEFT });
+  });
+
+  it("the same through TLS", async (ctx) => {
+    const identity = localhostIdentity();
+    const far = await twoAddresses(identity);
+    if (far === null) return ctx.skip();
+    // The certificate is trusted for this case alone, as a public one is; nothing of the check is turned off.
+    const trusted = tls.getCACertificates("default");
+    tls.setDefaultCACertificates([...trusted, identity.cert]);
+    try {
+      const out = await inTurn(`https://localhost:${far.port}/x`, far.addresses);
+      expect(out, "the second request rode the first one's connection, or a connection outlived its request")
+        .toEqual({ second: far.addresses[1], left: NOTHING_LEFT });
+    } finally {
+      tls.setDefaultCACertificates(trusted);
+    }
+  });
+
+  it("the same when the first answer was dropped unread, as the unsubscribe and the wake drop theirs", async (ctx) => {
+    const far = await twoAddresses();
+    if (far === null) return ctx.skip();
+    const [first, second] = far.addresses;
+    const url = `http://localhost:${far.port}/x`;
+    (await ask(url, "GET", DEADLINE_MS, [first]).asked).stream.destroy();
+    const two = ask(url, "GET", DEADLINE_MS, [second]);
+    expect({ second: await text(await two.asked), left: await left(two.signal) }).toEqual({ second, left: NOTHING_LEFT });
   });
 });

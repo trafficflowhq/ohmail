@@ -35,6 +35,10 @@ export interface PinnedResponse {
  * `connect` one, and with nobody listening Node ends the request with a `close` alone, after
  * which the caller's abort finds nothing to abort. Both are refused here as a reset
  * (`ECONNRESET`), the code every caller already reads as a request that failed.
+ *
+ * It dials its own pin every time, and its connection ends with it. The platform's shared agent
+ * would keep the connection and hand it to the next request for the same name and port, whatever
+ * that request's pin: a request whose own check passed one address would be answered at another.
  */
 export function pinnedHttpRequest(url: string, opts: PinnedRequestOptions): Promise<PinnedResponse> {
   const request = new URL(url).protocol === "https:" ? httpsRequest : httpRequest;
@@ -50,6 +54,8 @@ export function pinnedHttpRequest(url: string, opts: PinnedRequestOptions): Prom
       {
         method: opts.method ?? "GET",
         lookup: pinnedLookup(opts.pin),
+        // An agent of this request's own, which keeps no connection: nothing is shared with a later request.
+        agent: false,
         headers: opts.headers,
         signal: opts.signal,
         // `servername` (SNI) and the `Host` header are left to default from the URL's hostname,

@@ -631,17 +631,17 @@ describe("the socket goes where the gate's lookup said, not where the name leads
         }
       }
       if (pair === undefined) return ctx.skip();
+      // One port for both rows, one after the other: no connection the first row's request left carries the second's.
+      const servers = await onOnePort(...pair);
+      if (servers === null) throw new Error("the two addresses were free a moment ago");
       const reached: [string, string | false][] = [];
-      for (const pinned of pair) {
-        // Servers and a port of the row's own: the platform keeps a connection by name, and would answer from it.
-        const servers = await onOnePort(...pair);
-        if (servers === null) throw new Error("the two addresses were free a moment ago");
-        try {
+      try {
+        for (const pinned of pair) {
           const answer = await make({ resolve: async () => [pinned] }).request(`http://localhost:${servers.port}/`, get());
           reached.push([pinned, answer.arrived && textOf(answer.body)]);
-        } finally {
-          servers.close();
         }
+      } finally {
+        servers.close();
       }
       expect(reached).toEqual(pair.map((address) => [address, address]));
     });

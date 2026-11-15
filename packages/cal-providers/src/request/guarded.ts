@@ -50,7 +50,7 @@ const PRINTABLE = /^[\x20-\x7e]*$/;
 const TOKEN = /^[\x21-\x7e]+$/;
 
 /** A socket's or a lookup's failure, by its code. Anything else is a fault of this program and is thrown on. */
-const TRANSPORT_CODES: ReadonlySet<string> = new Set([
+export const TRANSPORT_CODES: ReadonlySet<string> = new Set([
   "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH",
   "ENETDOWN", "EPIPE", "EADDRNOTAVAIL", "EHOSTDOWN", "ERR_SOCKET_CONNECTION_TIMEOUT", "ERR_SOCKET_CLOSED", "ERR_STREAM_PREMATURE_CLOSE",
   // A handshake that is no TLS at all (a plain server on the port) fails as a protocol error of the socket.
@@ -60,9 +60,11 @@ const TRANSPORT_CODES: ReadonlySet<string> = new Set([
   "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "HOSTNAME_MISMATCH",
   "OUT_OF_MEM", "UNSPECIFIED",
 ]);
+/** The families of such failures, each matched by the start of its code. */
+export const TRANSPORT_PREFIXES: readonly string[] = ["CERT_", "CRL_", "UNABLE_TO_", "ERROR_IN_", "ERR_TLS_", "ERR_SSL_", "ERR_OSSL_", "HPE_"];
 const isTransportFailure = (err: unknown): boolean => {
   const code = typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
-  return typeof code === "string" && (TRANSPORT_CODES.has(code) || /^(CERT_|CRL_|UNABLE_TO_|ERROR_IN_|ERR_TLS_|ERR_SSL_|ERR_OSSL_|HPE_)/.test(code));
+  return typeof code === "string" && (TRANSPORT_CODES.has(code) || TRANSPORT_PREFIXES.some((prefix) => code.startsWith(prefix)));
 };
 
 function parse(text: string, against?: string): URL | null {
@@ -208,8 +210,8 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
         if ("refused" in cleared) return refused(cleared.refused);
         const headers = headersFor(req, body, hop);
         if (headers === null) return refused("sign_in_refused");
-        // The wait is this call's, not the request's: a connection can end with neither an answer nor an error
-        // (a server that answers with a change of protocol), and such a request never settles and hears no signal.
+        // The wait is this call's, not the request's: the call ends at its own bound even with a request that never
+        // settles. The product's pinned request settles on every path; the bound does not lean on that.
         const asking = deps.request(url.href, { method: req.method, headers, body: body ?? undefined, pin: cleared.pin, signal: ac.signal });
         const answered = await unlessAborted(asking, ac.signal);
         if (answered === "late") {

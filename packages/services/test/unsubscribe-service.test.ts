@@ -8,7 +8,7 @@ import {
   makeUnsubscribeService, makeNodeOneClickPost, ONE_CLICK_BODY, ServiceError,
   type HostResolver, type OneClickPost, type ServiceContext,
 } from "../src/index.js";
-import { farSide, SWITCH } from "../../core/test/far-side.js";
+import { farSide, NOT_HTTP, SWITCH } from "../../core/test/far-side.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
 /**
@@ -309,8 +309,11 @@ describe("UnsubscribeService — the outbound request", () => {
     expect(post.calls).toHaveLength(1);
   });
 
-  it("a list that answers with a change of protocol (101) is a failure the person may retry, never a press that hangs", async () => {
-    const switching = await farSide((socket) => socket.write(SWITCH));
+  it.each([
+    ["a change of protocol (101)", SWITCH],
+    ["bytes that are no HTTP", NOT_HTTP],
+  ])("a list that answers with %s is a failure the person may retry, never a press that hangs", async (_shape, bytes) => {
+    const switching = await farSide((socket) => socket.write(bytes));
     const watch: { timer?: ReturnType<typeof setTimeout> } = {};
     try {
       const { db, ctx, accountId, mailboxId } = await makeCtx();
