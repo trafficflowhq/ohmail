@@ -1,4 +1,5 @@
-import { countRealFiles, normalizeMime } from "./mime.js";
+import { countRealFiles, itipReplyByHeaders, normalizeMime } from "./mime.js";
+import type { PlannedInvitation } from "./invitation-mail.js";
 import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { searchBodyOf, type MessageSearchInput } from "./message-search.js";
@@ -447,6 +448,13 @@ export interface NewPlan {
    * PlanDeps.correspondenceSince} — which the commit teaches `contacts`. Absent for anything else.
    */
   learnCorrespondents?: readonly string[];
+  /**
+   * THE INVITATION THE LETTER CARRIES (mail 0204), as its calendar part said it at the parse, and
+   * whether the person wrote it. Set in ONE place, {@link planChange}, whichever arm planned the
+   * row; the commit writes it, as the winner. A letter carrying one is never a run member: only the
+   * per-letter commit writes the row (`sync.ts`'s `runnable`).
+   */
+  invitation?: PlannedInvitation;
 }
 
 export interface ExistingPlan {
@@ -832,6 +840,11 @@ export interface CommitDeps {
   mailboxMustBeLive?: MailboxMustBeLive;
   /** {@link AdoptDeps.observedSince}, for the `adopt_external` arm; absent ⇒ read when it adopts. */
   observedSince?: Date | null;
+  /**
+   * The caller's log: a letter kept without its invitation row (the store refused the row's value)
+   * is said here, by ids and a closed word.
+   */
+  log?: Logger;
 }
 
 /**
@@ -1043,7 +1056,9 @@ function domainOf(value: string): string {
  * Who one of the account's own Sent copies was written to, when it teaches — To, Cc and a Bcc
  * the copy kept, lower-cased. Nothing before the consent point ({@link
  * PlanDeps.correspondenceSince}) and nothing a machine wrote: an out-of-office copy addressed to
- * every stranger who wrote is not the person writing to them.
+ * every stranger who wrote is not the person writing to them. Nor an answer to an invitation (an
+ * iTIP REPLY, by its type or its calendar part): a "No" to an invitation a stranger sent is not
+ * writing to them, and must not let them past the gate for good.
  */
 function sentCopyRecipients(
   msg: NormalizedMessage, internalDate: Date | null, since: Date | undefined,
@@ -1051,6 +1066,7 @@ function sentCopyRecipients(
   const at = internalDate ?? msg.date;
   if (since === undefined || at === null || at.getTime() <= since.getTime()) return [];
   if (autoReplySuppression(msg.headers, msg.from.address) !== null) return [];
+  if (itipReplyByHeaders(msg) || msg.calendar?.invitation?.method === "REPLY") return [];
   const bcc = (msg.headers["bcc"] ?? []).flatMap((line) => line.split(","))
     .map((part) => /<([^<>@\s]+@[^<>\s]+)>/.exec(part)?.[1] ?? part.trim());
   return [...new Set([...msg.to.map((a) => a.address), ...msg.cc.map((a) => a.address), ...bcc]
@@ -1126,6 +1142,8 @@ function headersDigest(normalized: NormalizedMessage): string {
 export async function planChange(change: Change, deps: PlanDeps, parsed?: NormalizedMessage): Promise<ChangePlan> {
   const plan = await planFromRaw(change, deps, parsed);
   if (change.oversizeBytes !== undefined && plan.new) plan.new.bodyWithheld = "too_large";
+  const invitation = plan.new?.normalized.calendar?.invitation;
+  if (plan.new && invitation !== undefined) plan.new.invitation = { ...invitation, own: change.ownAuthored === true };
   return plan;
 }
 
@@ -1988,6 +2006,20 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // Attachment METADATA (never bytes) persists in the SAME transaction as the
     // message — atomic ingest, no orphan attachment without its message.
     await repo.insertAttachments(stored.id, accountId, p.normalized.attachments);
+
+    // The invitation the letter carries, as the winner and in this transaction: its own row rides
+    // the letter's `create` below, and every OTHER letter the write changed (the person's reply
+    // recording its answer on the invitation) is owed a message change in the same list. A fault
+    // of the store's own leaves here as a throw: the letter is never kept without its row for it.
+    if (p.invitation) {
+      const wrote = await repo.writeInvitation(stored.id, accountId, mailboxId, p.invitation);
+      for (const id of wrote.touched) {
+        deltas.push({ accountId, entityType: "message", entityId: id, op: "update", meta: null });
+      }
+      if (wrote.refused !== undefined) {
+        deps.log?.warn("invitation_row_refused", { accountId, mailboxId, messageId: stored.id, reason: wrote.refused });
+      }
+    }
 
     // The full original body, always — text AND html, sensitive or not. Body redaction is
     // removed: the mailbox on the IMAP server already holds this mail unredacted, so a redacted

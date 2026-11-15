@@ -39,6 +39,7 @@ import { junkRestorePass, oweJunkWalk } from "./junk-restore.js";
 import { junkGonePass } from "./junk-gone.js";
 import { forgetTrashProof, trashGonePass, TRASH_GONE_PAGE } from "./trash-gone.js";
 import { storageRefillPass } from "./storage-refill.js";
+import { invitationBackfillPass } from "./invitation-backfill.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
@@ -852,11 +853,15 @@ interface OpenRun {
   teaches: boolean;
 }
 
-/** A NEW letter `commitChange` writes nothing else for: no AI decision, no contact, no audit row, no away stamp. */
+/**
+ * A NEW letter `commitChange` writes nothing else for: no AI decision, no contact, no audit row, no
+ * away stamp, no invitation (only the per-letter commit writes its row and the answer it records).
+ */
 function runnable(plan: ChangePlan): boolean {
   const p = plan.outcome === "new" ? plan.new : undefined;
   return p !== undefined && p.ai === undefined && p.correspondentAdmission === undefined
-    && p.bounceAdmission === undefined && p.awayBounceOf === undefined && p.learnCorrespondents === undefined;
+    && p.bounceAdmission === undefined && p.awayBounceOf === undefined && p.learnCorrespondents === undefined
+    && p.invitation === undefined;
 }
 
 /**
@@ -1734,6 +1739,7 @@ async function syncCycleWithin(
       commitFenced(plan, txRepo, {
         repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
         ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
+        ...(log !== undefined ? { log } : {}),
       }, deps.fence !== undefined));
     await runOwedDemotions(repo, accountId, mailboxId, committed.owedDemotions ?? [], log);
     noteCommitted(ch, plan);
@@ -2039,6 +2045,28 @@ async function syncCycleWithin(
     }
   }
 
+  // THE INVITATION PASS: letters stored before ingest kept invitations get their row, read again
+  // from the mail server (`invitation-backfill.ts`). Same placement and error handling.
+  if (deferred.size === 0) {
+    try {
+      await invitationBackfillPass({
+        repo, adapter, accountId, mailboxId,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("invitation_backfill_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so no invitation was written",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("invitation_backfill_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
   /* THE BLANK REPAIR (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS): the junk restore's place and
      rule, the visit's tail and only when nothing was deferred. A blank an older build stored in a
      letter's place gives the place back, and a letter its move filed away goes back to INBOX; the
@@ -2299,6 +2327,7 @@ async function retryFailedMessages(
             {
               repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
               ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
+              ...(log !== undefined ? { log } : {}),
             },
             deps.fence !== undefined,
           ),

@@ -199,6 +199,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["inReplyTo", "messageIdHeader", "references"], classes: ["display"],
     why: "a reply's outgoing chain is written from the parent WE hold, and the minted id is recorded",
   },
+  "packages/services/src/invitation-answer-draft.ts": {
+    terms: ["inReplyTo", "references"], classes: ["display"],
+    why: "an invitation's answer carries the outgoing chain `send-service.ts` wrote from the parent WE hold, or none when an id is no plain token; it groups nothing",
+  },
   "packages/services/src/away-responder-pass.ts": {
     terms: ["inReplyTo", "messageIdHeader", "references"], classes: ["display"],
     why: "the reply's own outgoing headers, plus RFC 3834 loop markers read off the incoming message",
@@ -258,6 +262,10 @@ const CLASSIFIED: Record<string, Row> = {
   "apps/worker/src/storage-refill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a letter emptied for space gets its text back only from bytes whose id and dedup key match the stored row",
+  },
+  "apps/worker/src/invitation-backfill.ts": {
+    terms: ["messageIdHeader"], classes: ["dedup-content"],
+    why: "a stored letter gets its invitation row only from bytes whose id and dedup key match the stored row",
   },
   "packages/services/src/live-body.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],

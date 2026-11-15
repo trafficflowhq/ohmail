@@ -25,6 +25,7 @@ import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
 } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
+import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type AnswerCalendar } from "./invitation-answer-draft.js";
 import { requireUuid } from "./ids.js";
 import { htmlToPlainText, sanitizeOutboundHtml, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
@@ -496,6 +497,12 @@ export interface SendInput {
    * answers its replays. Never with staged files or forward fields: the held row names its original.
    */
   again?: boolean;
+  /**
+   * AN INVITATION'S ANSWER: the calendar part its letter carries, written from the invitation's row,
+   * and the envelope it was written for. Set by the answer's service alone, for its own draft
+   * (`invitation-answer-draft.ts`); never stored, and never on any other letter.
+   */
+  calendar?: AnswerCalendar;
 }
 
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
@@ -953,6 +960,11 @@ export function sendContentFingerprint(input: {
   attachments: ReadonlyArray<{
     filename: string; contentType: string; sizeBytes: number; contentSha256: string | null;
   }>;
+  /**
+   * The calendar part's SHA-256, when the letter carries one (an invitation's answer): two answers
+   * to one invitation differ in it alone. Absent keeps every older digest.
+   */
+  calendar?: string | null;
 }): string {
   const addrs = (xs: readonly EmailAddress[]): string[] =>
     [...new Set(xs.map((a) => a.address.trim().toLowerCase()))].sort();
@@ -970,6 +982,7 @@ export function sendContentFingerprint(input: {
     input.sendAt ? input.sendAt.toISOString() : null,
     files,
     ...(input.forwardParts ? [[...new Set(input.forwardParts)].sort()] : []),
+    ...(input.calendar ? [{ calendar: input.calendar }] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -1001,6 +1014,7 @@ function contentFingerprintOf(
     ...(forwardParts ? { forwardParts } : {}),
     sendAt: d.sendAt ?? null,
     attachments: files,
+    ...(input.calendar ? { calendar: createHash("sha256").update(input.calendar.text, "utf8").digest("hex") } : {}),
   });
 }
 
@@ -2781,6 +2795,7 @@ export class SendService {
         accountId: ctx.accountId,
         mailboxId,
         storageCap,
+        log: deps.log ?? defaultLog,
         // The read phase runs on the request's own handle, outside a transaction — the same shape
         // the worker's plan phase has.
         repo: makeDrizzleRepo(ctx.db as never) as RepoPort,
@@ -3079,6 +3094,9 @@ export class SendService {
         );
       }
       const forwardOf = input.forwardOf ?? d.forwardOfMessageId ?? null;
+      // AN INVITATION'S ANSWER leaves only with its calendar part, and only as it was made.
+      const answerRefusal = answerEnvelopeRefusal(d, mb?.address, input.calendar);
+      if (answerRefusal !== null) throw answerRefusal;
 
       // THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions. The three lists are on
       // the row this transaction already locked, so the total costs nothing — and this is the
@@ -3296,7 +3314,7 @@ export class SendService {
         // half exists when the draft is rich or a forwarded original has html of its own.
         ...(fwdBody ?? { text: d.body, ...(html ? { html } : {}) }),
         messageId: mintedMessageId,
-        ...(inReplyTo ? { inReplyTo, references } : {}),
+        ...(inReplyTo && threadHeadersFit(input.calendar, inReplyTo, references) ? { inReplyTo, references } : {}),
         // ── ATTACHMENTS RIDE THE REQUEST, NOT THE ROW ──────────────────────────────────────
         //
         // The bytes are the send request's, decoded by the route. They go onto the `OutboundMessage`
@@ -3304,6 +3322,7 @@ export class SendService {
         // one object, so both copies carry the files and neither this transaction nor any other
         // writes a byte of them to disk. Empty ⇒ omitted, so a plain send is unchanged.
         ...(input.attachments && input.attachments.length ? { attachments: input.attachments } : {}),
+        ...(input.calendar ? { calendar: { method: input.calendar.method, text: input.calendar.text } } : {}),
       };
 
       // THE ACCOUNT'S CLAIM ON THIS CONTENT — LAST, IMMEDIATELY BEFORE THE FLIP; the duplicate
@@ -4176,9 +4195,10 @@ export class SendService {
    */
   private async recipientsOf(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<string[]> {
     // scoped-by: draftId is the reservation's own draft, loaded by (id, accountId) upstream
-    const [d] = await tx.select({ to: drafts.to, cc: drafts.cc, bcc: drafts.bcc })
+    const [d] = await tx.select({ to: drafts.to, cc: drafts.cc, bcc: drafts.bcc, workflowDedupKey: drafts.workflowDedupKey })
       .from(drafts).where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
-    if (!d) return [];
+    // An invitation's answer teaches nobody: one No to a stranger's invitation must not admit them.
+    if (!d || isInvitationAnswerDraft(d)) return [];
     return [...new Set(
       [...(d.to as EmailAddress[]), ...(d.cc as EmailAddress[]), ...(d.bcc as EmailAddress[])]
         .map((a) => a?.address?.trim().toLowerCase())

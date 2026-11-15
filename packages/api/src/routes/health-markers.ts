@@ -851,9 +851,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration 42P01s on all three. Deploy order migration → API → worker.
   ["pass_progress", "job"],
   // mail 0204_message_invitations — the identity of an invitation a letter carried, one row per
-  // letter. The SILENT kind for now: ingest writes it and the message read joins it, and until a
-  // release does either nothing fails without the table. The marker is what says the entry ran.
-  ["message_invitations", "uid"],
+  // letter, with the answer on record. LOUD: ingest writes it in the letter's transaction and every
+  // message read joins it, so a host ahead of the migration fails on both. The marker probes the
+  // last column the entry gained, so a store that ran the entry before it had the letter's stamp
+  // reads red. Deploy order migration → API → worker.
+  ["message_invitations", "stamped_at"],
   // mail 0205_calendar — the calendar's ten tables, one probe each. LOUD in one place: the key
   // rotation's census counts `cal_credentials` with every other sealed column, at each start of
   // the worker and under `/health`, so a host ahead of the migration 42P01s there. The other nine

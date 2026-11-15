@@ -13,6 +13,8 @@ import { normalizeMime } from "../src/mime.js";
 import { fingerprintDedupKey, foldMessageIdDomain, messageFingerprint } from "../src/identity.js";
 import { isSentFolderPath } from "../src/types.js";
 import type { CorrespondentEvidence } from "../src/correspondent.js";
+import type { PlannedInvitation } from "../src/invitation-mail.js";
+import type { InvitationWritten } from "../src/ports.js";
 
 /**
  * The `dedup_key` ingest will write for these raw bytes — DERIVED, never spelled out.
@@ -326,6 +328,16 @@ export class FakeRepo implements RepoPort {
   async insertAttachments(messageId: string, _accountId: string, rows: AttachmentMeta[]): Promise<void> {
     if (rows.length === 0) return;
     this.attachments.set(messageId, [...(this.attachments.get(messageId) ?? []), ...rows]);
+  }
+
+  /** The invitations the commit wrote, by message id, as planned; what the store's door decides is its own test. */
+  invitations = new Map<string, PlannedInvitation>();
+  /** Letters a write reports as changed beside its own, for a test of the commit's deltas. */
+  invitationTouches: string[] = [];
+  async writeInvitation(messageId: string, _accountId: string, _mailboxId: string, planned: PlannedInvitation): Promise<InvitationWritten> {
+    if (this.invitations.has(messageId)) return { touched: [] };
+    this.invitations.set(messageId, planned);
+    return { touched: [...this.invitationTouches] };
   }
 
   async getFolderState(messageId: string): Promise<FolderStateRow | null> {

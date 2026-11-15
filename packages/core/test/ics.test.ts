@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parseIcsEvent,
   isCalendarMime,
@@ -342,5 +342,52 @@ describe("parseIcsEvent — recurrence stays honest", () => {
   it("a rule with BYMONTHDAY/BYSETPOS complexity → null", () => {
     expect(parseIcsEvent(wrap("RRULE:FREQ=MONTHLY;BYMONTHDAY=15"))!.recurrence).toBeNull();
     expect(parseIcsEvent(wrap("RRULE:FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1"))!.recurrence).toBeNull();
+  });
+});
+
+/**
+ * THE ZONE NAMES A SENDER WRITES DO NOT BUY MEMORY. A formatter for a zone weighs about 50 kB
+ * outside the heap, the zone name is sender text, and this reader runs at ingest on a server: one
+ * formatter per zone, whatever its spelling, and names the platform refused kept apart.
+ */
+describe("parseIcsEvent — the zone memory is bounded", () => {
+  const atZone = (tzid: string) =>
+    ["BEGIN:VCALENDAR", "BEGIN:VEVENT", `DTSTART;TZID=${tzid}:20261201T110000`, "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  /** The zone each formatter made was asked for, by its spelling. */
+  function countFormatters(): { made: Map<string, number>; restore: () => void } {
+    const made = new Map<string, number>();
+    const Real = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (this: unknown, ...args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+      const zone = String(args[1]?.timeZone ?? "").toLowerCase();
+      made.set(zone, (made.get(zone) ?? 0) + 1);
+      return new Real(...args);
+    } as unknown as typeof Intl.DateTimeFormat);
+    return { made, restore: () => spy.mockRestore() };
+  }
+  /** `n` spellings of `name`, each a different mix of upper and lower case. */
+  const spellings = (name: string, n: number) => Array.from({ length: n }, (_, k) =>
+    [...name].map((c, i) => ((k >> (i % 13)) & 1 ? c.toUpperCase() : c.toLowerCase())).join(""));
+
+  it("5,000 letters each spelling one zone anew make one formatter, and each reads the same instant", () => {
+    const { made, restore } = countFormatters();
+    try {
+      const instants = new Set(spellings("America/Argentina/Buenos_Aires", 5000).map((s) => parseIcsEvent(atZone(s))!.start.epochMs));
+      expect(instants).toEqual(new Set([Date.UTC(2026, 11, 1, 14, 0)]));
+      expect(made.get("america/argentina/buenos_aires") ?? 0).toBeLessThanOrEqual(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it("names the platform refuses do not push out a zone it knows", () => {
+    expect(parseIcsEvent(atZone("Asia/Kathmandu"))!.start.epochMs).not.toBeNull();
+    const { made, restore } = countFormatters();
+    try {
+      for (let i = 0; i < 5000; i++) expect(parseIcsEvent(atZone(`Nowhere/Zone_${i}`))!.start.epochMs).toBeNull();
+      expect(parseIcsEvent(atZone("Asia/Kathmandu"))!.start.epochMs).toBe(Date.UTC(2026, 11, 1, 5, 15));
+      expect(made.get("asia/kathmandu") ?? 0).toBe(0);
+    } finally {
+      restore();
+    }
   });
 });

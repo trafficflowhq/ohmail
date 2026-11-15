@@ -2515,6 +2515,14 @@ export const messageInvitations = pgTable("message_invitations", {
   startsAt: timestamp("starts_at", { withTimezone: true }),
   organizer: text("organizer"),
   invitedAddress: text("invited_address"),
+  /**
+   * On a REQUEST, the answer this mailbox gave on record (`accepted`, `tentative`, `declined`) and
+   * when; on a REPLY, the answer the letter carries. Written by the door in `message-invitations.ts`.
+   */
+  answer: text("answer"),
+  answeredAt: timestamp("answered_at", { withTimezone: true }),
+  /** The letter's DTSTAMP: it orders one revision's letters (a cancellation and a new invitation). */
+  stampedAt: timestamp("stamped_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
