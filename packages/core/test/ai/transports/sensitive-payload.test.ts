@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { SensitivePayloadRefusal, type ClassifierInput, type DraftInput } from "../../../src/mail.js";
+import {
+  DRAFT_OWN_PREFIX, DRAFT_PREFIX, NO_LETTER, SensitivePayloadRefusal, type ClassifierInput, type DraftInput,
+} from "../../../src/mail.js";
+import { buildDraftParams } from "../../../src/ai/draft.js";
 import {
   anthropicTransport, ollamaTransport, openaiTransport, opencodeGoTransport, type AiTransport,
 } from "../../../src/ai/transports/index.js";
@@ -97,4 +100,75 @@ describe("an unredacted draft input never reaches a model, whichever transport c
       expect(calls.length, `${name} never called its fetch, so the case above proves nothing`).toBeGreaterThan(0);
     });
   }
+});
+
+/** A fetch that keeps each request's body and answers nothing usable. */
+function capturing(): { bodies: string[]; fetchImpl: typeof fetch } {
+  const bodies: string[] = [];
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response("{}", { status: 500 });
+  }) as unknown as typeof fetch;
+  return { bodies, fetchImpl };
+}
+/** A text as it stands inside a JSON request body, at whatever depth it was encoded. */
+const inBody = (body: string, text: string): boolean => body.includes(JSON.stringify(text).slice(1, -1))
+  || body.includes(JSON.stringify(JSON.stringify(text).slice(1, -1)).slice(1, -1));
+
+describe("a draft from the person's own words, whichever drafter writes it", () => {
+  const words = "tell Ann the budget review moves to Friday at nine";
+  const fromWords = (): DraftInput => ({ incoming: { ...NO_LETTER }, context: { kbEntries: [], threadMessages: [] }, own: { text: words, replying: false } });
+
+  for (const [name, make] of TRANSPORTS) {
+    it(`${name}: asks with the own-words prefix and the words, and sends no letter`, async () => {
+      const { bodies, fetchImpl } = capturing();
+      await expect(make(fetchImpl).draft(fromWords())).rejects.toThrow();
+      expect(bodies.length).toBeGreaterThan(0);
+      for (const body of bodies) {
+        expect(inBody(body, DRAFT_OWN_PREFIX), `${name}: the own-words prefix`).toBe(true);
+        expect(inBody(body, DRAFT_PREFIX), `${name}: not the reply prefix`).toBe(false);
+        expect(body).toContain(words);
+        expect(body).not.toContain("incoming");
+      }
+    });
+
+    it(`${name}: a reply drafted from the letter alone asks as it always did`, async () => {
+      const { bodies, fetchImpl } = capturing();
+      await expect(make(fetchImpl).draft(redacted())).rejects.toThrow();
+      for (const body of bodies) {
+        expect(inBody(body, DRAFT_PREFIX), `${name}: the reply prefix`).toBe(true);
+        expect(inBody(body, DRAFT_OWN_PREFIX)).toBe(false);
+      }
+    });
+
+    it(`${name}: own words with a field outside the list, or a letter they do not answer, never reach the fetch`, async () => {
+      const { bodies, fetchImpl } = capturing();
+      const extra = { ...fromWords(), own: { text: words, replying: false, body: "the whole message" } as DraftInput["own"] };
+      const letter = { ...redacted(), own: { text: words, replying: false } };
+      await expect(make(fetchImpl).draft(extra)).rejects.toThrow(/redaction violation/);
+      await expect(make(fetchImpl).draft(letter)).rejects.toThrow(/redaction violation/);
+      expect(bodies).toEqual([]);
+    });
+  }
+
+  it("the Sonnet drafter's request: the own-words prefix, the words, and a letter only when answering one", () => {
+    const own = buildDraftParams(fromWords());
+    expect(JSON.stringify(own.system)).toContain(JSON.stringify(DRAFT_OWN_PREFIX).slice(1, -1));
+    expect(JSON.parse((own.messages as Array<{ content: string }>)[0]!.content)).toEqual({
+      context: { kbEntries: [], threadMessages: [] }, own: { text: words },
+    });
+    const answering = buildDraftParams({ ...redacted(), own: { text: words, replying: true, subject: "Friday" } });
+    expect(JSON.parse((answering.messages as Array<{ content: string }>)[0]!.content)).toEqual({
+      incoming: redacted().incoming, context: { kbEntries: [], threadMessages: [] }, own: { text: words, subject: "Friday" },
+    });
+  });
+
+  it("a reply from the letter alone serialises byte for byte as before: the reply prefix, and incoming then context", () => {
+    const params = buildDraftParams(redacted());
+    expect((params.system as Array<{ text: string }>)[0]!.text).toBe(DRAFT_PREFIX);
+    expect((params.messages as Array<{ content: string }>)[0]!.content).toBe(JSON.stringify({
+      incoming: { from: "her@example.test", subject: "Question", snippet: "when are you free?" },
+      context: { kbEntries: [], threadMessages: [] },
+    }));
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort } from "@trafficflow/db";
@@ -146,6 +147,20 @@ describe("DraftingService — a spend that bought nothing", () => {
     // BEFORE A CREDIT MOVES is the whole claim: discovering the wiring fault at the moment a
     // refund is owed is discovering it one charge too late.
     expect(credits.spends).toEqual([]);
+  });
+
+  it("a letter in a DISCONNECTED mailbox is refused before a credit moves: no draft could be stored there", async () => {
+    const { db, ctx, messageId } = await setup();
+    const [m] = await db.select({ mailboxId: messages.mailboxId }).from(messages).where(eq(messages.id, messageId));
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, m!.mailboxId));
+    const credits = fakeSpendPort();
+    const drafter = { draft: vi.fn(throwingDrafter.draft) };
+
+    await expect(svc.draftFromMessage(ctx, messageId, {
+      drafter, credits, obligations: fakeObligations(), attemptKey,
+    })).rejects.toMatchObject({ code: "validation_failed", httpStatus: 400 });
+    expect(credits.spends).toEqual([]);
+    expect(drafter.draft).not.toHaveBeenCalled();
   });
 });
 

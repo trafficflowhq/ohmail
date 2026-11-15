@@ -4,8 +4,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import type { AnthropicCallReport, DraftCallOptions, DraftPort } from "@trafficflow/core";
-import { DraftingService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE } from "../src/index.js";
-import type { DraftsService, ServiceContext } from "../src/index.js";
+import { DraftingService, DraftsService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE } from "../src/index.js";
+import type { ServiceContext } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 
 /*
@@ -179,7 +179,8 @@ describe("the draft's usage rides its release", () => {
 
   it("a store that faults after a delivered call: the store's error stands, and one release carries the line", async () => {
     const w = await setup();
-    const drafts = { create: async () => { throw new Error("store 08006"); } } as unknown as DraftsService;
+    // The real service, its store failing: the mailbox is still asked as it is before any charge.
+    const drafts = Object.assign(new DraftsService(), { create: async () => { throw new Error("store 08006"); } });
     const drafter = reportingDrafter();
     const svc = new DraftingService(drafts, undefined, { usageHost: "api" });
     let thrown = "none";

@@ -34,3 +34,4 @@ export type * from "./client.js";
 export type * from "./routes.js";
 export type * from "./unbound-calls.js";
 export type * from "./calendar.js";
+export type * from "./account.js";

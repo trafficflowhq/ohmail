@@ -1,8 +1,8 @@
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  declineOf, draftUserPayload, knownRequestRules,
+  declineOf, draftSystemPrompt, draftUserPayload, knownRequestRules,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult, ThinkingOff,
@@ -193,7 +193,7 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
       const raw = await call({
         model: opts.draftModel,
         max_tokens: 2048,
-        system: [{ type: "text", text: DRAFT_PREFIX, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: draftSystemPrompt(input), cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: JSON.stringify(userPayload) }],
         ...shaped(thinkingOffShape(opts.draftModel, { thinking: { type: "disabled" } }),
           { type: "json_schema", schema: DRAFT_RESULT_SCHEMA }),

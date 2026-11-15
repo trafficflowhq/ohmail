@@ -167,6 +167,15 @@ export function draftAttemptKey(messageId: string, attemptKey: IdempotencyKey): 
   return `${messageId}:${shortHash(attemptKey)}`;
 }
 
+/**
+ * The work ONE draft from the person's own words is a draft of: the letter it answers, else the
+ * mailbox it is written in, and the client's own intent token. Never a reply draft's key: the same
+ * Idempotency-Key on both routes names two pieces of work, each charged once.
+ */
+export function draftFromTextAttemptKey(anchorId: string, attemptKey: IdempotencyKey): string {
+  return `text.${anchorId}:${shortHash(attemptKey)}`;
+}
+
 /** The work ONE workflow step is a step of. */
 export function workflowAttemptKey(runId: string, stepIndex: number): string {
   return `${runId}:${stepIndex}`;

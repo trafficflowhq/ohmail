@@ -42,6 +42,7 @@ export type ServiceErrorCode =
   | "oauth_state_invalid" | "oauth_unconfigured" | "organized_elsewhere"
   | "organizer_host_change_refused" | "organizer_unreadable" | "origin_not_allowed" | "own_address"
   | "pairing_invalid" | "pairing_mint_limit" | "payload_too_large" | "payment_required"
+  | "plans_unavailable"
   | "profile_changed" | "profile_document_unreadable" | "profile_newer" | "rate_limited"
   | "read_bound_exceeded" | "refresh_expired" | "refresh_missing" | "refresh_revoked"
   | "remote_content_not_loaded" | "return_not_found" | "return_unconfirmed" | "rule_runs_here"

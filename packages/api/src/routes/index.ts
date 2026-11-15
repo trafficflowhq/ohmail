@@ -10,6 +10,7 @@ import { pushRoutes } from "./push.js";
 import { mailboxRoutes } from "./mailboxes.js";
 import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
+import { draftFromTextRoutes } from "./draft-from-text.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
 import { trashRoutes } from "./trash.js";
@@ -228,6 +229,7 @@ export const apiRoutes: Route[] = [
   ...mailboxDiscoverRoutes,
   ...rulesRoutes,
   ...messageRoutes,
+  ...draftFromTextRoutes,
   ...threadRoutes,
   ...screenerRoutes,
   ...trashRoutes,

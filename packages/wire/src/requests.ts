@@ -262,3 +262,16 @@ export type PatchDraftBody = Partial<CreateDraftBody>;
  * `not_arrived` means they looked and it is not there.
  */
 export type SendResolution = "arrived" | "not_arrived";
+
+/**
+ * A DRAFT FROM THE PERSON'S OWN WORDS (`POST /drafts/from-text`): `text` says what the letter should
+ * say, and is the input. `inReplyToMessageId` names a letter to answer, read as context; without it
+ * `mailboxId` names the mailbox the draft is written in, and with it a `mailboxId` must be that
+ * letter's. `subject` is the person's own, kept as written. The draft is stored, never sent.
+ */
+export interface DraftFromTextBody {
+  text: string;
+  mailboxId?: string;
+  inReplyToMessageId?: string;
+  subject?: string;
+}

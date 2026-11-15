@@ -1,8 +1,8 @@
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload, ModelDeclinedError,
+  draftSystemPrompt, draftUserPayload, ModelDeclinedError,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -218,7 +218,7 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
         model: opts.draftModel,
         max_tokens: 2048,
         temperature: 0,
-        messages: turns(DRAFT_PREFIX, userPayload),
+        messages: turns(draftSystemPrompt(input), userPayload),
         response_format: responseFormat("reply_draft", DRAFT_RESULT_SCHEMA),
       }, "drafter");
       return coerceDraftResult(raw);

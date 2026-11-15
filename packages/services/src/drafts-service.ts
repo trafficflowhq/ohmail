@@ -704,7 +704,7 @@ export class DraftsService {
    * send. The same reasoning excludes `sync_blocked_reason`. Only `'disabled'` — the state a
    * human or a billing/lease decision put the row in — refuses.
    */
-  private async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
+  async validMailbox(ctx: ServiceContext, v: unknown): Promise<string> {
     if (typeof v !== "string" || v.length === 0) {
       throw new ServiceError("validation_failed", 400, "mailboxId is required");
     }

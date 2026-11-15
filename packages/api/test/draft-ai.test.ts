@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { localRoutes } from "../src/routes/local.js";
 import type { DraftInput, DraftPort } from "@trafficflow/core";
 import {
   makeDeps, seedSession, seedThread, seedMessage, seedMailbox, req, FIXED_NOW,
 } from "./helpers.js";
-import { drafts, kbEntries } from "@trafficflow/db";
+import { drafts, kbEntries, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -217,5 +218,63 @@ describe("POST /messages/:id/draft — a credential split across two fields", ()
     expect(res.status).toBe(422);
     expect((await res.json()).error.code).toBe("credential_screened");
     expect(drafter.calls, "only the admitted first request reached the model").toBe(1);
+  });
+});
+
+describe("POST /drafts/from-text — a draft from the person's own words", () => {
+  const post = (body: unknown, token: string): Request => req("POST", "/drafts/from-text", { bearer: token, body: JSON.stringify(body) });
+
+  it("202 { draftId } with X-Sync-Seq: the words reach the drafter, the draft is stored in the mailbox named, never sent", async () => {
+    const drafter = mockDrafter();
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const res = await H(post({ text: "ask Ines for the signed contract", mailboxId, subject: "Contract" }, s.token), deps);
+    expect(res.status).toBe(202);
+    expect(res.headers.get("x-sync-seq")).toBeTruthy();
+    const { draftId } = await res.json();
+    expect(drafter.inputs[0]!.own).toEqual({ text: "ask Ines for the signed contract", replying: false, subject: "Contract" });
+    const got = await (await H(req("GET", `/drafts/${draftId}`, { bearer: s.token }), deps)).json();
+    expect([got.status, got.mailboxId, got.subject, got.inReplyToMessageId]).toEqual(["draft", mailboxId, "Contract", null]);
+  });
+
+  it("metered: no Idempotency-Key is a 400 before anything is read or asked", async () => {
+    const drafter = mockDrafter();
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    // A metered composition whose every answer is open: what is refused is the missing key alone.
+    const access = async (): Promise<AccessVerdict> => ({ ok: true, limits: { mailboxes: 5, storageBytes: 1_000, canAddMailbox: true, aiEnabled: true } });
+    const port: EntitlementsPort = {
+      access, accessOrFault: access,
+      spend: async (_a, _b, key) => ({ verdict: "ok", charged: true, attempt: key }),
+      release: async () => "settled" as const, manageLink: async () => null, releaseAccount: async () => "none",
+    };
+    const metered: ApiDeps = { ...deps, services: { ...deps.services!, entitlementsPort: port } };
+    const res = await H(post({ text: "hello" }, s.token), metered);
+    expect([res.status, (await res.json()).error.code]).toEqual([400, "idempotency_key_required"]);
+    expect(drafter.calls).toBe(0);
+  });
+
+  it("no drafter wired is a 503 drafter_unconfigured; an unverified account is refused before it", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const noAi: ApiDeps = { ...deps, services: { ...deps.services!, drafter: undefined } };
+    const res = await H(post({ text: "hello", mailboxId }, s.token), noAi);
+    expect([res.status, (await res.json()).error.code]).toEqual([503, "drafter_unconfigured"]);
+    const u = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW, emailVerified: false });
+    const refused = await H(post({ text: "hello", mailboxId }, u.token), deps);
+    expect([refused.status, (await refused.json()).error.code]).toEqual([403, "email_unverified"]);
+  });
+
+  it("the desktop's own table serves it too, unmetered, on the desktop's own drafter", async () => {
+    const drafter = mockDrafter();
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const local = createApp(localRoutes);
+    const res = await local.handle(post({ text: "hello", mailboxId }, s.token), { ...deps, session: null, idempotency: null });
+    expect(res.status).toBe(202);
+    expect(drafter.calls).toBe(1);
   });
 });
