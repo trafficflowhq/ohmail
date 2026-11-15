@@ -1,0 +1,14 @@
+{
+  "provider": "caldav",
+  "name": "sync-collection-first",
+  "request": {
+    "method": "REPORT",
+    "url": "http://127.0.0.1:8821/bench/ohmail-bench-r2-cal-accounts-20261113/",
+    "body": "<d:sync-collection xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:sync-token></d:sync-token><d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>"
+  },
+  "response": {
+    "status": 207,
+    "contentType": "text/xml",
+    "body": "<?xml version='1.0' encoding='utf-8'?>\n<multistatus xmlns=\"DAV:\"><sync-token>sync-1</sync-token><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/stall-planning-call.ics</href><propstat><prop><getetag>&quot;etag-1&quot;</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/wheel-class.ics</href><propstat><prop><getetag>&quot;etag-2&quot;</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/glaze-firing.ics</href><propstat><prop><getetag>&quot;etag-3&quot;</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/catalogue-proofs.ics</href><propstat><prop><getetag>&quot;etag-4&quot;</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/market-day.ics</href><propstat><prop><getetag>&quot;etag-5&quot;</getetag></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "provider": "google",
+  "name": "events-instances-series",
+  "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/cal-1/events/evt-3/instances?maxResults=250"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "kind": "calendar#events",
+      "summary": "google-account@bench.example",
+      "description": "",
+      "updated": "2026-11-13T12:00:00.000Z",
+      "timeZone": "Europe/Zurich",
+      "accessRole": "owner",
+      "defaultReminders": [
+        {
+          "method": "popup",
+          "minutes": 30
+        }
+      ],
+      "nextSyncToken": "sync-2",
+      "items": [
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261117T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-17T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-17T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-11-17T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261124T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-11-24T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-11-24T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-11-24T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261208T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-12-08T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-12-08T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-12-08T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261215T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-12-15T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-12-15T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-12-15T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261222T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-12-22T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-12-22T19:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-12-22T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 0,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench-key": "wheel-class",
+              "ohmail-bench": "r2-cal-accounts-20261113"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        },
+        {
+          "kind": "calendar#event",
+          "id": "evt-3_20261201T170000Z",
+          "status": "confirmed",
+          "created": "2026-11-13T12:00:00.000Z",
+          "updated": "2026-11-13T12:00:00.000Z",
+          "summary": "Wheel class",
+          "description": "Six evenings at the wheel. Bring an apron.",
+          "creator": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "organizer": {
+            "email": "google-account@bench.example",
+            "self": true
+          },
+          "start": {
+            "dateTime": "2026-12-02T19:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "end": {
+            "dateTime": "2026-12-02T20:30:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "recurringEventId": "evt-3",
+          "originalStartTime": {
+            "dateTime": "2026-12-01T18:00:00+01:00",
+            "timeZone": "Europe/Zurich"
+          },
+          "iCalUID": "evt-3@bench.example",
+          "sequence": 1,
+          "extendedProperties": {
+            "private": {
+              "ohmail-bench": "r2-cal-accounts-20261113",
+              "ohmail-bench-key": "wheel-class-moved"
+            }
+          },
+          "reminders": {
+            "useDefault": true
+          },
+          "eventType": "default"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "provider": "google",
+  "name": "event-get-with-meet",
+  "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/calendars/cal-1/events/evt-5"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "kind": "calendar#event",
+      "id": "evt-5",
+      "status": "confirmed",
+      "created": "2026-11-13T12:00:00.000Z",
+      "updated": "2026-11-13T12:00:00.000Z",
+      "summary": "Stall planning call",
+      "description": "Who brings the shelves, who brings the till.",
+      "creator": {
+        "email": "google-account@bench.example",
+        "self": true
+      },
+      "organizer": {
+        "email": "google-account@bench.example",
+        "self": true
+      },
+      "start": {
+        "dateTime": "2026-11-23T10:00:00+01:00",
+        "timeZone": "Europe/Zurich"
+      },
+      "end": {
+        "dateTime": "2026-11-23T10:30:00+01:00",
+        "timeZone": "Europe/Zurich"
+      },
+      "iCalUID": "evt-5@bench.example",
+      "sequence": 0,
+      "extendedProperties": {
+        "private": {
+          "ohmail-bench-key": "stall-planning-call",
+          "ohmail-bench": "r2-cal-accounts-20261113"
+        }
+      },
+      "hangoutLink": "https://meet.bench.example/room-1",
+      "conferenceData": {
+        "createRequest": {
+          "requestId": "request-1",
+          "conferenceSolutionKey": {
+            "type": "hangoutsMeet"
+          },
+          "status": {
+            "statusCode": "success"
+          }
+        },
+        "conferenceSolution": {
+          "key": {
+            "type": "hangoutsMeet"
+          },
+          "name": "Google Meet"
+        },
+        "conferenceId": "room-1",
+        "entryPoints": [
+          {
+            "entryPointType": "video",
+            "uri": "https://meet.bench.example/room-1"
+          }
+        ]
+      },
+      "reminders": {
+        "useDefault": true
+      },
+      "eventType": "default"
+    }
+  }
+}
