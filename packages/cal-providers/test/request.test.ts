@@ -554,8 +554,9 @@ describe("on a real connection", () => {
     expect(wordOf(await real().request(`http://127.0.0.1:${port}/`, get()))).toBe("connection_failed");
   });
 
-  it("gives up at its bound and at the caller's word on a server that answers with a change of protocol", { timeout: 4_000 }, async () => {
-    // The platform ends such a request with no answer and no error, so nothing but the call's own clock ends the wait.
+  it("ends at once as a connection that failed on a server that answers with a change of protocol", { timeout: 4_000 }, async () => {
+    // The pinned request refuses a change of protocol itself, so the word comes at once and not at the call's
+    // bound. The call's own wait, for a request that never settles, is held by its stand-in case above.
     const sockets: Socket[] = [];
     const upgrading = createRawServer((socket) => {
       sockets.push(socket);
@@ -565,15 +566,10 @@ describe("on a real connection", () => {
     await new Promise<void>((done) => upgrading.listen(0, "127.0.0.1", done));
     const at = `http://127.0.0.1:${(upgrading.address() as AddressInfo).port}/feed.ics`;
     try {
-      const bound = Date.now();
-      expect(wordOf(await real({ connectMs: 150 }).request(at, get()))).toBe("timeout");
-      expect(Date.now() - bound).toBeLessThan(1_500);
-      const caller = new AbortController();
-      setTimeout(() => caller.abort(), 60);
-      const word = Date.now();
-      expect(wordOf(await real().request(at, get({ signal: caller.signal })))).toBe("timeout");
-      expect(Date.now() - word).toBeLessThan(1_500);
-      expect(sockets.length).toBe(2);
+      const began = Date.now();
+      expect(wordOf(await real().request(at, get()))).toBe("connection_failed");
+      expect(Date.now() - began).toBeLessThan(1_500);
+      expect(sockets.length).toBe(1);
     } finally {
       for (const socket of sockets) socket.destroy();
       upgrading.close();
