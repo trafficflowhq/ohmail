@@ -16,6 +16,7 @@ import { pinnedLookup } from "../src/pinned-fetch.js";
 import { isTransportFailure } from "../src/privacy-service.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 import { GIF_2X3, JPEG_2X3, PNG_2X3 } from "../../core/test/fixtures/images.js";
+import { farSide, SWITCH } from "../../core/test/far-side.js";
 
 /**
  * The SSRF gate's DNS port, INJECTED — required at construction precisely so
@@ -1031,6 +1032,25 @@ describe("nodeRemoteFetch: a 3xx is a refusal, never a second request", () => {
         .rejects.toMatchObject({ httpStatus: 424 });
     } finally {
       await rude.close();
+    }
+  });
+
+  it("the REAL port turns a change of protocol (101) into a 424 at once, not a request held open", async () => {
+    // A sender's image host that answers 101 and holds the connection: the port's own timeout cannot end a
+    // request that has already let go of its socket, so only the answer itself can.
+    const switching = await farSide((socket) => socket.write(SWITCH));
+    const watch: { timer?: ReturnType<typeof setTimeout> } = {};
+    try {
+      const started = Date.now();
+      const out = await Promise.race([
+        makeNodeRemoteFetch({ timeoutMs: 1_000 }).fetch(`${switching.url}/x.gif`, ["127.0.0.1"]).then(() => "an image", (e: unknown) => e),
+        new Promise((done) => { watch.timer = setTimeout(() => done("never settled"), 3_000); }),
+      ]);
+      expect(out).toMatchObject({ httpStatus: 424 });
+      expect(Date.now() - started).toBeLessThan(1_000);
+    } finally {
+      clearTimeout(watch.timer);
+      await switching.close();
     }
   });
 

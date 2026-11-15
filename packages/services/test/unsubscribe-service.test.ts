@@ -3,11 +3,12 @@ import type { AddressInfo } from "node:net";
 import { describe, it, expect, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { accounts, mailboxes, messages, messageBodies } from "@trafficflow/db";
+import { accounts, mailboxes, messages, messageBodies, unsubscribeRecords } from "@trafficflow/db";
 import {
   makeUnsubscribeService, makeNodeOneClickPost, ONE_CLICK_BODY, ServiceError,
   type HostResolver, type OneClickPost, type ServiceContext,
 } from "../src/index.js";
+import { farSide, SWITCH } from "../../core/test/far-side.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
 /**
@@ -306,6 +307,30 @@ describe("UnsubscribeService — the outbound request", () => {
     await expect(svc.unsubscribe(ctx, messageId))
       .rejects.toMatchObject({ code: "unsubscribe_list_refused", details: { status: 410 } });
     expect(post.calls).toHaveLength(1);
+  });
+
+  it("a list that answers with a change of protocol (101) is a failure the person may retry, never a press that hangs", async () => {
+    const switching = await farSide((socket) => socket.write(SWITCH));
+    const watch: { timer?: ReturnType<typeof setTimeout> } = {};
+    try {
+      const { db, ctx, accountId, mailboxId } = await makeCtx();
+      const messageId = await seedWithHeaders(db, accountId, mailboxId, ONE_CLICK_HEADERS);
+      // The production port, re-aimed at the far side: the gate rightly never clears this machine's address.
+      const real = makeNodeOneClickPost({ timeoutMs: 1_000 });
+      const post: OneClickPost = { post: (_url, _pin, left) => real.post(`${switching.url}/u?t=abc`, ["127.0.0.1"], left) };
+      const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => NOBODY });
+
+      const out = await Promise.race([
+        svc.unsubscribe(ctx, messageId).then(() => "posted", (e: unknown) => e),
+        new Promise((done) => { watch.timer = setTimeout(() => done("never answered"), 3_000); }),
+      ]);
+      expect(out).toMatchObject({ code: "unsubscribe_list_failed", retryable: true, details: { status: null } });
+      const [record] = await db.select().from(unsubscribeRecords).where(eq(unsubscribeRecords.messageId, messageId));
+      expect(record).toMatchObject({ state: "failed", httpStatus: null });
+    } finally {
+      clearTimeout(watch.timer);
+      await switching.close();
+    }
   });
 });
 
