@@ -13,17 +13,25 @@ One source, written by hand, and what a script makes of it.
 |---|---|
 | `source/tokens.json` | The values, as flat maps of token name to CSS value, one map per block: a face, a scheme, a device, an accent. `var()` is the only reference. A dark or Ohmarchy block names only what differs. |
 | `source/motion.json` | The motion tokens (times, curves, shapes, stagger) and the set they become under reduced motion. |
+| `source/fonts.json` | The typefaces: each family's `@font-face` descriptors, its files with a sha256 each, its licence and where it comes from. |
+| `fonts/` | The font files, the licence text of each family, and `FONTS.md` (**generated**). |
 | `source/declared.tsv` | What the comparison with the design sheet may differ in, each row with its reason. |
 | `scripts/generate-design.mjs` | Writes `src/design/` from the source. No dependency. |
 | `src/design/tokens.css` | **Generated.** One rule per block on the root's attributes: `data-scheme`, `data-face`, `data-accent`, `data-touch`, `data-device`, `data-product`. A document that stamps no scheme follows the system's. |
 | `src/design/motion.css` | **Generated.** The motion tokens; reduced by `data-rm="1"` or by the system's own setting. |
 | `src/design/tokens.ts` | **Generated.** The same values resolved for every situation, typed: `design`, `motion`, `TokenName`, `MotionRole`, and `v("ink")` for `var(--ink)`. |
 | `src/design/tokens.json` | **Generated.** That data for a reader that is not TypeScript. |
+| `src/design/fonts.css` | **Generated.** One `@font-face` per font file, its source a relative path into `fonts/`. A shell imports it once; its bundler emits the files, so the page asks no host for a font. |
+| `src/design/fonts.ts` | **Generated.** The same list for a shell that copies the files itself: `fonts`, `fontFiles`, `fontLicenceFiles`. |
 | `omarchy/design-slots.ts` | A live Omarchy theme, mapped by the law in `omarchy/mapping.js`, renamed to the design's slots. A few colours of the face do not follow a theme yet; `test/design-omarchy-slots.test.ts` names them. |
 | `scripts/compare-sheet.mjs` | Compares what ships with a design sheet, value by value. |
 
-Imports: `@ohmail/tokens/design.css`, `@ohmail/tokens/design/motion.css`, `@ohmail/tokens/design` and
-`@ohmail/tokens/design/tokens.json`.
+Imports: `@ohmail/tokens/design.css`, `@ohmail/tokens/design/motion.css`, `@ohmail/tokens/design/fonts.css`,
+`@ohmail/tokens/design`, `@ohmail/tokens/design/fonts` and `@ohmail/tokens/design/tokens.json`.
+
+The fonts are under the SIL Open Font License, not under this package's licence (`fonts/FONTS.md`, and
+`COPYRIGHT` at the root). Whatever copies a font file out of `fonts/` copies its family's licence text with it;
+a copy of `src/` alone has no fonts, and `fonts.css` then points at nothing.
 
 ### Changing a value
 
