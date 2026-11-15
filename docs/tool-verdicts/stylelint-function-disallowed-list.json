@@ -1,0 +1,20 @@
+{
+  "id": "stylelint:function-disallowed-list",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a colour function in a shorthand",
+      "file": "packages/ui/src/planted/function.css",
+      "line": 2,
+      "refused": "Unexpected function \"rgb\" (function-disallowed-list)"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean stylesheet of the kit",
+      "file": "packages/ui/src/planted/clean.css"
+    }
+  ]
+}
