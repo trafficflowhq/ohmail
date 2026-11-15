@@ -315,6 +315,18 @@ behind and failed the next statement on a healthy connection. And that branch re
 no backoff: a database or pooler that closed every attempt while it opened (a bare close on the
 startup packet or on the types query) was dialled hundreds of times a second until it was back.
 
+A transaction had a third defect, after its connection closed or after it ended. `sql.begin` writes every
+statement of a transaction on the connection its BEGIN ran on, whoever holds that connection by then.
+When the connection closes while the transaction's callback waits, the caller is told `CONNECTION_CLOSED`
+and the callback goes on, and the pool dials the same connection again for the next caller. The
+callback's next statement then ran inside that caller's transaction, under another account's binding
+when the caller was a bound flight; its `commit` committed that transaction early and its `rollback`
+removed that transaction's rows. With nobody holding the connection, its next write stood alone,
+committed outside any transaction. A statement sent on a transaction's handle after the transaction had
+ended ran the same way (`packages/db/test/begin-own-connection.pg.test.ts`). The server's
+`idle_in_transaction_session_timeout`, 30 or 60 s on every pool of the handle table, is one thing that
+closes such a connection.
+
 The patch changes `connection.js` in both builds the package ships (`src/` and `cjs/src/`):
 
 1. a `socketClosed` flag beside `terminated`;
@@ -340,13 +352,38 @@ Within 5, without the server's error a FATAL there leaves the statement waiting 
 never fail it, and without the backoff every bare close redials at once.
 `apps/worker/test/driver-startup-outage.test.ts` holds each of them against a fake Postgres.
 
+It also changes `index.js` in both builds, in `begin` alone (the same hunk in each):
+
+7. `begin` keeps, as `own`, the function it stores on the connection as the transaction's reservation
+   when BEGIN is written (`onexecute`). The driver clears a connection's reservation when the
+   transaction ends or the connection closes, and a later holder stores its own;
+8. the transaction's statement handler, which every statement of the transaction goes through (its
+   savepoints, `rollback to`, `rollback` and `commit` too), refuses a statement before anything is
+   written while the connection's reservation is not `own`: `CONNECTION_CLOSED`, a message that names no
+   host, and the reason `statement sent on a transaction whose connection closed`, a third marker
+   (`apply-patches.mjs markers` reads the message's literal, `write CONNECTION_CLOSED`, as a fourth).
+
+So a statement sent on a transaction's handle after the transaction ended is refused too, where upstream
+writes it outside the transaction on whatever holds the connection then. A statement already waiting in
+the transaction's own queue when the connection closed is never written: only a reply on that connection
+sends it. Nor is it ever answered, so a caller awaiting that statement alone waits for ever; the
+transaction's caller has its refusal. The bound flights of `packages/db/src/client.ts` check the same
+identity for their own statements.
+
+Between the callback's end and the answer to the transaction's own `commit` or `rollback` the connection is
+still the transaction's, so upstream wrote a statement handed in that window behind the commit or the
+rollback, where it ran alone, outside the transaction, and stood even when the transaction rolled back.
+`begin` keeps the `commit`, `rollback` or `prepare transaction` it sends to close the transaction as
+`closing`, and from then on its handler refuses every other statement, unwritten, with the same refusal.
+
 It could not be worked around from our side: `query`, `sent`, `chunk`, `errorResponse` and the timer are
-private to the connection's closure, the rollback is sent by the driver's own `begin`, and the types
-query and state check are the driver's own; turning `fetch_types` off would return array columns as
-strings.
+private to the connection's closure, the rollback is sent by the driver's own `begin`, the transaction's
+connection and its statement handler are private to `begin`'s closure, and the types query and state
+check are the driver's own; turning `fetch_types` off would return array columns as strings.
 
 **What would let us drop this:** an upstream release that refuses a statement on a closed connection,
-clears its write state on close, and handles its own startup queries failing.
+clears its write state on close, handles its own startup queries failing, and refuses a transaction's
+statement once its connection is no longer the transaction's or its own commit or rollback is sent.
 
 ## `htmlparser2@12.0.0` and `htmlparser2@10.1.0`
 
