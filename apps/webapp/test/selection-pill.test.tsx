@@ -670,7 +670,7 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
     // The other half of the contract, and the reason `BulkVerbs.run` returns a boolean at all:
     // a set thrown away by a press that did nothing has to be rebuilt before the person can try
     // the verb that would have worked.
-    const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8");
+    const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8") + readFileSync("packages/app-logic/src/ohbox/picks.ts", "utf8");
     expect(view).toMatch(/if \(bulk\.run\(action, pickedIds\)\) clearPicked\(\);/);
     expect(view, "runBulk clears unconditionally again").not.toMatch(
       /bulk\.run\(action, pickedIds\);\s*\n\s*clearPicked\(\);/,
@@ -917,7 +917,7 @@ describe("what the stylesheets say", () => {
 /* ══ the ? sheet ═════════════════════════════════════════════════════════════════════════ */
 
 describe("the shortcut sheet teaches the state the reader is actually in", () => {
-  const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8");
+  const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8") + readFileSync("packages/app-logic/src/ohbox/keys.ts", "utf8");
 
   it("every selection label in the catalogue is declared by the view", () => {
     // The sheet is generated from the registry, so a label with no binding cannot appear and a
@@ -1041,6 +1041,25 @@ describe("a long press starts a selection on a phone", () => {
     expect(pickedRows(), "a short tap started a selection").toHaveLength(0);
   });
 
+  it("a row that leaves under a resting finger leaves no empty bar behind", async () => {
+    /* The hold picks the row it started on; when that row has left the list meanwhile (here the
+       cursor's Park), the pick names nothing on screen and must go at once, as any pick of a row
+       that left does. Kept only on the list's own changes, the prune missed it: "0 selected" stood. */
+    vi.useFakeTimers();
+    await mountShell();
+    setPhone();
+    const row = rows()[0]!;
+    const id = row.dataset.id!;
+    await pointer(row, "pointerdown", { pointerType: "touch" });
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await key("e");
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+    expect(rows().some((r) => r.dataset.id === id), "fixture: Park left the row in the list").toBe(false);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(pickCount(), "the hold's stale pick drew a count").toBeNull();
+    expect(pill(), "a bar stood over a selection of nothing").toBeNull();
+  });
+
   it("while a selection stands, a tap TOGGLES a row instead of opening it", async () => {
     vi.useFakeTimers();
     await mountShell();
@@ -1080,7 +1099,7 @@ describe("a long press starts a selection on a phone", () => {
   });
 
   it("the gesture is declared beside the drag's, and neither can arm on the other's pointer", () => {
-    const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8");
+    const view = readFileSync("apps/webapp/app/views/OhboxView.tsx", "utf8") + readFileSync("packages/app-logic/src/ohbox/pointer.ts", "utf8");
     const drag = readFileSync("apps/webapp/app/shell/drag-file.ts", "utf8");
     // Both handlers run on the same capture, and each returns early for the other's pointer.
     expect(view).toMatch(/onPointerDownCapture=\{\(e\) => \{ drag\.onPointerDown\(e\); onHoldPointerDown\(e\); \}\}/);

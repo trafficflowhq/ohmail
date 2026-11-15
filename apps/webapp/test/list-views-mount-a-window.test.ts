@@ -149,7 +149,7 @@ function refusals(file: string, r: Reading): string[] {
 }
 
 const viewFiles = readdirSync(VIEWS_DIR).filter((f) => f.endsWith(".tsx")).sort();
-const readings = new Map(viewFiles.map((f) => [f, readListViews(readFileSync(join(VIEWS_DIR, f), "utf8"), f)]));
+const readings = new Map(viewFiles.map((f) => [f, readListViews(readFileSync(join(VIEWS_DIR, f), "utf8") + (f === "OhboxView.tsx" ? readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/window.ts"), "utf8") : ""), f)]));
 
 describe("every list view mounts its window", () => {
   it("the reader sees a planted raw map, and admits the window's own slice", () => {

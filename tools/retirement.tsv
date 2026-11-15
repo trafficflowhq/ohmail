@@ -775,7 +775,7 @@ apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text
 apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
 apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	
 apps/webapp/test/selection-pill.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
-apps/webapp/test/selection-verb-parity.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/selection-verb-parity.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/selfhost-account-kept.test.tsx	source-text	reads source as text (ts): a constant of the API's account route	layer 2	account	
 apps/webapp/test/selfhost-hsts.test.ts	data	reads data files (caddy, env, example, yml)	none	removals	
 apps/webapp/test/selfhost-private-origin-tls.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	

@@ -163,7 +163,7 @@ const view = (name: string): string =>
   readFileSync(resolve(process.cwd(), `apps/webapp/app/views/${name}.tsx`), "utf8");
 
 const VIEWS = {
-  OhboxView: view("OhboxView"),
+  OhboxView: view("OhboxView") + readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/keys.ts"), "utf8"),
   ReadsView: view("ReadsView"),
   ReceiptsView: view("ReceiptsView"),
   ScreenerView: view("ScreenerView"),

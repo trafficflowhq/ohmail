@@ -89,7 +89,7 @@ const PLACED_BY: Record<string, string> = {
     "its caller — a factory with no cursor of its own, mounted by the shell and by the verbs seam",
   "shell/message-verbs.ts":
     "itself — `useRowCursorPlacer` at `view` scope, for every split view that mounts it",
-  "views/OhboxView.tsx": "shell/shell-open-state.ts",
+  "../../../packages/app-logic/src/ohbox/keys.ts": "shell/shell-open-state.ts",
   "views/ReadsView.tsx": "shell/shell-open-state.ts",
   "views/ReceiptsView.tsx": "shell/shell-open-state.ts",
 };

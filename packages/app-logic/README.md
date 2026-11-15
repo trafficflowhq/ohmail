@@ -21,6 +21,7 @@ New code imports a folder's door. A door is the folder's `index.ts` and names wh
 | `@ohmail/app-logic/press` | the one seam a press leaves the interface through, and Undo |
 | `@ohmail/app-logic/mail-state` | the mailbox state ladder and its keys |
 | `@ohmail/app-logic/doors` | the first run, pairing, an update, the wall |
+| `@ohmail/app-logic/ohbox` | the Ohbox's behaviour: placement by arrival, the picks, the read hold, Undo's place, its keys; and the door its model stands behind |
 | `@ohmail/app-logic/geometry`, `/keys`, `/screener`, `/text` | geometry under the text size, key lists, and the types behaviour shares with the views |
 
 The files that were moved here out of the web app's shell are still imported one by one
