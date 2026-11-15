@@ -1114,7 +1114,7 @@ packages/db/test/entitlements-fault-census.test.ts	source-text	reads source as t
 packages/db/test/entitlements-fault-row.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/flag-intent-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/folder-state-outstanding-parity.test.ts	data	reads data files (sql)	none	services-proof	
-packages/db/test/folder-state-outstanding-prebuild.pg.test.ts	data	mail 0160's trigger-kept account copy on folder_state, built ahead of the migrator (mail 0201 removes it); read the journal through the product's reader	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
+packages/db/test/folder-state-outstanding-prebuild.pg.test.ts	behaviour	mail 0160's trigger-kept account copy on folder_state, built ahead of the migrator (mail 0201 removes it); read the journal through the product's reader	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/inbound-header-index-bounds.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/journal-drops-a-referenced-table.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/journal-heads.test.ts	data	reads data files (json, sql): the released-migrations lock, the journals and the migration folders	none	services-proof	
@@ -1159,7 +1159,7 @@ packages/db/test/phantom-rollback.pg.test.ts	source-text	reads source as text (j
 packages/db/test/plane-ops.test.ts	data	reads data files (json)	none	services-proof	
 packages/db/test/pool-wedge.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/recipient-keys-index.test.ts	data	reads data files (json, sql)	none	services-proof	
-packages/db/test/reconcile-queue-account.test.ts	data	mail 0181's account copy on the reconcile queues' pending rows, kept by triggers for every writer (mail 0201 removes it); read no file of its own	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
+packages/db/test/reconcile-queue-account.test.ts	behaviour	mail 0181's account copy on the reconcile queues' pending rows, kept by triggers for every writer (mail 0201 removes it); read no file of its own	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (json, sql)	none	services-proof	
 packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	

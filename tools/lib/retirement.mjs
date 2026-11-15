@@ -3,7 +3,8 @@
 import path from "node:path";
 
 export const RETIREMENT_HEADER = "file\tkind\tholds\thome\ttask\tverdict";
-export const KINDS = ["source-text", "artifact", "data", "duplicate", "helper-only"];
+/** `behaviour`: a test that reads no file. It gets its row when it leaves. */
+export const KINDS = ["source-text", "artifact", "data", "duplicate", "helper-only", "behaviour"];
 /** A test that calls one of these reads a file: it has a row. */
 export const READS_A_FILE = /\b(readFileSync|readFile|readdirSync|readdir|globSync)\b/;
 const TASK = /^(ruling:[A-Za-z0-9][A-Za-z0-9-]*|[a-z][a-z0-9]*(-[a-z0-9]+)*)$/;
@@ -76,6 +77,38 @@ export function parseRetirement(text) {
   return { rows, refusals };
 }
 
+const FORMS =
+  "a file under docs/tool-verdicts or docs/invariant-verdicts, held:<test>#<case title>, gone:<path>, gone:<path>#<text>";
+
+/**
+ * The last column, read in words: `gone:<path>` or `gone:<path>#<text>`, `held:<test>#<case title>`,
+ * a verdict file, or empty. The first `#` splits; whatever follows it is kept as written.
+ * @param {string} cell
+ */
+export function readProof(cell) {
+  if (cell === "") return { form: "empty" };
+  if (cell.startsWith("docs/tool-verdicts/") || cell.startsWith("docs/invariant-verdicts/"))
+    return { form: "verdict", path: cell };
+  const unknown = { form: "unknown" };
+  for (const form of ["gone", "held"]) {
+    if (!cell.startsWith(`${form}:`)) continue;
+    const rest = cell.slice(form.length + 1);
+    const hash = rest.indexOf("#");
+    const before = hash === -1 ? rest : rest.slice(0, hash);
+    const after = hash === -1 ? null : rest.slice(hash + 1);
+    if (form === "gone") {
+      if (before === "" || before.includes(" ") || after === "") return unknown;
+      return after === null ? { form, path: before } : { form, path: before, piece: after };
+    }
+    if (before === "" || !after) return unknown;
+    return { form, test: before, title: after };
+  }
+  return unknown;
+}
+
+/** A path that is a test of the suite, or has a folder named `test`. */
+const isTestPath = (rel) => isSuiteTest(rel) || rel.split("/").slice(0, -1).includes("test");
+
 export function renderRetirement(rows) {
   const sorted = [...rows].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
   const lines = sorted.map((row) =>
@@ -91,32 +124,57 @@ export function renderRetirement(rows) {
  * @param {Set<string>} given.present every test file in the tree
  * @param {string[]} given.deleted the test files the change deletes, read against its base
  * @param {(path: string) => boolean} given.verdictExists
+ * @param {(path: string) => string | null} given.tree a file's text in the tree, null where there is none
+ * @param {(path: string) => string | null} [given.base] the same at the base; absent when no base was given
  */
-export function checkRetirement({ rows, reading, present, deleted, verdictExists }) {
+export function checkRetirement({ rows, reading, present, deleted, verdictExists, tree, base }) {
   const refusals = [];
   const byFile = new Map(rows.map((row) => [row.file, row]));
   for (const row of rows) {
     const at = `retirement: ${row.file}`;
+    const proof = readProof(row.verdict);
+    const here = present.has(row.file);
     if (!KINDS.includes(row.kind))
       refusals.push(`${at}: the kind "${row.kind}" is not one of ${KINDS.join(", ")}`);
     if (!row.holds) refusals.push(`${at}: the row does not say what the file holds`);
     if (row.holds === UNDECIDED) refusals.push(`${at}: "${UNDECIDED}" does not say what the file reads`);
     if (!row.home) refusals.push(`${at}: the row names no home; write none where nothing takes its place`);
     if (!TASK.test(row.task)) refusals.push(`${at}: the task "${row.task}" is empty or not a task's name`);
-    if (row.kind === "source-text" && row.home === "none") {
+    if (row.kind === "source-text" && row.home === "none" && proof.form !== "gone") {
       refusals.push(
         `${at}: it reads source as text, so its row names the rule, type or test that takes its place, not none`,
       );
     }
-    if (row.verdict && !(VERDICT.test(row.verdict) && verdictExists(row.verdict))) {
+    if (here && row.kind === "behaviour")
+      refusals.push(
+        `${at}: the kind behaviour is for a test that reads no file; it gets its row when it leaves`,
+      );
+    if (proof.form === "unknown")
+      refusals.push(`${at}: the last column "${row.verdict}" is none of the four proofs: ${FORMS}`);
+    if (proof.form === "verdict" && !(VERDICT.test(row.verdict) && verdictExists(row.verdict))) {
       refusals.push(
         `${at}: the verdict "${row.verdict}" is not a file under docs/tool-verdicts or docs/invariant-verdicts`,
       );
     }
-    if (!present.has(row.file) && !row.verdict)
-      refusals.push(`${at}: the file is gone and its row has no verdict`);
+    if (here && (proof.form === "gone" || proof.form === "held"))
+      refusals.push(`${at}: the test file is still there, so its row carries no gone: or held: proof`);
+    if (proof.form === "gone") {
+      if (row.home !== "none") refusals.push(`${at}: a gone: proof has the home none, not "${row.home}"`);
+      if (isTestPath(proof.path))
+        refusals.push(
+          `${at}: ${row.verdict} is a test or under a folder named test; gone: names what left the product`,
+        );
+      const text = tree(proof.path);
+      if (text !== null && proof.piece === undefined)
+        refusals.push(`${at}: ${row.verdict} is still in the tree`);
+      if (text !== null && proof.piece !== undefined && text.includes(proof.piece))
+        refusals.push(`${at}: ${row.verdict} is still in the tree: ${proof.path} contains "${proof.piece}"`);
+    }
+    if (proof.form === "held" && row.home === "none")
+      refusals.push(`${at}: a held: proof names the layer and the plant in home, not none`);
+    if (!here && !row.verdict) refusals.push(`${at}: the file is gone and its row has no proof`);
     const mechanical = row.kind === "source-text" || row.kind === "artifact" || row.kind === "data";
-    if (present.has(row.file) && !reading.has(row.file) && mechanical && !row.verdict) {
+    if (here && !reading.has(row.file) && mechanical && !row.verdict) {
       refusals.push(`${at}: the file reads no file any more; its row leaves with the reading`);
     }
   }
@@ -125,8 +183,25 @@ export function checkRetirement({ rows, reading, present, deleted, verdictExists
       refusals.push(`retirement: ${file} reads a file and has no row in tools/retirement.tsv`);
   }
   for (const file of deleted) {
-    if (!byFile.get(file)?.verdict)
-      refusals.push(`retirement: ${file} is deleted without a row that carries a verdict`);
+    const row = byFile.get(file);
+    if (!row?.verdict) {
+      refusals.push(`retirement: ${file} is deleted without a row that carries a proof`);
+      continue;
+    }
+    const at = `retirement: ${file}`;
+    const proof = readProof(row.verdict);
+    if (proof.form === "gone" && base) {
+      const before = base(proof.path);
+      if (before === null) refusals.push(`${at}: gone:${proof.path} is not in the base`);
+      else if (proof.piece !== undefined && !before.includes(proof.piece))
+        refusals.push(`${at}: ${row.verdict}: the base's ${proof.path} does not contain "${proof.piece}"`);
+    }
+    if (proof.form === "held") {
+      if (!present.has(proof.test))
+        refusals.push(`${at}: held:${proof.test} is not a test of the suite in the tree`);
+      else if (!(tree(proof.test) ?? "").includes(proof.title))
+        refusals.push(`${at}: held:${proof.test} does not contain the case title "${proof.title}"`);
+    }
   }
   return refusals;
 }
