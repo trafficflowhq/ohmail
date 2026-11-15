@@ -210,6 +210,13 @@ describe("the value evaluator (test/support/workflow-if.ts)", () => {
     expect(() => evalValue("${{ 1.5 }}", {})).toThrow(/not an expression this reads/);
     expect(() => evalValue("${{ 6x }}", {})).toThrow(/not an expression this reads/);
   });
+  it("compares a boolean context with the boolean literal; against the string it is never equal", () => {
+    expect(evalValue("${{ a.b != true }}", { "a.b": true })).toBe(false);
+    expect(evalValue("${{ a.b != true }}", { "a.b": false })).toBe(true);
+    expect(evalValue("${{ a.b != true }}", { "a.b": null })).toBe(true);
+    // GitHub reads `true != 'true'` as true: a draft guard written against the string starts every draft.
+    expect(evalValue("${{ a.b != 'true' }}", { "a.b": true })).toBe(true);
+  });
   it("evalIf is the value read for truth", () => {
     for (const e of ["${{ 'a' && 'b' }}", "${{ '' }}", "${{ fromJSON('[]') }}", "${{ null }}", "${{ !cancelled() }}"]) {
       expect(evalIf(e, {})).toBe(Boolean(evalValue(e, {})));
