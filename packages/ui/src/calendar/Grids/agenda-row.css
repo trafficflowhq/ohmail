@@ -1,0 +1,171 @@
+/* The agenda's row: the mail row's measures, with the calendar's square where mail has the contact circle. */
+@layer oh {
+  .oh-erow {
+    --oh-erow-pad: 0 var(--s3) 0 var(--s1);
+    --oh-erow-gap: 2px;
+    --oh-erow-open: inset 0 0 0 var(--oh-cal-open-line) var(--ink);
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+    align-content: center;
+    row-gap: var(--oh-erow-gap);
+    width: 100%;
+    height: var(--row);
+    padding: var(--oh-erow-pad);
+    border-radius: var(--r-row);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-erow:hover {
+    background: var(--hover);
+  }
+  .oh-erow:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: calc(var(--oh-focus) * -1);
+  }
+  :root[data-touch="1"] .oh-erow {
+    height: 72px;
+    touch-action: pan-y;
+  }
+  /* ohmarchy's rows in a window stand a step further from the column's edges. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-erow {
+    --oh-erow-pad: 0 14px 0 var(--s2);
+  }
+  .oh-erow-mark {
+    display: grid;
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    place-items: center;
+    place-self: center;
+    width: var(--av);
+    height: var(--av);
+  }
+  .oh-erow-ico {
+    color: var(--ink2);
+  }
+  /* On no calendar yet: outlined in ink. Found in mail: the letter's glyph in a dashed box. */
+  .oh-erow-out {
+    --oh-erow-out-r: calc(var(--r-sq) * 2);
+    --oh-erow-out-line: inset 0 0 0 var(--ev-line) var(--ink);
+    width: 16px;
+    height: 16px;
+    border-radius: var(--oh-erow-out-r);
+    box-shadow: var(--oh-erow-out-line);
+  }
+  .oh-erow-found {
+    --oh-erow-found-r: 8px;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--oh-erow-found-r);
+    outline: var(--ev-line) dashed var(--ink2);
+    outline-offset: calc(var(--ev-line) * -1);
+  }
+  .oh-erow-found > .oh-erow-ico {
+    width: 16px;
+    height: 16px;
+  }
+  .oh-erow-drsq {
+    --oh-erow-drsq-r: calc(var(--r-sq) * 1.5);
+    width: 12px;
+    height: 12px;
+    border-radius: var(--oh-erow-drsq-r);
+    outline: var(--ev-line) dashed var(--oh-cal-mark, var(--ink2));
+    outline-offset: calc(var(--ev-line) * -1);
+  }
+  .oh-erow-first,
+  .oh-erow-second {
+    grid-column: 2;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .oh-erow-first {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: var(--row-l1);
+  }
+  .oh-erow-title {
+    flex: 0 1 auto;
+    min-width: 3em;
+    overflow: hidden;
+    font-weight: var(--w-mid);
+    text-overflow: ellipsis;
+  }
+  .oh-erow-room {
+    flex: 1;
+  }
+  .oh-erow-time {
+    flex: none;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+  .oh-erow-second {
+    display: block;
+    overflow: hidden;
+    color: var(--ink2);
+    text-overflow: ellipsis;
+  }
+  /* Ohmarchy: the second voices a size smaller and quieter, as on the mail row; louder under the
+     pointer, and in ink on the open row. */
+  :root[data-face="ohmarchy"] .oh-erow-second {
+    font-size: var(--t-meta);
+  }
+  :root[data-face="ohmarchy"] .oh-erow-second,
+  :root[data-face="ohmarchy"] .oh-erow-time {
+    color: var(--ink3);
+  }
+  :root[data-face="ohmarchy"] .oh-erow:hover .oh-erow-second,
+  :root[data-face="ohmarchy"] .oh-erow:hover .oh-erow-time {
+    color: var(--ink2);
+  }
+  /* On now: bold, and until when in the hot ink. */
+  .oh-erow[data-now] .oh-erow-title {
+    font-weight: var(--w-bold);
+  }
+  .oh-erow[data-now] .oh-erow-time {
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-erow[data-quiet] .oh-erow-title {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  .oh-erow[data-off] .oh-erow-title {
+    color: var(--ink2);
+    text-decoration: line-through;
+  }
+  /* What the typing line makes: dashed in its place among the day's rows. */
+  .oh-erow[data-draft] {
+    outline: var(--ev-line) dashed var(--oh-cal-mark, var(--ink2));
+    outline-offset: -4px;
+    cursor: default;
+  }
+  .oh-erow[data-draft]:hover {
+    background: transparent;
+  }
+  /* The open row: a step deeper and an ink line, never filled with ink. */
+  .oh-erow[data-open],
+  .oh-erow[data-open]:hover {
+    background: var(--oh-cal-open-plain);
+    box-shadow: var(--oh-erow-open);
+    color: var(--ink);
+  }
+  :root[data-face="ohmarchy"] .oh-erow[data-open] .oh-erow-second,
+  :root[data-face="ohmarchy"] .oh-erow[data-open] .oh-erow-time {
+    color: var(--ink);
+  }
+  /* A row that carries controls of its own keeps them on its second line's end. */
+  .oh-erow-tail {
+    grid-column: 2;
+    min-width: 0;
+  }
+  .oh-erow[data-tail] {
+    height: auto;
+    min-height: var(--row);
+    padding-block: var(--s3);
+  }
+}

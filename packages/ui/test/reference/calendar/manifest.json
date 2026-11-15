@@ -1,0 +1,5360 @@
+{
+  "shard": {
+    "id": "kit-calendar",
+    "file": "kit-calendar-8c30a5aa71ce.3.tar.gz",
+    "revision": 3,
+    "sha256": "2ed295d1a1096104e77534edf14f92ede360d685975157b439bd75152f600aa7",
+    "bytes": 14788436,
+    "urls": []
+  },
+  "rows": [
+    {
+      "key": "AgendaRow/all-day@ohmarchy-light-desktop",
+      "file": "7abc2ec7274a105d",
+      "png": {
+        "sha256": "62944d71ad8260a3d24d79952c076296baf41fd722c10c929e3d6ca3a2e95482",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "1e4db2f44d9c3eb793016748ec2899af2ca30c04d146d2e32e9f53f808b72d70" },
+      "stateHash": "b3fe773cb4d663b8",
+      "source": "b0e56b83b38131f2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/all-day@paper-light-desktop",
+      "file": "af0be7ba3ee39841",
+      "png": {
+        "sha256": "3d66201087360309be8cb39ae460c93559aa00bbb3b01500fd1b9b699f4c49bd",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "6b67a5bc346294b4d75b48608271ebab38f45a7a8aae95097565aac0a88c9854" },
+      "stateHash": "b3fe773cb4d663b8",
+      "source": "b0e56b83b38131f2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/cancelled@ohmarchy-light-desktop",
+      "file": "4f98f5fc26fb4be8",
+      "png": {
+        "sha256": "a3eda1b7ac3d4ca5edd89a3864d0433824e91c34060db5a790685afc4aca62c7",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "cc4fc68e73e6b0516edad434182219ede325e0160071eabda1e38e8d9b8bdd88" },
+      "stateHash": "2a70ed34899d1f52",
+      "source": "e31213066f26a3f0",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/cancelled@paper-light-desktop",
+      "file": "218a7ccbcaa97583",
+      "png": {
+        "sha256": "5d3c0b3e91b560f29ee07ba47958f58bb24d6ee8caa0a96bd6d2e08b85c97a88",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "c00fcbf390e2b7033071a1c73e4e89808a78b87c06468eca6b59b157fe0e3b67" },
+      "stateHash": "2a70ed34899d1f52",
+      "source": "e31213066f26a3f0",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/changed@ohmarchy-light-desktop",
+      "file": "410ab8b846be106a",
+      "png": {
+        "sha256": "a61a3fe787dbbef9190aee9da2975f15ce2c94c3e297deece4fd40770724605b",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "2f14ad0002f59c67d63fc5f4333a5d84585fb4808d531605f7f1e368f5227fc3" },
+      "stateHash": "953ed7d2a2ec238a",
+      "source": "d01e9bdbc90077f4",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/changed@paper-light-desktop",
+      "file": "7d2f5c9eeec21b4a",
+      "png": {
+        "sha256": "0d29bccd9320d492b472a90bd6c84a1d0d7bb0c17f4c0ccb097c07566921e9f7",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "96155f19dbde573abd9cc9226fcd16eaf1ea1ad9041e4e8b458aa61c15e5fbfd" },
+      "stateHash": "953ed7d2a2ec238a",
+      "source": "d01e9bdbc90077f4",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/dated@ohmarchy-light-desktop",
+      "file": "4291833731b1e832",
+      "png": {
+        "sha256": "38908419ed8423ea34cde1c7d289567f6ae0fb684c86692cddb079ad1ee01765",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "1755da6e38737cf02dfc577855eca233053d75dcc606e92f6848bbcfb2b24902" },
+      "stateHash": "9230e02fd486b8bd",
+      "source": "9e9bf0b69dba2380",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/dated@paper-light-desktop",
+      "file": "84e15622c73da2b4",
+      "png": {
+        "sha256": "4608e529666d803235c538d0823b99f5d101f5f0449aadfc8c8a19355921a998",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "b11adc7b3f44b0dedce738693ec9f6d5f5f9b65cd2fe7f4d4f04d7f1ab822b05" },
+      "stateHash": "9230e02fd486b8bd",
+      "source": "9e9bf0b69dba2380",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/found@ohmarchy-light-desktop",
+      "file": "d84bc19b0e0da485",
+      "png": {
+        "sha256": "ec74386444ce3eb08a80c5a465ea90f6a8e372b936afbb20fffccdab0aa5a661",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "20b8b14fc1248e23240891233278a449e72089c5a911bab1eba24436f7345589" },
+      "stateHash": "68ef3efabf1b2d31",
+      "source": "384177ad184d781e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/found@paper-light-desktop",
+      "file": "b1fb53e191000cad",
+      "png": {
+        "sha256": "fc6435eaf4993349e3f38c36142a7eec4d2a46ccfdb3753e43b2ef985de5ff7e",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "b89edb6d04dd88be3b80a9c1aca03747a1e398c21f6f723fb0e1bdc91eec0e5c" },
+      "stateHash": "68ef3efabf1b2d31",
+      "source": "384177ad184d781e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/hover@ohmarchy-light-desktop",
+      "file": "da6c32ddb349699e",
+      "png": {
+        "sha256": "836a23eeef54e42d9632698bd93545a33f75de9a088160f22069bc0c28394e08",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "457b95fcd2afc4871fdd4e82a4391aeaa4e94a0a688131623dc6fde0cd450020" },
+      "stateHash": "c6bbf502c0973eac",
+      "source": "7af576c0ed2a49dc",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/hover@paper-light-desktop",
+      "file": "cf414a34b517fab2",
+      "png": {
+        "sha256": "9cfcd9c03a0aa5f9baa30b28fc92f5d8955750bd98abc2cb18edd1ee521bd63a",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "9792935971f5db63efbeae5675ff601c15df9a0728975d4e71109c86e5d3e584" },
+      "stateHash": "c6bbf502c0973eac",
+      "source": "7af576c0ed2a49dc",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/maybe@ohmarchy-light-desktop",
+      "file": "dfd70a8c5acdf28f",
+      "png": {
+        "sha256": "a61c103bd7761ecebc88cd277e94ca12442e0cffd03968eb156cd295cf6814e2",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "1959170e832bb287210ecca14198eefd91105e24796bcca960528262ffe477fd" },
+      "stateHash": "54936f2a4678b75b",
+      "source": "f00b7ad0f87cad0f",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/maybe@paper-light-desktop",
+      "file": "a3fc3eef02bc0fd4",
+      "png": {
+        "sha256": "ca0373ce1d42fa3e07a2e13a19337985101b7f556f42959158b491b1fe143bac",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "768049031daa883553c3fe424b1e2a517d248da9ce6290081c697254b95f6a44" },
+      "stateHash": "54936f2a4678b75b",
+      "source": "f00b7ad0f87cad0f",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/now@ohmarchy-light-desktop",
+      "file": "37c40aedbb8901f0",
+      "png": {
+        "sha256": "032a7463690469c75210f1127c8b37d55a2c607bb6edb32ef46325c4d407160c",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "a8a656f5634a14a14dba72acef51cf0eabcb60bdb39bb2b5cd1519c796588c22" },
+      "stateHash": "3996ab1878d460b7",
+      "source": "c19df08a658cc3e9",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/now@paper-light-desktop",
+      "file": "39cb91fced069048",
+      "png": {
+        "sha256": "d9ae883ce6f76c24ab7be626d6f1ea31c0e2860f5f5e010192ed401f460fe7c8",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "1c6308761debe7cfe3ef23f4a5eb666c6eb89835bb3a9ca61c60415903215934" },
+      "stateHash": "3996ab1878d460b7",
+      "source": "c19df08a658cc3e9",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/open@ohmarchy-light-desktop",
+      "file": "a1fd57da43d89c07",
+      "png": {
+        "sha256": "07b9488496d6eaffc3e647e6c768209df1cbccfc98dbd29aeabe3ef7d1045b3f",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "aa1e8bb6e584b04812f4f0a9cd1657146888d7d0a9a5e547710a381e8cf49829" },
+      "stateHash": "6c7f2c9db6900e00",
+      "source": "30bc2c09271c41f8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/open@paper-light-desktop",
+      "file": "1013ce0c1f0ff6e5",
+      "png": {
+        "sha256": "798875b29fd11cc15333bf15eec24bdbea50844d9a806170a9192a675cdf8ef9",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "e8d2bc770eb6f61f9b469a9d13f374fd8ddf0acbb72471e9dcbf28378ba01d43" },
+      "stateHash": "6c7f2c9db6900e00",
+      "source": "30bc2c09271c41f8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-dark-desktop",
+      "file": "1fe2572082580da5",
+      "png": {
+        "sha256": "7c9caea11d78fcd41a21959458c678125c2ff8272b6b74f5658845325ca04dca",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "cda5840838b0974bc307d4ca5e244bdf2b0a5d4613f293c99139d27bec83fcae" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-dark-fold",
+      "file": "8dcaef36ff2bf08b",
+      "png": {
+        "sha256": "7b095d6fe543e2962fb87b912db419c449e87e5a75fc51599801549775374dbf",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "cb78bfafaa65f7bb64ba58ebf84697876cd8979ec0b8055136d002ad4ae3a8fc" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-dark-foldl",
+      "file": "31b98976a5a066b7",
+      "png": {
+        "sha256": "7b095d6fe543e2962fb87b912db419c449e87e5a75fc51599801549775374dbf",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "d9784d22e46f6c8fb9a7458ffe3cbf63ef2caf80f9a227e603d60d577d8cb351" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-dark-phone",
+      "file": "69e9526f4702897d",
+      "png": {
+        "sha256": "12f6cd9e5ce1c84f546040174bd485090e110a8e32e792a565673cf70e2d7a33",
+        "w": 824,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "5bbc465e2756ba354a2b40f952e55d0f2e2d2d9781197881bebb10660c54f51d" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-light-desktop",
+      "file": "b808aebcd22b8d7f",
+      "png": {
+        "sha256": "a5f651784de8a384b9047b8185c8a07c18d92d70c71f3b4457a740b0540a2fad",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "b3c9dda795dd832081dc62b5fb7a272b94310471dd3cd8936a5926f9141ed0b7" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-light-fold",
+      "file": "4574e153067b8390",
+      "png": {
+        "sha256": "d7236321a630c686e6166e4cd9d595f2f04e55e97b75cb658f488b2acee41c0e",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "df7eacd1b848beb2565c1b5e41fd9b98bb29cac59e9e6706da0b518aea8ce418" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-light-foldl",
+      "file": "751be9d1bbae020a",
+      "png": {
+        "sha256": "d7236321a630c686e6166e4cd9d595f2f04e55e97b75cb658f488b2acee41c0e",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "acf3a049f7c08d33be188b1d7dea5cf127b19a17d2e46d9a4bf733fb0dcc5ed2" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@ohmarchy-light-phone",
+      "file": "df89570331d86699",
+      "png": {
+        "sha256": "d53fb8c639c87fe378f6a81c28f3482204ef1262cb7688401368b0de9b4d80a9",
+        "w": 824,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "2f8058c94f757a68cbea81046821a5faa09689e9f1c5c98eb78ef0d6ad816276" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-dark-desktop",
+      "file": "a59f463aae2ad6a9",
+      "png": {
+        "sha256": "544b5433b51d25ee4ac3e816130e2e599d30478ca57aafbc089565f0c87ec70e",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "21d767238a024c41390e02345d2030234baef679dfb94b6a76f0a78427c61def" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-dark-fold",
+      "file": "2f849af2a17d8941",
+      "png": {
+        "sha256": "122dc3f2e99253b5ce35fbf1d07b4e0b7555df23bca313cdb088021f8f39033b",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "7e9d91280918f3105746374db446ab8fc1784394cdb821c562882235b83fc9f3" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-dark-foldl",
+      "file": "d8dd4656912b1622",
+      "png": {
+        "sha256": "122dc3f2e99253b5ce35fbf1d07b4e0b7555df23bca313cdb088021f8f39033b",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "b77f1633e49761638d00f988d3ef37fac3decbf43e625e561e4ce70464d913f9" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-dark-phone",
+      "file": "29cb01b0d3e12222",
+      "png": {
+        "sha256": "9413112fa90f0883b64db2b7e342932aebac7c05567c1dea8c6204a894d4511d",
+        "w": 824,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "13ff144a72828805082d1c04461110007ee6bcdb66935f7b38b832e8c92368ef" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-light-desktop",
+      "file": "6f7869e48cff713d",
+      "png": {
+        "sha256": "b63b7e83b4b50ff2c7692e3ba046c7159808e69312cda1afb4e92c57af963cf2",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "d6c2f18bab82186f140af18d3642420882289327e877a3e68be487a291d7774e" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-light-fold",
+      "file": "11b961325d706019",
+      "png": {
+        "sha256": "30812facae483e5431a4d49a058beec782bcba34ca6486c00b0a8f8254aa114f",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "596b8b7cbd4778226035a17b1eb4d40515f40488e2dcf88e502d0eb2920a7989" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-light-foldl",
+      "file": "abe7ae2da7aa53e8",
+      "png": {
+        "sha256": "30812facae483e5431a4d49a058beec782bcba34ca6486c00b0a8f8254aa114f",
+        "w": 808,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "2967a46fbc7235ae888bc40b78d23dc8f5ab03faa62675785e22d5d4a0613138" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/rest@paper-light-phone",
+      "file": "9a6af11617348048",
+      "png": {
+        "sha256": "009573ababa9eac17f2cb8c3d8705a5b2835d2ceb2ad4c1b1906bed0d75561db",
+        "w": 824,
+        "h": 144,
+        "scale": 2
+      },
+      "scene": { "sha256": "a447104d35203c197c5124aa7fc377e30c6d97235101654af65faedd435ce667" },
+      "stateHash": "b960ec261fe5ef4b",
+      "source": "e254b44b66d696cb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/to-answer@ohmarchy-light-desktop",
+      "file": "13b886d776620b20",
+      "png": {
+        "sha256": "ae927e0dff765f887b881a53956008f0eb3b68f66b182c839bbff55e0414c78b",
+        "w": 400,
+        "h": 84,
+        "scale": 1
+      },
+      "scene": { "sha256": "465785b28d0e2d58dd88b31ead7f7fa38b3919cb663e2643563bee349fd4d71a" },
+      "stateHash": "7231d5aaef742409",
+      "source": "c486c1ed78eb3019",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AgendaRow/to-answer@paper-light-desktop",
+      "file": "5ae41e486379130d",
+      "png": {
+        "sha256": "024ed31621de87fd947928953c45277de12f476b0942aa0ba8a1f0736453823f",
+        "w": 404,
+        "h": 72,
+        "scale": 1
+      },
+      "scene": { "sha256": "68d3f7d07fe311e449174702a72586d67f2ee6b3ea9262b41f9c7235144c811e" },
+      "stateHash": "7231d5aaef742409",
+      "source": "c486c1ed78eb3019",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AllDayRow/rest@paper-light-desktop",
+      "file": "71bb720023850736",
+      "png": {
+        "sha256": "66c2c850c1db4675de83aaa56727eacdf8f434330309caa27b30d41fc531c064",
+        "w": 1392,
+        "h": 28,
+        "scale": 1
+      },
+      "scene": { "sha256": "b26fce1386d12ce37f9426d7d051b5f6499f56086057845092aa7c592e161ae3" },
+      "stateHash": "59bf4e4f414e26e0",
+      "source": "7c05dfbecd16f831",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AnswerSwitch/given@paper-light-desktop",
+      "file": "9d66443c32f2a927",
+      "png": {
+        "sha256": "a328fd5eed184d9a34639925fb406e7fb0ffcefeea4d2cc0a44019520df01864",
+        "w": 321,
+        "h": 37,
+        "scale": 1
+      },
+      "scene": { "sha256": "bdc88f98783b5fa8c8ceaceeb8bd933bbad59d2e1944088a0209c2b5ea3193cd" },
+      "stateHash": "910c70f4505e7dd1",
+      "source": "498b1b7078ba6a61",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+      "file": "4dbd0b8cd94c3d97",
+      "png": {
+        "sha256": "8d623e0c538e10a81c2f560440fd1f3a1921c22d178bef586cb6a5bec2e7b985",
+        "w": 349,
+        "h": 69,
+        "scale": 1
+      },
+      "scene": { "sha256": "b6f2af2026b4ef89a2ad665b6da0b686152ce83287f33a64b753ad52fa04529f" },
+      "stateHash": "67fb5238bef92c19",
+      "source": "e14487206bee541d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+      "file": "4de0a91c3a24e7a1",
+      "png": {
+        "sha256": "b7460c3fd2a59f24d574143c9864b33a7fcaafd44657099280f9f84d616348a8",
+        "w": 349,
+        "h": 69,
+        "scale": 1
+      },
+      "scene": { "sha256": "02724fc3966a5a14f6c90f723b45b5d49cf05da732bcf2dfb6b32dd67d704751" },
+      "stateHash": "67fb5238bef92c19",
+      "source": "e14487206bee541d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AnswerSwitch/rest@paper-dark-desktop",
+      "file": "e4dd50b7a88447ab",
+      "png": {
+        "sha256": "40d66bf344eea5fa04eae8ac906ea6ea7e34b7e5d71ab016ccf2a95087f61fc7",
+        "w": 321,
+        "h": 37,
+        "scale": 1
+      },
+      "scene": { "sha256": "384724960cb03160fedeaf59bfcb509d9adedc5b316e38988b4a5ac1bbbf3b60" },
+      "stateHash": "67fb5238bef92c19",
+      "source": "e14487206bee541d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "AnswerSwitch/rest@paper-light-desktop",
+      "file": "f85608d52ad11bf1",
+      "png": {
+        "sha256": "44021e72f4a007ed743f2270064d7329cccb24fa5e5c07c855c39d93ff4016c4",
+        "w": 321,
+        "h": 37,
+        "scale": 1
+      },
+      "scene": { "sha256": "199640366c241f0e55fc6f1c7d6132892efe1898d9b628ae005a60752461053a" },
+      "stateHash": "67fb5238bef92c19",
+      "source": "e14487206bee541d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/away@paper-light-desktop",
+      "file": "42cd36be79564d34",
+      "png": {
+        "sha256": "cc2193734254860db7c61b9fbe6b3b25d02e0c64af7a61ebc9317ef8ecbbc7b6",
+        "w": 1000,
+        "h": 40,
+        "scale": 1
+      },
+      "scene": { "sha256": "ffcaf4ff578c6ac649ee4ea200cd86eedd04269d1f9a9ef0e0b1a1600423dbe2" },
+      "stateHash": "fc8da68733aafbfc",
+      "source": "7a9630d5e88a52e1",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@ohmarchy-dark-fold",
+      "file": "f56e973fffaa88a6",
+      "png": {
+        "sha256": "6fac89f332da2adcdbc55a00026e2789979f42dbe38336b7ed9bd5702bae542e",
+        "w": 1240,
+        "h": 120,
+        "scale": 2
+      },
+      "scene": { "sha256": "9d9fb58e1c800f18b2e2563af53036591dad0ef579ae480b8c9d5480c4705574" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@ohmarchy-dark-foldl",
+      "file": "6f837f376c06dcae",
+      "png": {
+        "sha256": "11e2b0798c9baf56d4cca0a8409662c085a326f31e1eebda04e960a6c8b8942a",
+        "w": 1240,
+        "h": 120,
+        "scale": 2
+      },
+      "scene": { "sha256": "86cb59cbef0a3967c2934c032c54dd5378673dd022f6ac191a4af22d0bd72f82" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@ohmarchy-light-fold",
+      "file": "aa4fc146876c6abb",
+      "png": {
+        "sha256": "7aa5664ee9727988b74bc0d7dede8d7188ec9b6fc23c685428847fadceea070e",
+        "w": 1240,
+        "h": 120,
+        "scale": 2
+      },
+      "scene": { "sha256": "85e0440c2b42fa8af59667148671a2e40312544720fe646d286ac6cd7898ac0f" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@ohmarchy-light-foldl",
+      "file": "dfda1e2f5ce91786",
+      "png": {
+        "sha256": "b0bb4913d6fb9e84e1966aa1a941070c222288fe7e358a56e2b212eac5ac5a04",
+        "w": 1240,
+        "h": 120,
+        "scale": 2
+      },
+      "scene": { "sha256": "14bb89a11db1dcb003228ad3f6fc355a021dcfeaf8c86a9be47d205e13397eae" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@paper-dark-fold",
+      "file": "15a0fc4bade7cd99",
+      "png": {
+        "sha256": "7dc80f97e566bac837dcd00432fb084b81919faca3d4e2b41c687f448f984c54",
+        "w": 1240,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "7c68f455bbc51bd49b6506975af3d342d2a708a9c5299837cf94c19780928efd" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@paper-dark-foldl",
+      "file": "86e4e45b324f8b70",
+      "png": {
+        "sha256": "49ce12b4024e8eb2bb29f73f8a751c95167368ff8bf80fce26934112f86e7408",
+        "w": 1240,
+        "h": 96,
+        "scale": 2
+      },
+      "scene": { "sha256": "67cb04b79886448615d18fc13a091ef4c87b7cc3e9e25f89d5c0874e31a2c234" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@paper-light-fold",
+      "file": "c9121b27ba0e19d9",
+      "png": {
+        "sha256": "39ba273faf1655a53eb32551be624a9be690c27b06b9eb4b0c4d55e47ea53e6b",
+        "w": 1240,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "b70fb565e1e8875cefa061dc088b7e82958c8a99385a8c64b907ad800e8c18d9" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/narrow@paper-light-foldl",
+      "file": "9c17a9743ecd586d",
+      "png": {
+        "sha256": "c09a290dd8220e5e3988ec76df778ea0cffa5f366c4300cc639a79520a709659",
+        "w": 1240,
+        "h": 96,
+        "scale": 2
+      },
+      "scene": { "sha256": "251a963bd8f941f82a0df8c37f911d4b5dbe957a21239c7834450411f5c357a1" },
+      "stateHash": "4663b1ee4aee87bc",
+      "source": "e52e66fd3241a788",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/phone@ohmarchy-dark-phone",
+      "file": "a758dcc3e231ca8b",
+      "png": {
+        "sha256": "8301ad1e5b25061f6c00d5fd1c55786a8c74c6d1320ea24881b0e9c9d74d6944",
+        "w": 780,
+        "h": 128,
+        "scale": 2
+      },
+      "scene": { "sha256": "90cffa0b5558f6f9e6f04d86ffea976a89230fe345cb859b249a52b9c235cb7e" },
+      "stateHash": "da4abfc6fafc3907",
+      "source": "f5300ffd873c715b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/phone@ohmarchy-light-phone",
+      "file": "17f1280139c0b7a6",
+      "png": {
+        "sha256": "7d23614d9e4b07c638cd4aef2463e8c75600636a84b5f9c1a15434eadfbcd270",
+        "w": 780,
+        "h": 128,
+        "scale": 2
+      },
+      "scene": { "sha256": "8dbcfcf3f2001e253d37f2fbae53b78981228e085186d498405000ac5e983080" },
+      "stateHash": "da4abfc6fafc3907",
+      "source": "f5300ffd873c715b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/phone@paper-dark-phone",
+      "file": "ff13eea8e11e031a",
+      "png": {
+        "sha256": "126076762bd52578b13f698df03bd6a4885bebbdf8f23f1d8e91201512941029",
+        "w": 780,
+        "h": 128,
+        "scale": 2
+      },
+      "scene": { "sha256": "3de74692f120789ebc3501f4fa20dd407fb8482cd08a6d00a45c0b676d936df9" },
+      "stateHash": "da4abfc6fafc3907",
+      "source": "f5300ffd873c715b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/phone@paper-light-phone",
+      "file": "c084fe7aa586d351",
+      "png": {
+        "sha256": "9f7695403fbf7b2589fac25b1f035b112612858afa5820e228945c7a2959ea95",
+        "w": 780,
+        "h": 128,
+        "scale": 2
+      },
+      "scene": { "sha256": "afe566cf81da2bf91a51ca98be998f0b1e677d060086667a6d1f56494493cd35" },
+      "stateHash": "da4abfc6fafc3907",
+      "source": "f5300ffd873c715b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/place@paper-light-desktop",
+      "file": "46fefd33de195b41",
+      "png": {
+        "sha256": "eb996e524b2e7ea4b4ac61f0740b6e3a208e5e7e7e6506ef96cfa8230b0d51f2",
+        "w": 1000,
+        "h": 40,
+        "scale": 1
+      },
+      "scene": { "sha256": "442cded588662d26859f99508a0245948f2f2cc755fa029d4f014377c2a550c9" },
+      "stateHash": "33315600ac63a744",
+      "source": "0f387a708f89cbaa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/rest@ohmarchy-dark-desktop",
+      "file": "d2b3931bb0be75ac",
+      "png": {
+        "sha256": "69f225ffc37781ff271deb28f4b7ffc744097c3e0cc2814af7cf004a88b4c5da",
+        "w": 1000,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "2653afd3a404bbdef05660ee434dc4501d4466e196e0ab52d2b2220ec995ae48" },
+      "stateHash": "4c5b52c8b0244ad5",
+      "source": "c50f6331cbfef13b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/rest@ohmarchy-light-desktop",
+      "file": "188761caf5dc94d4",
+      "png": {
+        "sha256": "a9a55bf05f2264a5f840031319a294c6965be5bf45634cb0eabde544221c247a",
+        "w": 1000,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "3f3ce7abf83b68b3b419f29970ca31586ed9699579721ee1e9e2f82c6056153e" },
+      "stateHash": "4c5b52c8b0244ad5",
+      "source": "c50f6331cbfef13b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/rest@paper-dark-desktop",
+      "file": "59ee492d692127a7",
+      "png": {
+        "sha256": "8acdac456344caad699a0faf419b1c5cb7d87b34c4cc8008081f6a0e689630d7",
+        "w": 1000,
+        "h": 40,
+        "scale": 1
+      },
+      "scene": { "sha256": "ec80706944aae12abcc8bc04688587e34950d9f3b4030863bba5f72fb1e79094" },
+      "stateHash": "4c5b52c8b0244ad5",
+      "source": "c50f6331cbfef13b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarHead/rest@paper-light-desktop",
+      "file": "29226fc3ec9a42cc",
+      "png": {
+        "sha256": "93d1a5c81e9abf5e91efb3651b7d6d7c0e69f601dfbdc1dff640357d1964d82c",
+        "w": 1000,
+        "h": 40,
+        "scale": 1
+      },
+      "scene": { "sha256": "49c5907eee7c4308556af59d4ad863c70e71bf0da44710f43490b0612787b878" },
+      "stateHash": "4c5b52c8b0244ad5",
+      "source": "c50f6331cbfef13b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRail/open@paper-light-desktop",
+      "file": "8fbf9f549d4eddb6",
+      "png": {
+        "sha256": "8368aa4def893e1d2b2bba95dfa2df8893aa4418e4aed956f492f39b0ce79a92",
+        "w": 232,
+        "h": 876,
+        "scale": 1
+      },
+      "scene": { "sha256": "9e790d77abd4648b05534bc12e7ba1ff73494668002628c940676b63bbafebcd" },
+      "stateHash": "1b23745d434c3062",
+      "source": "b6c01822be9de81e",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "CalendarRail/shut@ohmarchy-dark-desktop",
+      "file": "33036efc1eff3467",
+      "png": {
+        "sha256": "6f7d8e258b2f83bc887cff38169495a26c15241c3878bc3bf09981360a17f299",
+        "w": 224,
+        "h": 876,
+        "scale": 1
+      },
+      "scene": { "sha256": "1a88275f778beec0d2cd8795807a7584d2205ae17726a40687a712c8fa7339e3" },
+      "stateHash": "08a97c614b373d29",
+      "source": "5e5312b597d747ad",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "CalendarRail/shut@ohmarchy-light-desktop",
+      "file": "3dbcf310768484ab",
+      "png": {
+        "sha256": "3e9215dd0f239a674c05a4dd2b80e9610448c4411f815fcd0cacd79687bffb4a",
+        "w": 224,
+        "h": 876,
+        "scale": 1
+      },
+      "scene": { "sha256": "23060f5ce4973043c148216d68c89267cb9d4e922c74064a0aa0f198bb08de47" },
+      "stateHash": "08a97c614b373d29",
+      "source": "5e5312b597d747ad",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "CalendarRail/shut@paper-dark-desktop",
+      "file": "dc9595054f7866a7",
+      "png": {
+        "sha256": "98001af2eba10e28d0a386e12291050e29bcc75b7c51666c862ba3d27544bd24",
+        "w": 232,
+        "h": 876,
+        "scale": 1
+      },
+      "scene": { "sha256": "11cc4a8c000bb32dcc128e3f0593d871cf481544985631b1dd787ffd568e36a9" },
+      "stateHash": "08a97c614b373d29",
+      "source": "5e5312b597d747ad",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "CalendarRail/shut@paper-light-desktop",
+      "file": "593525311f7f8189",
+      "png": {
+        "sha256": "47b13a763151f1a2c196c771e3f6d426025cb4f7e216e6d6387360b3bd8f837e",
+        "w": 232,
+        "h": 876,
+        "scale": 1
+      },
+      "scene": { "sha256": "461c4cdb98f9b7ad0b223af79a085720f52ad46c292ce33e2a06d68b295b367f" },
+      "stateHash": "08a97c614b373d29",
+      "source": "5e5312b597d747ad",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "CalendarRow/hidden@paper-light-desktop",
+      "file": "d6a112874642f77b",
+      "png": {
+        "sha256": "58a5704024d94c9a8db2daf9eb4c888b74ee1be4ba11fbe24d9962601b62cdef",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "4c19c67785dbf6d6dd1f25d1ff9b8faf4f59c924f577a6f52e0e5488e2d78989" },
+      "stateHash": "24a969478de8c873",
+      "source": "dbe2306b49ba09dd",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/hover@paper-light-desktop",
+      "file": "6fbf894daf849a6d",
+      "png": {
+        "sha256": "6fd6aa0d6cdf6870a1d19c19f7ffd8fc3e13af723374fb7e7b90c7a934c3842c",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "f2d62c150a49fbcea94d43a6d9626984495eb154e5e3eebf9697f83d4214f7f5" },
+      "stateHash": "72db4a77bc179205",
+      "source": "ccc90a1a6b94d7e8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/neutral@paper-light-desktop",
+      "file": "247d5c7e8faa145c",
+      "png": {
+        "sha256": "4d86881cf2873070a4877fd19b6c4d19b02ab8a9af685d32d68560d7c577ee01",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "83d62febd9562aee21cd6dc79ed097ed8a9054e2a43f2498ca89b9bc37686939" },
+      "stateHash": "9a8664e9b39e0087",
+      "source": "ff75296081580944",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/rest@ohmarchy-dark-desktop",
+      "file": "1bda05b32c9730d3",
+      "png": {
+        "sha256": "a2973332063ab71bff388fd6e876d4fb25a1fa48e3af92be26f2b1ea98cb7cde",
+        "w": 212,
+        "h": 28,
+        "scale": 1
+      },
+      "scene": { "sha256": "8856bfec1a9d513e674dc1cfc1be614e9ab1f4818fa67502a0cd0236cabf1337" },
+      "stateHash": "344066d89c69db2c",
+      "source": "9e0c564d7ceaaee2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/rest@ohmarchy-light-desktop",
+      "file": "b1ccb8267fd3ffe1",
+      "png": {
+        "sha256": "953fda5430f2fba109a9fe5308ed1a54c8a8c59ff5c10b34a532b99cb67db7d0",
+        "w": 212,
+        "h": 28,
+        "scale": 1
+      },
+      "scene": { "sha256": "0f312ba7a102a84aa02de95e0c61cda34ac361e670ff7667d062271aca91bf34" },
+      "stateHash": "344066d89c69db2c",
+      "source": "9e0c564d7ceaaee2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/rest@paper-dark-desktop",
+      "file": "574b898fa854e422",
+      "png": {
+        "sha256": "3c4fbad5871098f7f946a760b515a32f67d660981713a496720d08801af56101",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "dda30bbab7c64deaca99febd64237c0944632d8db0397183af511173a1af1992" },
+      "stateHash": "344066d89c69db2c",
+      "source": "9e0c564d7ceaaee2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/rest@paper-light-desktop",
+      "file": "d0711bd47cd0993a",
+      "png": {
+        "sha256": "eb5005788077160348ba9a6b9ff6fec180b041ba76ee70fb13eebe98dfbc3925",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "59166f1053cc4ff410c45c58b4c3fb84c1130e298b4975571d8c331aceb13d26" },
+      "stateHash": "344066d89c69db2c",
+      "source": "9e0c564d7ceaaee2",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarRow/view-only@paper-light-desktop",
+      "file": "0c5434714e079d88",
+      "png": {
+        "sha256": "fddd36c0304afc2aecb7d8f0e5c694190e4c6dbe7a63dd9a2c2fae9af0e1be02",
+        "w": 232,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "e6e06f28c8ae3b125e6b38b9f9f93a6d47745351e782744b316b9f32a1b8e017" },
+      "stateHash": "ee72cbd487452512",
+      "source": "40f4f1401743b25c",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/hidden@paper-light-desktop",
+      "file": "00271ae1de90d80b",
+      "png": {
+        "sha256": "2e68be147caabbd0a22efc70b129e5941eab2062f75f7744bc8a6b8262e23b94",
+        "w": 28,
+        "h": 12,
+        "scale": 1
+      },
+      "scene": { "sha256": "ef2eb7c343cd2998c7b546a6586998bbb6ba9d739a5900a8ef0011a2d5bc004d" },
+      "stateHash": "e626d73427fc8f4d",
+      "source": "724316283adbbed1",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/large@paper-light-desktop",
+      "file": "a26f747d96ec688c",
+      "png": {
+        "sha256": "bd196ddc6305807d1c5a7309f0f15a6f08f5f034a81d334244428d2bb495584a",
+        "w": 12,
+        "h": 12,
+        "scale": 1
+      },
+      "scene": { "sha256": "7844e787e38d5675c472da339196643a7121039746cc0e0372f76391fb729905" },
+      "stateHash": "eb79c8b869c23e26",
+      "source": "01f5505be83aea3a",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/neutral@paper-light-desktop",
+      "file": "d0bcaf4b00e7624f",
+      "png": {
+        "sha256": "f184daa7e9ed7b5604c5f558ee7688636508d0b01eee09152733930dac525045",
+        "w": 28,
+        "h": 12,
+        "scale": 1
+      },
+      "scene": { "sha256": "138ae9b8c05b98f1df602cc7d52b611ba3e119059935c9e906973df7ba304253" },
+      "stateHash": "2b28058708a7b04e",
+      "source": "f3e78265e2f3645d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-dark-desktop",
+      "file": "8dfefb99396c5f41",
+      "png": {
+        "sha256": "514f7d6e60f1abbc543b442ae32ab263d1c0e569be8013b881152589a7ca356a",
+        "w": 8,
+        "h": 8,
+        "scale": 1
+      },
+      "scene": { "sha256": "b8dce182cbcfc781a713847330efd00d0301d2a602f16de1c02a8e0e73f88df7" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-dark-fold",
+      "file": "7e4d8323dfb581bd",
+      "png": {
+        "sha256": "dd8e5326c2f817a07e5612d251a2430dcead449c24fd9966582eaaa2d4ec7f0b",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "a9899b44ba2b40feab6497ef151003f4acb2a806f109d002707925fd2095539c" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-dark-foldl",
+      "file": "17379f703c5d921c",
+      "png": {
+        "sha256": "dd8e5326c2f817a07e5612d251a2430dcead449c24fd9966582eaaa2d4ec7f0b",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "446b9e8ed45751123353a5ce3343f99392bc61f41c6d649c6b53ef5c956148b9" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-dark-phone",
+      "file": "bebfa5caaaba0234",
+      "png": {
+        "sha256": "dd8e5326c2f817a07e5612d251a2430dcead449c24fd9966582eaaa2d4ec7f0b",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "1419089365b9aa9f581e4ff2fb5e7e88ceef9c92562701dc179eea6f91fe85ac" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-light-desktop",
+      "file": "007394b84040410a",
+      "png": {
+        "sha256": "6a4570906bbf68fe83137059295624b847ab2e3a8fc92e71268193b32de99fa9",
+        "w": 8,
+        "h": 8,
+        "scale": 1
+      },
+      "scene": { "sha256": "62111f33d98fbb81ee693af7663a0039d496d1bdc9e656b37c32863e799a88a0" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-light-fold",
+      "file": "98f2736f9872f21c",
+      "png": {
+        "sha256": "0266caea10f67ac93dee8ec318dbd38dd3ba4e1a2eef597d223e777ac84a1b32",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "193cfb6d285fd451519266dadb1295b6734ccdaa07ee2531d920d4a5765ca6b0" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-light-foldl",
+      "file": "2e4c61d92ea7f703",
+      "png": {
+        "sha256": "0266caea10f67ac93dee8ec318dbd38dd3ba4e1a2eef597d223e777ac84a1b32",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "6f5d438f30811ed7a80c521d69d814dc9bdaadb7f3d0dee41f22d09c9436a817" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@ohmarchy-light-phone",
+      "file": "c243c7577fa821e1",
+      "png": {
+        "sha256": "0266caea10f67ac93dee8ec318dbd38dd3ba4e1a2eef597d223e777ac84a1b32",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "4c48764b874b7d4e89efb0c8ae60fbfd5b6d224fa54bf46d79d0c09bea55e3b3" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-dark-desktop",
+      "file": "f68214817f5c5b6f",
+      "png": {
+        "sha256": "94f19123b3fb8a65691fb3a621f5b133d15f78e9e85c6ee4776d2e895caffebe",
+        "w": 8,
+        "h": 8,
+        "scale": 1
+      },
+      "scene": { "sha256": "b3e98531879b9de359e9fc8cb7cc448334bc2a63bc02b2b2aa2840e2f0d5e36e" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-dark-fold",
+      "file": "24deb1205aee5974",
+      "png": {
+        "sha256": "632ad0ce4df17d1f7776b96871e21cf2e5eabc4ae118c2d8af4ddc06e3ef31c2",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "82e0e1410922b2ede7f0da709df2c51154876f924e7a4dc676389c4f94f0539f" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-dark-foldl",
+      "file": "38266c677909a20f",
+      "png": {
+        "sha256": "632ad0ce4df17d1f7776b96871e21cf2e5eabc4ae118c2d8af4ddc06e3ef31c2",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "fc6c069e670360800762e326621f78cd51a405b60fd40d0cca66011799259e5f" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-dark-phone",
+      "file": "a8f5f2b3adc120d5",
+      "png": {
+        "sha256": "632ad0ce4df17d1f7776b96871e21cf2e5eabc4ae118c2d8af4ddc06e3ef31c2",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "504ff07cfecb905fc1b73cd07eda9fe7f0c1e69c5d98560df713d1dcce99f7b2" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-light-desktop",
+      "file": "1d2b0ed267c0472d",
+      "png": {
+        "sha256": "df98c54e363d7823446ba834ea2fa193822704a5e5a3dd191cd64cb38d63de4e",
+        "w": 8,
+        "h": 8,
+        "scale": 1
+      },
+      "scene": { "sha256": "fc113d82478bdb1ef0a3e1a9a2d93d029a6ab489d0e0195664a41ecc2cf20198" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-light-fold",
+      "file": "5261d3e189776c09",
+      "png": {
+        "sha256": "7887dc29c20a43bcad24cae5d7ac16390ff1c4bcc5dfb09559b8fd2726dfdeff",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "2c8898c7b72ebf1958f448b1291073f4c8ef090077cdc793a2f6724b2e380190" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-light-foldl",
+      "file": "2c6d635413943012",
+      "png": {
+        "sha256": "7887dc29c20a43bcad24cae5d7ac16390ff1c4bcc5dfb09559b8fd2726dfdeff",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "e393874d5e7e6c778cbca95caf2e0767f1041fa38061eb0a89780a918e8c1d14" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/rest@paper-light-phone",
+      "file": "aa06caaf288844aa",
+      "png": {
+        "sha256": "7887dc29c20a43bcad24cae5d7ac16390ff1c4bcc5dfb09559b8fd2726dfdeff",
+        "w": 16,
+        "h": 16,
+        "scale": 2
+      },
+      "scene": { "sha256": "dca1bf5ca7646a7d9d2b45449bace4a14c147bccfaa122c05a687c091bb1a086" },
+      "stateHash": "2cd5c59ddac4be10",
+      "source": "80404b529e4ff59d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CalendarSquare/small@paper-light-desktop",
+      "file": "93745e89f2be307c",
+      "png": {
+        "sha256": "4c12a96eeeabd3df3f600188457714e3bc15b22f2e8b5033083bb504861451d3",
+        "w": 6,
+        "h": 6,
+        "scale": 1
+      },
+      "scene": { "sha256": "1ac1c652c533946e1135428607a52ff722e1b736577c9c6ddab71cf630cf49e7" },
+      "stateHash": "46767b2cbedc420c",
+      "source": "7cb693ea7399223b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventBridge/beside@ohmarchy-dark-desktop",
+      "file": "d3b04d4ea5cbb95d",
+      "png": {
+        "sha256": "6d98b496d9ba8f2dd13e77b26e1037dc8f11749951f803b142a07040141bef3c",
+        "w": 11,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "648b189926cb8aae61160fdc55d9902127c299ca28cb0c0708f93a5d40407585" },
+      "stateHash": "7efd7c0f505798ff",
+      "source": "8781560d97a820e4",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "EventBridge/beside@ohmarchy-light-desktop",
+      "file": "a1de1e46d077ff93",
+      "png": {
+        "sha256": "341384a9c2465b869fe80de92b0ff1d9d16bb1461a5bf3f7ecff8f55b6988990",
+        "w": 11,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "fba88e28097d9c9cc5a17976c0b94dc3757e29fa461ec1f8d18ba02d431a23cb" },
+      "stateHash": "7efd7c0f505798ff",
+      "source": "8781560d97a820e4",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "EventBridge/beside@paper-dark-desktop",
+      "file": "919496638158cd17",
+      "png": {
+        "sha256": "1a7f254ec3fc948c4a1ee03b8970aea006022861f6981398bb4f8964e42b8b42",
+        "w": 13,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "b93e322be0a6e10d832d64d08bbf5f4e3c9144affe83942a3c5bcd63045506fc" },
+      "stateHash": "7efd7c0f505798ff",
+      "source": "8781560d97a820e4",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "EventBridge/beside@paper-light-desktop",
+      "file": "ac82790217a2954f",
+      "png": {
+        "sha256": "95fb89b860ce31ffa833b2d8b4c6be64f9e4f9ff83ed0818b66dac31bca2c5e2",
+        "w": 13,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "a88bd7e49d954fdcfb535038b86431564570ce27218b6478b244798ed46c6972" },
+      "stateHash": "7efd7c0f505798ff",
+      "source": "8781560d97a820e4",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "EventCard/call@paper-light-desktop",
+      "file": "1791c6a6764ab7a4",
+      "png": {
+        "sha256": "ac1e1045b30cf5b4f653ce323baa91f58cfe2fb5b08f54708e3505cd1b1a0aa0",
+        "w": 345,
+        "h": 466,
+        "scale": 1
+      },
+      "scene": { "sha256": "ca628362de62e2e43adab0b9513cb7d00f662ce0bc81675bd5981a2acfd2d4dc" },
+      "stateHash": "399f3685de77625e",
+      "source": "eca9fec13387c7b6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/found@paper-light-desktop",
+      "file": "b78425c8c725ed6d",
+      "png": {
+        "sha256": "0debf76cfd704d42f443598261c1bdbb2fc3467537790b6e544fa50df1243de8",
+        "w": 344,
+        "h": 341,
+        "scale": 1
+      },
+      "scene": { "sha256": "f3a5a04da913cea8ce307d406c1ee67ba8bcaf94ef9b14e55c39ac88ebac8bc6" },
+      "stateHash": "218c3c16e0c1573e",
+      "source": "c338c84e12104b2d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/inline@paper-light-desktop",
+      "file": "5c4ea4c42532e8ed",
+      "png": {
+        "sha256": "6f9409a45a7500730bb90d8a629997444cced01ea2ab7109d2304b84a82d7baa",
+        "w": 376,
+        "h": 204,
+        "scale": 1
+      },
+      "scene": { "sha256": "36bbada26cb9154839cb41c01faef76bef3ceb0f79c5fbdf7586fcf8b7e9c516" },
+      "stateHash": "fcf9c56cb25ade7e",
+      "source": "78b2a60873b49978",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-dark-desktop",
+      "file": "a1e6ccc50335a96b",
+      "png": {
+        "sha256": "f6368934619c1116933a4a10cd015edebb99e6326c281045378f7d445499af0a",
+        "w": 373,
+        "h": 383,
+        "scale": 1
+      },
+      "scene": { "sha256": "4f864c7121e73515c83510d41dae9b23cb0e629a0b14345c9f8ed34120e3fb07" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-dark-fold",
+      "file": "f88a2efbc70e309b",
+      "png": {
+        "sha256": "1a0fd0f34664e588bd9c3fd50131cdb5b7aa46794e487fa77dbed25bae924161",
+        "w": 470,
+        "h": 966,
+        "scale": 2
+      },
+      "scene": { "sha256": "e8313f38cd23c1393988eb9b4910c898699545e0679ca8db4787f733c4ee6521" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-dark-foldl",
+      "file": "fd3008a2aea7c454",
+      "png": {
+        "sha256": "d62848f3987b63b6ee822959fa080555b3bbe16c44790a2622fd17a6f8d991f5",
+        "w": 690,
+        "h": 776,
+        "scale": 2
+      },
+      "scene": { "sha256": "34b434731fc5e28ebd84cc9b181c4359a7c3461dd9ef027b23b3a5ecfda0555e" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-light-desktop",
+      "file": "ddbaf1689b4ab431",
+      "png": {
+        "sha256": "9c5cd3f95c5b5d8c8376a56ed7e5b1da2714032d33a2206455e54e59d17a13e0",
+        "w": 373,
+        "h": 383,
+        "scale": 1
+      },
+      "scene": { "sha256": "69112c3eb1f023e20da295b3e8c55366756c81ac2539230fa0671738fb50bcc7" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-light-fold",
+      "file": "980dc68e79bae174",
+      "png": {
+        "sha256": "ad99943e780904db860b3c75c7603bd979ad865bccf023f89c76e05d230e3399",
+        "w": 470,
+        "h": 966,
+        "scale": 2
+      },
+      "scene": { "sha256": "beb3da36eb97ceeac68c35a316eaf18f6c5cc727d57b8043b0ea8cbae172ad63" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@ohmarchy-light-foldl",
+      "file": "929d8dd7794bf56d",
+      "png": {
+        "sha256": "023ee631a4e7b3f745246e9184f02b55f9c322a5c24dd9af391286efc9ff7ed6",
+        "w": 690,
+        "h": 776,
+        "scale": 2
+      },
+      "scene": { "sha256": "e5a5617e2d874e295a8525599a69228f44151e85ff9212f02d5f958ceaaaeabf" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-dark-desktop",
+      "file": "1705c13db6876b39",
+      "png": {
+        "sha256": "fd3590a66a2503f02dfd2418694174929bab57a21e8e6afb972ea00faff5f11e",
+        "w": 345,
+        "h": 394,
+        "scale": 1
+      },
+      "scene": { "sha256": "d01162803d49ddee2e42dee599bd7a7bdd8e562907932e586a61a9341028d6d3" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-dark-fold",
+      "file": "22de571713fff1af",
+      "png": {
+        "sha256": "258ea139cf94f832e7dc4fad5da69bf9e01d7cf133795fbd55a18c432c4635b0",
+        "w": 512,
+        "h": 1030,
+        "scale": 2
+      },
+      "scene": { "sha256": "1f978ad667f8cd31814ee919bec118432c525876c5b343dbed2640567e338717" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-dark-foldl",
+      "file": "d208afc05e79b138",
+      "png": {
+        "sha256": "a24f0c1ed0ffc7d2590e285fb21c94f4f579f405e7af6e036d0b99c1a87f7eff",
+        "w": 690,
+        "h": 820,
+        "scale": 2
+      },
+      "scene": { "sha256": "42b523f5fe45ffaeb159776ea93bb14013fd80ff5e8f888ea203980906b7301c" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-light-desktop",
+      "file": "57db0aa04745dc67",
+      "png": {
+        "sha256": "f62c4890f5e348fafc1cf689382686692ceb572442e906c8e9352e4ddc73debc",
+        "w": 345,
+        "h": 394,
+        "scale": 1
+      },
+      "scene": { "sha256": "950646766fb5224aad660b80ba46522c00d37abc743cc18377195da5c57c773c" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-light-fold",
+      "file": "4dcc5291d7bfce8d",
+      "png": {
+        "sha256": "b47d3cadc942961f6e9c125d76879d8c2a2024517a76bb1f209eedbe78bb9d17",
+        "w": 512,
+        "h": 1030,
+        "scale": 2
+      },
+      "scene": { "sha256": "fe67e78207b74a75bb4c8a359450a4c1d9b97be2809125d15d1f192303b85fd0" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/invited@paper-light-foldl",
+      "file": "2421a09826fd4490",
+      "png": {
+        "sha256": "e6deaf6cd81f4f4223978ab796ed823238cbce0fb148982c0f15a497125c95e9",
+        "w": 690,
+        "h": 820,
+        "scale": 2
+      },
+      "scene": { "sha256": "9b32870846d70ae7805be00590ed79fd3c847f0159df9d806738c1a76172bfb1" },
+      "stateHash": "9ebf6472af3dabf9",
+      "source": "e071e9dd1e01a5d8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/own@paper-light-desktop",
+      "file": "285e99af6ca17d3c",
+      "png": {
+        "sha256": "d86ec5356b31f07e0325ddf3949592aa31db9cf13db311eb50e161a8eba821eb",
+        "w": 345,
+        "h": 179,
+        "scale": 1
+      },
+      "scene": { "sha256": "e9586c8c3fe6c4d3907c24b2fc2f757f48f3086245022fcf1210632cddf56d2b" },
+      "stateHash": "6c441c83d856ceec",
+      "source": "ef05cbef4b7a6b6f",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/sheet@ohmarchy-dark-phone",
+      "file": "a0980cc0a4b789c6",
+      "png": {
+        "sha256": "cc46a2bbd681922be823b6ae89bfd77e5ad08cccd2778bc1ee256a86079400cf",
+        "w": 780,
+        "h": 1126,
+        "scale": 2
+      },
+      "scene": { "sha256": "bbe16c614752e9b6ec4942d418035bbccd0072b200dd065cae25d539048b3bcb" },
+      "stateHash": "3f29db74f1c1334b",
+      "source": "f9a25b38b7cd642e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/sheet@ohmarchy-light-phone",
+      "file": "481580f23826a80d",
+      "png": {
+        "sha256": "b0d7ae6d75d6d80cc62edf1b0b36a6e5ad2b141cc9f547e675a2e6c073cfb614",
+        "w": 780,
+        "h": 1126,
+        "scale": 2
+      },
+      "scene": { "sha256": "259f4da8e89313e1d6beda4e498a18d595cb92cfa81f820220c90227b8540b1d" },
+      "stateHash": "3f29db74f1c1334b",
+      "source": "f9a25b38b7cd642e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/sheet@paper-dark-phone",
+      "file": "688948bff4178c69",
+      "png": {
+        "sha256": "6fdc28fadc02713e39844b17bcb19e8d882e373e784048732e1f56f3f2434dbf",
+        "w": 780,
+        "h": 1136,
+        "scale": 2
+      },
+      "scene": { "sha256": "e587adf214350248bfc7e36765e9f713bc866f4592fb3e40531339c920ee7a9e" },
+      "stateHash": "3f29db74f1c1334b",
+      "source": "f9a25b38b7cd642e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/sheet@paper-light-phone",
+      "file": "0970e75814ce8eed",
+      "png": {
+        "sha256": "4878bf3a20047612960758f3b5af52c4a7441a249832b157822e4783588fba1c",
+        "w": 780,
+        "h": 1136,
+        "scale": 2
+      },
+      "scene": { "sha256": "7b637cfdb6e6ae540161149e39b63175be8c895694b2cfe4a68ecef02782b063" },
+      "stateHash": "3f29db74f1c1334b",
+      "source": "f9a25b38b7cd642e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventCard/view-only@paper-light-desktop",
+      "file": "e9d7fd9edeb98977",
+      "png": {
+        "sha256": "956748350a1aa3e0da259631aa9bf3a2c9d202088b5cef3ade3072992e19fd57",
+        "w": 345,
+        "h": 186,
+        "scale": 1
+      },
+      "scene": { "sha256": "bc1e9a002d35b52f19e531d4f7c524ecc0f9fc2285323507c1d3c92641ba61d0" },
+      "stateHash": "8449720b190a80d0",
+      "source": "7b6c5a6004314d73",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-cancelled@paper-light-desktop",
+      "file": "f4f3f9cdf469c3f5",
+      "png": {
+        "sha256": "ff873efa9174df5ae44aac1d3a3812781cbff1391b0e9eec194f60054ba3ae76",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "b5caac6b7f0d894bbeb38ecdf30066d21bbc44c1783a1a58697dcdff7eceb60b" },
+      "stateHash": "fa7bfef91b6b8d17",
+      "source": "79f56ae247d6fef9",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-changed@paper-light-desktop",
+      "file": "895f372e3b786d65",
+      "png": {
+        "sha256": "d2b5600f3f2a6c5d787aa43ffc6ffa3920de56d350101b3962143932b7124bf8",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "a2a6b797dea7f11063de6aa7c4a166fd62f711d181760e0b5f047753875906ab" },
+      "stateHash": "a77e5e88d18c6a5b",
+      "source": "3467a5d7d8d4f3d9",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-draft@paper-light-desktop",
+      "file": "b87d924895c1e0a1",
+      "png": {
+        "sha256": "e306a31b02bc5bab40be131e5d68311140feb09826cbec3d5005577ea50f2436",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "c1e1f080d040e8ca2b72b016de34cf5c48d821d13c6a574ac373558eb52339db" },
+      "stateHash": "baea0f4885e1f6e0",
+      "source": "695b7bd609359b46",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-dragged@paper-light-desktop",
+      "file": "b9aa5f1e5754c44f",
+      "png": {
+        "sha256": "c89d2d5ca41d48256ffa21619ecfcedb79893f25c523c3dda8cc17b25af3e6c5",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "459bde1c88aeb772b93b3d81d1e4a64ee6d55c3fe33cdea86481106f33b6853b" },
+      "stateHash": "9bd7e12357b2732e",
+      "source": "453037bb4bd4e22c",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-focus@paper-light-desktop",
+      "file": "e943fcf72847ab35",
+      "png": {
+        "sha256": "0977b47b10372f7c147b3cab42455f3d49945ec390ff92a574811fe2f6621fe7",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "29b6c715a161684dba6036da5b882c9abe7279511099cf8e63f0c78b951f6807" },
+      "stateHash": "de59b03c3621c7d1",
+      "source": "6c4dae968a224fcb",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-from-mail-focus@paper-light-desktop",
+      "file": "e7c056d466fc1839",
+      "png": {
+        "sha256": "69ccfa9499b51d92757c8746b9fe65df5882936253c68b67fe826a72049d6ccf",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "98c30d262180854307dbf38a70dbf8d5af05914e952055c9894e9132246bde9c" },
+      "stateHash": "2f6609c7a6ffd867",
+      "source": "f57ff9b7b3c2a21c",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-from-mail@paper-light-desktop",
+      "file": "28211cc421b32598",
+      "png": {
+        "sha256": "69ccfa9499b51d92757c8746b9fe65df5882936253c68b67fe826a72049d6ccf",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "eeec555ea0449523491b750e67fefc7adf77bca1690b6b8eb572ae8d1a631a36" },
+      "stateHash": "b8a8074c637b06e6",
+      "source": "f57ff9b7b3c2a21c",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-half-hour@paper-light-desktop",
+      "file": "6c8462cb8a4bf9bd",
+      "png": {
+        "sha256": "70491475d88d2c14684eacf7693d58cc5e230265b982a8c18657685b190db80f",
+        "w": 220,
+        "h": 28,
+        "scale": 1
+      },
+      "scene": { "sha256": "203128cf01e7967b6d7c46e766a839085e0bbe4c83c3ba7b2b3b3838b539bcf6" },
+      "stateHash": "1184a69f73c4dd18",
+      "source": "c4351cf97028aed8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-hover@paper-light-desktop",
+      "file": "aed4b44f840f24e2",
+      "png": {
+        "sha256": "48a08b4caa2c7a4a4bc8a6b0e72a2799f2b6f90b1375311ebad1db31c5b1fe6b",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "6128586318c8db155665c388ac8a28abc74011041eea4d6e9cbd94a03b1ee6c2" },
+      "stateHash": "3b3008fda6fab327",
+      "source": "ec3d88b2cb85e855",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-maybe@paper-light-desktop",
+      "file": "639cc512bac249bd",
+      "png": {
+        "sha256": "415e261f7adbbe72c0a69d3312b9814d19399c8282652b16df8bd7580c3aeb43",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "2ff4c32563ea22b4f8c8281a3a56b8e4fa987b2ae570d4170caf4e513aa3908f" },
+      "stateHash": "71dd7969d8ac237c",
+      "source": "4e6ae84df3b505da",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-narrow@paper-light-desktop",
+      "file": "00ab2559d504b2e1",
+      "png": {
+        "sha256": "0e724429e92f9a62d38be2bb63e8ca817604a6c767515529ee9d70185969dc0f",
+        "w": 84,
+        "h": 44,
+        "scale": 1
+      },
+      "scene": { "sha256": "761dce63e7bdef18fc6687b364c684e440182d3bd27d986a59c7660d0a45d57e" },
+      "stateHash": "be071b1f9f2d9595",
+      "source": "f4fe9e99f0790583",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-not-saved@paper-light-desktop",
+      "file": "c32953c6ba4eb09b",
+      "png": {
+        "sha256": "470a6483fdcf787f1d8ce14b9b0d67c81a13cba5448fc3a6d0c727b3e7df3948",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "6899e95bba4a0e490860cecef131ac7421695e870468b81f17ab58b130157be7" },
+      "stateHash": "ab807603542b2b2f",
+      "source": "492aa2e506219851",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-open@paper-light-desktop",
+      "file": "2f19c0b30f5def45",
+      "png": {
+        "sha256": "c9c7a921c42b3031e6a742d1898522b1d7e74c8400c1b7021244a28ea71d18a9",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "5b2a821a270be33ef870a06a27343e998110663d1c06b44c736f90fc0d1cbc99" },
+      "stateHash": "1445f85bcbdc54bb",
+      "source": "1a3d56c3e1638e34",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-shortest@paper-light-desktop",
+      "file": "8cbfd932d23e4209",
+      "png": {
+        "sha256": "1c4418cc30b63eb565abc2fa978ecb1a2953febe4425d4711846c6592b214bbc",
+        "w": 220,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "8050d24d221c5702c678763fbd1a145f2bb6188704f668281254e867015b5a1d" },
+      "stateHash": "8d7c3a845a1bbf46",
+      "source": "c4b492f1159c1e34",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-to-answer-new@paper-light-desktop",
+      "file": "968ad7a6cfd128a1",
+      "png": {
+        "sha256": "36e6387d0425e7c16deaa9539c229e130eb9feda1f1db49b2a58aab2d74b7ce5",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "f2f0300e6abaa3eea2dd87ba1734b2d10f7592cab8a905a985d4cef79a0175f1" },
+      "stateHash": "630e0406e4ff0b95",
+      "source": "3ea0db2ac481b833",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-to-answer@paper-light-desktop",
+      "file": "f8bc068d790c39a5",
+      "png": {
+        "sha256": "fc9e93ff55203eacbf666df12cd0b63e16894562a57b6c6b54c6230905861b37",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "d1e76c629024be6d7713556178ef679c5c5a68e7a04ae38282d35b9b00e82272" },
+      "stateHash": "1c3e6b5359ef10f3",
+      "source": "565598a0bc1c795a",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-two-hours@paper-light-desktop",
+      "file": "d7d5be33d31a1137",
+      "png": {
+        "sha256": "e2be30980a4d053631ec37befbecbb666c05bf1d40b0b844707ea5b8b60fa03d",
+        "w": 220,
+        "h": 118,
+        "scale": 1
+      },
+      "scene": { "sha256": "5c5c56eb0e1e550fa39de65530d8c7e15bfe8204acc5a832defc0ec39487fe0a" },
+      "stateHash": "ad49f32c1a6049f5",
+      "source": "955282c82a89d875",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-view-only@paper-light-desktop",
+      "file": "8c51d92e82f0e293",
+      "png": {
+        "sha256": "0cdf2945767de4d2af070ce57dfb4772a07d86d58073a6285c7d82e20bf20fb0",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "742d768e40d43195be17f8cfffa50b8bbfa6a56ad7cb46a09122fc3f0a1a5a01" },
+      "stateHash": "7f46414c0aea3752",
+      "source": "08c709dac1385ac7",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-waiting@paper-light-desktop",
+      "file": "83d39b88c5346ac3",
+      "png": {
+        "sha256": "4e2d92822bbf8e0d186f0a26206f859ad58af52ed06793cbfb3981e7734bb496",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "b7247e8ee79cd95fd1d540dedb95eff383f8178294dea029ce901c6fcd25bd15" },
+      "stateHash": "11242d2b0564f00f",
+      "source": "91efc3e12a2fe598",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block-zone@paper-light-desktop",
+      "file": "722f69f42cd83d01",
+      "png": {
+        "sha256": "991b8eb19adf7c9b20272af42c13b678562a2e202d15c802cc59d6c03e0d8087",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "ae57c765a077e262bc020efc1b952fa602c6af546c0b831422f373f8962fd1fb" },
+      "stateHash": "ef60f93ff0868ac3",
+      "source": "fcbf39318e9ebecc",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-dark-desktop",
+      "file": "6a8f87a9e8e0bc80",
+      "png": {
+        "sha256": "541e3a6b3fd764d830063b0d4e7803d769d291c5517685a057a53c05a2d66dfa",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "b1a1f69200a092ba6c706dbc88c836f913ba809262fda4e56fa5bc3114575b8d" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-dark-fold",
+      "file": "460ab9be858da0f0",
+      "png": {
+        "sha256": "dfbf7f44a891f7fb2ad595f22fa73df9306c90f1634cf23014eb9ba485199793",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "a7c7face50ff48d024322af27c52aba0d6d9ab383fd0406a103b68034a26f2ef" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-dark-foldl",
+      "file": "e386db99ad7880fe",
+      "png": {
+        "sha256": "dfbf7f44a891f7fb2ad595f22fa73df9306c90f1634cf23014eb9ba485199793",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "6197d4ecdf115a0c4c686a20b8aee5cc08699d86fac95fad4b9e44a07b648929" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-dark-phone",
+      "file": "78bfc3e225405373",
+      "png": {
+        "sha256": "ccfc8941a5798dc77c76081cc4f5c8f565396a04a7823ee2704ab6a1e55301b5",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "7215b275a4a65955cbdc0cc006bf46b23428b405a9fcfa289d6f19bcdaa2a116" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-light-desktop",
+      "file": "100a07bbd34e8bca",
+      "png": {
+        "sha256": "90797754400676bfb53428097e54821eb54d98cd180135671c3e3a63a554fdc6",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "75dffdb51e3d3d58b9440f814bb685348c46f70d933dea09166bad4773250674" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-light-fold",
+      "file": "b0d61f0d51533cc6",
+      "png": {
+        "sha256": "a28d58dc27c966eeb1b2a2fc9e3818596e00562e4d1dfd5444f7708277a44aaa",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "c225957876307d801d003c57ecc620aa13305efe3148debf02c8d5de8af0048f" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-light-foldl",
+      "file": "c470b135b976c61e",
+      "png": {
+        "sha256": "a28d58dc27c966eeb1b2a2fc9e3818596e00562e4d1dfd5444f7708277a44aaa",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "1e22ea289bedb8e3f2407c0c378a0721b4a1144fdf2d372aca724fad0c508227" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@ohmarchy-light-phone",
+      "file": "3e1b06efceb43c2c",
+      "png": {
+        "sha256": "a2b36f6b52d273474fbb1a5b2b6c3b694758fe5542cc923ef088f75e5ce2960a",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "9d879403ae0541b00a59dc65a6b898e59d2eb520a5cb17a3abcf8392944c7dfb" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-dark-desktop",
+      "file": "b588db196aad5fae",
+      "png": {
+        "sha256": "fce6e351487d14edfd5d04cdcbd91bef032de4647ce6e0976044fe2d5be3627c",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "95fbd47c106dc355a16c58c105caf19f47808f3d2b0a2777ca5d8447869ca651" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-dark-fold",
+      "file": "70f0d7938a311e1f",
+      "png": {
+        "sha256": "b2aec0a52317c9617335c265cba048b81ebd02ab64d7ca61ee808e2236dfb79a",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "0ee7874e9cb23a4df2a8a64b8253fd95cbf17ed1bdbd0bdba18c1346bd6dbaa5" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-dark-foldl",
+      "file": "c59cf5fabe300bbe",
+      "png": {
+        "sha256": "b2aec0a52317c9617335c265cba048b81ebd02ab64d7ca61ee808e2236dfb79a",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "a02bf6b71289714bb84d8fd7adf05e9a5aa4c28e26842b195a24ab3e41c5a1c3" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-dark-phone",
+      "file": "2d30899e47fe92fc",
+      "png": {
+        "sha256": "2b5c4793569f2226b23f3bf9c0e98ae3c70f1e034dcbc2146e6f022c83799919",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "a572bce338462c7f5166d8c45928259d1a88696491387e45969c5ff6d6ff3b6b" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-light-desktop",
+      "file": "9d3838bb4916a7dc",
+      "png": {
+        "sha256": "e71baff76be9bb5340d3d1eebe17dc653dac375ef43030d54e0daea96328d3b5",
+        "w": 220,
+        "h": 56,
+        "scale": 1
+      },
+      "scene": { "sha256": "cea20fae6acae6376ebfbb9d0ada70c801794c0568b1e0a399e561cff0264fd5" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-light-fold",
+      "file": "adf62cb53311b088",
+      "png": {
+        "sha256": "67a82159bbf143680ab14977feb52bebdbb0e8c5604b9d6031cd125cc8c24ea5",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "66292dd27c26007258cfc71c6db7a5272a482a2fdc068f20260e566df1ba85ad" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-light-foldl",
+      "file": "1d58937bbd5d8751",
+      "png": {
+        "sha256": "67a82159bbf143680ab14977feb52bebdbb0e8c5604b9d6031cd125cc8c24ea5",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "9d34824a94cd90de8e6368091099350be127839b557d79ba269435e34978ccf0" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/block@paper-light-phone",
+      "file": "1b72e06f16f36ddd",
+      "png": {
+        "sha256": "6f02f5648e4fa9c7b822f6f1511680ed9efd5b55d169aa8298aca5166e37bff8",
+        "w": 440,
+        "h": 112,
+        "scale": 2
+      },
+      "scene": { "sha256": "64cdcdc182e3eac575143bb1826d6942a7b70050f8689df910bc03aeb3a704d6" },
+      "stateHash": "a10e4a7d7a0dbc2b",
+      "source": "1356d023763763c8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-cancelled@paper-light-desktop",
+      "file": "147c6fac690d860d",
+      "png": {
+        "sha256": "fb4cf3734f0e1f9aa2526ed7ce51b8b5b854b617d5a5bf3719ff950283ef5afd",
+        "w": 186,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "b0cbb227372675a1b5e67c0631f183fb8798cb85956a74fc00498cdd92aa4123" },
+      "stateHash": "bf6f21f9760c3ed6",
+      "source": "897af30ea2670c7a",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-changed@paper-light-desktop",
+      "file": "d2e2c2e04fff5080",
+      "png": {
+        "sha256": "7647eab496a83799fba899e25cebc6f0e806ef334891d75fc4bade6261af525e",
+        "w": 218,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "12c7b22411cdca142d85a9454134f61e15e818449c602c731f0bdcfdb16c3ac3" },
+      "stateHash": "91ac7f0fd9b05c37",
+      "source": "c3129a327b47c970",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-from-mail@paper-light-desktop",
+      "file": "2a1c95eb4d09cf9d",
+      "png": {
+        "sha256": "db654da4d58a2e926622d4f52655be64f5a961f7b7fadc56001b4e8b7f85ad8c",
+        "w": 148,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "7bf6c2ed11bbe3479e7b30eb9dd63b03d6d7a8bf5db4757b109c31890410b04c" },
+      "stateHash": "8875945f704f7750",
+      "source": "cd8efea91e156142",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-hover@paper-light-desktop",
+      "file": "7fc90fae23c9de95",
+      "png": {
+        "sha256": "27628377ed0385880feb4c730118cb05b6baf0cec5a8e86aa53410e6422a4fe3",
+        "w": 202,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "46efa28507469982da55252f1181497a0aa575e7c253da65a082f5359c9c256b" },
+      "stateHash": "3e4443753d6d102b",
+      "source": "337e5e420cc32ad6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-maybe@paper-light-desktop",
+      "file": "06858c3563cad30f",
+      "png": {
+        "sha256": "5d83d393e7055a6ed1df35c647410eff7155a832a07b5bd6e941fa2b1fa95c42",
+        "w": 189,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "4f3694e675d37173122efef5a1f47306148aef374c404b3dba8083c03acd3c73" },
+      "stateHash": "cfe12a383dbe74e0",
+      "source": "f8f6c28e6fe57640",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-open@paper-light-desktop",
+      "file": "477f997fb16545ab",
+      "png": {
+        "sha256": "c4ea9fd89b1f52d8a7e4a98cc38467562d9b986350dfe006af95a49626a1f371",
+        "w": 148,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "9dedafa35cce12d4c9861996df24ae3363f982c53192ebc8f4e6d64dcb10b0b7" },
+      "stateHash": "026dfc135a277aaf",
+      "source": "0cf18300ebbef9b1",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-run@paper-light-desktop",
+      "file": "42b8aad94e7cba2a",
+      "png": {
+        "sha256": "9f65783e7001d1d888997096c3146f771b5593c307902b0783e9a70fa9e4c3d1",
+        "w": 96,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "dc6c97b2e6e1aeaee82b0c413ff866c4939bf4ebc3be55478d519157b279cc72" },
+      "stateHash": "3ba023d83f65ed09",
+      "source": "5d2ad5fb7362ae3c",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line-to-answer@paper-light-desktop",
+      "file": "f9b0f79ec93fca10",
+      "png": {
+        "sha256": "11dafcec0ec29346e56b7f4ca34010b2490053f9cadf30a835a4af0c2e82b279",
+        "w": 194,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "58abefe420d9790286168eeec934babee97049b8b2447b5ea0f3a5ef108014a3" },
+      "stateHash": "e6b8398014c17905",
+      "source": "cab3a7fc9dd8159b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-dark-desktop",
+      "file": "aae722967f467a19",
+      "png": {
+        "sha256": "7cdb75cb2620ee1285e1e5f5ff38d93a77495abf0666eaf2dd01310a11424d64",
+        "w": 231,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "fd3614d53c9640f5fc073a36b95ea0696db6344bc91c1fd26e36dcabfc8a5bf4" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-dark-fold",
+      "file": "53b29ebf1f31b55f",
+      "png": {
+        "sha256": "7d5038a92eec0e57689ce057ed83887f26dc05725fe8dbaf59b16fe1e7c3fc5f",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "94474e57ebbd2698383e11af3b8052b0a9a9bf4f298cb4db6a2b034460ffa465" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-dark-foldl",
+      "file": "5c21f466a905a48a",
+      "png": {
+        "sha256": "7d5038a92eec0e57689ce057ed83887f26dc05725fe8dbaf59b16fe1e7c3fc5f",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "dd9123ae6fd57a9890b7e47ec2e1d547f17c6ee2170c3b1fefb075bbc52e4511" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-dark-phone",
+      "file": "4d7a1115a4b1cb72",
+      "png": {
+        "sha256": "7d5038a92eec0e57689ce057ed83887f26dc05725fe8dbaf59b16fe1e7c3fc5f",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "6f7d5c30dc6245601d901cd9a2608fa860d90c90b1c5997bb48d2913d39989b4" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-light-desktop",
+      "file": "d633433bfee28b64",
+      "png": {
+        "sha256": "42df8a2be0f12e86c17e831fb7245d13407d12bd3197e5ad19d91903a3c9b2aa",
+        "w": 231,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "b8cc0cef82ca2d9c0bcf91cc77f9dce4e3ba1bdbadce3a00c4e06fa657b1e657" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-light-fold",
+      "file": "9f23d9df7dc065fd",
+      "png": {
+        "sha256": "12ab5376664571fafbfc3306d0cbbbdf59c81f7387328336d3c67f30cda311d9",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "30dcc57763a115fa3557e71618783b25565c9b258114668ccc8afaf1267f9cf6" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-light-foldl",
+      "file": "51785c1b41c833e8",
+      "png": {
+        "sha256": "12ab5376664571fafbfc3306d0cbbbdf59c81f7387328336d3c67f30cda311d9",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "93cf78027fb25fbc1746a9ac83f3da7aed099cf6c003a04b6d58979364cb8d5d" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@ohmarchy-light-phone",
+      "file": "8c15e68a0ebcdc4b",
+      "png": {
+        "sha256": "12ab5376664571fafbfc3306d0cbbbdf59c81f7387328336d3c67f30cda311d9",
+        "w": 462,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "d6783ec9cae135ab3283c8be2c68c10a0200aee2574be99dc3215f4b5d408012" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-dark-desktop",
+      "file": "f08eed507a0ad656",
+      "png": {
+        "sha256": "17c39a99e26dff9b2a9e0b728b4f288d8ca5924ef911eea3e0c615568fe8630b",
+        "w": 202,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "63180597944e45c08d66c2b5d4bb39c1cd1e2726cc64a906ddaa968d00f0515c" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-dark-fold",
+      "file": "bc633232a22f8afe",
+      "png": {
+        "sha256": "e9e3e9d54db4a66d2c29646ee02c37efa5fa5ada7ec515fae7c4b92e948157e5",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "d7de21f27decdf854cea8da155e81d592863b344dbd3a4c50ca82364c0ddc58d" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-dark-foldl",
+      "file": "896f24cb30009612",
+      "png": {
+        "sha256": "e9e3e9d54db4a66d2c29646ee02c37efa5fa5ada7ec515fae7c4b92e948157e5",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "02dff03b0f03afe024a5306fa16ef2679809ec8e7a2a2101c715ded75948cde2" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-dark-phone",
+      "file": "614d138b39046348",
+      "png": {
+        "sha256": "e9e3e9d54db4a66d2c29646ee02c37efa5fa5ada7ec515fae7c4b92e948157e5",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "4b67f7424a8385c3e536443e17b71f8e1ecee58c3cf42eeba289e2709d63cca9" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-light-desktop",
+      "file": "d7d6591017801199",
+      "png": {
+        "sha256": "45ffddc4bad92a76d8b647ebd6bbf349c00502682e62d4255d26833b917b18c9",
+        "w": 202,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "5cad50867f6651780c986b59fb84b4086c5312b598d134c984888db7ff10f22a" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-light-fold",
+      "file": "ddfd7ca9bf472dc3",
+      "png": {
+        "sha256": "375ce11ead05778ad78dc2a88cb03f637a58217fc96d8a00fd8031638043a49e",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "7f4869f0af1235580336ab66029cae6c77300f07b669ed2505921433ec7f8c64" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-light-foldl",
+      "file": "66db83f16eb9ca87",
+      "png": {
+        "sha256": "375ce11ead05778ad78dc2a88cb03f637a58217fc96d8a00fd8031638043a49e",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "0c3499cf01ef09d2e51d1f7ec3fbc6fcebce0c3a7f9bb7a97f6d9a78a9fbf6a7" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/line@paper-light-phone",
+      "file": "7221fd2128c3aa2b",
+      "png": {
+        "sha256": "375ce11ead05778ad78dc2a88cb03f637a58217fc96d8a00fd8031638043a49e",
+        "w": 404,
+        "h": 40,
+        "scale": 2
+      },
+      "scene": { "sha256": "11bf5c79363493af8da27215adecba1009d7dbd6cea56628807eb2c456df6d1b" },
+      "stateHash": "9f1cb1d71a125c8b",
+      "source": "bcd34ee6065ebf5b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-draft@paper-light-desktop",
+      "file": "29a356d6287d16ce",
+      "png": {
+        "sha256": "6a8e544c533084290f9525a140610057521e4cc096af4ac5f150392203df199e",
+        "w": 160,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "19c24bd836a053e66d0cf52aec828edb442551f8cf74259cadaf60c7cf0ad340" },
+      "stateHash": "1b86e1195746b0b1",
+      "source": "dc47c05a6143f4b9",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-from-mail@paper-light-desktop",
+      "file": "da9b369c5e34314c",
+      "png": {
+        "sha256": "11cad2292456af6cd1a9844026762922c6ed9ae5b5e610cda127035c1e75aea0",
+        "w": 192,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "3f234b8741f5c3e1c9a3e3a584ed1f87ee055d1b54d643fca4aa92fb576e3ef4" },
+      "stateHash": "5377e1dd205b5ac6",
+      "source": "c0e8b63b07732795",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-hover@paper-light-desktop",
+      "file": "f0cc97294f65453d",
+      "png": {
+        "sha256": "843ef1b5374c6ca205870150f3c8d675688fa3ea8e024f321af440b41f4b79db",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "8a517cbec4d4fdd72cff809b1d4032a9cb22e96504c447005b369dfc9460f58a" },
+      "stateHash": "d32e1c604bc68007",
+      "source": "19461a43c0dab786",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-neutral@paper-light-desktop",
+      "file": "f1d72bdde810e2e4",
+      "png": {
+        "sha256": "c2cb6786842c3cdeffebff3cb66cbd9f826e4f71aebd8108dcd6d4f82036f484",
+        "w": 122,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "ab29f7e13308dccf0c6e2c3602525a84d47f0f65557be29d43a624b38d144f6d" },
+      "stateHash": "ef641aef900013e3",
+      "source": "8171263bd61b25a4",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-open@paper-light-desktop",
+      "file": "e996b7da759d0b5d",
+      "png": {
+        "sha256": "d5310396796233a531bf25e3d93285ed23c55bbf563634716245348b8ef3fe28",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "5a470008da83b2224533296d1a36016c4f9787e5b28e3ab4bcfeaaaa0a8e4cad" },
+      "stateHash": "1faefd529e76a88d",
+      "source": "663ec4b2cd489e83",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill-view-only@paper-light-desktop",
+      "file": "8ef65a5306d0ffc2",
+      "png": {
+        "sha256": "4a8ab0d8af3c8bf9b6087dfba5bd5580399e05c0c94fc96724f4d1a304a8e167",
+        "w": 154,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "2d12590d285641a66b076bc0ea3c230cb7f26e960b058aa1622e12a4e9866fbf" },
+      "stateHash": "82b024dd0bb9b197",
+      "source": "fdce9b46929e7a99",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-dark-desktop",
+      "file": "378c943bb40272df",
+      "png": {
+        "sha256": "382462539605f72514d79ca590cd35b0ec7df2784225cba679f36e2864cec439",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "863bbe79531a9e5ce0babb389167cd51c7f2509a30b9b6d28b3d31fd7582df73" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-dark-fold",
+      "file": "0a5bc359089f6af4",
+      "png": {
+        "sha256": "c6b293dcbe9ebe30023a09a15d477f6508a550c8a0b01843ef5c4bd5fab59fd9",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "388c1c723d4eedbb1a25b2703b8ede824b820d8a31cd3b97d51a24e463a2724b" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-dark-foldl",
+      "file": "596516e503b6578c",
+      "png": {
+        "sha256": "c6b293dcbe9ebe30023a09a15d477f6508a550c8a0b01843ef5c4bd5fab59fd9",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "385e2e5dccd613e45802c1cf2928de3fc8273978ed056d1781f7b39f56c35b7c" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-dark-phone",
+      "file": "c37ea0900f923bf0",
+      "png": {
+        "sha256": "c6b293dcbe9ebe30023a09a15d477f6508a550c8a0b01843ef5c4bd5fab59fd9",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "6fd7d2245deb0b61fd5319fd5706058d7aa9ac8299f3739894a779b66aff4efe" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-light-desktop",
+      "file": "964246e8b58c4b5c",
+      "png": {
+        "sha256": "7b257d71001eb8a457119ef88bb74df3c321a51497c4629f4ea9c716c1b0fd83",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "f0ff5be4082dc697b6673c8bc621309d4b52234b8f4d0b5b2a93ac92514812cd" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-light-fold",
+      "file": "87bf2044cb878353",
+      "png": {
+        "sha256": "c47a7f787edfabe6f45d8688a53b2cfd9b80f7b837899fd765891be182502abe",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "9eca11a6aae08ce5dc2f4c36abccc30574a16c3dd40eef2735d1b5bcca722a38" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-light-foldl",
+      "file": "19c72fdd52e330e6",
+      "png": {
+        "sha256": "c47a7f787edfabe6f45d8688a53b2cfd9b80f7b837899fd765891be182502abe",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "62957b1f917de85c6c9ed3e81ddaea49fc6ed1d3dbabaa09d515270966918020" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@ohmarchy-light-phone",
+      "file": "35f6a8724a1c9366",
+      "png": {
+        "sha256": "c47a7f787edfabe6f45d8688a53b2cfd9b80f7b837899fd765891be182502abe",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "037ee06443964832e5378f2c4312b8b3a2e2ca4b54ba99a1cd0eb50de435db0d" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-dark-desktop",
+      "file": "f53ed0f840239924",
+      "png": {
+        "sha256": "6c7fd4612b611ce680c6db22172a69ed05118e9045d0f4304cad217edc6504fa",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "f96884ef1172be9d0e529e0aac7577a9ab057da734e59c0928d9fb7a3a140498" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-dark-fold",
+      "file": "98ddbd9177a13767",
+      "png": {
+        "sha256": "1f5c184995778a9d5e815db3cea12005bce2877a79d2480b13c84b549d5f0c6c",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "fa8a2a4a504a5db2f29b5ed79b4003539f488c16dc81255086700db42b429a00" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-dark-foldl",
+      "file": "f59f911e66810ffd",
+      "png": {
+        "sha256": "1f5c184995778a9d5e815db3cea12005bce2877a79d2480b13c84b549d5f0c6c",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "c43dafdcb21e115907250a33317687980fd679951a14522180c3c63ea201c7a7" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-dark-phone",
+      "file": "a2bdf4ef132847dc",
+      "png": {
+        "sha256": "1f5c184995778a9d5e815db3cea12005bce2877a79d2480b13c84b549d5f0c6c",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "fe4636d81aa8c98be8d3876bf61abc9c33125dd4a7a06443d246c574145efb98" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-light-desktop",
+      "file": "beb5bc11cec8d382",
+      "png": {
+        "sha256": "d68b5b8d38c3e68cc55980da0326ce4f1660d0de2e0d150b0892c225852ee838",
+        "w": 200,
+        "h": 22,
+        "scale": 1
+      },
+      "scene": { "sha256": "64137eb7d43c9519c94249293b1e783428d44083afd379e484a38e0ceb435a46" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-light-fold",
+      "file": "ab74669f4b75c27f",
+      "png": {
+        "sha256": "36735f548777fa487511e54b0a7e990f23e72e03e408ade271709f5ef04b8609",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "7b18e288a0ac2e517a3f3e3078dbcec14ede397c6d2ff8a8754e863575691ffe" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-light-foldl",
+      "file": "67085d5a01f9ed11",
+      "png": {
+        "sha256": "36735f548777fa487511e54b0a7e990f23e72e03e408ade271709f5ef04b8609",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "9ca45a7c68c734be1e199788fae4c037a4a4d3b5fc51bc3d4d9f87cdbf99493a" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventChip/pill@paper-light-phone",
+      "file": "063ba4d1f7c7a04a",
+      "png": {
+        "sha256": "36735f548777fa487511e54b0a7e990f23e72e03e408ade271709f5ef04b8609",
+        "w": 400,
+        "h": 44,
+        "scale": 2
+      },
+      "scene": { "sha256": "5b401df7113d1a09538c3c52aa10664ccb5c73f63337f7bd44695b179c6072e7" },
+      "stateHash": "5483e3299aa5f77c",
+      "source": "537aa259d0a54748",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventForm/every-row@paper-light-desktop",
+      "file": "a1ce45cd7d4e759d",
+      "png": {
+        "sha256": "f1f1402b305363b893c7b58f401f7630a94413742958c9c66d49c0314f978640",
+        "w": 580,
+        "h": 344,
+        "scale": 1
+      },
+      "scene": { "sha256": "d02b7a7d468dca7af8731b55eb36b06a688da617aafb1b6c9a747ac3a2067b0e" },
+      "stateHash": "400aa44e078c3754",
+      "source": "dfd27623e71d2c64",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventForm/new@ohmarchy-dark-desktop",
+      "file": "ef23e9e0c5b8fd40",
+      "png": {
+        "sha256": "2009c3689bac3ad74bda692c53cbb9a8d9db5d39876463b000d8294d33bd0d54",
+        "w": 580,
+        "h": 144,
+        "scale": 1
+      },
+      "scene": { "sha256": "4c5a61d175ec0a6d9efba7ee197f2d85731d202ef242d7fc0a07af6551268452" },
+      "stateHash": "b3261d7724dd00dd",
+      "source": "cdd0627e5b5e87b8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventForm/new@ohmarchy-light-desktop",
+      "file": "192305a37b937223",
+      "png": {
+        "sha256": "f093dfd5971229d68d6044ac78116e292e28f9f54436fce1e6ed2b9f6425fcf8",
+        "w": 580,
+        "h": 144,
+        "scale": 1
+      },
+      "scene": { "sha256": "8ce7cf4c31080a9840f397282af0ba9ed3d060b02bbf9df3a029111179c26a58" },
+      "stateHash": "b3261d7724dd00dd",
+      "source": "cdd0627e5b5e87b8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventForm/new@paper-dark-desktop",
+      "file": "c11b5a80ec311c08",
+      "png": {
+        "sha256": "d2382465852786a7d72dc729edf72ecd74b8150c6ba2267c82b18d80b5cf8e3b",
+        "w": 580,
+        "h": 148,
+        "scale": 1
+      },
+      "scene": { "sha256": "ecc58e29ae5d617c1196e192d66628c31a52430d67c76d87fc856f9e03f4ce10" },
+      "stateHash": "b3261d7724dd00dd",
+      "source": "cdd0627e5b5e87b8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "EventForm/new@paper-light-desktop",
+      "file": "9f774576ca44db24",
+      "png": {
+        "sha256": "e0c7bb97c41820cd1fafe4d4a54d7a530e9666ce6c9ef5830f5d6b5c68d9a9e8",
+        "w": 580,
+        "h": 148,
+        "scale": 1
+      },
+      "scene": { "sha256": "22c49c7666f69ddda01878cdeb9402607f2eda7738116c6053dcb2c8cbd8db77" },
+      "stateHash": "b3261d7724dd00dd",
+      "source": "cdd0627e5b5e87b8",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/added@paper-light-desktop",
+      "file": "16f112628489630f",
+      "png": {
+        "sha256": "27b7380851e42d46bb92905f1cff456e051440807f501873f11e056172a7b855",
+        "w": 436,
+        "h": 75,
+        "scale": 1
+      },
+      "scene": { "sha256": "797bcf950582ea9099777a797c6dac8b8cfebac988c6900f0f1e0c541648ca87" },
+      "stateHash": "fa3eb79c622fdb75",
+      "source": "30d8f2de43718b3d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-dark-desktop",
+      "file": "24bc1e75208dbf3b",
+      "png": {
+        "sha256": "5e48f2c3cd144b378f2fb3018e7d187b57429d80bf61671c2af63de18dfef967",
+        "w": 412,
+        "h": 66,
+        "scale": 1
+      },
+      "scene": { "sha256": "9f642738f7e5be9062ebacfe80ca88e0d2a4bdc614a51e38f8ddf47a3d758e7d" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-dark-fold",
+      "file": "d69a7a638fefcc39",
+      "png": {
+        "sha256": "6449f08aaf618744f7083dd668cd9677de2c6e3648146c04dd7cc75a4824a3fc",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "d77bd50f70d8df7a197f4a3d94b769ae22cd522186db0556f8aa0ef766320ad8" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-dark-foldl",
+      "file": "9a6417f8c14a7afa",
+      "png": {
+        "sha256": "6449f08aaf618744f7083dd668cd9677de2c6e3648146c04dd7cc75a4824a3fc",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "c0129785c9d224cdc2a6553c649e7de0870a977a25cbdb0ddc63f0ea82e1fea5" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-dark-phone",
+      "file": "eff44fafd0d1965d",
+      "png": {
+        "sha256": "6449f08aaf618744f7083dd668cd9677de2c6e3648146c04dd7cc75a4824a3fc",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "30d1aafd3f4bd9b23b2039e24088d6338e18419cf32a6a6494b303d2fa3c34ed" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-light-desktop",
+      "file": "d004719e446dcebd",
+      "png": {
+        "sha256": "a352ca92a6114a738120845205d4c89f5a29277db6b0258d000ccc0a840eca09",
+        "w": 412,
+        "h": 66,
+        "scale": 1
+      },
+      "scene": { "sha256": "1952c1b07af624d1ae294d603f072e70f7652d6b2e3412f8112756598446b74b" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-light-fold",
+      "file": "7ae9605183fff182",
+      "png": {
+        "sha256": "0b5c9103fc40b1cd1b19f8d3c0bc082e4f1480117581504f0f8259d2d1cf1c69",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "d3fcaccea51b86cc42381119cbccabf90bf64bcc5493c112385f7445e852b16d" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-light-foldl",
+      "file": "2762a631d4b93408",
+      "png": {
+        "sha256": "0b5c9103fc40b1cd1b19f8d3c0bc082e4f1480117581504f0f8259d2d1cf1c69",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "41e809fc03882e9e379503ce0d7ab260e85be9d081fb10d1678dcb68136c0796" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@ohmarchy-light-phone",
+      "file": "c85d5c19a2b38921",
+      "png": {
+        "sha256": "0b5c9103fc40b1cd1b19f8d3c0bc082e4f1480117581504f0f8259d2d1cf1c69",
+        "w": 928,
+        "h": 136,
+        "scale": 2
+      },
+      "scene": { "sha256": "8e09818bd97934455af9f2d98d4641c92944c5ff62e52f227a6bb7d05b2ea453" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-dark-desktop",
+      "file": "7184f403440573ff",
+      "png": {
+        "sha256": "111d44539deb45491d4f10ba67702fe3e7f8d9df75c43165e3e7650d0e19199d",
+        "w": 436,
+        "h": 75,
+        "scale": 1
+      },
+      "scene": { "sha256": "fa6c9bf9b4c02a33451db0ba89a6a84f4b56531411d8326eaafa8e97887accf7" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-dark-fold",
+      "file": "c8b487078f1b8862",
+      "png": {
+        "sha256": "4d700ae621fa725da0cba36026162e9bafda5bebf18c53041c1784ec1f602ba9",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "7a5ec0e198dada73e6fe53d82fe8478f71602313ffd7ef89d40294a99345f6b2" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-dark-foldl",
+      "file": "6bf3cf2d97dcd809",
+      "png": {
+        "sha256": "4d700ae621fa725da0cba36026162e9bafda5bebf18c53041c1784ec1f602ba9",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "a20df96b8a0fb4746e8b019b28c2c832d59e9d81572e1c97be8cf4298b0a45b5" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-dark-phone",
+      "file": "70f6c685f735637f",
+      "png": {
+        "sha256": "4d700ae621fa725da0cba36026162e9bafda5bebf18c53041c1784ec1f602ba9",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "31ad60f57b14b9eb576f7ad928c3b95189f3c4c77ebcd7f4f30a8114ebc2c9eb" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-light-desktop",
+      "file": "d7bc3bd91c4353c4",
+      "png": {
+        "sha256": "0a009a45276501a3b8ee5efa43670d20e86fc599221172302487f966df5b4896",
+        "w": 436,
+        "h": 75,
+        "scale": 1
+      },
+      "scene": { "sha256": "898e2282f78f91d75437debd53d5faa234101e8948ef93574ceab23d8e014467" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-light-fold",
+      "file": "42334cef49b57103",
+      "png": {
+        "sha256": "1695195921b8317a91b23db91395331ffd5e8302cc509ad9b946cd4d98c34df1",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "52592eb38b3dc09fc4ba720b0ea21c050c94ee989616e38f9fcc977c845dd608" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-light-foldl",
+      "file": "87e58118c229c100",
+      "png": {
+        "sha256": "1695195921b8317a91b23db91395331ffd5e8302cc509ad9b946cd4d98c34df1",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "28b8616aa19ebda52374c949c0e525376f381e0100b55952018b0319588862e8" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/found@paper-light-phone",
+      "file": "4509573628e48d84",
+      "png": {
+        "sha256": "1695195921b8317a91b23db91395331ffd5e8302cc509ad9b946cd4d98c34df1",
+        "w": 920,
+        "h": 150,
+        "scale": 2
+      },
+      "scene": { "sha256": "094c4d4ec2c8e918671b14772d33576ac13e4bfc71fb1728eb13a34a3222e548" },
+      "stateHash": "b37acf09ee685e50",
+      "source": "1091262e29cf1992",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "FoundEventRow/guess@paper-light-desktop",
+      "file": "fedbf67125334965",
+      "png": {
+        "sha256": "ee38968ad76807d4ddfe07e0134aeeb03babcc1f4f00309bd2fb3e834dbb69b4",
+        "w": 436,
+        "h": 59,
+        "scale": 1
+      },
+      "scene": { "sha256": "73a6dfb186d03291a67a40176c56de93e288e1d572f81edd3195dfa92c87aa5f" },
+      "stateHash": "8ed7e8136534c9eb",
+      "source": "39b5398fec0d9e73",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/answered@ohmarchy-light-desktop",
+      "file": "d23c2e2fb5caac14",
+      "png": {
+        "sha256": "004798244dc82af71efc3c0b47630538c36e96960c0be70aab3a6898f72f9501",
+        "w": 412,
+        "h": 219,
+        "scale": 1
+      },
+      "scene": { "sha256": "d484baddeea5ff5b9eecc42c179724e78bed4037eb7935951d7a64cf55f7e7d7" },
+      "stateHash": "45ae2023291ff7e9",
+      "source": "496b8d2d1c6a0281",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/answered@paper-light-desktop",
+      "file": "1a0a11f724f510d8",
+      "png": {
+        "sha256": "89e214053b86bc56a3f2a748366538c32f28f3a1bf498316150ba2cc97ca26cc",
+        "w": 436,
+        "h": 250,
+        "scale": 1
+      },
+      "scene": { "sha256": "e4d4810d6ad55dc0c1e354eb476b7999f5ad2b4777a803e910c0af8c1d1d1e07" },
+      "stateHash": "45ae2023291ff7e9",
+      "source": "496b8d2d1c6a0281",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/proposed@ohmarchy-light-desktop",
+      "file": "15f5d5a9bc95238e",
+      "png": {
+        "sha256": "33f304cde234a20518414f46c0a7dac28c182ca345527da62ea5ce562839327c",
+        "w": 515,
+        "h": 283,
+        "scale": 1
+      },
+      "scene": { "sha256": "f850b013035bb9ba1b92d37ba3d85851a46fc1f2b4ff9b1d226ea900bcd5f1fa" },
+      "stateHash": "c531edd77b2f4583",
+      "source": "3a0c8493edd37e2d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/proposed@ohmarchy-light-fold",
+      "file": "335ef2741e68b1a4",
+      "png": {
+        "sha256": "f4ab4a9886c3a39795bc49716f42c9d5125eddcbb3edb9dd87bb9cf9fda21104",
+        "w": 542,
+        "h": 800,
+        "scale": 2
+      },
+      "scene": { "sha256": "9786906c0a78bab10efa48dbc7f94a255df45334a8e3d3f1760bb5bd8a6e68a7" },
+      "stateHash": "c531edd77b2f4583",
+      "source": "3a0c8493edd37e2d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/proposed@paper-light-desktop",
+      "file": "ba8822a389318005",
+      "png": {
+        "sha256": "c8bbe291b6c0160fcd848c7b139df258174c1f4578cc67824e0932c04c782bf5",
+        "w": 520,
+        "h": 315,
+        "scale": 1
+      },
+      "scene": { "sha256": "a55bb99b9a6d2646239632518a4c693a22a9ffb7ac13271c3e29aabeb8bf2482" },
+      "stateHash": "c531edd77b2f4583",
+      "source": "3a0c8493edd37e2d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/proposed@paper-light-fold",
+      "file": "87cb45f33bc01016",
+      "png": {
+        "sha256": "5e81357bcbd7bb5abf7f108e9b90ee1e3f86bfe3b38b3ddb7e57ce5fde5bed59",
+        "w": 534,
+        "h": 862,
+        "scale": 2
+      },
+      "scene": { "sha256": "d965d92f336202957d4d2f2371d411b702cfbc1cbfb310f2fdeb7399f1d66ae7" },
+      "stateHash": "c531edd77b2f4583",
+      "source": "3a0c8493edd37e2d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-dark-desktop",
+      "file": "4389ac091ea7dd70",
+      "png": {
+        "sha256": "ef4946c86c2e2717302eae750313c2e434f7dafb093bb8e1e51a2ec1ddbcaf1f",
+        "w": 515,
+        "h": 257,
+        "scale": 1
+      },
+      "scene": { "sha256": "793d464dd515d1b778e13e34913e39f98e8f6ab2c077c5a20d10d87abc647cd4" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-dark-fold",
+      "file": "d4afe40e690894e0",
+      "png": {
+        "sha256": "555530e7f4391350f716277018f8854a257ae38c77c58ea5d1cc375550b6de84",
+        "w": 542,
+        "h": 748,
+        "scale": 2
+      },
+      "scene": { "sha256": "7e447854281ec6b2de5eee697e6d7dbee522a4c4593b554d705e864608e2c4c8" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-dark-foldl",
+      "file": "6866cf176ef2b90d",
+      "png": {
+        "sha256": "4607981dc9ce978e6046ca85c77bbf4a39f3e67937902c18e4c469e1d52b178e",
+        "w": 732,
+        "h": 650,
+        "scale": 2
+      },
+      "scene": { "sha256": "7549caba6dfcc094d5df6b1742354b361de4bf160476e20060621287f7fb88d9" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-dark-phone",
+      "file": "43bfe81345973646",
+      "png": {
+        "sha256": "6a295a5f20a7d81ca43c4d73eed37e0d9aa1ea0d5d4bb7062ab21fb3d84c1b0b",
+        "w": 668,
+        "h": 680,
+        "scale": 2
+      },
+      "scene": { "sha256": "ec48706d81745854aaf7c04e0d317c3160e49780f36c3240e2e8cd921de911bb" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-light-desktop",
+      "file": "299909291667f4b3",
+      "png": {
+        "sha256": "e752eccfecd76c1d395d048a65de64bdc7376adc40638b68dcf1a60f9ff1062a",
+        "w": 515,
+        "h": 257,
+        "scale": 1
+      },
+      "scene": { "sha256": "b00d47f4c5c0d9a3f2cda5a447c15ec6ca7112d0ff85e1daba34079e03d8cadd" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-light-fold",
+      "file": "385725d2831c9e4e",
+      "png": {
+        "sha256": "9a9257daac21b6ea47a39b36f40a7c9b333c28551a4a30b2f598284010520e49",
+        "w": 542,
+        "h": 748,
+        "scale": 2
+      },
+      "scene": { "sha256": "32854e86c0222c26ad635b7c8466199ef5e21e495bac360c74180c5b60cff8dc" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-light-foldl",
+      "file": "135e66bab4de8673",
+      "png": {
+        "sha256": "f234d557334480669ba6a3f318cdd0fc51d9554ed3ca08ac7b1d14fe3ee4ef28",
+        "w": 732,
+        "h": 650,
+        "scale": 2
+      },
+      "scene": { "sha256": "3b17be4f7c1c326b60234c3c6a8abdc9dab96e0a18655d8208c765a09c4c5ac9" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@ohmarchy-light-phone",
+      "file": "d4b315f18f24d196",
+      "png": {
+        "sha256": "799368e36475ac943d521558d8854dc1e2597309ea78109e3c4e4fb2500520ef",
+        "w": 668,
+        "h": 680,
+        "scale": 2
+      },
+      "scene": { "sha256": "39234b30df88e5d42b5ce9c3107c28855c0d8b269f5a2e4d56828b1cb3f17f44" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-dark-desktop",
+      "file": "c89af1b11ff4fc23",
+      "png": {
+        "sha256": "cc6858d2d22e2cc54898601cfc2d6e49884b73550d6021f7b3395003206444b6",
+        "w": 520,
+        "h": 289,
+        "scale": 1
+      },
+      "scene": { "sha256": "b5ce2bf4eff135551e704d26d5b5c2f2c34100de23569a92f977b12b75772c30" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-dark-fold",
+      "file": "80f7f2a53d844cde",
+      "png": {
+        "sha256": "abaddf3f0397f95443fa412032170de74f8e4824af666a06ea88630cef463bf4",
+        "w": 534,
+        "h": 794,
+        "scale": 2
+      },
+      "scene": { "sha256": "ffa9ea2cbd055592aac206df1abfba4b58d6a101a937823d09741c539c8a7714" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-dark-foldl",
+      "file": "7ddee72fb10d1d14",
+      "png": {
+        "sha256": "dae5977d8f63f79bb65e0d4e380cdbb2694101d72c4414f8a23c31f35d0afffa",
+        "w": 724,
+        "h": 722,
+        "scale": 2
+      },
+      "scene": { "sha256": "bdb61722a29aef3ad64f5d937a9ebc1e24484caf175c6868cab66455d06167ae" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-dark-phone",
+      "file": "aa2860a4c6f1b35d",
+      "png": {
+        "sha256": "5d80a9fff6bb3680146e47656a3c3cdd461d7f86d081e2fa3bf3abcd843af5ca",
+        "w": 668,
+        "h": 722,
+        "scale": 2
+      },
+      "scene": { "sha256": "1db477510d0b54ad3d523313d13fa26bad4beb0c4a84c833371dd6e4e2f1556b" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-light-desktop",
+      "file": "db3be1e2b23511cd",
+      "png": {
+        "sha256": "47189d337dd89abc45b8e560c459c1ff5601284dfd33685448c471393f6a57f9",
+        "w": 520,
+        "h": 289,
+        "scale": 1
+      },
+      "scene": { "sha256": "9195ad516c335f5287b4ddc746cef3f02c27ab22f85ad0067fedceab5c95168a" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-light-fold",
+      "file": "b2228200f53f8d67",
+      "png": {
+        "sha256": "368b9b7d4d164fa457d1eb51e2669ac0fa007c2392a5e901d3bf78162ad05ebc",
+        "w": 534,
+        "h": 794,
+        "scale": 2
+      },
+      "scene": { "sha256": "72da1e08840bcfbeff0df791e99356f4fa2c387d9619636ff24490c6af166489" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-light-foldl",
+      "file": "9b5ee8baf7e231c2",
+      "png": {
+        "sha256": "f00cbb6c1cac4d862ad7e9a3c34965122674e8efcee2c4b92b233eec6896f36a",
+        "w": 724,
+        "h": 722,
+        "scale": 2
+      },
+      "scene": { "sha256": "92f8a1c42758b7abe5a6021565e21d9ab946d84bd7a9d2fbcdff36073e0df6cf" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "InvitationCard/to-answer@paper-light-phone",
+      "file": "830b046fcfddd578",
+      "png": {
+        "sha256": "41560a3298946471154aba90829b1aa90405aafd0abd4fb79a7b65b9199c9ec6",
+        "w": 668,
+        "h": 722,
+        "scale": 2
+      },
+      "scene": { "sha256": "a9ed446d6e10e5693b8aced35a8d33e2122e968fb8ddfc7a2c8e74eaf33755c2" },
+      "stateHash": "c2ec7c589daeabd5",
+      "source": "f79dda39e049d902",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/menu@paper-light-desktop",
+      "file": "50c72487577ebe3c",
+      "png": {
+        "sha256": "b225cacf6b75d1ba72bd32513e4ddc30ff18e364ba5ad1b7685c01074c5a6959",
+        "w": 220,
+        "h": 184,
+        "scale": 1
+      },
+      "scene": { "sha256": "a2adedaf8f2c0563740a5d29cc06eedb2461b955afaa7065f576a627fa15dd84" },
+      "stateHash": "d98e4048058f6565",
+      "source": "7b6c54d4cbc0bdb1",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/phone@ohmarchy-dark-phone",
+      "file": "8716af39d5a8f096",
+      "png": {
+        "sha256": "fafdb3743c5a74bbd8f81c7af85b042ff13bf167c9877fd884c21b47dd543856",
+        "w": 716,
+        "h": 588,
+        "scale": 2
+      },
+      "scene": { "sha256": "9276f5291d42dea5c2b5fe9caa45723e2b6d6e3091efece0f5cbe3aa06a7462b" },
+      "stateHash": "24eb8115b0624973",
+      "source": "a677993e58eec970",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/phone@ohmarchy-light-phone",
+      "file": "6cc4122b6b126f13",
+      "png": {
+        "sha256": "62526cdc04fc84c8a82a3eefd0a5b505573f7292f9f0d0fb6c7bcb9a9c4d0d44",
+        "w": 716,
+        "h": 588,
+        "scale": 2
+      },
+      "scene": { "sha256": "b39c9856fd3a6a8e98475e2bb679757e5cb2af29b42274e7b851eef24a30bb13" },
+      "stateHash": "24eb8115b0624973",
+      "source": "a677993e58eec970",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/phone@paper-dark-phone",
+      "file": "00a77f485cf9d429",
+      "png": {
+        "sha256": "6ac4975822f62dcb547147ebaf53f5e56100968b4d297414a9914fddc9da0768",
+        "w": 716,
+        "h": 588,
+        "scale": 2
+      },
+      "scene": { "sha256": "fdad36d03c86eaffb49b65a6798a974dc204c8d220e2954c0f266d36d33510ad" },
+      "stateHash": "24eb8115b0624973",
+      "source": "a677993e58eec970",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/phone@paper-light-phone",
+      "file": "c40be1b13d4e5362",
+      "png": {
+        "sha256": "97a5666b6255d00cd555cfe42b8018e10237eba3d4630d9bad9f05a2b5af8ca9",
+        "w": 716,
+        "h": 588,
+        "scale": 2
+      },
+      "scene": { "sha256": "386d1e38f8e831aa954f4ffb17cf9ec0faba59749264dd8839b4cbdeadf817c2" },
+      "stateHash": "24eb8115b0624973",
+      "source": "a677993e58eec970",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/picked@paper-light-desktop",
+      "file": "64cf54bcab00e881",
+      "png": {
+        "sha256": "89ca5db2659ecad8772f84e6cf18613684dc17cbbb39cea4d230dede6dffce8e",
+        "w": 232,
+        "h": 214,
+        "scale": 1
+      },
+      "scene": { "sha256": "697aad180c5247a9985dffd7df671a521d9c2b7833e3cb49eceeb921cf687d4f" },
+      "stateHash": "964be8b268470902",
+      "source": "b8e938690614c280",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-dark-desktop",
+      "file": "6fc6b28c479befdd",
+      "png": {
+        "sha256": "366be44272dc49a20d52877aa3a816f39a6100b919d6b4a1c279ec17f3f72da0",
+        "w": 212,
+        "h": 202,
+        "scale": 1
+      },
+      "scene": { "sha256": "c2ec7316e2d500a5664ca88c842e461591376cd4dbd496e707ba842cd17e6e01" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-dark-fold",
+      "file": "82a07b7b49032112",
+      "png": {
+        "sha256": "002ce6b1fba7aa408314a6e03a9316138bd43ef6b51c694a65d1c61033549a42",
+        "w": 464,
+        "h": 404,
+        "scale": 2
+      },
+      "scene": { "sha256": "f4b0a4546878823ddcfef514895d465bcda39ef33071603fdc8ffb7e1ed1584f" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-dark-foldl",
+      "file": "a8b59762c2697aab",
+      "png": {
+        "sha256": "002ce6b1fba7aa408314a6e03a9316138bd43ef6b51c694a65d1c61033549a42",
+        "w": 464,
+        "h": 404,
+        "scale": 2
+      },
+      "scene": { "sha256": "ac7a1cba7823f43d497f0127fc4a89438071e4f9632fe4f08a6aea96f146e02a" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-light-desktop",
+      "file": "d5c7239fe2dae4a0",
+      "png": {
+        "sha256": "b39faa9b418d31a2bb155ba2df66aecd15854a55cf0682975e903222bb03d9d4",
+        "w": 212,
+        "h": 202,
+        "scale": 1
+      },
+      "scene": { "sha256": "84633a8269f2f2d88976fd9634ad83f1e744d78f3c90c90a98b5a6efa502084a" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-light-fold",
+      "file": "563f51828d64d382",
+      "png": {
+        "sha256": "5c33a8def55a1691cb706d6edeae3b2e67079b200a3f0fb2fe484dbaa4d91b0c",
+        "w": 464,
+        "h": 404,
+        "scale": 2
+      },
+      "scene": { "sha256": "db6e25f2ab9da02ff8a83237ab10da3492783578e531b299b2fce50fe2a1913b" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@ohmarchy-light-foldl",
+      "file": "5db5993b27d5ec3c",
+      "png": {
+        "sha256": "5c33a8def55a1691cb706d6edeae3b2e67079b200a3f0fb2fe484dbaa4d91b0c",
+        "w": 464,
+        "h": 404,
+        "scale": 2
+      },
+      "scene": { "sha256": "62d0e85b5c0b35e134177533544489ef3b9eb8c20c7bbc7f8b90b6beeda5797d" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-dark-desktop",
+      "file": "67a22ea8e2123901",
+      "png": {
+        "sha256": "acf0d38b898ed451a0766ecfe93946682707aebe31b063de72fc49837993e063",
+        "w": 232,
+        "h": 214,
+        "scale": 1
+      },
+      "scene": { "sha256": "4823c6cfa006e4fb3b944541fadab951b0cfc8f887d3d84e389cc9204425b654" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-dark-fold",
+      "file": "36fac1f2252ec7e0",
+      "png": {
+        "sha256": "befe11cbb3626ea9d6e4e71a7cf316dd25632a334ea7be55d1f6f50406cc58d7",
+        "w": 464,
+        "h": 428,
+        "scale": 2
+      },
+      "scene": { "sha256": "97c1b9e361c3f3bee17679021c15c7d9e6f9955f6bf088ec565a03ad0a1d92e3" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-dark-foldl",
+      "file": "5b8db8115b4ee5b1",
+      "png": {
+        "sha256": "befe11cbb3626ea9d6e4e71a7cf316dd25632a334ea7be55d1f6f50406cc58d7",
+        "w": 464,
+        "h": 428,
+        "scale": 2
+      },
+      "scene": { "sha256": "f129248005243b18ecb4fa61760b3a81b02311db50b969f8b0db55a9061318c7" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-light-desktop",
+      "file": "101ce0f15b0be820",
+      "png": {
+        "sha256": "6247085345c74aa6453e19bb9e7bd44288b13c639431dcbe652b0be83994c66e",
+        "w": 232,
+        "h": 214,
+        "scale": 1
+      },
+      "scene": { "sha256": "2ddeb9b497867b04ad536abc66785c7bea458cb85a981ee270eb6a26a8896a9d" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-light-fold",
+      "file": "a1baaf4798fe7508",
+      "png": {
+        "sha256": "7da4e3c705ed20cf5e43440864a81f89e7dad5821c5d7f09e4ea455de14d1d3f",
+        "w": 464,
+        "h": 428,
+        "scale": 2
+      },
+      "scene": { "sha256": "be4791d181bded75162dbd7a8511554921d19850e04409cee7d703b37047733c" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/rail@paper-light-foldl",
+      "file": "5523aba73b5248ff",
+      "png": {
+        "sha256": "7da4e3c705ed20cf5e43440864a81f89e7dad5821c5d7f09e4ea455de14d1d3f",
+        "w": 464,
+        "h": 428,
+        "scale": 2
+      },
+      "scene": { "sha256": "5b8858a208017d577c77bc03b91f30754cee3cc1ea0cca150191f5b922131594" },
+      "stateHash": "55a4bb0373d05f95",
+      "source": "4d8d155409487898",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/widget@paper-light-desktop",
+      "file": "25d4d39c1959fd0a",
+      "png": {
+        "sha256": "8f33a0144d71fd9429aedbc77ff6c08c2b06be60b46cee2695f0c230b8b6bbb0",
+        "w": 140,
+        "h": 119,
+        "scale": 1
+      },
+      "scene": { "sha256": "ace944f996ffaa8b0edd3910bac0366e4e7e66ccc052f5401ce6c00ea2ed9841" },
+      "stateHash": "dfea04c543aac07f",
+      "source": "2ea9630dc4c83b8d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MiniMonth/year@paper-light-desktop",
+      "file": "ed658754e508bbd0",
+      "png": {
+        "sha256": "c64304c0c29e0d0dbca3d26485418c8f914c7b15828cd354ba6c49c9a597bbab",
+        "w": 232,
+        "h": 214,
+        "scale": 1
+      },
+      "scene": { "sha256": "36a70b8dbc902c5f3f28331f505b831e95b682e6c1410ca6f38cdea61bcd3b6a" },
+      "stateHash": "793f20d275c95e65",
+      "source": "f110e3912b01a412",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-dark-desktop",
+      "file": "1058b0cb3fc72dbd",
+      "png": {
+        "sha256": "02dd1258cfc806950924c6b62043563b80b4bfb9636c337f34c6d6a7d273619a",
+        "w": 1392,
+        "h": 816,
+        "scale": 1
+      },
+      "scene": { "sha256": "d1de1d71a2a4a636b92ef7d40eb0f12833d4474565f4b8f2c11fc2d525534e1f" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-dark-fold",
+      "file": "a2378dbb32f81db6",
+      "png": {
+        "sha256": "7c20273048e18904bb5ef6aba0f47d4af50a6d4cfd9d3f56001319d1d990bac7",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "8224d8710b5001530987462a558797501dd05c39d4d32df1b4b9d27c27acf95c" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-dark-foldl",
+      "file": "1a082765cd2636a5",
+      "png": {
+        "sha256": "7c20273048e18904bb5ef6aba0f47d4af50a6d4cfd9d3f56001319d1d990bac7",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "6963c98bb3316c912b8b9a2377572025184a471c51fd3d7b834da45b4d17dab6" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-dark-phone",
+      "file": "ede20dca37230d5c",
+      "png": {
+        "sha256": "722da50d968d5ca9c964bd7696c7c1b1a4752ef7e53256081c517a3a8926e837",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "85bf69cace7245383fb8d1b8502c42b92fcc367f511811ac19e798696fb7fdf6" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-light-desktop",
+      "file": "bb03287bf45a4113",
+      "png": {
+        "sha256": "1626ff7acfae1139b57ace0b59e2bf37f777517247507c90bc24376cf9e20ca4",
+        "w": 1392,
+        "h": 816,
+        "scale": 1
+      },
+      "scene": { "sha256": "bac3f91581929a7933e3f9669d37f05daff917c075ece073300f065cebd41dc8" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-light-fold",
+      "file": "83f72db94e90cf75",
+      "png": {
+        "sha256": "1f4d6bb2e13453add363b3cc6d4e9a7182dfd2034f7939e9fe64a8ed7c0ada99",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "0c69af71d1d9cb53de9666f4c2087c2c9415a0bda5adee988580868fad4b8f2a" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-light-foldl",
+      "file": "67af7a8276b92c0c",
+      "png": {
+        "sha256": "1f4d6bb2e13453add363b3cc6d4e9a7182dfd2034f7939e9fe64a8ed7c0ada99",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "8f15bf4c4efefbf83ac969fccc3b91f0ddd67d0887cd7411efa068f9691c11ca" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@ohmarchy-light-phone",
+      "file": "b5dde7064bc4df23",
+      "png": {
+        "sha256": "044ee7cd3314b0de764ad3ba22bff83c4f7bafc2b8bbe8af202063e9bd75f6ad",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "8c6402ca98c172395b8fea2f8d12239a21eddcdc3b76b3fd10cd4ee4b4ebe4db" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-dark-desktop",
+      "file": "c72d024d30fcbf81",
+      "png": {
+        "sha256": "428588e324e6ed2443ca641f50afa3a92b0458b9b1d89c1b9bc37d2a65e7c135",
+        "w": 1392,
+        "h": 816,
+        "scale": 1
+      },
+      "scene": { "sha256": "809cadb33c626940ba8a6cd69028a6a96f6f8a90f6962102d5ae4ca79c899189" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-dark-fold",
+      "file": "18cd2a3af586494d",
+      "png": {
+        "sha256": "8b66be3dedd7524f4d13658e78533d729f96b97b33835697b6324c1b45465c11",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "5e2a8d19c3f37a4354c9a2d99ed95c8abf2917dc893795d8e26067d20fcf6776" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-dark-foldl",
+      "file": "b64cefdc09c29622",
+      "png": {
+        "sha256": "8b66be3dedd7524f4d13658e78533d729f96b97b33835697b6324c1b45465c11",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "20718c1930a0c35c8a6a302a5f90e57116b328c03300960abf3867cefff5af43" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-dark-phone",
+      "file": "455d11cafb35620f",
+      "png": {
+        "sha256": "801b461202dc7310cd1d18249bf0fe0b1ef74b2010f6e070237d24e3cdb3a8f3",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "8cb6c1c449b85366230fb3e5f2d754591015a60c075c237cf7f84d674e62276e" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-light-desktop",
+      "file": "0d3e725d21941da2",
+      "png": {
+        "sha256": "ea4c5a6b03b0a0626f6099b2c07db05726dbf6dac85d35740b586814c1436b57",
+        "w": 1392,
+        "h": 816,
+        "scale": 1
+      },
+      "scene": { "sha256": "a48f0a27811c711e4913aaf1161ae748b112922853bbc8d225dc06d13aecaf51" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-light-fold",
+      "file": "e3ed461c8850056c",
+      "png": {
+        "sha256": "13769b94c4ecd7c1b985dd211e3f1ffbf2d66eec1d9079cbd28071d3e2b77898",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "1e1e87be36cd25aea7f3dd3a44551642e7931ff086d0a0c4e4985f874316ce18" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-light-foldl",
+      "file": "99eef8a8f32e93dd",
+      "png": {
+        "sha256": "13769b94c4ecd7c1b985dd211e3f1ffbf2d66eec1d9079cbd28071d3e2b77898",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "cce56e12d8fc2cf0485a4bca0343e74f50035cdb14141ec101ca068caa99cdac" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/month@paper-light-phone",
+      "file": "e3460cf5c08a6194",
+      "png": {
+        "sha256": "a20c33502bd95e4b07587b83260dd721f12b4aed886133daeeb01b9c07ec5b2b",
+        "w": 2784,
+        "h": 1632,
+        "scale": 2
+      },
+      "scene": { "sha256": "fee89341fc8cf08365c5df450ecfd4d554b3103ea2f954958d96f35e02f64b7e" },
+      "stateHash": "3224d939d58adb63",
+      "source": "2b659695c76f63be",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "MonthGrid/week-numbers@paper-light-desktop",
+      "file": "0f2f7866f8e9f093",
+      "png": {
+        "sha256": "4f780ecf067da06e5de36877f302ce84a614bac168732ccf2334eb564864f916",
+        "w": 1392,
+        "h": 816,
+        "scale": 1
+      },
+      "scene": { "sha256": "0d389eb173a64c183fca8c90c2b90c3b341d34a1f5ae806438d90dac8679e9ec" },
+      "stateHash": "a32ff7e39816abc8",
+      "source": "5977ebdc701f8eac",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "NowLine/rest@paper-light-desktop",
+      "file": "02721067f82ec525",
+      "png": {
+        "sha256": "6333fbe42d77ff2b3fc34b02123b460741051bb7ae05ac50a58bc1b96cf7b6c5",
+        "w": 303,
+        "h": 2,
+        "scale": 1
+      },
+      "scene": { "sha256": "d590bb9c75d95546b832d523a3ea8f6a3de7737285cc5db81b833b7945fc8086" },
+      "stateHash": "ec9b678d5c3b4eda",
+      "source": "16a10786ad435e31",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "OutOfSightCapsule/rest@paper-light-desktop",
+      "file": "2d100c9126d2e3e4",
+      "png": {
+        "sha256": "9b9620a09974b7202a24a652cdaa27cab6698993c6c339defe6ec317ed1e7125",
+        "w": 288,
+        "h": 20,
+        "scale": 1
+      },
+      "scene": { "sha256": "761db1367107bd08a5ef49e3dbd6ab78306548784337f2f70ea6647ab4c1d15d" },
+      "stateHash": "de1fb5a214ac3d6c",
+      "source": "7670a0eb2491b60d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuestionBeforeAct/series@ohmarchy-dark-desktop",
+      "file": "b9136493c500bc36",
+      "png": {
+        "sha256": "4ea7b5eae06e5f392254af9f0458104f14f63bb2ef19ec4cc0e8c6f01a9ba26a",
+        "w": 373,
+        "h": 181,
+        "scale": 1
+      },
+      "scene": { "sha256": "64e80af08c3915fad9b663b7f539da54da1b6288dc9883830a6717be2933bf01" },
+      "stateHash": "36f16ff97803fcb4",
+      "source": "4e87a02914aea9f3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuestionBeforeAct/series@ohmarchy-light-desktop",
+      "file": "a6ca1ca08bc70e31",
+      "png": {
+        "sha256": "f341c03cccfcf2fbc2ee67cb6fa347419fdd727785cc0a2444db2360f3ad0198",
+        "w": 373,
+        "h": 181,
+        "scale": 1
+      },
+      "scene": { "sha256": "5375303f1c58b03671974b5429ed7bfefee039cf9dec481fc53f55b5a31d054d" },
+      "stateHash": "36f16ff97803fcb4",
+      "source": "4e87a02914aea9f3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuestionBeforeAct/series@paper-dark-desktop",
+      "file": "2d57ebf074a2b8e6",
+      "png": {
+        "sha256": "2fe1f36f23fa4eb792f3cd148b5da41c0a9404dd72e4d2500692651b218bbfee",
+        "w": 377,
+        "h": 219,
+        "scale": 1
+      },
+      "scene": { "sha256": "056469df754ccdc4ebfef35a077d7894dc92e43db07f672bb08571dfc08a450e" },
+      "stateHash": "36f16ff97803fcb4",
+      "source": "4e87a02914aea9f3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuestionBeforeAct/series@paper-light-desktop",
+      "file": "f1a06239f5abecea",
+      "png": {
+        "sha256": "33b12f2843f1de79cddbbbb821c904eec25e6b7c62493b00611bb09c02749611",
+        "w": 377,
+        "h": 219,
+        "scale": 1
+      },
+      "scene": { "sha256": "41a56a818c32cdb4f45f540acba8c222256ba0f25a9824652aa68518f1c6c03e" },
+      "stateHash": "36f16ff97803fcb4",
+      "source": "4e87a02914aea9f3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuestionBeforeAct/tell@paper-light-desktop",
+      "file": "0cfeaf38b2f21d06",
+      "png": {
+        "sha256": "6eff4de68f4f7b41f9c1957a96b7a0b73cbcec9c33f7d94c76356a350a9d6353",
+        "w": 377,
+        "h": 208,
+        "scale": 1
+      },
+      "scene": { "sha256": "a94de246e45084e61c729b0943e55b8cc7f08ca95de62aa8671ee378a8807b7f" },
+      "stateHash": "b101f46e593b174c",
+      "source": "497088e334d3deae",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-dark-desktop",
+      "file": "7a293b493dd7d061",
+      "png": {
+        "sha256": "231fb480cbb5198fc112f3ede5e321e1b5f9e1ae05fedbd8cfb5bbad97684c49",
+        "w": 620,
+        "h": 224,
+        "scale": 1
+      },
+      "scene": { "sha256": "6289a89746b39ca3a6ee8d29dfeba2003a5a5b37ea9c37e29c393c5692c26970" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-dark-fold",
+      "file": "b280913cb07ecbbe",
+      "png": {
+        "sha256": "5b42710aa314370cd51eab44aaa7269040f7091f032e191fa796b8a2e2d63dfb",
+        "w": 664,
+        "h": 596,
+        "scale": 2
+      },
+      "scene": { "sha256": "604e8936c20d7c59da4fb3ec3def1b9a411a39b040eb5d2564f78e92d59cd671" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-dark-foldl",
+      "file": "fb3623328a47044b",
+      "png": {
+        "sha256": "73a4e6eb65575bfb142a4c6db03c7d4f18656715d83e3724f3c76158f7873146",
+        "w": 786,
+        "h": 592,
+        "scale": 2
+      },
+      "scene": { "sha256": "050c62c117cb6588dac4799bb1a957369cf972b513a6f056e5ecea5902be1293" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-dark-phone",
+      "file": "62707d4894cdb754",
+      "png": {
+        "sha256": "0bdec1b653434126810d46fefc0c3c4a33812c161589d3e96078522741690b8b",
+        "w": 780,
+        "h": 584,
+        "scale": 2
+      },
+      "scene": { "sha256": "96b3dc656da1a49978e8d08d7df335f7db6e5abacabbda0ab567458a6bb296a7" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-light-desktop",
+      "file": "e8daf3f34f1ba5e8",
+      "png": {
+        "sha256": "6809d99cb48cceaafbefea464544eca5c47b3be4fe4e10677d1414e6179f77c8",
+        "w": 620,
+        "h": 224,
+        "scale": 1
+      },
+      "scene": { "sha256": "f0b88626f5c60475300db471e2a8f542127dec9ec861825a59ef0e2bbc1e9cf1" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-light-fold",
+      "file": "4a6796465b91b1ca",
+      "png": {
+        "sha256": "6c3b34d91c36ef48332eb15268ca3cc515a348c79fd27bccbb2087deb03e8855",
+        "w": 664,
+        "h": 596,
+        "scale": 2
+      },
+      "scene": { "sha256": "4bd8a960889861ac2fd1948b7b46703bf67ebe38b5520e95aad171149dd5e86b" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-light-foldl",
+      "file": "807840e32bffff0e",
+      "png": {
+        "sha256": "5f490bf6caf33bb49702455783b06cfb7a5b81190870756b4c17426557bc3f9f",
+        "w": 786,
+        "h": 592,
+        "scale": 2
+      },
+      "scene": { "sha256": "52c7d6fd723e898eacfe488fcc963cc349f3e26a6af7cf3246600dfd42b2ab63" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@ohmarchy-light-phone",
+      "file": "a3d4bc6eadb1fc0e",
+      "png": {
+        "sha256": "8679ac7f6fa343fc14497456d28aeef9751b88250010557138a30f9e77962ee4",
+        "w": 780,
+        "h": 584,
+        "scale": 2
+      },
+      "scene": { "sha256": "30b76e14b8a2dfb08bb3789b9912c88a4557a641e010de16e8d99949ddb50d1e" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-dark-desktop",
+      "file": "f14b750b89919413",
+      "png": {
+        "sha256": "d7951418689dbc8ed1d633243c70e2a8d3dc5f7a4198b8d9a71f0eea5d739597",
+        "w": 620,
+        "h": 228,
+        "scale": 1
+      },
+      "scene": { "sha256": "4b5aa647884f113ae6520cd593a5a16b936c290079019fc2f6718a156c55ec91" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-dark-fold",
+      "file": "c072f714efd640a4",
+      "png": {
+        "sha256": "613ba8fd93b9380a801ec663ee93ccf0868b6d7b2ae86e3d4a90745004fecc0e",
+        "w": 664,
+        "h": 596,
+        "scale": 2
+      },
+      "scene": { "sha256": "4550a07f67509ae28693803da6bfb40705c76ff4a547a2d5033506d806de5830" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-dark-foldl",
+      "file": "758f014220164a17",
+      "png": {
+        "sha256": "7324471c74b1861927e4e5b2141450b6fcb032b906f76f2c26603d4a820ad72c",
+        "w": 786,
+        "h": 592,
+        "scale": 2
+      },
+      "scene": { "sha256": "b8ea5921435b54997c1e5cde1abf4401d4a4829f627d47c95c22a3c07ccaecf9" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-dark-phone",
+      "file": "6631d057d015f9c0",
+      "png": {
+        "sha256": "7b42d87de26983ae8295327228e103ed6a17a8a3e84cf6727b81084701081aee",
+        "w": 780,
+        "h": 584,
+        "scale": 2
+      },
+      "scene": { "sha256": "9a116a60a1fa3637671aa3b5b6eb37dd71c2217de6ee3fb11f907c56984af61a" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-light-desktop",
+      "file": "3cf75d0e35c8bb51",
+      "png": {
+        "sha256": "af2b4e678bfa35160eb2485653f1db424ae8b56b10edf0c3799efe95bf59ae4f",
+        "w": 620,
+        "h": 228,
+        "scale": 1
+      },
+      "scene": { "sha256": "6c844edb88fa4feb6cc8dc45396df17f02506aac339ccce04e271b0872b6b0c9" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-light-fold",
+      "file": "2bab9d3a1888bb01",
+      "png": {
+        "sha256": "648947cafea5231096ee694b7e3d52ee67b2e863ee78d101dd802a566ff485f2",
+        "w": 664,
+        "h": 596,
+        "scale": 2
+      },
+      "scene": { "sha256": "cea7a6107fa3df40c55c16479d504ddaf4e5fe94b830fe7ffe8242772827bde4" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-light-foldl",
+      "file": "d30dce91711eb02c",
+      "png": {
+        "sha256": "b387dfdc168665b2f6636cbbfb7443e4f704a44bcf528d70c0159b60877edb25",
+        "w": 786,
+        "h": 592,
+        "scale": 2
+      },
+      "scene": { "sha256": "a0349c83100bd1818e8fbbc4777e53fa8ea27cc892a5149710975de263a18db4" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "QuickAdd/typed@paper-light-phone",
+      "file": "e459cafc38598c4f",
+      "png": {
+        "sha256": "638b53e92a174c4c55244e6f35ec6dc817280b8da2f874db5e7493dd0b1b874d",
+        "w": 780,
+        "h": 584,
+        "scale": 2
+      },
+      "scene": { "sha256": "52d0f24ee9a3b20a3650c2815c6f989cff2c48ca10aed8efade5ad1a9710a56c" },
+      "stateHash": "6e10cdd535c66757",
+      "source": "216fcd6a917a460e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "SidePanel/agenda@ohmarchy-dark-desktop",
+      "file": "10f7e5c48eb08dd1",
+      "png": {
+        "sha256": "5ca938650d27b0407e4517fdf809d533ad6fdec09b7f281dcebce27748d727a0",
+        "w": 392,
+        "h": 820,
+        "scale": 1
+      },
+      "scene": { "sha256": "94d6acbd20df18f3383e9459ae667d4bd8ce79049346d9caa097d135b5f73864" },
+      "stateHash": "7f22d7495b19a379",
+      "source": "a20ce27bf85dd5c6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "SidePanel/agenda@ohmarchy-light-desktop",
+      "file": "5a0c1e26fd212c4e",
+      "png": {
+        "sha256": "da68c7f19277d25b11fe2573d114fa31c847f7052f7e792b5fc6b00d5e9cca7c",
+        "w": 392,
+        "h": 820,
+        "scale": 1
+      },
+      "scene": { "sha256": "74754cf637a86a3de9c9c7ac005bd376f6040b43d3fe532fadc69d36bf69c8ae" },
+      "stateHash": "7f22d7495b19a379",
+      "source": "a20ce27bf85dd5c6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "SidePanel/agenda@paper-dark-desktop",
+      "file": "182f8e398b18ad7b",
+      "png": {
+        "sha256": "20b83d2e4b5e35518645b7e9df3033fe11b76a6f76256094f5fe67f518013755",
+        "w": 392,
+        "h": 824,
+        "scale": 1
+      },
+      "scene": { "sha256": "11b5aef3d66c3f27e261e717115e6a51fbce4f7c7e80db55a86aeca935dd94c2" },
+      "stateHash": "7f22d7495b19a379",
+      "source": "a20ce27bf85dd5c6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "SidePanel/agenda@paper-light-desktop",
+      "file": "6890221a7d1578ed",
+      "png": {
+        "sha256": "2a4eedab62181f3dce82a0c5dba002da9201e181b246cbf58540fce15bb6e0dd",
+        "w": 392,
+        "h": 824,
+        "scale": 1
+      },
+      "scene": { "sha256": "79c1fefc26b4079d98040b165efd35519e860582582b2db4bca5d95a4bedc698" },
+      "stateHash": "7f22d7495b19a379",
+      "source": "a20ce27bf85dd5c6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/all-day@paper-light-desktop",
+      "file": "269c4abbc624d41f",
+      "png": {
+        "sha256": "97e577d9893fd075ba767b4a373a38b153d5b9b50c285b47acb9476eca65988c",
+        "w": 1392,
+        "h": 260,
+        "scale": 1
+      },
+      "scene": { "sha256": "ad8a9deeb6a986e40159a5b55ea5ffa99ff25b68b7c394e5b352c76ee24664ad" },
+      "stateHash": "b5873fe1c931dd25",
+      "source": "ad86328e287852ef",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/day-now@paper-light-desktop",
+      "file": "55f5a6c84ae6438a",
+      "png": {
+        "sha256": "b7e36f3a33e5cdeeabf6a066291543eda86534a0b81c82ecd221e41096e7bbb2",
+        "w": 360,
+        "h": 250,
+        "scale": 1
+      },
+      "scene": { "sha256": "b128c3219ab41c4a996738ef4221eb861733039ccf3c7025b37637c5514c0191" },
+      "stateHash": "172d3217efe87e23",
+      "source": "54ccd1b3f1e90258",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/day@paper-light-desktop",
+      "file": "80d022dbfc3847c8",
+      "png": {
+        "sha256": "19cbfee0ec8c7ec4cbec2673028d3c95757493910cd5dd1eb1abcf0353903471",
+        "w": 420,
+        "h": 560,
+        "scale": 1
+      },
+      "scene": { "sha256": "6fa16e592006846b783a633785c05792d5f1983020355e4aa3e58db94323dd44" },
+      "stateHash": "a307db478435882b",
+      "source": "22c1a127ffe34613",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/days-now@paper-light-desktop",
+      "file": "c0e01a1526c1909d",
+      "png": {
+        "sha256": "23615abbea676beab29ce6b45ed52f332c28b2d64b748604e1e14b2fa4cea83e",
+        "w": 360,
+        "h": 250,
+        "scale": 1
+      },
+      "scene": { "sha256": "0d91723ded56abbc3a067944b0c8af460c2feb2542f1d59b9f21293da6d634f0" },
+      "stateHash": "1a94947802f19d93",
+      "source": "ec9281de89b498b6",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/hot@paper-light-desktop",
+      "file": "4568955461e912de",
+      "png": {
+        "sha256": "53a59772faef92fb49d42dbfd2c72e9d95ceca1b624b6e1b7bd565cd83ff0620",
+        "w": 520,
+        "h": 340,
+        "scale": 1
+      },
+      "scene": { "sha256": "401a4076b135c1fd649a2279dfa10633fcf4ca37d451483767591d8d62e8be55" },
+      "stateHash": "f0e8ad79f774d71b",
+      "source": "ec3815baf35a40c3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-dark-desktop",
+      "file": "1a8d21a61f9b2e6b",
+      "png": {
+        "sha256": "45d4ec40d39f501ea973c4519428bc2b9c745399602154c56b8cb5ddda6bde3f",
+        "w": 1392,
+        "h": 600,
+        "scale": 1
+      },
+      "scene": { "sha256": "4f39f98ae49fdf015aea34d01fca79ed3cf7be792c0c0520b8c2d700c72ba9bb" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-dark-fold",
+      "file": "948db4493fcb9b69",
+      "png": {
+        "sha256": "c9815bbbdc0c4437f7676a719905c53bc0d979ebd10b577fa31a990a37cf7e57",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "d62547bd0a8042933b5f68e3135bc379213b3ebc56ad339af3a081cea52324b9" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-dark-foldl",
+      "file": "6cebca4a95c8769d",
+      "png": {
+        "sha256": "c9815bbbdc0c4437f7676a719905c53bc0d979ebd10b577fa31a990a37cf7e57",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "43a2d933f460f82d58ad43ab3a63fb9812ba948756966296424afe9081f5c8f5" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-dark-phone",
+      "file": "c60119231238ee68",
+      "png": {
+        "sha256": "b660bc10a8086648b36d931cff7829269faa412f221756471a0e98f8e2e0b188",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "968f3b004390ed24edc8cb57eeff6f6ee0203d63edbe7d1d8c91720ad3e70fce" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-light-desktop",
+      "file": "8d56cf1ad914ac2c",
+      "png": {
+        "sha256": "232c3de43090ab6b6a3b65e7e516bf10dc2a867538d605f3b44aa4e3281126e0",
+        "w": 1392,
+        "h": 600,
+        "scale": 1
+      },
+      "scene": { "sha256": "c23f5821f619f86f9ada4cb0a3d593ad9570e4f9392937e295c46f115034efc6" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-light-fold",
+      "file": "cf07c260596d605b",
+      "png": {
+        "sha256": "e626b4b87ed6da537b0f4b41b53a3198a6f776c77e26cee9b3ea1f2ffe845e5d",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "c64e5cc79664fb26842c0472afb2e45ba2358714f72f8181d64be23272c5dca8" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-light-foldl",
+      "file": "621cec7fd5e40e62",
+      "png": {
+        "sha256": "e626b4b87ed6da537b0f4b41b53a3198a6f776c77e26cee9b3ea1f2ffe845e5d",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "8721d929026eab6850c1ff6644cb43073ed8877bf56ecd9761e155fc4d36a7c5" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@ohmarchy-light-phone",
+      "file": "118f0f9301ac164d",
+      "png": {
+        "sha256": "e5ea2f1a4bf18ce3b76b25954fea1c86ad203fe22f38c8f92f26a7ada2809e87",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "dbfcedb67d5c87e3402018534b31d1eef6406962e6c1c00b0a3178742e25d374" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-dark-desktop",
+      "file": "96502c6af70e7585",
+      "png": {
+        "sha256": "c5d91942788962345e057d9e33b58df2b75baa617c069e14443b57638e1ad2bb",
+        "w": 1392,
+        "h": 600,
+        "scale": 1
+      },
+      "scene": { "sha256": "936dd1dfe2d9ef5a9d1b87075646d58412b656a0043efcd9de140ebec2daf5fc" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-dark-fold",
+      "file": "97ebf72f26e11526",
+      "png": {
+        "sha256": "0fcdb2313989403319e4f858161864c1f32b649b092d7c301d8025a316e52cef",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "88203710cf1719dc7c4c9b1efe79a0f6147c62354cf561f50f63cbb8a9109238" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-dark-foldl",
+      "file": "ebc4f1b345208961",
+      "png": {
+        "sha256": "0fcdb2313989403319e4f858161864c1f32b649b092d7c301d8025a316e52cef",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "d8f0a066c8551da4e50e408540b1f42def3d4f6d3bb7008117463bbd66308c7b" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-dark-phone",
+      "file": "65ca169c9009b1a3",
+      "png": {
+        "sha256": "1894ecec9dfaa7188daeb1ea5b708e4694b6211b47906b16b2205a7ce865f6bd",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "c0ab9ca9980a7e9c42d34bc400f337136079524aa5eb9989dab0bfb9f4959f71" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-light-desktop",
+      "file": "45d540a030dbc37d",
+      "png": {
+        "sha256": "c38a03f1373fb70e670b47b10f45d26e7ee35d6c195202130ba6de72125707b9",
+        "w": 1392,
+        "h": 600,
+        "scale": 1
+      },
+      "scene": { "sha256": "07644ffb337df2418aaef76484cd19a8625d2bf8ed68ee34bb3c626809b4f806" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-light-fold",
+      "file": "9ba859cb3c2978f1",
+      "png": {
+        "sha256": "f9204e24d3aa9d8909a22314e517a508cbc4e4f0b558702ff5779f80e65d586b",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "a946943d0d83acb8504ba997493e32aed60f5bfc91a2950d2ba995a6bdb14da4" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-light-foldl",
+      "file": "30cad616e394892c",
+      "png": {
+        "sha256": "f9204e24d3aa9d8909a22314e517a508cbc4e4f0b558702ff5779f80e65d586b",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "83180b8fd87b71ee4c1b9aeb97322f70ece53ef55f4be3b8001883c1d8bc3371" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TimeGrid/week@paper-light-phone",
+      "file": "950030cb9d97b36c",
+      "png": {
+        "sha256": "8c496e38cc01b413f38517b5c5e14aa74eb7367de3e65caa464ef2db5c754c37",
+        "w": 2784,
+        "h": 1200,
+        "scale": 2
+      },
+      "scene": { "sha256": "045bac68bbdc2c96b0ec01e63ed547cb225810dcb5f80d034ef6a99f60e274b0" },
+      "stateHash": "a59f8c561c1c2076",
+      "source": "304f0a768da5a767",
+      "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-dark-desktop",
+      "file": "0660dcf690206d71",
+      "png": {
+        "sha256": "cccddee2a613b3ff632dfd3fa3b958901173c0cb77cc053f04c98cd0527bf356",
+        "w": 304,
+        "h": 135,
+        "scale": 1
+      },
+      "scene": { "sha256": "390eacf35087815c8b6cf810f003ec27b40953d98f9aa0b76d8db07fb8132bb3" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-dark-fold",
+      "file": "dd2bbb9646699e55",
+      "png": {
+        "sha256": "b3d7c239a6fdd317f9fff5f57556aec21148737475aa0f8d9212a60a70905786",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "cd2a1b3680c4b4c431a7074295e12b1bee03f7d667228c378ae6f2d409388ea1" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-dark-foldl",
+      "file": "94ecad27a32e177d",
+      "png": {
+        "sha256": "b3d7c239a6fdd317f9fff5f57556aec21148737475aa0f8d9212a60a70905786",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "54bcdbf00a888e7df3acc34d0ad9966aabd49a5ae601b7282ac56ebd3b1a9e54" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-dark-phone",
+      "file": "a5817bcb88deb504",
+      "png": {
+        "sha256": "b3d7c239a6fdd317f9fff5f57556aec21148737475aa0f8d9212a60a70905786",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "a3f8b4913e94e1439e212cd6d1d0dbac8d1a2f0eb6bf2a02628c407396522fa6" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-light-desktop",
+      "file": "d20eecaa0b835ba2",
+      "png": {
+        "sha256": "f6a9072525caae261e42b6d5eb02e4fc4c46913ecf4e197885debee80b9c7959",
+        "w": 304,
+        "h": 135,
+        "scale": 1
+      },
+      "scene": { "sha256": "760c8d2ac4e7f2bff5d97684efabea7312c249c627cea61e6c1c22e3106cd81f" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-light-fold",
+      "file": "88318ea5458cda29",
+      "png": {
+        "sha256": "cfcb2105752ab5099d3af99b1d2e13121815fad78c7e9334292df65fb42b3270",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "32d37b3b1122ce54ee301faf92d4fc0fcb3b4018e7e54064845db14bcb26df6e" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-light-foldl",
+      "file": "b336a14cab9030a7",
+      "png": {
+        "sha256": "cfcb2105752ab5099d3af99b1d2e13121815fad78c7e9334292df65fb42b3270",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "57b40ef1b8b8480804f03c57f114030eed8df38a4877d4e31328c225a8374abe" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@ohmarchy-light-phone",
+      "file": "7b0fb72157e39fac",
+      "png": {
+        "sha256": "cfcb2105752ab5099d3af99b1d2e13121815fad78c7e9334292df65fb42b3270",
+        "w": 608,
+        "h": 298,
+        "scale": 2
+      },
+      "scene": { "sha256": "dafba89c941d19b5e1a3dcdba48316d56724befafe1067ebd86d4e9d724bfa1f" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-dark-desktop",
+      "file": "ea35da506e2d46dd",
+      "png": {
+        "sha256": "cfe5b95def9d4215195fbe11c1cf3edf5b0b8d65bbcb7d49bef7c41ca2be0744",
+        "w": 304,
+        "h": 150,
+        "scale": 1
+      },
+      "scene": { "sha256": "94df2e9a57792ae5320cd40c970fe1e26ede73b6a7aa0f8913b8238d6ef7c862" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-dark-fold",
+      "file": "468b294c661e8676",
+      "png": {
+        "sha256": "3e040b9027cfc4f96123c47b65e98e220d29db96d8df15c4000d4791cc85f2cd",
+        "w": 608,
+        "h": 308,
+        "scale": 2
+      },
+      "scene": { "sha256": "982edfb82becefedd7f280c6b1ad98c5d5f9e040ac032718fea1cc4f21fd81b3" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-dark-foldl",
+      "file": "46cb19f20a018a45",
+      "png": {
+        "sha256": "3e040b9027cfc4f96123c47b65e98e220d29db96d8df15c4000d4791cc85f2cd",
+        "w": 608,
+        "h": 308,
+        "scale": 2
+      },
+      "scene": { "sha256": "7af96bcd2673b7bf43d2e3b12433658c52767533584581eb4b14b5fd02e1b977" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-dark-phone",
+      "file": "5ca205e5b4746055",
+      "png": {
+        "sha256": "ffd9212603ece896c734221a6a54edfd2893e663036f1af1a2cd4f68c76b1ef9",
+        "w": 608,
+        "h": 316,
+        "scale": 2
+      },
+      "scene": { "sha256": "8004b9b9b18bd1990afa2a44b85e6203b0a7d79597888ccd0163ae3fb6f701d7" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-light-desktop",
+      "file": "c9902fcdaacd863d",
+      "png": {
+        "sha256": "59bc959f02b0f34a829c71a8d039b44ec992b4175bee32c3d298daaa75f0eced",
+        "w": 304,
+        "h": 150,
+        "scale": 1
+      },
+      "scene": { "sha256": "bb8b0ce3e615a0156034a903e32576dda706c64a3620394647fdb2717ae5afbf" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-light-fold",
+      "file": "3497a1f64174e139",
+      "png": {
+        "sha256": "68d25958dcbdd79a5ae1f828a9670fc35fe2043f45102484859aeffdf40d8a22",
+        "w": 608,
+        "h": 308,
+        "scale": 2
+      },
+      "scene": { "sha256": "27894f91d360e5011020d2c865739611973dae03c94359a5f93f39ffd6be8474" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-light-foldl",
+      "file": "099230d771432fae",
+      "png": {
+        "sha256": "68d25958dcbdd79a5ae1f828a9670fc35fe2043f45102484859aeffdf40d8a22",
+        "w": 608,
+        "h": 308,
+        "scale": 2
+      },
+      "scene": { "sha256": "e7566eb08176045d71851b5f70f1b0d8d6b3a28200820311c5b7411ca36fa1c4" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/coming@paper-light-phone",
+      "file": "42a24dcdde8138c1",
+      "png": {
+        "sha256": "a690ecfb175c63ab272bd853cc4e1a1495266ce4e370220e34dc609b2eea434b",
+        "w": 608,
+        "h": 316,
+        "scale": 2
+      },
+      "scene": { "sha256": "3c52e5f8603a3b1c9fe495e16a11173ebc2501756823e3f9c5d0511345bb1cfd" },
+      "stateHash": "afcdbf6435d76786",
+      "source": "cd4408f50ecf3877",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-dark-desktop",
+      "file": "ca06d63007255941",
+      "png": {
+        "sha256": "a66382b2f5aa873479fba4f00a282cd5b8ffa8ce92e8e7e7a3f2b1ac3dc69d1c",
+        "w": 340,
+        "h": 156,
+        "scale": 1
+      },
+      "scene": { "sha256": "529df2e53b84dcc209f8e859e0eea5e9cb47cfc6853440c561fc2e14c154fa25" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-dark-fold",
+      "file": "1a6731e7251d7cb8",
+      "png": {
+        "sha256": "eeab8be870f995f263f5d883f40dc390be853470786243bda11ea0f8847807c0",
+        "w": 680,
+        "h": 408,
+        "scale": 2
+      },
+      "scene": { "sha256": "265e15d6496fec38cec9d26a6deac8aaef441fd58da5afb92fccce705792ad35" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-dark-foldl",
+      "file": "adf20f347f02e5cc",
+      "png": {
+        "sha256": "eeab8be870f995f263f5d883f40dc390be853470786243bda11ea0f8847807c0",
+        "w": 680,
+        "h": 408,
+        "scale": 2
+      },
+      "scene": { "sha256": "bd384cf7e154c2489259b429d8a8322d093c4fcf825a00812fdecaa11732fbbf" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-light-desktop",
+      "file": "be96667de6b39f9b",
+      "png": {
+        "sha256": "97587ecb7d401590a9f58c9ebee782b9d24611671b94178dbd82e01e57aa5d4d",
+        "w": 340,
+        "h": 156,
+        "scale": 1
+      },
+      "scene": { "sha256": "e1f4e3cd2e8f6413e094a461080064039e0db664dce2f9cc8679c28fbf1fcceb" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-light-fold",
+      "file": "446d4b12e98defb0",
+      "png": {
+        "sha256": "b7d26b634186e16303706765e7250f9d4dbafde945c917a71393071cad6aa668",
+        "w": 680,
+        "h": 408,
+        "scale": 2
+      },
+      "scene": { "sha256": "5ff48b305f3460105cebb987d933cca21b048f5106c5354204eff78f1a4b12c3" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@ohmarchy-light-foldl",
+      "file": "00741ad8a3ae45ef",
+      "png": {
+        "sha256": "b7d26b634186e16303706765e7250f9d4dbafde945c917a71393071cad6aa668",
+        "w": 680,
+        "h": 408,
+        "scale": 2
+      },
+      "scene": { "sha256": "d706f433a2eb2559c91a4155300891244ec0fc3f9b870dedfb410ed2ff03b0dc" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-dark-desktop",
+      "file": "ffd707708bd70b66",
+      "png": {
+        "sha256": "073cd927eb9b82211a8699cc627f60a33e2ede71a20c88cd37449ea1eb4ff8ad",
+        "w": 340,
+        "h": 192,
+        "scale": 1
+      },
+      "scene": { "sha256": "78064fa044a0455895646d0ef422e34d4b5c9eefae9934094e3222c9c510c968" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-dark-fold",
+      "file": "36624f8c31f3a619",
+      "png": {
+        "sha256": "11b3504957d569c66584660cbe91a6783f7ec5423459be70010c05dd6b00dcd7",
+        "w": 680,
+        "h": 416,
+        "scale": 2
+      },
+      "scene": { "sha256": "75ddb1659df8aefb116a3848b0037466d52b5c7b659b99a1b113922895e7ce76" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-dark-foldl",
+      "file": "590e122002fb168e",
+      "png": {
+        "sha256": "11b3504957d569c66584660cbe91a6783f7ec5423459be70010c05dd6b00dcd7",
+        "w": 680,
+        "h": 416,
+        "scale": 2
+      },
+      "scene": { "sha256": "3a917d88a7eb3fe06499cb114687cc965edc3957c385200d3344b842eff5f826" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-light-desktop",
+      "file": "714b75ca22dd2273",
+      "png": {
+        "sha256": "813798074de0d345b288727b146fce27313636f451a4e34c60e5ddd5797b4327",
+        "w": 340,
+        "h": 192,
+        "scale": 1
+      },
+      "scene": { "sha256": "ffe9e44199ffe02464f9bd3d6369b8b807f8ab147f99b91ce3a0613a3d78fc74" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-light-fold",
+      "file": "30550be61939ff75",
+      "png": {
+        "sha256": "906c30f089ba28ccc2399c679afb38ca4d47e0e15154df4209eabc4213383b25",
+        "w": 680,
+        "h": 416,
+        "scale": 2
+      },
+      "scene": { "sha256": "a65c492d769db96cdff75ef31a92ab6211faf9aab9da86eb19001f1d635d252f" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "TodayList/today@paper-light-foldl",
+      "file": "989e0990514e1e9c",
+      "png": {
+        "sha256": "906c30f089ba28ccc2399c679afb38ca4d47e0e15154df4209eabc4213383b25",
+        "w": 680,
+        "h": 416,
+        "scale": 2
+      },
+      "scene": { "sha256": "0625d29737833bc5737397a1eef4d8f0bf41fb79d3eb912947cd414559ab4e3e" },
+      "stateHash": "a16bee4d5fabc514",
+      "source": "d062396862413db3",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/capsule@ohmarchy-dark-fold",
+      "file": "7fc16ff5c02bc577",
+      "png": {
+        "sha256": "30b137d1317bb8ba49bd5f0532e85d3f0669cd3a5a99f8fcfbd7c2fee7d5d4c1",
+        "w": 156,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "12460780f58d08c191f5fed18a382e4964b6ff5da6dfbb642322b8e03a75d695" },
+      "stateHash": "e72f873066ced4e7",
+      "source": "c9e6e172c822621e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/capsule@ohmarchy-light-fold",
+      "file": "ea9db0b4d2e7e07b",
+      "png": {
+        "sha256": "99090d56dc3522bacc775e58fb8a076f0c421d832fcec45aab4d3e6cace90693",
+        "w": 156,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "e83c2c42f2ba05436f8adbd0e22c2906828620c0f476724ebc47ed9a16025d29" },
+      "stateHash": "e72f873066ced4e7",
+      "source": "c9e6e172c822621e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/capsule@paper-dark-fold",
+      "file": "5445f6e53f3d5fad",
+      "png": {
+        "sha256": "9b1ce2c0bbaac8e9101af8d8909024788794c97b13761f91f943c12c984a2bf4",
+        "w": 170,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "dfbcd04d3360bf96427a7e541e8533ed90db1ce23214476ae69ae37c86deae5a" },
+      "stateHash": "e72f873066ced4e7",
+      "source": "c9e6e172c822621e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/capsule@paper-light-fold",
+      "file": "e384d5b000d17cd3",
+      "png": {
+        "sha256": "02e462cccd4814231d4064b38751d81dbd715e1ba1b0dadae99c7e3f450e6b65",
+        "w": 170,
+        "h": 88,
+        "scale": 2
+      },
+      "scene": { "sha256": "4e6dd5ded7ba4a5045efaedfbf5d17365a66f491765b4966def280ff619cea40" },
+      "stateHash": "e72f873066ced4e7",
+      "source": "c9e6e172c822621e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/segments@ohmarchy-dark-desktop",
+      "file": "9d903342f25a7018",
+      "png": {
+        "sha256": "b16c9832c4b1ac0b25febe2465c1208077df7c37b0447ef4ae696dfa2d1c013d",
+        "w": 329,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "3a83402257e5fc8ffd9da3a0f4b01c63b70ddba7c33de8f349679769ac678ac4" },
+      "stateHash": "7f01f1ed96e499c7",
+      "source": "9983b1f3e682e4fa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/segments@ohmarchy-light-desktop",
+      "file": "c5f50a8cdf064afb",
+      "png": {
+        "sha256": "5ee54fb2fe45341698acfaeb1d97a920780343459e3ba9a72968cf5c6871ef00",
+        "w": 329,
+        "h": 32,
+        "scale": 1
+      },
+      "scene": { "sha256": "78975a732c4a529ac7cea42182bb7df96df6deb9f1866b48f57e0b645bcc791c" },
+      "stateHash": "7f01f1ed96e499c7",
+      "source": "9983b1f3e682e4fa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/segments@paper-dark-desktop",
+      "file": "c49acefaeffa538b",
+      "png": {
+        "sha256": "5a59b7e1a7cb9c323024193b5709b30c4a1bebd5da2330f87431ae71999a709b",
+        "w": 256,
+        "h": 36,
+        "scale": 1
+      },
+      "scene": { "sha256": "373d63fdd7cf7627d24602fad5780aa0470ba44e9a5f846d8b39b32c5d75fd93" },
+      "stateHash": "7f01f1ed96e499c7",
+      "source": "9983b1f3e682e4fa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "ViewSwitch/segments@paper-light-desktop",
+      "file": "ba9706dedf408852",
+      "png": {
+        "sha256": "de1c93cf343b1b6c2c7c3a7cdb2129965128e2beb6a44df4bd1e3428092cb098",
+        "w": 256,
+        "h": 36,
+        "scale": 1
+      },
+      "scene": { "sha256": "d0a8ff153a99de526cafe3fbfb0a0d597672d6dcfd725ee8d52d5c082667a93b" },
+      "stateHash": "7f01f1ed96e499c7",
+      "source": "9983b1f3e682e4fa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-dark-desktop",
+      "file": "1c4e88efe8cc6b58",
+      "png": {
+        "sha256": "119eb264857ed439186bc7f525618b79ec3f31da2fab00c1d133aaa6a5cb0cfe",
+        "w": 25,
+        "h": 17,
+        "scale": 1
+      },
+      "scene": { "sha256": "70d07de2ecbf9652c2c5c2d62eebde0891bb6a40de1c0f86f3ad6e866154e7fe" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-dark-fold",
+      "file": "a24fa04b5804b749",
+      "png": {
+        "sha256": "bcd195b0c5924022a252856c8318b9b2f0d0cb30db175bd5443f19817058550c",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "d3da20c98153356bfc7c2c8564b869ee5e2fea5236afac9e1fbafb0ab2529dd2" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-dark-foldl",
+      "file": "196003e50e91966d",
+      "png": {
+        "sha256": "bcd195b0c5924022a252856c8318b9b2f0d0cb30db175bd5443f19817058550c",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "8392c074c50f3d0c2b7affc422f239e8d8fa086fe3affb6d4b27eafefae9c3c7" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-dark-phone",
+      "file": "020aef6c7e018ec6",
+      "png": {
+        "sha256": "fc9171c45f6c7ecbdbf7602c26728b35de56d140364c4d96324d0c005cee6000",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "bd19fa1dcacff89f0e57820d7b1ef550ffd014b722d980e50f71ee943ba6fe8d" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-light-desktop",
+      "file": "b5b10af2098a86cb",
+      "png": {
+        "sha256": "085bab258285b092bb6cb9bf948c5543162b77caa927b3616e379a4293469de3",
+        "w": 25,
+        "h": 17,
+        "scale": 1
+      },
+      "scene": { "sha256": "42e390d78a35887210a730a154db4a8834282e431d355f20f8710d154e57273b" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-light-fold",
+      "file": "785adb186434b16f",
+      "png": {
+        "sha256": "d7c645faf3421ff1d36c1a2310b27902d774022c64f64a581f3608ba594ae52e",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "b014adc5c42b3559eb5d5bc3f49e289041f0e5b7540fc0db34ad53fd9150fa13" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-light-foldl",
+      "file": "adfba77b2381143d",
+      "png": {
+        "sha256": "d7c645faf3421ff1d36c1a2310b27902d774022c64f64a581f3608ba594ae52e",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "f60a4a041abba52019df127beb6b9c5c43419bad4451b5ba60ef80322cbb47e3" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@ohmarchy-light-phone",
+      "file": "b519722d28254d1d",
+      "png": {
+        "sha256": "fc78404d0a3073228c329cdc16ed7d125141732d06d7f90b3fa3c759629c65ce",
+        "w": 50,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "111c38f146cd1389ce72adb4a3792691ee62ac37d8da3ea3c7146bc2a53c4807" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-dark-desktop",
+      "file": "31e79c5e7752a75d",
+      "png": {
+        "sha256": "e1ef23b33a72686464b9dec24a62e22f5405463b6e129e903f524086bfc22a92",
+        "w": 24,
+        "h": 17,
+        "scale": 1
+      },
+      "scene": { "sha256": "346329f43e5b651b7b61832553e37ae9467d48ff7d81b814db1082d7f0203baa" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-dark-fold",
+      "file": "02d50b626631d7f5",
+      "png": {
+        "sha256": "cd59b75c303fa1c7c7e62140eee28e0c5c7f4a0e830b6d8b3708dd93a27e40a5",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "18bf46519374460346204557cbfa1612954267693b9666efa744fe860a66e998" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-dark-foldl",
+      "file": "786835cd4b336a54",
+      "png": {
+        "sha256": "cd59b75c303fa1c7c7e62140eee28e0c5c7f4a0e830b6d8b3708dd93a27e40a5",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "a2d8bbb58690f6858b8a5e93ef3ffe98f76b9fb7641b65a4d1f480c35fe65f41" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-dark-phone",
+      "file": "161257093aabd180",
+      "png": {
+        "sha256": "5acec867e490665c2955dc1405ce20ba39d64fb4d3d0af6d21e831130f3e0d2b",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "f7c3cbf31b5a288bad5804dbce68dc44a2fd8d704e3b8817ff4d7b2d03dc0118" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-light-desktop",
+      "file": "6134189bed382dd6",
+      "png": {
+        "sha256": "af0f05a59377b0b414dfe797a0a4c8b2da77b10422dcc8649910bb397e6c7493",
+        "w": 24,
+        "h": 17,
+        "scale": 1
+      },
+      "scene": { "sha256": "0e235d726ecda38dbb7b6391dbf5b18c1900a261ff4aeaf9cc8bc843340b1174" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-light-fold",
+      "file": "6d391f04d4e776ac",
+      "png": {
+        "sha256": "5e95b9fbe2a8e83b81673463f328bf0f2b717c4301c35bbc734fbe42d748aae8",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "8e06195785259d32cc1256e5af5fd9052c1c144378279ac41e78b721b8b0bb00" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-light-foldl",
+      "file": "ae0590cc201b80db",
+      "png": {
+        "sha256": "5e95b9fbe2a8e83b81673463f328bf0f2b717c4301c35bbc734fbe42d748aae8",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "c804592b1ea969762b9ee817ca8417ba857a7be01b7d6f418568e5c9747c27ea" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "WeekNumber/rest@paper-light-phone",
+      "file": "1114cb77e9af930c",
+      "png": {
+        "sha256": "5e95b9fbe2a8e83b81673463f328bf0f2b717c4301c35bbc734fbe42d748aae8",
+        "w": 48,
+        "h": 34,
+        "scale": 2
+      },
+      "scene": { "sha256": "13eff7e335584c67c2f055a1dd9387cdab035fe922cc9fd3e9b0fe682df0c02e" },
+      "stateHash": "091b2dcf7b902dbf",
+      "source": "d7c83ad752727c10",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    }
+  ]
+}

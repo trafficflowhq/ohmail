@@ -1,0 +1,90 @@
+/* A word you can press: it opens a short menu. Its measures follow the text it stands in. */
+@layer oh {
+  .oh-slot {
+    --oh-slot-pad: 0.02em 0.3em 0.08em 0.36em;
+    --oh-slot-r: 0.4em;
+    --oh-slot-ring: none;
+    display: inline;
+    padding: var(--oh-slot-pad);
+    border-radius: var(--oh-slot-r);
+    background: var(--slot-soft);
+    box-shadow: var(--oh-slot-ring);
+    color: var(--ink);
+    font-weight: var(--w-bold);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-slot:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-slot:hover {
+    background: var(--slot-soft-on);
+  }
+  .oh-slot-arrow {
+    --oh-slot-arrow-gap: 0 0.14em 0 0.34em;
+    display: inline-block;
+    width: 0.4em;
+    height: 0.4em;
+    margin: var(--oh-slot-arrow-gap);
+    border: solid currentColor;
+    border-width: 0 0.1em 0.1em 0;
+    opacity: 0.6;
+    transform: translateY(-0.2em) rotate(45deg);
+  }
+  .oh-slot[data-kind="fill"] {
+    --oh-slot-pad: 0.02em 0.34em 0.08em;
+    background: var(--slot-fill);
+    color: var(--on-slot-fill);
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-dot) var(--e-std);
+  }
+  .oh-slot[data-kind="fill"]:active {
+    transform: var(--x-press);
+  }
+  .oh-slot[data-kind="done"] {
+    --oh-slot-pad: 0;
+    background: transparent;
+    color: var(--ink);
+  }
+  .oh-slot[data-kind="none"] {
+    color: var(--ink2);
+    font-weight: var(--w-mid);
+  }
+
+  :root[data-touch="1"] .oh-slot {
+    position: relative;
+  }
+  /* A finger's room: as high as the smallest control, the word's own width and a little more. */
+  :root[data-touch="1"] .oh-slot::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: calc(var(--s1) * -1);
+    left: calc(var(--s1) * -1);
+    height: var(--h-s);
+    transform: translateY(-50%);
+  }
+
+  :root[data-face="ohmarchy"] .oh-slot {
+    --oh-slot-pad: 0.08em 0.4em;
+    --oh-slot-ring: inset 0 0 0 var(--oh-hair) currentColor;
+    color: var(--hot-ink);
+  }
+  :root[data-face="ohmarchy"] .oh-slot[data-kind="fill"] {
+    --oh-slot-ring: none;
+    color: var(--on-slot-fill);
+  }
+  :root[data-face="ohmarchy"] .oh-slot[data-kind="done"] {
+    --oh-slot-pad: 0;
+    --oh-slot-ring: none;
+    color: var(--ink);
+  }
+  /* In a list a proposal is boxed on the wash, so a column of them stays quiet. */
+  :root[data-face="ohmarchy"] .oh-slot[data-kind="fill"][data-listed] {
+    --oh-slot-ring: inset 0 0 0 var(--oh-hair) var(--hot);
+    background: var(--wash);
+    color: var(--hot-ink);
+  }
+}

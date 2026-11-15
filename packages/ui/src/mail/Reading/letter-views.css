@@ -1,0 +1,40 @@
+/* The line of ways to see a letter: quiet words at the trailing edge, above the letter. */
+@layer oh {
+  .oh-letterviews {
+    --oh-letterviews-gap: 6px;
+    --oh-letterviews-out: calc(var(--s3) * -1) calc(var(--cap-q) * -1) var(--s2) 0;
+    --oh-letterviews-out-touch: calc(var(--s2) * -1) calc(var(--cap-q) * -1) var(--s1) 0;
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0 var(--s1);
+    margin: var(--oh-letterviews-out);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-letterviews-way {
+    display: inline-flex;
+  }
+
+  .oh-letterviews-way > .oh-button {
+    gap: var(--oh-letterviews-gap);
+    font-size: var(--t-meta);
+  }
+
+  .oh-letterviews-way > .oh-button:hover {
+    color: var(--ink);
+  }
+
+  /* With a pointer a way that is for a finger is not offered, and a line that offers nothing is not drawn. */
+  :root[data-touch="0"] .oh-letterviews-way[data-touch-only],
+  :root[data-touch="0"] .oh-letterviews:not(:has(> .oh-letterviews-way:not([data-touch-only]))) {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-letterviews {
+    margin: var(--oh-letterviews-out-touch);
+  }
+}

@@ -1,0 +1,73 @@
+/* The Move menu's own lines: the line that looks for a folder, and the folders under it. */
+@layer oh {
+  .oh-movepicker-find {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s1) var(--s3) var(--s2);
+  }
+
+  .oh-movepicker-line {
+    flex: 1;
+    min-width: 0;
+    height: var(--h-s);
+    padding: 0 var(--s3);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-movepicker-line::placeholder {
+    color: var(--ink2);
+    opacity: 1;
+  }
+
+  .oh-movepicker-line:focus-visible {
+    outline: none;
+    box-shadow: var(--oh-ring-focus);
+  }
+
+  .oh-movepicker-mailbox {
+    padding: 0 var(--s3);
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-movepicker-folders {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* A folder is a menu item whose name gives way before the way to it does, and both before they are cut. */
+  .oh-movepicker-folder > .oh-icon {
+    color: var(--ink2);
+  }
+
+  .oh-movepicker-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .oh-movepicker-path {
+    --oh-movepicker-path-max: 38%;
+
+    flex: 0 4 auto;
+    min-width: 0;
+    max-width: var(--oh-movepicker-path-max);
+    margin-left: auto;
+    padding-left: var(--s4);
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    text-overflow: ellipsis;
+  }
+}

@@ -1,0 +1,89 @@
+/* An invitation in the letter it came in: a card on the soft sheet, answered where it is read. */
+@layer oh {
+  .oh-invcard {
+    --oh-invcard-pad: var(--s4) var(--s5);
+    --oh-invcard-ring: inset 0 0 0 var(--oh-hair) var(--btn-ring);
+    --oh-seg-ground: var(--sheet);
+    --oh-tag-ground: var(--sheet);
+    max-width: var(--measure);
+    margin-top: var(--s4);
+    padding: var(--oh-invcard-pad);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-invcard-ring);
+  }
+  .oh-invcard-kind {
+    --oh-invcard-kind-gap: 2px;
+    margin-bottom: var(--oh-invcard-kind-gap);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-invcard-title {
+    margin-bottom: var(--s1);
+    font-size: var(--t-title);
+    line-height: 1.2;
+  }
+  .oh-invcard-when {
+    color: var(--ink);
+    font-weight: var(--w-mid);
+  }
+  .oh-invcard-was {
+    margin-right: var(--s2);
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  .oh-invcard-line {
+    color: var(--ink2);
+  }
+  .oh-invcard-around {
+    --oh-invcard-around-gap: 6px var(--s2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--oh-invcard-around-gap);
+    margin-top: var(--s3);
+    color: var(--ink);
+  }
+  .oh-invcard-around + .oh-invcard-around {
+    margin-top: var(--s1);
+  }
+  /* The answer stands on the card as the one decision of the letter: a full row's height. */
+  .oh-invcard-answers {
+    margin-top: var(--s4);
+  }
+  /* Here the switch is a control on the card, with a control's ring, not the open event's quiet one. */
+  .oh-invcard-answers > .oh-ans {
+    --oh-ans-ring: var(--oh-ring-ctl);
+  }
+  .oh-invcard-answers .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s4);
+    height: var(--h-m);
+  }
+  /* In a letter the answers stay bold in both faces; the open event's card keeps its face's own weight. */
+  :root[data-face="ohmarchy"] .oh-invcard-answers .oh-seg-item {
+    font-weight: var(--w-bold);
+  }
+  .oh-invcard-foot {
+    --oh-invcard-foot-gap: var(--s1) var(--s3);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--oh-invcard-foot-gap);
+    margin-top: var(--s3);
+  }
+  .oh-invcard-goes {
+    --dot-size: 5px;
+    font-weight: var(--w-mid);
+  }
+  .oh-invcard-goes .oh-dot {
+    --oh-dot-gap: 1px;
+  }
+  .oh-invcard-room {
+    flex: 1;
+  }
+  .oh-invcard-foot > .oh-button {
+    --oh-invcard-show-out: 0 calc(var(--s3) * -1) 0 0;
+    margin: var(--oh-invcard-show-out);
+  }
+}

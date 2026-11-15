@@ -1,0 +1,56 @@
+/* What was kept out of a letter: one chip among the head's tools, and the sentence it opens. */
+@layer oh {
+  .oh-blocked {
+    --oh-blocked-h: 22px;
+    --oh-blocked-h-touch: 32px;
+    --oh-blocked-pad: 0 var(--s2) 0 6px;
+
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    height: var(--oh-blocked-h);
+    padding: var(--oh-blocked-pad);
+    border-radius: var(--r-pill);
+    background: var(--oh-soft, var(--soft-sheet));
+    box-shadow: var(--oh-ring-btn);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+  }
+
+  .oh-blocked:hover {
+    color: var(--ink);
+  }
+
+  .oh-blocked:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-blocked-said {
+    --oh-blocked-lh: 1.45;
+    --oh-blocked-measure: 38ch;
+
+    max-width: var(--oh-blocked-measure);
+    padding: var(--s2) var(--s3);
+    color: var(--ink);
+    font-size: var(--t-ui);
+    line-height: var(--oh-blocked-lh);
+    text-wrap: pretty;
+  }
+
+  /* The sentence's card is as wide as its sentence, and as close around it as a menu is around its lines. */
+  .oh-menu:has(> .oh-blocked-said) {
+    --oh-menu-width: auto;
+    --oh-menu-pad: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-menu:has(> .oh-blocked-said) {
+    --oh-menu-width: auto;
+    --oh-menu-pad: var(--s1);
+  }
+
+  :root[data-touch="1"] .oh-blocked {
+    height: var(--oh-blocked-h-touch);
+  }
+}

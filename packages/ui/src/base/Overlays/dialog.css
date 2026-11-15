@@ -1,0 +1,34 @@
+/* A question, for a yes that cannot be undone: a sentence, at most one line, the buttons. */
+@layer oh {
+  .oh-dialog {
+    display: flex;
+    flex-direction: column;
+    padding: var(--s6);
+  }
+  /* With a list of what waits: wider, and a little further from the window's edge. */
+  .oh-overlay.oh-dialog-listed {
+    --oh-overlay-max: 560px;
+    max-height: calc(100% - 2 * var(--s5));
+  }
+  .oh-dialog-line {
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+  /* What the answer needs. A long list scrolls here; the sentence and the answers stay. */
+  .oh-dialog-body {
+    min-height: 0;
+    margin-top: var(--s4);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-dialog-acts {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: var(--s5);
+  }
+  :root[data-touch="1"] .oh-dialog .oh-button {
+    min-height: var(--h-s);
+  }
+}

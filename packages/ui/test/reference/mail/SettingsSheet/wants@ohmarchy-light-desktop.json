@@ -1,0 +1,125 @@
+{
+  "component": "SettingsSheet",
+  "state": "wants",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [684, 86, 744, 104.1875],
+  "clip": [684, 86, 744, 105],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(134, 132, 125) 0px 0px 0px 1px inset", "opacity": "0.5" },
+    { "backgroundColor": "rgb(255, 252, 240)" },
+    { "backgroundColor": "rgb(236, 233, 222)", "boxShadow": "rgb(140, 139, 135) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(32, 94, 166)" },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(195, 193, 184) 0px 0px 0px 1px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "switch",
+      "name": "Notify me on this device",
+      "box": [656, 56.2, 44, 26],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(16, 15, 15)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [656, 56.2, 44, 26], "paint": 0 },
+        { "box": [678, 60.2, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Blocked", "type": 0 },
+      { "said": "In this device’s system settings.", "type": 1 },
+      { "said": "Notify me on this device", "type": 2 },
+      { "said": "This device", "type": 3 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 744, 104.2], "paint": 2 },
+      { "box": [99.6, 27.5, 5.5, 5.5], "paint": 3 },
+      { "box": [239.2, 58.2, 95.2, 22], "paint": 4 }
+    ]
+  }
+}

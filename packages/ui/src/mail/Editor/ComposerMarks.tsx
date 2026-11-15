@@ -1,0 +1,63 @@
+import { Fragment } from "react";
+import { Icon, type IconName } from "../../icons/Icon.js";
+import "./composer.css";
+
+/** One mark of the editor: Bold, a link, a list. It is drawn as a letter or as a sign. */
+export interface ComposerMark {
+  id: string;
+  label: string;
+  /** The pointer's hint, where it says more than the name: the name with its key, "Bold · ⌘B". */
+  title?: string;
+  /** The letter that stands for it, drawn the way the mark draws text. */
+  glyph?: { letter: string; as: "bold" | "italic" | "underline" | "strike" };
+  icon?: IconName;
+  /** The mark holds where the caret is. */
+  pressed?: boolean;
+  disabled?: boolean;
+  onPress?: () => void;
+}
+
+export interface ComposerMarksProps {
+  /** The strip's name for a screen reader. */
+  label: string;
+  /** The marks in groups; a hair parts two groups. */
+  groups: readonly (readonly ComposerMark[])[];
+}
+
+/** The editor's marks on a quiet strip at its top. A press never takes the caret out of the text. */
+export function ComposerMarks({ label, groups }: ComposerMarksProps) {
+  return (
+    <div
+      className="oh-composer-marks"
+      role="toolbar"
+      aria-label={label}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {groups.map((group, g) => (
+        <Fragment key={g}>
+          {g ? <i className="oh-composer-hair" aria-hidden="true" /> : null}
+          {group.map((mark) => (
+            <button
+              key={mark.id}
+              type="button"
+              className="oh-control oh-composer-mark"
+              aria-label={mark.label}
+              title={mark.title ?? mark.label}
+              aria-pressed={mark.pressed ?? false}
+              disabled={mark.disabled}
+              onClick={mark.onPress}
+            >
+              {mark.icon ? (
+                <Icon name={mark.icon} size={18} />
+              ) : (
+                <span className="oh-composer-glyph" data-as={mark.glyph?.as}>
+                  {mark.glyph?.letter}
+                </span>
+              )}
+            </button>
+          ))}
+        </Fragment>
+      ))}
+    </div>
+  );
+}

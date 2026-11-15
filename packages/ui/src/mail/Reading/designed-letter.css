@@ -1,0 +1,56 @@
+/* A designed letter: its own paper from edge to edge of the sheet, the frame as tall as its document. */
+@layer oh {
+  .oh-designedletter {
+    --oh-designedletter-max: 764px;
+    --oh-designedletter-rest: 120px;
+    --oh-designedletter-layer: 1;
+    --oh-designedletter-out: 0 calc(var(--sheet-pad) * -1);
+    --oh-designedletter-foot: calc(var(--s6) * -1);
+    --oh-designedletter-bar: calc(var(--new-bar) - var(--sheet-pad));
+
+    margin: var(--oh-designedletter-out);
+    background: var(--oh-letter-paper, var(--sheet));
+    transition: background-color var(--d-tint) var(--e-std);
+  }
+
+  /* The last thing on a message closes the sheet: its paper takes the sheet's lower corners. */
+  .oh-message > .oh-designedletter:last-child {
+    margin-bottom: var(--oh-designedletter-foot);
+    overflow: hidden;
+    border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+  }
+
+  /* On an unread sheet the hot bar keeps its place beside the paper. */
+  .oh-message[data-unread] > .oh-designedletter {
+    margin-left: var(--oh-designedletter-bar);
+  }
+
+  .oh-designedletter + .oh-files {
+    margin-top: var(--s5);
+  }
+
+  .oh-designedletter-sheet {
+    position: relative;
+    max-width: var(--oh-designedletter-max);
+  }
+
+  /* The letter was drawn for a light page, whatever the app's scheme. */
+  .oh-designedletter-frame {
+    display: block;
+    width: 100%;
+    height: var(--oh-designedletter-rest);
+    border: 0;
+    background: var(--oh-letter-paper, var(--sheet));
+    color-scheme: light;
+  }
+
+  .oh-designedletter-link {
+    position: absolute;
+    z-index: var(--oh-designedletter-layer);
+    border-radius: var(--r-sq);
+  }
+
+  .oh-designedletter-link:focus-visible {
+    border-radius: var(--r-sq);
+  }
+}

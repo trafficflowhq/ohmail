@@ -1,0 +1,311 @@
+/* The action panel: one capsule of verbs at the foot of a column. A verb is the panel's own control;
+   it takes the values a button takes, at the panel's heights and insets. */
+@layer oh {
+  .oh-actionpanel {
+    display: flex;
+    justify-content: center;
+    min-width: 0;
+    max-width: 100%;
+    pointer-events: none;
+  }
+
+  .oh-actionpanel-bar {
+    --oh-actionpanel-in: 6px;
+    --oh-actionpanel-between: 1px;
+    --oh-actionpanel-h: var(--h-m);
+    --oh-actionpanel-apart: 5px;
+    --oh-actionpanel-pad: 0 10px;
+    --oh-actionpanel-pad-signed: 0 9px 0 7px;
+    --oh-actionpanel-pad-ink: 0 var(--s5);
+    --oh-actionpanel-pad-ink-signed: 0 18px 0 14px;
+    --oh-actionpanel-pad-soft-signed: 0 14px 0 10px;
+    --oh-actionpanel-after-ink: var(--s1);
+    --oh-actionpanel-after-soft: 2px;
+    --oh-actionpanel-gap: 6px;
+    --oh-actionpanel-gap-signed: 5px;
+    --oh-actionpanel-bare: var(--h-m);
+    --oh-actionpanel-pad-more: 0;
+    --oh-actionpanel-pad-soft: 0 var(--s4);
+    --oh-actionpanel-held: var(--soft-sheet);
+    --oh-actionpanel-held-ring: none;
+    --oh-actionpanel-ring: none;
+    --oh-actionpanel-weight: var(--w-mid);
+    --oh-actionpanel-weight-ink: var(--w-bold);
+    --oh-actionpanel-weight-held: var(--w-bold);
+    --oh-actionpanel-key: color-mix(in srgb, var(--on-solid) 22%, transparent);
+
+    display: flex;
+    align-items: center;
+    gap: var(--oh-actionpanel-between);
+    max-width: 100%;
+    padding: var(--oh-actionpanel-in);
+    border-radius: var(--r-pill);
+    background: var(--sheet);
+    box-shadow: var(--float);
+    pointer-events: auto;
+  }
+
+  .oh-actionpanel-verb {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--oh-actionpanel-gap);
+    height: var(--oh-actionpanel-h);
+    padding: var(--oh-actionpanel-pad);
+    border-radius: var(--r-pill);
+    background: transparent;
+    box-shadow: var(--oh-actionpanel-ring);
+    font-size: var(--t-ui);
+    font-weight: var(--oh-actionpanel-weight);
+    line-height: var(--oh-lh-tight);
+    white-space: nowrap;
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-fade) var(--e-std),
+      opacity var(--d-fade) var(--e-std);
+  }
+
+  .oh-actionpanel-verb[hidden] {
+    display: none;
+  }
+
+  .oh-actionpanel-verb:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-actionpanel-verb:active {
+    transform: var(--x-press);
+  }
+
+  .oh-actionpanel-verb:hover {
+    background: var(--hover);
+  }
+
+  .oh-actionpanel-verb[data-signed] {
+    gap: var(--oh-actionpanel-gap-signed);
+    padding: var(--oh-actionpanel-pad-signed);
+  }
+
+  .oh-actionpanel-verb[data-apart] {
+    margin-left: var(--oh-actionpanel-apart);
+  }
+
+  /* The one ink capsule, and the soft capsules of several answers. */
+  .oh-actionpanel-verb[data-kind] {
+    margin-right: var(--oh-actionpanel-after-ink);
+    padding: var(--oh-actionpanel-pad-ink);
+    box-shadow: none;
+    font-weight: var(--oh-actionpanel-weight-ink);
+  }
+
+  .oh-actionpanel-verb[data-kind="ink"],
+  .oh-actionpanel-verb[data-kind="ink"]:hover {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+
+  .oh-actionpanel-verb[data-kind][data-signed] {
+    padding: var(--oh-actionpanel-pad-ink-signed);
+  }
+
+  .oh-actionpanel-verb[data-kind="soft"] {
+    margin-right: var(--oh-actionpanel-after-soft);
+    padding: var(--oh-actionpanel-pad-soft);
+    background: var(--soft-sheet);
+    color: var(--ink);
+  }
+
+  .oh-actionpanel-verb[data-kind="soft"][data-signed] {
+    padding: var(--oh-actionpanel-pad-soft-signed);
+  }
+
+  .oh-actionpanel-verb[data-kind="soft"]:hover {
+    background: var(--hover-ground);
+  }
+
+  .oh-actionpanel-verb[data-kind="ink"] > .oh-key {
+    background: var(--oh-actionpanel-key);
+    color: var(--on-solid);
+  }
+
+  /* More stands as its icon. */
+  .oh-actionpanel-verb[data-more] {
+    width: var(--oh-actionpanel-bare);
+    padding: var(--oh-actionpanel-pad-more);
+  }
+
+  /* A toggle that holds; a verb that is off stays a word. */
+  .oh-actionpanel-verb:not([data-kind])[aria-pressed="true"] {
+    background: var(--oh-actionpanel-held);
+    box-shadow: var(--oh-actionpanel-held-ring);
+    color: var(--ink);
+    font-weight: var(--oh-actionpanel-weight-held);
+  }
+
+  .oh-actionpanel-verb:not([data-kind]):disabled {
+    background: transparent;
+    color: var(--on-off);
+    transform: none;
+    cursor: default;
+  }
+
+  .oh-actionpanel-verb[data-kind]:disabled {
+    background: var(--off);
+    color: var(--on-off);
+    transform: none;
+    cursor: default;
+  }
+
+  /* A slot as wide as its widest face: both faces lie in one cell and the wider one is not drawn. */
+  .oh-actionpanel-label[data-wide] {
+    display: inline-grid;
+    justify-items: start;
+  }
+
+  .oh-actionpanel-label[data-wide] > * {
+    grid-area: 1 / 1;
+  }
+
+  .oh-actionpanel-widest {
+    visibility: hidden;
+    font-style: normal;
+  }
+
+  .oh-actionpanel-count {
+    font-weight: inherit;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Short of room a verb stands as its icon; a count keeps its number. */
+  .oh-actionpanel-verb[data-short]:not([data-counted]) > .oh-actionpanel-label,
+  .oh-actionpanel-verb[data-short] > .oh-key,
+  .oh-actionpanel-verb[data-short] .oh-actionpanel-word {
+    display: none;
+  }
+
+  .oh-actionpanel-verb[data-short] {
+    width: var(--oh-actionpanel-bare);
+    padding: 0;
+  }
+
+  .oh-actionpanel-verb[data-short][data-kind] {
+    --oh-actionpanel-wide: calc(var(--h-m) + var(--s4));
+
+    width: var(--oh-actionpanel-wide);
+  }
+
+  /* The count of what is picked: ink, and a press lets go. Short of room it keeps its number. */
+  .oh-actionpanel-verb[data-counted],
+  .oh-actionpanel-verb[data-counted]:hover {
+    margin-right: var(--s1);
+    background: var(--solid);
+    color: var(--on-solid);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-actionpanel-verb[data-counted][data-short] {
+    width: auto;
+    padding: var(--oh-actionpanel-pad-signed);
+  }
+
+  .oh-actionpanel-note {
+    padding: 0 var(--s3);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+  }
+
+  .oh-actionpanel-note[hidden] {
+    display: none;
+  }
+
+  /* The unfolded phone: closer together, and More as wide as a finger needs. */
+  :root[data-device="fold"] .oh-actionpanel-bar {
+    --oh-actionpanel-in: var(--s1);
+    --oh-actionpanel-between: 0;
+    --oh-actionpanel-apart: 2px;
+    --oh-actionpanel-pad-signed: 0 6px 0 5px;
+    --oh-actionpanel-pad-ink: 0 var(--s4);
+    --oh-actionpanel-pad-ink-signed: 0 12px 0 10px;
+    --oh-actionpanel-after-ink: 2px;
+    --oh-actionpanel-gap-signed: var(--s1);
+    --oh-actionpanel-bare: 40px;
+    --oh-actionpanel-pad-more: 0 10px;
+  }
+
+  :root[data-device="fold"] .oh-actionpanel-verb[data-kind][data-signed] {
+    gap: var(--oh-actionpanel-gap-ink-signed);
+
+    --oh-actionpanel-gap-ink-signed: 5px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-bar {
+    --oh-actionpanel-in: 5px;
+    --oh-actionpanel-between: var(--s1);
+    --oh-actionpanel-apart: 2px;
+    --oh-actionpanel-pad: 0 6px;
+    --oh-actionpanel-pad-ink: 0 var(--s2);
+    --oh-actionpanel-pad-more: 0;
+    --oh-actionpanel-after-ink: 0;
+    --oh-actionpanel-after-soft: 0;
+    --oh-actionpanel-ring: inset 0 0 0 1px var(--btn-ring);
+    --oh-actionpanel-held: var(--off);
+    --oh-actionpanel-held-ring: inset 0 0 0 1px var(--ink);
+    --oh-actionpanel-weight: var(--w-text);
+    --oh-actionpanel-weight-ink: var(--w-mid);
+    --oh-actionpanel-weight-held: var(--w-text);
+    --oh-actionpanel-joined: -5px;
+    --oh-actionpanel-key: transparent;
+    --oh-actionpanel-key-ring: inset 0 0 0 1px color-mix(in srgb, currentColor 50%, transparent);
+    --oh-actionpanel-over: 1;
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb {
+    font-size: var(--t-meta);
+  }
+
+  /* The verbs of one segment share their rings. */
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb[data-segment]:not([data-apart]) {
+    margin-left: var(--oh-actionpanel-joined);
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb:not([data-kind])[aria-pressed="true"] {
+    position: relative;
+    z-index: var(--oh-actionpanel-over);
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb[data-hot-icon] > .oh-icon {
+    color: var(--hot);
+  }
+
+  /* ohmarchy's count is set in the text's own weight. */
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb[data-counted] {
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb > .oh-key {
+    --oh-key-pad: 0 3px;
+
+    min-width: 16px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-actionpanel-verb[data-kind="ink"] > .oh-key {
+    box-shadow: var(--oh-actionpanel-key-ring);
+    color: inherit;
+  }
+
+  /* With a pointer ohmarchy's panel is lower and its signs smaller. */
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-actionpanel-bar {
+    --oh-actionpanel-h: 30px;
+    --oh-actionpanel-bare: 30px;
+    --oh-actionpanel-gap: 5px;
+    --oh-actionpanel-pad-signed: 0 6px;
+    --oh-actionpanel-pad-ink-signed: 0 var(--s2);
+    --oh-actionpanel-pad-soft-signed: 0 var(--s2);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-actionpanel-verb > .oh-icon {
+    width: 16px;
+    height: 16px;
+  }
+}

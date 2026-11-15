@@ -1,0 +1,64 @@
+{
+  "component": "WeekNumber",
+  "state": "rest",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [34, 187.3281, 24.2031, 16],
+  "clip": [34, 187, 25, 17],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "11px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "11px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Week 50",
+      "box": [0, 0, 24.2, 16],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "11px",
+        "fontWeight": "500",
+        "lineHeight": "11px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "6px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "50", "type": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

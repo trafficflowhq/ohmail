@@ -1,0 +1,70 @@
+[
+  [
+    {
+      "title": "Move around",
+      "rows": [
+        { "label": "Next", "keys": [["j"], ["↓"]] },
+        { "label": "Previous", "keys": [["k"], ["↑"]] },
+        { "label": "Ohbox", "keys": [["g", "o"]] },
+        { "label": "News", "keys": [["g", "r"]] },
+        { "label": "Receipts", "keys": [["g", "e"]] },
+        { "label": "Screener", "keys": [["g", "s"]] },
+        { "label": "Answer Later", "keys": [["g", "l"]] },
+        { "label": "Parked", "keys": [["g", "p"]] },
+        { "label": "Resurface", "keys": [["g", "b"]] },
+        { "label": "Drafts", "keys": [["g", "d"]] },
+        { "label": "History", "keys": [["g", "h"]] },
+        { "label": "Trash", "keys": [["g", "t"]] },
+        { "label": "Settings", "keys": [["g", ","]] },
+        { "label": "The first seven places", "keys": [["1", "…", "7"]] },
+        { "label": "Search", "keys": [["/"]] },
+        { "label": "Back to top", "keys": [["g", "g"]] },
+        { "label": "Calendar", "keys": [["g", "c"]] },
+        { "label": "Menu, list", "keys": [["←"], ["h"]] },
+        { "label": "List, open message", "keys": [["→"], ["l"]] }
+      ]
+    }
+  ],
+  [
+    {
+      "title": "This message",
+      "rows": [
+        { "label": "Open", "keys": [["↵"]] },
+        { "label": "Select", "keys": [["x"]] },
+        { "label": "Reach the selection", "keys": [["⇧j"], ["⇧k"]] },
+        { "label": "Tag", "keys": [["t"]] },
+        { "label": "Mark unread", "keys": [["u"]] },
+        { "label": "Mark read", "keys": [["⇧i"]] },
+        { "label": "Selection read", "keys": [["⇧u"]] },
+        { "label": "Reply", "keys": [["r"]] },
+        { "label": "Reply all", "keys": [["⇧r"]] },
+        { "label": "Forward", "keys": [["⇧f"]] },
+        { "label": "Send", "keys": [["Ctrl ↵"]] },
+        { "label": "Send + Done", "keys": [["Ctrl ⇧↵"]] },
+        { "label": "Screening", "keys": [["s"]] },
+        { "label": "Later", "keys": [["a"]] },
+        { "label": "Park", "keys": [["e"]] },
+        { "label": "Resurface", "keys": [["b"]] },
+        { "label": "Move", "keys": [["m"]] },
+        { "label": "Move to Trash", "keys": [["d"], ["⌫"]] },
+        { "label": "Add to calendar", "keys": [["v"]] },
+        { "label": "Yes, Maybe, No", "keys": [["y"], ["⇧y"], ["n"]] }
+      ]
+    }
+  ],
+  [
+    {
+      "title": "App",
+      "rows": [
+        { "label": "Close", "keys": [["Esc"]] },
+        { "label": "Pull new mail", "keys": [["p"]] },
+        { "label": "Write", "keys": [["c"]] },
+        { "label": "Reply Run", "keys": [["f"]] },
+        { "label": "Command palette", "keys": [["Ctrl K"]] },
+        { "label": "Undo", "keys": [["z"]] },
+        { "label": "Keys", "keys": [["?"]] },
+        { "label": "Menu", "keys": [["≣"], ["⇧F10"]] }
+      ]
+    }
+  ]
+]

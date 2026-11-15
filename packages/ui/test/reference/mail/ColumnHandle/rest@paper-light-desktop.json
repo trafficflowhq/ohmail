@@ -1,0 +1,57 @@
+{
+  "component": "ColumnHandle",
+  "state": "rest",
+  "look": "paper-light-desktop",
+  "place": "window",
+  "target": [245, 12, 10, 876],
+  "clip": [245, 12, 10, 876],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    {
+      "after.backgroundColor": "rgb(138, 129, 118)",
+      "after.opacity": "0",
+      "after.borderRadius": "2px",
+      "borderRadius": "999px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "separator",
+      "name": "Sidebar width",
+      "box": [245, 12, 10, 876],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "surfaces": [{ "box": [245, 12, 10, 876], "paint": 0, "parts": { "after": [4, 219, 2, 438] } }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

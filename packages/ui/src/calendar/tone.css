@@ -1,0 +1,41 @@
+/* A thing in a calendar's colour, and the open event's three values.
+   The square's colour and the tint come in as --oh-cal-mark and --oh-cal-tint (tone.ts mixes them from
+   the calendar's tokens and the calendar's hue). What is open stands a step deeper in its own colour. */
+@layer oh {
+  :root {
+    --oh-cal-open-mix: 20%;
+    --oh-cal-open-plain: color-mix(in oklab, var(--ink) 8%, var(--sheet));
+    --oh-cal-open-line: var(--ev-line);
+  }
+  :root[data-scheme="dark"] {
+    --oh-cal-open-mix: 26%;
+    --oh-cal-open-plain: color-mix(in oklab, var(--ink) 16%, var(--sheet));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-scheme]) {
+      --oh-cal-open-mix: 26%;
+      --oh-cal-open-plain: color-mix(in oklab, var(--ink) 16%, var(--sheet));
+    }
+  }
+  :root[data-face="ohmarchy"] {
+    --oh-cal-open-line: 2px;
+  }
+
+  .oh-cal-tone {
+    --oh-cal-open: color-mix(in oklab, var(--oh-cal-mark) var(--oh-cal-open-mix), var(--oh-cal-tint));
+  }
+  .oh-cal-tone[data-tone="neutral"] {
+    --oh-cal-mark: var(--cal-grey);
+    --oh-cal-tint: var(--soft-sheet);
+    --oh-cal-open: color-mix(in oklab, var(--cal-grey) 22%, var(--soft-sheet));
+  }
+
+  /* The dot on a thing that waits for you. */
+  .oh-cal-wait {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--dot-r);
+    background: var(--hot);
+  }
+}

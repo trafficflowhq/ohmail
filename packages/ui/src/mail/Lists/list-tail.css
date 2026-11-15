@@ -1,0 +1,12 @@
+/* The last line of a list. It starts at the column's edge, as the place's name does. */
+@layer oh {
+  .oh-listtail {
+    padding: var(--s4) var(--s5) var(--s6) var(--flush);
+    color: var(--ink2);
+  }
+
+  /* Stand-in: the sheet gives ohmarchy this edge in a window, and the tokens do not carry it yet. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-listtail {
+    --flush: 26px;
+  }
+}

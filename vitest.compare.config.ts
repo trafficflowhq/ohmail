@@ -15,7 +15,7 @@ export default defineConfig({
   resolve: base.resolve,
   esbuild: base.esbuild,
   test: {
-    include: ["test/compare/**/*.compare.ts"],
+    include: ["test/compare/**/*.compare.ts", "packages/ui/test/compare/**/*.compare.ts"],
     environment: "node",
     testTimeout: 60_000,
     hookTimeout: 120_000,

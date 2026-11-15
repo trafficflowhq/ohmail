@@ -1,0 +1,128 @@
+{
+  "component": "Opening",
+  "state": "phone",
+  "look": "ohmarchy-dark-phone",
+  "place": "window",
+  "target": [0, 0, 390, 844],
+  "clip": [0, 0, 390, 844],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(122, 162, 247)" },
+    { "backgroundColor": "rgb(28, 29, 39)" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(32, 33, 45)" }
+  ],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "",
+      "box": [0, 64, 390, 59.2],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "16px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Updating the mail store on this phone", "type": 0 },
+        { "said": "3 of 12", "type": 1 }
+      ],
+      "surfaces": [{ "box": [335.9, 71.1, 5.9, 5.9], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [],
+    "surfaces": [
+      { "box": [24, 28, 96, 16], "paint": 1 },
+      { "box": [0, 123.2, 390, 720.8], "paint": 2 },
+      { "box": [21, 175.2, 32, 32], "paint": 3 },
+      { "box": [62, 167.2, 104.7, 12], "paint": 3 },
+      { "box": [338, 168.2, 32, 10], "paint": 3 },
+      { "box": [62, 187.2, 191, 10], "paint": 3 },
+      { "box": [62, 205.2, 258.7, 10], "paint": 3 },
+      { "box": [21, 279.2, 32, 32], "paint": 3 },
+      { "box": [62, 271.2, 83.2, 12], "paint": 3 },
+      { "box": [338, 272.2, 32, 10], "paint": 3 },
+      { "box": [62, 291.2, 227.9, 10], "paint": 3 },
+      { "box": [62, 309.2, 209.4, 10], "paint": 3 },
+      { "box": [21, 383.2, 32, 32], "paint": 3 },
+      { "box": [62, 375.2, 126.3, 12], "paint": 3 },
+      { "box": [338, 376.2, 32, 10], "paint": 3 },
+      { "box": [62, 395.2, 178.6, 10], "paint": 3 },
+      { "box": [62, 413.2, 234.1, 10], "paint": 3 },
+      { "box": [21, 487.2, 32, 32], "paint": 3 },
+      { "box": [62, 479.2, 92.4, 12], "paint": 3 },
+      { "box": [338, 480.2, 32, 10], "paint": 3 },
+      { "box": [62, 499.2, 215.6, 10], "paint": 3 },
+      { "box": [62, 517.2, 271, 10], "paint": 3 },
+      { "box": [21, 591.2, 32, 32], "paint": 3 },
+      { "box": [62, 583.2, 114, 12], "paint": 3 },
+      { "box": [338, 584.2, 32, 10], "paint": 3 },
+      { "box": [62, 603.2, 203.3, 10], "paint": 3 },
+      { "box": [62, 621.2, 191, 10], "paint": 3 },
+      { "box": [21, 695.2, 32, 32], "paint": 3 },
+      { "box": [62, 687.2, 77, 12], "paint": 3 },
+      { "box": [338, 688.2, 32, 10], "paint": 3 },
+      { "box": [62, 707.2, 166.3, 10], "paint": 3 },
+      { "box": [62, 725.2, 246.4, 10], "paint": 3 },
+      { "box": [21, 799.2, 32, 32], "paint": 3 },
+      { "box": [62, 791.2, 120.1, 12], "paint": 3 },
+      { "box": [338, 792.2, 32, 10], "paint": 3 },
+      { "box": [62, 811.2, 218.7, 10], "paint": 3 },
+      { "box": [62, 829.2, 218.7, 10], "paint": 3 }
+    ]
+  }
+}

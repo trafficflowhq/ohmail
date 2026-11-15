@@ -1,0 +1,52 @@
+/* A column's handle: it stands in the gap after its column, and shows a short line only while it is wanted. */
+@layer oh {
+  .oh-columnhandle {
+    --oh-columnhandle-w: 10px;
+    --oh-columnhandle-half: -5px;
+    --oh-columnhandle-layer: 4;
+
+    position: absolute;
+    top: var(--edge);
+    bottom: var(--edge);
+    left: calc(var(--edge) + var(--rail) + var(--gap) / 2);
+    z-index: var(--oh-columnhandle-layer);
+    width: var(--oh-columnhandle-w);
+    margin-left: var(--oh-columnhandle-half);
+    border-radius: var(--r-pill);
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .oh-columnhandle[data-column="list"] {
+    left: calc(var(--edge) + var(--rail) + var(--gap) + var(--listw) + var(--gap) / 2);
+  }
+
+  .oh-columnhandle::after {
+    content: "";
+    position: absolute;
+    top: 25%;
+    bottom: 25%;
+    left: 4px;
+    width: 2px;
+    border-radius: var(--r-sq);
+    background: var(--ctl-ring);
+    opacity: 0;
+    transition: opacity var(--d-fade) var(--e-std);
+  }
+
+  .oh-columnhandle:hover::after,
+  .oh-columnhandle:focus-visible::after,
+  .oh-columnhandle[data-dragging]::after {
+    opacity: 1;
+  }
+
+  .oh-columnhandle:focus,
+  .oh-columnhandle:focus-visible {
+    outline: none;
+  }
+
+  /* No handle on touch: an unfolded phone's list ends at the hinge. */
+  :root[data-touch="1"] .oh-columnhandle {
+    display: none;
+  }
+}

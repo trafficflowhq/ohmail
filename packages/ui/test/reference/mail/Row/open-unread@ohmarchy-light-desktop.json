@@ -1,0 +1,260 @@
+{
+  "component": "Row",
+  "state": "open-unread",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 420, 88],
+  "clip": [24, 24, 420, 88],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13.5px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "oklch(0.38 0.085 78)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "11px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "11px",
+      "letterSpacing": "-0.44px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px inset" },
+    {
+      "backgroundColor": "oklch(0.938301 0.0320379 78)",
+      "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset"
+    },
+    { "backgroundColor": "rgb(32, 94, 166)", "boxShadow": "rgb(236, 233, 222) 0px 0px 0px 2px" },
+    {
+      "backgroundColor": "rgb(236, 233, 222)",
+      "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset, rgb(236, 233, 222) 0px 0px 0px 2px"
+    },
+    { "boxShadow": "rgb(195, 193, 184) 0px 0px 0px 1px inset" },
+    { "boxShadow": "rgb(139, 137, 130) 0px 0px 0px 2px inset" },
+    { "backgroundColor": "rgb(150, 148, 137)" },
+    { "backgroundColor": "rgb(32, 94, 166)" },
+    { "boxShadow": "rgb(95, 94, 90) 0px 0px 0px 1px" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 9f76e510b51d" },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(140, 139, 135) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "list",
+      "name": "",
+      "box": [0, 0, 420, 88],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "10px",
+        "paddingBottom": "4px",
+        "paddingLeft": "10px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "button",
+      "name": "G +2 Giulia, Ben 09:12 Re: Glaze order #2291 Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is one ca…",
+      "box": [10, 0, 400, 84],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(236, 233, 222)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "14px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Giulia, Ben", "type": 0 },
+        { "said": "09:12", "type": 1 },
+        { "said": "Re: Glaze order #2291", "type": 2 },
+        {
+          "said": "Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is one carton after all.",
+          "type": 3
+        }
+      ],
+      "surfaces": [{ "box": [10, 0, 400, 84], "paint": 0 }]
+    },
+    {
+      "role": "img",
+      "name": "3 people: Giulia Ferrari, Ben Arnold and you",
+      "box": [26, 13.2, 32, 32],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "G", "type": 4 },
+        { "said": "+2", "type": 5 }
+      ],
+      "surfaces": [
+        { "box": [26, 13.2, 32, 32], "paint": 1 },
+        { "box": [22, 9.2, 8, 8], "paint": 2 },
+        { "box": [44, 31.2, 18, 18], "paint": 3 }
+      ]
+    },
+    {
+      "role": "group",
+      "name": "5 messages, 2 unread",
+      "box": [258, 11.2, 72, 22],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "6px",
+        "paddingBottom": "0px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [258, 11.2, 72, 22], "paint": 4 },
+        { "box": [266, 18.2, 8, 8], "paint": 5 },
+        { "box": [278, 18.2, 8, 8], "paint": 6 },
+        { "box": [290, 18.2, 8, 8], "paint": 5 },
+        { "box": [302, 18.2, 8, 8], "paint": 7 },
+        { "box": [314, 18.2, 8, 8], "paint": 7 },
+        { "box": [311, 15.2, 14, 14], "paint": 8 }
+      ]
+    },
+    {
+      "role": "img",
+      "name": "Has an attachment",
+      "box": [338, 14.2, 16, 16],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [{ "box": [338, 14.2, 16, 16], "paint": 9 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 420, 88], "paint": 10 }] }
+}

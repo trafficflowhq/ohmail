@@ -1,0 +1,41 @@
+/* The full stop: hot is open, ink is done, a ring came back. Its size follows the text it ends. */
+@layer oh {
+  .oh-dot {
+    --oh-dot-gap: 0.08em;
+    --oh-dot-ring: inset 0 0 0 var(--oh-focus) var(--hot);
+    display: inline-block;
+    flex: none;
+    width: var(--dot-size);
+    height: var(--dot-size);
+    margin-left: var(--oh-dot-gap);
+    border-radius: var(--dot-r);
+    background: var(--ink);
+    vertical-align: baseline;
+    transition: background-color var(--d-dot) var(--e-std);
+  }
+  .oh-dot[data-kind="hot"] {
+    background: var(--hot);
+  }
+  .oh-dot[data-kind="ring"] {
+    background: transparent;
+    box-shadow: var(--oh-dot-ring);
+  }
+  .oh-dot[data-kind="none"] {
+    background: transparent;
+  }
+  /* An app's own dot: that app's colour whichever app is open. In ohmarchy both wear the theme's. */
+  :root:not([data-face="ohmarchy"]) .oh-dot[data-product] {
+    background: var(--oh-dot-light);
+  }
+  :root:not([data-face="ohmarchy"])[data-scheme="dark"] .oh-dot[data-product] {
+    background: var(--oh-dot-dark);
+  }
+  :root[data-face="ohmarchy"] .oh-dot[data-product] {
+    background: var(--hot);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-face="ohmarchy"], [data-scheme]) .oh-dot[data-product] {
+      background: var(--oh-dot-dark);
+    }
+  }
+}

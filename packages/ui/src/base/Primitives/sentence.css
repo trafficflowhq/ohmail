@@ -1,0 +1,48 @@
+/* A line in the display face that is the control itself, and the blank a person fills in it. */
+@layer oh {
+  .oh-sentence {
+    font-family: var(--f-display);
+    font-size: var(--t-head);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz-l);
+    line-height: 1.12;
+    letter-spacing: var(--track);
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  .oh-sentence[data-size="xl"] {
+    font-size: var(--t-display);
+    line-height: 1.06;
+  }
+  .oh-sentence .oh-slot,
+  .oh-sentence .oh-slot[data-kind="none"] {
+    font-weight: inherit;
+  }
+
+  .oh-blank {
+    --oh-blank-pad: 0 0.04em;
+    min-width: 2.5em;
+    max-width: 100%;
+    padding: var(--oh-blank-pad);
+    border-bottom: var(--slot-line) dotted var(--ink);
+    color: var(--ink);
+    line-height: 1.1;
+    cursor: text;
+    field-sizing: content;
+  }
+  .oh-blank::placeholder {
+    color: var(--ink2);
+    opacity: 1;
+  }
+  .oh-blank:focus,
+  .oh-blank:focus-visible {
+    border-bottom-style: solid;
+    border-bottom-color: var(--hot);
+    border-radius: 0;
+    outline: none;
+  }
+  :root[data-touch="1"] .oh-blank {
+    position: relative;
+    min-height: var(--h-s);
+  }
+}

@@ -30,8 +30,12 @@ const walk = (dir: string, out: string[] = []): string[] => {
 };
 /* The new design's files are not loaded beside the views this census reads (the tokens package's
    design-not-yet-imported test holds that), so what they declare defines nothing here. Their own
-   reads are held by the tokens package's design-one-source test. */
-const NEW_DESIGN = ["packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/"];
+   reads are held by the tokens package's design-one-source test: the design's folders, and the kit's
+   three, whose stylesheets read the design's tokens. */
+const NEW_DESIGN = [
+  "packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/",
+  "packages/ui/src/base/", "packages/ui/src/mail/", "packages/ui/src/calendar/",
+];
 const files = DOMAIN.flatMap((d) => walk(join(ROOT, d))).map((f) => relative(ROOT, f).replace(/\\/g, "/"))
   .filter((f) => !NEW_DESIGN.some((dir) => f.startsWith(dir)));
 const text = (f: string): string => readFileSync(join(ROOT, f), "utf8");

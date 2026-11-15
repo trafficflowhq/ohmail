@@ -1,0 +1,288 @@
+/* One form for a new event and for an edit: rows led by a glyph. A change takes effect at once; there is no Save. */
+@layer oh {
+  .oh-evform {
+    --oh-evform-row: 32px;
+    --oh-evform-lead: 20px;
+    display: grid;
+    grid-auto-rows: max-content;
+    gap: var(--s1);
+    min-width: 0;
+    margin-top: var(--s3);
+  }
+  .oh-evform-row {
+    --oh-evform-row-gap: 0 var(--s3);
+    display: grid;
+    grid-template-columns: var(--oh-evform-lead) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--oh-evform-row-gap);
+    min-height: var(--oh-evform-row);
+  }
+  .oh-evform-lead {
+    display: grid;
+    place-items: center;
+    width: var(--oh-evform-lead);
+    height: var(--oh-evform-row);
+    color: var(--ink2);
+  }
+  .oh-evform-lead-ico {
+    width: 18px;
+    height: 18px;
+  }
+  .oh-evform-value {
+    --oh-evform-value-gap: var(--s1) var(--s2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--oh-evform-value-gap);
+    min-width: 0;
+    min-height: var(--oh-evform-row);
+  }
+  /* A word that opens a menu is cut where the row ends; one nobody has chosen yet is quiet. */
+  .oh-evform .oh-slot {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-evform .oh-slot[data-kind="none"] {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  /* A field of the form is a line under its words, not a box. */
+  .oh-evform-field {
+    --oh-evform-field-pad: 1px 4px;
+    --oh-evform-field-line: inset 0 calc(var(--oh-hair) * -1) 0 var(--line);
+    --oh-evform-field-on: inset 0 calc(var(--oh-focus) * -1) 0 var(--focus);
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+    height: 28px;
+    padding: var(--oh-evform-field-pad);
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-evform-field-line);
+    cursor: text;
+  }
+  .oh-evform-field:focus-visible {
+    outline: none;
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-evform-field-on);
+  }
+  .oh-evform-field::placeholder {
+    opacity: 1;
+    color: var(--ink2);
+  }
+  .oh-evform-field[data-kind="time"] {
+    flex: none;
+    width: 58px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .oh-evform-field[data-kind="notes"] {
+    --oh-evform-field-pad: 6px 8px;
+    --oh-evform-field-line: inset 0 0 0 var(--oh-hair) var(--line);
+    --oh-evform-field-on: inset 0 0 0 var(--oh-focus) var(--focus);
+    --oh-evform-notes-r: 8px;
+    display: block;
+    flex: 1 1 100%;
+    height: auto;
+    min-height: 44px;
+    margin-top: var(--s1);
+    border-radius: var(--oh-evform-notes-r);
+    line-height: 1.4;
+    field-sizing: content;
+    resize: none;
+  }
+  .oh-evform-field[data-kind="notes"]:focus-visible {
+    border-radius: var(--oh-evform-notes-r);
+  }
+  .oh-evform-word,
+  .oh-evform-note {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-evform-note {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-evform-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-left: auto;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    cursor: pointer;
+  }
+  .oh-evform-toggle {
+    --oh-evform-toggle-gap: 4px;
+    --oh-evform-toggle-pad: 0 var(--s2);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-evform-toggle-gap);
+    height: 26px;
+    padding: var(--oh-evform-toggle-pad);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-evform-toggle:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+  .oh-evform-toggle[aria-checked="true"] {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .oh-evform-toggle-ico {
+    width: 14px;
+    height: 14px;
+  }
+  /* An invitee, a file: a capsule with its name and the control that takes it away. */
+  .oh-evform-who {
+    --oh-evform-who-gap: 6px;
+    --oh-evform-who-pad: 2px 2px 2px 3px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-evform-who-gap);
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--oh-evform-who-pad);
+    border-radius: var(--r-pill);
+    background: var(--soft-sheet);
+    font-weight: var(--w-mid);
+  }
+  .oh-evform-who[data-file] {
+    --oh-evform-who-pad: 2px 2px 2px 8px;
+  }
+  .oh-evform-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-evform-who-gap);
+    min-width: 0;
+    border-radius: var(--r-pill);
+  }
+  .oh-evform-name > .oh-avatar {
+    box-shadow: none;
+  }
+  .oh-evform-name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-evform-who[data-declined] .oh-evform-name-text {
+    color: var(--ink2);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+  }
+  .oh-evform-name-note {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    white-space: nowrap;
+  }
+  .oh-evform-file-ico {
+    width: 14px;
+    height: 14px;
+    color: var(--ink2);
+  }
+  .oh-evform-x {
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-evform-x:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+  .oh-evform-x-ico {
+    width: 14px;
+    height: 14px;
+  }
+  .oh-evform-link {
+    max-width: 100%;
+    overflow: hidden;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-mid);
+    text-decoration: underline;
+    text-decoration-color: var(--line);
+    text-overflow: ellipsis;
+    text-underline-offset: 0.2em;
+    white-space: nowrap;
+  }
+  .oh-evform-link:hover {
+    text-decoration-color: var(--ink);
+  }
+  /* The last line: what can still be added, as words, and Add at its end. */
+  .oh-evform-last {
+    --oh-evform-last-out: var(--s2) 0 0 calc(var(--s1) * -1);
+    display: flex;
+    align-items: flex-end;
+    gap: var(--s2);
+    min-height: var(--h-s);
+    margin: var(--oh-evform-last-out);
+  }
+  .oh-evform-last > .oh-button {
+    flex: none;
+  }
+  .oh-evform-adds {
+    --oh-evform-adds-gap: 2px;
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--oh-evform-adds-gap);
+    min-width: 0;
+  }
+  .oh-evform-add {
+    --oh-evform-add-gap: 5px;
+    --oh-evform-add-pad: 0 10px 0 6px;
+    --oh-evform-add-h: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-evform-add-gap);
+    height: var(--oh-evform-add-h);
+    padding: var(--oh-evform-add-pad);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    transition:
+      background-color var(--d-hover) var(--e-std),
+      color var(--d-hover) var(--e-std);
+  }
+  .oh-evform-add[data-bare] {
+    --oh-evform-add-pad: 0 var(--s2);
+  }
+  .oh-evform-add:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+  .oh-evform-add-ico {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* With a finger: taller words, and a finger's room round the small controls. */
+  :root[data-touch="1"] .oh-evform-add {
+    --oh-evform-add-h: 36px;
+  }
+  :root[data-touch="1"] .oh-evform-who {
+    --oh-evform-who-pad: 5px 4px 5px 5px;
+  }
+  :root[data-touch="1"] .oh-evform-x::after {
+    position: absolute;
+    inset: -11px;
+    content: "";
+  }
+}

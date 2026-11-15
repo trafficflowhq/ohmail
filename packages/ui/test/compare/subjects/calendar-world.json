@@ -1,0 +1,4155 @@
+{
+  "week": {
+    "width": 1392,
+    "height": 600,
+    "scroll": 245,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-09",
+            "weekday": "Mon",
+            "date": "9",
+            "label": "Monday 9 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Studio Monday",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 540, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Menu cards to Gartenlokal Rosa",
+                  "tone": "tone:blue",
+                  "place": { "top": 900, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [{ "kind": "calendar", "tone": "tone:blue" }],
+                "label": "Later: 15:00 Menu cards to Gartenlokal Rosa"
+              }
+            }
+          },
+          {
+            "id": "2026-11-10",
+            "weekday": "Tue",
+            "date": "10",
+            "label": "Tuesday 10 November",
+            "today": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Invoices, new template",
+                  "tone": "tone:blue",
+                  "place": { "top": 540, "height": 60, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "nowCrosses": true,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 840, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Poster review",
+                  "tone": "tone:green",
+                  "open": true,
+                  "place": { "top": 870, "height": 60, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1110, "height": 90, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 540,
+                "icon": "resurface",
+                "label": "Resurface · Domain renewal: lichtgrat.example expires 30 November"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim"
+              }
+            }
+          },
+          {
+            "id": "2026-11-11",
+            "weekday": "Wed",
+            "date": "11",
+            "label": "Wednesday 11 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Kiln technician",
+                  "tone": "tone:green",
+                  "place": { "top": 480, "height": 240, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Open bench",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 1080, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 480,
+                "icon": "clock",
+                "label": "Send later · Re: Would you teach the December glaze evening?"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [{ "kind": "calendar", "tone": "tone:green" }],
+                "label": "Later: 18:00 Open bench"
+              }
+            }
+          },
+          {
+            "id": "2026-11-12",
+            "weekday": "Thu",
+            "date": "12",
+            "label": "Thursday 12 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Run with Reto",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 420, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Dentist",
+                  "tone": "tone:blue",
+                  "place": { "top": 570, "height": 75, "column": 0, "columns": 1, "room": 47.5 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "waits": true,
+                  "place": { "top": 600, "height": 30, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze firing",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 780, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "state": "draft",
+                  "place": { "top": 900, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue check-in",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 990, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Film night",
+                  "tone": "tone:blue",
+                  "place": { "top": 1215, "height": 135, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kino Seeblick",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 13:00 Glaze firing, 16:30 Catalogue check-in, 20:15 Film night"
+              }
+            }
+          },
+          {
+            "id": "2026-11-13",
+            "weekday": "Fri",
+            "date": "13",
+            "label": "Friday 13 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Lunch with Anna",
+                  "tone": "tone:blue",
+                  "place": { "top": 735, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Gartenlokal Rosa",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze test review",
+                  "tone": "tone:blue",
+                  "place": { "top": 900, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Pizza, wood oven",
+                  "tone": "tone:green",
+                  "place": { "top": 1080, "height": 180, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio yard",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 15:00 Glaze test review, 18:00 Pizza, wood oven"
+              }
+            }
+          },
+          {
+            "id": "2026-11-14",
+            "weekday": "Sat",
+            "date": "14",
+            "label": "Saturday 14 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Train to Lugano",
+                  "tone": null,
+                  "state": "from-mail",
+                  "place": { "top": 482, "height": 202, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Winterthur → Lugano",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Monte Brè with Reto",
+                  "tone": "tone:blue",
+                  "place": { "top": 720, "height": 270, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Lugano",
+                  "handles": true
+                }
+              }
+            ]
+          },
+          {
+            "id": "2026-11-15",
+            "weekday": "Sun",
+            "date": "15",
+            "label": "Sunday 15 November",
+            "children": []
+          }
+        ],
+        "heads": true,
+        "allDay": {
+          "c": "AllDayRow",
+          "p": {
+            "label": "all day",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "pill",
+                  "title": "Glaze order #2291 arrives",
+                  "tone": null,
+                  "state": "from-mail",
+                  "style": { "gridColumn": "5 / 6", "gridRow": "1" }
+                }
+              }
+            ]
+          }
+        },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60,
+        "now": { "minutes": 564, "label": "09:24" }
+      }
+    }
+  },
+  "week@phone": {
+    "width": 1392,
+    "height": 600,
+    "scroll": 217,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-09",
+            "weekday": "Mon",
+            "date": "9",
+            "label": "Monday 9 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Studio Monday",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 504, "height": 28, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Menu cards to Gartenlokal Rosa",
+                  "tone": "tone:blue",
+                  "place": { "top": 840, "height": 28, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [{ "kind": "calendar", "tone": "tone:blue" }],
+                "label": "Later: 15:00 Menu cards to Gartenlokal Rosa"
+              }
+            }
+          },
+          {
+            "id": "2026-11-10",
+            "weekday": "Tue",
+            "date": "10",
+            "label": "Tuesday 10 November",
+            "today": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Invoices, new template",
+                  "tone": "tone:blue",
+                  "place": { "top": 504, "height": 56, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "nowCrosses": true,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 784, "height": 42, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Poster review",
+                  "tone": "tone:green",
+                  "open": true,
+                  "place": { "top": 812, "height": 56, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1036, "height": 84, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 540,
+                "icon": "resurface",
+                "label": "Resurface · Domain renewal: lichtgrat.example expires 30 November"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim"
+              }
+            }
+          },
+          {
+            "id": "2026-11-11",
+            "weekday": "Wed",
+            "date": "11",
+            "label": "Wednesday 11 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Kiln technician",
+                  "tone": "tone:green",
+                  "place": { "top": 448, "height": 224, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Open bench",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 1008, "height": 112, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 480,
+                "icon": "clock",
+                "label": "Send later · Re: Would you teach the December glaze evening?"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [{ "kind": "calendar", "tone": "tone:green" }],
+                "label": "Later: 18:00 Open bench"
+              }
+            }
+          },
+          {
+            "id": "2026-11-12",
+            "weekday": "Thu",
+            "date": "12",
+            "label": "Thursday 12 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Run with Reto",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 392, "height": 42, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Dentist",
+                  "tone": "tone:blue",
+                  "place": { "top": 532, "height": 70, "column": 0, "columns": 1, "room": 47.5 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "waits": true,
+                  "place": { "top": 560, "height": 28, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze firing",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 728, "height": 56, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "state": "draft",
+                  "place": { "top": 840, "height": 28, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue check-in",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 924, "height": 28, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Film night",
+                  "tone": "tone:blue",
+                  "place": { "top": 1134, "height": 126, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kino Seeblick",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 13:00 Glaze firing, 16:30 Catalogue check-in, 20:15 Film night"
+              }
+            }
+          },
+          {
+            "id": "2026-11-13",
+            "weekday": "Fri",
+            "date": "13",
+            "label": "Friday 13 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Lunch with Anna",
+                  "tone": "tone:blue",
+                  "place": { "top": 686, "height": 56, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Gartenlokal Rosa",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze test review",
+                  "tone": "tone:blue",
+                  "place": { "top": 840, "height": 56, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Pizza, wood oven",
+                  "tone": "tone:green",
+                  "place": { "top": 1008, "height": 168, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio yard",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 12:15 Lunch with Anna, 15:00 Glaze test review, 18:00 Pizza, wood oven"
+              }
+            }
+          },
+          {
+            "id": "2026-11-14",
+            "weekday": "Sat",
+            "date": "14",
+            "label": "Saturday 14 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Train to Lugano",
+                  "tone": null,
+                  "state": "from-mail",
+                  "place": {
+                    "top": 449.8666666666667,
+                    "height": 188.53333333333333,
+                    "column": 0,
+                    "columns": 1
+                  },
+                  "shortest": 0,
+                  "second": "Winterthur → Lugano",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Monte Brè with Reto",
+                  "tone": "tone:blue",
+                  "place": { "top": 672, "height": 252, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Lugano",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [{ "kind": "calendar", "tone": "tone:blue" }],
+                "label": "Later: 12:00 Monte Brè with Reto"
+              }
+            }
+          },
+          {
+            "id": "2026-11-15",
+            "weekday": "Sun",
+            "date": "15",
+            "label": "Sunday 15 November",
+            "children": []
+          }
+        ],
+        "heads": true,
+        "allDay": {
+          "c": "AllDayRow",
+          "p": {
+            "label": "all day",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "pill",
+                  "title": "Glaze order #2291 arrives",
+                  "tone": null,
+                  "state": "from-mail",
+                  "style": { "gridColumn": "5 / 6", "gridRow": "1" }
+                }
+              }
+            ]
+          }
+        },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 56,
+        "now": { "minutes": 564, "label": "09:24" }
+      }
+    }
+  },
+  "day": {
+    "width": 420,
+    "height": 560,
+    "scroll": 252,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-12",
+            "weekday": "",
+            "date": "",
+            "label": "2026-11-12",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Run with Reto",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 420, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Dentist",
+                  "tone": "tone:blue",
+                  "place": { "top": 570, "height": 75, "column": 0, "columns": 1, "room": 47.5 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "waits": true,
+                  "place": { "top": 600, "height": 30, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze firing",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 780, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze evening, planning call",
+                  "tone": "tone:blue",
+                  "state": "draft",
+                  "place": { "top": 900, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue check-in",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 990, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Film night",
+                  "tone": "tone:blue",
+                  "place": { "top": 1215, "height": 135, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Kino Seeblick",
+                  "handles": true
+                }
+              }
+            ],
+            "free": [
+              { "minutes": 517.5, "text": "1 h 45 min" },
+              { "minutes": 712.5, "text": "2 h 15 min" },
+              { "minutes": 1117.5, "text": "3 h 15 min" }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green", "text": "13:00 Glaze firing" },
+                  { "kind": "calendar", "tone": "tone:violet", "text": "16:30 Catalogue check-in" }
+                ],
+                "label": "Later: 13:00 Glaze firing, 16:30 Catalogue check-in, 20:15 Film night"
+              }
+            }
+          }
+        ],
+        "heads": false,
+        "allDay": {
+          "c": "AllDayRow",
+          "p": {
+            "label": "all day",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "pill",
+                  "title": "Glaze order #2291 arrives",
+                  "tone": null,
+                  "state": "from-mail",
+                  "style": { "gridColumn": "2 / 3", "gridRow": "1" }
+                }
+              }
+            ]
+          }
+        },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60
+      }
+    }
+  },
+  "now-day": {
+    "width": 360,
+    "height": 250,
+    "scroll": 196,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-10",
+            "weekday": "",
+            "date": "",
+            "label": "2026-11-10",
+            "today": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Invoices, new template",
+                  "tone": "tone:blue",
+                  "place": { "top": 540, "height": 60, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "nowCrosses": true,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 840, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Poster review",
+                  "tone": "tone:green",
+                  "place": { "top": 870, "height": 60, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1110, "height": 90, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 540,
+                "icon": "resurface",
+                "label": "Resurface · Domain renewal: lichtgrat.example expires 30 November"
+              }
+            ],
+            "free": [
+              { "minutes": 720, "text": "4 h" },
+              { "minutes": 1020, "text": "3 h" }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue", "text": "09:00 Invoices, new template" },
+                  { "kind": "mail", "icon": "resurface", "text": "09:00 Resurface" }
+                ],
+                "label": "Later: 09:00 Invoices, new template, 09:00 Resurface, 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim"
+              }
+            }
+          }
+        ],
+        "heads": false,
+        "allDay": { "c": "AllDayRow", "p": { "label": "all day", "children": [] } },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60,
+        "now": { "minutes": 564, "label": "09:24" }
+      }
+    }
+  },
+  "now-week": {
+    "width": 360,
+    "height": 250,
+    "scroll": 96,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-10",
+            "weekday": "Tue",
+            "date": "10",
+            "label": "Tuesday 10 November",
+            "today": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Invoices, new template",
+                  "tone": "tone:blue",
+                  "place": { "top": 540, "height": 60, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "nowCrosses": true,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 840, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Poster review",
+                  "tone": "tone:green",
+                  "place": { "top": 870, "height": 60, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1110, "height": 90, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 540,
+                "icon": "resurface",
+                "label": "Resurface · Domain renewal: lichtgrat.example expires 30 November"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "mail", "icon": "resurface" },
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 09:00 Invoices, new template, 09:00 Resurface, 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim"
+              }
+            }
+          },
+          {
+            "id": "2026-11-11",
+            "weekday": "Wed",
+            "date": "11",
+            "label": "Wednesday 11 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Kiln technician",
+                  "tone": "tone:green",
+                  "place": { "top": 480, "height": 240, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Open bench",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 1080, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 480,
+                "icon": "clock",
+                "label": "Send later · Re: Would you teach the December glaze evening?"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "mail", "icon": "clock" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 08:00 Kiln technician, 08:00 Send later, 18:00 Open bench"
+              }
+            }
+          }
+        ],
+        "heads": true,
+        "allDay": { "c": "AllDayRow", "p": { "label": "all day", "children": [] } },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60,
+        "now": { "minutes": 564, "label": "09:24" }
+      }
+    }
+  },
+  "allday": {
+    "width": 1392,
+    "height": 260,
+    "scroll": 300,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-16",
+            "weekday": "Mon",
+            "date": "16",
+            "label": "Monday 16 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Studio Monday",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 540, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Slides, last pass",
+                  "tone": "tone:blue",
+                  "place": { "top": 600, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Stand list with Jonas",
+                  "tone": "tone:green",
+                  "place": { "top": 840, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 480,
+                "icon": "resurface",
+                "label": "Resurface · Makersfest: slides due"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "mail", "icon": "resurface" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 08:00 Resurface, 09:00 Studio Monday, 10:00 Slides, last pass, 14:00 Stand list with Jonas"
+              }
+            }
+          },
+          {
+            "id": "2026-11-17",
+            "weekday": "Tue",
+            "date": "17",
+            "label": "Tuesday 17 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "state": "off",
+                  "waits": true,
+                  "repeats": "series",
+                  "place": { "top": 840, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Pack samples for Porto",
+                  "tone": "tone:blue",
+                  "place": { "top": 960, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1110, "height": 90, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 14:00 Catalogue weekly, 16:00 Pack samples for Porto, 18:30 Bouldering with Tim"
+              }
+            }
+          },
+          {
+            "id": "2026-11-18",
+            "weekday": "Wed",
+            "date": "18",
+            "label": "Wednesday 18 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Flight to Porto",
+                  "tone": "tone:blue",
+                  "place": { "top": 415, "height": 165, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "06:55 Zürich – 08:40 Porto",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue shoot, day 1",
+                  "tone": "tone:violet",
+                  "waits": true,
+                  "place": { "top": 690, "height": 390, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "10:30–17:00 Porto",
+                  "was": "11:00",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Open bench",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 1080, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Dinner with Inês and Duarte",
+                  "tone": "tone:violet",
+                  "place": { "top": 1230, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "19:30–21:30 Porto",
+                  "handles": false
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:violet" }
+                ],
+                "label": "Later: 06:55 Flight to Porto, 11:30 Catalogue shoot, day 1, 18:00 Open bench, 20:30 Dinner with Inês and Duarte"
+              }
+            }
+          },
+          {
+            "id": "2026-11-19",
+            "weekday": "Thu",
+            "date": "19",
+            "label": "Thursday 19 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue shoot, day 2",
+                  "tone": "tone:violet",
+                  "place": { "top": 600, "height": 240, "column": 0, "columns": 1, "room": 187.5 },
+                  "shortest": 0,
+                  "second": "09:00–13:00 Porto",
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Glaze firing",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 780, "height": 60, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Flight to Zürich",
+                  "tone": "tone:blue",
+                  "place": { "top": 980, "height": 160, "column": 0, "columns": 2 },
+                  "shortest": 0,
+                  "second": "15:20 Porto – 19:00 Zürich",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue check-in",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 990, "height": 30, "column": 1, "columns": 2 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:violet" }
+                ],
+                "label": "Later: 10:00 Catalogue shoot, day 2, 13:00 Glaze firing, 16:20 Flight to Zürich, 16:30 Catalogue check-in"
+              }
+            }
+          },
+          {
+            "id": "2026-11-20",
+            "weekday": "Fri",
+            "date": "20",
+            "label": "Friday 20 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Talk rehearsal",
+                  "tone": "tone:blue",
+                  "place": { "top": 600, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Stand set-up, Hall 2",
+                  "tone": "tone:green",
+                  "place": { "top": 930, "height": 90, "column": 0, "columns": 1, "room": 47.5 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Tech check, main hall",
+                  "tone": null,
+                  "state": "to-answer",
+                  "waits": true,
+                  "place": { "top": 960, "height": 22, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": false
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "outlined" }
+                ],
+                "label": "Later: 10:00 Talk rehearsal, 15:30 Stand set-up, Hall 2, 16:00 Tech check, main hall"
+              }
+            }
+          },
+          {
+            "id": "2026-11-21",
+            "weekday": "Sat",
+            "date": "21",
+            "label": "Saturday 21 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Wabi-sabi for web people",
+                  "tone": null,
+                  "state": "from-mail",
+                  "place": { "top": 660, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Stand shift",
+                  "tone": "tone:green",
+                  "place": { "top": 780, "height": 240, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Makersfest, Hall 2, Zürich",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Winternacht",
+                  "tone": null,
+                  "state": "from-mail",
+                  "place": { "top": 1170, "height": 60, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "dashed" },
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "dashed" }
+                ],
+                "label": "Later: 11:00 Wabi-sabi for web people, 13:00 Stand shift, 19:30 Winternacht"
+              }
+            }
+          },
+          {
+            "id": "2026-11-22",
+            "weekday": "Sun",
+            "date": "22",
+            "label": "Sunday 22 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Stand shift",
+                  "tone": "tone:green",
+                  "place": { "top": 600, "height": 180, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Makersfest, Hall 2, Zürich",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Stand take-down",
+                  "tone": "tone:green",
+                  "place": { "top": 960, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Makersfest, Hall 2, Zürich",
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 10:00 Stand shift, 16:00 Stand take-down"
+              }
+            }
+          }
+        ],
+        "heads": true,
+        "allDay": {
+          "c": "AllDayRow",
+          "p": {
+            "label": "all day",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "pill",
+                  "title": "Makersfest",
+                  "tone": "tone:green",
+                  "style": { "gridColumn": "6 / 9", "gridRow": "1" }
+                }
+              }
+            ]
+          }
+        },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60
+      }
+    }
+  },
+  "hot": {
+    "width": 520,
+    "height": 340,
+    "scroll": 196,
+    "part": {
+      "c": "TimeGrid",
+      "p": {
+        "days": [
+          {
+            "id": "2026-11-09",
+            "weekday": "Mon",
+            "date": "9",
+            "label": "Monday 9 November",
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Studio Monday",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 540, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Menu cards to Gartenlokal Rosa",
+                  "tone": "tone:blue",
+                  "place": { "top": 900, "height": 30, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": true
+                }
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "calendar", "tone": "tone:blue" }
+                ],
+                "label": "Later: 09:00 Studio Monday, 15:00 Menu cards to Gartenlokal Rosa"
+              }
+            }
+          },
+          {
+            "id": "2026-11-10",
+            "weekday": "Tue",
+            "date": "10",
+            "label": "Tuesday 10 November",
+            "today": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Invoices, new template",
+                  "tone": "tone:blue",
+                  "place": { "top": 540, "height": 60, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "nowCrosses": true,
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Catalogue weekly",
+                  "tone": "tone:violet",
+                  "repeats": "series",
+                  "place": { "top": 840, "height": 45, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Poster review",
+                  "tone": "tone:green",
+                  "place": { "top": 870, "height": 60, "column": 0, "columns": 1, "lap": true },
+                  "shortest": 0,
+                  "handles": false
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Bouldering with Tim",
+                  "tone": "tone:blue",
+                  "repeats": "series",
+                  "place": { "top": 1110, "height": 90, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Boulder hall, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 540,
+                "icon": "resurface",
+                "label": "Resurface · Domain renewal: lichtgrat.example expires 30 November"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:blue" },
+                  { "kind": "mail", "icon": "resurface" },
+                  { "kind": "calendar", "tone": "tone:violet" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 09:00 Invoices, new template, 09:00 Resurface, 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim"
+              }
+            }
+          },
+          {
+            "id": "2026-11-11",
+            "weekday": "Wed",
+            "date": "11",
+            "label": "Wednesday 11 November",
+            "picked": true,
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Kiln technician",
+                  "tone": "tone:green",
+                  "open": true,
+                  "place": { "top": 480, "height": 240, "column": 0, "columns": 1, "bay": 16 },
+                  "shortest": 0,
+                  "second": "Kiln room",
+                  "handles": true
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "block",
+                  "title": "Open bench",
+                  "tone": "tone:green",
+                  "repeats": "series",
+                  "place": { "top": 1080, "height": 120, "column": 0, "columns": 1 },
+                  "shortest": 0,
+                  "second": "Studio, Winterthur",
+                  "handles": true
+                }
+              }
+            ],
+            "marks": [
+              {
+                "id": "0",
+                "minutes": 480,
+                "icon": "clock",
+                "label": "Send later · Re: Would you teach the December glaze evening?"
+              }
+            ],
+            "below": {
+              "c": "OutOfSightCapsule",
+              "p": {
+                "side": "below",
+                "items": [
+                  { "kind": "calendar", "tone": "tone:green" },
+                  { "kind": "mail", "icon": "clock" },
+                  { "kind": "calendar", "tone": "tone:green" }
+                ],
+                "label": "Later: 08:00 Kiln technician, 08:00 Send later, 18:00 Open bench"
+              }
+            }
+          }
+        ],
+        "heads": true,
+        "allDay": { "c": "AllDayRow", "p": { "label": "all day", "children": [] } },
+        "firstHour": 0,
+        "hourLabels": [
+          "00:00",
+          "01:00",
+          "02:00",
+          "03:00",
+          "04:00",
+          "05:00",
+          "06:00",
+          "07:00",
+          "08:00",
+          "09:00",
+          "10:00",
+          "11:00",
+          "12:00",
+          "13:00",
+          "14:00",
+          "15:00",
+          "16:00",
+          "17:00",
+          "18:00",
+          "19:00",
+          "20:00",
+          "21:00",
+          "22:00",
+          "23:00",
+          "00:00"
+        ],
+        "hourHeight": 60,
+        "now": { "minutes": 564, "label": "09:24" }
+      }
+    }
+  },
+  "month": {
+    "width": 1392,
+    "height": 816,
+    "part": {
+      "c": "MonthGrid",
+      "p": {
+        "weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        "weeks": [
+          {
+            "id": "0",
+            "days": [
+              {
+                "id": "2026-10-26",
+                "number": "26",
+                "label": "Monday 26 October",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "1", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-10-27",
+                "number": "27",
+                "label": "Tuesday 27 October",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+              {
+                "id": "2026-10-29",
+                "number": "29",
+                "label": "Thursday 29 October",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "4", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+              { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+              { "id": "2026-11-01", "number": "1 Nov", "label": "Sunday 1 November" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "All Saints' Day (regional)",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "7 / 8", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "1",
+            "days": [
+              {
+                "id": "2026-11-02",
+                "number": "2",
+                "label": "Monday 2 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "1", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-03",
+                "number": "3",
+                "label": "Tuesday 3 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-04",
+                "number": "4",
+                "label": "Wednesday 4 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue captions",
+                      "tone": "tone:violet",
+                      "time": "10:00",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-05",
+                "number": "5",
+                "label": "Thursday 5 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing (small kiln)",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "4", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-06",
+                "number": "6",
+                "label": "Friday 6 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Poster photos: twelve tiles",
+                      "tone": "tone:green",
+                      "time": "14:00",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+              {
+                "id": "2026-11-08",
+                "number": "8",
+                "label": "Sunday 8 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Dinner at Mum's",
+                      "tone": "tone:amber",
+                      "time": "18:00",
+                      "style": { "gridColumn": "7", "gridRow": "2" }
+                    }
+                  }
+                ]
+              }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Tim Berger's birthday",
+                  "tone": "tone:rose",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "3 / 4", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "2",
+            "days": [
+              {
+                "id": "2026-11-09",
+                "number": "9",
+                "label": "Monday 9 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "1", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Menu cards to Gartenlokal Rosa",
+                      "tone": "tone:blue",
+                      "time": "15:00",
+                      "style": { "gridColumn": "1", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-10",
+                "number": "10",
+                "label": "Tuesday 10 November",
+                "today": true,
+                "mail": "resurface",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Invoices, new template",
+                      "tone": "tone:blue",
+                      "time": "09:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "2", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Poster review",
+                      "tone": "tone:green",
+                      "open": true,
+                      "time": "14:30",
+                      "style": { "gridColumn": "2", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-11",
+                "number": "11",
+                "label": "Wednesday 11 November",
+                "mail": "clock",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Kiln technician",
+                      "tone": "tone:green",
+                      "time": "08:00",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-12",
+                "number": "12",
+                "label": "Thursday 12 November",
+                "more": { "text": "+4", "label": "+4" },
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Dentist",
+                      "tone": "tone:blue",
+                      "time": "09:30",
+                      "style": { "gridColumn": "4", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-13",
+                "number": "13",
+                "label": "Friday 13 November",
+                "picked": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Lunch with Anna",
+                      "tone": "tone:blue",
+                      "time": "12:15",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze test review",
+                      "tone": "tone:blue",
+                      "time": "15:00",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Pizza, wood oven",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "5", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-14",
+                "number": "14",
+                "label": "Saturday 14 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Train to Lugano",
+                      "tone": null,
+                      "state": "from-mail",
+                      "time": "08:02",
+                      "style": { "gridColumn": "6", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Monte Brè with Reto",
+                      "tone": "tone:blue",
+                      "time": "12:00",
+                      "style": { "gridColumn": "6", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Glaze order #2291 arrives",
+                  "tone": null,
+                  "state": "from-mail",
+                  "run": true,
+                  "style": { "gridColumn": "4 / 5", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "3",
+            "days": [
+              {
+                "id": "2026-11-16",
+                "number": "16",
+                "label": "Monday 16 November",
+                "mail": "resurface",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "1", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Slides, last pass",
+                      "tone": "tone:blue",
+                      "time": "10:00",
+                      "style": { "gridColumn": "1", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Stand list with Jonas",
+                      "tone": "tone:green",
+                      "time": "14:00",
+                      "style": { "gridColumn": "1", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-17",
+                "number": "17",
+                "label": "Tuesday 17 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "state": "off",
+                      "waits": true,
+                      "time": "14:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Pack samples for Porto",
+                      "tone": "tone:blue",
+                      "time": "16:00",
+                      "style": { "gridColumn": "2", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-18",
+                "number": "18",
+                "label": "Wednesday 18 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Flight to Porto",
+                      "tone": "tone:blue",
+                      "time": "06:55",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue shoot, day 1",
+                      "tone": "tone:violet",
+                      "waits": true,
+                      "time": "11:30",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "3", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Dinner with Inês and Duarte",
+                      "tone": "tone:violet",
+                      "time": "20:30",
+                      "style": { "gridColumn": "3", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-19",
+                "number": "19",
+                "label": "Thursday 19 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue shoot, day 2",
+                      "tone": "tone:violet",
+                      "time": "10:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Flight to Zürich",
+                      "tone": "tone:blue",
+                      "time": "16:20",
+                      "style": { "gridColumn": "4", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "4", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-20",
+                "number": "20",
+                "label": "Friday 20 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Talk rehearsal",
+                      "tone": "tone:blue",
+                      "time": "10:00",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Stand set-up, Hall 2",
+                      "tone": "tone:green",
+                      "time": "15:30",
+                      "style": { "gridColumn": "5", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Tech check, main hall",
+                      "tone": null,
+                      "state": "to-answer",
+                      "waits": true,
+                      "time": "16:00",
+                      "style": { "gridColumn": "5", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-21",
+                "number": "21",
+                "label": "Saturday 21 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Wabi-sabi for web people",
+                      "tone": null,
+                      "state": "from-mail",
+                      "time": "11:00",
+                      "style": { "gridColumn": "6", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Stand shift",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "6", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Winternacht",
+                      "tone": null,
+                      "state": "from-mail",
+                      "time": "19:30",
+                      "style": { "gridColumn": "6", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-22",
+                "number": "22",
+                "label": "Sunday 22 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Stand shift",
+                      "tone": "tone:green",
+                      "time": "10:00",
+                      "style": { "gridColumn": "7", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Stand take-down",
+                      "tone": "tone:green",
+                      "time": "16:00",
+                      "style": { "gridColumn": "7", "gridRow": "4" }
+                    }
+                  }
+                ]
+              }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Makersfest",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "5 / 8", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "4",
+            "days": [
+              { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+              {
+                "id": "2026-11-24",
+                "number": "24",
+                "label": "Tuesday 24 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-25",
+                "number": "25",
+                "label": "Wednesday 25 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-26",
+                "number": "26",
+                "label": "Thursday 26 November",
+                "more": { "text": "+2", "label": "+2" },
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "4", "gridRow": "4" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-11-27",
+                "number": "27",
+                "label": "Friday 27 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Month-end books",
+                      "tone": "tone:blue",
+                      "time": "15:00",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+              { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Days off",
+                  "tone": "tone:blue",
+                  "run": true,
+                  "style": { "gridColumn": "1 / 4", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Photo selects due",
+                  "tone": "tone:violet",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "2 / 3", "gridRow": "3" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Lea Brunner's birthday",
+                  "tone": "tone:rose",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "4 / 5", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Proofs due",
+                  "tone": "tone:violet",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "5 / 6", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "First Advent",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "7 / 8", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "5",
+            "days": [
+              {
+                "id": "2026-11-30",
+                "number": "30",
+                "label": "Monday 30 November",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "1", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-01",
+                "number": "1 Dec",
+                "label": "Tuesday 1 December",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "2", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+              {
+                "id": "2026-12-03",
+                "number": "3",
+                "label": "Thursday 3 December",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "4", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+              { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+              { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Catalogue to print",
+                  "tone": "tone:violet",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "5 / 6", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Open studio? (hold)",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "6 / 7", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "St Nicholas' Day",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "7 / 8", "gridRow": "2" }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "month-numbers": {
+    "width": 1392,
+    "height": 816,
+    "part": {
+      "c": "MonthGrid",
+      "p": {
+        "weekdays": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+        "weeks": [
+          {
+            "id": "0",
+            "weekNumber": { "number": 49, "label": "Week 49" },
+            "days": [
+              { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November", "outside": true },
+              {
+                "id": "2026-11-30",
+                "number": "30",
+                "label": "Monday 30 November",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-01",
+                "number": "1 Dec",
+                "label": "Tuesday 1 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December" },
+              {
+                "id": "2026-12-03",
+                "number": "3",
+                "label": "Thursday 3 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-04", "number": "4", "label": "Friday 4 December" },
+              { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "First Advent",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "1 / 2", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Catalogue to print",
+                  "tone": "tone:violet",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "6 / 7", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Open studio? (hold)",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "7 / 8", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "1",
+            "weekNumber": { "number": 50, "label": "Week 50" },
+            "days": [
+              { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December" },
+              {
+                "id": "2026-12-07",
+                "number": "7",
+                "label": "Monday 7 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-08",
+                "number": "8",
+                "label": "Tuesday 8 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-09",
+                "number": "9",
+                "label": "Wednesday 9 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-10",
+                "number": "10",
+                "label": "Thursday 10 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-11", "number": "11", "label": "Friday 11 December" },
+              { "id": "2026-12-12", "number": "12", "label": "Saturday 12 December" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Winter market, Winterthur",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "6 / 8", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "St Nicholas' Day",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "1 / 2", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "2",
+            "weekNumber": { "number": 51, "label": "Week 51" },
+            "days": [
+              { "id": "2026-12-13", "number": "13", "label": "Sunday 13 December" },
+              {
+                "id": "2026-12-14",
+                "number": "14",
+                "label": "Monday 14 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-15",
+                "number": "15",
+                "label": "Tuesday 15 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-16",
+                "number": "16",
+                "label": "Wednesday 16 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2026-12-17",
+                "number": "17",
+                "label": "Thursday 17 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Run with Reto",
+                      "tone": "tone:blue",
+                      "time": "07:00",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Glaze firing",
+                      "tone": "tone:green",
+                      "time": "13:00",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "4" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio dinner",
+                      "tone": "tone:green",
+                      "time": "19:00",
+                      "style": { "gridColumn": "5", "gridRow": "5" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-18", "number": "18", "label": "Friday 18 December" },
+              { "id": "2026-12-19", "number": "19", "label": "Saturday 19 December" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Winter market, Winterthur",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "1 / 2", "gridRow": "2" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "3",
+            "weekNumber": { "number": 52, "label": "Week 52" },
+            "days": [
+              { "id": "2026-12-20", "number": "20", "label": "Sunday 20 December" },
+              { "id": "2026-12-21", "number": "21", "label": "Monday 21 December" },
+              { "id": "2026-12-22", "number": "22", "label": "Tuesday 22 December" },
+              { "id": "2026-12-23", "number": "23", "label": "Wednesday 23 December" },
+              {
+                "id": "2026-12-24",
+                "number": "24",
+                "label": "Thursday 24 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2026-12-25", "number": "25", "label": "Friday 25 December" },
+              { "id": "2026-12-26", "number": "26", "label": "Saturday 26 December" }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Studio closed",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "5 / 8", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Christmas Day",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "6 / 7", "gridRow": "3" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "St Stephen's Day",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "7 / 8", "gridRow": "3" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "4",
+            "weekNumber": { "number": 53, "label": "Week 53" },
+            "days": [
+              { "id": "2026-12-27", "number": "27", "label": "Sunday 27 December" },
+              { "id": "2026-12-28", "number": "28", "label": "Monday 28 December" },
+              { "id": "2026-12-29", "number": "29", "label": "Tuesday 29 December" },
+              { "id": "2026-12-30", "number": "30", "label": "Wednesday 30 December" },
+              {
+                "id": "2026-12-31",
+                "number": "31",
+                "label": "Thursday 31 December",
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2027-01-01", "number": "1 Jan", "label": "Friday 1 January 2027", "outside": true },
+              { "id": "2027-01-02", "number": "2", "label": "Saturday 2 January 2027", "outside": true }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Studio closed",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "1 / 8", "gridRow": "2" }
+                }
+              },
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "New Year's Day",
+                  "tone": "neutral",
+                  "viewOnly": true,
+                  "run": true,
+                  "style": { "gridColumn": "6 / 7", "gridRow": "3" }
+                }
+              }
+            ]
+          },
+          {
+            "id": "5",
+            "weekNumber": { "number": 1, "label": "Week 1" },
+            "days": [
+              { "id": "2027-01-03", "number": "3", "label": "Sunday 3 January 2027", "outside": true },
+              {
+                "id": "2027-01-04",
+                "number": "4",
+                "label": "Monday 4 January 2027",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Studio Monday",
+                      "tone": "tone:green",
+                      "time": "09:00",
+                      "style": { "gridColumn": "2", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2027-01-05",
+                "number": "5",
+                "label": "Tuesday 5 January 2027",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue weekly",
+                      "tone": "tone:violet",
+                      "time": "14:00",
+                      "style": { "gridColumn": "3", "gridRow": "2" }
+                    }
+                  },
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Bouldering with Tim",
+                      "tone": "tone:blue",
+                      "time": "18:30",
+                      "style": { "gridColumn": "3", "gridRow": "3" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2027-01-06",
+                "number": "6",
+                "label": "Wednesday 6 January 2027",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Open bench",
+                      "tone": "tone:green",
+                      "time": "18:00",
+                      "style": { "gridColumn": "4", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "2027-01-07",
+                "number": "7",
+                "label": "Thursday 7 January 2027",
+                "outside": true,
+                "lines": [
+                  {
+                    "c": "EventChip",
+                    "p": {
+                      "size": "line",
+                      "title": "Catalogue check-in",
+                      "tone": "tone:violet",
+                      "time": "16:30",
+                      "style": { "gridColumn": "5", "gridRow": "2" }
+                    }
+                  }
+                ]
+              },
+              { "id": "2027-01-08", "number": "8", "label": "Friday 8 January 2027", "outside": true },
+              { "id": "2027-01-09", "number": "9", "label": "Saturday 9 January 2027", "outside": true }
+            ],
+            "children": [
+              {
+                "c": "EventChip",
+                "p": {
+                  "size": "line",
+                  "title": "Studio closed",
+                  "tone": "tone:green",
+                  "run": true,
+                  "style": { "gridColumn": "1 / 2", "gridRow": "2" }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "mini-rail": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "head": {
+          "title": "November",
+          "hot": true,
+          "before": { "label": "The month before" },
+          "after": { "label": "The month after" }
+        },
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-10-26", "number": "26", "label": "Monday 26 October", "outside": true, "busy": true },
+          {
+            "id": "2026-10-27",
+            "number": "27",
+            "label": "Tuesday 27 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+          {
+            "id": "2026-10-29",
+            "number": "29",
+            "label": "Thursday 29 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+          { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+          { "id": "2026-11-01", "number": "1", "label": "Sunday 1 November" },
+          { "id": "2026-11-02", "number": "2", "label": "Monday 2 November", "busy": true },
+          { "id": "2026-11-03", "number": "3", "label": "Tuesday 3 November", "busy": true },
+          { "id": "2026-11-04", "number": "4", "label": "Wednesday 4 November", "busy": true },
+          { "id": "2026-11-05", "number": "5", "label": "Thursday 5 November", "busy": true },
+          { "id": "2026-11-06", "number": "6", "label": "Friday 6 November", "busy": true },
+          { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+          { "id": "2026-11-08", "number": "8", "label": "Sunday 8 November", "busy": true },
+          { "id": "2026-11-09", "number": "9", "label": "Monday 9 November", "busy": true, "band": "start" },
+          {
+            "id": "2026-11-10",
+            "number": "10",
+            "label": "Tuesday 10 November",
+            "today": true,
+            "busy": true,
+            "band": "in"
+          },
+          {
+            "id": "2026-11-11",
+            "number": "11",
+            "label": "Wednesday 11 November",
+            "busy": true,
+            "band": "in"
+          },
+          { "id": "2026-11-12", "number": "12", "label": "Thursday 12 November", "busy": true, "band": "in" },
+          { "id": "2026-11-13", "number": "13", "label": "Friday 13 November", "busy": true, "band": "in" },
+          { "id": "2026-11-14", "number": "14", "label": "Saturday 14 November", "busy": true, "band": "in" },
+          { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November", "band": "end" },
+          { "id": "2026-11-16", "number": "16", "label": "Monday 16 November", "busy": true },
+          { "id": "2026-11-17", "number": "17", "label": "Tuesday 17 November", "busy": true },
+          { "id": "2026-11-18", "number": "18", "label": "Wednesday 18 November", "busy": true },
+          { "id": "2026-11-19", "number": "19", "label": "Thursday 19 November", "busy": true },
+          { "id": "2026-11-20", "number": "20", "label": "Friday 20 November", "busy": true },
+          { "id": "2026-11-21", "number": "21", "label": "Saturday 21 November", "busy": true },
+          { "id": "2026-11-22", "number": "22", "label": "Sunday 22 November", "busy": true },
+          { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+          { "id": "2026-11-24", "number": "24", "label": "Tuesday 24 November", "busy": true },
+          { "id": "2026-11-25", "number": "25", "label": "Wednesday 25 November", "busy": true },
+          { "id": "2026-11-26", "number": "26", "label": "Thursday 26 November", "busy": true },
+          { "id": "2026-11-27", "number": "27", "label": "Friday 27 November", "busy": true },
+          { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+          { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" },
+          { "id": "2026-11-30", "number": "30", "label": "Monday 30 November", "busy": true },
+          { "id": "2026-12-01", "number": "1", "label": "Tuesday 1 December", "outside": true, "busy": true },
+          { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+          {
+            "id": "2026-12-03",
+            "number": "3",
+            "label": "Thursday 3 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+          { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+          { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+        ],
+        "size": "rail"
+      }
+    }
+  },
+  "mini-picked": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "head": {
+          "title": "November",
+          "hot": true,
+          "before": { "label": "The month before" },
+          "after": { "label": "The month after" }
+        },
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-10-26", "number": "26", "label": "Monday 26 October", "outside": true, "busy": true },
+          {
+            "id": "2026-10-27",
+            "number": "27",
+            "label": "Tuesday 27 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+          {
+            "id": "2026-10-29",
+            "number": "29",
+            "label": "Thursday 29 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+          { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+          { "id": "2026-11-01", "number": "1", "label": "Sunday 1 November" },
+          { "id": "2026-11-02", "number": "2", "label": "Monday 2 November", "busy": true },
+          { "id": "2026-11-03", "number": "3", "label": "Tuesday 3 November", "busy": true },
+          { "id": "2026-11-04", "number": "4", "label": "Wednesday 4 November", "busy": true },
+          { "id": "2026-11-05", "number": "5", "label": "Thursday 5 November", "busy": true },
+          { "id": "2026-11-06", "number": "6", "label": "Friday 6 November", "busy": true },
+          { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+          { "id": "2026-11-08", "number": "8", "label": "Sunday 8 November", "busy": true },
+          { "id": "2026-11-09", "number": "9", "label": "Monday 9 November", "busy": true },
+          { "id": "2026-11-10", "number": "10", "label": "Tuesday 10 November", "today": true, "busy": true },
+          { "id": "2026-11-11", "number": "11", "label": "Wednesday 11 November", "busy": true },
+          { "id": "2026-11-12", "number": "12", "label": "Thursday 12 November", "busy": true },
+          { "id": "2026-11-13", "number": "13", "label": "Friday 13 November", "busy": true },
+          { "id": "2026-11-14", "number": "14", "label": "Saturday 14 November", "busy": true },
+          { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November" },
+          { "id": "2026-11-16", "number": "16", "label": "Monday 16 November", "busy": true },
+          {
+            "id": "2026-11-17",
+            "number": "17",
+            "label": "Tuesday 17 November",
+            "picked": true,
+            "busy": true
+          },
+          { "id": "2026-11-18", "number": "18", "label": "Wednesday 18 November", "busy": true },
+          { "id": "2026-11-19", "number": "19", "label": "Thursday 19 November", "busy": true },
+          { "id": "2026-11-20", "number": "20", "label": "Friday 20 November", "busy": true },
+          { "id": "2026-11-21", "number": "21", "label": "Saturday 21 November", "busy": true },
+          { "id": "2026-11-22", "number": "22", "label": "Sunday 22 November", "busy": true },
+          { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+          { "id": "2026-11-24", "number": "24", "label": "Tuesday 24 November", "busy": true },
+          { "id": "2026-11-25", "number": "25", "label": "Wednesday 25 November", "busy": true },
+          { "id": "2026-11-26", "number": "26", "label": "Thursday 26 November", "busy": true },
+          { "id": "2026-11-27", "number": "27", "label": "Friday 27 November", "busy": true },
+          { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+          { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" },
+          { "id": "2026-11-30", "number": "30", "label": "Monday 30 November", "busy": true },
+          { "id": "2026-12-01", "number": "1", "label": "Tuesday 1 December", "outside": true, "busy": true },
+          { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+          {
+            "id": "2026-12-03",
+            "number": "3",
+            "label": "Thursday 3 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+          { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+          { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+        ],
+        "size": "rail"
+      }
+    }
+  },
+  "mini-year": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "head": {
+          "title": "January 2027",
+          "hot": false,
+          "before": { "label": "The month before" },
+          "after": { "label": "The month after" }
+        },
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-12-28", "number": "28", "label": "Monday 28 December", "outside": true },
+          { "id": "2026-12-29", "number": "29", "label": "Tuesday 29 December", "outside": true },
+          { "id": "2026-12-30", "number": "30", "label": "Wednesday 30 December", "outside": true },
+          {
+            "id": "2026-12-31",
+            "number": "31",
+            "label": "Thursday 31 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2027-01-01", "number": "1", "label": "Friday 1 January 2027" },
+          { "id": "2027-01-02", "number": "2", "label": "Saturday 2 January 2027" },
+          { "id": "2027-01-03", "number": "3", "label": "Sunday 3 January 2027" },
+          { "id": "2027-01-04", "number": "4", "label": "Monday 4 January 2027", "busy": true },
+          { "id": "2027-01-05", "number": "5", "label": "Tuesday 5 January 2027", "busy": true },
+          { "id": "2027-01-06", "number": "6", "label": "Wednesday 6 January 2027", "busy": true },
+          { "id": "2027-01-07", "number": "7", "label": "Thursday 7 January 2027", "busy": true },
+          { "id": "2027-01-08", "number": "8", "label": "Friday 8 January 2027" },
+          { "id": "2027-01-09", "number": "9", "label": "Saturday 9 January 2027" },
+          { "id": "2027-01-10", "number": "10", "label": "Sunday 10 January 2027" },
+          { "id": "2027-01-11", "number": "11", "label": "Monday 11 January 2027", "busy": true },
+          { "id": "2027-01-12", "number": "12", "label": "Tuesday 12 January 2027", "busy": true },
+          { "id": "2027-01-13", "number": "13", "label": "Wednesday 13 January 2027" },
+          { "id": "2027-01-14", "number": "14", "label": "Thursday 14 January 2027", "busy": true },
+          { "id": "2027-01-15", "number": "15", "label": "Friday 15 January 2027" },
+          { "id": "2027-01-16", "number": "16", "label": "Saturday 16 January 2027" },
+          { "id": "2027-01-17", "number": "17", "label": "Sunday 17 January 2027" },
+          { "id": "2027-01-18", "number": "18", "label": "Monday 18 January 2027", "busy": true },
+          { "id": "2027-01-19", "number": "19", "label": "Tuesday 19 January 2027", "busy": true },
+          { "id": "2027-01-20", "number": "20", "label": "Wednesday 20 January 2027", "busy": true },
+          { "id": "2027-01-21", "number": "21", "label": "Thursday 21 January 2027", "busy": true },
+          { "id": "2027-01-22", "number": "22", "label": "Friday 22 January 2027" },
+          { "id": "2027-01-23", "number": "23", "label": "Saturday 23 January 2027" },
+          { "id": "2027-01-24", "number": "24", "label": "Sunday 24 January 2027" },
+          { "id": "2027-01-25", "number": "25", "label": "Monday 25 January 2027", "busy": true },
+          { "id": "2027-01-26", "number": "26", "label": "Tuesday 26 January 2027", "busy": true },
+          { "id": "2027-01-27", "number": "27", "label": "Wednesday 27 January 2027", "busy": true },
+          { "id": "2027-01-28", "number": "28", "label": "Thursday 28 January 2027", "busy": true },
+          { "id": "2027-01-29", "number": "29", "label": "Friday 29 January 2027", "busy": true },
+          { "id": "2027-01-30", "number": "30", "label": "Saturday 30 January 2027" },
+          { "id": "2027-01-31", "number": "31", "label": "Sunday 31 January 2027" },
+          {
+            "id": "2027-02-01",
+            "number": "1",
+            "label": "Monday 1 February 2027",
+            "outside": true,
+            "busy": true
+          },
+          {
+            "id": "2027-02-02",
+            "number": "2",
+            "label": "Tuesday 2 February 2027",
+            "outside": true,
+            "busy": true
+          },
+          {
+            "id": "2027-02-03",
+            "number": "3",
+            "label": "Wednesday 3 February 2027",
+            "outside": true,
+            "busy": true
+          },
+          {
+            "id": "2027-02-04",
+            "number": "4",
+            "label": "Thursday 4 February 2027",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2027-02-05", "number": "5", "label": "Friday 5 February 2027", "outside": true },
+          { "id": "2027-02-06", "number": "6", "label": "Saturday 6 February 2027", "outside": true },
+          { "id": "2027-02-07", "number": "7", "label": "Sunday 7 February 2027", "outside": true }
+        ],
+        "size": "rail"
+      }
+    }
+  },
+  "mini-menu": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-10-26", "number": "26", "label": "Monday 26 October", "outside": true, "busy": true },
+          {
+            "id": "2026-10-27",
+            "number": "27",
+            "label": "Tuesday 27 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+          {
+            "id": "2026-10-29",
+            "number": "29",
+            "label": "Thursday 29 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+          { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+          { "id": "2026-11-01", "number": "1", "label": "Sunday 1 November" },
+          { "id": "2026-11-02", "number": "2", "label": "Monday 2 November", "busy": true },
+          { "id": "2026-11-03", "number": "3", "label": "Tuesday 3 November", "busy": true },
+          { "id": "2026-11-04", "number": "4", "label": "Wednesday 4 November", "busy": true },
+          { "id": "2026-11-05", "number": "5", "label": "Thursday 5 November", "busy": true },
+          { "id": "2026-11-06", "number": "6", "label": "Friday 6 November", "busy": true },
+          { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+          { "id": "2026-11-08", "number": "8", "label": "Sunday 8 November", "busy": true },
+          { "id": "2026-11-09", "number": "9", "label": "Monday 9 November", "busy": true },
+          { "id": "2026-11-10", "number": "10", "label": "Tuesday 10 November", "today": true, "busy": true },
+          { "id": "2026-11-11", "number": "11", "label": "Wednesday 11 November", "busy": true },
+          {
+            "id": "2026-11-12",
+            "number": "12",
+            "label": "Thursday 12 November",
+            "picked": true,
+            "busy": true
+          },
+          { "id": "2026-11-13", "number": "13", "label": "Friday 13 November", "busy": true },
+          { "id": "2026-11-14", "number": "14", "label": "Saturday 14 November", "busy": true },
+          { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November" },
+          { "id": "2026-11-16", "number": "16", "label": "Monday 16 November", "busy": true },
+          { "id": "2026-11-17", "number": "17", "label": "Tuesday 17 November", "busy": true },
+          { "id": "2026-11-18", "number": "18", "label": "Wednesday 18 November", "busy": true },
+          { "id": "2026-11-19", "number": "19", "label": "Thursday 19 November", "busy": true },
+          { "id": "2026-11-20", "number": "20", "label": "Friday 20 November", "busy": true },
+          { "id": "2026-11-21", "number": "21", "label": "Saturday 21 November", "busy": true },
+          { "id": "2026-11-22", "number": "22", "label": "Sunday 22 November", "busy": true },
+          { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+          { "id": "2026-11-24", "number": "24", "label": "Tuesday 24 November", "busy": true },
+          { "id": "2026-11-25", "number": "25", "label": "Wednesday 25 November", "busy": true },
+          { "id": "2026-11-26", "number": "26", "label": "Thursday 26 November", "busy": true },
+          { "id": "2026-11-27", "number": "27", "label": "Friday 27 November", "busy": true },
+          { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+          { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" },
+          { "id": "2026-11-30", "number": "30", "label": "Monday 30 November", "busy": true },
+          { "id": "2026-12-01", "number": "1", "label": "Tuesday 1 December", "outside": true, "busy": true },
+          { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+          {
+            "id": "2026-12-03",
+            "number": "3",
+            "label": "Thursday 3 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+          { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+          { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+        ],
+        "size": "rail"
+      }
+    }
+  },
+  "mini-phone": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "head": {
+          "title": "November",
+          "hot": true,
+          "before": { "label": "The month before" },
+          "after": { "label": "The month after" }
+        },
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-10-26", "number": "26", "label": "Monday 26 October", "outside": true, "busy": true },
+          {
+            "id": "2026-10-27",
+            "number": "27",
+            "label": "Tuesday 27 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+          {
+            "id": "2026-10-29",
+            "number": "29",
+            "label": "Thursday 29 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+          { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+          { "id": "2026-11-01", "number": "1", "label": "Sunday 1 November" },
+          { "id": "2026-11-02", "number": "2", "label": "Monday 2 November", "busy": true },
+          { "id": "2026-11-03", "number": "3", "label": "Tuesday 3 November", "busy": true },
+          { "id": "2026-11-04", "number": "4", "label": "Wednesday 4 November", "busy": true },
+          { "id": "2026-11-05", "number": "5", "label": "Thursday 5 November", "busy": true },
+          { "id": "2026-11-06", "number": "6", "label": "Friday 6 November", "busy": true },
+          { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+          { "id": "2026-11-08", "number": "8", "label": "Sunday 8 November", "busy": true },
+          { "id": "2026-11-09", "number": "9", "label": "Monday 9 November", "busy": true },
+          { "id": "2026-11-10", "number": "10", "label": "Tuesday 10 November", "today": true, "busy": true },
+          { "id": "2026-11-11", "number": "11", "label": "Wednesday 11 November", "busy": true },
+          { "id": "2026-11-12", "number": "12", "label": "Thursday 12 November", "busy": true },
+          { "id": "2026-11-13", "number": "13", "label": "Friday 13 November", "busy": true },
+          { "id": "2026-11-14", "number": "14", "label": "Saturday 14 November", "busy": true },
+          { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November" },
+          { "id": "2026-11-16", "number": "16", "label": "Monday 16 November", "busy": true },
+          { "id": "2026-11-17", "number": "17", "label": "Tuesday 17 November", "busy": true },
+          { "id": "2026-11-18", "number": "18", "label": "Wednesday 18 November", "busy": true },
+          { "id": "2026-11-19", "number": "19", "label": "Thursday 19 November", "busy": true },
+          { "id": "2026-11-20", "number": "20", "label": "Friday 20 November", "busy": true },
+          { "id": "2026-11-21", "number": "21", "label": "Saturday 21 November", "busy": true },
+          { "id": "2026-11-22", "number": "22", "label": "Sunday 22 November", "busy": true },
+          { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+          { "id": "2026-11-24", "number": "24", "label": "Tuesday 24 November", "busy": true },
+          { "id": "2026-11-25", "number": "25", "label": "Wednesday 25 November", "busy": true },
+          { "id": "2026-11-26", "number": "26", "label": "Thursday 26 November", "busy": true },
+          { "id": "2026-11-27", "number": "27", "label": "Friday 27 November", "busy": true },
+          { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+          { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" },
+          { "id": "2026-11-30", "number": "30", "label": "Monday 30 November", "busy": true },
+          { "id": "2026-12-01", "number": "1", "label": "Tuesday 1 December", "outside": true, "busy": true },
+          { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+          {
+            "id": "2026-12-03",
+            "number": "3",
+            "label": "Thursday 3 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+          { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+          { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+        ],
+        "size": "phone"
+      }
+    }
+  },
+  "mini-widget": {
+    "part": {
+      "c": "MiniMonth",
+      "p": {
+        "weekdays": ["M", "T", "W", "T", "F", "S", "S"],
+        "days": [
+          { "id": "2026-10-26", "number": "26", "label": "Monday 26 October", "outside": true, "busy": true },
+          {
+            "id": "2026-10-27",
+            "number": "27",
+            "label": "Tuesday 27 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-28", "number": "28", "label": "Wednesday 28 October", "outside": true },
+          {
+            "id": "2026-10-29",
+            "number": "29",
+            "label": "Thursday 29 October",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-10-30", "number": "30", "label": "Friday 30 October", "outside": true },
+          { "id": "2026-10-31", "number": "31", "label": "Saturday 31 October", "outside": true },
+          { "id": "2026-11-01", "number": "1", "label": "Sunday 1 November" },
+          { "id": "2026-11-02", "number": "2", "label": "Monday 2 November", "busy": true },
+          { "id": "2026-11-03", "number": "3", "label": "Tuesday 3 November", "busy": true },
+          { "id": "2026-11-04", "number": "4", "label": "Wednesday 4 November", "busy": true },
+          { "id": "2026-11-05", "number": "5", "label": "Thursday 5 November", "busy": true },
+          { "id": "2026-11-06", "number": "6", "label": "Friday 6 November", "busy": true },
+          { "id": "2026-11-07", "number": "7", "label": "Saturday 7 November" },
+          { "id": "2026-11-08", "number": "8", "label": "Sunday 8 November", "busy": true },
+          { "id": "2026-11-09", "number": "9", "label": "Monday 9 November", "busy": true },
+          { "id": "2026-11-10", "number": "10", "label": "Tuesday 10 November", "today": true, "busy": true },
+          { "id": "2026-11-11", "number": "11", "label": "Wednesday 11 November", "busy": true },
+          { "id": "2026-11-12", "number": "12", "label": "Thursday 12 November", "busy": true },
+          { "id": "2026-11-13", "number": "13", "label": "Friday 13 November", "busy": true },
+          { "id": "2026-11-14", "number": "14", "label": "Saturday 14 November", "busy": true },
+          { "id": "2026-11-15", "number": "15", "label": "Sunday 15 November" },
+          { "id": "2026-11-16", "number": "16", "label": "Monday 16 November", "busy": true },
+          { "id": "2026-11-17", "number": "17", "label": "Tuesday 17 November", "busy": true },
+          { "id": "2026-11-18", "number": "18", "label": "Wednesday 18 November", "busy": true },
+          { "id": "2026-11-19", "number": "19", "label": "Thursday 19 November", "busy": true },
+          { "id": "2026-11-20", "number": "20", "label": "Friday 20 November", "busy": true },
+          { "id": "2026-11-21", "number": "21", "label": "Saturday 21 November", "busy": true },
+          { "id": "2026-11-22", "number": "22", "label": "Sunday 22 November", "busy": true },
+          { "id": "2026-11-23", "number": "23", "label": "Monday 23 November" },
+          { "id": "2026-11-24", "number": "24", "label": "Tuesday 24 November", "busy": true },
+          { "id": "2026-11-25", "number": "25", "label": "Wednesday 25 November", "busy": true },
+          { "id": "2026-11-26", "number": "26", "label": "Thursday 26 November", "busy": true },
+          { "id": "2026-11-27", "number": "27", "label": "Friday 27 November", "busy": true },
+          { "id": "2026-11-28", "number": "28", "label": "Saturday 28 November" },
+          { "id": "2026-11-29", "number": "29", "label": "Sunday 29 November" },
+          { "id": "2026-11-30", "number": "30", "label": "Monday 30 November", "busy": true },
+          { "id": "2026-12-01", "number": "1", "label": "Tuesday 1 December", "outside": true, "busy": true },
+          { "id": "2026-12-02", "number": "2", "label": "Wednesday 2 December", "outside": true },
+          {
+            "id": "2026-12-03",
+            "number": "3",
+            "label": "Thursday 3 December",
+            "outside": true,
+            "busy": true
+          },
+          { "id": "2026-12-04", "number": "4", "label": "Friday 4 December", "outside": true },
+          { "id": "2026-12-05", "number": "5", "label": "Saturday 5 December", "outside": true },
+          { "id": "2026-12-06", "number": "6", "label": "Sunday 6 December", "outside": true }
+        ],
+        "size": "widget"
+      }
+    }
+  }
+}

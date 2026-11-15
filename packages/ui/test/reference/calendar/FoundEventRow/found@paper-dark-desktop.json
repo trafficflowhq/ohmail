@@ -1,0 +1,139 @@
+{
+  "component": "FoundEventRow",
+  "state": "found",
+  "look": "paper-dark-desktop",
+  "place": "cell",
+  "target": [56, 64, 436, 74.4844],
+  "clip": [56, 64, 436, 75],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxDecorationBreak": "clone", "borderRadius": "6.4px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 1 447c0f4542bb" },
+    { "outline": "1px dashed color(srgb 0.721569 0.686274 0.639216 / 0.6) -1px", "borderRadius": "12px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 3 8c8578e2e715" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Add",
+      "box": [344, 25.3, 40, 24],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(255, 106, 61)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "6.4px",
+        "paddingTop": "0.32px",
+        "paddingRight": "5.44px",
+        "paddingBottom": "1.28px",
+        "paddingLeft": "5.44px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Add", "type": 0 }],
+      "surfaces": [{ "box": [344, 25.3, 40, 24], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Dismiss",
+      "box": [396, 21.2, 32, 32],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "surfaces": [{ "box": [402, 27.2, 20, 20], "paint": 1 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Sat 21 Nov, 11:00", "type": 1 },
+      { "said": "Wabi-sabi for web people", "type": 2 },
+      { "said": "Makersfest, main hall", "type": 3 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 436, 74.5], "paint": 2 },
+      { "box": [12, 27.2, 20, 20], "paint": 3 }
+    ]
+  }
+}

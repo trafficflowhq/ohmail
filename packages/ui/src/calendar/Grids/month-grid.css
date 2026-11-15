@@ -1,0 +1,218 @@
+/* The month: one run of weeks. A day's events are lines without a fill; a run across days is a bar. */
+@layer oh {
+  .oh-mo {
+    --oh-mo-pad: 0 var(--s2) var(--s2);
+    --oh-mo-cols: repeat(7, minmax(0, 1fr));
+    padding: var(--oh-mo-pad);
+  }
+  .oh-mo-wd {
+    display: grid;
+    flex: none;
+    grid-template-columns: var(--oh-mo-cols);
+    align-items: center;
+    height: 36px;
+  }
+  .oh-mo-wd-name {
+    --oh-mo-wd-in: 10px;
+    padding-left: var(--oh-mo-wd-in);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+  }
+  :root[data-device="fold"] .oh-mo-wd-name {
+    --oh-mo-wd-in: 8px;
+  }
+  .oh-mo-weeks {
+    display: grid;
+    flex: 1;
+    grid-template-rows: repeat(var(--oh-mo-count, 6), minmax(0, 1fr));
+    min-height: 0;
+  }
+  /* A number at a row's start lies over the line above it: the weeks make that room. */
+  .oh-mo-weeks[data-numbers] {
+    --oh-mo-lift: -8px 0 0;
+    --oh-mo-air: 8px 0 0;
+    margin: var(--oh-mo-lift);
+    padding: var(--oh-mo-air);
+    scroll-padding-top: 8px;
+  }
+  .oh-mo-week {
+    --oh-mo-week-pad: 5px 0 0;
+    --oh-mo-row: 1px;
+    position: relative;
+    display: grid;
+    grid-template-rows: 26px repeat(4, 20px);
+    grid-template-columns: var(--oh-mo-cols);
+    grid-auto-rows: 20px;
+    align-content: start;
+    row-gap: var(--oh-mo-row);
+    min-height: 0;
+    padding: var(--oh-mo-week-pad);
+  }
+  /* The line over a week: a row of dots on paper, a rule on ohmarchy. None over the first. */
+  .oh-mo-week::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 4px;
+    left: 4px;
+    height: 2px;
+    background-image: radial-gradient(circle at 1px 1px, var(--rule) 1px, transparent 1.3px);
+    background-size: 6px 2px;
+  }
+  .oh-mo-weeks:not([data-run]) > .oh-mo-week:first-child::before {
+    display: none;
+  }
+  :root[data-face="ohmarchy"] .oh-mo-week::before {
+    height: var(--oh-hair);
+    background: var(--rule);
+  }
+  .oh-mo-cell {
+    --oh-mo-cell-out: 0 0 -4px;
+    position: relative;
+    grid-row: 1 / -1;
+    margin: var(--oh-mo-cell-out);
+    border-radius: var(--ev-r);
+    cursor: pointer;
+  }
+  .oh-mo-cell:hover {
+    background: var(--hover);
+  }
+  .oh-mo-n {
+    --oh-mo-n-pad: 0 6px 0 4px;
+    --oh-mo-n-gap: 6px;
+    --oh-mo-n-z: 1;
+    z-index: var(--oh-mo-n-z);
+    display: flex;
+    grid-row: 1;
+    align-items: center;
+    gap: var(--oh-mo-n-gap);
+    height: 26px;
+    padding: var(--oh-mo-n-pad);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  .oh-mo-n[data-out] {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  .oh-mo-date {
+    display: inline-grid;
+    border-radius: var(--r-pill);
+    font-weight: inherit;
+    pointer-events: auto;
+  }
+  .oh-mo-date:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-mo-disc {
+    --oh-mo-disc-pad: 0 6px;
+    display: inline-grid;
+    place-items: center;
+    min-width: 24px;
+    height: 24px;
+    padding: var(--oh-mo-disc-pad);
+    border-radius: var(--r-pill);
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+  .oh-mo-date:hover > .oh-mo-disc {
+    background: var(--hover-ground);
+  }
+  .oh-mo-n[data-today] .oh-mo-disc,
+  .oh-mo-n[data-today] .oh-mo-date:hover > .oh-mo-disc {
+    background: var(--hot);
+    color: var(--on-hot);
+  }
+  .oh-mo-n[data-picked] .oh-mo-disc,
+  .oh-mo-n[data-picked] .oh-mo-date:hover > .oh-mo-disc {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .oh-mo-mail {
+    width: 14px;
+    height: 14px;
+    margin-left: auto;
+    color: var(--ink2);
+  }
+  .oh-mo-more {
+    --oh-mo-more-pad: 0 10px;
+    --oh-mo-more-z: 1;
+    z-index: var(--oh-mo-more-z);
+    display: flex;
+    grid-row: 5;
+    align-items: center;
+    height: 20px;
+    padding: var(--oh-mo-more-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-mo-week > .oh-wn {
+    --oh-mo-wn-pad: 0 6px 0 5px;
+    --oh-mo-wn-z: 2;
+    position: absolute;
+    top: -8px;
+    left: 2px;
+    z-index: var(--oh-mo-wn-z);
+    height: 16px;
+    padding: var(--oh-mo-wn-pad);
+    border-radius: var(--r-pill);
+    background: var(--sheet);
+  }
+  :root[data-device="fold"] .oh-mo .oh-ev[data-size="line"] {
+    --oh-ev-lead: 4px;
+    --oh-ev-pad: 0 6px;
+    --oh-ev-out-pad: 0 2px 0 2px;
+  }
+
+  /* The run: the weeks scroll as one list, each at its own place, and only those near the view are there.
+     The days of the other months step back under a veil. */
+  .oh-mo-weeks[data-run] {
+    position: relative;
+    display: block;
+    overflow: hidden auto;
+    overflow-anchor: none;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .oh-mo-weeks[data-run]::-webkit-scrollbar {
+    display: none;
+  }
+  .oh-mo-weeks[data-run][data-numbers] {
+    clip-path: inset(0 0 8px 0);
+  }
+  .oh-mo-run {
+    position: relative;
+  }
+  .oh-mo-run > .oh-mo-week {
+    position: absolute;
+    top: calc(var(--oh-mo-at) * var(--oh-mo-rowh));
+    right: 0;
+    left: 0;
+    height: var(--oh-mo-rowh);
+  }
+  .oh-mo-run .oh-mo-cell::after {
+    --oh-mo-veil-z: 2;
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-mo-veil-z);
+    border-radius: inherit;
+    background: var(--sheet);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--d-fade) var(--e-std);
+  }
+  .oh-mo-run .oh-mo-cell[data-out]::after {
+    opacity: 0.5;
+  }
+  .oh-mo-run .oh-mo-n {
+    --oh-mo-n-z: 3;
+    transition: color var(--d-fade) var(--e-std);
+  }
+  .oh-mo-run .oh-mo-week > .oh-wn {
+    --oh-mo-wn-z: 4;
+  }
+}

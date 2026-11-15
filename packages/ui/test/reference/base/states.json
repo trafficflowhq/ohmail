@@ -1,0 +1,455 @@
+{
+  "with": {
+    "Icon": "Button",
+    "EndDot": "Dot",
+    "Blank": "Sentence",
+    "Faces": "Avatar",
+    "Sign": "Avatar",
+    "TagDot": "Tag",
+    "Where": "Tag",
+    "MenuItem": "Menu",
+    "MenuRule": "Menu",
+    "MenuNote": "Menu",
+    "Overlay": "Dialog"
+  },
+  "rows": [
+    { "component": "Button", "state": "ink", "looks": "all" },
+    { "component": "Button", "state": "ink-hover" },
+    { "component": "Button", "state": "ink-focus" },
+    { "component": "Button", "state": "ink-pressed" },
+    { "component": "Button", "state": "ink-held" },
+    { "component": "Button", "state": "ink-off" },
+    { "component": "Button", "state": "ink-working" },
+    { "component": "Button", "state": "two" },
+    { "component": "Button", "state": "two-hover" },
+    { "component": "Button", "state": "two-focus" },
+    { "component": "Button", "state": "two-pressed" },
+    { "component": "Button", "state": "two-held" },
+    { "component": "Button", "state": "two-off" },
+    { "component": "Button", "state": "two-working" },
+    { "component": "Button", "state": "quiet" },
+    { "component": "Button", "state": "quiet-hover" },
+    { "component": "Button", "state": "quiet-focus" },
+    { "component": "Button", "state": "quiet-pressed" },
+    { "component": "Button", "state": "quiet-held" },
+    { "component": "Button", "state": "quiet-off" },
+    { "component": "Button", "state": "quiet-working" },
+    { "component": "Button", "state": "large" },
+    { "component": "Button", "state": "small-two" },
+    { "component": "Button", "state": "small-quiet" },
+    { "component": "Button", "state": "icon" },
+    { "component": "Button", "state": "icon-small" },
+    { "component": "Button", "state": "key" },
+    { "component": "Button", "state": "key-quiet" },
+    { "component": "Dot", "state": "hot", "looks": "all" },
+    { "component": "Dot", "state": "ink" },
+    { "component": "Dot", "state": "ring" },
+    {
+      "component": "KeyHint",
+      "state": "one",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "KeyHint", "state": "shift" },
+    { "component": "KeyHint", "state": "chord" },
+    { "component": "KeyHint", "state": "modifier" },
+    { "component": "Sentence", "state": "proposal", "looks": "all" },
+    { "component": "Sentence", "state": "choice" },
+    { "component": "Sentence", "state": "decided" },
+    { "component": "Sentence", "state": "nobody" },
+    {
+      "component": "Sentence",
+      "state": "blank",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Slot", "state": "quiet", "looks": "all" },
+    { "component": "Slot", "state": "hover" },
+    { "component": "Slot", "state": "focus" },
+    {
+      "component": "Slot",
+      "state": "fill",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Field", "state": "rest", "looks": "all" },
+    { "component": "Field", "state": "filled" },
+    {
+      "component": "Field",
+      "state": "focus",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Field", "state": "hint" },
+    {
+      "component": "Field",
+      "state": "refused",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Field", "state": "lines" },
+    { "component": "Switch", "state": "off", "looks": "all" },
+    {
+      "component": "Switch",
+      "state": "on",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Switch", "state": "focus" },
+    { "component": "Switch", "state": "labelled" },
+    { "component": "Switch", "state": "labelled-on" },
+    { "component": "Seg", "state": "plain", "looks": "all" },
+    {
+      "component": "Seg",
+      "state": "counts",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Seg", "state": "five" },
+    { "component": "Avatar", "state": "row", "looks": "all" },
+    { "component": "Avatar", "state": "card" },
+    { "component": "Avatar", "state": "account" },
+    { "component": "Avatar", "state": "byline" },
+    {
+      "component": "Avatar",
+      "state": "unread",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Avatar",
+      "state": "faces",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Avatar",
+      "state": "sign",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Avatar", "state": "hue-25" },
+    { "component": "Avatar", "state": "hue-42" },
+    { "component": "Avatar", "state": "hue-78" },
+    { "component": "Avatar", "state": "hue-112" },
+    { "component": "Avatar", "state": "hue-150" },
+    { "component": "Avatar", "state": "hue-196" },
+    { "component": "Avatar", "state": "hue-250" },
+    { "component": "Avatar", "state": "hue-318" },
+    { "component": "Tag", "state": "pile", "looks": "all" },
+    {
+      "component": "Tag",
+      "state": "own",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Tag", "state": "where" },
+    {
+      "component": "Tag",
+      "state": "dots",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Count",
+      "state": "plain",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Count",
+      "state": "point",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "InfoMark", "state": "rest", "looks": "all" },
+    {
+      "component": "HintLine",
+      "state": "list",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "JumpBack",
+      "state": "top",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-desktop",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-desktop",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-desktop",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    { "component": "RadioLines", "state": "two", "looks": "all" },
+    {
+      "component": "JumpBack",
+      "state": "end",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-phone",
+        "paper-dark-phone",
+        "ohmarchy-light-phone",
+        "ohmarchy-dark-phone"
+      ]
+    },
+    { "component": "Dialog", "state": "delete", "looks": "all" },
+    {
+      "component": "Menu",
+      "state": "more",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-desktop",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-desktop",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-desktop",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "Menu",
+      "state": "titled",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Menu",
+      "state": "place",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Menu",
+      "state": "field",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Menu",
+      "state": "context",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "PhoneSheet",
+      "state": "more",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    { "component": "Palette", "state": "typed", "looks": "all" },
+    { "component": "KeyHelp", "state": "keys", "looks": "all" },
+    {
+      "component": "Dialog",
+      "state": "keys",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Dialog", "state": "field" },
+    {
+      "component": "Dialog",
+      "state": "waiting",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone"
+      ]
+    },
+    {
+      "component": "Dialog",
+      "state": "store",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    { "component": "Notice", "state": "full", "looks": "all" },
+    {
+      "component": "Notice",
+      "state": "calm",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "NoticeSlot",
+      "state": "several",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-fold",
+        "paper-light-foldl"
+      ]
+    },
+    { "component": "NoticeSlot", "state": "listed" },
+    { "component": "Report", "state": "undo", "looks": "all" },
+    { "component": "Report", "state": "plain" },
+    { "component": "Report", "state": "decision" },
+    { "component": "Report", "state": "selection" },
+    {
+      "component": "Report",
+      "state": "why",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone"
+      ]
+    },
+    { "component": "Empty", "state": "label", "looks": "all" },
+    { "component": "Empty", "state": "hot" },
+    {
+      "component": "Empty",
+      "state": "act",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Empty",
+      "state": "mark",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "WaitRow",
+      "state": "refused",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone"
+      ]
+    },
+    {
+      "component": "RefusalLine",
+      "state": "way",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "RefusalLine", "state": "start" },
+    { "component": "Page", "state": "refused", "looks": "all" },
+    {
+      "component": "Opening",
+      "state": "window",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "Opening",
+      "state": "phone",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    }
+  ]
+}

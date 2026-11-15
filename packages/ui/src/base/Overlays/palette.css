@@ -1,0 +1,99 @@
+/* Every command: a line you type on in the display face, the rows of a menu, what the keys do. */
+@layer oh {
+  .oh-palette {
+    --oh-overlay-max: 600px;
+    --oh-palette-top: var(--s8);
+    display: flex;
+    flex-direction: column;
+    /* The line, and eleven and a half rows: the half row says there is more. */
+    max-height: min(
+      calc(var(--h-xl) + 2 * var(--s2) + 11.5 * var(--h-m)),
+      calc(100% - 2 * var(--oh-palette-top))
+    );
+    margin-top: var(--oh-palette-top);
+    padding: var(--s2);
+  }
+  .oh-palette-head {
+    --oh-palette-head-pad: 0 var(--s3) 0 0;
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--oh-palette-head-pad);
+  }
+  .oh-palette-input {
+    --oh-palette-input-pad: 0 var(--s3);
+    flex: 1 1 0;
+    min-width: 0;
+    height: var(--h-xl);
+    padding: var(--oh-palette-input-pad);
+    color: var(--ink);
+    font-size: var(--t-title);
+    cursor: text;
+  }
+  .oh-palette-input::placeholder {
+    color: var(--ink2);
+    opacity: 1;
+  }
+  .oh-palette-input:focus-visible {
+    outline: none;
+  }
+  /* Its own key, one step stronger than the rows' keys. */
+  .oh-palette-head > .oh-key {
+    color: var(--ink);
+  }
+  .oh-palette-list {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-palette-list > .oh-menu-item[aria-selected="true"] {
+    background: var(--hover);
+  }
+  .oh-palette-list > .oh-menu-item > .oh-icon {
+    color: var(--ink2);
+  }
+  .oh-palette-list > .oh-menu-item:disabled > .oh-icon {
+    color: inherit;
+  }
+  .oh-palette-list .oh-menu-word {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .oh-palette-keys {
+    --oh-palette-keys-gap: 3px;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--oh-palette-keys-gap);
+    margin-left: auto;
+  }
+  .oh-palette-foot {
+    --oh-palette-foot-pad: var(--s3) var(--s3) var(--s1);
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s4);
+    padding: var(--oh-palette-foot-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-palette-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+  }
+  :root[data-touch="1"] .oh-palette-foot {
+    display: none;
+  }
+  :root[data-device="phone"] .oh-palette {
+    --oh-palette-top: var(--s6);
+    --oh-palette-foot-room: 104px;
+    max-height: calc(100% - var(--oh-palette-top) - var(--oh-palette-foot-room));
+  }
+  :root[data-face="ohmarchy"] .oh-palette-head > .oh-key {
+    color: var(--ink2);
+  }
+}

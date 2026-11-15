@@ -1,0 +1,128 @@
+{
+  "component": "Opening",
+  "state": "phone",
+  "look": "paper-dark-phone",
+  "place": "window",
+  "target": [0, 0, 390, 844],
+  "clip": [0, 0, 390, 844],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(35, 32, 28)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(35, 32, 28)", "borderRadius": "20px 20px 0px 0px" },
+    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "",
+      "box": [0, 64, 390, 38.4],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "16px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        { "said": "Updating the mail store on this phone", "type": 0 },
+        { "said": "3 of 12", "type": 1 }
+      ],
+      "surfaces": [{ "box": [296.2, 74.6, 5.4, 5.4], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [],
+    "surfaces": [
+      { "box": [24, 28, 96, 16], "paint": 1 },
+      { "box": [0, 102.4, 390, 741.6], "paint": 2 },
+      { "box": [20, 152.4, 36, 36], "paint": 3 },
+      { "box": [64, 146.4, 104, 12], "paint": 3 },
+      { "box": [338, 147.4, 32, 10], "paint": 3 },
+      { "box": [64, 166.4, 189.7, 10], "paint": 3 },
+      { "box": [64, 184.4, 257, 10], "paint": 3 },
+      { "box": [20, 256.4, 36, 36], "paint": 3 },
+      { "box": [64, 250.4, 82.6, 12], "paint": 3 },
+      { "box": [338, 251.4, 32, 10], "paint": 3 },
+      { "box": [64, 270.4, 226.4, 10], "paint": 3 },
+      { "box": [64, 288.4, 208.1, 10], "paint": 3 },
+      { "box": [20, 360.4, 36, 36], "paint": 3 },
+      { "box": [64, 354.4, 125.5, 12], "paint": 3 },
+      { "box": [338, 355.4, 32, 10], "paint": 3 },
+      { "box": [64, 374.4, 177.5, 10], "paint": 3 },
+      { "box": [64, 392.4, 232.5, 10], "paint": 3 },
+      { "box": [20, 464.4, 36, 36], "paint": 3 },
+      { "box": [64, 458.4, 91.8, 12], "paint": 3 },
+      { "box": [338, 459.4, 32, 10], "paint": 3 },
+      { "box": [64, 478.4, 214.2, 10], "paint": 3 },
+      { "box": [64, 496.4, 269.3, 10], "paint": 3 },
+      { "box": [20, 568.4, 36, 36], "paint": 3 },
+      { "box": [64, 562.4, 113.2, 12], "paint": 3 },
+      { "box": [338, 563.4, 32, 10], "paint": 3 },
+      { "box": [64, 582.4, 202, 10], "paint": 3 },
+      { "box": [64, 600.4, 189.7, 10], "paint": 3 },
+      { "box": [20, 672.4, 36, 36], "paint": 3 },
+      { "box": [64, 666.4, 76.5, 12], "paint": 3 },
+      { "box": [338, 667.4, 32, 10], "paint": 3 },
+      { "box": [64, 686.4, 165.2, 10], "paint": 3 },
+      { "box": [64, 704.4, 244.8, 10], "paint": 3 },
+      { "box": [20, 776.4, 36, 36], "paint": 3 },
+      { "box": [64, 770.4, 119.3, 12], "paint": 3 },
+      { "box": [338, 771.4, 32, 10], "paint": 3 },
+      { "box": [64, 790.4, 217.3, 10], "paint": 3 },
+      { "box": [64, 808.4, 217.3, 10], "paint": 3 }
+    ]
+  }
+}

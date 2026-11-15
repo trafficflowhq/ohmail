@@ -1,0 +1,46 @@
+/* What every overlay stands in: one layer over the window, a veil or a scrim behind the part. */
+@layer oh {
+  .oh-over {
+    position: fixed;
+    inset: 0;
+    z-index: var(--oh-layer-over);
+    pointer-events: none;
+  }
+  .oh-over > * {
+    pointer-events: auto;
+  }
+  /* A press beside a menu lands here. */
+  .oh-veil {
+    position: absolute;
+    inset: 0;
+  }
+  :root[data-device="phone"] .oh-veil,
+  .oh-veil[data-dim] {
+    background: var(--scrim);
+  }
+  .oh-scrim {
+    --oh-scrim-edge: var(--s4);
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    /* In the middle, unless what holds it says another place (`--oh-scrim-place`). */
+    place-items: var(--oh-scrim-place, center);
+    background: var(--scrim);
+  }
+  .oh-scrim[data-place="top"] {
+    --oh-scrim-place: start center;
+  }
+  /* The part on the scrim: a sheet that floats. Its own class says its measure. */
+  .oh-overlay {
+    --oh-soft: var(--soft-sheet);
+    width: min(var(--oh-overlay-max, 480px), calc(100% - 2 * var(--oh-scrim-edge)));
+    max-height: calc(100% - 2 * var(--oh-scrim-edge));
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--float);
+  }
+  .oh-overlay:focus {
+    outline: none;
+  }
+}
