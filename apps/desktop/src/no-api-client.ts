@@ -603,7 +603,6 @@ export interface ScreeningPreferenceWire {
     ohboxPolicy: "people_only" | "people_and_replied" | null;
     ohboxBar: string | null;
     defaultBar: string;
-    screenerAutoApply: boolean;
     impersonationFiling?: boolean;
     pending?: true;
     change?: ChangeWire;
@@ -614,7 +613,6 @@ export const screeningSettings: {
     set: (body: {
         ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
         ohboxBar?: string | null;
-        screenerAutoApply?: boolean;
         impersonationFiling?: boolean;
     }) => Promise<ScreeningPreferenceWire>;
 } = absent;

@@ -100,7 +100,7 @@ describe("applyMessageMove writes desired state and nothing else", () => {
     const w = await world(db);
     // A row the worker already owns, saying where the message physically is.
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false,
     });
 
@@ -237,7 +237,7 @@ describe("a forwarded delete records where the message came from", () => {
     const w = await world(db);
     // The row a previous delete left behind: this message has been in Trash once already.
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false, trashedFrom: "Archive/2026",
     });
     const r = await apply(db, w.mailboxId, { dedupKey: w.dedupKey, destination: "reads" });
@@ -255,7 +255,7 @@ describe("a forwarded delete records where the message came from", () => {
     const w = await world(db);
     await db.update(mailboxes).set({ trashFolder: "INBOX.Trash" }).where(eq(mailboxes.id, w.mailboxId));
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "INBOX.Trash", observedFolder: "INBOX.Trash",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "INBOX.Trash", observedFolder: "INBOX.Trash",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false,
     });
     await apply(db, w.mailboxId, { dedupKey: w.dedupKey, destination: "trash" });
@@ -378,7 +378,7 @@ describe("a host that has lost the lease hands its pending moves over", () => {
     desired: string, lastSetBy = "us",
   ): Promise<void> => {
     await db.insert(folderState).values({
-      messageId, desiredFolder: desired, observedFolder: "ohmail/Screener",
+      messageId, accountId: ACCT, desiredFolder: desired, observedFolder: "ohmail/Screener",
       lastSetBy, reconcileStatus: "pending", conflict: false,
     });
   };
@@ -730,10 +730,12 @@ describe("the screening preference, validated at the boundary", () => {
   const screening = (v: unknown) => validateProfileUpdatePayload({ screeningPreference: v });
 
   it("the object is admitted key by key, and a partial names only what it carries", () => {
+    // `screenerAutoApply` is the retired auto-apply switch: an install one release older still sends
+    // it. It is admitted beside a setting and carried nowhere; alone it names nothing to apply.
     expect(screening({ ohboxPolicy: "people_only", ohboxBar: "people", screenerAutoApply: true })!
-      .screeningPreference).toEqual({ ohboxPolicy: "people_only", ohboxBar: "people", screenerAutoApply: true });
+      .screeningPreference).toEqual({ ohboxPolicy: "people_only", ohboxBar: "people" });
     expect(screening({ ohboxBar: null })!.screeningPreference).toEqual({ ohboxBar: null });
-    expect(screening({ screenerAutoApply: false })!.screeningPreference).toEqual({ screenerAutoApply: false });
+    expect(screening({ screenerAutoApply: false }), "a record naming only the retired switch").toBeNull();
     expect(screening({ impersonationFiling: false })!.screeningPreference).toEqual({ impersonationFiling: false });
     expect(screening({ impersonationFiling: true, ohboxBar: null })!.screeningPreference)
       .toEqual({ impersonationFiling: true, ohboxBar: null });
@@ -809,7 +811,7 @@ describe("the reader's press instant, bounded by the organizer's clock", () => {
     const db = await makeTestDb();
     const w = await world(db);
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, decidedAt: T,
     });
     const r = await at(db, w.mailboxId, w.dedupKey, new Date(T.getTime() + 60_000), new Date(T.getTime() + 30_000 - 90_000));
@@ -821,7 +823,7 @@ describe("the reader's press instant, bounded by the organizer's clock", () => {
     const db = await makeTestDb();
     const w = await world(db);
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, decidedAt: new Date(T.getTime() - 20 * 60 * MIN),
     });
     expect(await at(db, w.mailboxId, w.dedupKey, T, new Date(T.getTime() - 25 * 60 * MIN))).toEqual({ applied: false, refusal: "stale_press" });

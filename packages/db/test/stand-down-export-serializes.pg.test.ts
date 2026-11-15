@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -89,7 +90,7 @@ describe("the stand-down handover serializes against a forwarded move in flight"
     const move = db.transaction(async (mtx) => {
       await assertOrganizerRole(mtx as unknown as Tx, dialect(db), w.accountId, w.mailboxId);
       await mtx.insert(folderState).values({
-        messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+        messageId: w.messageId, accountId: accountOfMessage(w.messageId), desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       });
       await moveHeld;
@@ -156,7 +157,7 @@ describe("the stand-down handover serializes against a forwarded move in flight"
     const refusal = await db.transaction(async (mtx) => {
       await assertOrganizerRole(mtx as unknown as Tx, dialect(db), w.accountId, w.mailboxId);
       await mtx.insert(folderState).values({
-        messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+        messageId: w.messageId, accountId: accountOfMessage(w.messageId), desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       });
       return "admitted";

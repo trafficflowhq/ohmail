@@ -23,7 +23,7 @@ async function world() {
       subject, fromAddress: from, fromName, nativeLocator: { folder, ref: "1:1" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

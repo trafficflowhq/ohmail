@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import dns from "node:dns";
 import net from "node:net";
@@ -58,7 +59,7 @@ async function attachmentDoor(port: unknown): Promise<{ deps: ApiDeps; mailboxId
   const [mb] = await db.insert(mailboxes).values({ accountId: randomUUID(), provider: "imap", address: "u@port.example" })
     .returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: `imap${SUFFIX}`, port, secure: true, user: "u@port.example" },
   });
   const deps = {
@@ -122,7 +123,7 @@ describe("the send door", () => {
     const [mb] = await d.db.insert(mailboxes).values({ accountId: acct!.id, provider: "imap", address: "u@port.example" }).returning();
     const imap = await d.deps.keyProvider.encrypt("imap-pass");
     await d.db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
       meta: o.oauthSmtpPort !== undefined
         ? { host: `imap${SUFFIX}`, port: o.imapPort, secure: true, user: "u@port.example", authType: "oauth2", provider: "microsoft", tenant: "common", smtp: { host: `smtp${SUFFIX}`, port: o.oauthSmtpPort, secure: false } }
         : { host: `imap${SUFFIX}`, port: o.imapPort, secure: true, user: "u@port.example" },
@@ -130,7 +131,7 @@ describe("the send door", () => {
     if (o.smtpPort !== undefined) {
       const smtp = await d.deps.keyProvider.encrypt("smtp-pass");
       await d.db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport: "smtp", secretEnc: smtp.ciphertext, keyVersion: smtp.keyVersion,
+        mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "smtp", secretEnc: smtp.ciphertext, keyVersion: smtp.keyVersion,
         meta: { host: `smtp${SUFFIX}`, port: o.smtpPort, secure: false, user: "u@port.example" },
       });
     }
@@ -202,7 +203,7 @@ describe("the SIZE probe", () => {
     }).returning();
     const imap = await deps.keyProvider.encrypt(o.oauth ? "a-refresh-token" : "imap-fixture");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
       meta: o.oauth
         ? { host: `imap${SUFFIX}`, port: 993, secure: true, user: "o@port.example", authType: "oauth2", provider: "microsoft", tenant: "common", smtp: { host: `smtp${SUFFIX}`, port: smtpPort, secure: false } }
         : { host: `imap${SUFFIX}`, port: 993, secure: true, user: "u@port.example" },
@@ -214,7 +215,7 @@ describe("the SIZE probe", () => {
     }
     const smtp = await deps.keyProvider.encrypt("smtp-fixture");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp", secretEnc: smtp.ciphertext, keyVersion: smtp.keyVersion,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "smtp", secretEnc: smtp.ciphertext, keyVersion: smtp.keyVersion,
       meta: { host: `smtp${SUFFIX}`, port: smtpPort, secure: false, user: "u@port.example" },
       updatedAt: new Date(FIXED_NOW.getTime() + 1000),
     });

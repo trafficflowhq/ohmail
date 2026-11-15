@@ -152,6 +152,8 @@ describe("the hosted jobs each event starts", () => {
   const APK = "android.yml: apk @ubuntu-24.04", SMOKE = "selfhost-smoke.yml: boot-smoke @ubuntu-24.04";
   /** The search budget, judged alone on a hosted runner of its own, in a workflow no hold cancels. */
   const BUDGET = "search-budget.yml: search-budget @ubuntu-24.04";
+  /* The 2.0 transition on Postgres 17: one more job of the budget's workflow, after the budget. */
+  const PG17 = "search-budget.yml: transition-nightly-pg17 @ubuntu-24.04";
   const ENGINE = ["build.yml: engine @ubuntu-24.04", "build.yml: engine-ui-smoke @ubuntu-24.04"];
   const DESKTOP = ["macos @macos-15", "macos-sign @macos-15", "windows @windows-latest", "linux @ubuntu-24.04", "linux-arm64 @ubuntu-24.04-arm",
     "linux-rpm-install @ubuntu-24.04", "linux-flatpak @ubuntu-24.04"].map((j) => `build.yml: ${j}`);
@@ -214,14 +216,14 @@ describe("the hosted jobs each event starts", () => {
     expect(hosted("push", "refs/tags/android-v0.30.7")).toEqual(["android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04"]);
   });
 
-  it("the nightly: 10, every platform, the APK, the search budget judged and the self-host smoke", () => {
-    expect(nightly()).toEqual([APK, ...DESKTOP, BUDGET, SMOKE]);
+  it("the nightly: 11, every platform, the APK, the search budget judged, the 2.0 transition on Postgres 17 and the self-host smoke", () => {
+    expect(nightly()).toEqual([APK, ...DESKTOP, BUDGET, PG17, SMOKE]);
   });
 
   it("a dispatch on main: ci.yml starts no hosted job, a release's whole run never waits on the budget; search-budget.yml judges it", () => {
     const of = (file: string) => hosted("workflow_dispatch", "refs/heads/main").filter((j) => j.startsWith(`${file}:`));
     expect(of("ci.yml")).toEqual([]);
-    expect(of("search-budget.yml")).toEqual([BUDGET]);
+    expect(of("search-budget.yml")).toEqual([BUDGET, PG17]);
   });
 
   it("the nightly preview: 0 on a dispatch on next and on a push to next; no pull request, tag or push to main starts it", () => {
@@ -255,10 +257,10 @@ describe("the hosted jobs each event starts", () => {
     };
     expect(push(BATCH, planted(" && !startsWith(github.head_ref, 'pr/batch-')", "")), "the batch clause dropped").toEqual(QUICK);
     expect(push({}, planted("needs.changes.result != 'skipped' && ", "")), "a skipped `changes` read as unread").toEqual([APK, ...DESKTOP, SMOKE, ...QUICK]);
-    expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, BUDGET, SMOKE]);
+    expect(nightly(planted('  schedule:\n    - cron: "41 0 * * *"\n', "", "build.yml")), "build.yml's schedule dropped").toEqual([APK, BUDGET, PG17, SMOKE]);
     expect(nightly(planted('  schedule:\n    - cron: "23 2 * * *"\n', "", "search-budget.yml")), "the budget's schedule dropped")
       .toEqual([APK, ...DESKTOP, SMOKE]);
-    expect(push({}, planted("\non:\n", "\non:\n  pull_request:\n", "search-budget.yml")), "the budget on every pull request").toEqual([BUDGET, ...QUICK]);
+    expect(push({}, planted("\non:\n", "\non:\n  pull_request:\n", "search-budget.yml")), "the budget on every pull request").toEqual([BUDGET, PG17, ...QUICK]);
     expect(matricesOf(text("ghcr-images.yml").replace("      max-parallel: 3\n", ""))[0]).toEqual({ job: "build-push", bound: undefined });
   });
 });
@@ -270,7 +272,7 @@ describe("the hosted jobs each event starts", () => {
  * nightly it went unjudged for days: the maintainers' land and release holds cancel every ci.yml and build.yml run,
  * the scheduled ones included. So it runs alone in search-budget.yml, nightly and by dispatch, and nowhere else.
  */
-type Job = { name?: string; "runs-on"?: unknown; env?: Record<string, unknown>; steps?: Array<{ run?: unknown; env?: Record<string, unknown> }> };
+type Job = { name?: string; needs?: unknown; "runs-on"?: unknown; env?: Record<string, unknown>; steps?: Array<{ run?: unknown; env?: Record<string, unknown> }> };
 /** The workflows the holds cancel runs of. */
 export const HELD = ["build.yml", "ci.yml"];
 const JUDGED = "packages/services/test/search-budget.pg.test.ts";
@@ -285,7 +287,8 @@ export function budgetFindings(wfs: Record<string, unknown>): string[] {
   const wf = wfs[file] as { on?: Record<string, unknown>; jobs: Record<string, Job> };
   const out: string[] = [];
   if (HELD.includes(file)) out.push(`${file}: the holds cancel the run that judges the budget`);
-  const others = Object.keys(wf.jobs).filter((j) => j !== id);
+  /* A job that needs the budget's starts once it has been judged, never beside it: it shares the workflow, not the runner's quiet. */
+  const others = Object.keys(wf.jobs).filter((j) => j !== id && ![wf.jobs[j]!.needs].flat().includes(id));
   if (others.length) out.push(`${file}: the budget shares its run with ${others.join(", ")}`);
   const triggers = Object.keys(wf.on ?? {}).sort();
   if (triggers.join() !== "schedule,workflow_dispatch") out.push(`${file}: starts on ${triggers.join(", ")}, not the nightly and a dispatch alone`);
@@ -304,7 +307,8 @@ describe("the judged search budget", () => {
 
   it("runs alone in search-budget.yml, on the nightly's hour and by dispatch, on a hosted runner of its own", () => {
     expect(budgetFindings(WFS)).toEqual([]);
-    expect(Object.values(budget.jobs).map((j) => j.name)).toEqual(["suite · search budget · judged"]);
+    expect(Object.values(budget.jobs).map((j) => j.name)).toEqual(["suite · search budget · judged", "suite · 2.0 transition · Postgres 17"]);
+    expect(Object.entries(budget.jobs).filter(([, j]) => j.needs === undefined).map(([id]) => id), "only the budget's job starts with the run").toEqual(["search-budget"]);
     const cronOf = (wf: unknown) => [(wf as { on: { schedule: unknown } }).on.schedule].flat().map((c) => (c as { cron: string }).cron);
     expect(cronOf(budget)).toEqual(cronOf(WFS["ci.yml"]));
     /* ci.yml's dispatch asks nothing of the budget any more. */
@@ -323,6 +327,8 @@ describe("the judged search budget", () => {
     expect(budgetFindings(gone), "gone").toEqual(["the budget is judged by 0 jobs: none"]);
     expect(budgetFindings(load((f, t) => (f === "search-budget.yml" ? t.replace('  schedule:\n    - cron: "23 2 * * *"\n', "") : t))), "no schedule")
       .toEqual(["search-budget.yml: starts on workflow_dispatch, not the nightly and a dispatch alone", "search-budget.yml: the budget is not judged nightly"]);
+    expect(budgetFindings(load((f, t) => (f === "search-budget.yml" ? t.replace("    needs: [search-budget]\n", "") : t))), "a job beside it")
+      .toEqual(["search-budget.yml: the budget shares its run with transition-nightly-pg17"]);
     expect(budgetFindings(load((f, t) => (f === "search-budget.yml" ? t.replace("runs-on: ubuntu-24.04", 'runs-on: ["self-hosted", "ohmail-zorin"]') : t))), "on a pool VM")
       .toEqual(['search-budget.yml: search-budget runs on ["self-hosted","ohmail-zorin"], not one hosted runner']);
     expect(budgetFindings(load((f, t) => (f === "search-budget.yml" ? t.replaceAll(JUDGED, "packages/services/test/other.pg.test.ts") : t))), "another file")

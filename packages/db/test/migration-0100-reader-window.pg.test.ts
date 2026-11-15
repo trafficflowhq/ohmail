@@ -97,7 +97,7 @@ describe.skipIf(!AVAILABLE)("migration 0100 — the reader-window re-stamp", () 
       createdAt: opts.createdAt,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: opts.desired, observedFolder: opts.observed,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: opts.desired, observedFolder: opts.observed,
       lastSetBy: opts.lastSetBy, reconcileStatus: "reconciled", conflict: false,
     });
     if (opts.userMoved) {

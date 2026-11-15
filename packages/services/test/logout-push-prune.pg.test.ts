@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -315,7 +316,7 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
       return s.changePassword(c, { currentPassword: PASSWORD, newPassword: `${PASSWORD}-next` });
     }],
     ["an authenticator removal", async (s, c, _w1, seeded) => {
-      await db.insert(webauthnCredentials).values({ userId: seeded.userId, credentialId: `c0056-${randomUUID()}`, publicKey: "AAAA" });
+      await db.insert(webauthnCredentials).values({ userId: seeded.userId, accountId: accountOfUser(seeded.userId), credentialId: `c0056-${randomUUID()}`, publicKey: "AAAA" });
       return s.totpRemove(c);
     }],
   ];

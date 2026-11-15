@@ -37,7 +37,7 @@ async function seedMailbox(db: Db, consented: boolean): Promise<{ accountId: str
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -53,7 +53,7 @@ async function seedPendingReadMark(db: Db, mb: { accountId: string; mailboxId: s
     bodyHash: `ra-hash-${tag}`, nativeLocator: locator, unread: false,
   }).returning();
   await db.insert(flagState).values({
-    messageId: m!.id, desiredSeen: true, observedSeen: false, lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us",
     reconcileStatus: "pending", conflict: false, attempts: 0, nextAttemptAt: null,
   });
   await db.insert(messageInstances).values({

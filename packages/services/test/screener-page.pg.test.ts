@@ -103,7 +103,7 @@ async function seed(opts: {
       nativeLocator: { folder: desired, ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: desired, observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -363,7 +363,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${k}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       ids.push(m!.id);
@@ -461,7 +461,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
           nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
         }).returning();
         await db.insert(folderState).values({
-          messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
           lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
         });
       }

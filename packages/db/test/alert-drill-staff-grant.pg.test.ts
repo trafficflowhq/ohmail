@@ -16,7 +16,7 @@ import {
 import { STAFF_ROLE, STAFF_SELECT_GRANTS } from "../src/staff-grants.js";
 import { MIGRATED_DB_TEARDOWN_BUDGET_MS, PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import type { Tx } from "../src/change-log.js";
-import { HARDEN_SCRIPT, hardenScriptWithout } from "./_harden-script.js";
+import { HARDEN_SCRIPT, SINCE_2_0, hardenScriptWithout } from "./_harden-script.js";
 
 /**
  * CLOUD 0051'S GRANT, in the migration itself — 0049's lesson applied up front. The API starts,
@@ -64,8 +64,8 @@ function grantsOnTable(text: string, table: RegExp): string[] {
   return out.sort();
 }
 
-/** The harden script as it stood before 0051: the shipped one, its `alert_drills` stanza and cloud 0054's, 0057's and 0059's taken out. */
-const scriptBefore0051 = (): string => hardenScriptWithout(TABLE, "connect_attempts", "mailbox_storage_stats", "account_storage_holds");
+/** The harden script as it stood before 0051: the shipped one, its `alert_drills` stanza, cloud 0054's, 0057's and 0059's and what 2.0 added taken out. */
+const scriptBefore0051 = (): string => hardenScriptWithout(TABLE, "connect_attempts", "mailbox_storage_stats", "account_storage_holds", ...SINCE_2_0);
 
 describe("cloud 0051's grant says what the harden script says, and only that", () => {
   it("its grants are the script's alert_drills stanza, verb for verb and column for column", () => {
@@ -225,8 +225,8 @@ describe.skipIf(!PG_UP)("cloud 0051 on real Postgres: a database hardened before
   });
 
   it("re-running the shipped harden script afterwards leaves the same privileges: either order agrees", async () => {
-    // Without the stanzas of tables newer than this database (cloud 0054's, 0057's and 0059's), which it would refuse.
-    await owners[DB_GRANTED]!.unsafe(hardenScriptWithout("connect_attempts", "mailbox_storage_stats", "account_storage_holds")).simple();
+    // Without the stanzas of tables newer than this database (cloud 0054's, 0057's and 0059's, and what 2.0 added), which it would refuse.
+    await owners[DB_GRANTED]!.unsafe(hardenScriptWithout("connect_attempts", "mailbox_storage_stats", "account_storage_holds", ...SINCE_2_0)).simple();
     expect(await heldByRole(DB_GRANTED)).toEqual(EXPECTED);
   });
 });

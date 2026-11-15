@@ -5,6 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, accountSettings, changeLog, contacts, folderState, mailboxes, messageBodies,
   messageStates, messages, rules, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { gateReleasePass } from "../src/gate-release.js";
 import { ruleRetroPass } from "../src/rule-retro.js";
@@ -81,9 +82,9 @@ async function seed(role: "organizer" | "reader" = "organizer"): Promise<World> 
       subject: `Note ${i}`, snippet: "", fromAddress: o.from, date: IMPORTED, unread: true,
       createdAt: IMPORTED, nativeLocator: { folder: o.desired, ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired, observedFolder: o.desired,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired, observedFolder: o.desired,
       lastSetBy: o.lastSetBy, reconcileStatus: "reconciled", conflict: false,
     });
     w.ids[key] = m!.id;
@@ -159,9 +160,7 @@ describe("the one-time gate release", () => {
     expect(r!.releaseHeldAt!.getTime()).toBe(r!.retroRequestedAt!.getTime());
     expect(r!.retroDoneAt).toBeNull();
 
-    const [s] = await w.db.select().from(accountSettings)
-      .where(eq(accountSettings.accountId, w.accountId));
-    expect(s!.gateReleaseDoneAt).not.toBeNull();
+    expect((await readPassProgress(w.db, accountPass("gate_release", w.accountId))).doneAt).not.toBeNull();
   });
 
   it("the retro pass then files the armed sender's held mail, and ONLY that", async () => {
@@ -251,9 +250,7 @@ describe("the one-time gate release", () => {
     const out = await sweep(w);
     expect(out.ran).toBe(false);
     expect(out.completed).toBe(false);
-    const [s] = await w.db.select().from(accountSettings)
-      .where(eq(accountSettings.accountId, w.accountId));
-    expect(s?.gateReleaseDoneAt ?? null).toBeNull();
+    expect((await readPassProgress(w.db, accountPass("gate_release", w.accountId))).doneAt).toBeNull();
     expect(await desiredOf(w, "knownHeld")).toBe(GATE);
   });
 

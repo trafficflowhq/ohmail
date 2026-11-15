@@ -178,13 +178,13 @@ describe("unreachable: the mirror answers, and says it is the mirror", () => {
     expect(info).toMatchObject({ total: 1, totalExact: true, fromMirror: true });
   });
 
-  // "Older mail is still being indexed" over a settled mirror. The mirror
-  // holds no search documents and no marker, and this composition runs no backfill to write them.
-  it("the mirror's answer carries no index progress: nothing here fills that index", async () => {
+  // "Older mail is still being indexed" over a settled mirror. The mirror writes each letter's
+  // search document with the letter and no marker: this composition runs no backfill to write one.
+  it("the mirror's answer carries no index progress: no pass here fills that index", async () => {
     state.mode = "503";
     const db = sidecar.db as unknown as Tx;
     expect(await searchIndexBuilt(db, sidecar.world.accountId)).toBe(false);
-    expect(await searchIndexProgress(db, sidecar.world.accountId)).toEqual({ done: 0, total: 1 });
+    expect(await searchIndexProgress(db, sidecar.world.accountId)).toEqual({ done: 1, total: 1 });
     const res = await get("/search?q=heron&parts=estimate&limit=50");
     const body = (await res.json()) as { answeredFrom?: string; total?: number; indexed?: unknown };
     expect(body).toMatchObject({ answeredFrom: "mirror", total: 1 });

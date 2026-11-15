@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, routingDecisions } from "@trafficflow/db";
@@ -25,7 +26,7 @@ async function wired() {
   const w = await makeCtx(NOW);
   await w.db.insert(accounts).values({ id: w.accountId, name: "screener-corr" });
   await w.db.update(mailboxes).set({ createdAt: new Date("2026-07-01T00:00:00Z") }).where(eq(mailboxes.id, w.mailboxId));
-  await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder: "Sent", uidvalidity: 7n, uidnext: 9n });
+  await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder: "Sent", uidvalidity: 7n, uidnext: 9n });
   const [sent] = await w.db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: "sent:corr-1",
     subject: "the north elevation", fromAddress: "mila@lichtgrat.example", messageIdHeader: "sent-1@own.invalid",
@@ -64,7 +65,7 @@ describe("a pressed suggestion about a correspondent", () => {
     // for this message (owner ruling 2026-10-08), so the bought Spam is capped with the reason.
     const w = await wired();
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from: "assistant@else.invalid", subject: "Re: the north elevation" });
-    await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: { "in-reply-to": ["<sent-1@own.invalid>"] } });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: { "in-reply-to": ["<sent-1@own.invalid>"] } });
     const res = await w.svc.suggest(w.ctx, { senders: ["assistant@else.invalid"] });
     expect(res.suggestions[0]).toMatchObject({ decision: "yes", destination: "INBOX", reasonCode: "correspondent" });
   });
@@ -74,7 +75,7 @@ describe("a pressed suggestion about a correspondent", () => {
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, {
       from: "assistant@else.invalid", fromName: "PayPal", subject: "Re: the north elevation",
     });
-    await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: { "in-reply-to": ["<sent-1@own.invalid>"] } });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: { "in-reply-to": ["<sent-1@own.invalid>"] } });
     if (checked) {
       await w.db.update(messages).set({ senderCheck: "impersonation", senderCheckBrand: "PayPal" }).where(eq(messages.id, id));
     }

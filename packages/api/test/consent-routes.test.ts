@@ -608,7 +608,7 @@ describe("the onboarding-consent routes", () => {
     // A user folder in the worker's inventory — what enabling must announce to live mirrors.
     const mailboxRow = await db.query.mailboxes.findFirst();
     const [inv] = await db.insert(mailboxFolders)
-      .values({ mailboxId: mailboxRow!.id, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+      .values({ mailboxId: mailboxRow!.id, accountId: mailboxRow!.accountId, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
       .returning();
 
     // A fresh account has never chosen: null on the wire, the pre-feature interface.
@@ -662,7 +662,7 @@ describe("the onboarding-consent routes", () => {
     const s = await seedAccount(db, FIXED_NOW);
     const mailboxRow = await db.query.mailboxes.findFirst();
     const [inv] = await db.insert(mailboxFolders)
-      .values({ mailboxId: mailboxRow!.id, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+      .values({ mailboxId: mailboxRow!.id, accountId: mailboxRow!.accountId, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
       .returning();
     await H(req("PATCH", "/consent/settings", {
       bearer: s.token, body: JSON.stringify({ foldersEnabled: true }),

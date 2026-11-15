@@ -169,7 +169,7 @@ function plantTombstone(exec: Executor, accountId: string, n: number): string {
     "insert into mailboxes (id, account_id, provider, address, status, disabled_reason) values (?, ?, 'imap', ?, 'disabled', NULL)",
     [id, accountId, `gone-${id.slice(0, 6)}@b.test`],
   );
-  exec.direct("insert into mailbox_folders (id, mailbox_id, folder) values (?, ?, 'INBOX')", [randomUUID(), id]);
+  exec.direct("insert into mailbox_folders (id, mailbox_id, account_id, folder) values (?, ?, ?, 'INBOX')", [randomUUID(), id, accountId]);
   plantMessages(exec, accountId, id, n);
   return id;
 }
@@ -219,7 +219,7 @@ describe.runIf(ON_DEVICE_STORE)("a removal, on the device store", () => {
     /* CONTROL: a mailbox switched off by a plain status PATCH keeps its credential, and its mail. */
     const off = plantTombstone(planting, accountId, 2);
     planting.direct(
-      "insert into mailbox_credentials (mailbox_id, transport, secret_enc, key_version) values (?, 'imap', 'not-a-secret', 1)",
+      "insert into mailbox_credentials (mailbox_id, account_id, transport, secret_enc, key_version) select id, account_id, 'imap', 'not-a-secret', 1 from mailboxes where id = ?",
       [off],
     );
     await planting.close();

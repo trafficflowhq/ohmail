@@ -25,7 +25,7 @@ import { repoWithFailingMethod } from "./_fault.js";
  *
  * MUTATION-WATCHES held here, each written so dropping the guard turns it red:
  *   (a) the consent decides — the SAME sender under the SAME suggestion is filed with the act's
- *       own consent and waits without it, the no-AI switch (`screener_auto_apply_at`) on or off.
+ *       own consent and waits without it.
  *   (b) the bar decides — a suggestion below it waits.
  *   (c) the destination predicate — a folder no decision may file to leaves the sender waiting.
  *   (d) a refusal leaves the sender waiting with their suggestion, counted and never claimed;
@@ -73,15 +73,15 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     return { accountId, mailboxId: mb!.id };
   }
 
-  /** The settings row, with the no-AI switch (`screener_auto_apply_at`) stamped or NULL. */
-  async function settingsRow(w: World, on: boolean): Promise<void> {
+  /** The settings row. */
+  async function settingsRow(w: World): Promise<void> {
     await db.insert(accountSettings).values({
-      accountId: w.accountId, screenerAutoApplyAt: on ? new Date() : null,
+      accountId: w.accountId,
       // 'all_time' so the cutline admits a fixture message whose date nobody set.
       screeningScope: "all_time",
     }).onConflictDoUpdate({
       target: accountSettings.accountId,
-      set: { screenerAutoApplyAt: on ? new Date() : null, screeningScope: "all_time" },
+      set: { screeningScope: "all_time" },
     });
   }
 
@@ -95,7 +95,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
       nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(messageInstances).values({
@@ -128,7 +128,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   //  (a) THE SETTING DECIDES — the same sender, the same suggestion, both answers
   // ══════════════════════════════════════════════════════════════════════════════════════════
 
-  it("MUTATION-WATCH (a): a confident Spam suggestion is filed on the act's own consent, never on the no-AI switch", async () => {
+  it("MUTATION-WATCH (a): a confident Spam suggestion is filed on the act's own consent, and waits without it", async () => {
     const off = await newWorld();
     const stranger = "stranger@spam.test";
     const waiting = await held(off, stranger);
@@ -139,14 +139,13 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await screenerAutoActPass(db, { accountId: off.accountId, consent: null })).toMatchObject({ ran: false, filed: 0 });
     expect(await desiredOf(waiting), "a sender was filed with no consent").toBe(SCREENER);
 
-    // The no-AI switch ON is still no consent: it says "Deterministic rules only — no AI".
-    await settingsRow(off, true);
+    // A settings row alone is still no consent.
+    await settingsRow(off);
     expect(await screenerAutoActPass(db, { accountId: off.accountId, consent: null })).toMatchObject({ ran: false, filed: 0 });
-    expect(await desiredOf(waiting), "the no-AI switch armed the act").toBe(SCREENER);
-    expect(await rulesFor(off, stranger), "a rule was promoted on the no-AI switch").toHaveLength(0);
+    expect(await desiredOf(waiting), "a settings row armed the act").toBe(SCREENER);
+    expect(await rulesFor(off, stranger), "a rule was promoted with no consent").toHaveLength(0);
 
-    // The act's own consent is the only difference — switch off, same sender, same suggestion.
-    await settingsRow(off, false);
+    // The act's own consent is the only difference — same sender, same suggestion.
     const r = await screenerAutoActPass(db, { accountId: off.accountId, consent: GIVEN });
     expect(r).toMatchObject({ ran: true, filed: 1, failed: 0 });
     expect(r.destinations[SPAM]).toBe(1);
@@ -164,7 +163,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (n): advice to let a sender in files nothing and writes nothing, however sure; Spam is still filed", async () => {
     const w = await newWorld();
-    await settingsRow(w, true);
+    await settingsRow(w);
     const admitting: string[] = [];
     for (const [from, to] of [
       ["talent@hire-outreach.example", "ohmail/News"], ["billing@hire-outreach.example", "ohmail/Receipts"],
@@ -196,7 +195,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (b): a suggestion below the bar waits, and the same sender above it is filed", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const unsure = await held(w, "unsure@shop.test");
     await suggest(w, unsure, SPAM, SCREENER_ACT_DENY_BAR - 0.01);
 
@@ -239,7 +238,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (c): a destination outside the decidable set leaves the sender waiting", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const gate = await held(w, "loop@shop.test");
     // `ohmail/Screener` is the one a coercing reader would take as a decision — it would promote a
     // rule holding the sender at the gate for ever.
@@ -260,7 +259,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (d): an apply that throws leaves the sender waiting, counted as failed and never as filed", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const first = await held(w, "one@spam.test");
     await suggest(w, first, SPAM, 0.99);
     const second = await held(w, "two@spam.test");
@@ -295,7 +294,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("an account erased under the pass is one account-level line: nothing filed, failed or recorded", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const first = await held(w, "one@spam.test");
     await suggest(w, first, SPAM, 0.99);
     await suggest(w, await held(w, "two@spam.test"), SPAM, 0.99);
@@ -316,7 +315,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (e): the act's consent is its own column, and the account's AI switch outranks it", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const waiting = await held(w, "column@spam.test");
     await suggest(w, waiting, SPAM, 0.95);
     const run = () => screenerAutoActPass(db, { accountId: w.accountId, consent: screenerActConsentFrom(w.accountId) });
@@ -334,7 +333,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (f): a refused act is recorded on its suggestion, and the next filing clears it", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const waiting = await held(w, "refused@spam.test");
     await suggest(w, waiting, SPAM, 0.95);
     const faulty = repoWithFailingMethod(db, "insert", () => { throw new Error("injected store fault"); },
@@ -355,7 +354,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   // capped; the next call files the rest. Without the check all three go in one call.
   it("stops at its clock after the first filed sender, and the next call goes on", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     for (const who of ["a@spam.test", "b@spam.test", "c@spam.test"]) {
       await suggest(w, await held(w, who), SPAM, 0.99);
     }
@@ -380,7 +379,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (g): held mail the check never reached is checked before the act decides, and a claim says so", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "kundendienst@gmail.test";
     const old = await held(w, sender);
     // Older than the column: NULL, with the name a forger writes.
@@ -400,7 +399,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(g) a denying plan on a marked sender still files", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "postfinance-alerts@gmail.test";
     const m = await marked(w, sender, "PostFinance");
     await suggest(w, m, SPAM, 0.97);
@@ -424,7 +423,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(h) a denying plan on an unconfirmed brand sender files the letter to Spam and writes no rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const m = await heldWithVerdict(w, "service@paypal.com", "unavailable");
     await suggest(w, m, SPAM, 0.95);
     const r = await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN });
@@ -466,7 +465,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): a Spam deny bought on a forged letter files that letter alone and writes no rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "service@paypal.com";
     const { genuine, forged } = await genuineAndForged(w, sender, "unavailable");
     await suggest(w, forged, SPAM, 0.95);
@@ -483,7 +482,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): the next pass on the same advice writes no rule either, and the genuine letter waits", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
     await suggest(w, forged, SPAM, 0.95);
     await act(w);
@@ -497,7 +496,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) a failed letter's advice, capped to Spam, files that letter alone beside a genuine one", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "fail");
     // `capSuggestion` states a failed letter's advice as Spam at CAP_CONFIDENCE, which meets the bar.
     await suggest(w, forged, SPAM, CAP_CONFIDENCE);
@@ -510,7 +509,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): the same at an address no company owns, screened out", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "anna@studio-nord.example", "unavailable");
     await suggest(w, forged, "ohmail/Screened", 0.95);
     const r = await act(w);
@@ -522,7 +521,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): NULL confirms nothing: a letter older than the column is filed alone", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "offers@shop.test", null);
     await suggest(w, forged, SPAM, 0.95);
     const r = await act(w);
@@ -534,7 +533,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("CONTROL (j): advice on a confirmed letter, every held letter confirmed, files the sender under the act's rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "service@paypal.com";
     const older = await held(w, sender);
     await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, older));
@@ -553,7 +552,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): every letter unconfirmed, as at a provider whose word ohmail does not read: a forgery's advice files the forgery alone, never the address's other or later mail", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "anna@studio-nord.example";
     const first = await heldWithVerdict(w, sender, "unavailable");
     await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, first));
@@ -579,7 +578,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): advice on a confirmed letter files every unconfirmed letter held beside it first, then the sender under the act's rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "service@paypal.com";
     const genuine = await held(w, sender);
     const unconfirmed = [await heldWithVerdict(w, sender, "unavailable"), await heldWithVerdict(w, sender, null)];
@@ -596,7 +595,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): a letter filed with no rule is listed under Filed automatically, and put back it is never filed again", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "anna@studio-nord.example", "unavailable");
     await suggest(w, forged, SPAM, 0.95);
     await act(w);
@@ -613,7 +612,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) a sender whose advised letter the person put back takes no turn under the clock", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const putBack = await heldWithVerdict(w, "anna@studio-nord.example", "unavailable");
     await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, putBack));
     await suggest(w, putBack, SPAM, 0.95);
@@ -629,7 +628,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) advice on a confirmed letter whose unconfirmed neighbour the person put back files the sender under the rule, and that letter stays", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "service@paypal.com";
     const genuine = await held(w, sender);
     const putBack = await heldWithVerdict(w, sender, "unavailable");
@@ -643,7 +642,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (j): another sender's unconfirmed letter leaves a confirmed sender's deny whole; the same address's does not", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     // Confirmed, every held letter confirmed: filed under the act's rule, whoever else waits.
     const whole = "deals@shop.test";
     const wholeOld = await held(w, whole);
@@ -670,7 +669,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) a letter the person put back stays where they put it; the unconfirmed one beside it is filed", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
     const putBack = await heldWithVerdict(w, "service@paypal.com", "unavailable");
     await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, putBack));
@@ -685,7 +684,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) a forged letter in the account's other mailbox is filed; the genuine one waits, and no rule is written", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const [other] = await db.insert(mailboxes).values({
       accountId: w.accountId, provider: "imap", address: `two-${w.accountId.slice(0, 8)}@example.test`,
     }).returning();
@@ -703,7 +702,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) a refused filing of unconfirmed letters is counted failed and recorded, and moves nothing", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
     await suggest(w, forged, SPAM, 0.95);
     // A store fault at every held letter's move, on both stores; nothing else throws.
@@ -734,7 +733,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) stale advice, about a letter no longer held, is decided before the clock and takes no turn", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { genuine, forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
     await suggest(w, forged, SPAM, 0.95);
     await act(w);
@@ -750,7 +749,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(j) the line says how many senders and letters, and the real logger keeps both numbers", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const { forged } = await genuineAndForged(w, "service@paypal.com", "unavailable");
     await suggest(w, forged, SPAM, 0.95);
     const lines: string[] = [];
@@ -866,7 +865,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (k): advice stored before the reason was, on a confirmed letter, files that letter alone and writes no rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "deals@shop.test";
     const older = await held(w, sender);
     await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, older));
@@ -886,7 +885,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   ] as const) {
     it(`(k) a confident deny on a confirmed letter, stored under ${String(reason)}, ${rules ? "writes the sender's rule" : "files that letter alone"}`, async () => {
       const w = await newWorld();
-      await settingsRow(w, false);
+      await settingsRow(w);
       const sender = "deals@shop.test";
       const older = await held(w, sender);
       await db.update(messages).set({ date: new Date("2020-01-01T00:00:00Z") }).where(eq(messages.id, older));
@@ -903,7 +902,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   it("(k) a list address no person let in is an address like any: a confident deny on a confirmed letter writes its rule", async () => {
     // `List-Post` is the sender's to write: a forger names its own From there and becomes a "list address".
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "list@lists.test";
     await db.insert(listAddresses).values({ accountId: w.accountId, address: sender, consentedBrands: [] });
     const older = await held(w, sender);
@@ -920,7 +919,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
   it("(k) on an unconfirmed letter the stored reason changes nothing: none, campaign and NULL each file that letter alone, as (j)", async () => {
     for (const reason of ["none", "campaign", null]) {
       const w = await newWorld();
-      await settingsRow(w, false);
+      await settingsRow(w);
       const { genuine, forged } = await genuineAndForged(w, "anna@studio-nord.example", "unavailable");
       await suggest(w, forged, SPAM, 0.95, reason);
       const r = await act(w);
@@ -933,7 +932,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(k) a confirmed advised letter that is sensitive, or put back, is not filed and takes no turn under the clock", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     // Two senders whose crowd-capped advice is about a letter no automatic filing may move.
     const sensitive = await held(w, "codes@shop-a.test");
     const newer = await held(w, "codes@shop-a.test");
@@ -959,7 +958,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("(k) the line says how many senders and letters, and the real logger keeps both numbers", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     await suggest(w, await held(w, "orders@shop-a.test"), SPAM, 0.95, "campaign");
     const lines: string[] = [];
     const log = createLogger({ service: "worker", level: "info", sink: (line) => { lines.push(line); } });
@@ -986,7 +985,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (l): a standing deny leaves an unconfirmed password reset at the gate, pass after pass, and writes no rule", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "accounts@shop.test";
     const reset = await heldSensitive(w, sender, "password_reset", "unavailable");
     const advised = await held(w, sender);
@@ -1001,7 +1000,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("CONTROL (l): a person's press over the same bag files the code", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "login@shop.test";
     const code = await heldSensitive(w, sender, "otp");
     type InTx = (f: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
@@ -1021,7 +1020,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("CONTROL (m): a person's press moves the failed letter", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "orders@supplier.test";
     const { genuine, forged } = await genuineAndForged(w, sender, "fail");
     type InTx = (f: (tx: Tx) => Promise<unknown>) => Promise<unknown>;
@@ -1046,7 +1045,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (o): a sender whose held letter has no copy on record is not filed; the one beside it is", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const live = await held(w, "live@spam.test");
     const gone = await held(w, "gone@spam.test");
     await suggest(w, live, SPAM, 0.95);
@@ -1061,7 +1060,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (o): advice on a letter with no copy on record files nothing alone, and the live letter waits", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "billing@shop.test";
     const advised = await heldWithVerdict(w, sender, "unavailable");
     const live = await held(w, sender);
@@ -1077,7 +1076,7 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
 
   it("MUTATION-WATCH (o): the check the act runs first marks no letter the server no longer holds", async () => {
     const w = await newWorld();
-    await settingsRow(w, false);
+    await settingsRow(w);
     const sender = "news@quiet.test";
     const gone = await held(w, sender);
     // Older than the column: the check never reached it, so a pass that reads it writes `none`.

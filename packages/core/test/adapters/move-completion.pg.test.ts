@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, attachments as attachmentsTbl } from "@trafficflow/db";
+import { accountOfMessage, accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, attachments as attachmentsTbl } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "../../src/adapters/drizzle-repo.js";
@@ -156,7 +156,7 @@ describe.skipIf(!AVAILABLE)("move completion requires source absence", () => {
       isPrimary: true,
     });
     await owned.db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: DST, observedFolder: SRC,
+      messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: DST, observedFolder: SRC,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
     return row!.id;

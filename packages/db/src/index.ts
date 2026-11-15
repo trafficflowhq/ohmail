@@ -71,6 +71,12 @@ export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
 // The reconcile polls' account bound (mail 0181): each queue read at its own account. Reaches
 // `schema-mail.js` alone.
 export { folderQueueOf, flagQueueOf } from "./reconcile-queue.js";
+export { accountOfMessage, accountOfMailbox, accountOfUser } from "./parent-account.js";
+export {
+  PASS_NAMES, isPassName, UnknownPassName, NO_MARKS, accountPass, mailboxPass, onPass, passMark, passDone, proposed,
+  cursorBehind, readPassProgress, writePassProgress, updatePassProgress, markPassDone, requestPass,
+  type PassName, type PassKey, type PassMarks, type PassWrite,
+} from "./pass-progress.js";
 export {
   PRESS_AGED_MS, PRESS_AGE_MAX_MS, clampPressInstant, decisionInstant, placementDecidedAfter, pressIsAged,
   readDecidedAfter, tagAssignedAfter, triageDecidedAfter,

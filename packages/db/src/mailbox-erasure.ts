@@ -2,10 +2,12 @@ import { and, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, ty
 import type { Dialect } from "./dialect/index.js";
 import {
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
-  approvals, attachments, auditLog, awayReplies, awayResponderSent, drafts, flagState, folderOps,
+  approvals, attachments, auditLog, awayReplies, drafts, flagState, folderOps,
   folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes,
-  messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messageTags, messages,
-  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, scheduledSendFiles,
+  messageBodies, messageFailures, messageInstances, messageInvitations, messageSearch, messageStates, messageTags,
+  messages,
+  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, passProgress, routingDecisions,
+  scheduledSendFiles,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
@@ -195,6 +197,9 @@ export async function sweepMailboxStep(
   // Idempotent: the removal this rides already deleted the credential rows.
   await drop("mailbox_credentials", tx.delete(mailboxCredentials)
     .where(eq(mailboxCredentials.mailboxId, mailboxId)));
+  // Where this mailbox's one-time passes stood (mail 0203): keyed by the mailbox as their subject.
+  await drop("pass_progress", tx.delete(passProgress)
+    .where(and(eq(passProgress.accountId, accountId), eq(passProgress.subjectId, mailboxId))));
   deleted["idempotency_keys"] = await eraseIdempotentResponses(tx, accountId, now, { mailboxId });
   const seq = await recordMailboxRemoved(tx, accountId, mailboxId);
   // The receipt retains nothing for the mailbox, its signature included, nor a hash of it or the settings.
@@ -260,11 +265,12 @@ async function eraseMessages(
   await drop("message_tags", tx.delete(messageTags).where(inArray(messageTags.messageId, ids)));
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("message_states", tx.delete(messageStates).where(inArray(messageStates.messageId, ids)));
+  // The invitation's identity a letter carried (mail 0204): an organizer's address and an event's id.
+  await drop("message_invitations", tx.delete(messageInvitations).where(and(
+    eq(messageInvitations.accountId, accountId), inArray(messageInvitations.messageId, ids))));
   await drop("tracker_events", tx.delete(trackerEvents).where(and(
     eq(trackerEvents.accountId, accountId), inArray(trackerEvents.messageId, ids))));
   // A CORRESPONDENT's address, held because this mailbox answered them.
-  await drop("away_responder_sent", tx.delete(awayResponderSent).where(and(
-    eq(awayResponderSent.accountId, accountId), inArray(awayResponderSent.messageId, ids))));
   await drop("away_replies", tx.delete(awayReplies).where(and(
     eq(awayReplies.accountId, accountId), inArray(awayReplies.messageId, ids))));
   // scoped-by: ids — a page of this mailbox's messages read by the step

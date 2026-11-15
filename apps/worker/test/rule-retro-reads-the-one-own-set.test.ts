@@ -32,7 +32,7 @@ async function world(oldState: "removed" | "live") {
       subject: "hello", fromAddress: from, threadId, nativeLocator: { folder: "INBOX", ref: "1:1" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };

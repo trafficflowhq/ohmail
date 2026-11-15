@@ -41,7 +41,7 @@ describe("the auto-act beside a rule written after its page was read", () => {
       authVerdict: o.authVerdict ?? "pass",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     // Its copy in the Screener, as the ingest records one.

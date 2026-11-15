@@ -115,7 +115,7 @@ describe.skipIf(!AVAILABLE)("mail 0065/0071 — the junk_filed restore against r
         uidvalidity: 1n, isPrimary: i.primary,
       });
     }
-    await db.insert(messageBodies).values({ messageId: m!.id, text: norm.textBody, html: null });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: norm.textBody, html: null });
     const bytes = bodyBytesOf({ text: norm.textBody, html: null });
     await db.insert(accountStorage).values({ accountId, bytes });
     // THE FILING'S OWN HUSK — text emptied, marker written, bytes released, all by the one

@@ -284,7 +284,7 @@ describe("a stand-down mid-drain is a state change, not a failed drain", () => {
       createdAt: new Date(nowMs),
     }).returning();
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: "INBOX",
       desiredFolder: "ohmail/Screener",
       lastSetBy: "us",

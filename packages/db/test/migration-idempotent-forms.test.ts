@@ -53,6 +53,14 @@ describe("no migration is written in a form that cannot be applied twice", () =>
       "allow-list entries whose migration is idempotent now — remove them").toEqual([]);
   });
 
+  it("control: the 2.0 transition's window is not judged, and one entry past it is", () => {
+    const bare = { journal: "mail", when: 0, path: "", text: `CREATE TABLE "probe" ("id" uuid);` };
+    expect(refusedByForm([{ ...bare, tag: "0201_inside" }, { ...bare, tag: "0206_past" }])).toEqual(["mail/0206_past"]);
+    // Each journal has its own window: the Cloud's ends at 0105.
+    expect(refusedByForm([{ ...bare, journal: "cloud", tag: "0105_inside" }, { ...bare, journal: "cloud", tag: "0201_past" }]))
+      .toEqual(["cloud/0201_past"]);
+  });
+
   it("the allow list names migrations that exist", () => {
     const keys = new Set(allMigrations().map(keyOf));
     expect(Object.keys(ALLOWED).filter((k) => !keys.has(k)), "allow-list keys not in a journal")

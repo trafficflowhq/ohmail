@@ -46,8 +46,9 @@ export const STAFF_ADMIN_VIEWS = ["audit_log"] as const;
  * statement of what the harden script grants — spelled out rather than derived, so a diff in
  * either is visible: a column added here without the script fails the pg guard's strict-equality
  * census; the script without here fails the guard AND refuses to boot. The rationale for each
- * omission lives in the script. Two worth repeating: `messages.subject_tsv` reconstructs
- * `subject` and `from_address` out of its lexemes, and the whole of `messages`, `change_log`,
+ * omission lives in the script. Two worth repeating: `messages.subject_tsv`, on a store that
+ * still carries it (mail 0200), reconstructs `subject` and `from_address` out of its lexemes, and
+ * the whole of `messages`, `change_log`,
  * `folder_state` and `flag_state` are absent as a ROW-EXISTENCE finding, which cannot be
  * partially conceded — see the block above `public.accounts`.
  */
@@ -70,17 +71,20 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // a `connected` mailbox with a growing `sync_lag` — a state an operator otherwise stares at
   // with no explanation — so the console projects them as a bucket distinct from `lastError`, and
   // this census must name them or `assertContentBlind` refuses the very grant the console needs.
-  // The SAFEST columns on this list: a CLOSED set behind a CHECK constraint, so unlike
-  // `error_detail` — whose safety rests on a write-site allowlist — no value a mail server chose
-  // can reach the column at all.
+  // The SAFEST columns on this list. Until mail 0202 a member list in a CHECK; since then the
+  // members are held at the write door and the CHECK holds the SHAPE: one lower-case word of at
+  // most 48 characters, no blank, no capital, no `@`. So unlike `error_detail` — whose safety
+  // rests on a write-site allowlist alone — the database itself still refuses an address, a
+  // subject line or any other value a mail server chose. The same holds for `disabled_reason`
+  // and `organized_by_kind` below.
   "public.mailboxes": [
     "id", "account_id", "provider", "address", "created_at", "display_name", "status",
     "last_sync_at", "auth_kind", "error_code", "error_detail", "failed_at", "retry_count",
-    "kickstart_at", "sync_blocked_reason", "sync_blocked_since",
+    "sync_blocked_reason", "sync_blocked_since",
     // Mail 0130: the `sync_lag` rule reads it, and that rule runs on this role.
     "sync_progress_at",
     // The organizer facts the account page projects (cloud 0047's grants): each a closed set
-    // behind a CHECK or a timestamp. NOT `organized_by_name`, `organized_by_install_id` or
+    // behind a CHECK, a word held to mail 0202's shape, or a timestamp. NOT `organized_by_name`, `organized_by_install_id` or
     // `organized_by_capabilities`: each is a header off the lease message, which anything able to
     // write to the mailbox can choose. `staff-role.pg.test.ts` proves all three refuse.
     "organizer_role", "organized_by_kind", "organized_since",
@@ -90,6 +94,17 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   ],
   // PRESENCE ONLY: the composite primary key, and nothing that makes a mailbox connectable.
   "public.mailbox_credentials": ["mailbox_id", "transport"],
+  // WHERE THE ONE-TIME PASSES STAND (mail 0203): which pass, for which mailbox or account, and when
+  // it was asked for, begun and finished. Reliability data: ids, a name from a list this repository
+  // enumerates (`PASS_NAMES`), and timestamps. It replaces `mailboxes.kickstart_at`, which was
+  // granted on the same terms. NEVER `cursor`: it names the letter a pass stopped at, and a letter's
+  // id is the row-existence finding the block above `public.accounts` refuses.
+  "public.pass_progress": ["account_id", "job", "subject_id", "requested_at", "started_at", "done_at", "updated_at"],
+  // A CALENDAR CONNECTION (mail 0205): which provider, and how its sync stands. Ids, a provider and
+  // a status from lists the product writes, an error code and a timestamp: the class of
+  // `mailboxes.status` and `last_sync_at`. NEVER `label`, `server_url` or `principal` (the person's
+  // words and their calendar's address), never `list_token`, and no other calendar table.
+  "public.cal_connections": ["id", "account_id", "provider", "status", "error_code", "last_synced_at"],
   // THE SYNC-STALENESS ALERTS' INPUTS (mail 0064 + 0070). Reliability data by the isolation
   // rule's own words — ids, kinds and timestamps, the same class as `mailboxes.last_sync_at`
   // four entries up. Deliberately NOT `label` (user-chosen text) and NOT `ip`.
@@ -183,6 +198,10 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     // both, persisted because two rules are driver-keyed and one role-keyed, so a blind read can
     // only get them from the row.
     "cls", "affected_accounts", "fix_href", "title", "count",
+    // The account a per-subject alert is about (cloud 0102). The same id already stands in
+    // `alert_key`, so it tells this role nothing new; granted in the three verbs because the API
+    // host's alert pass inserts on this role and an insert names every column of the table.
+    "subject_account_id",
   ],
   // The alerting's own pulse (cloud 0030). Granted WHOLE, and there is nothing on the table that
   // could not be: a driver word from a two-value CHECK, a timestamp and four counts — no
@@ -257,6 +276,9 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   ],
   // Held storage limits (cloud 0055, granted by 0059): the alert pass's cap reader. Bytes and instants.
   "public.account_storage_holds": ["account_id", "seen_bytes", "held_bytes", "held_until", "updated_at"],
+  // An account closed by staff (cloud 0104): which account, when, by which staff id, under which
+  // request. What the console shows of a closed account; no word a person or a mail server wrote.
+  "public.account_closures": ["account_id", "closed_at", "closed_by_staff_id", "request_id"],
   "public.staff_audit_events": [
     "id", "at", "request_id", "staff_user_id", "staff_session_id", "actor_label", "roles",
     "action", "target_account_id", "target_user_id", "target_mailbox_id", "outcome",

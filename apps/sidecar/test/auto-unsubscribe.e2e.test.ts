@@ -198,7 +198,7 @@ describe("auto-unsubscribe on the standalone door", () => {
       nativeLocator: { folder: "INBOX", ref: `1:${address.length}` },
     }).returning();
     await s.db.insert(messageBodies).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       text: "the letter",
       // Stored header values are string ARRAYS — the shape `rules.ts#headerValues` reads;
       // a bare string is treated as absent, which `unsubscribeHeaderState` reports `no_header`.
@@ -211,7 +211,7 @@ describe("auto-unsubscribe on the standalone door", () => {
       },
     });
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: "INBOX",
       desiredFolder: SCREENER,
       lastSetBy: "us",

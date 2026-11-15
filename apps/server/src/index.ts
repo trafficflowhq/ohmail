@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { setNoticeSink, noticeSinkFor } from "@trafficflow/db";
-import { setupProdDatabase } from "@trafficflow/db/admin";
+import { sealedOpener, setupProdDatabase } from "@trafficflow/db/admin";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { createLogger } from "@trafficflow/core";
 import { aiBootFields } from "@trafficflow/core/ai-provider-env";
@@ -104,6 +104,9 @@ async function main(): Promise<void> {
       // `setupStep`, not `msg`: a generic key admitted by the census would let any later caller
       // log a driver message under it. Only this seam writes this one.
       log: (msg) => logger.info("db_setup", { setupStep: msg }),
+      // A database that still has 1.0.11's schema is moved to 2.0 here, in one transaction, before
+      // anything serves: this is a self-hosted server, and its own key ring opens what it sealed.
+      transition: { kind: "server", openSealed: sealedOpener(cfg.keyProvider) },
     });
     logger.info("boot_migrated", {
       appliedThisRun: report.appliedThisRun,

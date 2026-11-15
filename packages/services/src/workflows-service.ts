@@ -415,7 +415,7 @@ export class WorkflowsService {
       // Re-set DESIRED to the prior folder — the worker reconciles the physical move.
       // scoped-by: inv.messageId was just proved this account's (`owned`, two lines up)
       await tx.insert(folderState).values({
-        messageId: inv.messageId, desiredFolder: inv.toFolder, observedFolder: observed,
+        messageId: inv.messageId, accountId: ctx.accountId, desiredFolder: inv.toFolder, observedFolder: observed,
         lastSetBy: "us", reconcileStatus, conflict: false,
       }).onConflictDoUpdate({
         target: folderState.messageId,

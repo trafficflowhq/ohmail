@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, desc, isNull, like, sql } from "drizzle-orm";
@@ -5,7 +6,7 @@ import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import {
-  authEvents, authThrottle, credentials, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
+  authEvents, authThrottle, credentials, familyOf, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
 } from "@trafficflow/db/cloud";
 import {
   AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
@@ -630,6 +631,39 @@ describe("AuthService — lockout integrity", () => {
     const k = keys.client(ip);
     expect(slots).toEqual([`desktop_approval:ip:${k}`, `desktop_claim:ip:${k}`, `register:ip:invite:${k}`, `verify:ip:${k}`]);
     expect(slots.join(" "), "a plain digest of an address is reversed by a guess").not.toContain(hashToken(ip));
+  });
+
+  it("every counter key the sign-in doors write is of a registered family, in that family's shape", async () => {
+    // Cloud 0101 split the counters by what a key names, and a key nobody classed has no home:
+    // the families are `counter-keys.ts`. Driven through the doors, so a new counter is met here.
+    const base = makeTestAuthDeps();
+    const mail = new MailService({
+      mailer: new SpyMailer(), throttleKeys: throttleKeysFor(base.keyProvider),
+      config: { appUrl: ORIGIN, siteUrl: ORIGIN, supportEmail: "support@ohmail.app" },
+    });
+    const h = await harness({ ...base, mail });
+    const user = await register(h);
+    await h.svc.resendVerification(sessionCtx(h, user));
+    await expect(h.svc.claimDesktopLink(h.ctxFor(), { code: generateToken() })).rejects.toBeInstanceOf(ServiceError);
+    await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(generateToken()) });
+    await expect(h.svc.login(h.ctxFor(), { email: user.email, password: "not-the-account-password" }))
+      .rejects.toBeInstanceOf(ServiceError);
+    const secret = await enrollTotp(h, user);
+    h.clock.advance(30_000);
+    const ch = await h.svc.login(h.ctxFor(), { email: user.email, password: "account-signin-password" });
+    const good = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+    const wrong = good === "000000" ? "111111" : "000000";
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: wrong })).rejects.toBeInstanceOf(ServiceError);
+    await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: good });
+
+    const keys = (await h.db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key);
+    const families = new Set(keys.map((key) => familyOf(key)?.prefix ?? "nobody classed it"));
+    expect([...families].sort()).toEqual(expect.arrayContaining([
+      "desktop_approval:ip:", "desktop_claim:ip:", "factor-day:", "known:", "pw:", "register:ip:invite:", "user:", "verify:ip:",
+    ]));
+    expect(families.has("nobody classed it")).toBe(false);
+    // The family is named, never the key: it may carry what a person typed.
+    expect(keys.filter((key) => !familyOf(key)!.shape.test(key)).map((key) => familyOf(key)!.prefix)).toEqual([]);
   });
 
   it("the unknown-email decoy hash is computed once per hasher, not once per service", async () => {
@@ -2738,7 +2772,7 @@ describe("AuthService — a desktop link inherits the factor time", () => {
     const user = await register(h);
     const code = generateToken();
     await h.db.insert(loginTokens).values({
-      userId: user.userId, tokenHash: hashToken(code), methods: [], purpose: DESKTOP_LINK_PURPOSE,
+      userId: user.userId, accountId: accountOfUser(user.userId), tokenHash: hashToken(code), methods: [], purpose: DESKTOP_LINK_PURPOSE,
       expiresAt: new Date(h.clock.now().getTime() + 120_000),
     });
 
@@ -2818,7 +2852,7 @@ describe("AuthService — a desktop approval inherits the factor time", () => {
     const kind = "desktop-linux" as const;
     const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
     // Confirmed by hand, the way a row confirmed before the factor time was carried looks.
-    await h.db.update(loginTokens).set({ userId: user.userId, approvedAt: h.clock.now() })
+    await h.db.update(loginTokens).set({ userId: user.userId, accountId: user.accountId, approvedAt: h.clock.now() })
       .where(eq(loginTokens.id, approvalId));
 
     const claimed = await h.svc.claimDesktopApproval(h.ctxFor(), { approvalId, verifier, kind });
@@ -2900,7 +2934,7 @@ describe("AuthService — recovery codes", () => {
     // `batch_id`, unused, owned by this user — i.e. accepted by the old user+hash+unused match.
     const surplus = "1111-2222-3333";
     await h.db.insert(recoveryCodes).values({
-      userId: user.userId, codeHash: hashToken(surplus), batchId: randomUUID(),
+      userId: user.userId, accountId: accountOfUser(user.userId), codeHash: hashToken(surplus), batchId: randomUUID(),
       createdAt: new Date(h.clock.now().getTime() - 60_000),
     });
 
@@ -3027,7 +3061,7 @@ describe("AuthService — OAuth2 Authorization-Code + PKCE", () => {
     // A request on file that names no session, planted.
     const request = generateToken();
     await h.db.insert(loginTokens).values({
-      userId: user.userId, tokenHash: hashToken(request), methods: [], purpose: "oauth_authorize",
+      userId: user.userId, accountId: accountOfUser(user.userId), tokenHash: hashToken(request), methods: [], purpose: "oauth_authorize",
       oauthMeta: {
         clientId: "tf-macos", redirectUri: "trafficflow://auth", codeChallenge: s256(verifier),
         scope: "full", state: "s", sessionId: null, twofaAt: null,

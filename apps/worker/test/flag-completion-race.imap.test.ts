@@ -117,7 +117,7 @@ describe.skipIf(!PG_UP)("a press during a landed STORE reaches the real mailbox"
       // The person marked it READ: desired ahead of the server, which is the pending row the
       // reconciler picks up.
       await db.insert(flagState).values({
-        messageId: m!.id, desiredSeen: true, observedSeen: false,
+        messageId: m!.id, accountId: m!.accountId, desiredSeen: true, observedSeen: false,
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       });
 

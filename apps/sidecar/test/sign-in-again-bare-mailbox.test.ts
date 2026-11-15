@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -242,7 +243,7 @@ describe("Sign in again on a mailbox with no stored password", () => {
   const leftoverSmtp = (row: unknown): typeof mailboxCredentials.$inferInsert => {
     const r = row as typeof mailboxCredentials.$inferSelect;
     return {
-      mailboxId: r.mailboxId, transport: "smtp", secretEnc: r.secretEnc, keyVersion: r.keyVersion,
+      mailboxId: r.mailboxId, accountId: r.accountId, transport: "smtp", secretEnc: r.secretEnc, keyVersion: r.keyVersion,
       meta: { host: "smtp.two.invalid", port: 465, secure: true, user: TWO.user }, updatedAt: new Date(),
     };
   };
@@ -495,7 +496,7 @@ describe("Sign in again on a mailbox with no stored password", () => {
       });
       /* Mailbox two: kept by a 0127 sign-out, then an outgoing row written after it. */
       await c.s.db.insert(mailboxCredentials).values({
-        mailboxId: id2, transport: "smtp", secretEnc: one!.secretEnc, keyVersion: one!.keyVersion,
+        mailboxId: id2, accountId: accountOfMailbox(id2), transport: "smtp", secretEnc: one!.secretEnc, keyVersion: one!.keyVersion,
         meta: { host: "smtp.newer.invalid", port: 587, secure: false, user: TWO.user }, updatedAt: new Date(),
       });
       await c.s.stop();

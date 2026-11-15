@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -176,7 +177,7 @@ describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
         ...(r.arrivedAt === undefined ? {} : { createdAt: r.arrivedAt }),
       }).returning({ id: messages.id });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: r.folder, observedFolder: r.folder,
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: r.folder, observedFolder: r.folder,
         lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }
@@ -454,7 +455,7 @@ describe.skipIf(!AVAILABLE)("a held letter's arrival, on both implementations", 
         createdAt: ARRIVED, arrivedAt: r.receivedAt,
       }).returning({ id: messages.id });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: r.folder, observedFolder: r.folder, lastSetBy: "us", reconcileStatus: "reconciled",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: r.folder, observedFolder: r.folder, lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }
     await db.insert(rules).values({ accountId: ACCT, kind: "sender", match: "known@example.com", destination: "INBOX", provenance: "manual" });

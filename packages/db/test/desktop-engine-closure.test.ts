@@ -39,6 +39,9 @@ const ALLOWED = new Set([
   // The search extensions the engine sets up after its migrator, and the one index builder they
   // share with the server's setup; the lock constants sit in their own leaf so `migrate.ts` stays out.
   "search-setup.ts", "concurrent-index.ts", "migration-lock.ts",
+  // Where the 1.0 line ends and 2.0 begins: three constants and three pure readers, no import.
+  // The engine reads them to know which of a store's owed entries the 2.0 transition applies.
+  "journal-heads.ts",
 ]);
 
 /**

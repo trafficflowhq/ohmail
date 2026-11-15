@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -44,7 +45,7 @@ async function world(strays: number) {
     subject: "s", fromAddress: "person@example.com", unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const requestKey = deriveRequestKey({ auth: { user: "shared@x.example", pass: "basic-account-password" }, address: "shared@x.example" })!;

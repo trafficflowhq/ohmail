@@ -73,9 +73,9 @@ async function arrive(w: World, subject = "the roof", mailboxId?: string): Promi
     bodyHash: randomUUID(), dedupKey: randomUUID(), subject,
     fromAddress: "colleague@them.test", date: at, createdAt: at,
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }

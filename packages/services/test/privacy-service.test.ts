@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { describe, it, expect, vi } from "vitest";
@@ -68,7 +69,7 @@ function mockRemote(
  * its own case rather than being the accidental state of the others.
  */
 async function consented(db: Awaited<ReturnType<typeof makeCtx>>["db"], messageId: string): Promise<void> {
-  await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: true });
+  await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: true });
 }
 
 describe("PrivacyService.proxyImage", () => {
@@ -182,7 +183,7 @@ describe("PrivacyService.proxyImage", () => {
     const messageId = await seedMessage(db, accountId, mailboxId);
     // The account keeps the per-message flow, and the reader has NOT pressed "Show images".
     await db.insert(accountSettings).values({ accountId, blockRemoteImagesAt: new Date() });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
 
@@ -210,7 +211,7 @@ describe("PrivacyService.proxyImage", () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
     // No settings row, body present, nothing pressed: the product default, an ordinary picture.
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const realBytes = PNG_2X3;
     const remote = mockRemote({ contentType: "image/png", body: realBytes });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
@@ -237,7 +238,7 @@ describe("PrivacyService.proxyImage", () => {
   it("refuses a server-known tracker the fetch itself while pixel-blocking stands", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
 
@@ -280,7 +281,7 @@ describe("PrivacyService.proxyImage", () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     await db.insert(accountSettings).values({ accountId, loadTrackingPixelsAt: new Date() });
     const messageId = await seedMessage(db, accountId, mailboxId, { from: "spy@sender.example", folder: "INBOX" });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ body: GIF_1x1 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
 
@@ -309,7 +310,7 @@ describe("PrivacyService.proxyImage", () => {
   it.each(HELD_FOLDERS)("refuses an auto account's letter held in %s until the press, then serves it", async (folder) => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const messageId = await seedMessage(db, accountId, mailboxId, { folder });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ contentType: "image/png", body: PNG_2X3 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
     const url = "https://cdn.acme-com.example/photo.png";
@@ -323,7 +324,7 @@ describe("PrivacyService.proxyImage", () => {
   it("CONTROL: a letter let in at the press is served under auto before the mailbox files it", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const messageId = await seedMessage(db, accountId, mailboxId, { folder: "ohmail/Screener", desired: "INBOX" });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     const remote = mockRemote({ contentType: "image/png", body: PNG_2X3 });
     const svc = makePrivacyService({ remote, resolver: PUBLIC_DNS });
     await svc.proxyImage(ctx, { messageId, url: "https://cdn.acme-com.example/photo.png" });
@@ -334,7 +335,7 @@ describe("PrivacyService.proxyImage", () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     await db.insert(accountSettings).values({ accountId, loadTrackingPixelsAt: new Date() });
     const messageId = await seedMessage(db, accountId, mailboxId, { folder: "ohmail/Screener" });
-    await db.insert(messageBodies).values({ messageId, text: "b", loadedRemoteContent: false });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "b", loadedRemoteContent: false });
     await db.insert(trackerEvents).values({ accountId, messageId, kind: "pixel", trackerHost: "spy.example" });
     const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
     const blocked = async () => (await svc.listTrackerEvents(ctx, { messageId })).items[0]!.blocked;
@@ -357,7 +358,7 @@ describe("PrivacyService.loadRemote", () => {
     const messageId = await seedMessage(db, accountId, mailboxId);
     // NOT `consented()` — this is the test of the write that GRANTS consent, so the row must
     // start out unconsented or the assertion below proves nothing.
-    await db.insert(messageBodies).values({ messageId, text: "body", html: "<p>body</p>" });
+    await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "body", html: "<p>body</p>" });
     const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
 
     await svc.loadRemote(ctx, messageId);
@@ -501,7 +502,7 @@ describe("PrivacyService.listTrackerEvents", () => {
   it("blocked follows the pixel switch, not the images grant alone", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const m = await seedMessage(db, accountId, mailboxId);
-    await db.insert(messageBodies).values({ messageId: m, text: "b", loadedRemoteContent: true });
+    await db.insert(messageBodies).values({ messageId: m, accountId: accountOfMessage(m), text: "b", loadedRemoteContent: true });
     await db.insert(trackerEvents).values({ accountId, messageId: m, kind: "pixel", trackerHost: "spy.com" });
     const svc = makePrivacyService({ remote: mockRemote({ body: GIF_1x1 }), resolver: PUBLIC_DNS });
 

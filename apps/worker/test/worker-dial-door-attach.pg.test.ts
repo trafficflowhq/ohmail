@@ -33,13 +33,13 @@ async function seed(db: Db, accountId: string, imap: { host: string; port: numbe
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "u@door.example" }).returning();
   const enc = await KP.encrypt("fixture");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: imap.host, port: imap.port, secure: imap.port === 993, user: "u@door.example" },
   });
   if (smtp) {
     const s = await KP.encrypt("fixture");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp", secretEnc: s.ciphertext, keyVersion: s.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp", secretEnc: s.ciphertext, keyVersion: s.keyVersion,
       meta: { host: smtp.host, port: smtp.port, secure: smtp.port === 465, user: "u@door.example" },
     });
   }

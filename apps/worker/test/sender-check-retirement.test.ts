@@ -31,7 +31,7 @@ async function world(opts: { now?: () => number; overlapMs?: number } = {}) {
       senderCheck: check,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled",
     });
     return m!.id;
   };

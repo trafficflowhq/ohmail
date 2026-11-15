@@ -87,9 +87,9 @@ describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
       ...(o.threadId ? { threadId: o.threadId } : {}),
       nativeLocator: { folder: GATE, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired ?? GATE, observedFolder: o.observed ?? GATE,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired ?? GATE, observedFolder: o.observed ?? GATE,
       lastSetBy: o.lastSetBy ?? "external", reconcileStatus: "reconciled", conflict: false,
     });
     // The change row every production placement writes: the offer's dismissal anchors on the log.
@@ -110,9 +110,9 @@ describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
       threadId: t!.id, nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
     // Plain headers: a REAL reply, not the away responder's (`autoReplyByUsWhere` must not fire).
-    await db.insert(messageBodies).values({ messageId: reply!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: reply!.id, accountId: reply!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: reply!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: reply!.id, accountId: reply!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
     });
     return t!.id;

@@ -68,7 +68,7 @@ async function world(shape: "first" | "rerun", opts: { eraseInThePress?: boolean
     organizeConsentedAt: shape === "first" ? null : NOW,
   }).returning();
   await tx.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   if (shape === "rerun") {
     await tx.insert(accountSettings).values({

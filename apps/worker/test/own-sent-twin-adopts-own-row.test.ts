@@ -34,7 +34,7 @@ async function world() {
   const me = `me-${accountId.slice(0, 8)}@own.invalid`;
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 1n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 1n, uidnext: 100n });
   const fleet = new FakeAdapterFleet();
   const adapter = fleet.factory(
     { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },

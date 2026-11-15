@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
+import { messageSearch, messages, passDone, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
@@ -352,10 +352,16 @@ const INDEX_PROGRESS_FRESH_MS = 30_000;
 // pg_trgm and the word index are properties of the physical database, not the request: asked once
 // per handle, and a "no" to either asked again after a while (`storeProbe`), so a later install is seen.
 const trgmProbe = storeProbe();
-/** What the probe read, and each account's search documents as the catalog's statistics estimate them (kept in memory only). */
-interface IndexFacts { readonly trigram: boolean; readonly words: boolean; readonly docs: ReadonlyMap<string, number> }
+/**
+ * What the probe read, and each account's search documents as the catalog's statistics estimate
+ * them (kept in memory only). `oldColumns`: do the columns the search read before the search
+ * document (`message_bodies.body_tsv`, with `messages.subject_tsv`) still stand on this store?
+ * Mail 0200 drops them where no letter is found by them alone, so a store made from empty has
+ * none, and an arm that names them fails there.
+ */
+interface IndexFacts { readonly trigram: boolean; readonly words: boolean; readonly oldColumns: boolean; readonly docs: ReadonlyMap<string, number> }
 const indexFacts = new WeakMap<object, IndexFacts>();
-const NO_INDEXES: IndexFacts = { trigram: false, words: false, docs: new Map() };
+const NO_INDEXES: IndexFacts = { trigram: false, words: false, oldColumns: false, docs: new Map() };
 /** From this many search documents a mailbox is `large` in `search_timing`. */
 const SEARCH_LARGE_DOCS = 50_000;
 function storeIndexes(db: Db): Promise<IndexFacts> {
@@ -377,13 +383,18 @@ function storeIndexes(db: Db): Promise<IndexFacts> {
     db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as trigram,
         exists (select 1 from pg_index x where x.indexrelid = to_regclass('public.message_search_words_idx')
           and x.indisvalid and x.indisready) as words,
+        exists (select 1 from information_schema.columns c where c.table_schema = 'public'
+          and c.table_name = 'message_bodies' and c.column_name = 'body_tsv') as old_columns,
         (select c.reltuples from pg_class c where c.oid = to_regclass('public.message_search')) as tuples,
         (select json_object_agg(u.v, u.f) from (select st.most_common_vals::text::text[] as vals, st.most_common_freqs as freqs
             from pg_stats st where st.schemaname = 'public' and st.tablename = 'message_search' and st.attname = 'account_id'
             order by st.inherited limit 1) st cross join lateral unnest(st.vals, st.freqs) as u(v, f)) as shares`))
       .then((r) => {
-        const row = rowsOf<{ trigram: boolean; words: boolean; tuples: unknown; shares: unknown }>(r)[0];
-        const facts = { trigram: Boolean(row?.trigram), words: Boolean(row?.words), docs: docsOf(row?.tuples, row?.shares) };
+        const row = rowsOf<{ trigram: boolean; words: boolean; old_columns: boolean; tuples: unknown; shares: unknown }>(r)[0];
+        const facts = {
+          trigram: Boolean(row?.trigram), words: Boolean(row?.words), oldColumns: Boolean(row?.old_columns),
+          docs: docsOf(row?.tuples, row?.shares),
+        };
         indexFacts.set(key, facts);
         return facts.trigram && facts.words;
       })).then(() => indexFacts.get(key) ?? NO_INDEXES);
@@ -478,7 +489,11 @@ const folderParts = new WeakMap<SQL, { rest: SQL; of: (id: SQL) => SQL }>();
  * account-keyed word index (`message_search_words_idx`), and whether the account has any search
  * document yet (`docs`, read while the marker is unwritten).
  */
-interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean; readonly letters?: number }
+interface StoreFacts {
+  readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean; readonly letters?: number;
+  /** The store still carries the columns the search read before the search document ({@link IndexFacts}). */
+  readonly oldColumns: boolean;
+}
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch {
@@ -689,7 +704,10 @@ export class SearchService {
     // reads them, every branch held to the exclusion.
     const ops = queryOperandsOf(q);
     const pos = positiveText(q);
-    const legacy = built ? null : d.search.unindexed(pos, { trigram, threshold: FUZZY_THRESHOLD });
+    // The arm for letters without a document names the old columns: planned only where the store
+    // still has them AND the account's index is not stamped built. A store without them has no
+    // letter that only they find (mail 0200's guard), so nothing is left unread.
+    const legacy = built || !store.oldColumns ? null : d.search.unindexed(pos, { trigram, threshold: FUZZY_THRESHOLD });
     const legacyNone = legacy !== null && pos !== q ? d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD })?.excluded : undefined;
     const docless = legacy !== null && !store.docs;
     const bare = (b: SearchArm): Branch => {
@@ -2131,7 +2149,7 @@ export class SearchService {
     const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
     const facts = await storeIndexes(ctx.db);
-    const { trigram, words } = facts;
+    const { trigram, words, oldColumns } = facts;
     // The account's letters as the catalog's statistics estimate them, where they name it: a set read's walk of History whole.
     const estimated = facts.docs.get(ctx.accountId.toLowerCase());
     const letters = estimated === undefined ? {} : { letters: estimated };
@@ -2141,7 +2159,7 @@ export class SearchService {
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
-      return covered(await fn(ctx.db, { built, trigram, words, docs: true, ...letters }), open);
+      return covered(await fn(ctx.db, { built, trigram, words, oldColumns, docs: true, ...letters }), open);
     }
     const handle = ctx.db as unknown as object;
     const known = markerWritten.get(handle) ?? new Set<string>();
@@ -2152,13 +2170,12 @@ export class SearchService {
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx(async (t) => {
         if (gate) await gate();
-        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true, ...letters }));
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, oldColumns, docs: true, ...letters }));
         return covered(out, truthy(settings[0]?.[0]));
       });
     }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
-    const marker = sql`exists (select 1 from ${accountSettings}
-      where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
+    const marker = passDone("search_index_backfill", ctx.accountId);
     const docs = sql`exists (select 1 from ${messageSearch} where ${messageSearch.accountId} = ${ctx.accountId})`;
     return tx(async (t) => {
       if (gate) await gate();
@@ -2168,7 +2185,7 @@ export class SearchService {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
         known.add(ctx.accountId);
       }
-      return covered(await fn(t, { built, trigram, words, docs: truthy(row?.[2]), ...letters }), truthy(row?.[1]));
+      return covered(await fn(t, { built, trigram, words, oldColumns, docs: truthy(row?.[2]), ...letters }), truthy(row?.[1]));
     });
   }
 

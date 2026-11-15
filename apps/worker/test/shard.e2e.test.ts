@@ -41,7 +41,7 @@ async function seedMailbox(db: Db, accountId: string): Promise<string> {
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return row!.id;
@@ -165,7 +165,7 @@ describe("shard seam", () => {
         fromAddress: "a@ex.example", snippet: "a preview left behind", deletedAt: new Date(),
         nativeLocator: { folder: "INBOX", ref: "1:1" },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, withheldReason: "expunged" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, withheldReason: "expunged" });
       return m!.id;
     };
     const snippetOf = async (id: string): Promise<string | null> =>

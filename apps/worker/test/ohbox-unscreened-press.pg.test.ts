@@ -66,9 +66,9 @@ async function seedOhbox(w: World, from: string, arrivedAt = ARRIVED): Promise<s
     date: arrivedAt, createdAt: arrivedAt, arrivedAt, unread: false,
     nativeLocator: { folder: OHBOX, ref: `1:${i}` },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
     lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -84,10 +84,10 @@ async function seedNews(w: World, from: string, arrivedAt: Date | null): Promise
     nativeLocator: { folder: NEWS, ref: `2:${i}` },
   }).returning();
   await db.insert(messageBodies).values({
-    messageId: m!.id, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.test/u>"] },
+    messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.test/u>"] },
   });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

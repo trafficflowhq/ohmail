@@ -52,7 +52,7 @@ async function seed(w: World, o: {
     threadId: o.threadId ?? null,
     nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers });
   return m!.id;
 }
 

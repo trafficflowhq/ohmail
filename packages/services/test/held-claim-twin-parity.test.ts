@@ -51,9 +51,9 @@ async function world(o: {
       ...(held && (o.unconfirmed === "marked" || (claim && o.claimMarked)) ? { unconfirmedHold: true } : {}),
       date: at, arrivedAt: at, unread: false, createdAt: at, nativeLocator: { folder, ref: `1:${randomUUID().slice(0, 4)}` },
     } as never).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   await put("INBOX", false, new Date("2026-09-30T09:00:00.000Z"));
@@ -175,9 +175,9 @@ describe("a letter held for want of confirmation while the first import runs", (
       fromAddress: OWNED, fromName: null, senderCheck: "none", senderCheckBy: "ingest", authVerdict: "unavailable",
       unconfirmedHold: true, date: at, arrivedAt: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: "1:7" },
     } as never).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(contacts).values({ accountId, address: OWNED, source: "inferred" });
     const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `ki-${randomUUID().slice(0, 8)}` };

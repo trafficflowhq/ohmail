@@ -14,6 +14,9 @@ import {
   type JournalSpec,
 } from "../src/baseline.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { CLOUD_JOURNAL, MAIL_JOURNAL } from "../src/journal-specs.js";
+import { journalThrough } from "../src/testing-journal.js";
+import { OLD_HEADS } from "../src/journal-heads.js";
 import { catalogFingerprint } from "./_catalog.js";
 import { replacedConstraints } from "./_replaced-constraints.js";
 
@@ -48,12 +51,15 @@ const FOLDER_WHENS: ReadonlySet<number> = new Set(
   (JSON.parse(readFileSync(join(LEGACY_DIR, "meta", "_journal.json"), "utf8")) as
     { entries?: Array<{ when: number }> }).entries?.map((e) => e.when) ?? [],
 );
-const MAIL: JournalSpec = {
-  name: "mail", dir: join(HERE, "..", "..", "db-mail", "drizzle"), migrationsSchema: "drizzle_mail",
-};
-const CLOUD: JournalSpec = {
-  name: "cloud", dir: join(HERE, "..", "drizzle-cloud"), migrationsSchema: "drizzle_cloud",
-};
+/*
+ * THE 1.0 ROAD, as it stood at the old heads (`journalThrough`): adoption is a property of that
+ * road, whose entries after the cutoff only ever added to what was adopted. 2.0's entries retire
+ * objects on purpose and are held by the transition's own tests.
+ */
+const MAIL_CUT = journalThrough(MAIL_JOURNAL, OLD_HEADS.mail.when);
+const CLOUD_CUT = journalThrough(CLOUD_JOURNAL, OLD_HEADS.cloud.when);
+const MAIL: JournalSpec = MAIL_CUT.spec;
+const CLOUD: JournalSpec = CLOUD_CUT.spec;
 
 const ADMIN_URL = PG_TEST_URL;
 
@@ -83,6 +89,8 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
    * generous about rather than sharp.
    */
   afterAll(async () => {
+    MAIL_CUT.dispose();
+    CLOUD_CUT.dispose();
     for (const c of open) await c.end({ timeout: 5 }).catch(() => {});
     for (const db of created) {
       await admin?.unsafe(`drop database if exists "${db}" with (force)`).catch(() => {});

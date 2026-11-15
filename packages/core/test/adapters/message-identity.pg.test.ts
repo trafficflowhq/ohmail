@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, auditLog } from "@trafficflow/db";
+import { accountOfMessage, accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, auditLog } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -115,7 +115,7 @@ describe.skipIf(!AVAILABLE)("message identity against real Postgres", () => {
       isPrimary: true,
     });
     await owned.db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: locator.folder, observedFolder: locator.folder,
+      messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: locator.folder, observedFolder: locator.folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return row!.id;

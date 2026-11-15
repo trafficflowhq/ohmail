@@ -366,8 +366,7 @@ describe("a row that still fails an integrity constraint is quarantined, named, 
   });
 
   it("a message DELETE takes its search document with it", async () => {
-    // Mail 0125's document hangs off the message by FK; a standalone-era ingest or the store's
-    // backfill writes it, so it is seeded between the pulls the way the ledger is above.
+    // Mail 0125's document hangs off the message by FK; the mirror writes it with the letter.
     const { opened, world, cursorPath } = await standUp();
     const db = opened.db;
     const msgId = randomUUID();
@@ -378,11 +377,8 @@ describe("a row that still fails an integrity constraint is quarantined, named, 
       db, world, auth: fakeAuth([page1, page2]), cursorPath, now: () => new Date(), log: capture(lines),
     });
     await mirror.pullOnce();
-    await db.insert(messageSearch).values({
-      messageId: msgId, accountId: world.accountId, terms: "quarterly letter",
-      headTsv: sql`to_tsvector('simple', 'quarterly letter')`, textTsv: sql`to_tsvector('simple', '')`,
-      source: "text",
-    });
+    expect(await db.select().from(messageSearch).where(eq(messageSearch.messageId, msgId)),
+      "the letter's document was written with it").toHaveLength(1);
 
     await mirror.pullOnce();
 

@@ -1,7 +1,7 @@
 import { and, count, eq, gt, isNull, isNotNull, desc, type SQL } from "drizzle-orm";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { type Tx } from "@trafficflow/db";
-import { pairingTokens, users } from "@trafficflow/db";
+import { accountOfUser, pairingTokens, users } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
 import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, type PairedDeviceKind } from "./auth/session-lifecycle.js";
 import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
@@ -172,6 +172,8 @@ async function writePairingToken(
   const expiresAt = new Date(now.getTime() + ttlMs);
   const [row] = await tx.insert(pairingTokens).values({
     createdByUserId,
+    // The creator's account, and none where there is no creator (the first setup token).
+    accountId: createdByUserId === null ? null : accountOfUser(createdByUserId),
     grant,
     tokenHash: hashToken(token),
     label,

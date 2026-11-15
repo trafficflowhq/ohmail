@@ -100,7 +100,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — no organizer, no spend", () => 
       nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     // Its copy in the Screener, as the ingest records one.

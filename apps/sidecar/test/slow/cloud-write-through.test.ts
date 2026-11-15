@@ -161,7 +161,7 @@ function makeFakeCloud(threadId: string, msgId: string) {
         const patch = JSON.parse(bodyText(init) || "{}") as { ohboxBar?: string | null };
         if ("ohboxBar" in patch) screening.ohboxBar = patch.ohboxBar ?? null;
       }
-      return json({ ...screening, defaultBar: "Keep my Ohbox for real people.", screenerAutoApply: false });
+      return json({ ...screening, defaultBar: "Keep my Ohbox for real people." });
     }
 
     // Any other path is a MUTATION (or an attachment/media byte read). A move commits a folder

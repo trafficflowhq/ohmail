@@ -3,6 +3,7 @@ import {
   assertSessionUrl, setupProdDatabase, PROD_DB_HOST_ENV,
 } from "./setup-prod.js";
 import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
+import { NOTHING_OPENS } from "./transition/index.js";
 
 /**
  * The `pnpm db:setup:prod` entry point, kept in a module NOTHING re-exports. The guard at the
@@ -25,8 +26,29 @@ import { dataApiPolicyFromEnv } from "./supabase-lockdown-core.js";
  * this file's own `FAILED:` line. `.then`, NOT top-level `await`: this file reaches two Next
  * builds. `pathToFileURL`, not `file://${argv}` — a checkout under a SPACE exits 0 silently.
  */
-async function runCli(): Promise<number> {
+/**
+ * `--store cloud` or `--store server`: what kind of store this is, for the one run that finds it at
+ * 1.0.11's schema and moves it to 2.0. No default: without the word that run refuses. Any other
+ * run never reads it.
+ */
+function storeKindOf(argv: readonly string[]): "cloud" | "server" | undefined {
+  const at = argv.indexOf("--store");
+  const word = at >= 0 ? argv[at + 1] : argv.find((a) => a.startsWith("--store="))?.slice("--store=".length);
+  if (word === undefined) return undefined;
+  if (word !== "cloud" && word !== "server") throw new Error(`--store takes 'cloud' or 'server', not '${String(word).slice(0, 20)}'`);
+  return word;
+}
+
+/*
+ * THIS PROGRAM HOLDS NO KEY RING: the envelope is `packages/core`'s, which this package does not
+ * reach. The move to 2.0 opens every sealed value of the store, so from here a store with nothing
+ * sealed moves, and one that holds a sealed value is rolled back whole and says which place. A
+ * host that holds the ring calls `setupProdDatabase` with `transition.openSealed` instead, as the
+ * self-hosted server does at its start.
+ */
+async function runCli(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   try {
+    const store = storeKindOf(argv);
     const url = assertSessionUrl(process.env.DATABASE_URL_SESSION);
     const expectedHost = process.env[PROD_DB_HOST_ENV]?.trim();
     if (!expectedHost) {
@@ -47,6 +69,7 @@ async function runCli(): Promise<number> {
       // used to be the whole story here, and a green census is not a verdict about a public
       // key reading tables over HTTP.
       dataApi: dataApiPolicyFromEnv(process.env),
+      ...(store ? { transition: { kind: store, openSealed: NOTHING_OPENS } } : {}),
     });
     console.log(JSON.stringify(report, null, 2));
     console.log(

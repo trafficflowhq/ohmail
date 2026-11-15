@@ -41,9 +41,9 @@ async function world(rule: { match: string; destination: string } | null) {
     senderCheck: "impersonation", senderCheckBrand: "PostFinance",
     date: RECENT, unread: true, createdAt: RECENT, nativeLocator: { folder: GATE, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   if (rule) {
     await db.insert(rules).values({

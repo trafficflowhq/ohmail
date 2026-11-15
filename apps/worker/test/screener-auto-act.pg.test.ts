@@ -30,13 +30,13 @@ import { repoWithFailingMethod } from "./_fault.js";
  * Filed automatically to put back, where the press, a person deciding about the address, files every
  * held letter under their rule. The seeded letters carry the provider's `pass`, as a Gmail-held
  * mailbox's would. The last
- * two arms hold the consent: the old no-AI switch (`screener_auto_apply_at`) arms nothing, driven on
- * the lane's real Postgres as the worker's cycle tail drives the act. Advice to let a sender in files
+ * two arms hold the consent: bought suggestions arm nothing without it, driven on the lane's real
+ * Postgres as the worker's cycle tail drives the act. Advice to let a sender in files
  * nothing on this store either: only a person's press admits.
  *
  * MUTATIONS WATCHED (each restored, `cmp`-proven): `stampBaseline: false` → `true` ⇒ the divergence
  * arm; the consent re-ask + `return null` deleted ⇒ the revoke arm; the consent probe deleted ⇒
- * the no-AI switch arm. The last cases drive the consent the cycle tail hands the pass
+ * the no-consent arm. The last cases drive the consent the cycle tail hands the pass
  * and the refusal the act records on the suggestion row.
  */
 
@@ -73,8 +73,8 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     });
   }
 
-  /** One account, one mailbox, `n` held senders each with a confident Spam verdict; the no-AI switch on unless said. */
-  async function seed(n: number, opts: { suggest?: boolean; noAiSwitch?: boolean } = {}): Promise<{
+  /** One account, one mailbox, `n` held senders each with a confident Spam verdict. */
+  async function seed(n: number, opts: { suggest?: boolean } = {}): Promise<{
     accountId: string; mailboxId: string; ids: string[]; senders: string[];
   }> {
     const accountId = randomUUID();
@@ -83,12 +83,9 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `act-${tag}@example.test`, status: "connected",
     }).returning();
-    const switchAt = opts.noAiSwitch === false ? null : NOW;
-    await db.insert(accountSettings).values({
-      accountId, screenerAutoApplyAt: switchAt, screeningScope: "all_time",
-    }).onConflictDoUpdate({
+    await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" }).onConflictDoUpdate({
       target: accountSettings.accountId,
-      set: { screenerAutoApplyAt: switchAt, screeningScope: "all_time" },
+      set: { screeningScope: "all_time" },
     });
     const ids: string[] = [];
     const senders: string[] = [];
@@ -100,7 +97,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
         nativeLocator: { folder: SCREENER, ref: `1:${200 + i}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await copyOnRecord({ accountId, mailboxId: mb!.id }, m!.id, 200 + i);
@@ -203,11 +200,10 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     for (const id of ids) expect((await intentOf(id)).desired).toBe(SCREENER);
   }, 60_000);
 
-  /* THE OLD NO-AI SWITCH ARMS NO AI. It wrote `screener_auto_apply_at`, which nothing reads now.
-     Driven as the worker's cycle tail drives the act, with the consent every production caller
-     passes (pinned by the callers census). Red at an earlier base, where the act took that switch
-     as its opt-in and filed the stranger into Spam. */
-  it("with only the old no-AI switch on, the act files nothing", async () => {
+  /* BOUGHT SUGGESTIONS ARE NO CONSENT TO ACT. Driven as the worker's cycle tail drives the act,
+     with the consent every production caller passes (pinned by the callers census). Red at an
+     earlier base, where the act took another switch as its opt-in and filed the stranger into Spam. */
+  it("with suggestions bought and no consent to act, the act files nothing", async () => {
     const w = await seed(1);
     // Buying suggestions is not consent to act on them either.
     await db.update(accountSettings).set({ autoSuggestAt: NOW })
@@ -215,15 +211,14 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     const acted = await screenerAutoActPass(
       db as unknown as Tx, { accountId: w.accountId, consent: cycleTailConsent(w.accountId) }, NOW,
     );
-    expect(acted, "the no-AI switch armed the act").toMatchObject({ ran: false, filed: 0 });
+    expect(acted, "the act ran without its consent").toMatchObject({ ran: false, filed: 0 });
     expect((await intentOf(w.ids[0]!)).desired, "a suggestion was acted on").toBe(SCREENER);
     expect(await ruleOf(w.accountId, w.senders[0]!), "the act promoted a rule").toBeNull();
   }, 60_000);
 
-  /* CONTROL: the act's own consent, given, still files — with the no-AI switch OFF, so nothing but
-     that consent is in play. */
-  it("the act's own consent, given, files the confident sender with the switch off", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+  /* CONTROL: the act's own consent, given, still files: nothing but that consent is in play. */
+  it("the act's own consent, given, files the confident sender", async () => {
+    const w = await seed(1);
     const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
     expect(r).toMatchObject({ ran: true, filed: 1, failed: 0 });
     expect((await intentOf(w.ids[0]!)).desired).toBe(SPAM);
@@ -248,7 +243,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
      cycle tail hands the pass files the confident sender and writes the rule as ohmail's. Red at
      the base, where the cycle tail handed `null` and nothing could turn it on. */
   it("with the act turned on, the cycle tail's consent files the confident sender as ohmail's rule", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+    const w = await seed(1);
     await setAutoSuggest(ctxOf(w.accountId), true);
     await setAutoAct(ctxOf(w.accountId), true);
     expect(await actColumn(w.accountId), "the writer stored nothing").toEqual(NOW);
@@ -263,7 +258,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
   }, 60_000);
 
   it("the account's AI switch off outranks the act's consent: nothing is read or filed", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+    const w = await seed(1);
     await setAutoSuggest(ctxOf(w.accountId), true);
     await setAutoAct(ctxOf(w.accountId), true);
     await db.update(accounts).set({ aiEnabled: false }).where(eq(accounts.id, w.accountId));
@@ -276,7 +271,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
   }, 60_000);
 
   it("turning automatic suggestions off withdraws the act; the act alone is refused", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+    const w = await seed(1);
     await expect(setAutoAct(ctxOf(w.accountId), true), "the act turned on without suggestions")
       .rejects.toMatchObject({ code: "auto_suggest_required", httpStatus: 400 });
     expect(await actColumn(w.accountId)).toBeNull();
@@ -295,7 +290,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
      insert, through the handle `transaction` hands its callback); the suggestion row records
      `store_fault`, rides the delta, and the next act that files clears it. */
   it("a refused act records its refusal on the suggestion row and the mirror entity carries it", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+    const w = await seed(1);
     const [sug] = await db.select({ id: routingDecisions.id }).from(routingDecisions)
       .where(eq(routingDecisions.messageId, w.ids[0]!)).limit(1);
     let faults = 0;
@@ -330,7 +325,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
 
   /** One waiting sender at a brand's own domain, its provider's verdict `verdict`, advised to the Ohbox. */
   async function brandHeld(verdict: string | null): Promise<{ accountId: string; mailboxId: string; id: string; sender: string }> {
-    const w = await seed(0, { noAiSwitch: false });
+    const w = await seed(0);
     const sender = "service@paypal.com";
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `brand-${w.accountId}`, dedupKey: `brand:${w.accountId}`,
@@ -338,7 +333,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
       nativeLocator: { folder: SCREENER, ref: "1:900" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await copyOnRecord(w, m!.id, 900);
@@ -370,7 +365,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
       nativeLocator: { folder: SCREENER, ref: `1:${ref}` }, ...facts,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await copyOnRecord(w, m!.id, ref);
@@ -381,7 +376,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
   async function genuineAndForged(): Promise<{
     accountId: string; mailboxId: string; genuine: string; forged: string; sender: string;
   }> {
-    const w = await seed(0, { noAiSwitch: false });
+    const w = await seed(0);
     const sender = "service@paypal.com";
     const letter = async (ref: number, authVerdict: string, date: Date): Promise<string> => {
       const [m] = await db.insert(messages).values({
@@ -390,7 +385,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
         nativeLocator: { folder: SCREENER, ref: `1:${ref}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await copyOnRecord(w, m!.id, ref);
@@ -428,7 +423,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
   }, 60_000);
 
   it("each sender's own letters: another sender's unconfirmed letter leaves a confirmed sender's deny whole", async () => {
-    const w = await seed(1, { noAiSwitch: false });
+    const w = await seed(1);
     const stranger = await heldBeside(w, "anna@studio-nord.example", 904, { authVerdict: "unavailable" });
     const r = await screenerAutoActPass(db as unknown as Tx, { accountId: w.accountId, consent: GIVEN }, NOW);
     expect(await ruleOf(w.accountId, w.senders[0]!), "a confirmed sender's deny was cut for another sender's letter")

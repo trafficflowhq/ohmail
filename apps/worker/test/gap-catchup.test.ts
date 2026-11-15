@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -79,9 +80,9 @@ async function seedArrival(w: World, o: {
     ...(o.threadId ? { threadId: o.threadId } : {}),
     ...(o.authVerdict ? { authVerdict: o.authVerdict } : {}),
   }).returning();
-  if (o.headers) await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: o.headers });
+  if (o.headers) await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: o.headers });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: folder, observedFolder: folder,
     lastSetBy: o.lastSetBy ?? "peer", reconcileStatus: "reconciled", conflict: false,
     ...(o.decidedAt ? { decidedAt: o.decidedAt } : {}),
   });
@@ -569,7 +570,7 @@ describe("letters from new senders in a gap go to the Screener, and only on the 
     // The reply arm's evidence: a Sent copy of the person's own writing, after the mailbox was connected.
     await w.db.update(mailboxes).set({ createdAt: new Date("2026-09-01T00:00:00Z"), sentFolder: "Sent" })
       .where(eq(mailboxes.id, w.mailboxId));
-    await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder: "Sent" });
+    await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder: "Sent" });
     const [plan] = await w.db.insert(threads).values({ accountId: w.accountId, subject: "plan", rootMessageIdHeader: "own-1@rig.test" }).returning();
     const sentAt = new Date("2026-10-08T09:00:00Z");
     const [sent] = await w.db.insert(messages).values({
@@ -578,12 +579,12 @@ describe("letters from new senders in a gap go to the Screener, and only on the 
       messageIdHeader: "own-1@rig.test", toAddresses: [{ name: null, address: "team@lists.rig.test" }],
       nativeLocator: { folder: "Sent", ref: "1:1" },
     }).returning();
-    await w.db.insert(messageBodies).values({ messageId: sent!.id, text: "", html: null, headers: {} });
+    await w.db.insert(messageBodies).values({ messageId: sent!.id, accountId: accountOfMessage(sent!.id), text: "", html: null, headers: {} });
     await w.db.insert(messageInstances).values({
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: sent!.id, folder: "Sent", uidvalidity: 1n, uid: 1, isPrimary: true,
     });
     await w.db.insert(folderState).values({
-      messageId: sent!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
+      messageId: sent!.id, accountId: accountOfMessage(sent!.id), desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
     });
     // An answered sender: the person wrote to them in the thread their letter is in.
     const [talk] = await w.db.insert(threads).values({ accountId: w.accountId, subject: "talk" }).returning();
@@ -722,7 +723,7 @@ describe("letters from new senders in a gap go to the Screener, and only on the 
       arrivedAt: IN_GAP,
     }))).returning({ id: messages.id, from: messages.fromAddress });
     await w.db.insert(folderState).values(made.map((m) => ({
-      messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "peer" as const,
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "peer" as const,
       reconcileStatus: "reconciled" as const, conflict: false,
     })));
     expect(await run(w)).toMatchObject({ offered: 1 });

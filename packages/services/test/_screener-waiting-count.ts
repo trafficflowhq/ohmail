@@ -50,7 +50,7 @@ export async function waitingFixture(db: Db, opts: { single?: boolean } = {}) {
       nativeLocator: { folder, ref: `1:${n}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };

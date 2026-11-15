@@ -9,7 +9,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, approvals, auditLog, changeLog, contacts, drafts, folderState, mailboxes, messageBodies, messageStates, messages, rules, threads } from "@trafficflow/db";
+import { accounts, approvals, auditLog, changeLog, contacts, drafts, folderState, mailboxes, messageBodies, messageStates, messages, passProgress, rules, threads } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runSensitiveRescreen } from "../src/sensitive-rescreen.js";
 import type { Db } from "../src/context.js";
@@ -95,14 +95,14 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
     });
     // STAMPED A MINUTE BEFORE THE SEED, never the column's `now()`: a seed is mail that was in the
     // Ohbox BEFORE any walk began. Left to the default, a walk starting in the seed's own
     // millisecond reads the seed as written inside the walk and withholds its marker, which is the
     // product's right answer to a real write and was this file red one alone run in twelve.
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: o.observed ?? OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: o.observed ?? OHBOX,
       lastSetBy: o.lastSetBy ?? "us", reconcileStatus: "reconciled", conflict: false,
       updatedAt: new Date(Date.now() - 60_000),
     });
@@ -117,19 +117,18 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
   const sortedIds = (n: number): string[] =>
     Array.from({ length: n }, () => randomUUID()).sort();
 
-  /** The mailbox's durable pass columns, read as one. */
+  /** Where the pass stands for the mailbox, read as one; no row reads as every mark empty. */
+  const marksOf = async (mailboxId: string): Promise<{ at: Date | null; cursor: string | null; started: Date | null }> => {
+    const [r] = await db.select({ at: passProgress.doneAt, cursor: passProgress.cursor, started: passProgress.startedAt })
+      .from(passProgress).where(and(eq(passProgress.job, "sensitive_rescreen"), eq(passProgress.subjectId, mailboxId))).limit(1);
+    return r ?? { at: null, cursor: null, started: null };
+  };
   const passStateOf = async (mailboxId: string): Promise<{ at: Date | null; cursor: string | null }> => {
-    const [r] = await db.select({
-      at: mailboxes.sensitiveRescreenAt, cursor: mailboxes.sensitiveRescreenCursor,
-    }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
-    return { at: r!.at, cursor: r!.cursor };
+    const { at, cursor } = await marksOf(mailboxId);
+    return { at, cursor };
   };
   /** The walk epoch — NULL exactly when the cursor is. */
-  const walkStartOf = async (mailboxId: string): Promise<Date | null> => {
-    const [r] = await db.select({ s: mailboxes.sensitiveRescreenStartedAt })
-      .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
-    return r!.s;
-  };
+  const walkStartOf = async (mailboxId: string): Promise<Date | null> => (await marksOf(mailboxId)).started;
 
   const movesFor = async (accountId: string): Promise<string[]> => {
     const rows = await db.select().from(changeLog)
@@ -409,16 +408,14 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     const partial = await runSensitiveRescreen({ db, trustedAuthservIdsFor: NONE, mailboxId: w.mailboxId, batch: 2, maxPages: 1 });
     expect(partial).toMatchObject({ ran: true, examined: 2, rescreened: 2, truncated: true });
 
-    const [mid] = await db.select({ at: mailboxes.sensitiveRescreenAt })
-      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const mid = await passStateOf(w.mailboxId);
     // THE WHOLE OF THE CRASH POLICY. A marker written first would mark this mailbox corrected
     // with four misrouted messages still in the Ohbox and nothing that would ever look again.
     expect(mid!.at).toBeNull();
 
     const rest = await runSensitiveRescreen({ db, trustedAuthservIdsFor: NONE, mailboxId: w.mailboxId });
     expect(rest).toMatchObject({ ran: true, rescreened: 4, truncated: false });
-    const [done] = await db.select({ at: mailboxes.sensitiveRescreenAt })
-      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const done = await passStateOf(w.mailboxId);
     expect(done!.at).toBeInstanceOf(Date);
     expect(await movesFor(w.accountId)).toHaveLength(6);
   });
@@ -522,7 +519,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     // A database that dies at the exact instant the second page writes its resume point — after
     // that page has moved its rows and before it commits. This is the only window in which the
     // work and the position could ever disagree, and the claim is that the window does not
-    // exist: the UPDATE is in the page's own transaction, so the abort takes both.
+    // exist: the write is in the page's own transaction, so the abort takes both.
     let pages = 0;
     const dying = new Proxy(db as object, {
       get(target, prop, recv) {
@@ -540,26 +537,27 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
                   const v = Reflect.get(tt, p) as unknown;
                   return typeof v === "function" ? v.bind(tt) : v;
                 };
-                // `update(mailboxes)` inside a PAGE is the cursor write and nothing else — the
-                // page's own writes are inserts and an upsert. Dying on it is dying in the
-                // window.
+                // `insert(passProgress)` inside a PAGE is the cursor write and nothing else: the
+                // page stores its position through the one door, an upsert of the pass's row.
+                // Dying on it is dying in the window.
                 // THE DEATH IS AFTER THE WRITE, NOT INSTEAD OF IT — which is the whole point.
-                // Throwing before `update(mailboxes)` would only prove that a page which never
-                // stored a position stores no position. The window under test is the one where
-                // the page HAS done its moves AND HAS written its resume point and the
-                // transaction has not committed: the claim is that this state cannot reach disk.
-                if (kill && p === "update") {
+                // Throwing before the write would only prove that a page which never stored a
+                // position stores no position. The window under test is the one where the page
+                // HAS done its moves AND HAS written its resume point and the transaction has
+                // not committed: the claim is that this state cannot reach disk.
+                if (kill && p === "insert") {
                   return (table: unknown) => {
-                    const built = (bind() as (x: unknown) => unknown)(table) as {
-                      set: (v: unknown) => { where: (w: unknown) => PromiseLike<unknown> };
-                    };
-                    if (table !== mailboxes) return built;
+                    type Upsert = { select: (q: unknown) => { onConflictDoUpdate: (c: unknown) => { returning: (r: unknown) => PromiseLike<unknown> } } };
+                    const built = (bind() as (x: unknown) => unknown)(table) as Upsert;
+                    if (table !== passProgress) return built;
                     return {
-                      set: (v: unknown) => ({
-                        where: async (whereArg: unknown) => {
-                          await built.set(v).where(whereArg);   // the cursor IS written…
-                          throw new Error("the process died mid-page");   // …and then we die
-                        },
+                      select: (q: unknown) => ({
+                        onConflictDoUpdate: (c: unknown) => ({
+                          returning: async (r: unknown) => {
+                            await built.select(q).onConflictDoUpdate(c).returning(r);   // the cursor IS written…
+                            throw new Error("the process died mid-page");   // …and then we die
+                          },
+                        }),
                       }),
                     };
                   };
@@ -646,7 +644,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     // restores one of its rows afterwards, and run two starts LATER STILL. Measured against run
     // two's own start instant that restoration is in the past and invisible, and run two stamps
     // the mailbox over a candidate nothing will look at again. Measured against the walk's start
-    // — `mailboxes.sensitive_rescreen_started_at` — it is inside the window.
+    // (the pass's `started_at`) it is inside the window.
     const w = await newWorld();
     const ids = sortedIds(4);
     for (const id of ids) await seedOhbox(w, { id, from: `s-${id.slice(0, 8)}@stranger.test` });
@@ -743,10 +741,10 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     expect((await passStateOf(w.mailboxId)).at).toBeInstanceOf(Date);
 
     // Plant the state the predicate's second arm exists for.
-    await sql`update mailboxes
-                 set sensitive_rescreen_cursor = ${ids[0]!}::uuid,
-                     sensitive_rescreen_started_at = now()
-               where id = ${w.mailboxId}::uuid`;
+    await sql`insert into pass_progress (account_id, job, subject_id, cursor, started_at)
+               values (${w.accountId}::uuid, 'sensitive_rescreen', ${w.mailboxId}::uuid, ${ids[0]!}, now())
+               on conflict (account_id, job, subject_id)
+               do update set cursor = excluded.cursor, started_at = excluded.started_at`;
 
     const forced = await runSensitiveRescreen({
       db, trustedAuthservIdsFor: NONE, mailboxId: w.mailboxId, force: true,
@@ -924,8 +922,9 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
                 // which is where it has to be now that every page takes the mailbox row FOR
                 // UPDATE first. Inside the page it would block on that lock rather than race it,
                 // and the case would prove a wait instead of a rewind.
-                await sql`update mailboxes set sensitive_rescreen_cursor = ${ids[3]!}::uuid
-                           where id = ${w.mailboxId}::uuid`;
+                await sql`insert into pass_progress (account_id, job, subject_id, cursor)
+                           values (${w.accountId}::uuid, 'sensitive_rescreen', ${w.mailboxId}::uuid, ${ids[3]!})
+                           on conflict (account_id, job, subject_id) do update set cursor = excluded.cursor`;
               }
               return fn(t);
             });
@@ -1008,7 +1007,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     }
 
     // 4 — the mailbox ends STAMPED, and the instant is the first finisher's. Both processes may
-    // reach the marker statement; `coalesce(sensitive_rescreen_at, <now>)` is what makes the
+    // reach the marker statement; `coalesce(done_at, <now>)` is what makes the
     // second one preserve the first one's timestamp rather than overwrite it, so the answer is
     // the DATABASE's and not a read-then-write either process performed. (The `WHERE … IS NULL`
     // this comment used to name was removed with the cursor: it made the whole statement a no-op
@@ -1016,8 +1015,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     const audits = await db.select().from(auditLog)
       .where(and(eq(auditLog.accountId, w.accountId), eq(auditLog.action, "sensitive_rescreen")));
     expect(audits.length).toBeGreaterThanOrEqual(1);
-    const [mb] = await db.select({ at: mailboxes.sensitiveRescreenAt })
-      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const mb = await passStateOf(w.mailboxId);
     expect(mb!.at).toBeInstanceOf(Date);
   }, 60_000);
 
@@ -1036,8 +1034,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
     expect((await desiredOf(target)).desired).toBe(SCREENER);
     expect((await desiredOf(bystander)).desired).toBe(OHBOX);
     expect(await movesFor(theirs.accountId)).toEqual([]);
-    const [other] = await db.select({ at: mailboxes.sensitiveRescreenAt })
-      .from(mailboxes).where(eq(mailboxes.id, theirs.mailboxId)).limit(1);
+    const other = await passStateOf(theirs.mailboxId);
     expect(other!.at).toBeNull();
   });
 });

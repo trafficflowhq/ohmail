@@ -266,7 +266,7 @@ describe.skipIf(!PG_UP)("the dedup resolver and a credential PATCH cannot interl
         // over the stored connection params. Seeding it here is not a concession to the new
         // code — a row without it never existed in production, and leaving it out made this
         // fixture describe a mailbox the worker could not have logged into either.
-        mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+        mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "enc", keyVersion: 1,
         meta: { host: IMAP.host, port: IMAP.port, secure: IMAP.secure, user: IMAP.user },
       });
       return mb!.id;

@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { accountSettings, attachments, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
+import { accountSettings, attachments, folderState, mailboxes, messageBodies, messages, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS } from "@trafficflow/db/testing";
@@ -30,7 +30,6 @@ const L = randomUUID();
 /** Five letters: one word in the subject or sender, another only in the body. */
 const K = randomUUID();
 /** The same letters with no document and no marker: the pre-0125 columns answer. */
-const KL = randomUUID();
 /**
  * The five letters again, under 130 newer letters: holding none of their words (F), Kai's survey
  * samples (H), and those under 20 newest holding none (G).
@@ -64,7 +63,7 @@ function ctx(accountId: string, handle: unknown = db): ServiceContext {
 
 async function seed(o: {
   key: string; accountId: string; mailboxId: string; subject: string; from: EmailAddress;
-  to?: EmailAddress[]; text: string; html?: string | null; daysAgo: number; files?: string[]; noDocument?: boolean;
+  to?: EmailAddress[]; text: string; html?: string | null; daysAgo: number; files?: string[];
 }): Promise<void> {
   const [m] = await db.insert(messages).values({
     accountId: o.accountId, mailboxId: o.mailboxId, bodyHash: "h", dedupKey: `doc:${randomUUID()}`,
@@ -72,13 +71,12 @@ async function seed(o: {
     toAddresses: o.to ?? [], date: new Date(NOW.getTime() - o.daysAgo * 86_400_000),
     unread: false, hasAttachments: (o.files ?? []).length > 0, nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.text, html: o.html ?? null });
-  await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.text, html: o.html ?? null });
+  await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
   for (const f of o.files ?? []) {
     await db.insert(attachments).values({ accountId: o.accountId, messageId: m!.id, filename: f, contentType: "application/pdf" });
   }
   ids[o.key] = m!.id;
-  if (o.noDocument === true) return;
   const body = searchBodyOf(o.text, o.html ?? null);
   await upsertMessageSearch(db as never, m!.id, {
     accountId: o.accountId, subject: o.subject, from: o.from, to: o.to ?? [], cc: [],
@@ -98,8 +96,8 @@ async function seedAll(accountId: string, mailboxId: string, prefix: string, row
   }))).returning({ id: messages.id, dedupKey: messages.dedupKey });
   const idOf = new Map(made.map((m) => [m.dedupKey, m.id]));
   const id = (dedup: string): string => idOf.get(dedup)!;
-  await db.insert(messageBodies).values(keyed.map(({ r, dedup }) => ({ messageId: id(dedup), text: r.text })));
-  await db.insert(folderState).values(keyed.map(({ dedup }) => ({ messageId: id(dedup), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })));
+  await db.insert(messageBodies).values(keyed.map(({ r, dedup }) => ({ messageId: id(dedup), accountId, text: r.text })));
+  await db.insert(folderState).values(keyed.map(({ dedup }) => ({ messageId: id(dedup), accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })));
   const files = keyed.flatMap(({ r, dedup }) => r.files.map((f) => ({ accountId, messageId: id(dedup), filename: f, contentType: "application/pdf" })));
   if (files.length > 0) await db.insert(attachments).values(files);
   await upsertMessageSearchRows(db as never, keyed.map(({ r, dedup }) => ({
@@ -181,7 +179,6 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       const [mp] = await db.insert(mailboxes).values({ accountId: P, provider: "imap", address: "p@tf.example" }).returning();
       const [ml] = await db.insert(mailboxes).values({ accountId: L, provider: "imap", address: "l@tf.example" }).returning();
       const [mk] = await db.insert(mailboxes).values({ accountId: K, provider: "imap", address: "k@tf.example" }).returning();
-      const [mkl] = await db.insert(mailboxes).values({ accountId: KL, provider: "imap", address: "kl@tf.example" }).returning();
       const [mf] = await db.insert(mailboxes).values({ accountId: F, provider: "imap", address: "f@tf.example" }).returning();
       const [mg] = await db.insert(mailboxes).values({ accountId: G, provider: "imap", address: "g@tf.example" }).returning();
       const [mh] = await db.insert(mailboxes).values({ accountId: H, provider: "imap", address: "h@tf.example" }).returning();
@@ -193,7 +190,6 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
         ["k4", person("Fish Digest", "weekly@fishdigest.example"), "Weekly digest deep sea", "This week: why the lanternfish glows."],
         ["k5", kai, "Old harbour note", "A year-old note about the lanternfish survey."],
       ] as const).entries()) {
-        await seed({ key: `old-${key}`, accountId: KL, mailboxId: mkl!.id, subject, from, text, daysAgo: i + 1, noDocument: true });
         await seed({ key, accountId: K, mailboxId: mk!.id, subject, from, text, daysAgo: i + 1 });
         await seed({ key: `f-${key}`, accountId: F, mailboxId: mf!.id, subject, from, text, daysAgo: i + 1 });
         await seed({ key: `g-${key}`, accountId: G, mailboxId: mg!.id, subject, from, text, daysAgo: i + 1 });
@@ -237,8 +233,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
                lower(m.subject || ' ' || m.from_address), 'text'
         from messages m where m.account_id = ${L}`);
       for (const a of [D, P, L, K, F, G, H]) {
-        await db.insert(accountSettings).values({ accountId: a, searchIndexBuiltAt: NOW })
-          .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+        await writePassProgress(db, accountPass("search_index_backfill", a), { doneAt: NOW });
       }
       await db.execute(sql`analyze messages`);
       await db.execute(sql`analyze message_search`);
@@ -249,7 +244,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
 
   afterAll(async () => {
     await setupDone;
-    for (const a of [D, P, L, K, KL, F, G, H, J, N, V, ...RANKED, ...SCALED, FRAG, X, Y]) {
+    for (const a of [D, P, L, K, F, G, H, J, N, V, ...RANKED, ...SCALED, FRAG, X, Y]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from attachments where account_id = ${a}`);
       await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${a})`);
@@ -265,8 +260,8 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     // The pre-0125 lexical shape over the same rows: a lexeme match holds none of the three.
     const [before] = await db.execute(sql`
       select count(*)::int as n from messages m left join message_bodies b on b.message_id = m.id
-      where m.account_id = ${D} and (m.subject_tsv @@ websearch_to_tsquery('english', 'axa')
-        or b.body_tsv @@ websearch_to_tsquery('english', 'axa'))`) as unknown as Array<{ n: number }>;
+      where m.account_id = ${D} and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'axa')
+        or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'axa'))`) as unknown as Array<{ n: number }>;
     expect(before!.n).toBe(0);
     const r = await svc.search(ctx(D), { q: "axa" });
     expect(r.tier).toBe("exact");
@@ -305,11 +300,8 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     const out = await svc.search(ctx(K), { q: "kai -lanternfish", limit: 50 });
     expect(out.tier === "exact" ? out.items.map((m) => keyOf.get(m.id)) : [], "no exact row").toEqual([]);
     expect(out.items.map((m) => keyOf.get(m.id)), "no guess holds the excluded word").toEqual([]);
-    // Before the backfill too: `lanternfsh` is a guess at k1's subject, and `survey` is in its body.
-    const old = await svc.search(ctx(KL), { q: "lanternfsh -survey", limit: 50 });
-    expect({ tier: old.tier, ids: old.items.map((m) => m.id) }).toEqual({ tier: "similar", ids: [] });
-    const control = await svc.search(ctx(KL), { q: "lanternfsh", limit: 50 });
-    expect(control.items.map((m) => m.id), "the control: the guess without the exclusion").toEqual([ids["old-k1"]]);
+    // (The same held for letters without a document, read through the columns mail 0200 retired:
+    // `search-store-fact.pg.test.ts` asks it of a store that still carries them.)
   });
 
   // At limit 5 an arm cuts at K = 20 and walks the newest 120 letters; 130 newer letters hold none
@@ -374,8 +366,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
              to_tsvector('english', case when m.from_name = 'Kai Brandt' then 'Survey samples batch ' || substr(m.dedup_key, 3) else 'All systems nominal.' end),
              lower(m.subject || ' ' || m.from_name || ' ' || m.from_address), 'text'
       from messages m where m.account_id = ${J} and m.dedup_key like 'j:%'`);
-    await db.insert(accountSettings).values({ accountId: J, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", J), { doneAt: NOW });
     const q = "kai survey -samples";
     const page = await svc.search(ctx(J), { q, limit: 50, parts: "page" });
     const estimate = await svc.search(ctx(J), { q, limit: 50, parts: "estimate" });
@@ -402,8 +393,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     for (let j = 0; j < 20; j++) {
       await seed({ key: `n-n${j}`, accountId: N, mailboxId: mn!.id, subject: `Status ${j}`, from: person("Robot Desk", "status@robot.example"), text: `All systems nominal, run ${j}.`, daysAgo: (j + 1) / 2000 });
     }
-    await db.insert(accountSettings).values({ accountId: N, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", N), { doneAt: NOW });
     const q = "kai survey -samples";
     const said = (r: { tier: string; total: number; totalExact: boolean; items: unknown[] }) => ({ tier: r.tier, items: r.items.length, total: r.totalExact ? r.total : "cut" });
     const got = [];
@@ -428,8 +418,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     await seed({ key: "v-sr2", accountId: V, mailboxId: mv!.id, subject: "Papers for SR2", from: person("Ines Varga", "iv@post.example"), text: "SR2: the scan is attached.", daysAgo: 1, files: ["harbour-ledger-7731.pdf"] });
     await seed({ key: "v-d2", accountId: V, mailboxId: mv!.id, subject: "Ledger copy", from: person("Port Office", "office@port.example"), text: "The harbour scan.", daysAgo: 2, files: ["notes.txt"] });
     await seed({ key: "v-q3", accountId: V, mailboxId: mv!.id, subject: "Q3 papers", from: person("Desk", "po@desk.example"), text: "See attached.", daysAgo: 3, files: ["INV-123.pdf"] });
-    await db.insert(accountSettings).values({ accountId: V, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", V), { doneAt: NOW });
     const keyOf = new Map([[ids["v-sr2"], "sr2"], [ids["v-d2"], "d2"], [ids["v-q3"], "q3"]]);
     const table: ReadonlyArray<readonly [string, readonly string[]]> = [
       ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
@@ -469,8 +458,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       ["sandbox", "Hal Roy", "hal@roy.example", "Sandbox access", "Granted until May."],
       ["long", "Ivo Rask", "ivo@rask.example", "Harvest (late)", "Alpha bravo charlie delta echo foxtrot golf hotel india."],
     ] as const).entries()) await seed({ key: `x-${key}`, accountId: X, mailboxId: mx!.id, subject, from: person(name, address), text, daysAgo: i + 1 });
-    await db.insert(accountSettings).values({ accountId: X, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", X), { doneAt: NOW });
     const keyOf = new Map(Object.entries(ids).filter(([k]) => k.startsWith("x-")).map(([k, id]) => [id, k.slice(2)]));
     const HOLDERS: Readonly<Record<string, readonly string[]>> = { zzzqx: [], google: [], thanks: ["subject", "you2"], orchard: ["orchard"], harvest: ["long"] };
     // Nine words asked, past the eight a query is read across the letter's parts with.
@@ -537,8 +525,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       ...Array.from({ length: 25 }, (_, i) => row(`word${i}`, `Note ${i}`, "The beacon is lit.", 10 + i)),
       row("start", "Old note", "Beaconfield station is closed.", 50),
     ]);
-    await db.insert(accountSettings).values({ accountId: Y, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", Y), { doneAt: NOW });
     const q = "beacon -harbour";
     const want = [...Array.from({ length: 25 }, (_, i) => ids[`y-word${i}`]!), ids["y-start"]!].sort();
     const page = await svc.search(ctx(Y), { q, limit: 5, parts: "page" });
@@ -582,8 +569,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       const account = RANKED[i]!;
       const [mb] = await db.insert(mailboxes).values({ accountId: account, provider: "imap", address: `ranked${i}@tf.example` }).returning();
       for (const row of rows) await seed({ ...row, key: `ranked${i}-${row.key}`, accountId: account, mailboxId: mb!.id });
-      await db.insert(accountSettings).values({ accountId: account, searchIndexBuiltAt: NOW })
-        .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+      await writePassProgress(db, accountPass("search_index_backfill", account), { doneAt: NOW });
       const keyOf = new Map(rows.map((row) => [ids[`ranked${i}-${row.key}`], row.key]));
       for (const [label, s] of [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const) {
         const r = await s.search(ctx(account), { q, limit: 50 });
@@ -643,8 +629,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
         const [mb] = await db.insert(mailboxes).values({ accountId: account, provider: "imap", address: `scaled${n}@tf.example` }).returning();
         const to = [person("Mila Hartmann", "mila@lichtgrat.example")];
         await seedAll(account, mb!.id, `scaled${n}`, [older, ...Array.from({ length: 250 }, (_, i) => row(i))].map((r) => ({ ...r, to })));
-        await db.insert(accountSettings).values({ accountId: account, searchIndexBuiltAt: NOW })
-          .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+        await writePassProgress(db, accountPass("search_index_backfill", account), { doneAt: NOW });
         for (const [l, s] of SVCS) at.set(l, { ...(at.get(l) ?? { file: 0, body: 0 }), [kind]: await placeOf(s, account, ids[`scaled${n}-T`]!) });
       }
       const place = q === "pdf" ? 1 : 2;
@@ -662,8 +647,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
     for (let n = 100; n <= 160; n++) {
       await seed({ key: `frag-n${n}`, accountId: FRAG, mailboxId: mb!.id, subject: `Papers n${n}`, from: person(`Clerk n${n}`, `n${n}@desk.example`), to, text: "See attached.", daysAgo: 20 + n / 10, files: [`INV-${n}.pdf`] });
     }
-    await db.insert(accountSettings).values({ accountId: FRAG, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", FRAG), { doneAt: NOW });
     await db.execute(sql`analyze message_search`);
     const keyOf = new Map(Object.entries(ids).filter(([k]) => k.startsWith("frag-")).map(([k, id]) => [id, k.slice("frag-".length)]));
     const SVCS = [["store", svc], ["desktop", new SearchService({ indexFills: true, localStore: true })]] as const;

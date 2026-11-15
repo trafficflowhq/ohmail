@@ -9,6 +9,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, accountSettings, contacts, folderState, mailboxes, messageBodies, messages, rules,
   type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { heldReleaseSummary } from "@trafficflow/services/mail";
@@ -58,9 +59,9 @@ async function seed(): Promise<World> {
       subject: `Note ${i}`, snippet: "", fromAddress: from, unread: true,
       nativeLocator: { folder: desired, ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: desired, observedFolder: desired,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: desired,
       lastSetBy, reconcileStatus: "reconciled", conflict: false,
     });
     ids[key] = m!.id;
@@ -140,9 +141,8 @@ describe.skipIf(!PG_UP)("the gate release sweep, on real Postgres", () => {
   it("stamps the account, and a second sweep reads the stamp", async () => {
     const w = await seed();
     await gateReleasePass(db as unknown as Tx, { accountId: w.accountId }, NOW);
-    const [s] = await db.select().from(accountSettings)
-      .where(eq(accountSettings.accountId, w.accountId)).limit(1);
-    expect(s!.gateReleaseDoneAt?.getTime()).toBe(NOW.getTime());
+    const s = await readPassProgress(db as unknown as Tx, accountPass("gate_release", w.accountId));
+    expect(s.doneAt?.getTime()).toBe(NOW.getTime());
     const again = await gateReleasePass(db as unknown as Tx, { accountId: w.accountId }, NOW);
     expect(again.ran).toBe(false);
   });

@@ -428,7 +428,7 @@ describe.skipIf(!AVAILABLE)("the sync write fence over mail-bearing writes", () 
       nativeLocator: { folder: "INBOX", ref: "1:7" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
 
@@ -452,7 +452,7 @@ describe.skipIf(!AVAILABLE)("the sync write fence over mail-bearing writes", () 
       nativeLocator: { folder: "INBOX", ref: "1:7" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
 

@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
@@ -1870,7 +1871,7 @@ export class MessageService {
 
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     await tx.insert(folderState).values({
-      messageId: id, desiredFolder: folder, observedFolder: observed,
+      messageId: id, accountId: accountOfMessage(id), desiredFolder: folder, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom, ...decided,
     }).onConflictDoUpdate({
       target: folderState.messageId,

@@ -46,10 +46,10 @@ async function seed(db: Awaited<ReturnType<typeof makeTestDb>>) {
       uid: 50 + i, uidvalidity: 1n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
     ids.push(m!.id);
   }
   return { accountId, mailboxId: mb!.id, ids };
@@ -193,7 +193,7 @@ describe("junk-sweep — the review round's two rules", () => {
       nativeLocator: LOC("ohmail/Quarantine", "1:99"),
     }).returning();
     await db.insert(folderState).values({
-      messageId: moved!.id, desiredFolder: "INBOX", observedFolder: "ohmail/Quarantine",
+      messageId: moved!.id, accountId: moved!.accountId, desiredFolder: "INBOX", observedFolder: "ohmail/Quarantine",
       lastSetBy: "user", reconcileStatus: "pending",
     });
     const { adapter, moves } = adapterOf("INBOX/Junk");

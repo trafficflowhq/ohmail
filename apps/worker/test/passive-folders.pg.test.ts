@@ -82,7 +82,7 @@ describe.skipIf(!AVAILABLE)("passive folders, in SQL", () => {
       nativeLocator: { folder, ref: `42:${opts.uid ?? 1}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: opts.lastSetBy ?? "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

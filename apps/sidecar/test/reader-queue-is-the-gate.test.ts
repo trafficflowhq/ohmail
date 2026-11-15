@@ -97,7 +97,7 @@ async function held(s: Sidecar, n: number, from: string, at: Date, unread: boole
     nativeLocator: { folder: GATE, ref: `1:${n}` },
   }).returning();
   await s.db.insert(folderState).values({
-    messageId: m!.id, observedFolder: GATE, desiredFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled",
+    messageId: m!.id, accountId: m!.accountId, observedFolder: GATE, desiredFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled",
   });
 }
 

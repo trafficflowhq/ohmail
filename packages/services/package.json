@@ -34,5 +34,8 @@
     "@ohmail/wire": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
+  },
+  "devDependencies": {
+    "postgres": "3.4.9"
   }
 }

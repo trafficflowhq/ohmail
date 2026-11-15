@@ -35,7 +35,7 @@ async function world(o: { trusted?: ReadonlySet<string> } = {}) {
   const me = `me-${accountId.slice(0, 8)}@own.invalid`;
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   // A Sent copy to a THIRD party after the consent point — the phisher was never a recipient.
   const [s] = await db.insert(messages).values({
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `sent:${randomUUID()}`,
@@ -47,10 +47,10 @@ async function world(o: { trusted?: ReadonlySet<string> } = {}) {
     accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid: 1, isPrimary: true,
   });
   await db.insert(folderState).values({
-    messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us",
+    messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us",
     reconcileStatus: "reconciled", conflict: false,
   });
-  await db.insert(messageBodies).values({ messageId: s!.id, text: "hi", headers: {} });
+  await db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "hi", headers: {} });
 
   const fleet = new FakeAdapterFleet();
   const adapter = fleet.factory(

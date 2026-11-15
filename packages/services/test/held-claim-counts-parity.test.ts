@@ -43,9 +43,9 @@ async function world(claim: boolean, heldAt = new Date("2026-10-01T09:00:00.000Z
       senderCheck: check, senderCheckBrand: check === "impersonation" ? "PostFinance" : null,
       date: at, unread: false, createdAt: at, nativeLocator: { folder, ref: `1:${randomUUID().slice(0, 4)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   // The admitted first mail, then the held one, read and arrived inside the screening window: a claim

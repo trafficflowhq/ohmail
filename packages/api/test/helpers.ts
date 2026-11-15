@@ -1,5 +1,7 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import {
   accounts,
   users,
@@ -443,7 +445,7 @@ export async function seedMailbox(
   }).returning();
   for (const f of o.folders ?? []) {
     await db.insert(mailboxFolders).values({
-      mailboxId: mb!.id, folder: f.folder, highestmodseq: f.highestmodseq ?? null,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder: f.folder, highestmodseq: f.highestmodseq ?? null,
     });
   }
   return mb!.id;
@@ -527,7 +529,7 @@ export async function seedMessage(
   }).returning();
   if (o.folder) {
     await db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: accountOfMessage(m!.id),
       desiredFolder: o.folder,
       observedFolder: o.observedFolder ?? o.folder,
       lastSetBy: o.lastSetBy ?? "us",
@@ -538,12 +540,21 @@ export async function seedMessage(
 }
 
 /** Seed a message body row (1:1 with a message). */
+/**
+ * The search documents of an account's seeded letters, and the mark that they are all built: what
+ * ingest leaves behind, which writes a letter's document with the letter. A store finds a letter by
+ * its document alone, so a test that searches what it seeded calls this after its last seed.
+ */
+export async function seedSearchDocuments(db: Db, accountId: string): Promise<void> {
+  await searchIndexBackfillPass({ db: db as never, accountId });
+}
+
 export async function seedBody(
   db: Db,
   o: { messageId: string; text?: string; html?: string | null; headers?: Record<string, unknown>; loadedRemoteContent?: boolean },
 ): Promise<void> {
   await db.insert(messageBodies).values({
-    messageId: o.messageId,
+    messageId: o.messageId, accountId: accountOfMessage(o.messageId),
     text: o.text ?? "seed body text",
     html: o.html ?? null,
     ...(o.headers ? { headers: o.headers } : {}),

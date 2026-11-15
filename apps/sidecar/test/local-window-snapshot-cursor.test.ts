@@ -111,7 +111,7 @@ async function seed(sidecar: Sidecar): Promise<void> {
       folder: "INBOX", uidvalidity: 1n, uid, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external", reconcileStatus: "reconciled",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external", reconcileStatus: "reconciled",
     });
     ids.push(m!.id);
   }

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
@@ -21,11 +22,11 @@ async function world(held: Record<string, number>, epoch = EPOCH) {
     accountId, provider: "imap", address: `rd-${randomUUID().slice(0, 8)}@example.invalid`,
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   for (const [folder, n] of Object.entries(held)) {
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder, uidvalidity: BigInt(epoch) });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder, uidvalidity: BigInt(epoch) });
     for (let uid = 1; uid <= n; uid++) {
       const key = `${folder}-${uid}-${randomUUID()}`;
       const [m] = await db.insert(messages).values({

@@ -106,7 +106,7 @@ export class FolderOpsService {
       await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, mailboxId, [name]);
       const inserted = await tx.insert(mailboxFolders)
-        .values({ mailboxId, folder: name })
+        .values({ mailboxId, accountId: ctx.accountId, folder: name })
         .onConflictDoNothing()
         .returning({ id: mailboxFolders.id });
       const row = inserted[0];

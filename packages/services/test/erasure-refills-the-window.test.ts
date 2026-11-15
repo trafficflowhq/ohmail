@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, accounts, auditLog, drafts, eraseOwedMailbox, mailboxes, messages, outboundSends, recordChanges,
   threadNotes, threads, type LedgerTx,
+  accountPass, mailboxPass, markPassDone, passProgress,
 } from "@trafficflow/db";
 import {
   OhmailEngine, consentPartition, presentationReader, screenerSegments,
@@ -156,9 +157,18 @@ describe("erasing a mailbox on the hosted door", () => {
     });
     const [keptMarker, goneMarker] = await db.insert(auditLog)
       .values([marker(kept!.id, "1".repeat(32)), marker(gone!.id, "2".repeat(32))]).returning({ id: auditLog.id });
+    // Where three passes stand: one of each mailbox's, and one of the account's own.
+    await markPassDone(db, mailboxPass("kickstart", accountId, kept!.id), NOW);
+    await markPassDone(db, mailboxPass("kickstart", accountId, gone!.id), NOW);
+    await markPassDone(db, accountPass("gate_release", accountId), NOW);
 
     await svc.delete(ctx, gone!.id, { erase: { confirmAddress: goneAddress } });
     expect((await eraseOwedMailbox(db, dialect(db), { accountId, mailboxId: gone!.id, now: () => NOW, maxSteps: 20 })).done).toBe(true);
+
+    const passes = await db.select({ job: passProgress.job, subjectId: passProgress.subjectId }).from(passProgress)
+      .where(eq(passProgress.accountId, accountId));
+    expect(passes.map((p) => `${p.job} ${p.subjectId}`).sort(), "only the erased mailbox's passes go")
+      .toEqual([`gate_release ${accountId}`, `kickstart ${kept!.id}`].sort());
 
     const [words] = await db.select().from(drafts).where(eq(drafts.id, reply!.id));
     expect(words?.subject, "a reply drafted in the other mailbox was deleted").toBe("Re: from the other mailbox");

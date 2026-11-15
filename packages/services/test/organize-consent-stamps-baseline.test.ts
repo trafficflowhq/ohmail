@@ -56,7 +56,7 @@ async function readerMailbox() {
   }).returning();
   // A stored credential, because a claim-back with no password in the body requires one.
   await tx.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctxAt = (now: Date): ServiceContext => ({

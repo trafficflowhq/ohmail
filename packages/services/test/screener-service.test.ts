@@ -310,7 +310,7 @@ describe("ScreenerService — first-contact queue (derived) + decide", () => {
       const id = await seedMessage(db, accountId, mailboxId, { from: `list-${i}@corp.example` });
       held.push(id);
       await db.insert(messageBodies).values({
-        messageId: id, text: "", headers: {
+        messageId: id, accountId, text: "", headers: {
           "list-unsubscribe": [`<https://corp.example/u?t=${i}>`],
           "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
           // The mailbox's provider confirming the sender: the automatic arm's licence to ask.

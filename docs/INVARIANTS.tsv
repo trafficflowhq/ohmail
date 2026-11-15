@@ -31,4 +31,5 @@ id	claim	status	tests	verdict	waits
 10b	Free credits are bounded: one trial and one setup grant per account, and trial starts are throttled per origin.	out of tree	-	docs/invariant-verdicts/10b.json	scope
 10c	No plan's allowance costs more than the plan earns.	out of tree	-	docs/invariant-verdicts/10c.json	scope
 11	An account with an unverified address is refused every route that does work, holds a connection or calls a paid service.	not yet run	packages/api/test/spend-gate.test.ts packages/api/test/email-verification-gate.test.ts	docs/invariant-verdicts/11.json	-
+12	A store moved to 2.0 keeps nothing that 2.0 retired: what the move removes is gone from a moved store as from a fresh one.	bitten	packages/db/test/transition.pg.test.ts packages/db/test/old-search-retirement.pg.test.ts	docs/invariant-verdicts/12.json	-
 junk	Mail in the provider's Junk folder is never imported into ohmail's store; it is read in place, and nothing is moved out of it unless the person asks.	not yet run	packages/core/test/adapters/folder-roles.test.ts packages/api/test/junk-window.test.ts apps/worker/test/junk-sweep.test.ts	docs/invariant-verdicts/junk.json	-

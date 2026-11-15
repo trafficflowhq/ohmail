@@ -33,14 +33,15 @@ import type { ServiceContext } from "../src/context.js";
  * below turns on a `GROUP BY` over a real planner and a real `count(*)`, and the statement
  * census turns on what the postgres-js driver actually SENDS — neither is a property of the
  * TypeScript. The second is that the index premise is a Postgres fact:
- * `messages_account_mailbox_unread_idx` is `(account_id, mailbox_id, unread)`, so its leading
+ * `messages_account_mailbox_idx` is `(account_id, mailbox_id)` (the read flag left it with mail
+ * 0200), so its leading
  * column serves `WHERE account_id = $1` and the grouping key is the second. Measured on this
  * database with tens of thousands of rows across four mailboxes:
  *
  *   HashAggregate  (actual time=… rows=3)
  *     Group Key: mailbox_id
  *     ->  Bitmap Heap Scan on messages  (rows=60000)
- *           ->  Bitmap Index Scan on messages_account_mailbox_unread_idx
+ *           ->  Bitmap Index Scan on messages_account_mailbox_idx
  *                 Index Cond: (account_id = …)
  *
  * The plan itself is deliberately NOT asserted here: on the handful of rows a test seeds the

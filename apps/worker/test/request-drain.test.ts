@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -5,6 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, rules, contacts, organizerRequests, insertOrganizerRequest,
   accountSettings, awayResponders, changeLog, TRAVELLING_SIGNATURE_HTML_MAX_BYTES, ruleCreatePayload, type RuleKey,
+  accountPass, readPassProgress, updatePassProgress,
 } from "@trafficflow/db";
 import {
   formatRequest, formatAck, acksIn, parseRequestEnvelope, deriveRequestKey, decodeRequestPayload,
@@ -146,7 +148,7 @@ async function seedHeldMessage(db: TestDb, mailboxId: string, from: string): Pro
     subject: "s", fromAddress: from, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -687,13 +689,15 @@ describe("applyMetaRequests — what is LEFT STANDING rather than refused", () =
     expect((await post()).applied).toBe(1);
     const [first] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
     expect(first!.ohboxPolicy).toBe("people_only");
-    expect(first!.ohboxTidyRequestedAt, "the transition into people_only armed nothing").not.toBeNull();
+    const tidy = accountPass("ohbox_tidy", ACCT);
+    expect((await readPassProgress(db, tidy)).requestedAt, "the transition into people_only armed nothing").not.toBeNull();
 
     // A RE-SAVE that leaves the posture where it is must not re-arm.
-    await db.update(accountSettings).set({ ohboxTidyRequestedAt: null }).where(eq(accountSettings.accountId, ACCT));
+    await updatePassProgress(db, tidy, { requestedAt: null });
     expect((await post()).applied).toBe(1);
     const [again] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, ACCT));
-    expect(again!.ohboxTidyRequestedAt, "a re-save re-ran the backlog — the arming is not on the transition")
+    expect(again!.ohboxPolicy).toBe("people_only");
+    expect((await readPassProgress(db, tidy)).requestedAt, "a re-save re-ran the backlog — the arming is not on the transition")
       .toBeNull();
   });
 

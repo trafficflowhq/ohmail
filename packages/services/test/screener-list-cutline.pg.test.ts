@@ -106,7 +106,7 @@ async function seed(scope: string): Promise<{ accountId: string; retiredMessageI
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -187,7 +187,7 @@ describe.skipIf(!PG_UP)("the Screener list consults the cutline", () => {
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
     }
@@ -256,7 +256,7 @@ describe.skipIf(!PG_UP)("the Screener list consults the cutline", () => {
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
     };
@@ -343,7 +343,7 @@ async function seedRuled(): Promise<{ accountId: string; own: string }> {
       nativeLocator: { folder, ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };

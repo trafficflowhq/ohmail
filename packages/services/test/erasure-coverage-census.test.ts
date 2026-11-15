@@ -1,3 +1,4 @@
+import { unwrittenByExport } from "../../db/test/_unwritten-tables.js";
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -95,6 +96,10 @@ export function sweptIn(src: string, handle: string): Set<string> {
  * the end refuses an entry that no longer names a table, so a reason cannot outlive its schema.
  */
 const ACCOUNT_SURVIVORS: Record<string, string> = {
+  // Tables nothing writes yet: no account has a row for the sweep to reach. The list is held to
+  // the tree in `packages/db/test`; a table's first writer takes it off, and it is then red here
+  // until the sweep deletes it.
+  ...unwrittenByExport(),
   accounts:
     "the pseudonymous billing subject — Art. 17 keeps it, stamped `erased_at`, and that stamp is "
     + "what the erasure fence reads. The whole reason a fence exists: nothing structural refuses "
@@ -102,6 +107,8 @@ const ACCOUNT_SURVIVORS: Record<string, string> = {
 };
 
 const MAILBOX_SURVIVORS: Record<string, string> = {
+  // As above: what a mailbox's removal does with a table is decided with the table's first writer.
+  ...unwrittenByExport(),
   mailboxes:
     "the tombstone — how a removal is REMEMBERED. The row stays, `status = 'disabled'` and "
     + "`erased_at` stamped in the sweep's own transaction, so the id keeps meaning something to "
@@ -284,6 +291,10 @@ const SHARED_WRITES: Record<string, SharedWrite> = {
   },
   auditLog: {
     keeps: "every row stays; only the hashes naming the removed mailbox's settings or signature come off its own rows, another mailbox's keep theirs",
+    hosted: HOSTED_CASE, device: DEVICE_CASE,
+  },
+  passProgress: {
+    keeps: "only the rows whose subject is the removed mailbox go; the account's own passes and another mailbox's keep where they stand",
     hosted: HOSTED_CASE, device: DEVICE_CASE,
   },
 };

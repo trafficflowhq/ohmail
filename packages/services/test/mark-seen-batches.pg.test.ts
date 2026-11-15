@@ -46,7 +46,7 @@ async function newWorld(letters: number): Promise<{ accountId: string; ids: stri
     const part = rows.slice(i, i + 500);
     await db.insert(messages).values(part);
     await db.insert(folderState).values(part.map((r) => ({
-      messageId: r.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: r.id, accountId: r.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     })));
   }

@@ -59,7 +59,7 @@ async function seedAt(
 ): Promise<string> {
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened" });
   await personScreenedOut(db, accountId, from);
-  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: { ...CONFIRMED, ...headers } });
   await db.update(folderState).set({ updatedAt: at }).where(eq(folderState.messageId, messageId));
   return messageId;
 }
@@ -246,7 +246,7 @@ describe("a sender the provider did not confirm is not a drain candidate", () =>
   ): Promise<string> {
     const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened", authVerdict });
     await personScreenedOut(db, accountId, from);
-    await db.insert(messageBodies).values({ messageId, text: "", headers: {
+    await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: {
       ...CONFIRMED,
       "list-unsubscribe": [`<https://sender.example/u?t=${tag}>`],
       "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
@@ -316,7 +316,7 @@ describe("a letter whose sender's signature ingest checked", () => {
   ): Promise<string> {
     const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened", authVerdict });
     await personScreenedOut(db, accountId, from);
-    await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK_TO(tag) });
+    await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: ONE_CLICK_TO(tag) });
     await db.update(folderState).set({ updatedAt: ago(60_000) }).where(eq(folderState.messageId, messageId));
     return messageId;
   }

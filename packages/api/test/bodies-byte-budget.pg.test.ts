@@ -227,7 +227,7 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
         date: new Date(FIXED_NOW.getTime() - i * 60_000),
       }).returning();
       await db.insert(messageBodies).values({
-        messageId: m!.id,
+        messageId: m!.id, accountId: m!.accountId,
         text: randomBytesHex(ONE_MIB),
         html: null,
       });
@@ -313,7 +313,7 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies bounds the TRANSFER, not just 
         bodyHash: `bbs-${i}`, dedupKey: `bbs:${randomUUID()}`,
         subject: `small ${i}`, fromAddress: "friend@example.com",
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `hello ${i}`, html: `<p>hello ${i}</p>` });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `hello ${i}`, html: `<p>hello ${i}</p>` });
     }
 
     const body = await (await app.handle(get("/messages/bodies?limit=100", token), depsOn(db))).json() as

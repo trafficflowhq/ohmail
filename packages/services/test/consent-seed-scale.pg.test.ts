@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -81,7 +82,7 @@ async function world(count: number): Promise<World> {
       snippet: "",
     }))).returning({ id: messages.id });
     await db.insert(messageBodies).values(rows.map((r, i) => ({
-      messageId: r.id,
+      messageId: r.id, accountId: accountOfMessage(r.id),
       headers: { to: [`"Person ${part[i]}" <person${part[i]}@example.com>`] },
     })));
   }
@@ -176,7 +177,7 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed confirms at the size real mailbo
       nativeLocator: { folder: "Sent", uid: 9999 }, snippet: "",
     }).returning({ id: messages.id });
     await db.insert(messageBodies).values({
-      messageId: m!.id, headers: { to: ["newcomer@example.com"] },
+      messageId: m!.id, accountId: accountOfMessage(m!.id), headers: { to: ["newcomer@example.com"] },
     });
 
     const second = await buildSeedReview(w.ctx);

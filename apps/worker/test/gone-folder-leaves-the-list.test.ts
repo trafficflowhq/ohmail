@@ -27,7 +27,7 @@ async function seeded() {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `t-${accountId.slice(0, 8)}@example.test` }).returning();
   const mailboxId = mb!.id;
   const row = async (folder: string, uidvalidity: bigint) => (await db.insert(mailboxFolders)
-    .values({ mailboxId, folder, uidvalidity, uidnext: 9n, highestmodseq: 1n }).returning())[0]!.id;
+    .values({ mailboxId, accountId, folder, uidvalidity, uidnext: 9n, highestmodseq: 1n }).returning())[0]!.id;
   const ids = { clients: await row("Clients", 3n), projects: await row("Projects", 7n), kept: await row("Kept", 4n) };
   // A letter whose only instance is RESIDUE: Projects at epoch 6, a reset the row (epoch 7) is past.
   const [m] = await db.insert(messages).values({

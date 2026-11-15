@@ -395,7 +395,7 @@ describe("the fourth door, over the store this phone already holds", () => {
     if (kept.ok) await kept.door.stop();
     expect(kept.ok, "an empty leftover row locked the mailbox out").toBe(true);
     /* The same row once it holds mail: two mailboxes. */
-    plant("insert into mailbox_folders (mailbox_id, folder) select id, 'INBOX' from mailboxes where address = ?", "other@example.test");
+    plant("insert into mailbox_folders (mailbox_id, account_id, folder) select id, account_id, 'INBOX' from mailboxes where address = ?", "other@example.test");
     const s = store(file);
     const outcome = await reopen(s);
     if (outcome.ok) live = outcome.door as unknown as { stop(): Promise<void> };

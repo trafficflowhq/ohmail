@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "../src/parent-account.js";
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 import { readdirSync } from "node:fs";
@@ -162,6 +163,50 @@ describe("the SQLite journal, applied", () => {
     }
   });
 
+  it("keeps a unique index beside a primary key only where a key names it, and every key finds its target", async () => {
+    // Entry 0206 dropped the thirteen `(id, <owner>)` unique indexes nothing on this store names.
+    // One such index stays: a sent copy keys onto `outbound_sends (id, account_id)`. Read from the
+    // migrated store's own catalog, both ways: no index of that family is left that no key names,
+    // and no key names parent columns that are neither the primary key nor a unique index (the
+    // state SQLite answers "foreign key mismatch" for, on the child's every write).
+    const { db, target } = open();
+    await migrateSqlite(target);
+    const all = <T,>(q: string): T[] => db.prepare(q).all() as T[];
+    const tables = all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map((r) => r.name);
+    const keyColumns = (table: string): string[][] => {
+      const pk = all<{ name: string; pk: number }>(`PRAGMA table_info("${table}")`).filter((c) => c.pk > 0)
+        .sort((a, b) => a.pk - b.pk).map((c) => c.name);
+      const uniques = all<{ name: string; unique: number }>(`PRAGMA index_list("${table}")`).filter((i) => i.unique === 1)
+        .map((i) => all<{ name: string }>(`PRAGMA index_info("${i.name}")`).map((c) => c.name));
+      return [pk, ...uniques].filter((cols) => cols.length > 0);
+    };
+    const named = new Set<string>();
+    const mismatched: string[] = [];
+    let keys = 0;
+    for (const child of tables) {
+      const byKey = new Map<number, { table: string; to: Array<string | null> }>();
+      for (const r of all<{ id: number; seq: number; table: string; to: string | null }>(`PRAGMA foreign_key_list("${child}")`)) {
+        const k = byKey.get(r.id) ?? { table: r.table, to: [] };
+        k.to[r.seq] = r.to;
+        byKey.set(r.id, k);
+      }
+      for (const k of byKey.values()) {
+        keys += 1;
+        if (k.to.every((c) => c === null)) continue;   // the parent's primary key, by default
+        const want = [...(k.to as string[])].sort().join(",");
+        if (!keyColumns(k.table).some((cols) => [...cols].sort().join(",") === want)) mismatched.push(`${child} -> ${k.table}(${want})`);
+        named.add(`${k.table}(${want})`);
+      }
+    }
+    expect(keys, "the walk read no foreign key").toBeGreaterThan(30);
+    expect(mismatched, "a key whose parent columns are neither a primary key nor unique").toEqual([]);
+    const family = all<{ name: string; tbl_name: string }>(
+      "SELECT name, tbl_name FROM sqlite_master WHERE type='index' AND (name LIKE '%\_id\_account\_uq' ESCAPE '\\' OR name LIKE '%\_id\_mailbox\_uq' ESCAPE '\\')",
+    );
+    expect(family.map((i) => i.name)).toEqual(["outbound_sends_id_account_uq"]);
+    expect(named.has("outbound_sends(account_id,id)"), "the index that stays is the one a key names").toBe(true);
+  });
+
   it("enforces the IMMUTABLE closed sets, and leaves the widenable ones to the write door", async () => {
     const { db, target } = open();
     await migrateSqlite(target);
@@ -195,13 +240,13 @@ describe("the SQLite journal, applied", () => {
     MAILBOX_DISABLED_REASONS.forEach((r, i) => {
       expect(() => reason(r, `r${i}`), `${r} must be storable`).not.toThrow();
     });
-    // WIDENABLE, so the STORE admits it and the WRITE DOOR refuses it — that swap is the change.
+    // A LIST THAT GROWS, so the STORE admits it and the WRITE DOOR refuses it — that swap is the change.
     expect(() => reason("organized_elsewhere:phone", "rbad")).not.toThrow();
-    expect(() => closedSetValue("mailboxes_disabled_reason_closed", "organized_elsewhere:phone"))
+    expect(() => closedSetValue("mailboxes_disabled_reason_shape", "organized_elsewhere:phone"))
       .toThrow(ClosedSetViolation);
 
     /* WHY THIS INSTALL IS NOT SERVING A MAILBOX IT KNOWS ABOUT (mail 0029, widened by 0102 and
-       0105) — widenable too, so the device store carries no CHECK for it either. Every member is
+       0105) — a list that grows too, so the device store carries no CHECK for it either. Every member is
        storable, a foreign one is storable HERE, and the door is what refuses it. */
     const blocked = (b: string, id: string) => db.exec(
       "INSERT INTO mailboxes (id, account_id, provider, address, status, sync_blocked_reason) " +
@@ -211,7 +256,7 @@ describe("the SQLite journal, applied", () => {
       expect(() => blocked(b, `b${i}`), `${b} must be storable`).not.toThrow();
     });
     expect(() => blocked("a_sixth_reason", "bbad")).not.toThrow();
-    expect(() => closedSetValue("mailboxes_sync_blocked_reason_closed", "a_sixth_reason"))
+    expect(() => closedSetValue("mailboxes_sync_blocked_reason_shape", "a_sixth_reason"))
       .toThrow(ClosedSetViolation);
 
     /* THE VERB BEHIND THE TAKEOVER STAMP (mail 0104) KEEPS ITS CHECK, because it is IMMUTABLE by
@@ -298,7 +343,7 @@ describe("the SQLite journal, applied", () => {
     const beyondDouble = 9007199254740993n;   // 2^53 + 1: the first value a double cannot hold
     db.exec("INSERT INTO mailboxes (id, account_id, provider, address) VALUES ('m','a','imap','x@e.test')");
     await proxy.insert(mailboxFolders).values({
-      id: "f", mailboxId: "m", folder: "INBOX", uidvalidity: beyondDouble,
+      id: "f", mailboxId: "m", accountId: accountOfMailbox("m"), folder: "INBOX", uidvalidity: beyondDouble,
     });
     expect(sawBigintBind, "the column handed the host a bigint").toBe(false);
 
@@ -351,7 +396,7 @@ describe("the SQLite journal, applied", () => {
 
     const beyondDouble = 9007199254740993n;
     db.exec("INSERT INTO mailboxes (id, account_id, provider, address) VALUES ('m','a','imap','x@e.test')");
-    db.exec(`INSERT INTO mailbox_folders (id, mailbox_id, folder, uidvalidity) VALUES ('f','m','INBOX',${beyondDouble})`);
+    db.exec(`INSERT INTO mailbox_folders (id, mailbox_id, account_id, folder, uidvalidity) VALUES ('f','m','a','INBOX',${beyondDouble})`);
 
     let handedBack: unknown;
     const rounding = drizzleSqliteProxy(async (query, params, method) => {

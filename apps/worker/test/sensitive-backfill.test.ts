@@ -2,10 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import {
-  accounts, auditLog, changeLog, folderState, mailboxes, messageBodies, messages,
-  routingDecisions, type Tx,
-} from "@trafficflow/db";
+import { accounts, auditLog, changeLog, folderState, mailboxes, messageBodies, messages, routingDecisions, type Tx, mailboxPass, readPassProgress, updatePassProgress } from "@trafficflow/db";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMime, prepareHtmlForStorage,
 } from "@trafficflow/core";
@@ -262,7 +259,7 @@ async function seedDamaged(
     // 0.36.4 reflects on every insert value with `Object.getPrototypeOf(v).constructor`, which is
     // a TypeError on a prototype-less object. The production writer spreads for exactly this
     // reason; see `drizzle-repo.ts#insertMessageBody`.
-    messageId: m!.id, text: opts.storedText, html: null, headers: { ...norm.headers },
+    messageId: m!.id, accountId: m!.accountId, text: opts.storedText, html: null, headers: { ...norm.headers },
   });
   w.server.set(ref, raw);
   return m!.id;
@@ -300,7 +297,7 @@ async function seedWithheld(
     snippet: opts.storedText.slice(0, 200),
   }).returning();
   await w.db.insert(messageBodies).values({
-    messageId: m!.id, text: opts.storedText,
+    messageId: m!.id, accountId: m!.accountId, text: opts.storedText,
     html: opts.storedHtml ?? null, headers: { ...norm.headers },
   });
   w.server.set(ref, raw);
@@ -317,7 +314,7 @@ async function seedOrdinary(w: World): Promise<string> {
     nativeLocator: { folder: "INBOX", ref: "1:999" },
   }).returning();
   await w.db.insert(messageBodies).values({
-    messageId: m!.id, text: "hello there", html: "<p>hello there</p>", headers: {},
+    messageId: m!.id, accountId: m!.accountId, text: "hello there", html: "<p>hello there</p>", headers: {},
   });
   return m!.id;
 }
@@ -587,7 +584,7 @@ describe("the repair", () => {
    *
    * The row filed this pass as one of the five consumers that read a gone locator as terminal: a
    * refusal joined the per-process refused set, and a completed walk holding one still stamped the
-   * durable `sensitive_fp_backfill_at`, after which nothing looked at the mailbox again.
+   * durable done mark, after which nothing looked at the mailbox again.
    *
    * That was already closed by the marker-honesty work below by the time this row was worked, and
    * closing it is not this lane's to claim. What WAS missing is this assertion: every case in this
@@ -639,8 +636,8 @@ describe("the repair", () => {
 
     expect(r).toMatchObject({ unreadable: 1, cleared: 0, undecided: 1, blockedWalks: 1 });
     expect(r.marked).toBe(false);
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).toBeNull();
+    const mb = await readPassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId));
+    expect(mb.doneAt).toBeNull();
     // The body is untouched either way — the refusal costs a repair, never a corruption.
     const [b] = await w.db.select().from(messageBodies).where(eq(messageBodies.messageId, id));
     expect(b!.text).toBe(NEWSLETTER_STORED_TEXT);
@@ -715,8 +712,8 @@ describe("the repair", () => {
     // The count RESTARTED because the undecided set gained a member. Per mailbox this reads
     // `marked: true` and the newcomer is certified over after a single attempt.
     expect(third).toMatchObject({ marked: false, undecided: 2, blockedWalks: 1 });
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).toBeNull();
+    const mb = await readPassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId));
+    expect(mb.doneAt).toBeNull();
   });
 
   it("a RESTART resets the bound towards more looking, never towards a premature certificate", async () => {
@@ -734,8 +731,8 @@ describe("the repair", () => {
     resetSensitiveBackfillProgress(w.mailboxId);
 
     expect(await run(w)).toMatchObject({ marked: false, blockedWalks: 1 });
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).toBeNull();
+    const mb = await readPassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId));
+    expect(mb.doneAt).toBeNull();
   });
 
   it("a DECIDED refusal is certified: the classifier answered, so the marker may stand", async () => {
@@ -914,8 +911,7 @@ describe("idempotency", () => {
 
     // Clear the marker: this is also the supported way to ASK for the pass again, so the claim
     // and the operator's trigger are the same mechanism.
-    await w.db.update(mailboxes).set({ sensitiveFpBackfillAt: null })
-      .where(eq(mailboxes.id, w.mailboxId));
+    await updatePassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId), { doneAt: null });
     const again = await run(w);
 
     // The repaired message no longer carries a category, so it is not a candidate. No second
@@ -933,8 +929,8 @@ describe("idempotency", () => {
 
     expect(r).toMatchObject({ fetched: 1, cleared: 1, capped: true, marked: false });
     // Marking here would strand the second message unreadable for ever.
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).toBeNull();
+    const mb = await readPassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId));
+    expect(mb.doneAt).toBeNull();
 
     const rest = await run(w, undefined, { fetchesPerCycle: 1 });
     expect(rest).toMatchObject({ cleared: 1, marked: true });
@@ -986,8 +982,7 @@ describe("idempotency", () => {
     const first = await run(w);
     expect(first).toMatchObject({ fetched: 1, stillSensitive: 1, marked: true });
 
-    await w.db.update(mailboxes).set({ sensitiveFpBackfillAt: null })
-      .where(eq(mailboxes.id, w.mailboxId));
+    await updatePassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId), { doneAt: null });
     const again = await run(w);
 
     expect(again).toMatchObject({ fetched: 1, skipped: 0, stillSensitive: 1 });
@@ -1002,8 +997,8 @@ describe("idempotency", () => {
 
     expect(r.ran).toBe(false);
     // And crucially the marker stays NULL, so a deployment that CAN read still does the work.
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).toBeNull();
+    const mb = await readPassProgress(w.db, mailboxPass("sensitive_fp_backfill", w.accountId, w.mailboxId));
+    expect(mb.doneAt).toBeNull();
   });
 });
 

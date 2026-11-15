@@ -61,7 +61,7 @@ async function seedWithHeaders(
     from: opts.from ?? "news@sender.example",
     folder: opts.desired ?? "ohmail/Screened",
   });
-  await db.insert(messageBodies).values({ messageId, text: "", headers });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "", headers });
   return messageId;
 }
 

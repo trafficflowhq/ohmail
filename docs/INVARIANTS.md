@@ -32,7 +32,7 @@ every field filled.
 
 | Column | What it holds |
 |---|---|
-| `id` | The promise's number and a letter per sub-claim (`1a` to `11`); `junk` for the Junk-folder rule, which has no number. |
+| `id` | The promise's number and a letter per sub-claim (`1a` to `12`); `junk` for the Junk-folder rule, which has no number. |
 | `claim` | The sub-claim in one line, at most 160 characters. It never says more than its tests and the shipped code hold. |
 | `status` | `bitten`, `not yet run`, `no test` or `out of tree` (below). |
 | `tests` | The test files that hold the claim, relative to the repository root and separated by spaces; `-` when there are none. Every file must be one the suite runs. |

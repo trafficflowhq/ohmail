@@ -147,7 +147,7 @@ describe("a standalone desktop store", () => {
       const id = randomUUID();
       await db.insert(messages).values({ id, accountId: world.accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: msg.subject, fromAddress: msg.from.address, date: at, createdAt: at, updatedAt: at });
       // Spread, as `drizzle-repo` does: the store refuses the parser's null-prototype map.
-      await db.insert(messageBodies).values({ messageId: id, text: msg.textBody, headers: { ...msg.headers } });
+      await db.insert(messageBodies).values({ messageId: id, accountId: world.accountId, text: msg.textBody, headers: { ...msg.headers } });
       const got = (await materializeMessages(db, world.accountId, [id])).get(id);
       expect(got?.invitationWithoutEvent).toBe(withClass);
       const body = await messageService.getBody({ db, accountId: world.accountId } as never, id);

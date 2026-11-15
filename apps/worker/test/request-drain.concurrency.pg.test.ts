@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -110,7 +111,7 @@ async function seedHeld(ACCT: string, mailboxId: string, from: string): Promise<
     subject: "s", fromAddress: from, unread: true,
   }).returning({ id: messages.id });
   await dbA.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
 }

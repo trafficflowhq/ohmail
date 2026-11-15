@@ -117,6 +117,8 @@ describe("the schema upgrade says how far it has got", () => {
    * only thing this fixture decides is where the old install stopped. Answers the entries it
    * owes, so a test names them rather than recomputing the arithmetic it is checking.
    */
+  /** Three entries of the 1.0 road and the six of the 2.0 window, which an open takes as one step. */
+  const OWED = 9;
   async function oldInstall(dataDir: string, owed: number): Promise<JournalEntry[]> {
     const entries = readJournalOf(MAIL_JOURNAL);
     const folder = tempDir();
@@ -150,7 +152,8 @@ describe("the schema upgrade says how far it has got", () => {
 
   it("an upgrade counts 0 to N, and the launch after it has nothing to count", async () => {
     const dir = tempDir();
-    const owed = await oldInstall(dir, 6);
+    // Three entries short of 1.0.11's head, so this open owes those three and the six of the 2.0 window.
+    const owed = await oldInstall(dir, OWED);
     // Not vacuous: with one owed migration a counter and a constant would read alike.
     expect(owed.length).toBeGreaterThan(1);
 
@@ -158,8 +161,10 @@ describe("the schema upgrade says how far it has got", () => {
     expect(upgrade.phases[0]!.phase).toBe("opening_store");
     const counted = upgrade.phases.filter((p) => p.phase === "migrating");
     // 0 before the first migration, N after the last: the sequence the window renders as
-    // "(3 of 12)", and the one thing a counter that never advanced could not produce.
-    expect(counted.map((p) => p.progress?.applied)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // "(3 of 9)", and the one thing a counter that never advanced could not produce. The three
+    // entries of the 1.0 road are a step each; the 2.0 window's six are applied together in one
+    // transaction, so the count goes from 3 to 9 at once.
+    expect(counted.map((p) => p.progress?.applied)).toEqual([0, 1, 2, 3, 9]);
     expect([...new Set(counted.map((p) => p.progress?.pending))]).toEqual([owed.length]);
     expect(upgrade.migrations).toEqual({
       pending: owed.length,
@@ -179,17 +184,17 @@ describe("the schema upgrade says how far it has got", () => {
     // THE FLOOR, DRIVEN FROM BOTH SIDES. At zero every applied migration crosses it, in journal
     // order, each naming its own tag and what it cost.
     const admitDir = tempDir();
-    const owed = await oldInstall(admitDir, 6);
+    const owed = await oldInstall(admitDir, OWED);
     const admitted = await open(admitDir, { slowMigrationFloorMs: 0 });
     const spoken = admitted.lines.filter((l) => l.event === "migration_applied");
     expect(spoken.map((l) => l.detail.migration)).toEqual(owed.map((e) => e.tag));
     for (const line of spoken) expect(typeof line.detail.totalMs).toBe("number");
 
     // …and under the floor that SHIPS — no option at all, {@link SLOW_MIGRATION_MS} — the same
-    // six migrations say nothing, which is the half that keeps the log worth reading: these take
-    // single-digit milliseconds each, and nobody waited for any of them.
+    // migrations say nothing, which is the half that keeps the log worth reading: these take
+    // milliseconds each, and nobody waited for any of them.
     const quietDir = tempDir();
-    await oldInstall(quietDir, 6);
+    await oldInstall(quietDir, OWED);
     const quiet = await open(quietDir);
     expect(quiet.lines.filter((l) => l.event === "migration_applied")).toEqual([]);
     expect(quiet.migrations!.applied, "the pass still ran").toBe(owed.length);

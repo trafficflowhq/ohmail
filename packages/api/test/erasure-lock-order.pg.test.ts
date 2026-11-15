@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
@@ -525,7 +526,7 @@ const asUser = (h: unknown, p: Person): ServiceContext =>
 const authorizeQuery = () => ({ client_id: "tf-macos", redirect_uri: "trafficflow://auth", code_challenge: "A".repeat(43),
   code_challenge_method: "S" + "256", state: "fix026" }) as never;
 const withPassword: ParkPrior = async (p) => {
-  await db().insert(credentials).values({ userId: p.userId, passwordHash: await makeTestAuthDeps().passwordHasher.hash(PASSWORD), algo: "scrypt" });
+  await db().insert(credentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), passwordHash: await makeTestAuthDeps().passwordHasher.hash(PASSWORD), algo: "scrypt" });
   return {};
 };
 const emailOf = async (p: Person): Promise<string> =>
@@ -540,7 +541,7 @@ const PARKED: Array<[string, ParkPrior, ParkWriter, string]> = [
   ["generateRecoveryCodes, no prior codes", none, (h, p) => auth().generateRecoveryCodes(asUser(h, p)), "account_erased"],
   ["generateRecoveryCodes, over existing codes", async (p) => {
     const batchId = randomUUID();
-    for (let i = 0; i < 3; i++) await db().insert(recoveryCodes).values({ userId: p.userId, codeHash: hashToken(generateToken()), batchId });
+    for (let i = 0; i < 3; i++) await db().insert(recoveryCodes).values({ userId: p.userId, accountId: accountOfUser(p.userId), codeHash: hashToken(generateToken()), batchId });
     return {};
   }, (h, p) => auth().generateRecoveryCodes(asUser(h, p)), "account_erased"],
   ["totpEnroll, no prior secret", none, (h, p) => auth().totpEnroll(asUser(h, p)), "account_erased"],
@@ -558,13 +559,13 @@ const PARKED: Array<[string, ParkPrior, ParkWriter, string]> = [
   ["login, a factor enrolled (the login token)", async (p) => {
     await withPassword(p);
     const { ciphertext, keyVersion } = await makeTestAuthDeps().keyProvider.encrypt("JBSWY3DPEHPK3PXP");
-    await db().insert(totpSecrets).values({ userId: p.userId, secretEnc: ciphertext, keyVersion, activated: true });
+    await db().insert(totpSecrets).values({ userId: p.userId, accountId: accountOfUser(p.userId), secretEnc: ciphertext, keyVersion, activated: true });
     return {};
   }, async (h, p) => auth().login(ctxOn(h), { email: await emailOf(p), password: PASSWORD }), "credential_refused"],
   ["webauthnRegisterOptions (the registration challenge)", none,
     (h, p) => auth().webauthnRegisterOptions(asUser(h, p)), "account_erased"],
   ["stepUpWebauthnOptions (the step-up challenge)", async (p) => {
-    await db().insert(webauthnCredentials).values({ userId: p.userId, credentialId: `fix026-${randomUUID()}`, publicKey: "AAAA" });
+    await db().insert(webauthnCredentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), credentialId: `fix026-${randomUUID()}`, publicKey: "AAAA" });
     return {};
   }, (h, p) => auth().stepUpWebauthnOptions(asUser(h, p)), "account_erased"],
 ];
@@ -666,12 +667,12 @@ async function held(p: Person): Promise<Held> {
       dedupKey: `fix026:${tag}:${i}`, subject: "hello", nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
     });
   }
-  const [f] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Projects" }).returning();
+  const [f] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Projects" }).returning();
   await db().insert(folderOps).values({
     accountId: p.accountId, mailboxId: mb!.id, folderId: f!.id, op: "rename", toFolder: "Elsewhere",
     status: "failed", error: "exists",
   });
-  const [c] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Fresh" }).returning();
+  const [c] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Fresh" }).returning();
   await db().insert(folderOps).values({
     accountId: p.accountId, mailboxId: mb!.id, folderId: c!.id, op: "create", status: "failed", error: "exists",
   });

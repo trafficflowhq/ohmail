@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { drafts, mailboxes, messageBodies, messages, threads } from "@trafficflow/db/mail";
+import { drafts, junkRescues, mailboxes, messageBodies, messages, threads } from "@trafficflow/db/mail";
 import { mailboxService } from "@trafficflow/services/mail";
 import type {
   DraftDTO, MailboxDTO, MessageBodyBatchItem, MessageDTO, Page, ServiceContext, SnapshotResponse,
@@ -330,6 +330,23 @@ describe("a first pull mirrors the account's mailboxes and files its mail under 
     expect(listed.map((m) => m.address).sort()).toEqual([LOGIN, "second@ohmail.test"].sort());
   });
 
+  it("keeps the placeholder as a retired row while a queued 'not junk' still names it, and the pull lands", async () => {
+    // A computer that organized its mail on its own before it signed in: its mailbox carries a
+    // rescue the server never took. `junk_rescues` keys onto the mailbox, so a delete under that
+    // row is refused and takes the whole refresh with it.
+    const { db, world, cursorPath } = await standUp();
+    await db.insert(junkRescues).values({
+      accountId: world.accountId, mailboxId: world.mailboxId, folder: "Junk", uidvalidity: 7n, uid: 11,
+    });
+
+    await createCloudMirror({ db, world, cursorPath, now: () => new Date(), auth: fakeAuth() }).pullOnce();
+
+    expect(await localIds(db)).toEqual([HOSTED_A, world.mailboxId].sort());
+    const [kept] = await db.select().from(mailboxes).where(eq(mailboxes.id, world.mailboxId));
+    expect(kept!.status).toBe("disabled");
+    expect(await db.select().from(junkRescues)).toHaveLength(1);
+  });
+
   it("asks for the mailboxes BEFORE it drains — the ordering, read off the call log", async () => {
     const { db, world, cursorPath } = await standUp();
     const asked: string[] = [];
@@ -548,7 +565,7 @@ describe("an upgraded mirror re-keys itself", () => {
         bodyHash: "", dedupKey: `cloud:${id}`, subject: "Old mail",
         fromAddress: "stranger@nowhere.test", threadId, updatedAt: new Date(),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: `body of ${id}`, html: null });
+      await db.insert(messageBodies).values({ messageId: id, accountId: world.accountId, text: `body of ${id}`, html: null });
     }
     /* THE 0.9.3 CURSOR, VERBATIM. Four keys, no `version`. If an absent version ever reads as
        "current", this file is the population that silently keeps the defect while every fresh

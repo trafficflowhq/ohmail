@@ -307,7 +307,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
       });
     }
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: folder,
       desiredFolder: SCREENER,
       // `us`, because the gate is OUR decision: the pipeline held this first-contact sender, which

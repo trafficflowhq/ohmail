@@ -240,6 +240,32 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // cloud 0058_storage_stats_marks — the last of its three columns. Absent, the worker's storage snapshot
   // faults and the old rows stand. The deploy gate names it.
   ["mailbox_storage_stats", "walked_at"],
+  // cloud 0100_account_on_sign_in_tables — the account on the seven sign-in tables. LOUD: every
+  // registration, sign-in step, passkey ceremony, recovery batch and desktop code names the column
+  // in its insert, so an API ahead of the migration 42703s on each. One migration, one transaction:
+  // the columns imply the keys onto `users (id, account_id)` and the two pairs' CHECKs.
+  ["credentials", "account_id"],
+  ["webauthn_credentials", "account_id"],
+  ["totp_secrets", "account_id"],
+  ["recovery_codes", "account_id"],
+  ["oauth_auth_codes", "account_id"],
+  ["login_tokens", "account_id"],
+  ["webauthn_challenges", "account_id"],
+  // cloud 0101_account_counters — the table of the counters that name a row, by its last column.
+  // SILENT until a counter is written through the door: absent, that write 42P01s.
+  ["account_counters", "updated_at"],
+  // cloud 0102_alert_subject — the account a per-subject alert is about. LOUD: the alert pass's
+  // insert names every column, so an API ahead of the migration 42703s on every observation.
+  ["alert_state", "subject_account_id"],
+  // cloud 0104_account_closures — the table of accounts closed by staff, by its last column.
+  // SILENT until staff close one: absent, that act 42P01s.
+  ["account_closures", "request_id"],
+  // cloud 0105_calendar_sign_in — what a ceremony connects, and the table of a calendar's notice
+  // channels by its last column. `purpose` is defaulted, so the mailbox flows' inserts name it
+  // and an API ahead of the migration 42703s on each; the table is silent until a channel opens.
+  ["mailbox_oauth_ceremonies", "purpose"],
+  ["mailbox_oauth_device_ceremonies", "purpose"],
+  ["cal_push_channels", "created_at"],
 ] as const;
 
 /**
@@ -279,8 +305,13 @@ export const CLOUD_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // ceremony on the deployment, and how many that is, is chosen by whoever opened them.
   ["webauthn_challenges_open_login_idx",
     "ON public.webauthn_challenges USING btree (login_token_id, type, created_at)"],
+  // Cloud 0100 rebuilt it to lead with the account: the needle is the new key.
   ["webauthn_challenges_open_user_idx",
-    "ON public.webauthn_challenges USING btree (user_id, type, created_at)"],
+    "ON public.webauthn_challenges USING btree (account_id, user_id, type, created_at)"],
+  // Cloud 0103 — a secret's look-up key is unique. Absent, every read still answers and nothing
+  // refuses a second row under one hash: the uniqueness nothing else enforces.
+  ["login_tokens_token_hash_uq", "UNIQUE INDEX login_tokens_token_hash_uq ON public.login_tokens USING btree (token_hash)"],
+  ["oauth_auth_codes_code_hash_uq", "UNIQUE INDEX oauth_auth_codes_code_hash_uq ON public.oauth_auth_codes USING btree (code_hash)"],
 ] as const;
 
 /**
@@ -311,6 +342,9 @@ export const CLOUD_FK_MARKERS: ReadonlyArray<ForeignKeyMarker> = [
   // exists and says nothing about whose account it is. Absent, nothing raises and every suite is
   // green while an auth event may name another account's user: the silent shape, at its sharpest.
   ["auth_events_user_id_account_fk", "REFERENCES users(id, account_id)"],
+  // cloud 0103_census — its last statement: the key `push_subscriptions.account_id` never had.
+  // Absent, a wake registration may name an account that does not exist and nothing says so.
+  ["push_subscriptions_account_id_accounts_id_fk", "REFERENCES accounts(id)"],
 ] as const;
 
 /**
@@ -369,7 +403,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0047_staff_roles_and_audit";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0105_calendar_sign_in";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

@@ -46,9 +46,9 @@ export function defineJunkRefillSuite(label: string, openDb: () => Promise<Tx>):
         subject: "not spam after all", fromAddress: "sender@spam.invalid",
         messageIdHeader: "junked-1@spam.invalid", nativeLocator: { folder: JUNK, ref: "5:77" },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "", withheldReason: "junk_filed" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", withheldReason: "junk_filed" });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: desired, observedFolder: JUNK, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: JUNK, lastSetBy: "us",
         reconcileStatus: desired === JUNK ? "reconciled" : "pending", conflict: false,
       });
       return { accountId, mailboxId: mb!.id, messageId: m!.id };

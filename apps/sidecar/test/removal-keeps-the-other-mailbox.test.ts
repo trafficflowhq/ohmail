@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
   PROFILE_FOUND_AUDIT_ACTION, auditLog, drafts, mailboxes, messages, outboundSends, threadNotes, threads,
+  accountPass, mailboxPass, passProgress, writePassProgress,
 } from "@trafficflow/db";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
@@ -279,8 +280,18 @@ describe("removing a mailbox from this computer", () => {
     });
     const [keptMarker, goneMarker] = await s.db.insert(auditLog)
       .values([marker(s.world.mailboxId, "1".repeat(32)), marker(dto.id, "2".repeat(32))]).returning({ id: auditLog.id });
+    // Where three passes stand: one of each mailbox's, and one of the account's own.
+    const at = new Date("2026-09-22T12:00:00.000Z");
+    await writePassProgress(s.db, mailboxPass("sensitive_rescreen", accountId, s.world.mailboxId), { doneAt: at });
+    await writePassProgress(s.db, mailboxPass("sensitive_rescreen", accountId, dto.id), { doneAt: at });
+    await writePassProgress(s.db, accountPass("html_words_backfill", accountId), { cursor: keptMsg!.id });
 
     expect((await remove(s, dto.id)).status).toBe(200);
+
+    const passes = await s.db.select({ job: passProgress.job, subjectId: passProgress.subjectId }).from(passProgress)
+      .where(inArray(passProgress.job, ["sensitive_rescreen", "html_words_backfill"]));
+    expect(passes.map((p) => `${p.job} ${p.subjectId}`).sort(), "only the removed mailbox's passes go")
+      .toEqual([`html_words_backfill ${accountId}`, `sensitive_rescreen ${s.world.mailboxId}`].sort());
 
     const [words] = await s.db.select().from(drafts).where(eq(drafts.id, reply!.id));
     expect(words?.subject, "a reply drafted in the other mailbox was deleted").toBe("Re: from the other mailbox");

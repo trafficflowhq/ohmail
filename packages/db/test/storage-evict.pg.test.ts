@@ -74,7 +74,7 @@ async function seed(
     await db.transaction(async (tx) => {
       await reserveBodyBytes(tx as unknown as Tx, dialect(db), accountId, bodyBytesOf(body), null);
       await tx.insert(messageBodies).values({
-        messageId: m!.id, text: body.text, html: body.html, headers: { "x-seed": ["1"] },
+        messageId: m!.id, accountId: m!.accountId, text: body.text, html: body.html, headers: { "x-seed": ["1"] },
       });
     });
   }
@@ -257,7 +257,7 @@ describe.skipIf(!PG_UP)("the trim and the refill's counter helper", () => {
       accountId, mailboxId: mb!.id, bodyHash: "late", dedupKey: `${accountId}:late`, subject: "late",
       date: new Date(Date.UTC(2026, 6, 2)),
     }).returning();
-    await db.insert(messageBodies).values({ messageId: late!.id, text: "", html: null, withheldReason: "storage_cap", headers: {} });
+    await db.insert(messageBodies).values({ messageId: late!.id, accountId: late!.accountId, text: "", html: null, withheldReason: "storage_cap", headers: {} });
     await db.transaction(async (tx) => recordWithheldForSpace(tx as unknown as Tx, dialect(db), accountId, late!.id));
     const facts = async () => {
       const [row] = await db.select().from(accountStorage).where(eq(accountStorage.accountId, accountId));
@@ -365,7 +365,7 @@ describe.skipIf(!PG_UP)("replayReserveEvicting — the window for a run of lette
             const t = tx as unknown as Tx;
             const stored = await reserveBodyBytesEvicting(t, dialect(db), accountId, bodyBytesOf({ text, html: null }), cap);
             await tx.insert(messageBodies).values({
-              messageId: letters[i]!.id, text: stored ? text : "", html: null,
+              messageId: letters[i]!.id, accountId, text: stored ? text : "", html: null,
               withheldReason: stored ? null : "storage_cap", headers: {},
             });
             if (!stored) await recordWithheldForSpace(t, dialect(db), accountId, letters[i]!.id);

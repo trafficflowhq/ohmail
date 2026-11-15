@@ -51,8 +51,8 @@ beforeAll(async () => {
       select ${accountId}, ${mailboxId}, n.id, 'h', ${tag} || ':' || n.g, 'subject ' || n.g, 'snippet', ${from}, ${at.toISOString()}::timestamptz, ${arrived.toISOString()}::timestamptz, ${arrived.toISOString()}::timestamptz, ${unread},
         '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb
       from n`);
-    await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-      select id, ${folder}, ${folder}, 'us' from messages where dedup_key like ${`${tag}:%`}`);
+    await o.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+      select id, account_id, ${folder}, ${folder}, 'us' from messages where dedup_key like ${`${tag}:%`}`);
   };
   // Senders at the gate: some recent and unread, the rest quiet for a year with older mail in the Ohbox.
   for (let s = 0; s < HELD_ACTIVE; s++) await insert(`new${s}@x.test`, "ohmail/Screener", new Date(NOW - DAY), true, 1, `na${s}`);

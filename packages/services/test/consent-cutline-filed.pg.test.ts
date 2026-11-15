@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -136,7 +137,7 @@ describe.skipIf(!AVAILABLE)("the cutline over mail that is already filed", () =>
         fromAddress: r.from, subject: "s", date: r.date, unread: r.unread, snippet: "",
       }).returning({ id: messages.id });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: r.folder, observedFolder: r.folder,
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: r.folder, observedFolder: r.folder,
         lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }

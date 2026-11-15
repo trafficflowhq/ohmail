@@ -61,7 +61,7 @@ describe.skipIf(!AVAILABLE)("the revoke of a rule that filed a gap batch, on rea
         subject: `letter ${i}`, fromAddress: from, nativeLocator: { folder, ref: `1:${i + 1}` }, arrivedAt,
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
         lastSetBy, reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;

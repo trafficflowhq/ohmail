@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync,
   writeFileSync,
@@ -206,7 +207,7 @@ describe("a first local door nobody saved is kept or undone by the next start", 
     for (const transport of ["imap", "smtp"]) {
       const meta = { host: `${transport}.trafficflow.test`, port: transport === "imap" ? 993 : 465, secure: true, user: x };
       await db.insert(mailboxCredentials)
-        .values({ mailboxId, transport, secretEnc: "not-a-secret", keyVersion: 1, meta, updatedAt: at })
+        .values({ mailboxId, accountId: accountOfMailbox(mailboxId), transport, secretEnc: "not-a-secret", keyVersion: 1, meta, updatedAt: at })
         .onConflictDoUpdate({
           target: [mailboxCredentials.mailboxId, mailboxCredentials.transport],
           set: { secretEnc: "not-a-secret", updatedAt: at },
@@ -283,7 +284,7 @@ describe("a first local door nobody saved is kept or undone by the next start", 
       const attempt = await start(s, X, "pending");
       await seal(s.db, attempt.mailboxId, SEALED_AT);
       if (holds === "folder") {
-        await s.db.insert(mailboxFolders).values({ mailboxId: attempt.mailboxId, folder: "INBOX" });
+        await s.db.insert(mailboxFolders).values({ mailboxId: attempt.mailboxId, accountId: accountOfMailbox(attempt.mailboxId), folder: "INBOX" });
       } else {
         const [send] = await s.db.insert(outboundSends).values({
           accountId: attempt.accountId, idempotencyKey: "first-door", mintedMessageId: "<first-door@trafficflow.test>",

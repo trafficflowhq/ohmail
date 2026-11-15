@@ -54,7 +54,7 @@ describe("the /sync page's prefetches", () => {
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: randomUUID(), subject: "s", fromAddress: "f@x.example",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     const rec = (entityType: EntityType, entityId: string) =>
       db.transaction((tx) => recordChange(tx as never, { accountId, entityType, entityId, op: "create" }));

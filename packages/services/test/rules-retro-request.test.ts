@@ -240,7 +240,7 @@ describe("a Rules-page Change re-files what the rule filed, and only that", () =
         subject, fromAddress: NORA, nativeLocator: { folder, ref: "1:1" },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false, decidedAt,
       });
       return m!.id;

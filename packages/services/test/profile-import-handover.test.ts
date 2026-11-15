@@ -38,7 +38,7 @@ async function world(at: Date = NOW) {
     accountId, provider: "imap", address: `${accountId.slice(0, 8)}@trafficflow.test`,
   }).returning();
   // Reachable: the card's question offers nothing for a mailbox this install holds no credential for.
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   let now = at;
   const ctx = { db, accountId, now: () => now } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id, advance: (ms: number) => { now = new Date(now.getTime() + ms); } };

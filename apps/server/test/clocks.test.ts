@@ -250,7 +250,7 @@ describe("a self-hosted server's own sending chain", () => {
       const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `u@${host}`, status: "connected" }).returning();
       const enc = await program.runtime.cfg.keyRing.provider.encrypt(randomUUID());
       await db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId: mb!.id, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host, port: 993, secure: true, user: `u@${host}` },
       });
       return mb!.id;

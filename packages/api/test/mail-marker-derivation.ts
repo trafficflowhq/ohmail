@@ -65,8 +65,6 @@ export const COLUMN_FACET_ALLOWLIST: Record<string, string> = {
   "0004_graduations|graduations": "baseline: graduations (learning) carries no health marker",
   "0005_warm_black_bird|learning_signals": "baseline: learning_signals carries no health marker",
   "0007_amusing_nextwave|mailboxes": "baseline: mailboxes is probed by many later markers (id, …)",
-  "0008_hybrid_search|message_bodies": "baseline: message_bodies is probed at 0062.withheld_reason",
-  "0008_hybrid_search|messages": "baseline: messages is probed by its own markers",
   "0009_tracker_events|tracker_events": "baseline: tracker_events ledger carries no health marker",
   "0010_optimal_roland_deschain|away_responders": "baseline: away_responders is probed at 0052.audience",
   "0010_optimal_roland_deschain|contact_notes": "baseline: contact_notes carries no health marker",
@@ -87,7 +85,6 @@ export const COLUMN_FACET_ALLOWLIST: Record<string, string> = {
   // probed, through the sharper facet named.
   "0028_message_instances|messages": "one-per-migration: 0028 is probed at message_instances.is_primary",
   "0032_unsubscribe_records|unsubscribe_records": "unsubscribe ledger; no API path selects it (a staff read would be a delivery oracle), so no marker",
-  "0051_away_responder|away_responder_sent": "away-reply ledger; worker-only, not on a certified API read path",
   "0058_reconcile_backoff|flag_state": "one-per-migration: 0058 is probed at folder_state.next_attempt_at (same pair added to flag_state)",
   "0069_folders_enabled_reissue|account_settings": "reissue of 0066 (REISSUED_ORIGINALS); folders_enabled_at is already probed by 0066",
   "0087_away_reply_throttle|away_replies": "away-reply ledger; worker-only, not on a certified API read path",
@@ -95,7 +92,7 @@ export const COLUMN_FACET_ALLOWLIST: Record<string, string> = {
 };
 
 /**
- * The four facets the design deliberately probes TWICE — two `MAIL_SCHEMA_MARKERS` entries on one
+ * The three facets the design deliberately probes TWICE — two `MAIL_SCHEMA_MARKERS` entries on one
  * `(migration, table)` — because the two columns answer different questions (see the
  * `MAIL_SCHEMA_MARKERS` docblocks). They are the difference between "88 required facets" and "92
  * column markers", and pinning them here keeps `deriveMailColumnMarkerCount()` exact without
@@ -103,7 +100,6 @@ export const COLUMN_FACET_ALLOWLIST: Record<string, string> = {
  */
 export const DELIBERATE_DOUBLE_PROBES: Record<string, string> = {
   "0078_inbound_quiet|mailboxes": "inbound_quiet_since (worker evidence) and inbound_quiet_dismissed_at (user dismissal)",
-  "0081_sensitive_rescreen_cursor|mailboxes": "sensitive_rescreen_cursor (resume point) and sensitive_rescreen_started_at",
   "0083_organizer_role|mailboxes": "organizer_role (the gate) and organize_consented_at (the ceremony record)",
   "0083_organizer_role|account_settings": "onboarding_completed_at and screening_scope",
 };

@@ -10,6 +10,7 @@ import { MAIL_MIGRATIONS_DIR, SQLITE_MIGRATIONS_DIR } from "@ohmail/db-mail";
 import * as pgSchema from "../src/schema-mail.js";
 import * as sqliteSchema from "../src/schema-mail-sqlite.js";
 import { CLOSED_SETS, closedSetValue, organizerKindColumn, ClosedSetViolation } from "../src/closed-sets.js";
+import { GROWING_LIST_SHAPE, hasGrowingListShape, shapeCheck } from "../src/closed-set-shape.js";
 
 /**
  * A CHECK ON A DEVICE IS A TABLE REBUILD, SO THIS DECIDES WHICH ONES MAY BE THERE.
@@ -19,11 +20,12 @@ import { CLOSED_SETS, closedSetValue, organizerKindColumn, ClosedSetViolation } 
  * ships the device store, the baseline freezes and every further widening of a set carried there
  * becomes a fifty-column rebuild for one word.
  *
- * The rule, and what this file is: a WIDENABLE set (measured — added in more than one migration)
- * carries NO CHECK on the device and is refused at the write door instead; an IMMUTABLE set (added
- * once, closed by an invariant) keeps its CHECK on both twins. This replaces the argument the
- * `.noop` files used to carry, which was "the journal has never shipped" — true until 0.18 and
- * then never again.
+ * The rule, and what this file is: a set that GROWS (measured — its member list was added in more
+ * than one migration) carries NO member list in any store and is refused at the write door
+ * instead; since mail 0202 the server holds it to a SHAPE and the device carries no CHECK for it.
+ * An IMMUTABLE set (added once, closed by an invariant) keeps its CHECK on both twins. This
+ * replaces the argument the `.noop` files used to carry, which was "the journal has never
+ * shipped" — true until 0.18 and then never again.
  *
  * Every classification below is asserted against the pg journal's own history rather than typed.
  */
@@ -122,31 +124,58 @@ describe("closed sets, and which of them a device store may enforce", () => {
     // An entry classified the other way round is the whole failure this file exists to prevent,
     // so the class is derived here and compared with the one recorded.
     for (const set of CLOSED_SETS) {
-      const added = PG_HISTORY.get(set.constraint) as string[];
-      const measured = added.length > 1 ? "widenable" : "immutable";
-      expect(set.kind, `${set.constraint} is recorded as ${set.kind} and the journal adds it in `
-        + `${added.join(", ")}`).toBe(measured);
+      // A list that GROWS is measured on the member list it was: added in more than one migration
+      // means dropped and added back. Its shape is added once, by the entry that drops the list.
+      const added = PG_HISTORY.get(set.was ?? set.constraint) as string[];
+      const measured = added.length > 1 ? "shape" : "immutable";
+      expect(set.kind, `${set.constraint} is recorded as ${set.kind} and the journal adds `
+        + `${set.was ?? set.constraint} in ${added.join(", ")}`).toBe(measured);
+      expect(set.was === undefined, `${set.constraint}: only a shape names the list it replaced`).toBe(set.kind !== "shape");
+      if (set.kind === "shape") {
+        expect(PG_HISTORY.get(set.constraint), `${set.constraint} is added once, by mail 0202`).toEqual(["0202_retired.sql"]);
+      }
       expect(set.why.length, `${set.constraint} carries no reason`).toBeGreaterThan(40);
     }
     // And both classes are actually represented, or every case above is vacuous for one of them.
-    expect(CLOSED_SETS.some((s) => s.kind === "widenable")).toBe(true);
+    expect(CLOSED_SETS.some((s) => s.kind === "shape")).toBe(true);
     expect(CLOSED_SETS.some((s) => s.kind === "immutable")).toBe(true);
   });
 
-  it("keeps a WIDENABLE set off the device store — twin, baseline and every step", () => {
-    const widenable = CLOSED_SETS.filter((s) => s.kind === "widenable");
-    expect(widenable.map((s) => s.constraint).sort()).toEqual([
-      "mailboxes_disabled_reason_closed",
-      "mailboxes_organized_by_kind_closed",
-      "mailboxes_sync_blocked_reason_closed",
+  it("keeps a set that GROWS off the device store — twin, baseline and every step", () => {
+    const growing = CLOSED_SETS.filter((s) => s.kind === "shape");
+    expect(growing.map((s) => s.constraint).sort()).toEqual([
+      "mailboxes_disabled_reason_shape",
+      "mailboxes_organized_by_kind_shape",
+      "mailboxes_sync_blocked_reason_shape",
     ]);
-    for (const set of widenable) {
-      expect(SQLITE_CHECKS.has(set.constraint),
-        `${set.constraint} is widenable and the device twin declares a CHECK for it — SQLite cannot `
-        + "drop one, so this freezes a fifty-column rebuild into the first shipped baseline").toBe(false);
-      expect(DEVICE_HISTORY.has(set.constraint),
-        `${set.constraint} is widenable and the device journal creates a CHECK for it`).toBe(false);
+    for (const set of growing) {
+      for (const name of [set.constraint, set.was as string]) {
+        expect(SQLITE_CHECKS.has(name),
+          `${name}: a growing set and the device twin declares a CHECK for it — SQLite cannot `
+          + "drop one, so this freezes a fifty-column rebuild into the first shipped baseline").toBe(false);
+        expect(DEVICE_HISTORY.has(name), `${name}: a growing set and the device journal creates a CHECK for it`).toBe(false);
+      }
     }
+  });
+
+  it("holds a set that grows to ONE shape on the server, which every member has and no mail server's value does", () => {
+    for (const set of CLOSED_SETS.filter((s) => s.kind === "shape")) {
+      expect(set.shape, set.constraint).toBe(GROWING_LIST_SHAPE);
+      // The twin's CHECK is the shape, spelled as the entry spells it; the member list is gone from it.
+      const want = shapeCheck(set.column).replace(/"/g, "").replace(/\s+/g, " ").trim();
+      expect(PG_CHECKS.get(set.constraint), `${set.constraint}: the server twin's CHECK`).toBe(want);
+      expect(PG_CHECKS.has(set.was as string), `${set.was} is still declared`).toBe(false);
+      expect(membersOf(PG_CHECKS.get(set.constraint) as string), `${set.constraint} still spells members`).toBeNull();
+      // Every member fits, or the server would refuse what the write door admits.
+      for (const member of set.members) expect(hasGrowingListShape(member), `${set.constraint}: ${member}`).toBe(true);
+    }
+    // What the shape refuses is what a mail server could choose: an address, a sentence, a capital.
+    for (const foreign of ["a@b.test", "Mailbox full", "over quota", "", "ünïcode", "x".repeat(49), "1st", ":lead"]) {
+      expect(hasGrowingListShape(foreign), JSON.stringify(foreign)).toBe(false);
+    }
+    // And a word nobody has added yet fits: a new member alters no table.
+    expect(hasGrowingListShape("a_reason_of_next_year")).toBe(true);
+    expect(hasGrowingListShape("organized_elsewhere:watch")).toBe(true);
   });
 
   it("keeps an IMMUTABLE set on BOTH twins, spelled the same way", () => {
@@ -181,10 +210,14 @@ describe("closed sets, and which of them a device store may enforce", () => {
     // server's CHECK spells them out. A member added to the constant and not to the CHECK is a
     // value the server refuses and this store accepts, which is the drift a device cannot repair.
     for (const set of CLOSED_SETS) {
-      const declared = membersOf(PG_CHECKS.get(set.constraint) as string);
-      expect(declared, `${set.constraint} does not render as an enumeration`).not.toBeNull();
-      expect([...(declared as string[])].sort(), `${set.constraint}: the server twin's CHECK`)
-        .toEqual([...set.members].sort());
+      // A growing set's members stand in no CHECK (the case above holds its shape); an immutable
+      // set's CHECK spells them out.
+      if (set.kind === "immutable") {
+        const declared = membersOf(PG_CHECKS.get(set.constraint) as string);
+        expect(declared, `${set.constraint} does not render as an enumeration`).not.toBeNull();
+        expect([...(declared as string[])].sort(), `${set.constraint}: the server twin's CHECK`)
+          .toEqual([...set.members].sort());
+      }
 
       // READ FROM THE VALIDATOR, behaviourally — a predicate that admits every member and refuses
       // a foreign string is the same set, however it is written.
@@ -199,8 +232,10 @@ describe("closed sets, and which of them a device store may enforce", () => {
     }
   });
 
-  it("refuses a foreign value at the write door, which is where a widenable set is now enforced", () => {
-    for (const set of CLOSED_SETS.filter((s) => s.kind === "widenable")) {
+  it("refuses a foreign value at the write door, which is where a growing set's members are enforced", () => {
+    for (const set of CLOSED_SETS.filter((s) => s.kind === "shape")) {
+      // A word of the right shape that is no member: the server's CHECK would take it, the door does not.
+      expect(() => closedSetValue(set.constraint, "a_reason_of_next_year"), set.constraint).toThrow(ClosedSetViolation);
       expect(() => closedSetValue(set.constraint, "not-a-member"), set.constraint)
         .toThrow(ClosedSetViolation);
       for (const member of set.members) {
@@ -230,7 +265,7 @@ describe("closed sets, and which of them a device store may enforce", () => {
       if (membersOf(body) === null) continue;   // a bound or a shape, not a set
       const set = REGISTERED.get(name);
       expect(set, `${name} closes a set on the device store and CLOSED_SETS does not know it`).toBeDefined();
-      expect((set as { kind: string }).kind, `${name} is on the device store and is widenable`)
+      expect((set as { kind: string }).kind, `${name} is on the device store and is a set that grows`)
         .toBe("immutable");
     }
   });

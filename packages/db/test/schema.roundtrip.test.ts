@@ -14,7 +14,7 @@ describe("schema round-trip", () => {
       dedupKey: "mid:abc@x", subject: "Hi", fromAddress: "a@b.example",
     }).returning();
     await db.insert(folderState).values({
-      messageId: msg.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: msg.id, accountId: msg.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
 
     const got = await db.select().from(messages).where(eq(messages.id, msg.id));
