@@ -4,6 +4,15 @@
  * that is unreachable once the turn returns, and never written to a log, an error, an outcome or
  * any column but its own sealed one.
  *
+ * A SEALED TEXT IS READ FOR THE ROW IT WAS FOUND ON AND FOR NO OTHER. The text names the account
+ * and the connection it was sealed for; found on another connection's row, this account's or
+ * another's, it is no sign-in: nothing is dialled with it, and the connection waits for its person
+ * as one whose sign-in is missing does.
+ *
+ * A PASSWORD IS SENT TO THE SERVER ITS SEALED TEXT NAMES AND TO NO OTHER. The row's `server_url`
+ * stands in the clear and is never dialled; a row that names another server than the text does is
+ * refused in the same way, so one written column moves no password.
+ *
  * Google's and Microsoft's lasting sign-ins are traded for a short one once a turn. Microsoft hands
  * out a new lasting sign-in with every trade: it is sealed again, in its own transaction, before the
  * short one reaches a reader, and only where the stored one is still the one this turn traded with.
@@ -13,7 +22,7 @@
 import { createHash } from "node:crypto";
 import {
   parseCredential, Secret, serializeCredential, textOf, toCredential,
-  type CalendarProvider, type Clock, type Connection, type Credential, type HttpPort, type ProviderRefusal,
+  type CalendarProvider, type Clock, type Connection, type Credential, type CredentialPlace, type HttpPort, type ProviderRefusal,
   type ProviderWord, type StoredCredential,
 } from "@ohmail/cal-providers";
 import { googleBearer } from "@ohmail/cal-providers/google";
@@ -91,6 +100,9 @@ export interface SealPlace {
 
 const digestOf = (text: string): string => createHash("sha256").update(text).digest("hex");
 
+/** The row a turn's sealed text must name to be this connection's: the turn's own key, never anything the row or a provider said. */
+const placeOf = (key: ConnectionKey): CredentialPlace => ({ accountId: key.accountId, connectionId: key.id });
+
 /** The credential row under lock, opened, or `null` when it is gone or opens to nothing. */
 async function lockedOpened(tx: Tx, deps: SignInDeps, key: ConnectionKey, provider: ProviderWord): Promise<string | null> {
   const [row] = await dialect(tx).forUpdate(tx.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion })
@@ -119,9 +131,10 @@ function microsoftMeta(meta: unknown): { readonly tenant: string | null; readonl
 const STOPS: ReadonlySet<ProviderRefusal> = new Set(["consent_needed", "sign_in_refused", "sign_in_incomplete", "provider_off"]);
 
 /**
- * Open the sealed credential for this turn. `null` sealed, a text that opens to nothing, or a kind
- * that does not fit the provider is `sign_in_incomplete`: the person connects again. A key ring
- * that cannot open the value throws {@link CalendarKeyRingFault}, and nothing is written for it.
+ * Open the sealed credential for this turn. `null` sealed, a text that opens to nothing, a text
+ * sealed for another row, a password sealed for another server than the row names, or a kind that
+ * does not fit the provider is `sign_in_incomplete`: the person connects again. A key ring that
+ * cannot open the value throws {@link CalendarKeyRingFault}, and nothing is written for it.
  */
 export async function openPassSignIn(
   deps: SignInDeps, place: SealPlace, sealed: SealedCredential | null, held: HeldConnection,
@@ -134,7 +147,7 @@ export async function openPassSignIn(
   } catch {
     throw new CalendarKeyRingFault();
   }
-  const stored = parseCredential(text);
+  const stored = parseCredential(text, placeOf(place.key));
   let opened = digestOf(text);
   if (stored === null || stored.kind !== CREDENTIAL_KIND[word]) return { ok: false, word: "sign_in_incomplete" };
 
@@ -162,10 +175,12 @@ export async function openPassSignIn(
   if (stored.kind === "address") {
     credential = toCredential(stored);
   } else if (stored.kind === "basic") {
-    // CalDAV's typed address is needed at every call: the hosts the password may travel to are worked out from it.
-    if (held.serverUrl === null) return { ok: false, word: "sign_in_incomplete" };
+    // CalDAV's typed address is needed at every call: the hosts the password may travel to are worked out from it. It
+    // is THE SEALED TEXT's server that is dialled, never the row's: the row's stands in the clear, and one that is not
+    // the server this password was sealed for (another address written there, or none) holds no sign-in of its own.
+    if (stored.server !== held.serverUrl) return { ok: false, word: "sign_in_incomplete" };
     credential = toCredential(stored);
-    start = held.serverUrl;
+    start = stored.server;
   } else if (stored.provider !== word) {
     return { ok: false, word: "sign_in_incomplete" };
   } else if (word === "google") {
@@ -289,9 +304,9 @@ async function sealRotated(
 ): Promise<"superseded" | { readonly kind: "sealed"; readonly digest: string } | { readonly kind: "kept" }> {
   const done = await inConnection(place.db, place.key, async ({ tx }) => {
     const now = await lockedOpened(tx, deps, place.key, word);
-    const stored = now === null ? null : parseCredential(now);
+    const stored = now === null ? null : parseCredential(now, placeOf(place.key));
     if (stored === null || stored.kind !== "oauth" || stored.refreshToken.reveal() !== traded.reveal()) return "superseded" as const;
-    const text = serializeCredential({ kind: "oauth", provider: stored.provider, refreshToken: rotated });
+    const text = serializeCredential({ kind: "oauth", provider: stored.provider, refreshToken: rotated }, placeOf(place.key));
     if (text === null) return { kind: "kept" } as const;
     const envelope = await deps.keys.encrypt(text);
     if (await deps.keys.decrypt(envelope.ciphertext, envelope.keyVersion) !== text) throw new CalendarKeyRingFault();

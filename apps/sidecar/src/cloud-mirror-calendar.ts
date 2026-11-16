@@ -128,7 +128,7 @@ const calendar: KindStore<"calendar"> = {
     if (!await held(tx, calConnections, world, r.connectionId)) return false;
     const body = {
       connectionId: r.connectionId, providerId: r.id, name: r.name, color: r.color, access: r.access,
-      shown: r.shown, isDefault: r.isDefault, timeZone: r.timeZone,
+      shown: r.shown, timeZone: r.timeZone,
       windowStart: r.window?.from ?? null, windowEnd: r.window?.to ?? null,
       lastSyncedAt: asDate(r.lastSyncedAt), errorCode: r.errorCode, updatedAt: asDate(r.updatedAt) ?? now,
     };

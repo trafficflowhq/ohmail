@@ -12,7 +12,7 @@
  * for the stronger lock directly waits its turn instead.
  */
 import { and, eq, isNull, ne, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
-import type { StoredCredential } from "@ohmail/cal-providers/connect";
+import type { CredentialPlace, StoredCredential } from "@ohmail/cal-providers/connect";
 import { claimIdempotencyKey, recordCalendarChanges, type CalendarChange, type Tx } from "@trafficflow/db";
 import { CalendarConnectionGone, holdCalendarConnection, sweepCalendarConnectionStep } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
@@ -21,7 +21,7 @@ import type { CalendarConnectionRecord, CalendarPatchBody, CalendarRecord } from
 import { bridgeDb, bridgeTx, withAccountTx, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import {
-  connectRefusal, connectionRecord, connectionSeen, hasControlCharacter, parseSignInAsk, placedAddress, sealCredential,
+  connectRefusal, connectionRecord, connectionSeen, hasControlCharacter, parseSignInAsk, placedAddress, sealCredential, serverSealedFor,
   type CalendarConnectDoor,
 } from "./connect.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
@@ -58,6 +58,7 @@ const fenceOf = (mailboxId: string | null): { readonly mailboxId?: string } => (
 
 interface LockedConnection {
   readonly provider: string;
+  readonly serverUrl: string | null;
   readonly status: string;
   readonly errorCode: string | null;
   readonly nextPollAt: Date | null;
@@ -67,8 +68,8 @@ interface LockedConnection {
 async function lockedConnection(tx: Tx, accountId: string, id: string, mode: "update" | "no key update"): Promise<LockedConnection> {
   const [row] = await dialect(tx).forUpdate(
     tx.select({
-      provider: calConnections.provider, status: calConnections.status, errorCode: calConnections.errorCode,
-      nextPollAt: calConnections.nextPollAt,
+      provider: calConnections.provider, serverUrl: calConnections.serverUrl, status: calConnections.status,
+      errorCode: calConnections.errorCode, nextPollAt: calConnections.nextPollAt,
     }).from(calConnections).where(and(eq(calConnections.id, id), eq(calConnections.accountId, accountId))).limit(1),
     { mode },
   );
@@ -122,10 +123,13 @@ async function calendarsDue(tx: Tx, accountId: string, connectionId: string, whe
  * recorded, children first. `removed: false` says rows are still going; the same request again
  * goes on where this one stopped, AND NOTHING ELSE DOES: no worker pass finishes a connection left
  * at `removing`, so a caller asks again until the answer is `removed: true`.
+ *
+ * THE ONE ACT OF THIS DOOR THAT DOES NOT ASK WHETHER THE ACCOUNT'S CALENDAR IS ON. A removal
+ * lowers what is kept, and a switch that is off must never keep a person's sealed sign-in in the
+ * store against their wish. It dials nothing, makes nothing due and wakes no reading, on or off.
  */
 export async function removeCalendarConnection(ctx: ServiceContext, named: string): Promise<{ removed: boolean; seq: bigint | null }> {
   const id = oneSpelling(named);
-  await requireCalendarOn(ctx);
   const fence = fenceOf((await connectionSeen(ctx, id)).mailboxId);
   let seq = await withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
@@ -179,10 +183,31 @@ export async function checkCalendarConnection(ctx: ServiceContext, named: string
 // ── sign in again ────────────────────────────────────────────────────────────────
 
 /**
+ * THE SERVER A PASSWORD TYPED AGAIN IS SEALED FOR: the one the sign-in it replaces was sealed for,
+ * read out of that sealed text, and only while the connection's row names the same one. THE ROW'S
+ * OWN `server_url` IS NEVER SEALED: it stands in the clear, whoever can write rows can write
+ * another address there, and a password sealed for what was written there would be sent there.
+ * Where the kept sign-in does not open for this connection, or was sealed for another server than
+ * the row names, nothing is sealed and the door says `sign_in_incomplete`: the person removes the
+ * connection and connects again, typing its server. A connection that is being removed has lost
+ * its sealed sign-in to the removal: it answers as every act on it does.
+ */
+async function serverOfSignInAgain(
+  ctx: ServiceContext, door: CalendarConnectDoor, at: CredentialPlace, rowServer: string | null,
+): Promise<string> {
+  const server = await serverSealedFor(ctx, door.keys, at);
+  if (server !== null && server === rowServer) return server;
+  throw (await connectionSeen(ctx, at.connectionId)).status === "removing" ? stopped() : connectRefusal("sign_in_incomplete");
+}
+
+/**
  * `POST /calendar/connections/:id/sign-in`: the sign-in typed again, sealed in place of the one
  * the connection kept, and the connection active and due. The kind a connection keeps is its
- * provider's; a subscription's new address is read by its shape as at the connect, and its host
- * replaces the old one.
+ * provider's; a subscription's new address is read by its shape as at the connect, its host
+ * replaces the old one, and where the old address's reading stood is forgotten with it. (A
+ * reading of the old address that is under way at this instant writes where it stood when it
+ * ends, after this: that turn is covered by the reader, which sends a validator to no address
+ * but the one it came from.)
  *
  * DUE AT ONCE ONLY WHERE THE CONNECTION'S MINUTE IS FREE. A sign-in takes the minute a check takes
  * (`takeMinute`), or it would be a check with no limit, and for a subscription one that aims the
@@ -195,6 +220,11 @@ export async function checkCalendarConnection(ctx: ServiceContext, named: string
  * asked for during its turn), and the next turn opens the new one. A calendar that turn finished
  * reading keeps the time of its next reading, so there the new sign-in is first used when that
  * calendar is next due.
+ *
+ * A PASSWORD TYPED AGAIN IS SEALED FOR THE SERVER THE SIGN-IN IT REPLACES WAS SEALED FOR
+ * (`serverOfSignInAgain`): a request names no server for a connection that stands, and the row's
+ * own is never sealed. Where that server cannot be read, nothing is sealed and the person
+ * connects again.
  */
 export async function signInCalendarAgain(
   ctx: ServiceContext, door: CalendarConnectDoor, named: string, body: unknown,
@@ -208,15 +238,17 @@ export async function signInCalendarAgain(
   const kept = seen.provider === "ics" ? "address" : seen.provider === "caldav" ? "basic" : null;
   if (kept !== ask.kind) throw invalid("that is not the sign-in this connection keeps");
   const place = ask.kind === "address" ? placedAddress("ics", ask.address.reveal(), door.port.policy) : null;
+  const at = { accountId: ctx.accountId, connectionId: id };
   const credential: StoredCredential = ask.kind === "address"
     ? { kind: "address", url: ask.address }
-    : { kind: "basic", user: ask.user, password: ask.password };
-  const sealed = await sealCredential(door.keys, credential);
+    : { kind: "basic", server: await serverOfSignInAgain(ctx, door, at, seen.serverUrl), user: ask.user, password: ask.password };
+  const sealed = await sealCredential(door.keys, credential, at);
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
     const row = await lockedConnection(t, ctx.accountId, id, "no key update");
     if (row.status === "removing") throw stopped();
-    if (row.provider !== seen.provider) throw noConnection();
+    // The row is no longer the one this request read and sealed for: another provider's, or with another server written into it.
+    if (row.provider !== seen.provider || row.serverUrl !== seen.serverUrl) throw noConnection();
     const due = await takeMinute(t, ctx.accountId, id, ctx.now()) ? "now" : "within the minute";
     const columns = { secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta: null, updatedAt: sql`now()` };
     await t.insert(calCredentials).values({ accountId: ctx.accountId, connectionId: id, kind: credential.kind, ...columns })
@@ -228,6 +260,11 @@ export async function signInCalendarAgain(
     }).where(and(eq(calConnections.id, id), eq(calConnections.accountId, ctx.accountId)));
     const changes: CalendarChange[] = [];
     if (place !== null) {
+      // Where a reading stands (its validators, the hash of its text) is the old address's. Under a new address it is
+      // nobody's: forgotten here, with the address and in its transaction, so the calendar is read from the beginning.
+      // Bookkeeping: no record a device holds moves.
+      await t.update(calCalendars).set({ syncToken: null })
+        .where(and(eq(calCalendars.accountId, ctx.accountId), eq(calCalendars.connectionId, id)));
       // A subscription that had ended was the old address's: under a new one its calendar is read again.
       const revived = await t.update(calCalendars).set({ errorCode: null, updatedAt: sql`now()` }).where(and(
         eq(calCalendars.accountId, ctx.accountId), eq(calCalendars.connectionId, id), eq(calCalendars.errorCode, "ended"),
