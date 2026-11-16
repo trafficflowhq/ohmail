@@ -27,7 +27,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -313,6 +313,7 @@ describe("opening the platform", () => {
     const platform = await openLocalEnginePlatform({
       openDatabase: async (name) => { opened.push(name); return fakeExpoDatabase(rec); },
       deleteDatabase: async () => undefined,
+      exists: async () => false,
       kv: memoryKV(),
       randomKekHex: () => "a".repeat(64),
       removal: noRemoval(),
@@ -333,6 +334,7 @@ describe("opening the platform", () => {
     const outcome = await openLocalEnginePlatform({
       openDatabase: async () => fakeExpoDatabase(rec),
       deleteDatabase: async () => undefined,
+      exists: async () => false,
       kv: memoryKV({ [KEK_KEY]: "not-a-key" }),
       randomKekHex: () => "a".repeat(64),
       removal: noRemoval(),
@@ -396,7 +398,8 @@ function expoShapedStore(dir: string) {
     if ((open.get(name) ?? 0) > 0) { refusedDeletes.push(name); throw new Error(`${name} is still open`); }
     rmSync(join(dir, name), { force: true });
   };
-  return { openDatabase, deleteDatabase, opened, refusedDeletes, open };
+  const exists = async (name: string): Promise<boolean> => existsSync(join(dir, name));
+  return { openDatabase, deleteDatabase, exists, opened, refusedDeletes, open };
 }
 
 describe("the engine store closes after FTS5 has run on it", () => {
@@ -421,7 +424,7 @@ describe("the engine store closes after FTS5 has run on it", () => {
     const w = world();
     try {
       const platform = await openLocalEnginePlatform({
-        openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, kv: w.kv,
+        openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, exists: w.store.exists, kv: w.kv,
         randomKekHex: () => "a".repeat(64), removal: { recorded: async () => null, clear: async () => undefined },
       });
       expect(platform.kind).toBe("ready");
@@ -445,13 +448,15 @@ describe("the engine store closes after FTS5 has run on it", () => {
     const w = world();
     try {
       const platform = await openLocalEnginePlatform({
-        openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, kv: w.kv,
+        openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, exists: w.store.exists, kv: w.kv,
         randomKekHex: () => "a".repeat(64), removal: { recorded: async () => null, clear: async () => undefined },
       });
       const ready = platform as Extract<LocalEnginePlatformVerdict, { kind: "ready" }>;
       await indexOne(ready.exec);
       await ready.exec.close();
-      await removeStandaloneEngine({ openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, kv: w.kv });
+      await removeStandaloneEngine({
+        openDatabase: w.store.openDatabase, deleteDatabase: w.store.deleteDatabase, exists: w.store.exists, kv: w.kv,
+      });
       expect(w.store.refusedDeletes, "a delete refused over a handle the close did not release").toEqual([]);
       expect(w.store.opened).toEqual([ENGINE_DB_OPEN_OPTIONS, ENGINE_DB_OPEN_OPTIONS]);
       expect(w.store.open.get(ENGINE_DB_FILE)).toBe(0);

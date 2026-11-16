@@ -183,6 +183,12 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       access: NONE,
       updateOffer: NONE,
       droppedFiles: NONE,
+      // A computer's window: no fold, no edge the system draws over, no keyboard over it, no back.
+      posture: NONE,
+      insets: NONE,
+      keyboard: NONE,
+      back: NONE,
+      wake: NONE,
     },
   };
 }

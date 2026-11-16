@@ -267,8 +267,10 @@ npx playwright install chromium        # the layout tests render in it
 - **The phone app** (`apps/mobile`, Android and iOS from one tree) has its own
   two commands:
   - `npm run typecheck:mobile` typechecks the app as the phone runs it
-    (`apps/mobile/tsconfig.json`) and its tests as Node runs them
-    (`apps/mobile/tsconfig.test.json`).
+    (`apps/mobile/tsconfig.json`), its tests as Node runs them
+    (`apps/mobile/tsconfig.test.json`), and the shell's page as the web view
+    runs it (`apps/mobile/web/tsconfig.json`). A native build of the app needs
+    that page built first: `node apps/mobile/scripts/build-shell.mjs`.
   - `npm run test:mobile` applies the patches, then runs the phone app's tests
     and the engine package they drive (`apps/mobile/test`,
     `packages/client-engine/test`), and the phone's file on the device

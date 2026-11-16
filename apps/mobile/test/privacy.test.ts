@@ -599,6 +599,14 @@ const ENGINE_IMPORTERS = new Set([
    * over facts it is handed; no connection, and the pattern scan above holds it to that.
    */
   "src/ui/filing-lines.ts",
+  /**
+   * THE SHELL'S PAGE'S ONE DOOR TO THE ENGINE PACKAGE. The page the phone's web view runs composes the account's one
+   * client engine, as the web and the desktop window do, and every page file reaches the package through this file
+   * alone. It names the package and opens nothing: the page's only transport is the bridge, which posts root-relative
+   * paths to native's HTTP door, and the page's policy (`connect-src 'none'`) shuts every other way out of it. The
+   * pattern scan above still holds this file to no fetch, socket or endpoint.
+   */
+  "web/src/engine-package.ts",
 ]);
 
 describe("network: confined to the engine seam", () => {

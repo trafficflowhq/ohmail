@@ -17,7 +17,7 @@ const CONSENT = { named: "consent", foldersStorable: true };
 const FIRST_RUN = { named: "firstRun", door: "cloud" };
 const entryOf = (name: string) => ({ name, render: () => `node:${name}` });
 
-function host(over: { capabilities?: Partial<HostCapabilities>; wires?: Record<string, unknown>; features?: Record<string, unknown>; surface?: "web" | "desktop" | "pairedPage" } = {}): HostContract {
+function host(over: { capabilities?: Partial<HostCapabilities>; wires?: Record<string, unknown>; features?: Record<string, unknown>; surface?: "web" | "desktop" | "pairedPage" | "phone" } = {}): HostContract {
   return {
     engine: named("engine"),
     session: { resolve: NONE, confirmed: NONE, state: "live", scope: "acct-1", account: "acct-1", recover: NONE, signOut: NONE },
@@ -34,7 +34,10 @@ function host(over: { capabilities?: Partial<HostCapabilities>; wires?: Record<s
       saveFile: NONE, defaultMail: NONE, textSize: NONE, fold: NONE, liveTheme: NONE,
       address: named("address"), window: named("window"), appearance: named("appearance"),
     },
-    signals: { hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE },
+    signals: {
+      hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+      posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
+    },
   } as HostContract;
 }
 const DESKTOP_PANE: TodaysNodes = { screenerSuggest: NONE, desktopPane: { label: "Desktop" } };
@@ -104,6 +107,7 @@ describe("today's inputs, read off the host contract", () => {
     expect(() => todaysInputs(host({ wires: { firstRun: { named: "firstRun" } } }), DESKTOP_PANE)).toThrow(/wires\.firstRun/);
     expect(() => todaysInputs(host({ capabilities: { firstRunDoor: "selfhost" } }), DESKTOP_PANE)).toThrow(/capabilities\.firstRunDoor/);
     expect(() => todaysInputs(host({ surface: "pairedPage" }), DESKTOP_PANE)).toThrow(/features\.help/);
+    expect(() => todaysInputs(host({ surface: "phone" }), DESKTOP_PANE)).toThrow(/none of today's views/);
   });
 
   it("hands the Screener's own control on where the shell brings one", () => {

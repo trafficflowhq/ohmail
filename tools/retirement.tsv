@@ -265,6 +265,7 @@ apps/mobile/test/sender-sheet-first-contact-is-true.test.ts	source-text	reads so
 apps/mobile/test/server-settings-sheet.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/sheet-fits-the-window.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/sheet-has-a-cancel.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/shell-page-build.test.ts	artifact	reads what was built: the shell's page, its policy and its manifest	layer 5	phone-shell	
 apps/mobile/test/standalone-adopt.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/standalone-app-password-note.test.ts	data	reads data files (json): the message catalogue	none	phone-shell	
 apps/mobile/test/standalone-door.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
@@ -273,6 +274,7 @@ apps/mobile/test/standalone-server-fields.test.ts	source-text	reads source as te
 apps/mobile/test/standalone-starttls-certificate.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/starttls-upgrade-arrives.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
 apps/mobile/test/store-copy-sqlite-jsi-patches.test.ts	data	reads data files (patch)	none	phone-shell	
+apps/mobile/test/store-copy.test.ts	data	lists a folder it made: the store's file and the copy taken of it	none	phone-shell	
 apps/mobile/test/strip-follows-payment.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/surfaces-structure.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/synthetic-event-read-is-synchronous.test.ts	source-text	walks source files	layer 2	phone-screens	
@@ -1428,6 +1430,7 @@ test/perf-smoke-check.test.ts	source-text	reads source as text (mjs, rs, ts)	lay
 test/perf-smoke-summary.test.ts	data	reads data files (yml)	none	unassigned	
 test/pg-url-one-resolver.test.ts	source-text	reads source as text (mjs, mts, ts)	layer 5	unassigned	
 test/pglite-template-env-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/phone-relay-routes-copy.test.ts	data	reads data files (json): the phone shell's copy of the relay's routes	none	phone-shell	
 test/pin-released-migrations.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
 test/pr-build-scope.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
 test/pr-guard.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	

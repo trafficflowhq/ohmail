@@ -20,7 +20,9 @@ export type GateVerdict =
   | { to: "welcome" }
   | { to: "connecting"; origin: string; migrating?: BootMigrating }
   | { to: "servers" }
-  | { to: "mail" };
+  | { to: "mail" }
+  /** The shell's web view shows the mail (`app/shell.tsx`). */
+  | { to: "shell" };
 
 export function gateFor(
   state: ConnectionState,
@@ -48,6 +50,7 @@ export function gateFor(
      about an account this phone is not paired with. Only a LIVE session can be refused. */
   if (state.k === "live" && lock !== null) return { to: "wall", facts: lock };
   if (state.k === "live") return { to: "mail" };
+  if (state.k === "shell") return { to: "shell" };
   if (state.k === "starting") return { to: "boot" };
   if (state.k === "connecting") {
     return state.migrating === undefined

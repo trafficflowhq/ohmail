@@ -118,6 +118,7 @@ function supportOf(host: HostContract): SupportHost | undefined {
   if (host.features.help === NONE) return undefined;
   const build = host.device.build;
   if (build.surface === "pairedPage") throw contradiction("features.help", "device.build.surface", "a paired page has no Help pane");
+  if (build.surface === "phone") throw contradiction("features.help", "device.build.surface", "the phone mounts none of today's views");
   return {
     surface: build.surface,
     version: build.version,

@@ -63,6 +63,7 @@ const BROWSER_DEVICE = {
 };
 const NO_SIGNAL = {
   hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+  posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
 };
 /** What the account's page hands on in every setting, before what the server's words and the build add. */
 const THE_ACCOUNT = ["account", "mailboxes", "ai", "storageCard", "accountStrip", "security", "about", "screener"] as const;

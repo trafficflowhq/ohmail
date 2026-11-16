@@ -52,7 +52,8 @@ function raise(detail: DurabilityLostDetail): void {
   window.dispatchEvent(new DurabilityLostEvent(detail));
 }
 
-function lost(store: string): DurableWrite {
+/** A write that did not land, said: the latch and the event. Also for a store this door does not write (the phone's keeper). */
+export function lost(store: string): DurableWrite {
   announced = true;
   raise({ store });
   return "lost";

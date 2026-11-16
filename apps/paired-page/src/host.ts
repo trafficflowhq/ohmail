@@ -134,6 +134,12 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       access: NONE,
       updateOffer: NONE,
       droppedFiles: NONE,
+      // A page in a phone's browser: the browser owns the window's edges, its keyboard and its back.
+      posture: NONE,
+      insets: NONE,
+      keyboard: NONE,
+      back: NONE,
+      wake: NONE,
     },
   };
 }

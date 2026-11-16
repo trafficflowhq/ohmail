@@ -36,7 +36,11 @@ export type StoreFaultCode =
   /* The engine's store opened without durable commits — see `holdDurableCommits`. */
   | "engine_store_not_durable"
   /* A statement asked of the engine's store after it was closed — see `expoEngineExecutor`. */
-  | "engine_store_closed";
+  | "engine_store_closed"
+  /* The copy taken before the store crosses into 2.0 — see `engine/store-copy.ts`. */
+  | "store_copy_no_room" | "store_copy_failed"
+  /* The shell's two stores of a mailbox, taken back with its mirror — see `shell/take-back.ts`. */
+  | "shell_keeper_not_deleted" | "shell_view_not_cleared";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {

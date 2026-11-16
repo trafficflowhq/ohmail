@@ -214,7 +214,7 @@ export function localEngineTransport(door: LocalEngineDoor): {
  * does, before the engine: the outbox keeps it under its key, the adapter keeps the draft it just
  * wrote bound to that key, and the flush after the return sends that draft (`send-waits.ts`).
  */
-function heldWhileOffline(
+export function heldWhileOffline(
   fetch: (url: string, init?: unknown) => Promise<Response>,
   network: (() => NetworkState) | undefined,
 ): (url: string, init?: unknown) => Promise<Response> {
@@ -474,6 +474,29 @@ async function verifyAccountId(
 }
 
 /**
+ * {@link verifyAccountId}, bounded: the probe {@link EngineBoot.verifyIdentity} runs, and the one a
+ * session without the Hermes engine (the shell's) runs natively before its drain routes open.
+ */
+export async function identityProbe(
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>,
+  origin: string,
+  authHeaders: () => Record<string, string>,
+  accountId: string,
+  deadline: number,
+): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
+  // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
+  // answers times out into `unverified` (the timer is cleared when the probe wins).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
+  });
+  return Promise.race([
+    verifyAccountId(fetchImpl, origin, authHeaders, accountId).finally(() => clearTimeout(timer)),
+    timedOut,
+  ]);
+}
+
+/**
  * The drain-time half of the account rule: no page whose entities name another account is ever
  * handed to the store. Wire DTOs carry their `accountId`, and this wrapper reads it on every
  * /sync page and every snapshot page before the engine can apply them — so even on a door with
@@ -695,17 +718,8 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
   let identityCleared = local !== undefined;
   const verifyIdentity = async (): Promise<IdentityVerdict> => {
     if (local !== undefined) return { kind: "unverified" };
-    // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
-    // answers times out into `unverified` (the timer is cleared when the probe wins).
     const deadline = config.identityDeadlineMs ?? IDENTITY_PROBE_DEADLINE_MS;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
-      timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
-    });
-    const identity = await Promise.race([
-      verifyAccountId(fetchImpl, origin, authHeaders, accountId).finally(() => clearTimeout(timer)),
-      timedOut,
-    ]);
+    const identity = await identityProbe(fetchImpl, origin, authHeaders, accountId, deadline);
     if (identity.kind === "mismatch") {
       return {
         kind: "mismatch",

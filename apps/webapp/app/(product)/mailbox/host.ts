@@ -159,6 +159,12 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       access: NONE,
       updateOffer: NONE,
       droppedFiles: NONE,
+      // A page in a browser: the browser owns the window's edges, its keyboard and its back.
+      posture: NONE,
+      insets: NONE,
+      keyboard: NONE,
+      back: NONE,
+      wake: NONE,
     },
   };
 }

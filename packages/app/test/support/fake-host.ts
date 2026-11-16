@@ -133,6 +133,11 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       access: NONE,
       updateOffer: NONE,
       droppedFiles: NONE,
+      posture: NONE,
+      insets: NONE,
+      keyboard: NONE,
+      back: NONE,
+      wake: NONE,
     },
   };
   return { host, window, address, appearance };
