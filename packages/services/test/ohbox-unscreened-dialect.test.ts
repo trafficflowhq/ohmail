@@ -175,7 +175,8 @@ describe("the undecided-sender walk speaks both dialects", () => {
     ));
     const changes = await w.db.select({ seq: changeLog.seq, id: changeLog.entityId, op: changeLog.op, meta: changeLog.meta })
       .from(changeLog).where(eq(changeLog.accountId, w.accountId)).orderBy(asc(changeLog.seq));
-    expect(changes.map((c) => c.id)).toEqual([...ids].sort());
+    // The walk reads by sender address, then id: a's letter, b's three, c's.
+    expect(changes.map((c) => c.id)).toEqual([ids[1]!, ...[ids[0]!, ids[2]!, ids[4]!].sort(), ids[3]!]);
     expect(changes.map((c) => [c.op, c.meta])).toEqual(ids.map(() => ["move", { from: OHBOX, to: GATE }]));
     const seqs = changes.map((c) => Number(c.seq));
     expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));

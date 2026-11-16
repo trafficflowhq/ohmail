@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  effectForDestination, evaluateRules, standingRule,
+  effectForDestination, evaluateRules, senderIsDecided, standingRule,
   type AuthVerdict, type OhboxPolicy, type Rule,
 } from "../src/rules.js";
 import type { NormalizedMessage } from "../src/types.js";
@@ -240,5 +240,41 @@ describe("standingRule resolves by the router's own total order", () => {
       rule({ id: "s", kind: "sender", match: NARROW, destination: "ohmail/News", subjectContains: "invoice" }),
     ];
     expect(standingRule(rules, NARROW)?.id).toBe("s");
+  });
+});
+
+describe("senderIsDecided is the gate's own reading of a sender", () => {
+  const known = (addresses: string[]) => ({ addresses: new Set(addresses), inferred: new Set<string>(), lists: new Map() });
+  const own = new Set(["me@home.example"]);
+  /** The gate's answer for a letter from `from`, as the undecided-sender walk asks it. */
+  const gate = (from: string, rules: Rule[], contacts: string[], over: Partial<NormalizedMessage> = {}) => evaluateRules({
+    msg: msg({ from: { name: null, address: from }, headers: { from: [from] }, ...over }), rules, ownAddresses: own,
+    knownSenders: known(contacts), auth: "unavailable", ohboxPolicy: "people_and_replied", identity: null,
+  }).source;
+
+  it("a decided sender is never the gate's to hold, whatever the letter says", () => {
+    const cases: Array<{ from: string; rules: Rule[]; contacts: string[] }> = [
+      { from: NARROW, rules: [rule()], contacts: [] },
+      { from: NARROW, rules: [rule({ subjectContains: "invoice" })], contacts: [] },
+      { from: NARROW, rules: [rule({ destination: "ohmail/Quarantine" })], contacts: [] },
+      { from: NARROW, rules: [rule({ kind: "domain", match: "bank.example" })], contacts: [] },
+      { from: NARROW, rules: [], contacts: [NARROW] },
+      { from: "me@home.example", rules: [], contacts: [] },
+    ];
+    for (const c of cases) {
+      expect(senderIsDecided(c.from, c.rules, known(c.contacts), own)).toBe(true);
+      expect(gate(c.from, c.rules, c.contacts)).not.toBe("screener");
+    }
+  });
+
+  it("nobody decided about a stranger, a paused rule's sender, one a rule keeps at the Screener, or a broken address", () => {
+    expect(senderIsDecided(NARROW, [], known([]), own)).toBe(false);
+    expect(senderIsDecided(NARROW, [rule({ enabled: false })], known([]), own)).toBe(false);
+    expect(senderIsDecided(NARROW, [rule({ destination: "ohmail/Screener" })], known([]), own)).toBe(false);
+    expect(senderIsDecided(NARROW, [rule({ kind: "header", match: "list-id" })], known([]), own)).toBe(false);
+    // Not one usable mailbox: the gate fails closed on it, so no contact row decides it.
+    expect(senderIsDecided("", [], known([""]), own)).toBe(false);
+    expect(senderIsDecided("a@x.example, b@y.example", [], known(["a@x.example, b@y.example"]), own)).toBe(false);
+    expect(gate(NARROW, [], [])).toBe("screener");
   });
 });
