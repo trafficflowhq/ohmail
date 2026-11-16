@@ -9,6 +9,7 @@ import {
 import StarterKit from "@tiptap/starter-kit";
 import { NodeSelection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries, nextMarks } from "./rich-editor-marks";
+import { PasteAsLines, readParagraphsAsLines } from "./rich-editor-paste";
 import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { dropCarriesFiles } from "./dropped-files";
@@ -118,6 +119,7 @@ const EXTENSIONS = [
   // trailing-punctuation autolink Tiptap's own refuses.
   MarkBoundaries,
   AutolinkPunctuation,
+  PasteAsLines,
 ];
 
 const NO_LINKS: readonly string[] = [];
@@ -330,7 +332,7 @@ export function RichEditor({
     const current = editor.isEmpty ? "" : editor.getHTML();
     if (incoming === current) return;
     emitted.current = incoming;
-    editor.commands.setContent(incoming, { emitUpdate: false });
+    editor.chain().setContent(incoming, { emitUpdate: false }).command(readParagraphsAsLines).run();
   }, [editor, value.html, value.text]);
 
   useEffect(() => {

@@ -9,9 +9,13 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
-import { Slice } from "@tiptap/pm/model";
+import { DOMParser as SchemaParser, Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { undoDepth } from "@tiptap/pm/history";
+import { getText, getTextSerializersFromSchema } from "@tiptap/react";
+import { htmlToPlainText } from "@trafficflow/core/mail";
 import { RichEditor } from "../app/shell/RichEditor";
 import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "@ohmail/app-logic/writing/rich-text";
+import { pasteInto } from "./fixtures/rich-editor-driver";
 
 /**
  * THE EDITOR, MOUNTED — what it offers, and what it refuses to offer.
@@ -61,6 +65,8 @@ interface Mounted {
   button: (label: string) => HTMLButtonElement;
   /** Flips the mid-send lock, the way Compose does while a send is in flight. */
   setEditable: (editable: boolean) => void;
+  /** Hands the editor a new value from outside, the way a restored draft arrives. */
+  setValue: (value: RichValue) => void;
 }
 
 /** Mounts the editor and hands back a live view of the last value it emitted. */
@@ -71,12 +77,14 @@ function mount(initial: RichValue = EMPTY_RICH): Mounted {
   let current = initial;
   let instance: Editor | null = null;
   let lock: ((editable: boolean) => void) | null = null;
+  let replace: ((value: RichValue) => void) | null = null;
 
   function Harness() {
     const [v, setV] = React.useState<RichValue>(initial);
     const [editable, setEditable] = React.useState(true);
     current = v;
     lock = setEditable;
+    replace = setV;
     return (
       <NextIntlClientProvider locale="en" messages={messages as never}>
         <RichEditor
@@ -96,6 +104,7 @@ function mount(initial: RichValue = EMPTY_RICH): Mounted {
     emitted,
     get value() { return current; },
     setEditable: (editable: boolean) => act(() => lock?.(editable)),
+    setValue: (value: RichValue) => act(() => replace?.(value)),
     editor: () => {
       if (!instance) throw new Error("the editor never reported itself through editorRef");
       return instance;
@@ -732,8 +741,10 @@ describe("Code means the inline mark on one line and a code BLOCK across lines (
   it("turns a MULTI-PARAGRAPH selection into ONE block, not one per paragraph", () => {
     // `setCodeBlock()` is `setBlockType`, which retypes each textblock it finds — three
     // paragraphs would give three `<pre>` elements and bring the gaps back in a new costume.
-    // The command builds a single node from the selection's text instead.
-    const ed = mount({ text: "", html: "<p>alpha</p><p>beta</p><p>gamma</p>" });
+    // The command builds a single node from the selection's text instead. Side-by-side paragraphs are
+    // what the list and quote toggles leave; set by the content command, since a draft opens as lines.
+    const ed = mount();
+    act(() => { ed.editor().commands.setContent("<p>alpha</p><p>beta</p><p>gamma</p>"); });
     act(() => {
       ed.editor().chain().focus().selectAll().run();
       ed.button("Code").click();
@@ -871,8 +882,10 @@ describe("block formats take LINES, not the whole message (owner-reported)", () 
   });
 
   it("the multi-paragraph case stays as it was: the caret's own paragraph only", () => {
-    // This was already right before the fix — pinned so the line layer cannot regress it.
-    const ed = mount({ text: "", html: "<p>alpha</p><p>beta</p><p>gamma</p>" });
+    // This was already right before the fix — pinned so the line layer cannot regress it. Set by the
+    // content command: a draft's paragraphs open as lines.
+    const ed = mount();
+    act(() => { ed.editor().commands.setContent("<p>alpha</p><p>beta</p><p>gamma</p>"); });
     act(() => { ed.editor().commands.setTextSelection(9); });
     act(() => { ed.button("Bulleted list").click(); });
     expect(ed.editor().getHTML()).toBe(
@@ -1274,6 +1287,401 @@ describe("a file dropped on the editor never becomes text", () => {
     });
     expect(claimed(ed, link)).toBe(false);
     expect(claimed(ed, withheld, true)).toBe(false);
+  });
+});
+
+/* ── a paste keeps its lines (Slack's composer is the reference) ───────────────────────── */
+
+/** A letter as it was pasted, byte for byte but for the first name it is signed with: wrapped lines, empty lines, two `- ` lists. */
+const SAMPLE = `Hallo zusammen
+
+Das Q3 2026 ist in Bexio gebucht. Es ist das erste Quartal, das wir selbst
+gebucht haben. Könnt ihr bitte eine kurze Kontrolle machen, ob alles passt?
+Ich möchte die MWST-Abrechnung bis 27.11. bezahlen und bis 30.11. einreichen.
+
+- Alle Q3-Buchungen haben im Feld Referenz eine Nummer «TFA-2026Q3-…»,
+  die Belege sind direkt an den Buchungen angehängt.
+- Die Umbuchungen der MWST sind per 30.09. gebucht.
+- Bank 1020 per 30.09.: CHF 87.38, stimmt mit dem PostFinance-Auszug überein.
+
+MWST-Abrechnung Q3 2026:
+- Ziffer 303: Umsatz 85'365.60, Steuer 6'914.61
+- Ziffer 383 Bezugsteuer: 45'542.17, Steuer 3'688.91
+- Ziffer 400 Vorsteuer: 3'668.91
+- Ziffer 405 Vorsteuer: 782.39
+- Zu bezahlen: CHF 6'152.22
+
+Eine Frage: Wir zahlen der ESTV noch Raten für frühere Quartale
+(2'856.00, 2'856.00, 1'583.40 im Q3). Soll ich Q3 voll bezahlen?
+
+Für den Jahresabschluss habe ich ein paar Punkte notiert, die kommen mit Q4.
+
+Danke und Gruss
+Anna
+`;
+
+/** A block's text with a hard break read as `\n`. */
+const linesOf = (node: ProseMirrorNode): string =>
+  node.textBetween(0, node.content.size, "\n\n", (leaf) => (leaf.type.name === "hardBreak" ? "\n" : ""));
+
+/** The document as its blocks: a paragraph as its lines, a list as its items, anything else by name. */
+function blocksOf(ed: Mounted): Array<string | Record<string, string[]>> {
+  const out: Array<string | Record<string, string[]>> = [];
+  ed.editor().state.doc.forEach((node) => {
+    if (node.type.name === "paragraph") out.push(linesOf(node));
+    else if (node.type.name.endsWith("List")) {
+      const items: string[] = [];
+      node.forEach((item) => { items.push(linesOf(item)); });
+      out.push({ [node.type.name]: items });
+    } else out.push(node.type.name);
+  });
+  return out;
+}
+
+/** Every run of text with its marks (a link with its address), in document order. */
+function runsOf(doc: ProseMirrorNode): string[] {
+  const out: string[] = [];
+  doc.descendants((n) => {
+    if (n.isText) out.push(`${n.text}|${n.marks.map((m) => (m.attrs.href ? `link=${m.attrs.href}` : m.type.name)).join(",")}`);
+  });
+  return out;
+}
+
+const nodesOf = (doc: ProseMirrorNode, type: string): number => {
+  let n = 0;
+  doc.descendants((node) => { if (node.type.name === type) n += 1; });
+  return n;
+};
+
+/** The editor's markup with a link's attributes cut to its address, so a case reads the shape. */
+const shapeOf = (ed: Mounted): string =>
+  ed.editor().getHTML().replace(/<a [^>]*?href="([^"]*)"[^>]*>/g, '<a href="$1">');
+
+function paste(ed: Mounted, clip: { text?: string; html?: string }, plain = false): void {
+  act(() => { pasteInto(ed.surface(), clip, { plain }); });
+}
+
+describe("a paste keeps its lines: line breaks only, never a paragraph (owner-reported)", () => {
+  /**
+   * THE REPORTED DEFECT: the editor makes a line break for Enter, but a pasted letter came in as one
+   * paragraph per line with its empty lines gone, and a paragraph is nothing a person can type or
+   * take apart again. Slack's composer is the reference: it never makes a paragraph from a paste.
+   * Read on the unedited editor: the sample came in as 19 paragraphs, no list, no empty line.
+   */
+  it("THE SAMPLE: its lines, every empty line, and the two lists of three and five items", () => {
+    const ed = mount();
+    paste(ed, { text: SAMPLE });
+    expect(blocksOf(ed)).toEqual([
+      "Hallo zusammen\n\nDas Q3 2026 ist in Bexio gebucht. Es ist das erste Quartal, das wir selbst\n" +
+        "gebucht haben. Könnt ihr bitte eine kurze Kontrolle machen, ob alles passt?\n" +
+        "Ich möchte die MWST-Abrechnung bis 27.11. bezahlen und bis 30.11. einreichen.\n",
+      { bulletList: [
+        // The wrapped line joins its item with ONE space (Slack joins with none).
+        "Alle Q3-Buchungen haben im Feld Referenz eine Nummer «TFA-2026Q3-…», die Belege sind direkt an den Buchungen angehängt.",
+        "Die Umbuchungen der MWST sind per 30.09. gebucht.",
+        "Bank 1020 per 30.09.: CHF 87.38, stimmt mit dem PostFinance-Auszug überein.",
+      ] },
+      "\nMWST-Abrechnung Q3 2026:",
+      { bulletList: [
+        "Ziffer 303: Umsatz 85'365.60, Steuer 6'914.61",
+        "Ziffer 383 Bezugsteuer: 45'542.17, Steuer 3'688.91",
+        "Ziffer 400 Vorsteuer: 3'668.91",
+        "Ziffer 405 Vorsteuer: 782.39",
+        "Zu bezahlen: CHF 6'152.22",
+      ] },
+      "\nEine Frage: Wir zahlen der ESTV noch Raten für frühere Quartale\n" +
+        "(2'856.00, 2'856.00, 1'583.40 im Q3). Soll ich Q3 voll bezahlen?\n\n" +
+        "Für den Jahresabschluss habe ich ein paar Punkte notiert, die kommen mit Q4.\n\n" +
+        "Danke und Gruss\nAnna",
+    ]);
+  });
+
+  it("lands inside the caret's line: what stood before and after it stays there", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    act(() => { ed.editor().commands.setTextSelection(8); }); // after "before "
+    paste(ed, { text: "one\ntwo" });
+    expect(ed.editor().getHTML()).toBe("<p>before one<br>twoafter</p>");
+  });
+
+  it("replaces a selection", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    act(() => { ed.editor().commands.setTextSelection({ from: 8, to: 13 }); });
+    paste(ed, { text: "x\ny" });
+    expect(ed.editor().getHTML()).toBe("<p>before x<br>y</p>");
+  });
+
+  it("stays in the list item and in the quote it is pasted into", () => {
+    const list = mount({ text: "", html: "<ul><li><p>item</p></li></ul>" });
+    act(() => { list.editor().commands.setTextSelection(7); });
+    paste(list, { text: " a\nb" });
+    expect(list.editor().getHTML()).toContain("<ul><li><p>item a<br>b</p></li></ul>");
+
+    const quote = mount({ text: "", html: "<blockquote><p>quoted</p></blockquote>" });
+    act(() => { quote.editor().commands.setTextSelection(8); });
+    paste(quote, { text: " x\ny" });
+    expect(quote.editor().getHTML()).toContain("<blockquote><p>quoted x<br>y</p></blockquote>");
+  });
+
+  it("reads CR LF and CR as one break, and a paste ending in a line break leaves no empty last line", () => {
+    const ed = mount();
+    paste(ed, { text: "a\r\nb\rc\r\n\r\nd" });
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b<br>c<br><br>d</p>");
+
+    // The breaks after the text's last words are no lines of their own (Slack shows none).
+    const trailing = mount();
+    paste(trailing, { text: "a\nb\r\n" });
+    expect(blocksOf(trailing)).toEqual(["a\nb"]);
+    const empty = mount();
+    paste(empty, { text: "a\n\n" });
+    expect(blocksOf(empty)).toEqual(["a"]);
+    // A text of line breaks only has no last words: it goes in as it is.
+    const breaks = mount({ text: "", html: "<p>ab</p>" });
+    act(() => { breaks.editor().commands.setTextSelection(2); });
+    paste(breaks, { text: "\n\n" });
+    expect(breaks.editor().getHTML()).toBe("<p>a<br><br>b</p>");
+  });
+
+  it("a paste ending in a line break keeps it where words follow the caret: a copied line pasted above a line", () => {
+    const mid = mount({ text: "", html: "<p>Hello world</p>" });
+    act(() => { mid.editor().commands.setTextSelection(7); }); // after "Hello "
+    paste(mid, { text: "foo\n" });
+    expect(mid.editor().getHTML()).toBe("<p>Hello foo<br>world</p>");
+
+    const above = mount({ text: "", html: "<p>world</p>" });
+    act(() => { above.editor().commands.setTextSelection(1); });
+    paste(above, { text: "foo\n" });
+    expect(above.editor().getHTML()).toBe("<p>foo<br>world</p>");
+  });
+
+  it("puts one line in as plain words, and a code block takes its paste verbatim (unchanged)", () => {
+    // Both are what the library already did: pinned so the rule cannot take them over.
+    const ed = mount({ text: "", html: "<p>ab</p>" });
+    act(() => { ed.editor().commands.setTextSelection(2); });
+    paste(ed, { text: "- X" });
+    expect(ed.editor().getHTML()).toBe("<p>a- Xb</p>");
+
+    const code = mount({ text: "", html: "<pre><code>x</code></pre>" });
+    act(() => { code.editor().commands.setTextSelection(2); });
+    paste(code, { text: "\n  - y" });
+    expect(code.editor().getHTML()).toContain("<pre><code>x\n  - y</code></pre>");
+  });
+
+  it("paste-as-plain-text (Ctrl+Shift+V) takes the text by the same rule, markup left behind", () => {
+    const ed = mount();
+    paste(ed, { text: "a\nb", html: "<p><b>a</b></p><p>b</p>" }, true);
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b</p>");
+  });
+
+  it("a one-node paste takes the caret's marks only with Shift held, as ProseMirror's own paste does", () => {
+    // Only a slice of one closed node shows the flag; the text rule makes one only of a lone list,
+    // whose marks the document drops. So the slice is handed to the editor's paste handlers here.
+    const pasted = (shift: boolean): string => {
+      const ed = mount({ text: "", html: "<p><strong>ab</strong></p>" });
+      const view = ed.editor().view;
+      act(() => {
+        ed.editor().commands.setTextSelection(2);
+        if (shift) {
+          const key = { key: "V", keyCode: 86, ctrlKey: true, shiftKey: true, bubbles: true };
+          ed.surface().dispatchEvent(new KeyboardEvent("keydown", key));
+        }
+        const event = new Event("paste") as ClipboardEvent;
+        Object.defineProperty(event, "clipboardData", { value: { getData: (t: string) => (t === "text/plain" ? "x" : "") } });
+        const slice = new Slice(Fragment.from(view.state.schema.text("x")), 0, 0);
+        view.someProp("handlePaste", (f) => f(view, event, slice));
+      });
+      return ed.editor().getHTML();
+    };
+    expect(pasted(true)).toBe("<p><strong>axb</strong></p>");
+    expect(pasted(false)).toBe("<p><strong>a</strong>x<strong>b</strong></p>");
+  });
+
+  it("makes a numbered list of '1. ' and '2) ' lines, counting from 1", () => {
+    const ed = mount();
+    paste(ed, { text: "Steps:\n1. open\n2) close" });
+    // The empty last line is the one the editor keeps after a list at the document's end.
+    expect(blocksOf(ed)).toEqual(["Steps:", { orderedList: ["open", "close"] }, ""]);
+    expect(ed.editor().getHTML()).not.toContain("start=");
+  });
+
+  it("a line that begins with a date stays a line, and the letter sends the number it shows", () => {
+    // The letter drops a list's first number, so a list from 27 was sent as "1. November".
+    const ed = mount();
+    paste(ed, { text: "Termin:\n27. November 2026 um 10 Uhr\nGruss" });
+    expect(blocksOf(ed)).toEqual(["Termin:\n27. November 2026 um 10 Uhr\nGruss"]);
+    // An unformatted letter carries no markup and is sent as its text.
+    expect(ed.value.html).toBe("");
+    expect(ed.value.text).toContain("27. November");
+  });
+
+  it("numbered lines that do not count from 1 stay lines", () => {
+    const ed = mount();
+    paste(ed, { text: "3. open\n4. close" });
+    expect(blocksOf(ed)).toEqual(["3. open\n4. close"]);
+    // One numbered line alone is words too.
+    const one = mount();
+    paste(one, { text: "27. November 2026" });
+    expect(blocksOf(one)).toEqual(["27. November 2026"]);
+  });
+
+  it("a marker with nothing after it is no item", () => {
+    const ed = mount();
+    paste(ed, { text: "a\n- \nb\n1. \nc" });
+    expect(blocksOf(ed)).toEqual(["a\n- \nb\n1. \nc"]);
+  });
+});
+
+describe("formatted text comes in as lines, its marks, lists, quotes and code kept", () => {
+  it("a word processor's paragraphs: one empty line between them, bold kept", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "First with bold words.\r\n\r\nSecond.",
+      html: "<html><head><style>p.MsoNormal{margin-top:0cm;margin-bottom:8.0pt}</style></head><body>" +
+        "<!--StartFragment--><p class=MsoNormal>First with <b>bold</b> words.</p>" +
+        "<p class=MsoNormal>Second.</p><!--EndFragment--></body></html>",
+    });
+    expect(shapeOf(ed)).toBe("<p>First with <strong>bold</strong> words.<br><br>Second.</p>");
+  });
+
+  it("one block per line (a mail program's editor): no empty line added, the link kept", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Line one\nLine two\n\nLine four",
+      html: '<div dir="ltr"><div>Line one</div><div>Line <a href="https://example.com/two">two</a></div>' +
+        "<div><br></div><div>Line four</div></div>",
+    });
+    expect(shapeOf(ed)).toBe('<p>Line one<br>Line <a href="https://example.com/two">two</a><br><br>Line four</p>');
+  });
+
+  it("lines written as paragraphs with no margin (a document program) stay lines", () => {
+    const ed = mount();
+    const line = 'style="margin-top:0pt;margin-bottom:0pt"';
+    paste(ed, {
+      text: "a\nb\n\nc",
+      html: `<b style="font-weight:normal" id="docs-internal"><p ${line}>a</p><p ${line}>b</p><br><p ${line}>c</p></b>`,
+    });
+    expect(ed.editor().getHTML()).toBe("<p>a<br>b<br><br>c</p>");
+  });
+
+  it("a page with paragraphs, a list and a link: the list stays a list, the paragraphs become lines", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Intro with a link.\n\nSecond.\n\none\ntwo\n\nEnd.",
+      html: '<p>Intro with <a href="https://example.com/x">a link</a>.</p><p>Second.</p>' +
+        "<ul><li>one</li><li><strong>two</strong></li></ul><p>End.</p>",
+    });
+    expect(shapeOf(ed)).toBe(
+      '<p>Intro with <a href="https://example.com/x">a link</a>.<br><br>Second.</p>' +
+        "<ul><li><p>one</p></li><li><p><strong>two</strong></p></li></ul><p>End.</p>",
+    );
+  });
+
+  it("a quote stays a quote and a code block a code block", () => {
+    const ed = mount();
+    paste(ed, {
+      text: "Quoted\nlet a = 1;",
+      html: "<blockquote><div>Quoted</div><div>twice</div></blockquote><pre><code>let a = 1;\n  a += 1;</code></pre>",
+    });
+    const html = ed.editor().getHTML();
+    expect(html).toContain("<blockquote><p>Quoted<br>twice</p></blockquote>");
+    expect(html).toContain("<pre><code>let a = 1;\n  a += 1;</code></pre>");
+    // No paragraph beside another: the quote's lines are one paragraph, the code its own block.
+    expect(nodesOf(ed.editor().state.doc, "paragraph") - nodesOf(ed.editor().state.doc, "blockquote")).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("a draft put back into the editor reads its paragraphs as lines, losing nothing", () => {
+  const DRAFT =
+    '<p>One <strong>bold</strong> word</p><p>Two <a href="https://example.com/2">link</a></p>' +
+    "<ul><li><p>item</p><p>wrapped</p></li></ul><blockquote><p>q1</p><p>q2</p></blockquote><p>Three</p>";
+  const AS_LINES =
+    '<p>One <strong>bold</strong> word<br><br>Two <a href="https://example.com/2">link</a></p>' +
+    "<ul><li><p>item<br><br>wrapped</p></li></ul><blockquote><p>q1</p><p>q2</p></blockquote><p>Three</p>";
+
+  function parsed(ed: Mounted, html: string): ProseMirrorNode {
+    const el = document.createElement("div");
+    el.innerHTML = html;
+    return SchemaParser.fromSchema(ed.editor().schema).parse(el);
+  }
+
+  function expectNothingLost(ed: Mounted, html: string): void {
+    const before = parsed(ed, html);
+    const after = ed.editor().state.doc;
+    expect(runsOf(after)).toEqual(runsOf(before));
+    expect(nodesOf(after, "listItem")).toBe(nodesOf(before, "listItem"));
+    // The editor's own plain text (a block boundary an empty line, a break a line): equal, byte for byte.
+    const schema = ed.editor().schema;
+    expect(ed.editor().getText()).toBe(getText(before, { blockSeparator: "\n\n", textSerializers: getTextSerializersFromSchema(schema) }));
+  }
+
+  it("when the editor opens on the draft", () => {
+    const ed = mount({ text: "", html: DRAFT });
+    expect(shapeOf(ed)).toBe(AS_LINES);
+    expectNothingLost(ed, DRAFT);
+    // Opening is not an edit: nothing is reported, the stored draft stays as it was.
+    expect(ed.emitted).toEqual([]);
+  });
+
+  it("when the draft arrives in an open editor", () => {
+    const ed = mount();
+    ed.setValue({ text: "", html: DRAFT });
+    expect(shapeOf(ed)).toBe(AS_LINES);
+    expectNothingLost(ed, DRAFT);
+    expect(ed.emitted).toEqual([]);
+  });
+
+  it("a plain draft's empty lines are lines too", () => {
+    const ed = mount({ text: "a\n\nb\n\nc", html: "" });
+    expect(ed.editor().getHTML()).toBe("<p>a<br><br>b<br><br>c</p>");
+    expectNothingLost(ed, escapeAsParagraphs("a\n\nb\n\nc"));
+  });
+});
+
+describe("pasted text is sent as typed text is, and one undo takes it back", () => {
+  function typeLines(ed: Mounted, lines: string[]): void {
+    const { view } = ed.editor();
+    act(() => {
+      ed.editor().commands.focus("end");
+      lines.forEach((line, i) => {
+        if (i > 0) view.someProp("handleKeyDown", (fn) => fn(view, new KeyboardEvent("keydown", { key: "Enter" })));
+        if (line) ed.editor().commands.insertContent(line);
+      });
+    });
+  }
+
+  it("the same lines typed with Enter and pasted: the same markup, the same plain-text part", () => {
+    const typed = mount();
+    typeLines(typed, ["Line one", "Line two", "", "Line four"]);
+    const pasted = mount();
+    paste(pasted, { text: "Line one\nLine two\n\nLine four" });
+    expect(pasted.value).toEqual(typed.value);
+    expect(pasted.editor().getHTML()).toBe(typed.editor().getHTML());
+    expect(htmlToPlainText(pasted.value.html)).toBe(htmlToPlainText(typed.value.html));
+    expect(htmlToPlainText(pasted.value.html)).toBe("Line one\nLine two\n\nLine four");
+  });
+
+  it("the sample read back as the letter's plain-text part is the sample again, but for the joined item", () => {
+    const ed = mount();
+    paste(ed, { text: SAMPLE });
+    // A paste leaves no empty last line: the sample's last break is not in the letter.
+    const expected = SAMPLE
+      .replace("«TFA-2026Q3-…»,\n  die", "«TFA-2026Q3-…», die")
+      .replace(/\n$/, "");
+    expect(htmlToPlainText(ed.value.html)).toBe(expected);
+  });
+
+  it("ONE undo takes the whole paste back, and the caret stands after the pasted text", () => {
+    const ed = mount({ text: "", html: "<p>before after</p>" });
+    const start = ed.editor().state.doc;
+    act(() => { ed.editor().commands.setTextSelection(8); });
+    paste(ed, { text: SAMPLE });
+    const { state } = ed.editor();
+    expect(undoDepth(state)).toBe(1);
+    // The caret: everything before it is what stood there plus the paste, everything after is "after".
+    const after = state.doc.textBetween(state.selection.from, state.doc.content.size, "\n");
+    expect(state.selection.empty).toBe(true);
+    expect(after).toBe("after");
+    act(() => { ed.editor().commands.undo(); });
+    expect(ed.editor().state.doc.eq(start)).toBe(true);
   });
 });
 
