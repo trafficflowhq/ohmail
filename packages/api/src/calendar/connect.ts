@@ -3,14 +3,19 @@
  * composition that keeps a calendar; what the door is composed with is `ApiServices.calendarConnect`
  * (the address policy and the ways' switches), and an absent one refuses every way.
  *
- * NONE OF THESE DIALS: a sign-in is sealed and written, and the worker tries it. NONE IS RELAYED
- * (`relay: false` on all six): a route that carries a typed sign-in, and the routes that act on
- * what it made, are asked of the account's own server and of no door in between, until a ruling
- * says a relay may carry them. A secret rides in a body and never in a path or a query.
+ * NONE OF THESE DIALS: a sign-in is sealed and written, and the worker tries it.
+ *
+ * ALL SIX ARE RELAYED (`relay: true`): a phone and a desktop on a hosted account connect a
+ * calendar in the app, as `POST /mailboxes` adds a mailbox with its password. What lets a relay
+ * carry them: each is a signed-in session's route (none is public, anonymous, open to an enrolling
+ * session, or an answer for a sign-in of ours in its body); each reads every id it takes with the
+ * session's account in the same WHERE; and none takes or answers anything that signs in to this
+ * server, pairs a device or ends a session. A secret rides in a body and never in a path or a
+ * query, so a relay's line of a forwarded write (the route's pattern, a status, a time) holds none.
  */
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
-  calendarWays, checkCalendarConnection, connectCalendar, parseConnectAsk, removeCalendarConnection, setCalendar,
+  calendarConnectState, checkCalendarConnection, connectCalendar, parseConnectAsk, removeCalendarConnection, setCalendar,
   signInCalendarAgain, CalendarConnectionTaken, type CalendarConnectAsk, type CalendarConnectDoor,
 } from "@trafficflow/services/calendar-connect";
 import { IdempotencyRaceLost, ServiceError, sha256 } from "@trafficflow/services/mail";
@@ -41,14 +46,18 @@ const connectHashOf = (ask: CalendarConnectAsk): string =>
 
 export const calendarConnectRoutes: Route[] = [
   {
-    /** The ways this server offers the account now. A way that is absent is off: the client holds no list of its own. */
+    /**
+     * The ways this server offers the account now (a way that is absent is off: the client holds no
+     * list of its own), and the connections the account holds. The connections are answered while
+     * its calendar is off too: the feed sends none then, and a pane lists them from here to remove one.
+     */
     method: "GET",
     pattern: "/calendar/connect",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "read",
     handler: async (req, deps) =>
-      answer<"GET /calendar/connect">()(await calendarWays(serviceContext(deps, req), deps.services?.calendarConnect)),
+      answer<"GET /calendar/connect">()(await calendarConnectState(serviceContext(deps, req), deps.services?.calendarConnect)),
   },
   {
     /**
@@ -60,7 +69,7 @@ export const calendarConnectRoutes: Route[] = [
     method: "POST",
     pattern: "/calendar/connections",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "handler",
     handler: async (req, deps) => {
@@ -85,11 +94,14 @@ export const calendarConnectRoutes: Route[] = [
     },
   },
   {
-    /** A connection removed with everything that hangs on it. The same request again goes on where one stopped. */
+    /**
+     * A connection removed with everything that hangs on it. The same request again goes on where one
+     * stopped. Taken while the account's calendar is off too: the other acts are refused then, this one never.
+     */
     method: "DELETE",
     pattern: "/calendar/connections/:id",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
@@ -102,7 +114,7 @@ export const calendarConnectRoutes: Route[] = [
     method: "POST",
     pattern: "/calendar/connections/:id/check",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
@@ -115,7 +127,7 @@ export const calendarConnectRoutes: Route[] = [
     method: "POST",
     pattern: "/calendar/connections/:id/sign-in",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
@@ -128,7 +140,7 @@ export const calendarConnectRoutes: Route[] = [
     method: "PATCH",
     pattern: "/calendar/calendars/:id",
     wire: true,
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {

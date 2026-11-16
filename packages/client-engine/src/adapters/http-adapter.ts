@@ -921,8 +921,9 @@ export class HttpAdapter implements EngineAdapter {
   /**
    * THE CALENDAR'S CONNECT DOOR (`calendar-connect.ts`, its `CalendarConnectTransport`). Sent as it
    * is asked, once: none of these is queued or kept, because what a person types to connect a
-   * calendar is never a stored record. Asked of our server's own door alone; a door that does not
-   * carry a route answers 404, and `calendarWays` then names no way.
+   * calendar is never a stored record. Asked of our server's own door, directly or through a relay
+   * that forwards each as it was sent; a server that keeps no calendar answers 404, and
+   * `calendarWays` then names no way.
    */
   async calendarWays(): Promise<CalendarWay[]> {
     try {
@@ -933,6 +934,16 @@ export class HttpAdapter implements EngineAdapter {
       // No answer is no way: the setup then draws none, and holds no list of its own.
       return [];
     }
+  }
+
+  async calendarConnections(): Promise<CalendarConnectionRecord[]> {
+    const res = await this.call("GET /calendar/connect", {});
+    if (!res.ok) throw await this.rejectionOf(res, "read");
+    const held = (await this.readUntrusted<"GET /calendar/connect">(res)).connections;
+    // An answer that names no list is no word about what the account holds (a server whose door is older than this read
+    // answers its ways alone): a read that failed, never "nothing is connected".
+    if (!Array.isArray(held)) throw await this.rejectionOf(res, "read");
+    return held as CalendarConnectionRecord[];
   }
 
   async connectCalendar(ask: CalendarConnectBody, key: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {

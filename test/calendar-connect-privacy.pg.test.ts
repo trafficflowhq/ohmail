@@ -189,7 +189,7 @@ describe.skipIf(!AVAILABLE)("what was typed at the connect door", () => {
       }
     };
     try {
-      expect(await (await door.ask("GET", "/calendar/connect")).json()).toEqual({ ways: ["icloud", "caldav", "ics"] });
+      expect(await (await door.ask("GET", "/calendar/connect")).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [] });
       const server = await door.connect({ way: "caldav", server: `http://127.0.0.1:${dav.port}${dav.paths.start}`, user: dav.options.user, password: pw });
       const file = await door.connect({ way: "ics", address: `http://127.0.0.1:${filesPort}/${path}/basic.ics?key=${query}` });
       const dead = await door.connect({ way: "ics", address: `http://127.0.0.1:${deadPort}/${deadPath}/basic.ics` });
@@ -247,6 +247,9 @@ describe.skipIf(!AVAILABLE)("what was typed at the connect door", () => {
       expect((await door.ask("POST", `/calendar/connections/${file}/check`)).status).toBe(202);
       await until("the check being carried out", async () => asked.filter((a) => a === `/${pathAgain}/basic.ics`).length > askedBefore);
       expect((await door.ask("DELETE", `/calendar/connections/${dead}`)).status).toBe(200);
+      // The read names the four that stand: its answer is among those searched below.
+      const held = await (await door.ask("GET", "/calendar/connect")).json() as { connections: { id: string }[] };
+      expect(held.connections.map((c) => c.id)).toEqual([server, file, hop, cloud]);
       expect((await door.ask("POST", "/calendar/connections", { way: "ics", connectionId: randomUUID(), address: `https://169.254.169.254/${hopPath}.ics` }, true)).status).toBe(400);
     } finally {
       runner.stop();

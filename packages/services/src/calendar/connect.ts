@@ -10,9 +10,10 @@
  * sealed; only the envelope reaches a statement, so a store's error can quote nothing typed. A
  * refusal is a fixed sentence with a word of the closed list beside it, never anything typed.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
-  ICLOUD_CALDAV_START, MAX_URL_CHARS, Secret, readTypedAddress, serializeCredential, type StoredCredential,
+  ICLOUD_CALDAV_START, MAX_URL_CHARS, Secret, parseCredential, readTypedAddress, serializeCredential, type CredentialPlace,
+  type StoredCredential,
 } from "@ohmail/cal-providers/connect";
 import type { KeyProvider } from "@trafficflow/core";
 import { recordCalendarChanges } from "@trafficflow/db";
@@ -70,6 +71,8 @@ const REFUSAL: Readonly<Partial<Record<CalendarSyncFault, string>>> = {
   port_not_allowed: "no calendar is read on that port",
   too_large: "that sign-in is too long to keep",
   provider_off: "that way to connect a calendar is not offered here",
+  // A password typed again for a connection whose kept sign-in names no server this door can seal it for.
+  sign_in_incomplete: "this connection cannot be signed in again; remove it and connect it again",
 };
 
 /** A refusal of the door's own: `400 validation_failed`, the word in `details.fault`. */
@@ -189,9 +192,28 @@ export function offeredWays(
   return ways;
 }
 
-/** `GET /calendar/connect`: the ways offered to this account now; none while its calendar is off. */
-export async function calendarWays(ctx: ServiceContext, port: CalendarConnectPort | undefined): Promise<CalendarConnectWire> {
-  return { ways: (await calendarEnabledAt(ctx.db, ctx.accountId)) === null ? [] : offeredWays(port) };
+/**
+ * `GET /calendar/connect`: the ways offered to this account now, none while its calendar is off;
+ * and the connections it holds, on or off.
+ */
+export async function calendarConnectState(ctx: ServiceContext, port: CalendarConnectPort | undefined): Promise<CalendarConnectWire> {
+  const on = (await calendarEnabledAt(ctx.db, ctx.accountId)) !== null;
+  return { ways: on ? offeredWays(port) : [], connections: await connectionsHeld(ctx) };
+}
+
+/**
+ * The account's own connections, oldest first, as the feed's records: WHETHER ITS CALENDAR IS ON
+ * OR OFF. The feed sends no calendar record while the calendar is off, and a switch that is off
+ * must never hide what is kept for a person, nor keep them from having it removed: this is what a
+ * settings pane lists then. The session's account in the same WHERE of both reads; the record is
+ * the feed's own, which selects no sign-in. An account holds at most its ceiling of connections
+ * made here, and one for each mailbox a calendar rides.
+ */
+async function connectionsHeld(ctx: ServiceContext): Promise<CalendarConnectionRecord[]> {
+  const rows = await ctx.db.select({ id: calConnections.id }).from(calConnections)
+    .where(eq(calConnections.accountId, ctx.accountId)).orderBy(asc(calConnections.createdAt), asc(calConnections.id));
+  const built = await CALENDAR_BUILDERS.calendar_connection(ctx.db, ctx.accountId, rows.map((r) => r.id));
+  return rows.flatMap((r) => built.get(r.id) ?? []);
 }
 
 // ── the address and the seal ─────────────────────────────────────────────────────
@@ -209,13 +231,15 @@ export function placedAddress(
 
 /**
  * The sign-in sealed as the worker's pass opens it: `keys.encrypt(serializeCredential(...))`,
- * opened once again before it is kept. Outside every transaction. Whatever the key service says of
- * a failure is dropped here: it may quote what it was handed.
+ * opened once again before it is kept. THE TEXT NAMES THE ROW IT IS SEALED FOR (`at`: the
+ * session's account and the connection), and the pass opens it for that row alone: moved to
+ * another connection's row it opens for nobody. Outside every transaction. Whatever the key
+ * service says of a failure is dropped here: it may quote what it was handed.
  */
 export async function sealCredential(
-  keys: KeyProvider, credential: StoredCredential,
+  keys: KeyProvider, credential: StoredCredential, at: CredentialPlace,
 ): Promise<{ readonly ciphertext: string; readonly keyVersion: number }> {
-  const text = serializeCredential(credential);
+  const text = serializeCredential(credential, at);
   // What would not open again is not written: refused now, never found missing at the first reading.
   if (text === null) throw connectRefusal("too_large");
   let sealed: { ciphertext: string; keyVersion: number };
@@ -228,6 +252,29 @@ export async function sealCredential(
   }
   if (!opens) throw new CalendarSealFault();
   return sealed;
+}
+
+/**
+ * THE SERVER A CONNECTION'S KEPT PASSWORD WAS SEALED FOR, read out of the sealed text itself: the
+ * text the row at `at` holds, opened and read for that row. `null` where no such text is kept,
+ * where no key of this host opens it, or where it is no password's text sealed for this row.
+ * NEVER THE ROW'S OWN `server_url`: that column stands in the clear, and whoever can write rows
+ * can write another address there. The kept password is read with it and dropped here.
+ */
+export async function serverSealedFor(ctx: ServiceContext, keys: KeyProvider, at: CredentialPlace): Promise<string | null> {
+  const [row] = await ctx.db.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion }).from(calCredentials)
+    .where(and(eq(calCredentials.accountId, at.accountId), eq(calCredentials.connectionId, at.connectionId), eq(calCredentials.kind, "basic")))
+    .limit(1);
+  if (row === undefined) return null;
+  let text: string;
+  try {
+    text = await keys.decrypt(row.secretEnc, row.keyVersion);
+  } catch {
+    // Opened by no key of this host: no text to take a server from. Whatever the key service says of it is dropped.
+    return null;
+  }
+  const kept = parseCredential(text, at);
+  return kept?.kind === "basic" ? kept.server : null;
 }
 
 // ── the connect ──────────────────────────────────────────────────────────────────
@@ -253,10 +300,12 @@ export async function connectCalendar(
   const place = ask.way === "ics"
     ? placedAddress("ics", ask.address.reveal(), port.policy)
     : placedAddress("caldav", ask.way === "icloud" ? ICLOUD_CALDAV_START : ask.server, port.policy);
+  // A password is sealed with the server it is for: the start as placed, the very value the row is written with below
+  // (at iCloud, Apple's own). A CalDAV place always has one; a text without one would not be written.
   const credential: StoredCredential = ask.way === "ics"
     ? { kind: "address", url: ask.address }
-    : { kind: "basic", user: ask.user, password: ask.password };
-  const sealed = await sealCredential(door.keys, credential);
+    : { kind: "basic", server: place.serverUrl ?? "", user: ask.user, password: ask.password };
+  const sealed = await sealCredential(door.keys, credential, { accountId: ctx.accountId, connectionId: ask.connectionId });
 
   const done = await withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
@@ -304,8 +353,10 @@ export async function connectionRecord(
 /** Is a connection of this id the account's? The read every route that names one begins with. */
 export async function connectionSeen(
   ctx: ServiceContext, connectionId: string,
-): Promise<{ readonly provider: string; readonly mailboxId: string | null }> {
-  const [row] = await ctx.db.select({ provider: calConnections.provider, mailboxId: calConnections.mailboxId }).from(calConnections)
+): Promise<{ readonly provider: string; readonly mailboxId: string | null; readonly serverUrl: string | null; readonly status: string }> {
+  const [row] = await ctx.db.select({
+    provider: calConnections.provider, mailboxId: calConnections.mailboxId, serverUrl: calConnections.serverUrl, status: calConnections.status,
+  }).from(calConnections)
     .where(and(eq(calConnections.id, connectionId), eq(calConnections.accountId, ctx.accountId))).limit(1);
   if (row === undefined) throw new ServiceError("not_found", 404, "no calendar connection of this account under that id");
   return row;

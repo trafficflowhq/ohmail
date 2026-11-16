@@ -13,8 +13,8 @@ import { FIXED_NOW, makeDeps, seedSession } from "../packages/api/test/helpers.j
  * a door that does not carry them answers. A root test, because it holds the wire client and the
  * route table together and neither may depend on the other.
  *
- * The relay's answer is part of the door: none of the six routes is relayable, so a desktop paired
- * to an account and a phone, which both ask through a relay, are offered no way to connect.
+ * The relay's answer is part of the door: all six routes are relayable, so a desktop paired to an
+ * account and a phone, which both ask through a relay, connect a calendar as they add a mailbox.
  */
 
 const app = createApp([...apiRoutes, ...calendarRoutes]);
@@ -72,10 +72,14 @@ describe("the client's calls reach the connect door", () => {
     expect([named.calendar.name, named.calendar.shown, named.seq !== null]).toEqual(["Holidays", false, true]);
     expect((await w.adapter.setCalendar(calendarId, { shown: false })).seq).toBeNull();
 
+    // What the account holds, by the read: the records the two connects answered, as they stand now.
+    expect((await w.adapter.calendarConnections()).map((c) => [c.id, c.provider, c.serverHost]))
+      .toEqual([[connectionId, "caldav", "caldav.icloud.com"], [sub.connection.id, "ics", "feeds.example.test"]]);
     expect(await w.adapter.removeCalendarConnection(connectionId)).toMatchObject({ removed: true });
+    expect((await w.adapter.calendarConnections()).map((c) => c.id)).toEqual([sub.connection.id]);
     // This store is the test's own: every sealed sign-in in it is this account's.
     expect((await w.db.select({ id: calCredentials.connectionId }).from(calCredentials)).map((c) => c.id)).toEqual([sub.connection.id]);
-    expect(w.sent.map((r) => r.method).sort()).toEqual(["DELETE", "GET", "PATCH", "PATCH", "POST", "POST", "POST", "POST", "POST"]);
+    expect(w.sent.map((r) => r.method).sort()).toEqual(["DELETE", "GET", "GET", "GET", "PATCH", "PATCH", "POST", "POST", "POST", "POST", "POST"]);
   });
 
   it("hands a refusal on with our server's word and the closed word beside it", async () => {
@@ -103,33 +107,62 @@ describe("the ways an answer names", () => {
     expect(await answering(() => { throw new TypeError("no network"); }).calendarWays()).toEqual([]);
     expect(await answering(() => new Response(JSON.stringify({ ways: ["google", "icloud"] }), { status: 200 })).calendarWays()).toEqual(["google", "icloud"]);
   });
+
+  it("what the account holds is not guessed: a read that failed throws, and so does an answer that names no list", async () => {
+    const answering = (res: () => Response | Promise<Response>): CalendarConnectTransport =>
+      new HttpAdapter({ baseUrl: "http://localhost", fetch: (async () => res()) as FetchLike }) as CalendarConnectTransport;
+    // "Nothing is connected" is a sentence a pane may only say when our server said it.
+    await expect(answering(() => new Response(JSON.stringify({ error: { code: "not_found", message: "no such route" } }), { status: 404 })).calendarConnections())
+      .rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(answering(() => { throw new TypeError("no network"); }).calendarConnections()).rejects.toBeInstanceOf(MutationRejectedError);
+    // A server whose door is older than this read answers its ways alone. That is no word about what the account holds:
+    // a pane that read it as "nothing" would show an empty list while connections and their sealed sign-ins stand.
+    for (const none of [{ ways: [] }, { ways: [], connections: null }, { ways: [], connections: "x" }]) {
+      await expect(answering(() => new Response(JSON.stringify(none), { status: 200 })).calendarConnections(), JSON.stringify(none))
+        .rejects.toBeInstanceOf(MutationRejectedError);
+    }
+    // The control: a list our server did send is what the account holds, an empty one too.
+    expect(await answering(() => new Response(JSON.stringify({ ways: [], connections: [] }), { status: 200 })).calendarConnections()).toEqual([]);
+  });
 });
 
-describe("the relay does not carry the connect door", () => {
+describe("the relay carries the connect door", () => {
   const DOOR: [string, string][] = [
     ["GET", "/calendar/connect"], ["POST", "/calendar/connections"], ["DELETE", `/calendar/connections/${randomUUID()}`],
     ["POST", `/calendar/connections/${randomUUID()}/check`], ["POST", `/calendar/connections/${randomUUID()}/sign-in`],
     ["PATCH", `/calendar/calendars/${randomUUID()}`],
   ];
 
-  it("refuses each of the six routes, in every spelling of its path, while the calendar's other routes are carried", () => {
+  it("forwards each of the six routes, in every spelling of its path that reaches it, and nothing beside them under their paths", () => {
     for (const [method, path] of DOOR) {
-      expect(relayVerdict(method, path), `${method} ${path}`).toBe("refuse");
-      expect(relayVerdict(method, `${path}/`), `${method} ${path}/`).toBe("refuse");
-      expect(relayVerdict(method, path.replace("/calendar/", "/calendar//")), "a doubled slash").toBe("refuse");
+      expect(relayVerdict(method, path), `${method} ${path}`).toBe("forward");
+      expect(relayVerdict(method, `${path}/`), `${method} ${path}/`).toBe("forward");
+      expect(relayVerdict(method, path.replace("/calendar/", "/calendar//")), "a doubled slash").toBe("forward");
+      expect(relayVerdict(method, `/api${path}`), "under the web's prefix").toBe("forward");
     }
-    expect(RELAY_ALLOWLIST.filter((r) => r.pattern.startsWith("/calendar/conn") || r.pattern.startsWith("/calendar/calendars"))).toEqual([]);
-    // The control: the verdict is not refusing the whole calendar.
-    expect(relayVerdict("GET", "/calendar/settings")).toBe("forward");
-    expect(relayVerdict("POST", "/calendar/writes")).toBe("forward");
+    expect(RELAY_ALLOWLIST.filter((r) => r.pattern.startsWith("/calendar/conn") || r.pattern.startsWith("/calendar/calendars")).map((r) => `${r.method} ${r.pattern}`).sort())
+      .toEqual([
+        "DELETE /calendar/connections/:id", "GET /calendar/connect", "PATCH /calendar/calendars/:id", "POST /calendar/connections",
+        "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in",
+      ]);
+    // The controls: a method a route does not take, and a path one step past a route, are no route of the door.
+    for (const [method, path] of [
+      ["PUT", "/calendar/connections"], ["GET", "/calendar/connections"], ["GET", `/calendar/connections/${randomUUID()}`],
+      ["DELETE", "/calendar/connections"], ["POST", `/calendar/connections/${randomUUID()}/sign-in/again`], ["POST", "/calendar/connect"],
+      ["GET", `/calendar/calendars/${randomUUID()}`], ["POST", `/Calendar/connections`],
+    ] as const) {
+      expect(relayVerdict(method, path), `${method} ${path}`).toBe("refuse");
+    }
   });
 
-  it("every one of them says so on its own row of the route table", () => {
+  it("every one of them says so on its own row of the route table, and is a route of a signed-in session of its own account", () => {
     const door = calendarRoutes.filter((r) => /^\/calendar\/(connect|connections|calendars)/.test(r.pattern));
     expect(door.map((r) => `${r.method} ${r.pattern}`).sort()).toEqual([
       "DELETE /calendar/connections/:id", "GET /calendar/connect", "PATCH /calendar/calendars/:id", "POST /calendar/connections",
       "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in",
     ]);
-    expect(door.filter((r) => r.relay !== false)).toEqual([]);
+    expect(door.filter((r) => r.relay !== true)).toEqual([]);
+    // What a relayed route may never be: open to nobody's session, to an enrolling one, or an answer for a sign-in of ours in its body.
+    expect(door.filter((r) => r.options?.public === true || r.options?.anonymous === true || r.options?.enrollmentOk === true || r.options?.credentialSubject === true)).toEqual([]);
   });
 });

@@ -2870,7 +2870,6 @@ export const calCalendars = pgTable("cal_calendars", {
   color: text("color"),
   access: text("access").notNull().default("reader"),
   shown: boolean("shown").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
   timeZone: text("time_zone"),
   syncToken: text("sync_token"),
   fetchEtag: text("fetch_etag"),

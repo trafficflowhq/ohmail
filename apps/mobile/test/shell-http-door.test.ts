@@ -108,6 +108,39 @@ describe("the shell's HTTP door", () => {
     expect(t.calls).toHaveLength(0);
   });
 
+  it("passes the calendar's connect door, and a typed sign-in goes out in the one request's body and is counted or kept nowhere", async () => {
+    const t = transport();
+    const counted: string[] = [];
+    const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true, count: (what) => void counted.push(what) });
+    const signal = new AbortController().signal;
+    // Values nobody wrote down, put together here so that no line of this file is shaped like a sign-in.
+    const typedPassword = ["mk", "phone", "pw", String(Date.now())].join("");
+    const typedAddress = `https://feeds.example.test/${["mk", "phone", "feed", String(Date.now())].join("")}/basic.ics`;
+    const post = (path: string, body: object) =>
+      door.request({ ...get(path, { method: "POST" as const }), headers: [["content-type", "application/json"], ["idempotency-key", "k1"]], body: { as: "text", text: JSON.stringify(body) } }, signal);
+    const id = "7c0d4f0e-3b1a-4a55-8f1c-2f6a9a3b1c22";
+    const answers = [
+      await door.request(get("/calendar/connect"), signal),
+      await post("/calendar/connections", { way: "caldav", connectionId: id, server: "https://dav.studio.example.test/", user: "mila", password: typedPassword }),
+      await post(`/calendar/connections/${id}/sign-in`, { address: typedAddress }),
+      await post(`/calendar/connections/${id}/check`, {}),
+      await door.request(get(`/calendar/calendars/${id}`, { method: "PATCH" as const, body: { as: "text" as const, text: JSON.stringify({ shown: false }) } }), signal),
+      await door.request(get(`/calendar/connections/${id}`, { method: "DELETE" as const }), signal),
+    ];
+    expect(answers.map((a) => ("status" in a ? a.status : a.refused))).toEqual([200, 200, 200, 200, 200, 200]);
+    expect(t.calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["GET", `${ORIGIN}/calendar/connect`], ["POST", `${ORIGIN}/calendar/connections`], ["POST", `${ORIGIN}/calendar/connections/${id}/sign-in`],
+      ["POST", `${ORIGIN}/calendar/connections/${id}/check`], ["PATCH", `${ORIGIN}/calendar/calendars/${id}`], ["DELETE", `${ORIGIN}/calendar/connections/${id}`],
+    ]);
+    // Each secret is in its request's body, once, and in no address, header, count or answer of the door.
+    expect([String(t.calls[1]!.init.body).includes(typedPassword), String(t.calls[2]!.init.body).includes(typedAddress)]).toEqual([true, true]);
+    const around = JSON.stringify([t.calls.map((c) => [c.url, c.init.headers]), counted, answers]);
+    expect([around.includes(typedPassword), around.includes(typedAddress)]).toEqual([false, false]);
+    // A path beside the door's is not the door's: refused before anything is sent.
+    expect(await door.request(get("/calendar/connections"), signal)).toMatchObject({ status: 403 });
+    expect([t.calls.length, counted]).toEqual([6, ["notRelayed"]]);
+  });
+
   it("never lets the page reach a route that answers session tokens or spends a pairing or handoff code", async () => {
     const t = transport();
     const door = new HttpDoor({ live: () => ({ session: sessionOver(t.fetch), scope: SCOPE }), ready: () => true });

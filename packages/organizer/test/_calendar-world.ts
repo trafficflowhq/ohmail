@@ -63,10 +63,19 @@ export interface Seeded {
   readonly due: DueConnection;
 }
 
+/**
+ * A sign-in as a test hands it to a seed. A server's password may leave its server out: the seed
+ * seals it for the start it gives the connection, as the door seals the start it places. One that
+ * names a server is sealed for that server, whatever the row is given.
+ */
+export type SeededCredential =
+  | Exclude<StoredCredential, { kind: "basic" }>
+  | (Omit<Extract<StoredCredential, { kind: "basic" }>, "server"> & { readonly server?: string });
+
 /** An account, its calendar on (or not), one connection of `provider`, and its sealed sign-in (or none). */
 export async function seedConnection(w: World, o: {
   readonly provider: ProviderWord;
-  readonly credential: StoredCredential | null;
+  readonly credential: SeededCredential | null;
   readonly calendarOn?: boolean;
   readonly serverUrl?: string | null;
   readonly principal?: string | null;
@@ -84,16 +93,21 @@ export async function seedConnection(w: World, o: {
     serverUrl: o.serverUrl ?? null, principal: o.principal ?? null,
   }).returning({ id: calConnections.id });
   const connectionId = conn!.id;
-  if (o.credential !== null) await sealCredential(w, accountId, connectionId, o.credential, o.meta ?? null);
+  if (o.credential !== null) {
+    const credential: StoredCredential = o.credential.kind === "basic"
+      ? { ...o.credential, server: o.credential.server ?? o.serverUrl ?? "" }
+      : o.credential;
+    await sealCredential(w, accountId, connectionId, credential, o.meta ?? null);
+  }
   return { accountId, connectionId, due: { accountId, id: connectionId, provider: o.provider, status: "active" } };
 }
 
-/** The credential sealed as the store keeps it, replacing any of its kind. */
+/** The credential sealed as the store keeps it, for this connection's row, replacing any of its kind. */
 export async function sealCredential(
   w: World, accountId: string, connectionId: string, credential: StoredCredential, meta: Record<string, unknown> | null,
   keys: StaticKeyProvider = w.keys,
 ): Promise<void> {
-  const text = serializeCredential(credential);
+  const text = serializeCredential(credential, { accountId, connectionId });
   if (text === null) throw new Error("the test's credential would not open again");
   const env = await keys.encrypt(text);
   await w.db.delete(calCredentials).where(and(eq(calCredentials.accountId, accountId), eq(calCredentials.connectionId, connectionId)));

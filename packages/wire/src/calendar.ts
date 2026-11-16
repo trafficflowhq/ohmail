@@ -134,7 +134,6 @@ export interface CalendarRecord {
   color: string | null;
   access: CalendarAccess;
   shown: boolean;
-  isDefault: boolean;
   timeZone: string | null;
   /** The days the last reading covered (`to` inclusive), or `null` when the reading has no window. */
   window: { from: CalendarDay; to: CalendarDay } | null;
@@ -283,9 +282,20 @@ export interface CalendarSettingsBody {
  */
 export type CalendarWay = "icloud" | "caldav" | "ics" | "google" | "microsoft";
 
-/** `GET /calendar/connect`: the ways this server offers this account now. A way that is absent is off. */
+/**
+ * `GET /calendar/connect`: where the account's connecting stands on this server.
+ *
+ * `ways`: the ways offered to the account now. A way that is absent is off, and while the
+ * account's calendar is off there is none.
+ *
+ * `connections`: the connections the account holds, as the feed's own records, oldest first,
+ * WHETHER ITS CALENDAR IS ON OR OFF. The feed sends no calendar record while the calendar is off,
+ * so this is what a settings pane lists then: a person who switched the calendar off still sees
+ * what is kept for them, and can have each removed.
+ */
 export interface CalendarConnectWire {
   ways: CalendarWay[];
+  connections: CalendarConnectionRecord[];
 }
 
 /**
@@ -302,6 +312,10 @@ export type CalendarConnectBody =
 /**
  * `POST /calendar/connections/:id/sign-in`: the connection's sign-in typed again, whole. A CalDAV
  * connection takes a user and a password, a subscription its address; the other shape is refused.
+ * A server is named by no request for a connection that stands: a password typed again is kept for
+ * the server the connection was typed with at its connect. Where the server can no longer tell
+ * which that is, it keeps nothing and refuses with `sign_in_incomplete`
+ * ({@link CalendarConnectRefusal}): the connection is removed and connected again.
  */
 export type CalendarSignInBody = { user: string; password: string } | { address: string };
 
@@ -323,8 +337,9 @@ export interface CalendarRemovalWire {
 
 /**
  * What a refused connect or sign-in names in its envelope's `details`: the word a client has a
- * sentence for. An address refused by its shape says which rule, and a way that is switched off
- * says `provider_off`.
+ * sentence for. An address refused by its shape says which rule, a way that is switched off says
+ * `provider_off`, and a password typed again for a connection that has to be connected again
+ * says `sign_in_incomplete`.
  */
 export interface CalendarConnectRefusal {
   fault: CalendarSyncFault;
