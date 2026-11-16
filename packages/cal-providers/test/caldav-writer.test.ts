@@ -404,6 +404,40 @@ describe("CalDAV's writer", () => {
     ).toBe("read_only");
   });
 
+  it("sends no write, no question and no sign-in to a collection on a server its own did not name: a new member, a change with invitees, a removal", async () => {
+    const typed = await bench({ autoSchedule: true });
+    const other = await bench({ autoSchedule: true });
+    const text = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//x//EN",
+      "BEGIN:VEVENT",
+      "UID:one",
+      "DTSTAMP:20261101T000000Z",
+      "DTSTART:20261117T090000Z",
+      "DTEND:20261117T100000Z",
+      "SUMMARY:Kiln check",
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+    other.dav.put("studio", "one.ics", text, '"one-1"');
+    // The other server's calendar and member, as a stored row would name them: another port of the typed server's own host.
+    const stored = { id: other.member("one.ics"), version: '"one-1"', text, occurrence: null };
+    const answers = [
+      await typed.writer.create(typed.connection, other.cal, { key: { hex: KEY }, event: draft() }, never),
+      await typed.writer.change(typed.connection, other.cal, stored, { attendees: [] }, never),
+      await typed.writer.remove(typed.connection, other.cal, stored, never),
+    ];
+    expect(answers.map(word)).toEqual(["host_changed", "host_changed", "host_changed"]);
+    expect(other.dav.seen).toEqual([]);
+    // The typed server was asked where its calendars are, once for the three, and nothing was written there either.
+    expect(typed.dav.seen.map((s) => `${s.method} ${s.path}`)).toEqual([
+      "PROPFIND /dav/",
+      "PROPFIND /dav/principals/mila/",
+    ]);
+  });
+
   it("writes a series' rule and the zone over the series' span", async () => {
     const b = await bench();
     await b.writer.create(

@@ -2,4 +2,4 @@
 export const provider = "caldav" as const;
 export { caldavSession, makeReader } from "./reader.js";
 export { makeWriter } from "./writer.js";
-export { credentialHostsFor } from "./hosts.js";
+export { hostsBeside } from "./hosts.js";

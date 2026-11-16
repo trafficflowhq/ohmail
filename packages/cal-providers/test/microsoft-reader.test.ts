@@ -16,7 +16,7 @@ import type { HostResolver } from "@trafficflow/core/net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { makeReader, microsoftHosts, MS_GRAPH_BASE, MS_GRAPH_CALENDAR_SCOPE, provider } from "../src/microsoft/index.js";
 import type { CalendarReader, ChangeItem, ChangePage, ChangeToken, Connection } from "../src/port.js";
-import { fixedHostRequest, type HttpPort } from "../src/request/index.js";
+import { fixedHostRequest, hopOf, type HttpPort } from "../src/request/index.js";
 import { Secret } from "./support/calendar-test-accounts.ts";
 import { MsDoubleClient } from "./support/ms-double-client.ts";
 // @ts-expect-error a plain module
@@ -44,7 +44,7 @@ beforeAll(async () => {
   const seeing: HttpPort = {
     request(url, o) {
       const { pathname, search } = new URL(url);
-      sent.push({ method: o.method, path: pathname + search, tokenGoesTo: Object.fromEntries(["127.0.0.1", "graph.microsoft.com", "login.microsoftonline.com"].map((h) => [h, o.auth?.admits(h) ?? false])) });
+      sent.push({ method: o.method, path: pathname + search, tokenGoesTo: Object.fromEntries(["127.0.0.1", "graph.microsoft.com", "login.microsoftonline.com"].map((h) => [h, o.auth?.admits(hopOf(new URL(`https://${h}/`), null)) ?? false])) });
       return real.request(url, o);
     },
   };

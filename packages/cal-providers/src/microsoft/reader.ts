@@ -100,7 +100,7 @@ const present = (v: unknown): boolean => v !== undefined && v !== null;
  * reader and the writer both make it here.
  */
 export function graphAuthorization(token: string, base: GraphBase): Authorization {
-  return { credential: { kind: "bearer", token }, admits: (host) => host === base.host, tlsOnly: base.origin.startsWith("https:") };
+  return { credential: { kind: "bearer", token }, admits: ({ host }) => host === base.host, tlsOnly: base.origin.startsWith("https:") };
 }
 
 export function makeReader(deps: MicrosoftDeps): CalendarReader {
