@@ -257,11 +257,25 @@ describe("Hand the mailbox back rings the pass", () => {
     const meta = fleet.metaFor(ctx.mailboxId);
     const ours = () => claimsOf(meta.messages, INSTALL);
     expect((await svc.organizeHere(ctx, ctx.mailboxId, { intent: "takeover" })).outcome).toBe("authorized");
-    expect(await waitFor(() => ours() === 1, 20_000)).toBe(true);
+    expect(await waitFor(async () => ours() === 1
+      && (await rowOf(db, ctx.mailboxId)).organizerRole === "organizer", 20_000)).toBe(true);
+    // One visit of ours parked past its gate: while it is, no other visit of this mailbox can start,
+    // and every pass the Organize-here press set off is this one or behind it.
+    let openGate: () => void = () => undefined;
+    fleet.behave(ctx.mailboxId, { syncGate: new Promise<void>((r) => { openGate = r; }) });
+    expect(await waitFor(() => fleet.signal.has(ctx.mailboxId), 10_000), "no watch to wake").toBe(true);
+    fleet.signal.get(ctx.mailboxId)!();
+    expect(await waitFor(() => fleet.syncInFlight > 0, 10_000), "no visit parked").toBe(true);
 
     fleet.seedClaim(ctx.mailboxId, foreignClaim());
     const traceMark = fleet.trace.length;
     expect((await svc.release(ctx, ctx.mailboxId)).outcome).toBe("requested");
+    // The scan has read the press: it asks the roster before the cycle and clears the stamp last, and
+    // every visit starts behind an owed roster pass. From here the next gate of ours is the release's.
+    expect(await waitFor(async () => (await rowOf(db, ctx.mailboxId)).syncRequestedAt === null, 10_000),
+      "the hand-back's doorbell was never read").toBe(true);
+    fleet.behave(ctx.mailboxId, { syncGate: undefined });
+    openGate();
     expect(await waitFor(() => ours() === 0, RELEASED_WITHIN_MS), "our claim stayed").toBe(true);
     expect(await waitFor(() => lines.some((l) => l.event === "organizer_release_withheld"), 5_000),
       "the release was certified over a live holder").toBe(true);

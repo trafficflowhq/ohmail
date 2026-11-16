@@ -35,7 +35,7 @@ import type { EngineMessage, MessageBodyWire, SyncChange, SyncResponse } from ".
 
 const NOW = new Date("2026-09-13T12:00:00.000Z");
 
-/** One slice is a frame; this is the bound a slice may not cross, with headroom for a loaded CI box. */
+/** One slice is a frame; this is the bound a slice may not cross, read on the build's own clock ({@link workClock}). */
 const FRAME_BUDGET_MS = 50;
 
 /**
@@ -132,31 +132,69 @@ function adapterOf(): EngineAdapter {
   };
 }
 
-/** A build driven through an instrumented yield, so every synchronous stretch is a number. */
-async function sliced(store: MemoryMirrorStore, sliceMs?: number): Promise<{
+/** The test thread's own processor time, in milliseconds: time the thread spends off the processor is not in it. */
+function threadCpuMs(): number {
+  const u = process.threadCpuUsage();
+  return (u.user + u.system) / 1000;
+}
+
+/**
+ * THE BUILD'S CLOCK, HANDED IN BY THE TEST: the test thread's own processor time
+ * ({@link threadCpuMs}). A thread taken off the processor accrues none, so a loaded host cannot
+ * lengthen a stretch the build never ran, while a stretch that did costly work reads its cost. A
+ * wall clock counts both. The build slices by this clock and the test reads the same one, so a
+ * stretch here is what the build measured between two yields. `reads` counts the build's reads;
+ * `at` is the test's own reading and is not counted.
+ */
+function workClock(): { now: () => number; at: () => number; reads: () => number } {
+  let reads = 0;
+  return {
+    now: () => {
+      reads++;
+      return threadCpuMs();
+    },
+    at: threadCpuMs,
+    reads: () => reads,
+  };
+}
+
+/**
+ * A build driven through an instrumented yield, so every synchronous stretch is a number: on the
+ * build's own clock when one is handed in, else on the wall clock. `wallLongest` is always the wall
+ * clock's reading, kept so a run's numbers can be read beside the verdict.
+ */
+async function sliced(store: MemoryMirrorStore, sliceMs?: number, clock?: ReturnType<typeof workClock>): Promise<{
   index: SearchIndex | null;
   slices: number;
   longest: number;
+  wallLongest: number;
   total: number;
 }> {
+  const read = clock ? clock.at : () => performance.now();
   let slices = 0;
   let longest = 0;
-  let last = performance.now();
-  const t0 = last;
+  let wallLongest = 0;
+  let last = read();
+  let wallLast = performance.now();
+  const t0 = wallLast;
   const index = await SearchIndex.buildSliced(store, {
     ...(sliceMs !== undefined ? { sliceMs } : {}),
+    ...(clock ? { now: clock.now } : {}),
     yieldTo: () =>
       new Promise<void>((r) => {
         slices++;
-        longest = Math.max(longest, performance.now() - last);
+        longest = Math.max(longest, read() - last);
+        wallLongest = Math.max(wallLongest, performance.now() - wallLast);
         setTimeout(() => {
-          last = performance.now();
+          last = read();
+          wallLast = performance.now();
           r();
         }, 0);
       }),
   });
-  longest = Math.max(longest, performance.now() - last);
-  return { index, slices, longest, total: performance.now() - t0 };
+  longest = Math.max(longest, read() - last);
+  wallLongest = Math.max(wallLongest, performance.now() - wallLast);
+  return { index, slices, longest, wallLongest, total: performance.now() - t0 };
 }
 
 describe("no body text enters the instant index", () => {
@@ -184,20 +222,28 @@ describe("no body text enters the instant index", () => {
      * in nothing but a long `message_body` per message; before this change
      * that was the dominant term of the whole build. Asserted as a RATIO with generous slack
      * (this is a millisecond on a shared machine) — what it catches is the body pass coming
-     * back, which multiplies the walk, not a drift of a tenth.
+     * back, which multiplies the walk, not a drift of a tenth. Each build is timed on the test
+     * thread's own processor time, the smaller of three: a thread taken off the processor accrues
+     * none, so a loaded host lengthens neither side of the ratio, and the work of the walk does.
      */
     const bare = await mirrorOf(N, false);
     const laden = await mirrorOf(N, true);
 
-    const t0 = performance.now();
-    const a = SearchIndex.build(bare);
-    const bareMs = performance.now() - t0;
-    const t1 = performance.now();
-    const b = SearchIndex.build(laden);
-    const ladenMs = performance.now() - t1;
+    let a: SearchIndex | undefined;
+    let b: SearchIndex | undefined;
+    let bareMs = Infinity;
+    let ladenMs = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = threadCpuMs();
+      a = SearchIndex.build(bare);
+      bareMs = Math.min(bareMs, threadCpuMs() - t0);
+      const t1 = threadCpuMs();
+      b = SearchIndex.build(laden);
+      ladenMs = Math.min(ladenMs, threadCpuMs() - t1);
+    }
 
-    expect(a.coverage()).toEqual({ messages: N, full: 0 });
-    expect(b.coverage()).toEqual({ messages: N, full: 0 });
+    expect(a!.coverage()).toEqual({ messages: N, full: 0 });
+    expect(b!.coverage()).toEqual({ messages: N, full: 0 });
     expect(
       ladenMs / bareMs,
       `a mirror carrying ${N} ready bodies built in ${ladenMs.toFixed(0)} ms against ` +
@@ -209,15 +255,21 @@ describe("no body text enters the instant index", () => {
 describe("the build is handed back to the event loop", () => {
   it(`yields repeatedly and no synchronous stretch crosses ${FRAME_BUDGET_MS} ms`, async () => {
     const store = await mirrorOf(N_SLICE, false);
-    const run = await sliced(store);
+    const clock = workClock();
+    const run = await sliced(store, undefined, clock);
 
     expect(run.index).not.toBeNull();
     expect(run.index!.coverage().messages).toBe(N_SLICE);
     // Reported so a run's numbers are readable, not only its verdict.
     console.log(
       `  sliced build at ${N_SLICE}: ${run.total.toFixed(0)} ms in ${run.slices} slices, ` +
-        `longest synchronous stretch ${run.longest.toFixed(1)} ms`,
+        `longest synchronous stretch ${run.longest.toFixed(1)} ms on the build's clock ` +
+        `(${run.wallLongest.toFixed(1)} ms on the wall clock, which also counts the host)`,
     );
+
+    // THE CLOCK IS THE ONE THE BUILD SLICED BY. A build that kept a clock of its own would leave
+    // this one unread, and every stretch below would measure nothing.
+    expect(clock.reads(), "the build never read the clock it was handed").toBeGreaterThanOrEqual(N_SLICE);
 
     // IT ACTUALLY SLICED. A build that ran to completion in one go would pass the bound below
     // for the wrong reason on a fast machine, so the slice count is asserted first.
