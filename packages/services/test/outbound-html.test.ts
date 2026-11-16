@@ -7,6 +7,7 @@ import {
   htmlToPlainText,
   prepareOutboundBody,
   sanitizeOutboundHtml,
+  sanitizeQuotedHtml,
 } from "../src/outbound-html.js";
 
 /**
@@ -155,6 +156,17 @@ describe("everything inside the grammar survives, into both parts", () => {
     // silently unformat text the user can see is formatted.
     const out = sanitizeOutboundHtml("<b>b</b><i>i</i><strike>s</strike><del>d</del>");
     for (const tag of ["b", "i", "strike", "del"]) expect(out).toContain(`<${tag}>`);
+  });
+
+  it("keeps underline, bare, as markup, and its words in the text part", () => {
+    const out = sanitizeOutboundHtml('<p><u style="color:red" class="x" onclick="x()">under</u> line</p>');
+    expect(out).toBe("<p><u>under</u> line</p>");
+    expect(sanitizeOutboundHtml(out)).toBe(out);
+    expect(prepareOutboundBody(out)).toEqual({ html: out, text: "under line" });
+  });
+
+  it("keeps underline in a forward's quoted original too", () => {
+    expect(sanitizeQuotedHtml("<div><u>x</u></div>", new Set())).toContain("<u>x</u>");
   });
 
   it("renders emphasis as its text and nothing else — no invented markers", () => {
