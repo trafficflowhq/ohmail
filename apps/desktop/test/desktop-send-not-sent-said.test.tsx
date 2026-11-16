@@ -40,8 +40,8 @@ async function key(k: string): Promise<void> {
 }
 
 async function replyWritten(s: DraftShell, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -56,7 +56,7 @@ describe("desktop: a send that ends Not sent off screen", () => {
     await waitFor(() => sends(s).length === 1, "the send on the wire");
 
     // The reader moves on, as a person does after pressing Send.
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m2']"), "the next row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "the next row");
     await waitFor(() => replySurface(s.el) == null, "the reply editor off screen");
     await online();
     await waitFor(() => sends(s).length === 2, "the second try");

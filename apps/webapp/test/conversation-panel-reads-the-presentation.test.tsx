@@ -49,7 +49,7 @@ const click = async (el: Element | null | undefined, what: string): Promise<void
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement | null =>
-  host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
 const panels = (host: HTMLElement): string[] =>
   [...host.querySelectorAll<HTMLElement>(".read-col article.pm[data-conv-id]")].map((p) => p.dataset.convId!);
 /** The attachment-list asks the wire saw, by message id. */

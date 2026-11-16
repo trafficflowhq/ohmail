@@ -7,9 +7,9 @@
  */
 
 /**
- * Two idioms, because the product has two: a list row renders a `<button>` with `data-id` (avatar and address are
- * both handles); a reading-stream card renders an `<article>` with `data-sid`, address only — the card arm is the
- * repair: screening was reachable from every list and from nowhere in the two views whose entire content is mail from
+ * Two idioms, because the product has two: a list row carries `data-id`, today's `.row` and the Ohbox's kit row
+ * (avatar and address are both handles); a reading-stream card renders an `<article>` with `data-sid`, address
+ * only — the card arm is the repair: screening was reachable from every list and from nowhere in the two views whose entire content is mail from
  * senders you might want to stop hearing from.
  */
 
@@ -22,9 +22,9 @@ export interface SenderHit {
 
 /** Every element that means "this is the sender", in both idioms — and the Screener preview's
  *  sender press (`HeldMail`), a card stamped like a stream card, where the row is one target. */
-const HANDLES = ".row .av, .row .addr, .scast .addr, .hmail .hm-who";
+const HANDLES = ".row .av, .row .addr, .oh-row .oh-row-face, .oh-row .oh-row-address, .scast .addr, .hmail .hm-who";
 /** The carriers of a message id, in the order they nest. */
-const CARRIERS = ".row[data-id], .scast[data-sid], .hmail[data-sid]";
+const CARRIERS = ".row[data-id], .oh-row[data-id], .scast[data-sid], .hmail[data-sid]";
 
 export function senderHitOf(target: Element | null): SenderHit | null {
   if (!target?.closest?.(HANDLES)) return null;

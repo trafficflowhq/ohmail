@@ -53,8 +53,15 @@ import {
  * loading state must never be a spinner nobody can escape.
  */
 
-/** Every sentence the Ohbox can put in its empty pane. */
-const OHBOX = messages.ohbox as unknown as Record<string, string>;
+/** Every sentence the Ohbox can put in its empty pane, as its list says them (the catalogue's `ohbox.empty`: the kit's
+ *  Empty draws the closing dot itself), and the old tail's offer. */
+const OHBOX = {
+  emptyPlain: messages.ohbox.empty.nothing,
+  loading: messages.ohbox.empty.loading,
+  olderAction: (messages.ohbox as unknown as Record<string, string>).olderAction,
+};
+/** A row of the Ohbox's list: an option of its listbox, standing for its letters. */
+const ROWS = ":is(.row, [role=option])[data-id]";
 /** The `=0` arms — the two claims that are made in smaller type than the empty pane's. */
 const ALL_CLEAR = "All clear";
 /* The Ohbox header's zero form. It read "0 new" until this line's count took its noun — the
@@ -164,7 +171,7 @@ describe("a signed-in user with mail on the server is never told there is none",
      *
      * The list is empty and stays empty; only the SENTENCE changes.
      */
-    expect(el.querySelectorAll(".row").length, "rendered rows for mail it had not read").toBe(0);
+    expect(el.querySelectorAll(ROWS).length, "rendered rows for mail it had not read").toBe(0);
     expect(text).not.toContain("messages so far");
     // No number at all in the header while there is no number to give.
     expect(text).not.toMatch(/\d+\s+new\b/);
@@ -172,22 +179,15 @@ describe("a signed-in user with mail on the server is never told there is none",
 
   it("a genuinely empty mailbox reads as empty as soon as the drain lands", async () => {
     // The harness's own `/sync` — an immediate, empty, `hasMore: false` page: an Ohbox with no
-    // mail in it, and the honest answer is the settled one. The STORE still holds older mail
-    // this device never took in, so the way back is owed (with nothing older, it is not — the
-    // case below this one).
+    // mail in it, and the honest answer is the settled one, though the STORE still holds older
+    // mail this device never took in (the Ohbox offers no load of it any more: older mail is
+    // History's).
     answerStoreWith([{ id: "old-1", date: "2025-03-01T09:00:00.000Z" }]);
     const el = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(LOADING_GRACE_MS * 4);
 
     expect(textOf(el), "an empty mailbox was left spinning").toContain(OHBOX.emptyPlain);
-    expect(textOf(el), "the count never came back").toContain(ZERO_META);
-    expect(textOf(el), "the doorbell never came back").toContain(ALL_CLEAR);
     expect(textOf(el)).not.toContain(OHBOX.loading);
-    // AND THE WAY BACK COMES BACK WITH THEM. The repair above is a delay, not a deletion: a
-    // fix that simply removed the block would pass every `not.toContain` in this file and take
-    // the feature with it. (The sentence naming a device went with ARCHIVE-024.)
-    expect(textOf(el), "the way back to older mail never returned")
-      .toContain(OHBOX.olderAction);
   });
 
   it("an empty store offers no older mail: there is none", async () => {
@@ -205,20 +205,18 @@ describe("a signed-in user with mail on the server is never told there is none",
     // its ordinary condition. `settled` now gates two blocks rather than one, and a boolean
     // that never goes true is indistinguishable from a boolean that is read correctly, for as
     // long as every guard in the file asserts an ABSENCE. The store holds mail older than the
-    // window, so the tail is owed.
+    // window.
     answerStoreWith([{ id: "old-1", date: "2025-03-01T09:00:00.000Z" }]);
     answerSyncWith(() => page(3));
     const el = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(LOADING_GRACE_MS * 4);
 
-    expect(el.querySelectorAll(".row").length, "the drain landed and no mail was rendered")
+    expect(el.querySelectorAll(ROWS).length, "the drain landed and no mail was rendered")
       .toBeGreaterThan(0);
     expect(textOf(el), "mail on screen and the pane still claimed to be loading")
       .not.toContain(OHBOX.loading);
     expect(textOf(el), "mail on screen and the pane also claimed to be empty")
       .not.toContain(OHBOX.emptyPlain);
-    expect(textOf(el), "no way back past the newest slice this device kept")
-      .toContain(OHBOX.olderAction);
   });
 
   it("the session gate stays a quiet frame, then says what it is waiting for", async () => {

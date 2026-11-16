@@ -188,6 +188,15 @@ describe("the catalogues keep the waterline and unread apart", () => {
         }
       });
 
+      it("the Ohbox's rail tooltip states the unread number alone: no total the device cannot know", () => {
+        /* It once said "of M messages": the mirror's three groups, a window's count on a large mailbox and never the
+           Ohbox's; the store answers no Ohbox total. Its one figure is the unread count. */
+        const s = at(CATALOGUE[locale], "rail.ohboxTitle");
+        expect(typeof s, `${locale} rail.ohboxTitle is missing`).toBe("string");
+        expect([...(s as string).matchAll(/\{\s*(\w+)/g)].map((m) => m[1]), `${locale} rail.ohboxTitle states a second figure`)
+          .toEqual(["unread"]);
+      });
+
       it("the rail's tooltip says exactly what the header says", () => {
         /* Two keys, one sentence — the rail namespace and the stream namespace do not cross in
            `next-intl`, and a second copy of one sentence is how the pane and the rail came to

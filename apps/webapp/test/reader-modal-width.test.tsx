@@ -205,7 +205,7 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 
 /** The modal arm's real trigger at desktop width: the route mirror's overlay arm — a URL
  *  naming a message on a view with no column to read it in (the located-search-hit shape;

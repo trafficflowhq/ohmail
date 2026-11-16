@@ -47,7 +47,11 @@ import {
  * bars would trade a blank column for a strobe on every fast connection.
  */
 
-const OHBOX = messages.ohbox as unknown as Record<string, string>;
+/** The Ohbox's loading and empty sentences, as its list says them (the catalogue's `ohbox.empty`: the kit's Empty
+ *  draws the closing dot itself). */
+const OHBOX = { loading: messages.ohbox.empty.loading, emptyPlain: messages.ohbox.empty.nothing };
+/** A row of the Ohbox's list: an option of its listbox, standing for its letters. */
+const ROWS = ":is(.row, [role=option])[data-id]";
 
 /** A `/sync` that never answers — the cold mirror, held open for as long as the test wants. */
 function holdSync(): void {
@@ -118,7 +122,7 @@ describe("the cold-mirror silhouette in the shared shell", () => {
     // …and it is not in the accessibility tree either, so nothing announces a shape.
     expect(sk.getAttribute("aria-hidden")).toBe("true");
     // The real list is still empty. The bars are not rows and must never be counted as any.
-    expect(el.querySelectorAll(".row").length, "rendered rows for mail it had not read").toBe(0);
+    expect(el.querySelectorAll(ROWS).length, "rendered rows for mail it had not read").toBe(0);
     expect(textOf(el)).not.toContain("messages so far");
     expect(textOf(el)).not.toMatch(/\d+\s+new\b/);
   });
@@ -138,7 +142,7 @@ describe("the cold-mirror silhouette in the shared shell", () => {
     const el = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(BOOT_SKELETON_GRACE_MS * 8);
 
-    expect(el.querySelectorAll(".row").length, "the drain landed and no mail was rendered")
+    expect(el.querySelectorAll(ROWS).length, "the drain landed and no mail was rendered")
       .toBeGreaterThan(0);
     expect(skeleton(el), "the silhouette outlived the mail it was standing in for").toBeNull();
   });

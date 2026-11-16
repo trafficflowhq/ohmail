@@ -27,10 +27,10 @@ const SHEET = '.reader[role="dialog"]';
 
 /** The next row of the Ohbox that holds a letter of `kind` not opened yet, scrolled to where a press reaches it. */
 const nextRow = (page, kind, opened) => page.evaluate(([k, done]) => {
-  const rows = [...document.querySelectorAll(".view-ohbox button.row[data-id]")];
+  const rows = [...document.querySelectorAll(".view-ohbox :is(button.row, [role=option])[data-id]")];
   const row = rows.find((r) => !done.includes(r.dataset.id) && window.__speed.kindOf(r.dataset.id) === k);
   if (row === undefined) {
-    document.querySelector(".view-ohbox .scroller")?.scrollBy(0, 600);
+    document.querySelector(".view-ohbox :is(.scroller, .ob-scroll)")?.scrollBy(0, 600);
     return null;
   }
   row.scrollIntoView({ block: "center" });
@@ -62,7 +62,7 @@ export async function runOpens({ dist, engine, viewport, messages, bodyMs = 0, t
       opened.push(id);
       const wait = visit.arm("letter", id, 10000);
       await page.waitForTimeout(30);
-      await page.click(`.view-ohbox button.row[data-id="${id}"]`);
+      await page.click(`.view-ohbox :is(button.row, [role=option])[data-id="${id}"]`);
       opens.push({ rep: r, kind, id, ...((await wait) ?? { ms: null, why: "the letter's first lines never came on screen" }) });
       /* Past the moment an opened letter turns read, so that its own bookkeeping is not the next open's. */
       await page.waitForTimeout(1000);

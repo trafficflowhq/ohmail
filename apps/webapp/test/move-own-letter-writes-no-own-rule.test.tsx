@@ -68,8 +68,8 @@ const click = async (el: Element): Promise<void> => {
 };
 /** The row holding `id`: its own, or the folded conversation it is a member of. */
 const row = (host: HTMLElement, id: string): HTMLElement => {
-  const r = host.querySelector<HTMLElement>(`.row[data-id="${id}"]`)
-    ?? [...host.querySelectorAll<HTMLElement>(".row[data-ids]")].find((x) => (x.dataset.ids ?? "").split(" ").includes(id));
+  const r = host.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`)
+    ?? [...host.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-ids]")].find((x) => (x.dataset.ids ?? "").split(" ").includes(id));
   if (!r) throw new Error(`no row ${id}`);
   return r;
 };
@@ -223,8 +223,11 @@ describe("Move on our own letter", () => {
       row(host, "c_fwd").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
     });
     await settle();
-    await click(host.querySelector(".abar-move")!);
-    const target = [...host.querySelectorAll<HTMLButtonElement>(".abar-panel button")].find((b) => (b.textContent ?? "").includes("→ News"));
+    /* The selection's Move, by its name on the bar's foot, and the place by its name in the Move question (studio
+       `core.js` `moveMenu` lists the places by name, where the old bar wrote "→ News"). */
+    const move = [...host.querySelectorAll<HTMLButtonElement>(".ob-foot button")].find((b) => (b.textContent ?? "").trim().startsWith("Move"));
+    await click(move!);
+    const target = [...document.querySelectorAll<HTMLElement>(":is([role=menu], [role=dialog]) [role=menuitem]")].find((b) => (b.textContent ?? "").trim() === "News");
     await click(target!);
     await windowCloses();
     const w = writes();

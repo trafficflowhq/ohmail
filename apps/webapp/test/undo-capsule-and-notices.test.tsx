@@ -157,7 +157,8 @@ async function deleteAndReachUndo(): Promise<HTMLElement> {
   await key("j");
   await key("ArrowLeft");
   await key("ArrowRight");
-  expect((document.activeElement as HTMLElement | null)?.matches(".row[data-id]"), "not on a row").toBe(true);
+  /* A row of the Ohbox's list: an option of its listbox, standing for its letters. */
+  expect((document.activeElement as HTMLElement | null)?.matches(":is(.row, [role=option])[data-id]"), "not on a row").toBe(true);
   await key("Backspace");
   const undo = (): HTMLElement | null => host!.querySelector<HTMLElement>(".toast-held .toast-act");
   expect(undo(), "no Undo capsule after Backspace").not.toBeNull();

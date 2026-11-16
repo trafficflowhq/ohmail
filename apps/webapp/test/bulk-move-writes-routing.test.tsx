@@ -113,10 +113,10 @@ const buttonStarting = (label: string): HTMLButtonElement | undefined =>
 const toastText = (): string =>
   [...document.querySelectorAll('[role="status"]')].map((n) => n.textContent ?? "").join(" ");
 
-/** The rows the selection holds, read off the rendered list. */
+/** The rows the selection holds, read off the rendered list: a picked option says so (`data-picked`, the kit's row). */
 const pickedRows = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row")]
-    .filter((r) => r.classList.contains("picked") || r.getAttribute("aria-selected") === "true");
+  [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")]
+    .filter((r) => r.classList.contains("picked") || r.hasAttribute("data-picked"));
 
 /** The ids the selection holds, read off the rendered rows. */
 function pickedIds(): string[] {
@@ -129,8 +129,17 @@ function pickedIds(): string[] {
  * one plan for the whole set the mutations and the sentence agree with each other and disagree
  * only with the list on screen, which is why the anchor is the list.
  */
+/* A row's sender is its name in the option's name ("Sender: Subject"): the address is not drawn on every row (a row
+   with squares or a tag leaves it out, as the design draws it). */
 const pickedSenders = (): Set<string> =>
-  new Set(pickedRows().map((r) => (r.querySelector(".addr")?.textContent ?? "").trim().toLowerCase()));
+  new Set(pickedRows().map((r) => (r.getAttribute("aria-label") ?? "").split(": ")[0]!.trim().toLowerCase()));
+
+/** A place the Move question offers, by its name: the design lists the places by name (studio `core.js` `moveMenu`),
+ *  where the old bar wrote "→ News". */
+const placeOffered = (place: string): HTMLElement | undefined =>
+  [...document.querySelectorAll<HTMLElement>(
+    `:is([role=menu], [role=dialog])[aria-label="${messages.ohbox.moveLabel}"] [role=menuitem]`,
+  )].find((b) => (b.textContent ?? "").trim() === place);
 
 beforeEach(() => {
   window.location.hash = "#/ohbox";
@@ -181,7 +190,7 @@ async function moveSelectionTo(place: string, picks: number): Promise<{ ids: str
   expect(ids.length, "the selection gesture picked nothing").toBeGreaterThan(1);
   sent = [];
   await click(buttonStarting("Move"));
-  await click(buttonStarting(`→ ${place}`));
+  await click(placeOffered(place));
   await settle();
   return { ids, senders };
 }

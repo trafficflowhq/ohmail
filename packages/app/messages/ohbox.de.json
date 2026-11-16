@@ -174,6 +174,48 @@
       "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, nimmt diese Änderung von hier nicht an. Mach sie dort, oder aktualisiere ohmail darauf.",
       "elsewhere": "{name} organisiert dieses Postfach, also wird diese Änderung dort gemacht.",
       "elsewhereUnknown": "Eine andere ohmail-Installation organisiert dieses Postfach, also wird diese Änderung dort gemacht."
+    },
+    "list": {
+      "menu": "Aktionen der Ohbox",
+      "pull": "Neue Mails abrufen"
+    },
+    "end": {
+      "older": "Ältere Mails",
+      "history": "Historie",
+      "top": "Nach oben"
+    },
+    "row": {
+      "unread": "Ungelesen",
+      "read": "Gelesen",
+      "file": "Mit Anhang",
+      "marks": "{count} Nachrichten, älteste zuerst: {unread, plural, =0 {alle gelesen} other {# ungelesen}}",
+      "people": "{count} Personen: {names}",
+      "you": "du",
+      "more": "+{count}",
+      "open": "Öffnen",
+      "forward": "Weiterleiten",
+      "menu": "Aktionen zur Nachricht",
+      "select": "Auswählen",
+      "deselect": "Auswahl aufheben"
+    },
+    "bar": {
+      "label": "Auswahl",
+      "screen": "Screening",
+      "screenCommit": "Screenen",
+      "screenConfirm": "{senders, plural, one {1 Absender} other {# Absender}} → {place}. {count, plural, one {1 Nachricht wird verschoben} other {# Nachrichten werden verschoben}}. Es entsteht keine Regel, für künftige Mails ändert sich also nichts.",
+      "screenConfirmRules": "{senders, plural, one {1 Absender} other {# Absender}} → {place}. {count, plural, one {1 Nachricht wird verschoben} other {# Nachrichten werden verschoben}}, und {rules, plural, one {1 davon wartet noch, daher wird das eine Regel für seine künftigen Mails} other {# davon warten noch, daher wird das eine Regel für ihre künftigen Mails}}. Das lässt sich nicht rückgängig machen.",
+      "screenNothing": "Diese Mails liegen schon in {place}. Es würde nichts verschoben und keine Regel angelegt.",
+      "screenTo": "screenen nach"
+    },
+    "blank": {
+      "unread": "{count, plural, one {1 ungelesen} other {# ungelesen}}",
+      "clear": "Alles gelesen",
+      "none": "Nichts offen"
+    },
+    "empty": {
+      "loading": "Deine Mails werden geladen",
+      "nothing": "Nichts in deiner Ohbox",
+      "nothingYet": "Noch nichts in deiner Ohbox"
     }
   }
 }

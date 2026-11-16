@@ -224,7 +224,9 @@ describe("every mail row in the app is asked where its count comes from", () => 
         .filter((f) => fs.readFileSync(path.join(VIEWS, f), "utf8").includes("threadCountOf?:"))
         .map((f) => f.replace(/\.tsx$/, "")),
     );
-    expect(asks.size).toBe(6);
+    /* Five: the Ohbox left the views folder; its row is the kit's, one square per letter of the conversation
+       (`apps/webapp/test/ohbox/ohbox-row-strip.test.tsx`), and asks no count. */
+    expect(asks.size).toBe(5);
     const shell = fs.readFileSync(path.join(HERE, "..", "app", "shell", "AppShell.tsx"), "utf8");
     const sf = ts.createSourceFile("AppShell.tsx", shell, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     const given = new Set<string>();
@@ -244,8 +246,8 @@ describe("every mail row in the app is asked where its count comes from", () => 
 
   it("takes every count from the one helper", () => {
     const counted = rows().filter((r) => r.counted);
-    expect(counted.length).toBe(8);
+    expect(counted.length).toBe(6);
     expect([...new Set(counted.map((r) => r.file))].sort())
-      .toEqual(["FolderView.tsx", "HistoryView.tsx", "OhboxView.tsx", "TagView.tsx", "TrashView.tsx", "TriageView.tsx"]);
+      .toEqual(["FolderView.tsx", "HistoryView.tsx", "TagView.tsx", "TrashView.tsx", "TriageView.tsx"]);
   });
 });

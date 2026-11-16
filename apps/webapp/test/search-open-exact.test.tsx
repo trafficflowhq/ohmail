@@ -175,7 +175,7 @@ describe("TRI-F2 — a search hit opens exactly the clicked message", () => {
     // may be a folded conversation, in which case membership (data-id or data-ids) is the
     // contract; here the fixture's hit leads its own row.
     await waitFor(
-      () => container.querySelector(`.view-ohbox .row.sel[data-id="${clickedId}"]`) != null,
+      () => container.querySelector(`.view-ohbox :is(.row.sel, [role=option][data-open])[data-id="${clickedId}"]`) != null,
       `the cursor stands on ${clickedId}`,
     );
 
@@ -188,7 +188,7 @@ describe("TRI-F2 — a search hit opens exactly the clicked message", () => {
     // THE ARRIVAL IS MARKED — the locate pass finds the row and flashes it. This is the half
     // the sweep reported as silent.
     await waitFor(
-      () => document.querySelector(`.row.is-located[data-id="${clickedId}"]`) != null,
+      () => document.querySelector(`:is(.row, [role=option]).is-located[data-id="${clickedId}"]`) != null,
       "the locate flash on the clicked row",
       4000,
     );
@@ -205,8 +205,8 @@ describe("the locate selector reaches folded conversations (data-ids)", () => {
         <div class="row" data-id="lead" data-ids="lead older oldest"></div>
         <div class="row" data-id="single"></div>
       </div>`;
-    const bySelf = document.querySelector(`.view .row[data-id="older"]`);
-    const byMembership = document.querySelector(`.view .row[data-ids~="older"]`);
+    const bySelf = document.querySelector(`.view :is(.row, [role=option])[data-id="older"]`);
+    const byMembership = document.querySelector(`.view :is(.row, [role=option])[data-ids~="older"]`);
     expect(bySelf).toBeNull(); // the exact-id contract alone cannot see a folded member…
     expect(byMembership?.getAttribute("data-id")).toBe("lead"); // …membership can.
   });
@@ -215,15 +215,8 @@ describe("the locate selector reaches folded conversations (data-ids)", () => {
     /* The locate pass sits with the open it follows, in `shell-open-state.ts` — the frame is
        resolved from the manifest by the declaration it belongs to. */
     const src = shellFrameOf("openMessage").source;
-    expect(src).toMatch(/\.view \.row\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
-    expect(src).toMatch(/\.view \.row\[data-ids~="\$\{CSS\.escape\(located\)\}"\]/);
-  });
-
-  it("the Ohbox's folded rows declare their members", () => {
-    const src = read("../app/views/OhboxView.tsx");
-    // The group row hands every member to the row contract. Remove `memberIds` and a folded
-    // member's search hit goes back to flashing nothing.
-    expect(src).toMatch(/memberIds=\{g\.members\.map\(\(m\) => m\.id\)\}/);
+    expect(src).toMatch(/\.view :is\(\.row, \[role=option\]\)\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
+    expect(src).toMatch(/\.view :is\(\.row, \[role=option\]\)\[data-ids~="\$\{CSS\.escape\(located\)\}"\]/);
   });
 });
 
@@ -235,7 +228,7 @@ describe("the windowed lists reveal an externally-set cursor", () => {
     // rows times one height where rows are equal, and the window's own prefix sum where they
     // are not (the Ohbox — see `useListWindow`'s height cache).
     for (const view of ["OhboxView", "ReadsView", "ReceiptsView"]) {
-      const src = read(`../app/views/${view}.tsx`) + (view === "OhboxView" ? read("../../../packages/app-logic/src/ohbox/window.ts") : "");
+      const src = view === "OhboxView" ? read("../../../packages/app-logic/src/ohbox/window.ts") : read(`../app/views/${view}.tsx`);
       expect(src, `${view} reveals an unmounted cursor row`).toMatch(
         /scrollTop = Math\.max\(0, [^)]*win\.(rowHeight|offsetOf\()/,
       );

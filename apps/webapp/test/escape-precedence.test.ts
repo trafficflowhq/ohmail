@@ -153,14 +153,14 @@ async function waitFor(
    `textContent` scan reads "×1selectedesc" and an `includes("1 selected")` finds nothing. The
    live region inside the capsule is the exact node, and it is the one that is announced. */
 const picked = (el: HTMLElement): boolean =>
-  el.querySelector('.list-foot .abar-count [role="status"]')?.textContent === "1";
+  [...el.querySelectorAll("button")].some((b) => /^1 selected — /.test(b.getAttribute("aria-label") ?? ""));
 const open = (el: HTMLElement, sel: string): boolean => el.querySelector(sel) != null;
 
 /** Put the Ohbox in the state that broke everything: one row picked. */
 async function withSelection(): Promise<HTMLElement> {
   const container = await shell();
   expect(
-    container.querySelectorAll(".row[data-id]").length,
+    container.querySelectorAll(":is(.row, [role=option])[data-id]").length,
     "no rows to select — nothing below would prove anything",
   ).toBeGreaterThan(0);
   // `x` picks THE ROW AT THE CURSOR, and a fresh Ohbox no longer has one: the shell's

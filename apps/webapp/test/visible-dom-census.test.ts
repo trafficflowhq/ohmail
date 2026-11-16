@@ -65,8 +65,8 @@ describe("the shell's document queries skip hidden piles", () => {
     for (const [file, needle] of [
       ["shell/shell-keys.tsx", 'queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")'],
       ["shell/message-verbs.ts", 'queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")'],
-      ["shell/cursor-placer.ts", "queryVisible<HTMLElement>(\n    `${host.scope} .row"],
-      ["shell/message-verbs.ts", "return queryVisible<HTMLElement>(`${scope} .row"],
+      ["shell/cursor-placer.ts", "queryVisible<HTMLElement>(`${host.scope} :is(.row, .oh-row)"],
+      ["shell/message-verbs.ts", "return queryVisible<HTMLElement>(`${scope} :is(.row, [role=option])"],
       ["../../../packages/app-logic/src/keys/zone-nav.ts", "const sel = queryVisible<HTMLElement>(selector);"],
       ["../../../packages/app-logic/src/keys/zone-nav.ts", "if (tryFocus(queryVisible<HTMLElement>(sel))) return;"],
     ] as const) {

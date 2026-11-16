@@ -209,7 +209,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(): Promise<HTMLElement> {
   const { AppShell } = await import("./_todays-shell.js");

@@ -9,7 +9,7 @@ import type { OhboxListInput, OhboxListModel } from "./types.js";
 export function ohboxDrag(
   input: OhboxListInput,
   byId: Map<string, EngineMessage>,
-  { model: { olderShown, navRows }, rowIndexOf, olderRowOf }: OhboxGroups,
+  { model: { navRows }, rowIndexOf }: OhboxGroups,
   { picked, clearPicked }: PickSet,
   { pickedIds, runBulk }: PickVerbs,
   groupSenders: (g: OhboxRowGroup) => string,
@@ -31,13 +31,11 @@ export function ohboxDrag(
    * Fresh closures each render, read through the hook's ref at use time — nothing here can run stale, and nothing is
    * memoised for a gesture that happens at hand speed.
    */
-  /* THE DRAG'S LOOKUP IS `shown`, the list every verb resolves against — the three groups and
-     the Older tail. `byId` stays the groups': the session order prunes against it. */
-  const dragRowOf = (id: string): EngineMessage | undefined =>
-    byId.get(id) ?? olderShown.find((m) => m.id === id);
+  /* THE DRAG'S LOOKUP IS the three groups', the list every verb resolves against. */
+  const dragRowOf = (id: string): EngineMessage | undefined => byId.get(id);
   const dragSourceFor = (rowId: string): DragSource | null => {
     const idx = rowIndexOf(rowId);
-    const g = idx < 0 ? (olderRowOf(rowId) ?? null) : navRows[idx]!;
+    const g = idx < 0 ? null : navRows[idx]!;
     if (g === null) return null;
     const members = g.members;
     const selection = picked.size > 0 && members.every((m) => picked.has(m.id));

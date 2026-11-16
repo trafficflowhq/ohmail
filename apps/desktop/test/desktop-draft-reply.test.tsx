@@ -63,7 +63,7 @@ afterEach(async () => {
 });
 
 async function openDraftReplyOffer(shell: Awaited<ReturnType<typeof mountShell>>) {
-  const row = shell.el.querySelector(".row[data-id='m1']");
+  const row = shell.el.querySelector(":is(.row, [role=option])[data-id='m1']");
   await press(row, "the message row");
   await waitFor(() => shell.el.querySelector(".abar-more") !== null, "the message action bar");
   await press(shell.el.querySelector(".abar-more"), "more actions");

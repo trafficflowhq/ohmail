@@ -31,7 +31,10 @@ import {
  * and `countWhen` over `MailState.settled` and `MailState.owed`.
  */
 
-const OHBOX = messages.ohbox as unknown as Record<string, string>;
+/** The Ohbox's empty and loading sentences as its list says them (the catalogue's `ohbox.empty`): the filed arm
+ *  says the plain one. */
+const EMPTY = messages.ohbox.empty;
+const OHBOX = { emptyPlain: EMPTY.nothing, emptyFiledTitle: EMPTY.nothing, emptyScreenerTitle: EMPTY.nothingYet, loading: EMPTY.loading };
 /** The header's claim about the mailbox. The number is `unreadIds.length`. */
 const UNREAD_META = /\d[\d,]*\s+unread/;
 
@@ -76,7 +79,7 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     const el = await mountShell([importing()]);
     await tick(LOADING_GRACE_MS * 4);
 
-    expect(el.querySelectorAll(".row[data-id]").length, "the premise: rows landed")
+    expect(el.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: rows landed")
       .toBeGreaterThan(0);
     expect(textOf(el), "a partial count was stated as the mailbox's own")
       .not.toMatch(UNREAD_META);
@@ -86,15 +89,15 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
 
   /**
    * AND IT ALL COMES BACK. A guard that only asserts absences is indistinguishable from a
-   * feature deleted: with the import over, the count, the empty sentence and the older-mail
-   * tail are owed and this pins that they return.
+   * feature deleted: with the import over, the empty sentence is owed and this pins that it
+   * returns. (The 2.0 head states no unread count at all: its name and the hot dot only,
+   * `packages/app/src/ohbox/OhboxHead.tsx`'s `ListHead`.)
    */
-  it("states the count and the emptiness the moment the import is over", async () => {
+  it("states the emptiness the moment the import is over", async () => {
     const el = await mountShell([imported()]);
     await tick(LOADING_GRACE_MS * 4);
 
     expect(textOf(el), "the empty state never came back").toContain(OHBOX.emptyPlain);
-    expect(textOf(el), "the count never came back").toMatch(UNREAD_META);
     expect(textOf(el), "the pane was left spinning over a settled mailbox")
       .not.toContain(OHBOX.loading);
   });
@@ -156,7 +159,7 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     const el = await mountShell([importing()]);
     await tick(LOADING_GRACE_MS * 4);
 
-    expect(el.querySelectorAll(".row[data-id]").length, "the premise: no OHBOX rows").toBe(0);
+    expect(el.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: no OHBOX rows").toBe(0);
 
     expect(textOf(el), "the pane called a mid-import mailbox empty")
       .not.toContain(OHBOX.emptyPlain);
@@ -276,7 +279,7 @@ describe("a warm reopen mid-catch-up never asserts emptiness", () => {
     const el = await mountShell([mailbox({ lastSyncAt: ISO } as Partial<MailboxFacts>)], { engine });
     await tick(LOADING_GRACE_MS * 4);
 
-    expect(el.querySelectorAll(".row[data-id]").length, "the premise: filed mail, no OHBOX rows").toBe(0);
+    expect(el.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: filed mail, no OHBOX rows").toBe(0);
     expect(textOf(el), "the pane asserted emptiness mid-catch-up (INCIDENT-021)")
       .not.toContain(OHBOX.emptyPlain);
     expect(textOf(el), "the filed arm asserted emptiness mid-catch-up")

@@ -133,7 +133,7 @@ describe("every surface that draws a body subscribes to one", () => {
     "../app/views/ReadsView.tsx",
     "../app/views/ReceiptsView.tsx",
     "../app/views/ScreenerView.tsx",
-    "../app/views/OhboxView.tsx",
+    "../app/shell/TodaysOhbox.tsx",
     "../app/views/HistoryView.tsx",
     "../app/shell/StreamCardMemo.tsx",
     "../app/shell/InlineReply.tsx",

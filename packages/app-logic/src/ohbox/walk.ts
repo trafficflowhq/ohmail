@@ -13,7 +13,6 @@ export interface WalkOrder {
 
 export function walkOrder(
   navRows: OhboxRowGroup[],
-  olderRows: OhboxRowGroup[],
   rowIndexOf: (id: string | null) => number,
   selected: EngineMessage | null,
 ): WalkOrder {
@@ -24,24 +23,10 @@ export function walkOrder(
    * selection standing on a member that stopped leading its row (a newer reply arrived) still
    * knows which row it is on.
    */
-  const order =
-    olderRows.length === 0
-      ? navRows.map((g) => g.openTarget.id)
-      : [...navRows.map((g) => g.openTarget.id), ...olderRows.map((g) => g.openTarget.id)];
-  /**
-   * Where the cursor stands in that walk. Row MEMBERSHIP for the three groups — so a selection on
-   * a member that stopped leading its row still knows which row it is on — and position for the
-   * Older tail, whose rows fold into nothing and are one keyboard stop each. Without the second
-   * half a cursor on an Older row read `-1`, which `stepDown` treats as ENTRY: `j` from the tail
-   * jumped back to the top of the list.
-   */
-  const orderIndexOf = (id: string | null): number => {
-    const row = rowIndexOf(id);
-    if (row >= 0) return row;
-    const k = id == null ? -1 : olderRows.findIndex((g) => g.members.some((m) => m.id === id));
-    return k < 0 ? -1 : navRows.length + k;
-  };
-  const at = orderIndexOf(selected?.id ?? null);
+  const order = navRows.map((g) => g.openTarget.id);
+  /** Where the cursor stands in that walk, by row MEMBERSHIP: a selection on a member that stopped leading its row
+   * still knows which row it is on. */
+  const at = rowIndexOf(selected?.id ?? null);
   return { order, at };
 }
 

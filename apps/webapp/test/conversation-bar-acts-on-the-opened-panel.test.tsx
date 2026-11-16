@@ -58,7 +58,7 @@ const click = async (el: Element | null | undefined, what: string): Promise<void
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement | null =>
-  host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
 /** A row press, as a person makes it at this width: the first click selects, the second opens. */
 const openRow = async (host: HTMLElement, id: string): Promise<void> => {
   await click(rowOf(host, id), `the Ohbox row ${id}`);

@@ -67,8 +67,8 @@ async function key(k: string, init: KeyboardEventInit = {}): Promise<void> {
   await settleEditor();
 }
 async function replyOpen(s: DraftShell, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -360,8 +360,8 @@ async function typeRecipient(el: HTMLElement, label: string, text: string): Prom
   });
 }
 async function openOn(s: DraftShell, k: string, shiftKey = false): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
   await key(k, shiftKey ? { shiftKey: true } : {});
   await waitFor(() => replySurface(s.el) != null, "the editor");
 }

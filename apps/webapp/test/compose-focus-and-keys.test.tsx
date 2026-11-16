@@ -328,7 +328,7 @@ async function shell(): Promise<HTMLElement> {
   return container;
 }
 
-const rows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view .row[data-id]")];
+const rows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   // Bounded by TIME, not by a tick count: 40 zero-delay ticks read as "never" at load 100.

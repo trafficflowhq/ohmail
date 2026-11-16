@@ -16,10 +16,10 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
 
 const openReads = () => patches.filter((p) => (p as { openRead?: boolean }).openRead === true);
 const ids = (label: string): string[] =>
-  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] :is(.row, [role=option])[data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
-const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
-const selected = (): string | null => document.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
+const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
+const selected = (): string | null => document.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
 const naming = (id: string) => patches.filter((p) => p.ids.includes(id));
 /** "first" (08:20) and "old" (08:00) unread over "newer" read (08:30): New ["first", "old"], Earlier ["newer"]. */
 const three = () => [

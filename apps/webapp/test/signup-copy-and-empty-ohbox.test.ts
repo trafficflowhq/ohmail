@@ -95,6 +95,11 @@ describe("the signup account step says it once", () => {
 describe("an empty Ohbox says it is empty", () => {
   beforeEach(installShellEnv);
   afterEach(teardownShellEnv);
+  /* The list's group headings by their names (the kit's heading draws its count beside the name), its rows as options,
+     its groups as listboxes, and its empty sentence as the kit's Empty says it, the closing dot drawn by the kit. */
+  const headings = (c: HTMLElement): Array<string | null> =>
+    [...c.querySelectorAll(".view-ohbox .ob-heading .oh-groupheading > span:first-child")].map((n) => n.textContent);
+  const NOTHING = messages.ohbox.empty.nothing;
 
   it("no rows means no group headings, and one line saying so", async () => {
     // Mounted through the real shell on a mailbox that has never completed a cycle: no "New"/"Earlier" over an empty
@@ -102,10 +107,10 @@ describe("an empty Ohbox says it is empty", () => {
     const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(".row[data-id]").length, "the premise: no mail").toBe(0);
-    expect([...c.querySelectorAll(".grouplabel")].map((n) => n.textContent)).toEqual([]);
-    expect(c.querySelectorAll(".rows[role=listbox]").length, "an empty listbox to land in").toBe(0);
-    expect(textOf(c)).toContain("Nothing in your Ohbox.");
+    expect(c.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: no mail").toBe(0);
+    expect(headings(c)).toEqual([]);
+    expect(c.querySelectorAll(".view-ohbox [role=listbox]").length, "an empty listbox to land in").toBe(0);
+    expect(textOf(c)).toContain(NOTHING);
 
     // The pane says what it owns and no more: WHY the list is empty is the frame's notice, which says the first sync.
     expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
@@ -124,8 +129,8 @@ describe("an empty Ohbox says it is empty", () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
 
-    expect(c.querySelectorAll(".row[data-id]").length, "the premise: mail arrived").toBe(2);
-    expect([...c.querySelectorAll(".grouplabel")].map((n) => n.textContent)).toEqual(["New"]);
-    expect(textOf(c)).not.toContain("Nothing in your Ohbox.");
+    expect(c.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: mail arrived").toBe(2);
+    expect(headings(c)).toEqual(["New"]);
+    expect(textOf(c)).not.toContain(NOTHING);
   });
 });

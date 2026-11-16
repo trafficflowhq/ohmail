@@ -74,7 +74,7 @@ async function press(dest: string, ruleOff = false): Promise<{ mid: string | und
   const host = await mountShell([mailbox({ id: "mb_1", address: ME, organizerRole: "organizer", lastSyncAt: ISO } as never)],
     { engine });
   await tick(50);
-  const av = host.querySelector<HTMLElement>('.row[data-id="fr"] .av');
+  const av = host.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="fr"] :is(.av, .oh-row-face)');
   expect(av, "the friend's row is drawn").toBeTruthy();
   await act(async () => { av!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
   await tick(50);

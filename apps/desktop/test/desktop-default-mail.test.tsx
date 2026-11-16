@@ -260,7 +260,8 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
     const ask = el.querySelector<HTMLElement>("[role='dialog'][data-key-beside]");
     expect({ slot: ask?.parentElement?.matches(".stage > .stage-notice:first-child"), fixed: ask?.style.position ?? null })
       .toEqual({ slot: true, fixed: "" });
-    const row = (id: string) => el.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
+    /* A row of the Ohbox is an option of its listbox; the open one is the cursor's. */
+    const row = (id: string) => el.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
     const press = async (key: string) => {
       await act(async () => {
         (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -270,7 +271,7 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
 
     for (const [id, key] of [["m3", "Backspace"], ["m2", "Delete"]] as const) {
       await click(row(id)!);
-      expect(el.querySelector(".row.sel")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
+      expect(el.querySelector(":is(.row.sel, [role=option][data-open])")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
       await press(key);
       expect(row(id), `${key} left the row in the Ohbox`).toBeNull();
       expect(el.textContent).toContain("Moved to Trash.");

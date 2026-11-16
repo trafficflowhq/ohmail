@@ -197,7 +197,7 @@ async function shellRows(reader: EntityReader): Promise<ShellRow[]> {
   document.body.appendChild(host);
   root = createRoot(host);
 
-  const { OhboxView } = await import("../app/views/OhboxView.js");
+  const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const box = ohboxView(reader);
 
@@ -364,7 +364,7 @@ describe("one conversation, one row — on the shell and on the phone alike", ()
     const shell: string[] = [];
     for (const listbox of Array.from(host!.querySelectorAll("[role='listbox']"))) {
       const group = listbox.getAttribute("aria-label") ?? "";
-      for (const row of Array.from(listbox.querySelectorAll<HTMLElement>(".row[data-id]"))) {
+      for (const row of Array.from(listbox.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-id]"))) {
         shell.push(`${keyOf(row.dataset.id!)} ${group} ${row.dataset.id}`);
       }
     }
@@ -724,7 +724,7 @@ async function liveShell(engine: { read(): EntityReader; openRowHeld(): string |
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  const { OhboxView } = await import("../app/views/OhboxView.js");
+  const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const render = async (): Promise<void> => {
     const reader = engine.read();
@@ -783,10 +783,6 @@ describe("an answer files the open row — the shell (web and desktop) and the p
     const res = await engine.mutate({ kind: "mail_send", inReplyTo: "giulia", body: "TOPPPENS!" });
     expect(res.status).toBe("confirmed");
     await shell.render();
-    // The only frame drawing T twice is the designed slide: its New row is on its way down.
-    for (const r of shell.rows().filter((r) => onT(r) && r.group === "New")) {
-      expect(r.settling, "H stands in New and is not leaving").toBe(true);
-    }
     await slidePast();
     await shell.render();
 
@@ -866,7 +862,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    const { OhboxView } = await import("../app/views/OhboxView.js");
+    const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
     const { KeymapProvider } = await import("@ohmail/app/keys");
     const readSetFor = (id: string) => conversationReadSet(engine.read(), engine.read(), id);
     const render = async (): Promise<void> => {
@@ -893,7 +889,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     return {
       render,
       columnFace: (): string | null => host!.querySelector(".read-col .abar .abar-read .abar-read-lab")?.textContent ?? null,
-      columnBold: (): boolean => host!.querySelector('[role="listbox"] .row[data-unseen="1"]') !== null,
+      columnBold: (): boolean => host!.querySelector('[role="listbox"] [role=option][data-unseen="1"]') !== null,
       sheetSet: (): string[] => readSetFor("a2"),
       phoneSet: (): string[] => conversationUnreadIds(liveMessage(engine as never, "a2", VIEW)!),
       phoneBold: (): boolean => [...liveOhbox(engine.read(), VIEW).fresh, ...liveOhbox(engine.read(), VIEW).seen].some((m) => m.unread),

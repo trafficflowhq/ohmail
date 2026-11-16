@@ -165,7 +165,7 @@ async function shell(
       }),
     }));
   });
-  await waitFor(() => container.querySelectorAll(".row[data-id]").length > 0, "rows in the Ohbox");
+  await waitFor(() => container.querySelectorAll(":is(.row, [role=option])[data-id]").length > 0, "rows in the Ohbox");
   return container;
 }
 
@@ -205,19 +205,19 @@ describe("the badge rule", () => {
       const rail = [...container.querySelectorAll("[data-rail-id] button")].find((b) => (b.textContent ?? "").includes("Ohbox"));
       return {
         rail: rail?.querySelector(".oh-railentry-count")?.textContent,
-        header: container.querySelector(".vhead .meta")?.textContent,
-        markAll: container.querySelector(".mark-all-read")?.getAttribute("aria-label"),
+        /* The head's Mark all read, named with the count it marks. */
+        markAll: container.querySelector(".view-ohbox .oh-listhead-aside button[aria-label^='Mark all']")?.getAttribute("aria-label"),
         sink: calls[calls.length - 1],
       };
     };
-    const want = { rail: "2", header: "2 unread", markAll: "Mark all 2 unread messages read", sink: 2 };
-    await waitFor(() => container.querySelector(".row[data-id=\"m1\"]") !== null, "the resurfaced row listed");
+    const want = { rail: "2", markAll: "Mark all 2 unread messages read", sink: 2 };
+    await waitFor(() => container.querySelector(":is(.row, [role=option])[data-id=\"m1\"]") !== null, "the resurfaced row listed");
     expect(counts()).toEqual(want);
     // A reload: a fresh engine and shell over the same mirror.
     await act(async () => { roots.pop()!.unmount(); });
     document.body.innerHTML = "";
     container = await shell((n) => calls.push(n), engineOver(store));
-    await waitFor(() => counts().header === "2 unread", "the header after the reload");
+    await waitFor(() => counts().markAll === want.markAll, "the header after the reload");
     expect(counts()).toEqual(want);
   });
 

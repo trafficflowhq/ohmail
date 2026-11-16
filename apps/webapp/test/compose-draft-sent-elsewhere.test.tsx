@@ -421,8 +421,8 @@ describe("Compose after the letter went from another device", () => {
   async function replied(words: string): Promise<EngineDraft> {
     server = new DraftServer();
     shell = await mountShell("#/ohbox", [message("m1")], [], { server });
-    await waitFor(() => q(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(q(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => q(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(q(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
     await settleEditor();
     await waitFor(() => replySurface(shell.el) != null, "the reply editor");

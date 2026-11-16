@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
+import { Row, Rows } from "@ohmail/ui/mail";
+import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 /**
  * ONE DISCIPLINE FOR SHEETS AND MENUS, through the shipped
@@ -86,7 +88,9 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
-const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".view .row[data-id]")];
+/* A row of a list: today's row, or the Ohbox's, an option of its listbox; the cursor's is `.sel` there, open here. */
+const rows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
+const CURSOR = ".view :is(.row.sel, [role=option][data-open])[data-id]";
 const focused = (): HTMLElement | null => document.activeElement as HTMLElement | null;
 const where = (): string => {
   const el = focused();
@@ -133,7 +137,7 @@ async function enter(): Promise<void> {
 
 async function standOn(index: number): Promise<string> {
   const id = rows()[index]!.dataset.id!;
-  for (let i = 0; i < 12 && document.querySelector<HTMLElement>(".view .row.sel")?.dataset.id !== id; i += 1) await key("j");
+  for (let i = 0; i < 12 && document.querySelector<HTMLElement>(CURSOR)?.dataset.id !== id; i += 1) await key("j");
   await key("ArrowLeft");
   await key("ArrowRight");
   expect(focused()?.dataset.id, `could not stand on row ${index}: focus is on ${where()}`).toBe(id);
@@ -144,7 +148,7 @@ describe("the shortcut sheet's list (R21-03)", () => {
   it("is a named Tab stop, and there the scroll keys scroll the sheet instead of closing it", async () => {
     await shell();
     await standOn(1);
-    const cursor = document.querySelector<HTMLElement>(".view .row.sel")!.dataset.id;
+    const cursor = document.querySelector<HTMLElement>(CURSOR)!.dataset.id;
     await key("?");
     await settle();
     await tab();
@@ -157,7 +161,7 @@ describe("the shortcut sheet's list (R21-03)", () => {
       expect(document.querySelector(".ks"), `${k} closed the sheet`).not.toBeNull();
       expect(e.defaultPrevented, `${k} was prevented, so it cannot scroll`).toBe(false);
     }
-    expect(document.querySelector<HTMLElement>(".view .row.sel")!.dataset.id, "a scroll key moved the list behind").toBe(cursor);
+    expect(document.querySelector<HTMLElement>(CURSOR)!.dataset.id, "a scroll key moved the list behind").toBe(cursor);
   });
 
   it("any other key still closes it (control), and its headings sit under one h2", async () => {
@@ -319,5 +323,87 @@ describe("Escape gives focus back to what opened the palette and Search (R18-02)
     await settle();
     expect(document.querySelector(".palette")).toBeNull();
     expect(focused(), `after Escape focus is on ${where()}`).toBe(opener);
+  });
+});
+
+describe("the composer, closed, gives the keyboard back to the list it left (R18-02, a view that went while it stood)", () => {
+  /* `c` leaves the Ohbox for the composer and Escape comes back: the control that opened it is gone with the view, so
+     the keyboard goes to the row it stood on, else the cursor's row, else the list's own stop. Never a control of the
+     list's head, where the next Enter would press it. */
+  const compose = async (): Promise<void> => {
+    await key("c");
+    await waitFor(() => document.querySelector(".view-ohbox") === null, "c did not open the composer");
+    await settle();
+    await key("Escape");
+    await waitFor(() => document.querySelector(".view-ohbox") !== null && rows().length > 0, "Escape did not come back to the Ohbox");
+    await settle();
+  };
+  const LIST = ".view-ohbox :is(.scroller, .ob-scroll)";
+
+  it("opened from the cursor's row: back on that row", async () => {
+    await shell("#/ohbox");
+    const id = await standOn(1);
+    await compose();
+    expect(focused()?.dataset.id, `after the composer closed focus is on ${where()}`).toBe(id);
+    expect(focused()?.matches(CURSOR)).toBe(true);
+  });
+
+  it("opened from a control of the head with a letter open: on the cursor's row", async () => {
+    await shell("#/ohbox");
+    const id = await standOn(1);
+    const head = [...document.querySelectorAll<HTMLElement>(".view-ohbox :is(.oh-listhead-aside, .vhead) button:not([disabled])")].pop()!;
+    await act(async () => { head.focus(); });
+    expect(focused(), "the premise: a control of the head holds the keyboard").toBe(head);
+    await compose();
+    expect(focused()?.dataset.id, `after the composer closed focus is on ${where()}`).toBe(id);
+  });
+
+  it("opened from a row that holds the keyboard with no letter open: back on that row", async () => {
+    await shell("#/ohbox");
+    expect(document.querySelector(CURSOR), "the premise: no cursor").toBeNull();
+    const row = rows()[2]!;
+    const id = row.dataset.id;
+    await act(async () => { row.focus(); });
+    expect(focused(), "the premise: the row holds the keyboard").toBe(row);
+    await compose();
+    expect(focused()?.dataset.id, `after the composer closed focus is on ${where()}`).toBe(id);
+  });
+
+  it("opened with no cursor in the list: on the list's own stop", async () => {
+    await shell("#/ohbox");
+    expect(document.querySelector(CURSOR), "the premise: no cursor").toBeNull();
+    await compose();
+    expect(focused()?.matches(LIST), `after the composer closed focus is on ${where()}`).toBe(true);
+  });
+});
+
+describe("the shell's focus rule over the Ohbox's own rows, mounted alone (focus-follows)", () => {
+  /* In the shipped shell the list's keeper lands a row a verb took away before the rule beneath it is asked; the rule
+     must still say the same over the new list: a cursor row taken away goes to the cursor, else the list's own stop,
+     never a neighbour, which would wear the ring while the verbs act elsewhere. */
+  it("a focused row taken away with no cursor in the list: the keyboard on the list's own stop", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    let stop: HTMLDivElement | null = null;
+    const keep = (el: HTMLDivElement | null): void => { if (el !== null) stop = el; };
+    const draw = (ids: readonly string[]) => h("div", { className: "view" },
+      h(FocusFollows),
+      h("div", { className: "ob-scroll", tabIndex: -1, ref: keep },
+        h(Rows, {
+          label: "New", many: true,
+          children: ids.map((id) => h(Row, {
+            key: id, who: id, people: [], subject: id, listing: { name: id, selected: false }, mark: { id },
+          })),
+        })));
+    await act(async () => { root.render(draw(["a", "b", "c"])); });
+    const b = [...host.querySelectorAll<HTMLElement>("[role=option]")].find((o) => o.getAttribute("aria-label") === "b")!;
+    await act(async () => { b.focus(); });
+    expect(document.activeElement, "the premise: the row holds the keyboard").toBe(b);
+    await act(async () => { root.render(draw(["a", "c"])); });
+    await settle();
+    const at = document.activeElement as HTMLElement | null;
+    expect(at, `after the row went the keyboard is on ${at?.getAttribute("aria-label") ?? at?.tagName}`).toBe(stop);
   });
 });

@@ -86,9 +86,9 @@ async function rig(rules: RuleDTO[], extra: EngineMessage[] = [], seed: Partial<
 
 /** The ids the Ohbox draws in New, and in the whole Ohbox. */
 const inNew = (): string[] =>
-  [...document.querySelectorAll<HTMLElement>(`[aria-label="${en.ohbox.newForYou}"] .row[data-id]`)].map((n) => n.dataset.id!);
+  [...document.querySelectorAll<HTMLElement>(`[aria-label="${en.ohbox.newForYou}"] :is(.row, [role=option])[data-id]`)].map((n) => n.dataset.id!);
 const inOhbox = (): string[] =>
-  [...document.querySelectorAll<HTMLElement>(".row[data-id]")].map((n) => n.dataset.id!);
+  [...document.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-id]")].map((n) => n.dataset.id!);
 const folderOf = (r: Rig, id = "seed"): string | undefined => r.engine.read().get<EngineMessage>("message", id)?.folder;
 const moves = (r: Rig) => r.wire.filter((m): m is Extract<EngineMutation, { kind: "move" }> => m.kind === "move");
 const ruleWrites = (r: Rig) => r.wire.filter((m) => m.kind.startsWith("rule_"));
@@ -101,12 +101,12 @@ async function press(r: Rig, o: { dest?: string; retroOff?: boolean; domain?: bo
   await mountShell([mailbox({ id: "mb_1", address: ME, organizerRole: "organizer", lastSyncAt: ISO } as never)], { engine: r.engine });
   await tick(50);
   // Opened the way a person opens it: the click holds it in New and reads it.
-  const row = document.querySelector<HTMLElement>('.row[data-id="seed"]');
+  const row = document.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="seed"]');
   await act(async () => { row!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
   await tick(3000);
   expect(r.engine.openRowHeld(), "premise: the opened letter is held").toBe("seed");
   expect(inNew(), "premise: the opened letter is in New").toContain("seed");
-  const av = document.querySelector<HTMLElement>('.row[data-id="seed"] .av');
+  const av = document.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="seed"] :is(.av, .oh-row-face)');
   await act(async () => { av!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
   await tick(50);
   if (o.domain) {

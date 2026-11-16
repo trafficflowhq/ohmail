@@ -329,7 +329,7 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
@@ -352,15 +352,15 @@ const EARLIER = messages.ohbox.previouslySeen;
 
 /** `<listbox label>#<index>` for the row, or `ABSENT`. */
 const where = (el: HTMLElement, id: string): string => {
-  const r = el.querySelector(`.row[data-id="${id}"]`);
+  const r = el.querySelector(`:is(.row, [role=option])[data-id="${id}"]`);
   if (!r) return "ABSENT";
   const lb = r.closest('[role="listbox"]');
-  const rows = lb ? [...lb.querySelectorAll(".row[data-id]")].map((x) => x.getAttribute("data-id")) : [];
+  const rows = lb ? [...lb.querySelectorAll(":is(.row, [role=option])[data-id]")].map((x) => x.getAttribute("data-id")) : [];
   return `${lb?.getAttribute("aria-label") ?? "?"}#${rows.indexOf(id)}`;
 };
 /** The CURSOR's row (`sel`), not the pick: a picked row publishes `aria-selected` too. */
 const selectedRow = (el: HTMLElement): string =>
-  el.querySelector(".row.sel[data-id]")?.getAttribute("data-id") ?? "none";
+  el.querySelector(":is(.row.sel, [role=option][data-open])[data-id]")?.getAttribute("data-id") ?? "none";
 const sleep = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 
@@ -371,7 +371,7 @@ const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "open"): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
   expect(where(c, "w8")).toBe(`${NEW}#0`);
-  if (how === "open") await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  if (how === "open") await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
   else await key("j");
   await sleep(ms);
   await key(k);
@@ -415,7 +415,7 @@ describe("a held Delete, undone", () => {
 
   it("NOT UNDONE: the row stays gone and exactly one delete goes out when the window closes", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("Backspace");
     await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
@@ -494,7 +494,7 @@ const clickUndo = async (): Promise<void> => {
 /** Open w8 by a click (the read rule reads it), wait, take it away with `k`. */
 async function dwellAndPress(k: string): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
-  await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
   await sleep(2300);
   await key(k);
   await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
@@ -590,7 +590,7 @@ describe("a person who moved on is not dragged back (every door)", () => {
 describe("Undo restores the cursor only for a row its verb took and whose reversal took", () => {
   it("a deselection no verb caused (Back), then a set's Park of that row, Undo: the cursor stays put", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
     await goHash("#/ohbox");
@@ -608,9 +608,9 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
      be held, or it would stand in New the moment anything brought it back. */
   it("the open row's own reversal refused while another's took: no cursor on a row that is not there", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="n1"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="n1"]')!.click(); });
     await key("x");
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
     expect(selectedRow(c), "the premise: the cursor is on w8").toBe("w8");
@@ -629,7 +629,7 @@ describe("Undo restores the cursor only for a row its verb took and whose revers
 
   it("CONTROL: a set's Park of the open row, undone at once: back in New, selected", async () => {
     const c = await shell(ORGANIZER_ROSTER);
-    await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+    await act(async () => { c.querySelector<HTMLElement>(':is(.row, [role=option])[data-id="w8"]')!.click(); });
     await sleep(2300);
     await key("x");
     await key("e");

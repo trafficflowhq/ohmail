@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
@@ -11,6 +11,8 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  */
 const APP = join(__dirname, "..", "app");
 const VIEWS = join(APP, "views");
+/* The Ohbox's reading column stands in the shell's adapter, beside the Ohbox's own list. */
+const OHBOX = join(APP, "shell", "TodaysOhbox.tsx");
 
 /** Each `@media (<query>) { … }` block, brace-matched, joined. */
 function mediaBlocks(css: string, query: string): string {
@@ -44,13 +46,15 @@ describe("one rule hides every split view's reading column at phone widths", () 
 
   it("every view that renders a reading column is a split view, so the rule reaches it", () => {
     const withColumn: string[] = [];
-    for (const f of readdirSync(VIEWS).filter((n) => n.endsWith(".tsx"))) {
-      const src = withoutComments(readFileSync(join(VIEWS, f), "utf8")) as string;
+    const files = [...readdirSync(VIEWS).filter((n) => n.endsWith(".tsx")).map((n) => join(VIEWS, n)), OHBOX];
+    for (const path of files) {
+      const f = basename(path);
+      const src = withoutComments(readFileSync(path, "utf8")) as string;
       if (!/<(List)?ReadColumn\b|className="read-col/.test(src)) continue;
       withColumn.push(f);
       expect(src, `${f} renders a reading column outside a .view.split`).toMatch(/className=\{?[^}\n]*["`]view split /);
     }
     // The control: the census found the views it is about, Trash among them.
-    expect(withColumn).toEqual(expect.arrayContaining(["TrashView.tsx", "FolderView.tsx", "HistoryView.tsx", "OhboxView.tsx"]));
+    expect(withColumn).toEqual(expect.arrayContaining(["TrashView.tsx", "FolderView.tsx", "HistoryView.tsx", "TodaysOhbox.tsx"]));
   });
 });

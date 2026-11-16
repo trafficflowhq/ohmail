@@ -163,8 +163,10 @@ describe("ShortcutHint — the one item at the pane foot", () => {
 const view = (name: string): string =>
   readFileSync(resolve(process.cwd(), `apps/webapp/app/views/${name}.tsx`), "utf8");
 
+/* The Ohbox's keys are bound by its behaviour hook; its list draws no strip (the new list's keys are on the `?` sheet). */
+const OHBOX_KEYS = readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/keys.ts"), "utf8");
+
 const VIEWS = {
-  OhboxView: view("OhboxView") + readFileSync(resolve(process.cwd(), "packages/app-logic/src/ohbox/keys.ts"), "utf8"),
   ReadsView: view("ReadsView"),
   ReceiptsView: view("ReceiptsView"),
   ScreenerView: view("ScreenerView"),
@@ -178,7 +180,6 @@ describe("every pane-foot strip is the affordance, not a legend", () => {
       ([name, src]) => [name, (src.match(/<ShortcutHint \/>/g) ?? []).length] as const,
     );
     expect(Object.fromEntries(uses)).toEqual({
-      OhboxView: 1,
       ReadsView: 2,
       ReceiptsView: 2,
       ScreenerView: 1,
@@ -188,7 +189,7 @@ describe("every pane-foot strip is the affordance, not a legend", () => {
   it("no view hand-types a key legend again", () => {
     // `hintMove` was the lead item of every legend; any restored strip brings it back first.
     // The `?` sheet is the one list of the bindings — generated, so it cannot drift.
-    for (const [name, src] of Object.entries(VIEWS)) {
+    for (const [name, src] of [...Object.entries(VIEWS), ["ohbox-list", OHBOX_KEYS] as const]) {
       expect(src.includes("hintMove"), `${name} carries a hand-typed key legend again`).toBe(false);
       expect(src.includes("hintAllKeys"), `${name} still renders the old '? all keys' span`).toBe(false);
     }
@@ -199,7 +200,7 @@ describe("every pane-foot strip is the affordance, not a legend", () => {
     // generated sheet both read them from `useKeyBindings`).
     for (const chord of ['"j"', '"k"', '"Enter"', '"t"', '"x"', '"u"']) {
       expect(
-        VIEWS.OhboxView.includes(`chord: ${chord}`),
+        OHBOX_KEYS.includes(`chord: ${chord}`),
         `OhboxView no longer binds ${chord}`,
       ).toBe(true);
     }

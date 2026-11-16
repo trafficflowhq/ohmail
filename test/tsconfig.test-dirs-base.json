@@ -72,6 +72,7 @@
       "@ohmail/app-logic/*": ["../packages/app-logic/src/*"],
       "@ohmail/app/host": ["../packages/app/src/host/index.ts"],
       "@ohmail/app/keys": ["../packages/app/src/keys/index.ts"],
+      "@ohmail/app/ohbox": ["../packages/app/src/ohbox/index.ts"],
       "@ohmail/app/text": ["../packages/app/src/text/index.ts"],
       "@ohmail/ui/long-text": ["../packages/ui/src/format/long-text.ts"],
       "@ohmail/ui/squares-window": ["../packages/ui/src/squares-window.ts"],

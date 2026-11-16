@@ -59,7 +59,7 @@ export function useAfterVerbLanding(
     // A delete drops the shell's selection; Park and Later keep it on the filed message (the mirror still holds it).
     if (!acted || wasSel !== acted.id || (selectedId != null && selectedId !== acted.id)) return;
     if (ids.includes(acted.id)) return; // the verb left the row in place
-    if (!before.includes(acted.id)) return; // never in the three groups: an Older-tail letter, folded into a row or not
+    if (!before.includes(acted.id)) return; // never in the three groups
     if (Date.now() - acted.at > ACTED_FRESH_MS) return;
     if (columnHidden()) return;
     lastActed.current = null;

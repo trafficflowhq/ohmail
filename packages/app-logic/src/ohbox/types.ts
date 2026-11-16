@@ -18,12 +18,12 @@ import type { ActedMarker } from "../press/after-verb.js";
 import type { NotOrganizingYet } from "../mail-state/mail-state.js";
 import type { UndoLink } from "../press/shell-dispatch.js";
 import type { ListWindow } from "../lists/list-window.js";
-import type { OlderMail } from "../lists/older-mail.js";
 import type { BulkAction, MessageAction, MoveTarget } from "../press/actions.js";
 import type { DragSource, RailDropTarget } from "../lists/drag-source.js";
 import type { ScreeningDest } from "../press/sender-screening.js";
 import type { KeyBinding } from "../keys/index.js";
 import type { Translator } from "../text/translator.js";
+import type { ListVisit } from "../reading/list-meeting.js";
 
 /**
  * What a selection can be asked to do.
@@ -123,7 +123,6 @@ export interface OhboxListInput {
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
   onDropTag?: (ids: string[], tagId: string) => void;
   bulk: BulkVerbs;
-  older: OlderMail;
   onMarkAllRead?: (ids: string[]) => void;
 
   t: Translator;
@@ -158,6 +157,12 @@ export interface OhboxStep {
 }
 
 /** The locals the list and its reading column draw, under their names of today. */
+/** One person of a row's conversation: the newest letter they wrote, and whether it is the account's own. */
+export interface OhboxPerson {
+  letter: EngineMessage;
+  you: boolean;
+}
+
 export interface OhboxListModel {
   all: EngineMessage[];
   shown: EngineMessage[];
@@ -166,8 +171,6 @@ export interface OhboxListModel {
   groupedResurfaced: OhboxRowGroup[];
   groupedNew: OhboxRowGroup[];
   groupedPrev: OhboxRowGroup[];
-  olderRows: OhboxRowGroup[];
-  olderShown: EngineMessage[];
   listInput: { settled: boolean; count: number; pending: boolean };
   surface: ListSurface;
   mayState: boolean;
@@ -209,8 +212,12 @@ export interface OhboxListModel {
   wiring: ThreadReadWiring | null;
   walk: ThreadWalkChannel;
   stripOpen: (target: EngineMessage) => void;
+  /** The conversation as it stands, by any of its messages (the shell's), for the walked row's squares. */
+  conversationOf?: (messageId: string) => readonly EngineMessage[];
   groupVoices: (g: OhboxRowGroup) => EngineMessage[];
   groupSenders: (g: OhboxRowGroup) => string;
+  /** Everybody in the row's conversation: its voices first, the others newest first, the account's own as `you`. */
+  groupPeople: (g: OhboxRowGroup) => OhboxPerson[];
   stepUp: OhboxStep;
   stepDown: OhboxStep;
   keys: KeyBinding[];
@@ -219,6 +226,32 @@ export interface OhboxListModel {
     reader: { disabled: boolean; onEnter: () => void; onScrollKey: () => void; onHiddenEnter: () => void };
   };
   pointer: OhboxPointer;
+  /** Done on a row: its pins released, the open row read as the reader reads it, else its waiting letters read. */
+  doneRow: (row: OhboxRowGroup) => void;
+  /** Does the row wait for anything Done would answer: an unread letter somebody else wrote, or a pin? */
+  doneOffered: (row: OhboxRowGroup) => boolean;
+  /** The row as it is presented: unread when a member is, a pinned one included. */
+  rowUnread: (row: OhboxRowGroup) => boolean;
+  /** Is this the row the open letter is on (by membership)? */
+  rowOpen: (row: OhboxRowGroup) => boolean;
+  /** The row's subject: a conversation's stored name, else its face's. */
+  subjectOf: (row: OhboxRowGroup) => string;
+  /** The conversation's squares, where it has two messages or more. */
+  marksOf: (row: OhboxRowGroup) => readonly ThreadMark[] | undefined;
+  /** What screening the picked rows' senders to a place would move and make, before it is asked. */
+  screenPreview: (dest: ScreeningDest) => { senders: number; messages: number; rules: number };
+  /** Screen them: the pick clears when it went, and stays when it was refused at the press. */
+  screenPicked: (dest: ScreeningDest) => void;
+  /** Mark every unread letter of the Ohbox read, where the shell has the verb. */
+  markAllRead: ((ids: string[]) => void) | null;
+  /** What the list hands the reading column for the open letter; null while nothing is open. */
+  visit: ListVisit | null;
+  /** A verb of the row's own menu, on the letter the row opens on: the shell's, as a press on that letter. */
+  actOn: (row: OhboxRowGroup, action: MessageAction) => void;
+  /** The tag picker for the row's letter, at the element it was asked from. */
+  tagRow: (row: OhboxRowGroup, anchor: HTMLElement | null) => void;
+  /** The tag picker for the picked letters, at the element it was asked from. */
+  tagPicked: (anchor: HTMLElement | null) => void;
   drag: {
     sourceFor: (rowId: string) => DragSource | null;
     onDrop: (target: RailDropTarget, source: DragSource) => void;

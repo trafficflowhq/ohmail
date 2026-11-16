@@ -63,6 +63,12 @@
       "ohmail-source": "./src/text/index.ts",
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
+    },
+    "./ohbox": {
+      "types": "./src/ohbox/index.ts",
+      "ohmail-source": "./src/ohbox/index.ts",
+      "node": "./dist/ohbox/index.js",
+      "default": "./src/ohbox/index.ts"
     }
   },
   "dependencies": {

@@ -32,9 +32,9 @@ function counted<P>(name: string, Real: React.ComponentType<P>): React.Component
   return Wrapped as React.ComponentType<P>;
 }
 
-vi.mock("../app/views/OhboxView", async (orig) => {
-  const actual = await orig<typeof import("../app/views/OhboxView")>();
-  return { ...actual, OhboxView: counted("OhboxView", actual.OhboxView) };
+vi.mock("../app/shell/TodaysOhbox", async (orig) => {
+  const actual = await orig<typeof import("../app/shell/TodaysOhbox")>();
+  return { ...actual, TodaysOhbox: counted("TodaysOhbox", actual.TodaysOhbox) };
 });
 vi.mock("../app/shell/MessagePane", async (orig) => {
   const actual = await orig<typeof import("../app/shell/MessagePane")>();
@@ -172,7 +172,7 @@ async function buildEngine(): Promise<{ engine: OhmailEngine; store: MemoryMirro
 const PUBLISH_CONSTANT = 2;
 
 /** The components a body landing may not redraw. Each is a whole subtree of the window. */
-const UNRELATED_TO_A_BODY = ["SyncBar", "OhboxView", "FoldersRailGroup"] as const;
+const UNRELATED_TO_A_BODY = ["SyncBar", "TodaysOhbox", "FoldersRailGroup"] as const;
 
 /**
  * ═══ A MIRROR DELTA LANDING ON AN OPEN COMPOSER ═══════════════════════════════════════

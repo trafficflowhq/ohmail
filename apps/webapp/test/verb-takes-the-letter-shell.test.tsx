@@ -82,9 +82,11 @@ const tagPosts = (): string[] => {
   });
 };
 const TAG = create("tag", "tag_1", { id: "tag_1", name: "Keepme", hue: "blue", createdAt: ISO, updatedAt: ISO });
-const chips = (row: HTMLElement): string[] => [...row.querySelectorAll(".tagchip")].map((c) => (c.textContent ?? "").trim());
+/** The tags a row draws, by name: the kit's tag on the row's first line (`oh-tag`). */
+const chips = (row: HTMLElement): string[] =>
+  [...row.querySelectorAll(":is(.tagchip, .oh-tag)")].map((c) => (c.textContent ?? "").trim());
 const selRow = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>('[role="listbox"] .row.sel')?.dataset.id ?? null;
+  host.querySelector<HTMLElement>('[role="listbox"] :is(.row.sel, [role=option][data-open])')?.dataset.id ?? null;
 const KAI = { name: "Kai", address: "kai@example.invalid" };
 /** Two answered conversations in Earlier: T (a1, our x2) above U (b1, our y2). */
 const twoAnswered = () => [
@@ -94,7 +96,7 @@ const twoAnswered = () => [
   message("y2", "2026-08-03T07:00:00.000Z", { ...OURS, to: [KAI], threadId: "U", subject: "Re: Budget" }),
   thread("U", ["b1", "y2"]),
 ];
-const rows = (host: HTMLElement): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row[data-id]')];
+const rows = (host: HTMLElement): HTMLElement[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] :is(.row, [role=option])[data-id]')];
 const theRow = (host: HTMLElement): HTMLElement => {
   const r = rows(host)[0];
   expect(r, "the conversation's row").toBeTruthy();
@@ -147,7 +149,7 @@ describe("an answered conversation's row in the shipped shell", () => {
       window.dispatchEvent(new Event("hashchange"));
     });
     await settle();
-    const listed = [...host.querySelectorAll<HTMLElement>(".row[data-id]")].map((r) => r.dataset.id);
+    const listed = [...host.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-id]")].map((r) => r.dataset.id);
     expect(listed).toContain("a1");
     expect(listed).not.toContain("x2");
   }, 60_000);
@@ -722,7 +724,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     return b.state === "bubbled_up" && b.bubbleUpAt ? [b.bubbleUpAt] : [];
   }));
   const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
-    [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] .row[data-id]`)];
+    [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] :is(.row, [role=option])[data-id]`)];
   const strip = async (host: HTMLElement, label: string): Promise<void> => {
     await click(bar(host, "abar-resurface"));
     const b = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((x) => x.textContent?.trim() === label);
@@ -862,7 +864,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
   };
   /** The face's sender sheet, from a Resurfaced row's avatar (the first, or the one `face` faces); `ruleOff` turns its rule switch off first. */
   const sheetTo = async (host: HTMLElement, dest: string, ruleOff = false, face?: string): Promise<void> => {
-    const av = (face ? resurfacedRows(host).find((r) => r.dataset.id === face) : resurfacedRows(host)[0])?.querySelector<HTMLElement>(".av");
+    const av = (face ? resurfacedRows(host).find((r) => r.dataset.id === face) : resurfacedRows(host)[0])?.querySelector<HTMLElement>(":is(.av, .oh-row-face)");
     expect(av, "the row's avatar").toBeTruthy();
     await click(av!);
     if (ruleOff) await click(document.querySelector<HTMLElement>("#sender-sheet .sm-rule")!);
@@ -906,11 +908,17 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     await click(resurfacedRows(host)[0]!);
     await key("x");
     await key("s");
-    const foot = () => [...host.querySelectorAll<HTMLElement>(".view-ohbox .list-foot .abar-panel button")];
-    const receipts = foot().find((b) => (b.textContent ?? "").includes("→ Receipts"));
+    /* The pick's questions: Screening's, titled "screen to", lists the places by name (studio `core.js` `moveMenu`;
+       the old bar wrote "→ Receipts"), and its confirmation commits with "Screen them". */
+    const foot = () => [...document.querySelectorAll<HTMLElement>(
+      ".view-ohbox .ob-foot button, :is([role=menu], [role=dialog]) [role=menuitem]",
+    )];
+    const receipts = [...document.querySelectorAll<HTMLElement>(
+      `[role=dialog][aria-label="${en.ohbox.bar.screenTo}"] [role=menuitem]`,
+    )].find((b) => (b.textContent ?? "").trim() === "Receipts");
     expect(receipts, "the pick's Receipts").toBeTruthy();
     await click(receipts!);
-    const commit = foot().find((b) => b.classList.contains("primary"));
+    const commit = foot().find((b) => (b.textContent ?? "").trim() === en.ohbox.bar.screenCommit);
     expect(commit, "the pick's commit").toBeTruthy();
     await click(commit!);
     // A screening move leaves mail with a triage state where it is; Lena's untriaged z9 moves.
@@ -989,7 +997,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     const host = await mount(seven(() => "resurfaced").map((c) => (c.id === `rule_${KAI.address}`
       ? { ...c, entity: { ...c.entity, destination: "ohmail/Receipts", retro: { requestedAt: ISO, doneAt: ISO } } }
       : c)));
-    await click(resurfacedRows(host)[0]!.querySelector<HTMLElement>(".av")!);
+    await click(resurfacedRows(host)[0]!.querySelector<HTMLElement>(":is(.av, .oh-row-face)")!);
     await click(await waitFor(() => document.querySelector<HTMLElement>("#sender-sheet .sm-stayed-move"), "the sheet's Move them too"));
     expect(filedIds().sort()).toEqual(["m2", "m4", "m6"]);
     expect(posted("none").map(([id]) => id)).toEqual(["m1", "m3", "m5", "x7"]);

@@ -73,8 +73,8 @@ describe("a reply draft discarded in Drafts", () => {
 
   it("Reply afterwards opens empty and writes nothing", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await act(async () => { typeInto(replySurface(s.el)!, "A reply I will throw away"); });
@@ -83,8 +83,8 @@ describe("a reply draft discarded in Drafts", () => {
     await key("Escape");
     await confirmDiscard(s, row);
     await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row again");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row again");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor again");
     for (let i = 0; i < 120; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -101,8 +101,8 @@ describe("a reply draft discarded in Drafts", () => {
     await confirmDiscard(s, "d1");
     const before = s.sent.filter((m) => m.kind === "draft_save").length;
     await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor again");
     for (let i = 0; i < 120; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -121,8 +121,8 @@ describe("a reply draft deleted on another device while ohmail was closed", () =
     await settleEditor();
   };
   const reply = async (s: DraftShell): Promise<void> => {
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
   };
@@ -174,8 +174,8 @@ describe("a reply whose last save went through the offline queue, then deleted o
     await settleEditor();
   };
   const reply = async (s: DraftShell): Promise<void> => {
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
   };

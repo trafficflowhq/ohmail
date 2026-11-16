@@ -243,7 +243,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(ids: string[] = ["m1"], seed?: (s: MirrorStore) => Promise<void>): Promise<HTMLElement> {
   const s = await storeWith(ids);
@@ -290,7 +290,7 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 /** Open a NAMED row — `j` stops at whatever the list orders first, which is not the subject. */
 async function openRow(el: HTMLElement, id: string): Promise<void> {
-  const row = el.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${id}"]`);
+  const row = el.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"]`);
   if (!row) throw new Error(`no row for ${id}`);
   await act(async () => {
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));

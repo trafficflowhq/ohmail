@@ -36,8 +36,7 @@ export function useOhboxWindow(groupedNew: OhboxRowGroup[], groupedPrev: OhboxRo
    * The list is a window over `[New for you, Earlier]`: a mirror window still holds thousands
    * of rows, and grouped `.map(row)` mounted every accepted row — the unbounded cost
    * History was windowed for. The two groups keep their own `role="listbox"` containers, each
-   * rendering its share of the window with reserved height above and below; the Older tail is
-   * server-paged and stays whole. The Ohbox writes no `\Seen` on scroll (read-state is the
+   * rendering its share of the window with reserved height above and below. The Ohbox writes no `\Seen` on scroll (read-state is the
    * dwell), so no observer re-scan is needed; the split reader reads `selected` from `all` by
    * id, so a pick survives its row scrolling out. Resurfaced rows are not windowed — a small
    * pinned set rendered whole at the top.

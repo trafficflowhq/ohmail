@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, TagDTO, FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { OhboxView } from "../app/views/OhboxView";
+import { prepareToday, type TodayOhboxProps } from "./ohbox/_today";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { KeymapProvider } from "@ohmail/app/keys";
@@ -89,6 +89,12 @@ interface Mounted {
   cardCount: () => number;
 }
 
+/** A row of a list column: today's rows, and the Ohbox's, which are options of its listboxes. */
+const LIST_ROWS = ".list-col :is(.row, [role=option])[data-id], .ob-scroll [role=option][data-id]";
+
+/** Today's Ohbox, as today's shell mounts it (prepared once: its mail state stands on an engine). */
+let Ohbox: ((p: TodayOhboxProps) => React.ReactNode) | null = null;
+
 async function mount(node: React.ReactNode): Promise<Mounted> {
   const host = document.createElement("div");
   document.body.append(host);
@@ -103,9 +109,9 @@ async function mount(node: React.ReactNode): Promise<Mounted> {
   });
   return {
     host,
-    scroller: host.querySelector(".list-col .scroller") as HTMLElement,
+    scroller: host.querySelector(".list-col .scroller, .ob-scroll") as HTMLElement,
     rowIndices: () =>
-      [...host.querySelectorAll(".list-col .row[data-id]")].map((n) =>
+      [...host.querySelectorAll(LIST_ROWS)].map((n) =>
         Number((n.getAttribute("data-id") ?? "m-1").slice(1)),
       ),
     cardCount: () => host.querySelectorAll(".scast[data-sid]").length,
@@ -123,7 +129,7 @@ async function scrollTo(m: Mounted, px: number): Promise<void> {
 const ohbox = (count: number) => {
   const half = Math.floor(count / 2);
   return (
-    <OhboxView owed={false}
+    <OhboxEl owed={false}
       demo={false}
       newForYou={Array.from({ length: half }, (_, i) => message(i))}
       previouslySeen={Array.from({ length: count - half }, (_, i) => message(i + half))}
@@ -131,10 +137,10 @@ const ohbox = (count: number) => {
       onMarkSeen={() => {}} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
       onDoorbell={() => {}} onAction={() => {}} onAddTag={() => {}}
       bulk={{ run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-      older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: () => {} }}
     />
   );
 };
+const OhboxEl = (p: TodayOhboxProps) => <>{Ohbox!(p)}</>;
 
 const reads = (count: number) => {
   const freshRows = Array.from({ length: count }, (_, i) => message(i));
@@ -153,7 +159,8 @@ const receipts = (count: number) => (
 );
 
 describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    Ohbox ??= await prepareToday();
     Object.defineProperty(window, "matchMedia", {
       configurable: true, writable: true,
       value: (q: string) => ({ matches: false, media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
@@ -193,7 +200,9 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     it(`${name}: a short list renders every row and reserves nothing`, async () => {
       const m = await mount(render(12));
       expect(m.rowIndices().length).toBe(12);
-      expect(m.host.querySelectorAll(".list-col .rows > div[aria-hidden]").length).toBe(0);
+      const pads = [...m.host.querySelectorAll<HTMLElement>(".list-col .rows > div[aria-hidden], .ob-scroll div[aria-hidden]")]
+        .filter((d) => d.style.height !== "" && d.style.height !== "0px");
+      expect(pads.length).toBe(0);
     });
 
     /**
@@ -230,9 +239,9 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
 
       // …and no reserved height stands after it. A spacer below the final row is the list
       // claiming there is more mail below the mail it is showing.
-      const rows = [...m.host.querySelectorAll(".list-col .row[data-id]")];
+      const rows = [...m.host.querySelectorAll(LIST_ROWS)];
       const lastRow = rows[rows.length - 1]!;
-      const below = [...m.host.querySelectorAll<HTMLElement>(".list-col .scroller [aria-hidden]")]
+      const below = [...m.host.querySelectorAll<HTMLElement>(".list-col .scroller [aria-hidden], .ob-scroll [aria-hidden]")]
         .filter((d) => d.style.height !== "" && d.style.height !== "0px")
         .filter(
           (d) => (lastRow.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
@@ -264,7 +273,7 @@ describe("Ohbox, Reads and Receipts render a windowed list, not a mailbox", () =
     it(`${name}: an unread letter listed late on top leaves the cursor on the letter shown`, async () => {
       const rows = [message(0), message(1), message(2)];
       const m = await mount(render(rows));
-      const cursor = () => m.host.querySelector('.list-col .row[aria-selected="true"]')?.getAttribute("data-id");
+      const cursor = () => m.host.querySelector('.list-col :is(.row, [role=option])[aria-selected="true"]')?.getAttribute("data-id");
       expect(cursor()).toBe("m0");
       const late = { ...message(9), unread: true } as EngineMessage;
       await act(() => {

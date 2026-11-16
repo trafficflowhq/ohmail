@@ -439,7 +439,7 @@ export function useShellKeys({
     const rail = document.querySelector(".rail");
     const el = document.activeElement;
     if (rail && el instanceof HTMLElement && rail.contains(el)) {
-      const row = queryVisible<HTMLElement>(".view .row.sel");
+      const row = queryVisible<HTMLElement>(".view :is(.row.sel, [role=option][data-open])");
       if (row) row.focus();
       else el.blur();
     }
@@ -695,7 +695,7 @@ export function useShellKeys({
         if (!focused) return;
         openSenderMenu(
           focused.id,
-          queryVisible<HTMLElement>(`.view .row[data-id="${CSS.escape(focused.id)}"]`),
+          queryVisible<HTMLElement>(`.view :is(.row, [role=option])[data-id="${CSS.escape(focused.id)}"]`),
         );
       },
     },

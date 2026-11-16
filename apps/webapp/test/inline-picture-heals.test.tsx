@@ -105,7 +105,7 @@ async function openTheLetter(by: "row" | "url" | "news" = "row"): Promise<void> 
   await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
   await tick(30_000);
   if (by === "row") {
-    const row = document.querySelector<HTMLElement>(`.row[data-id="${LETTER}"]`);
+    const row = document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${LETTER}"]`);
     expect(row, "the Ohbox does not list the letter").not.toBeNull();
     await act(async () => { row!.click(); });
   } else if (by === "news") {

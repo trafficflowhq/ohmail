@@ -21,8 +21,6 @@ const VIEWS_DIR = resolve(process.cwd(), "apps/webapp/app/views");
  * read; an entry that no longer matches a map in its file refuses as stale.
  */
 const BOUNDED: readonly { file: string; receiver: string; bound: string }[] = [
-  { file: "OhboxView.tsx", receiver: "groupedResurfaced", bound: "the rows somebody scheduled back for now, pinned whole above the window" },
-  { file: "OhboxView.tsx", receiver: "olderRows", bound: "server pages past the mirror, fetched a press at a time, folded by conversation" },
   { file: "FolderView.tsx", receiver: "olderRows", bound: "server pages past the mirror, one per Load older press" },
   { file: "TrashView.tsx", receiver: "byDateDesc(live.items)", bound: "the server's own Trash, one page per press" },
   { file: "ScreenerView.tsx", receiver: "junk.visible.slice(0, localCount)", bound: "the live Junk window: one provider page per press" },
@@ -211,7 +209,7 @@ describe("every list view mounts its window", () => {
   });
 
   it("reads the views it is about", () => {
-    for (const f of ["ScreenerView.tsx", "HistoryView.tsx", "OhboxView.tsx", "TagView.tsx", "TriageView.tsx", "DraftsView.tsx"]) {
+    for (const f of ["ScreenerView.tsx", "HistoryView.tsx", "TagView.tsx", "TriageView.tsx", "DraftsView.tsx"]) {
       expect(readings.get(f)?.listRows ?? 0, `${f} holds no <ListRows> — the census reads nothing there`).toBeGreaterThan(0);
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow`).toBe(true);
     }

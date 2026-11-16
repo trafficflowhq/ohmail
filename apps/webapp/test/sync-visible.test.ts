@@ -285,7 +285,7 @@ async function goTo(view: string): Promise<void> {
   });
 }
 
-const rowCount = (el: HTMLElement): number => el.querySelectorAll(".row[data-id]").length;
+const rowCount = (el: HTMLElement): number => el.querySelectorAll(":is(.row, [role=option])[data-id]").length;
 
 /**
  * What the strip said now stands in the frame's one notice slot, beside notices about other things (the desktop
