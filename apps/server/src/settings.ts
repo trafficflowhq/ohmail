@@ -131,8 +131,18 @@ export interface Settings {
    * `OHMAIL_CALENDAR=1`: this program keeps a calendar. It hands the calendar's port to the feed,
    * mounts the calendar's routes and says so on `/hello`. Off by default, and off reads exactly
    * as a server that has never heard of a calendar.
+   *
+   * `policy` is what a typed calendar address may name: `own-network` only on a self-hosted server
+   * whose operator set `OHCAL_ALLOW_PRIVATE` to exactly `1` (the worker's own switch and rule);
+   * the managed service is `cloud` whatever its environment holds. `connect` holds, for the two
+   * ways that sign in at their provider, the operator's switch (`OHCAL_CONNECT_GOOGLE`,
+   * `OHCAL_CONNECT_MICROSOFT`: exactly `1`) and whether that provider's client is configured.
    */
-  calendar: { enabled: boolean };
+  calendar: {
+    enabled: boolean;
+    policy: "cloud" | "own-network";
+    connect: Record<"google" | "microsoft", { on: boolean; configured: boolean }>;
+  };
   /**
    * The geocoder the calendar's place field is suggested from (`PLACES_SUGGEST_URL`), and its bearer
    * (`PLACES_SUGGEST_TOKEN`) or null for one that takes none. Null: no suggestions are offered.
@@ -547,10 +557,38 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
       connectAttempts: chosen.funnel && trimmed(env, "TF_CONNECT_ATTEMPTS") === "record" ? "record" : "off",
     },
     clocks: loadClocks(env, door, alerts, database),
-    // On the exact word, as the other switches: a mistyped value keeps the calendar off.
-    calendar: { enabled: trimmed(env, "OHMAIL_CALENDAR") === "1" },
+    calendar: loadCalendar(env, dials),
     places: loadPlaces(env),
     installId: resolveCloudInstallId(env),
+  };
+}
+
+/**
+ * THE CALENDAR'S SETTINGS. The word is read on its exact spelling, as the other switches: a mistyped
+ * value keeps the calendar off. The two connect switches are stricter, because off is their safe
+ * side and a typo must not look like it: unset or `0` is off, `1` is on, and anything else refuses
+ * the start by the variable's name. A switch alone offers nothing: the provider's client must be
+ * configured, and its sign-in built (`offeredWays` in the services' connect door).
+ */
+function loadCalendar(env: NodeJS.ProcessEnv, privateDials: boolean): Settings["calendar"] {
+  const offered = (name: string): boolean => {
+    // As it stands, unpadded, like the private switch below: a padded 1 is not the word, and is refused.
+    const word = env[name] ?? "";
+    if (word !== "" && word !== "0" && word !== "1") throw new Error(`${name} must be 1 (the way offered) or unset`);
+    return word === "1";
+  };
+  return {
+    enabled: trimmed(env, "OHMAIL_CALENDAR") === "1",
+    // Exactly `1`, unpadded, as the worker reads the same variable: the two programs then agree, and
+    // where they did not, the dial's own refusal is the one that counts.
+    policy: privateDials && env.OHCAL_ALLOW_PRIVATE === "1" ? "own-network" : "cloud",
+    connect: {
+      google: {
+        on: offered("OHCAL_CONNECT_GOOGLE"),
+        configured: present(env, "OHCAL_GOOGLE_CLIENT_ID") && present(env, "OHCAL_GOOGLE_CLIENT_SECRET"),
+      },
+      microsoft: { on: offered("OHCAL_CONNECT_MICROSOFT"), configured: trimmed(env, "OHCAL_MICROSOFT") === "1" },
+    },
   };
 }
 

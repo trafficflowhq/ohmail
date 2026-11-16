@@ -693,6 +693,12 @@ const MAILBOX_ALLOWLIST: Record<string, string> = {
     + "Asserted by the case below rather than trusted. A fence here was written and REVERTED: it "
     + "takes a `mailboxes` row lock, and this transaction is built not to block on one — "
     + "`send-disabled-mailbox.pg.test.ts` timed out on it, which is the design saying so",
+  "packages/services/src/calendar/connect.ts insert calConnections":
+    "the connect door makes a connection that rides NO mailbox: this insert never names one (a "
+    + "connection that rides a mailbox's sign-in is made with that mailbox, not at this door), so no "
+    + "mailbox's erasure owns the row. The account's does, and the account is what the seam fences. "
+    + "Held by behaviour: every connection the door makes answers `grantMailboxId: null` "
+    + "(`packages/api/test/calendar-connect-routes.test.ts`, the three ways)",
 };
 
 /**

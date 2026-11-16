@@ -16,7 +16,9 @@ export {
   CALENDAR_UID_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_PROVIDER_ID_MAX_BYTES,
   fitsCalendarBytes,
 } from "./bounds.js";
-export { sweepMailboxCalendarStep, CALENDAR_ERASE_BATCH, type CalendarErasureStep } from "./erasure.js";
+export {
+  sweepCalendarConnectionStep, sweepMailboxCalendarStep, CALENDAR_ERASE_BATCH, type CalendarErasureStep,
+} from "./erasure.js";
 export {
   holdCalendarConnection, holdCalendarMailbox, fencedConnectionWrite, CalendarConnectionGone, type HeldCalendarConnection,
 } from "./fence.js";

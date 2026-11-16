@@ -678,6 +678,9 @@ export {
   type HttpAdapterOptions,
   type ServerMessageView,
 } from "./adapters/http-adapter.js";
+// The calendar's connect door as a setup reaches it: the six calls (the adapter is one), and the
+// ways an answer names as this build knows them.
+export { CALENDAR_WAYS, calendarWaysOf, type CalendarConnectTransport } from "./calendar-connect.js";
 export type { WireCall } from "./adapters/route-path.js";
 
 // The retrying read transport: one wrapper over the client's idempotent GETs, shared by the

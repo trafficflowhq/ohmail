@@ -402,7 +402,12 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
     // THE CALENDAR, only where the operator keeps one (`OHMAIL_CALENDAR=1`). The feed, the routes
     // and `/hello` all read THIS member, so the three cannot disagree; absent, nothing calendar
     // leaves this program and every answer is the one it gave before there was a calendar.
-    ...(cfg.calendar.enabled ? { calendar: calendarFeed } : {}),
+    ...(cfg.calendar.enabled ? {
+      calendar: calendarFeed,
+      // The connect door beside it: what a typed address may name here, and the ways' switches. It
+      // is handed no resolver and no way out: the door dials nothing.
+      calendarConnect: { policy: cfg.calendar.policy, ceremonies: cfg.calendar.connect },
+    } : {}),
     // PLACE SUGGESTIONS, beside the calendar and only where a geocoder is set (`PLACES_SUGGEST_URL`):
     // one suggester for the program, whose limits, answers and holds live as long as it does.
     ...(cfg.calendar.enabled && cfg.places !== null

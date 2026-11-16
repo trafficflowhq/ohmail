@@ -28,6 +28,12 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calendar-connect": {
+      "types": "./src/calendar/connect-door.ts",
+      "ohmail-source": "./src/calendar/connect-door.ts",
+      "node": "./dist/calendar/connect-door.js",
+      "default": "./src/calendar/connect-door.ts"
+    },
     "./invitation-answer": {
       "types": "./src/invitation-answer-service.ts",
       "ohmail-source": "./src/invitation-answer-service.ts",
@@ -45,6 +51,7 @@
     "tldts": "7.4.9",
     "@ohmail/wire": "*",
     "@ohmail/cal-core": "*",
+    "@ohmail/cal-providers": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
   },

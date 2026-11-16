@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService, ScheduledFilesKeeping,
-  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarFeedPort,
+  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarConnectPort, CalendarFeedPort,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -192,6 +192,12 @@ export interface ApiServices {
    * set. ABSENT, `POST /calendar/places/suggest` answers `off` and `/hello` does not offer them.
    */
   places?: PlaceSuggester;
+  /**
+   * What the calendar's connect door is composed with (`CalendarConnectPort`): the address policy
+   * and the switches of the ways that sign in at their provider. Handed beside `calendar` by a
+   * composition that keeps one. ABSENT refuses: no way is listed and none is taken.
+   */
+  calendarConnect?: CalendarConnectPort;
   /**
    * The session lifecycle — refresh rotation with reuse detection, logout, the device list
    * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence

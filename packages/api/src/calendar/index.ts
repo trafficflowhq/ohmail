@@ -15,6 +15,7 @@ import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
 import { placesOff, readPlaceQuestion } from "./places.js";
+import { calendarConnectRoutes } from "./connect.js";
 
 export {
   makePlaceSuggester, readPlaceQuestion,
@@ -126,4 +127,6 @@ export const calendarRoutes: Route[] = [
         : await places.suggest(deps.session!.accountId, question, { signal: req.signal, ...(deps.logger ? { logger: deps.logger } : {}) }));
     },
   },
+  // The connect door: the ways, a connection made, removed, asked now and signed in again, and a calendar's own (`./connect.ts`).
+  ...calendarConnectRoutes,
 ];
