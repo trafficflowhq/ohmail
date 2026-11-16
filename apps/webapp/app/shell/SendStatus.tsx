@@ -125,9 +125,10 @@ export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; ke
                */
               : send.code === "draft_changed"
                 ? { tone: "warn", key: "statusDraftChanged" }
-                /* The save before the send was refused: nothing went, and the row may not hold these
-                   words, so this never says the draft is kept. */
+                /* The save before the send was refused, or did not confirm the Bcc or the From: nothing
+                   went, and the row may not hold these words, so this never says the draft is kept. */
                 : send.code === "validation_failed" || send.code === "from_mailbox_unconfirmed"
+                    || send.code === "bcc_unsupported"
                   ? { tone: "error", key: "statusNotSavedFirst" }
                 /**
                  * THIS CLIENT COULD NOT SAVE THE DRAFT, so it cannot say which version would

@@ -137,6 +137,92 @@ describe("the undecided-sender offer, client side", () => {
 });
 
 /**
+ * A LARGE ACCOUNT'S ANSWER COMES IN PARTS, AND ONE READ AT A TIME. The server reads for a bounded
+ * time per request and says where it stopped (`next`); the engine asks on from there and shows what
+ * it holds as a floor meanwhile. A second read beside one in the air is a second walk of the store,
+ * which is how four of them took a hosted instance's connections.
+ */
+describe("the undecided-sender offer in parts", () => {
+  /** A door whose answers are released by hand, recording what each ask carried. */
+  function heldDoor() {
+    const asks: Array<{ pile: string | undefined; after: string | undefined; answer: (w: UnscreenedWire) => void }> = [];
+    const adapter = {
+      sync: async () => ({
+        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        cursor: null, hasMore: false, serverTime: NOW.toISOString(),
+      }),
+      mutate: async () => ({ ok: true as const, changes: [] }),
+      unscreened: (pile?: string, after?: string) =>
+        new Promise<UnscreenedWire>((answer) => { asks.push({ pile, after, answer }); }),
+      screenUnscreened: async () => ({ screened: [], total: 2 }),
+    } as unknown as EngineAdapter;
+    return { adapter, asks };
+  }
+  const turn = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+  it("asks on from `next`, adds the parts up, and shows a floor until the last one", async () => {
+    const { adapter, asks } = heldDoor();
+    const engine = await engineOn(adapter);
+    const read = engine.refreshUnscreened();
+    await turn();
+    asks[0]!.answer({
+      groups: [group({ address: "a@x.test", count: 3 }), group({ address: "cut@x.test", count: 2 })],
+      total: 5, complete: false, max: 200, next: "p1",
+    });
+    await turn();
+    // The first part is on screen while the second is in the air: a floor, never nothing.
+    expect(unscreenedTotalOf(engine.read())).toBe(5);
+    expect(unscreenedTotalIsFloor(engine.read())).toBe(true);
+    expect(asks[1]!.after).toBe("p1");
+
+    // The server's stop fell inside one sender's mail: the rest of it is the same group.
+    asks[1]!.answer({
+      groups: [group({ address: "cut@x.test", count: 4, newestAt: "2025-01-01T00:00:00.000Z" }), group({ address: "z@x.test", count: 1 })],
+      total: 5, complete: true, max: 200,
+    });
+    await read;
+    expect(asks).toHaveLength(2);
+    expect(unscreenedGroups(engine.read()).map((r) => [r.id, r.count]))
+      .toEqual([["cut@x.test", 6], ["a@x.test", 3], ["z@x.test", 1]]);
+    expect(unscreenedGroups(engine.read())[0]!.newestAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(unscreenedTotalOf(engine.read())).toBe(10);
+    expect(unscreenedTotalIsFloor(engine.read())).toBe(false);
+  });
+
+  it("a second caller starts no second read: it waits, then shares one read made after the first", async () => {
+    const { adapter, asks } = heldDoor();
+    const engine = await engineOn(adapter);
+    const first = engine.refreshUnscreened();
+    const second = engine.refreshUnscreened();
+    const third = engine.refreshUnscreened();
+    await turn();
+    expect(asks, "one read in the air, whoever asked").toHaveLength(1);
+
+    asks[0]!.answer({ groups: [group({ address: "a@x.test", count: 3 })], total: 3, max: 200 });
+    await first;
+    await turn();
+    // Both later callers hear the one read that started after the first ended, never the first's answer.
+    expect(asks).toHaveLength(2);
+    asks[1]!.answer({ groups: [group({ address: "a@x.test", count: 1 })], total: 1, max: 200 });
+    await Promise.all([second, third]);
+    expect(asks).toHaveLength(2);
+    expect(unscreenedTotalOf(engine.read())).toBe(1);
+  });
+
+  it("a pile's note adds its parts up too, and what they did not reach makes it a floor", async () => {
+    const { adapter, asks } = heldDoor();
+    const engine = await engineOn(adapter);
+    const note = engine.pileUnscreened("news");
+    await turn();
+    asks[0]!.answer({ groups: [group({ address: "a@x.test", count: 3 })], total: 3, complete: false, max: 200, pile: "news", next: "p1" });
+    await turn();
+    expect(asks[1]).toMatchObject({ pile: "news", after: "p1" });
+    asks[1]!.answer({ groups: [group({ address: "b@x.test", count: 4 })], total: 4, complete: true, max: 200, pile: "news" });
+    expect(await note).toEqual({ total: 7, atLeast: false });
+  });
+});
+
+/**
  * THE OFFER FOLLOWS THE STORE LIVE. A first import fills the Ohbox page by page while the Ohbox is
  * open; the offer the surface read at mount said nothing, and only leaving the tab re-asked. Ohbox
  * mail coming in now re-asks at the settle, at most once per {@link UNSCREENED_REASK_MS}, the due ask

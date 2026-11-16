@@ -1370,6 +1370,77 @@ describe("mail_send — the wire shapes `rejectionOf` cannot read", () => {
   });
 
   /**
+   * A BUSY SERVER IS NOT A SERVER THAT DROPPED THE BCC. The save before a send was answered
+   * `503 db_busy` with `Retry-After` (the hosted pool was starved), the adapter read "no echo" as
+   * the version skew above, and a message with one Bcc was refused with the general sentence while
+   * the server was merely busy for seconds. The save now waits as the answer says and is made once
+   * more; only what that answer says decides.
+   */
+  describe("a send whose save the server put off", () => {
+    const busy = (): Response => new Response(
+      JSON.stringify({ error: { code: "db_busy", message: "busy" } }),
+      { status: 503, headers: { "content-type": "application/json", "retry-after": "5" } },
+    );
+    const saved = (): Response => new Response(
+      JSON.stringify({ id: "draft-1", bcc: [{ name: null, address: "blind@example.com" }], contentRevision: "r2" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    /** A door whose saves answer from a script; the send itself always succeeds. */
+    function door(saves: Array<() => Response>) {
+      const calls: string[] = [];
+      const waits: number[] = [];
+      let n = 0;
+      const fetchImpl: FetchLike = async (url, init) => {
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (init?.method === "PUT") return saves[Math.min(n++, saves.length - 1)]!();
+        return new Response(
+          JSON.stringify({ status: "sent", providerMessageId: "<x@y>" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      };
+      const adapter = new HttpAdapter({ baseUrl: "", fetch: fetchImpl, saveWaitFor: async (ms) => { waits.push(ms); } });
+      return { adapter, calls, waits };
+    }
+    const words = {
+      draftId: "draft-1", subject: "x", body: "hi",
+      to: [{ name: null, address: "a@example.com" }], bcc: [{ name: null, address: "blind@example.com" }],
+    };
+    const withBcc = { kind: "mail_send" as const, inReplyTo: null, ...words };
+    /** The press that was refused had an autosaved row: a revision this client had seen. */
+    const autosave = (adapter: HttpAdapter): Promise<unknown> => adapter.mutate(
+      { kind: "draft_save", mailboxId: "mb1", inReplyToMessageId: null, cc: [], ...words } as never, { idempotencyKey: "auto" },
+    );
+
+    it("waits what the answer names, saves again, and sends with its Bcc confirmed", async () => {
+      const { adapter, calls, waits } = door([saved, busy, saved]);
+      await autosave(adapter);
+      await adapter.mutate(withBcc, { idempotencyKey: "kw" });
+      expect(waits).toEqual([5_000]);
+      expect(calls.filter((c) => c.startsWith("PUT "))).toHaveLength(3);
+      expect(calls.some((c) => c.includes("/send"))).toBe(true);
+    });
+
+    it("waits once: a server still busy refuses the send, and nothing leaves", async () => {
+      const { adapter, calls, waits } = door([saved, busy]);
+      await autosave(adapter);
+      const err = await adapter.mutate(withBcc, { idempotencyKey: "kx" }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MutationRejectedError);
+      expect(waits, "one wait, never a loop inside a press").toEqual([5_000]);
+      expect(calls.some((c) => c.includes("/send"))).toBe(false);
+    });
+
+    it("an ANSWERED save without the echo is still the version skew, at once", async () => {
+      const old = (): Response => new Response(JSON.stringify({ id: "draft-1" }), { status: 200, headers: { "content-type": "application/json" } });
+      const { adapter, calls, waits } = door([saved, old]);
+      await autosave(adapter);
+      const err = await adapter.mutate(withBcc, { idempotencyKey: "ky" }).catch((e: unknown) => e);
+      expect((err as MutationRejectedError).code).toBe("bcc_unsupported");
+      expect(waits).toEqual([]);
+      expect(calls.some((c) => c.includes("/send"))).toBe(false);
+    });
+  });
+
+  /**
    * IDENTITY SKEW: a From pick the server did not confirm must NEVER become a send.
    *
    * The reuse path (an autosaved row) PUTs the mutation's `mailboxId` — the identity the From
