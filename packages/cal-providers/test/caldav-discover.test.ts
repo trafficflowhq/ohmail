@@ -24,7 +24,7 @@ const CLOCK = { now: () => Date.UTC(2026, 10, 14, 9, 0, 0) };
 /** Three names for this machine: the typed host, a numbered host beside it, and a host of somebody else's. */
 const NAMES: Record<string, string[]> = { "caldav.example.test": ["127.0.0.1"], "p01-caldav.example.test": ["127.0.0.1"], "elsewhere.example.net": ["127.0.0.1"] };
 const resolver: HostResolver = { resolve: async (name) => NAMES[name] ?? [] };
-const ownNetwork = (): CalendarReader => makeReader({ http: namedHostRequest({ resolver, policy: { kind: "own-network" } }), clock: CLOCK, zones: ZONES });
+const ownNetwork = (): CalendarReader => makeReader({ http: namedHostRequest({ writes: false, resolver, policy: { kind: "own-network" } }), clock: CLOCK, zones: ZONES });
 /**
  * The same reader for hosts that have names. The suite lets no socket open to a name, so the last
  * step is this file's: the request the gate cleared is sent to this machine's own address under
@@ -35,6 +35,7 @@ const ownNetworkByName = (): CalendarReader =>
     clock: CLOCK,
     zones: ZONES,
     http: guardedRequest({
+      writes: false,
       resolver,
       policy: { kind: "own-network" },
       hosts: null,
@@ -146,7 +147,7 @@ describe("where the reader starts", () => {
 
   it("is refused on a hosted server for a server on that machine's own network, before a socket opens", async () => {
     const s = await server();
-    const hosted = makeReader({ http: namedHostRequest({ resolver, policy: { kind: "cloud" } }), clock: CLOCK, zones: ZONES });
+    const hosted = makeReader({ http: namedHostRequest({ writes: false, resolver, policy: { kind: "cloud" } }), clock: CLOCK, zones: ZONES });
     for (const start of [here(s), `http://caldav.example.test:${s.port}/`, `https://caldav.example.test:${s.port}/`]) {
       expect(await hosted.listCalendars(signIn(s, start), signal())).toEqual({ ok: false, reason: "address_not_allowed", retryAfterMs: null });
     }
@@ -219,6 +220,7 @@ describe("whom the reader tells the password", () => {
     function dialled(answers: Record<string, string>) {
       const asked: { url: string; signedIn: boolean }[] = [];
       const http = guardedRequest({
+        writes: false,
         resolver: { resolve: async (name) => HOME[name] ?? [] },
         policy: { kind: "own-network" },
         hosts: null,
@@ -311,7 +313,7 @@ describe("what a server says instead of an answer", () => {
   });
 });
 
-const real = namedHostRequest({ resolver, policy: { kind: "own-network" } });
+const real = namedHostRequest({ writes: false, resolver, policy: { kind: "own-network" } });
 const readerOver = (http: HttpPort): CalendarReader => makeReader({ http, clock: CLOCK, zones: ZONES });
 const typedBy = (start: string | null): Connection => ({ provider: "caldav", credential: { kind: "basic", user: "mila", password: () => ["any", "thing"].join("-") }, start });
 const notFound = (url: string): HttpAnswer => ({ arrived: true, status: 404, header: () => null, body: new Uint8Array(), location: null, url, hops: 0 });

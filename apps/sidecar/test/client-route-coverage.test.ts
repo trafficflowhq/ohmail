@@ -221,6 +221,12 @@ const FORWARDED_IN_CLOUD_MODE = [
      client spelled this path through a constant until it took the wire's name for it, and the
      read of this file could not see a constant. */
   "GET /organizer-requests",
+  /* THE CALENDAR'S THREE WRITES (record, send again, let go). Each changes the hosted account's
+     calendar, and this copy drains nothing of its own: the write is the account's server's,
+     relayed with the press's key on every attempt (`relay-allowlist.ts` names all three). */
+  "POST /calendar/writes",
+  "POST /calendar/writes/x/retry",
+  "DELETE /calendar/writes/x",
 ];
 
 /**
@@ -412,9 +418,41 @@ function stagingIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boo
   return { exempt: new Set(all ? STAGING_HOSTED_DOOR_ONLY : []), holds };
 }
 
+/**
+ * THE CALENDAR'S WRITES ARE THE HOSTED DOOR'S ONLY — required entries in
+ * {@link FORWARDED_IN_CLOUD_MODE}, exempt from the LOCAL-serving census alone.
+ *
+ * The standalone engine holds no calendar: its route table composes no calendar route, its own
+ * `/sync` serves no calendar record, and the calendar's routes are mounted in one place, the
+ * server's program, where a calendar service exists. A window on the standalone door is shown no
+ * event to press on, so a mounted write would be a handler for a request nothing there can make.
+ * {@link calendarIsHostedOnly} reads those three facts again and hands back NOTHING when one
+ * stops holding: a standalone build that grows a calendar mounts the writes then, on purpose.
+ */
+const CALENDAR_HOSTED_DOOR_ONLY = [
+  "POST /calendar/writes",
+  "POST /calendar/writes/x/retry",
+  "DELETE /calendar/writes/x",
+] as const;
+
+function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, boolean> } {
+  const table = fs.readFileSync(LOCAL_TABLE_SRC, "utf8");
+  const standalone = fs.readFileSync(path.resolve(HERE, "../src/engine.ts"), "utf8");
+  const program = fs.readFileSync(path.resolve(HERE, "../../server/src/program.ts"), "utf8");
+  const holds = {
+    "the standalone table composes no calendar route": !table.toLowerCase().includes("calendar"),
+    "the standalone engine serves no calendar record": !standalone.toLowerCase().includes("calendar"),
+    "the calendar's routes are mounted by the server's program, only beside its calendar service":
+      program.includes("services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes] : cfg.chosen.routes"),
+  };
+  const all = Object.values(holds).every(Boolean);
+  return { exempt: new Set(all ? CALENDAR_HOSTED_DOOR_ONLY : []), holds };
+}
+
 describe("the client's route list against the local engine", () => {
   const { calls: allCalls, sites, named: namedSites } = clientCalls();
   const { exempt: stagingOnly } = stagingIsHostedOnly();
+  const { exempt: calendarOnly } = calendarIsHostedOnly();
   const calls = allCalls;
   const named = allCalls.map((c) => `${c.method} ${c.pattern}`);
 
@@ -466,6 +504,7 @@ describe("the client's route list against the local engine", () => {
     const missing = calls
       .filter((c) => !hostedOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !stagingOnly.has(`${c.method} ${c.pattern}`))
+      .filter((c) => !calendarOnly.has(`${c.method} ${c.pattern}`))
       .filter((c) => !matchRoute(localRoutes, c.method, c.pattern).matched);
     expect(missing.map((c) => `${c.method} ${c.pattern}`)).toEqual([]);
   });
@@ -486,6 +525,22 @@ describe("the client's route list against the local engine", () => {
     // client really composes (not a ghost), and each stays a REQUIRED forward in the cloud
     // census — this exemption narrows the LOCAL census only, never the hosted one.
     for (const name of STANDALONE_DOOR_NEVER_ASKS) {
+      expect(named, `${name} is exempted but the wire client never composes it`).toContain(name);
+      expect(FORWARDED_IN_CLOUD_MODE, `${name} must stay a forwarded route`).toContain(name);
+      const [method, pattern] = name.split(" ") as [string, string];
+      expect(matchRoute(localRoutes, method, pattern).matched).toBe(false);
+    }
+  });
+
+  it("the calendar exemption is EARNED, and its writes are composed, forwarded and not served here", () => {
+    // Fact by fact, so a failure names which one stopped being true; then the two directions that
+    // keep the list from outliving its subject, as for the staging and the folder verbs above.
+    const { holds, exempt } = calendarIsHostedOnly();
+    for (const [fact, ok] of Object.entries(holds)) {
+      expect(ok, `no longer true: ${fact} — the calendar exemption is not licensed`).toBe(true);
+    }
+    expect([...exempt]).toEqual([...CALENDAR_HOSTED_DOOR_ONLY]);
+    for (const name of CALENDAR_HOSTED_DOOR_ONLY) {
       expect(named, `${name} is exempted but the wire client never composes it`).toContain(name);
       expect(FORWARDED_IN_CLOUD_MODE, `${name} must stay a forwarded route`).toContain(name);
       const [method, pattern] = name.split(" ") as [string, string];

@@ -12,15 +12,17 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { DEFAULT_LIMITS, intlZones, readCalendar, type CalEvent } from "@ohmail/cal-core";
 import {
   serializeCredential, Secret,
-  type Answer, type CalendarInfo, type CalendarProvider, type CalendarProviders, type CalendarReader, type ChangeItem,
-  type ChangePage, type ChangeToken, type Connection, type HttpPort, type PageRequest, type ProviderWord, type StoredCredential,
+  type Answer, type CalendarInfo, type CalendarProvider, type CalendarProviders, type CalendarReader, type CalendarRef,
+  type CalendarWriter, type ChangeItem, type ChangePage, type ChangeToken, type Connection, type EventChange, type EventDraft,
+  type HttpPort, type PageRequest, type ProviderWord, type StoredCredential, type WriteAnswer, type WriteKey, type WriteTarget,
 } from "@ohmail/cal-providers";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import {
-  accounts, calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, changeLog, mailboxes,
+  accounts, calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, mailboxes,
   type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
+import { parseCalendarAct, writePayloadOf, type CalendarWritePayload } from "@trafficflow/db/calendar";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -123,9 +125,14 @@ export function depsFor(w: World, providers: CalendarProviders, more: Partial<Ca
   } as CalendarSyncDeps & { memory: CalendarSyncMemory };
 }
 
-/** Providers that serve exactly these. */
-export function providersOf(served: Partial<Record<ProviderWord, CalendarProvider>>): CalendarProviders {
-  return { get: (word) => served[word] ?? null };
+/** Providers that serve exactly these; one named without a writer takes no writes. */
+export function providersOf(served: Partial<Record<ProviderWord, Omit<CalendarProvider, "writer"> & { readonly writer?: CalendarProvider["writer"] }>>): CalendarProviders {
+  return {
+    get: (word) => {
+      const p = served[word];
+      return p === undefined ? null : { ...p, writer: p.writer ?? null };
+    },
+  };
 }
 
 /** A request port that must never be asked: a test counts on its silence. */
@@ -304,4 +311,119 @@ export function tokenEndpoint(answer: (form: URLSearchParams, url: string) => Pr
       return { arrived: true, status: a.status, header: () => null, body: bytes, location: null, url, hops: 0 };
     },
   };
+}
+
+// ── a scripted writer ─────────────────────────────────────────────────────────
+
+/** One call a scripted writer was asked, with the connection and the calendar it was handed. */
+export interface WriterCall {
+  readonly kind: "create" | "change" | "remove" | "answer" | "move";
+  readonly connection: Connection;
+  readonly calendar: string;
+  readonly key: string | null;
+  readonly target: WriteTarget | null;
+  readonly draft: EventDraft | null;
+  readonly change: EventChange | null;
+}
+
+/**
+ * A writer that answers from a test's hand, and keeps a provider's store of its own: a new object
+ * made under a key it already holds answers that object again (the provider's own guard), and a
+ * change made against a version it no longer holds answers `version_stale`, unless the object
+ * already holds it (the writers' compare after a 412: an earlier attempt landed, nothing is written
+ * again). `answer` may refuse, throw, or let the default happen.
+ */
+export function scriptedWriter(word: ProviderWord, script: {
+  readonly answer?: (call: WriterCall, n: number) => Promise<WriteAnswer | "default"> | WriteAnswer | "default";
+} = {}): CalendarWriter & { calls: WriterCall[]; objects: Map<string, { version: number; summary: string }> } {
+  const calls: WriterCall[] = [];
+  const objects = new Map<string, { version: number; summary: string }>();
+  const upsertOf = (id: string): ChangeItem => {
+    const o = objects.get(id)!;
+    return upsert(id, `"v${o.version}"`, single(`uid-${id}`, 20, o.summary));
+  };
+  const run = async (call: WriterCall, fallback: () => WriteAnswer): Promise<WriteAnswer> => {
+    calls.push(call);
+    const scripted = script.answer === undefined ? "default" : await script.answer(call, calls.length);
+    return scripted === "default" ? fallback() : scripted;
+  };
+  const stale = (t: WriteTarget): boolean => objects.has(t.id) && `"v${objects.get(t.id)!.version}"` !== t.version;
+  const writer = {
+    provider: word,
+    calls,
+    objects,
+    async create(c: Connection, cal: CalendarRef, req: { readonly key: WriteKey; readonly event: EventDraft }): Promise<WriteAnswer> {
+      return run({ kind: "create", connection: c, calendar: cal.id, key: req.key.hex, target: null, draft: req.event, change: null }, () => {
+        const id = `made-${req.key.hex}`;
+        if (!objects.has(id)) objects.set(id, { version: 1, summary: req.event.summary });
+        return { ok: true, items: [upsertOf(id)] };
+      });
+    },
+    async change(c: Connection, cal: CalendarRef, target: WriteTarget, change: EventChange): Promise<WriteAnswer> {
+      return run({ kind: "change", connection: c, calendar: cal.id, key: null, target, draft: null, change }, () => {
+        if (stale(target)) {
+          const held = objects.get(target.id)!;
+          const holds = Object.keys(change).length > 0 && Object.keys(change).every((k) => k === "summary") && held.summary === change.summary;
+          return holds ? { ok: true, items: [upsertOf(target.id)] } : { ok: false, reason: "version_stale", retryAfterMs: null };
+        }
+        const was = objects.get(target.id) ?? { version: 1, summary: "" };
+        objects.set(target.id, { version: was.version + 1, summary: change.summary ?? was.summary });
+        return { ok: true, items: [upsertOf(target.id)] };
+      });
+    },
+    async remove(c: Connection, cal: CalendarRef, target: WriteTarget): Promise<WriteAnswer> {
+      return run({ kind: "remove", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => {
+        if (stale(target)) return { ok: false, reason: "version_stale", retryAfterMs: null };
+        objects.delete(target.id);
+        return { ok: true, items: [{ kind: "gone", id: target.id }] };
+      });
+    },
+    async answer(c: Connection, cal: CalendarRef, target: WriteTarget): Promise<WriteAnswer> {
+      return run({ kind: "answer", connection: c, calendar: cal.id, key: null, target, draft: null, change: null }, () => ({ ok: true, items: [upsertOf(target.id)] }));
+    },
+    moveEvent: null,
+  };
+  return writer;
+}
+
+// ── a recorded write ──────────────────────────────────────────────────────────
+
+const OPS = { calendar_event_create: "create", calendar_event_update: "update", calendar_event_delete: "delete", calendar_event_move: "move", calendar_event_answer: "answer" } as const;
+
+/**
+ * A write as the door records it (the services' `enqueueCalendarWrite`, whose own proofs are
+ * theirs): the act through the store's own parser and payload, under its key, its base
+ * the event's version now, and for a new event its row as the person wants it, named by the write.
+ * `after` names the row this one waits for. Answers the row's id and the event's.
+ */
+export async function recordWrite(w: World, o: {
+  readonly accountId: string; readonly key: string; readonly act: unknown; readonly after?: string | null;
+  readonly state?: "pending" | "refused"; readonly refusal?: string | null;
+}): Promise<{ readonly id: string; readonly eventId: string }> {
+  const act = parseCalendarAct(o.act);
+  if (act === null) throw new Error("the test's act is no act the door takes");
+  const payload: CalendarWritePayload = writePayloadOf(act, o.after ?? null, null);
+  if (act.kind === "calendar_event_create") {
+    const [row] = await w.db.insert(calWrites).values({
+      accountId: o.accountId, calendarId: act.calendarId, eventId: act.eventId, op: "create", payload, idempotencyKey: o.key,
+      state: o.state ?? "pending", refusal: o.refusal ?? null,
+    }).returning({ id: calWrites.id });
+    const name = `pending:${row!.id}`;
+    const ms = (v: string): Date => new Date(Date.UTC(+v.slice(0, 4), +v.slice(4, 6) - 1, +v.slice(6, 8), +v.slice(9, 11) || 0, +v.slice(11, 13) || 0));
+    await w.db.insert(calEvents).values({
+      id: act.eventId, accountId: o.accountId, calendarId: act.calendarId, providerId: name, uid: name, versionTag: null, title: act.event.title,
+      startKind: act.event.start.kind, startLocal: act.event.start.value, startZone: act.event.start.zone ?? null,
+      endKind: act.event.end.kind, endLocal: act.event.end.value, endZone: act.event.end.zone ?? null,
+      startsAt: ms(act.event.start.value), endsAt: ms(act.event.end.value), busy: act.event.busy, private: act.event.private,
+    });
+    return { id: row!.id, eventId: act.eventId };
+  }
+  const [event] = await w.db.select({ calendarId: calEvents.calendarId, versionTag: calEvents.versionTag }).from(calEvents)
+    .where(and(eq(calEvents.id, act.eventId), eq(calEvents.accountId, o.accountId)));
+  if (event === undefined) throw new Error("the test's act names no event of the account");
+  const [row] = await w.db.insert(calWrites).values({
+    accountId: o.accountId, calendarId: event.calendarId, eventId: act.eventId, op: OPS[act.kind], payload, baseVersionTag: event.versionTag,
+    idempotencyKey: o.key, state: o.state ?? "pending", refusal: o.refusal ?? null,
+  }).returning({ id: calWrites.id });
+  return { id: row!.id, eventId: act.eventId };
 }

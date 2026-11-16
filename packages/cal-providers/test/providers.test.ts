@@ -27,7 +27,7 @@ function composed(over: Partial<ProviderDeps>): { deps: ProviderDeps; looked: st
       return name === "localhost" ? ["127.0.0.1"] : [];
     },
   };
-  return { deps: { clock: { now: () => Date.parse("2026-11-14T08:00:00Z") }, zones, resolver, policy: { kind: "cloud" }, enabled: new Set(), microsoft: null, ...over }, looked };
+  return { deps: { clock: { now: () => Date.parse("2026-11-14T08:00:00Z") }, zones, resolver, policy: { kind: "cloud" }, enabled: new Set(), microsoft: null, writes: false, ...over }, looked };
 }
 const served = (deps: ProviderDeps): (ProviderWord | null)[] => {
   const providers = makeCalendarProviders(deps);
@@ -62,6 +62,19 @@ describe("the calendar's providers", () => {
     expect(served(all)).toEqual(WORDS);
     const providers = makeCalendarProviders(all);
     expect(WORDS.map((word) => providers.get(word)!.reader.provider)).toEqual(WORDS);
+  });
+
+  it("make a writer only for a program that writes, and never for a subscription", () => {
+    const writers = (writes: boolean) => {
+      const providers = makeCalendarProviders(composed({ enabled: new Set<ProviderWord>(WORDS), microsoft: { graphBase: MS_GRAPH_BASE }, writes }).deps);
+      return WORDS.map((word) => providers.get(word)!.writer?.provider ?? null);
+    };
+    expect(writers(false)).toEqual([null, null, null, null]);
+    expect(writers(true)[WORDS.indexOf("ics")]).toBeNull();
+    expect(writers(true)[WORDS.indexOf("google")]).toBe("google");
+    expect(writers(true)[WORDS.indexOf("caldav")]).toBe("caldav");
+    // Microsoft's writer stands behind its own switch, the word and the base, as its reader does.
+    expect(writers(true)[WORDS.indexOf("microsoft")]).toBe("microsoft");
   });
 
   it("serve Microsoft only when both of its switches are named: the word, and the base of its API", () => {

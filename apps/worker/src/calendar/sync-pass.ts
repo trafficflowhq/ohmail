@@ -91,9 +91,14 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   let drainNext: Date | null = null;
   if (deps.drainWrites !== undefined) {
-    drainNext = (await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal })).nextAttemptAt;
+    const drained = await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal });
+    const asked = drained.nextAttemptAt;
+    // A time no clock holds would make this turn's settle throw, every turn: such an answer asks for nothing.
+    drainNext = asked !== null && Number.isFinite(asked.getTime()) ? asked : null;
     if (stopping()) return { kind: "halted" };
     if (turnOverdue(signal)) return settleConnection(deps, db, key, signIn, "timeout", null);
+    // The provider asked a write to wait: nothing more of the connection is asked before that has passed, its readings neither.
+    if (drained.wait !== undefined) return settleConnection(deps, db, key, signIn, drained.wait.word, drained.wait.retryAfterMs);
   }
 
   let changed = 0;
@@ -170,6 +175,9 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     const nowMs = deps.clock.now();
     let at = next?.at === null || next?.at === undefined ? nowMs + LIST_EVERY_MS : Number(next.at);
     if (drainNext !== null) at = Math.min(at, drainNext.getTime());
+    // Someone asked for this connection while the turn ran (a press's wake after its drain, a retry): kept, never written over.
+    const asked = held.nextPollAt?.getTime() ?? null;
+    if (asked !== (gate.held.nextPollAt?.getTime() ?? null)) at = Math.min(at, asked ?? nowMs);
     if (more) at = nowMs;
     else if (crowded) at = Math.max(at, nowMs + READING_PLACE_WAIT_MS);
     at = Math.max(at, nowMs);

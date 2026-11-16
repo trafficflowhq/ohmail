@@ -4,12 +4,22 @@
  * pinned connection (`guarded.ts`).
  */
 import type { ZoneSource } from "@ohmail/cal-core";
-import { MAX_RETRY_AFTER_MS } from "../limits.js";
+import { MAX_RETRY_AFTER_MS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { Clock } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
 
-/** The methods reading needs. A writer adds its own here. */
-export type HttpMethod = "GET" | "POST" | "PROPFIND" | "REPORT";
+/**
+ * The methods reading needs, and the three a writer adds. No other: a calendar is never made or
+ * copied here, and a move without a provider's own call is a new object and a removal.
+ */
+export type HttpMethod = "GET" | "POST" | "PROPFIND" | "REPORT" | "PUT" | "PATCH" | "DELETE";
+
+/**
+ * What a write is made against, written by the port itself as it writes the sign-in's line: the
+ * version the change was made on (`If-Match`), or that the object must be new (`If-None-Match: *`).
+ * A version must be an entity tag ({@link sendableTag}); "any version" cannot be said.
+ */
+export type Precondition = { readonly kind: "unchanged"; readonly tag: string } | { readonly kind: "new" };
 
 /** The headers an adapter may name. Every other line of a request is the port's own. */
 export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer";
@@ -38,6 +48,8 @@ export interface HttpRequest {
   readonly auth: Authorization | null;
   /** Sent with the first request only: a validator belongs to the address it came from. With both, the tag is sent. */
   readonly validators: { readonly etag: string | null; readonly lastModified: string | null } | null;
+  /** Required on PUT, PATCH and DELETE, and refused on every other method. */
+  readonly precondition?: Precondition;
   readonly signal: AbortSignal;
 }
 
@@ -87,3 +99,12 @@ export function retryAfterMs(res: HttpResponse, clock: Clock): number | null {
 
 /** A body as text: UTF-8, a byte-order mark taken off. No other character set is honoured. */
 export const textOf = (body: Uint8Array): string => new TextDecoder("utf-8").decode(body);
+
+const ENTITY_TAG = /^(?:W\/)?"[\x21\x23-\x7e]*"$/;
+
+/**
+ * Can this version travel as a precondition? Only an entity tag as the standard writes one, strong
+ * or weak, of printable characters, and not past `MAX_VALIDATOR_CHARS`. A provider's version that is
+ * no tag (a time, a bare change key) is read again before a write, never sent as it stands.
+ */
+export const sendableTag = (text: string): boolean => text.length <= MAX_VALIDATOR_CHARS && ENTITY_TAG.test(text);

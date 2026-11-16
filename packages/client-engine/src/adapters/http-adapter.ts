@@ -44,7 +44,9 @@ import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
-import type { AddressSearchResult, AnswerOf, MessageDTO, RequestOf, RouteName, SearchResult, Untrusted } from "@ohmail/wire";
+import type {
+  AddressSearchResult, AnswerOf, CalendarEventAct, CalendarWriteAnswer, MessageDTO, RequestOf, RouteName, SearchResult, Untrusted,
+} from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
 import { calendarWindowOf } from "../calendar-window.js";
 import type { SnapshotParams } from "../engine/server-wire.js";
@@ -862,6 +864,31 @@ export class HttpAdapter implements EngineAdapter {
    * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt` is the newest of
    * them, kept for logging; a missing field degrades to "nothing to wait for".
    */
+  /**
+   * THE CALENDAR'S THREE WRITE ROUTES, for the calendar's own queue on a device (`calendar-writes.ts`,
+   * its `CalendarWriteTransport`). Each sends the press's key on every attempt; our server makes one
+   * row of one key. A refusal throws as every write's does.
+   */
+  async writeCalendar(act: CalendarEventAct, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    // The call's check of a body's names reads one member of a union at a time; the act is the wire's own type whole.
+    const body = act as Extract<CalendarEventAct, { kind: "calendar_event_create" }>;
+    const res = await this.call("POST /calendar/writes", { body, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"POST /calendar/writes">(res), seq: this.noteSeq(res) };
+  }
+
+  async retryCalendarWrite(writeId: string, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("POST /calendar/writes/:id/retry", { params: { id: writeId }, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"POST /calendar/writes/:id/retry">(res), seq: this.noteSeq(res) };
+  }
+
+  async dismissCalendarWrite(writeId: string, key: string): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"DELETE /calendar/writes/:id">(res), seq: this.noteSeq(res) };
+  }
+
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {
     const body: RequestOf<"POST /sync/pull"> = opts?.mailboxIds && opts.mailboxIds.length > 0 ? { mailboxIds: [...opts.mailboxIds] } : {};
     return this.withDeadline(PULL_RING_TIMEOUT_MS, async (signal) => {

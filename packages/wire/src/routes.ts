@@ -13,7 +13,7 @@
  */
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
-import type { CalendarSettingsBody, CalendarSettingsWire } from "./calendar.js";
+import type { CalendarEventAct, CalendarSettingsBody, CalendarSettingsWire, CalendarWriteAnswer } from "./calendar.js";
 import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
 import type { MessageDTO, MessageStateDTO, TrashRowDTO } from "./mail.js";
@@ -146,6 +146,12 @@ export interface Routes {
   "GET /calendar/settings": { params: None; body: never; answer: CalendarSettingsWire };
   /** `X-Sync-Seq` names the settings change when a field changed; a request that changes nothing carries none. */
   "PATCH /calendar/settings": { params: None; body: CalendarSettingsBody; answer: CalendarSettingsWire };
+  /** An act on an event, recorded under the press's `Idempotency-Key` (required) and carried out by the worker. `202`. */
+  "POST /calendar/writes": { params: None; body: CalendarEventAct; answer: CalendarWriteAnswer };
+  /** A refused write owed again, with the writes refused only because they waited for it. */
+  "POST /calendar/writes/:id/retry": { params: Id; body: never; answer: CalendarWriteAnswer };
+  /** A refused write, or one not tried yet, let go; a new event's takes the event with it. */
+  "DELETE /calendar/writes/:id": { params: Id; body: never; answer: CalendarWriteAnswer };
   /** Ring the worker's doorbell. `mailboxIds` narrows the ring; absent, every connected mailbox. */
   "POST /sync/pull": {
     params: None;

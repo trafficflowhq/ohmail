@@ -15,6 +15,7 @@ export function fixedHostRequest(hosts: ReadonlySet<string>, deps: RequestDeps):
     policy: deps.policy,
     request: pinnedHttpRequest,
     hosts: new Set([...hosts].map(canonicalHost)),
+    writes: deps.writes,
     limits: { connectMs: CONNECT_TIMEOUT_MS, totalMs: ANSWER_TIMEOUT_MS, maxRedirects: 0, maxBodyBytes: FETCH_BODY_MAX_BYTES },
   });
 }

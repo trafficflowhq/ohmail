@@ -11,7 +11,7 @@
  * calendar holds waits for a second whole reading that shows the same.
  */
 import { createHash } from "node:crypto";
-import type { CalEvent, EventTime, ZoneSource } from "@ohmail/cal-core";
+import type { CalEvent, ZoneSource } from "@ohmail/cal-core";
 import {
   MAX_MULTISTATUS_RESPONSES, MAX_PAGE_LIMIT, type CalendarProvider, type ChangeItem, type ChangePage, type ChangeToken,
   type ProviderWord,
@@ -19,12 +19,12 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { calCalendars, calConnections, mailboxes, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  applyChunk, applyChunks, chunksOf, dropCandidates, objectGone, objectWrite, storedAsIs, storedRowsOf,
-  type ApplyContext, type ChunkResult, type StoredRow, type Work,
+  applyChunk, applyChunks, chunksOf, dayCancelled, dropCandidates, objectGone, planItems, storedRowsOf,
+  type ApplyContext, type ChunkResult, type Work,
 } from "./apply.js";
 import type { StoredCalendar } from "./calendars.js";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "./connection.js";
-import { rowsOfObject, occurrenceKey, type MapContext, type Upsert } from "./map.js";
+import { occurrenceKey, type MapContext } from "./map.js";
 import { connectionsKept, hasPlace, keepReading, releaseAllBut, remember } from "./memory.js";
 import { cancelledDays } from "./microsoft.js";
 import { dueAmong } from "./roster.js";
@@ -301,73 +301,16 @@ function note(reading: OpenReading, page: ChangePage, zones: ZoneSource): boolea
 async function applyPage(
   ctx: ReadingContext, apply: ApplyContext, reading: OpenReading, items: readonly ChangeItem[],
 ): Promise<ChunkResult> {
-  const objects = new Map<string, Upsert[]>();
-  const gone: string[] = [];
-  const cancels: { uid: string; key: string; time: EventTime }[] = [];
-  /** What the page names by a text no row can hold: left out, and said as a count. No stored row can carry such a name. */
-  let unkept = 0;
-  for (const item of items) {
-    if (item.kind === "upsert") {
-      const list = objects.get(item.id) ?? [];
-      list.push(item);
-      objects.set(item.id, list);
-    } else if (item.kind === "gone") {
-      // Kept in the list all the same: the read of stored rows passes it over, and it is then a removal of something nobody stores.
-      gone.push(item.id);
-      if (!storableKey(item.id)) unkept += 1;
-    } else {
-      // The key carries the zone's name, a stranger's text like the UID, only where the platform does not know the zone. A known
-      // one (a vendor's prefix too) keys by the moment; a name the store cannot hold is then refused in the day's own write, and counted.
-      const key = occurrenceKey(item.originalStart, ctx.deps.zones);
-      if (storableKey(item.uid) && storableKey(key)) cancels.push({ uid: item.uid, key, time: item.originalStart });
-      else unkept += 1;
-    }
+  const plan = await planItems(apply, items, ctx.map);
+  if (plan === "gone") return { ok: false, why: "gone" };
+  // Microsoft names a removed day by the day's own id. One nobody stores was an ordinary day of its series; one
+  // that is stored was a changed day. Either way a day is gone that only the window read whole can confirm.
+  if (ctx.word === "microsoft" && reading.mode === "delta" && plan.goneOfDays) reading.unknownGone = true;
+  for (const c of plan.held) {
+    if (reading.heldCancellations.length < MAX_HELD_CANCELLATIONS) reading.heldCancellations.push(c);
   }
-  const mapped = new Map<string, ReturnType<typeof rowsOfObject>>();
-  for (const [id, ups] of objects) mapped.set(id, rowsOfObject(ups, ctx.map));
-  const stored = await storedRowsOf(apply, [...objects.keys(), ...gone], cancels.map((c) => c.uid));
-  if (stored === "gone") return { ok: false, why: "gone" };
-  const byProvider = new Map<string, StoredRow[]>();
-  for (const s of stored) byProvider.set(s.providerId, [...(byProvider.get(s.providerId) ?? []), s]);
-
-  const works: Work[] = [];
-  const seriesHere = new Set<string>();
-  for (const [id, m] of mapped) {
-    if (!m.ok) {
-      if (m.reason === "unstorable") unkept += 1;
-      continue;
-    }
-    for (const r of m.rows) if (r.values.recurrenceId === "") seriesHere.add(r.values.uid);
-    const was = byProvider.get(id) ?? [];
-    if (storedAsIs(m.rows, was)) continue;
-    works.push(objectWrite(id, m.rows, was, apply.unite));
-  }
-  // Where a changed day is an object of its own, a series named as gone takes its days' rows with it: how many, for the works' count.
-  const goneSeries = apply.unite ? gone.flatMap((id) => (byProvider.get(id) ?? []).filter((s) => s.recurrenceId === "").map((s) => s.uid)) : [];
-  const ofGoneSeries = await storedRowsOf(apply, [], goneSeries);
-  if (ofGoneSeries === "gone") return { ok: false, why: "gone" };
-  for (const id of gone) {
-    const was = byProvider.get(id) ?? [];
-    const uids = new Set(was.filter((s) => s.recurrenceId === "").map((s) => s.uid));
-    const days = ofGoneSeries.filter((s) => uids.has(s.uid) && s.recurrenceId !== "" && s.providerId !== id).length;
-    if (was.length > 0) works.push(objectGone(id, was.length + days, { withDays: apply.unite, dayLeaves: apply.unite }));
-    // Microsoft names a removed day by the day's own id. One nobody stores was an ordinary day of its series; one
-    // that is stored was a changed day. Either way a day is gone that only the window read whole can confirm.
-    if (ctx.word === "microsoft" && reading.mode === "delta" && (was.length === 0 || was.some((s) => s.recurrenceId !== ""))) reading.unknownGone = true;
-  }
-  const seriesStored = new Set(stored.filter((s) => s.recurrenceId === "").map((s) => s.uid));
-  for (const c of cancels) {
-    // The day's own changed rows go with it, also where their series is not stored.
-    const rows = stored.filter((s) => s.uid === c.uid && s.recurrenceId === c.key).length;
-    if (seriesStored.has(c.uid) || seriesHere.has(c.uid) || rows > 0) works.push(dayCancelled(c, rows));
-    else if (reading.heldCancellations.length < MAX_HELD_CANCELLATIONS) reading.heldCancellations.push(c);
-  }
-  return written(ctx, apply, works, unkept);
+  return written(ctx, apply, plan.works, plan.unkept);
 }
-
-/** A cancelled day as a work: one change for its series, one for each changed row of that day (one, where none is known yet). */
-const dayCancelled = (c: { readonly uid: string; readonly key: string; readonly time: EventTime }, rows: number): Work =>
-  ({ kind: "cancelled", uid: c.uid, key: c.key, time: c.time, changes: 1 + Math.max(rows, 1) });
 
 /**
  * Works written, in transactions of the store's bound. What the store would not keep, and the

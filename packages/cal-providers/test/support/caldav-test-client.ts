@@ -83,6 +83,11 @@ function hrefOf(source: string | undefined): string | undefined {
   return h === undefined ? undefined : unxml(h).trim();
 }
 
+/** Does a text carry an iCalendar invitee or organizer line (folded lines joined first, in any case)? */
+export function carriesInvitees(text: string): boolean {
+  return /^(?:ATTENDEE|ORGANIZER)[;:]/im.test(text.replace(/\r?\n[ \t]/g, ""));
+}
+
 /** The UIDs in a calendar object's text (folded lines joined first). */
 export function uidsOf(ics: string): string[] {
   return [...ics.replace(/\r?\n[ \t]/g, "").matchAll(/^UID(?:;[^:\r\n]*)?:(.*)$/gm)].map((m) => m[1]!.trim());
@@ -134,8 +139,16 @@ export class CalDavTestClient {
     return `Basic ${Buffer.from(pair, "utf8").toString("base64")}`;
   }
 
-  /** One request. The address is checked against the server's row first; a redirect is checked again. */
+  /**
+   * One request. The address is checked against the server's row first; a redirect is checked again.
+   * Only the bench's own server, which sends no mail, is handed an invitee or an organizer: a
+   * provider's real account sends an invitation for each, and the one invitation is Google's
+   * (`inviteOnce`), after its unlock.
+   */
   async request(method: string, href: string, o: { depth?: "0" | "1"; body?: string; headers?: Record<string, string> } = {}): Promise<DavResponse> {
+    if (this.server.name !== "bench" && o.body !== undefined && carriesInvitees(o.body)) {
+      throw new Error(`refused: an invitee or an organizer for the ${this.server.name} row`);
+    }
     let url = new URL(href, this.#base);
     for (let hop = 0; hop < 4; hop++) {
       if (!this.server.allows(url)) throw new Error(`refused: ${url.host} is outside the ${this.server.name} row`);

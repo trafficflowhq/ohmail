@@ -44,6 +44,19 @@ describe("the Google test client", () => {
     assert.equal(api(calls)[1]!.url.searchParams.get("privateExtendedProperty"), `${BENCH_MARKER}=${BENCH_ID}`);
   });
 
+  it("reads the events of a window, every page of them, marked or not: the days of a series one by one, nothing deleted", async () => {
+    const { calls, client } = fake((c) => (c.method === "GET" && c.url.pathname.endsWith("/events")
+      ? { json: c.url.searchParams.get("pageToken") === null ? { items: [{ id: "a" }], nextPageToken: "p2" } : { items: [{ id: "b" }] } }
+      : undefined));
+    const got = await client.listBetween("primary calendar", "2026-12-03T00:00:00Z", "2026-12-04T00:00:00Z");
+    assert.deepEqual([got.status, got.items.map((e) => e.id)], [200, ["a", "b"]]);
+    const asked = api(calls).map((c) => [c.method, c.url.pathname, Object.fromEntries(c.url.searchParams)]);
+    assert.deepEqual(asked, [
+      ["GET", "/calendar/v3/calendars/primary%20calendar/events", { timeMin: "2026-12-03T00:00:00Z", timeMax: "2026-12-04T00:00:00Z", singleEvents: "true", showDeleted: "false", maxResults: "250" }],
+      ["GET", "/calendar/v3/calendars/primary%20calendar/events", { timeMin: "2026-12-03T00:00:00Z", timeMax: "2026-12-04T00:00:00Z", singleEvents: "true", showDeleted: "false", maxResults: "250", pageToken: "p2" }],
+    ]);
+  });
+
   it("says so when Google's test consent has ended", async () => {
     const { client } = fake((c) => (c.url.href === GOOGLE_TOKEN_URL ? { status: 400, json: { error: "invalid_grant" } } : undefined));
     await assert.rejects(() => client.calendarList(), GoogleConsentEnded);

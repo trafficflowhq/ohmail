@@ -20,10 +20,10 @@ const CALENDAR = "the calendar's sync and acts are not built yet: no account hol
 
 /* The calendar's records, its six record tables, are written by a desktop's copy of a Cloud
    account (`cloud-mirror-calendar.ts`) and left this list with that writer; `cal_settings` left it
-   with the switch (`settings-service.ts`, and the copy's `storeCalendarSwitch`). */
+   with the switch (`settings-service.ts`, and the copy's `storeCalendarSwitch`); `cal_writes` with
+   the write door (`packages/services/src/calendar/writes.ts`). */
 export const UNWRITTEN_TABLES: Readonly<Record<string, UnwrittenTable>> = {
   cal_credentials: { name: "calCredentials", why: CALENDAR },
-  cal_writes: { name: "calWrites", why: CALENDAR },
   cal_links: { name: "calLinks", why: CALENDAR },
   cal_push_channels: { name: "calPushChannels", cloud: true, why: CALENDAR },
   account_closures: { name: "accountClosures", cloud: true, why: "the staff act that closes an account is not built yet: no account is closed" },

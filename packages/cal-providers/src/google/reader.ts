@@ -11,7 +11,7 @@ import { MAX_UID_CHARS, MAX_ZONE_NAME_CHARS } from "@ohmail/cal-core";
 import { CURSOR_MAX_CHARS, MAX_CALENDAR_NAME_CHARS, MAX_COLOR_CHARS, MAX_MASTERS_PER_ROUND, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, TOKEN_MAX_CHARS } from "../limits.js";
 import { bearerOf, isRecord, jsonOf, MAX_PROVIDER_ID_CHARS, pathSegment, refuse, type Json, type Left, type Refused } from "../json-answers.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, Connection } from "../port.js";
-import { retryAfterMs, type AdapterDeps } from "../request/index.js";
+import { retryAfterMs, type AdapterDeps, type Authorization } from "../request/index.js";
 import { convertEvent } from "./convert.js";
 import { GOOGLE_API_HOST, GOOGLE_CALENDAR_BASE } from "./hosts.js";
 
@@ -51,13 +51,18 @@ function refusalOf(status: number, body: Uint8Array, wait: number | null, contin
   return refuse("unknown");
 }
 
+/** The sign-in of one request to Google: a short bearer, for Google's API host alone, with TLS. Reader and writer both make it here. */
+export function googleAuthorization(token: string): Authorization {
+  return { credential: { kind: "bearer", token }, admits: (host) => host === GOOGLE_API_HOST, tlsOnly: true };
+}
+
 export function makeReader(deps: AdapterDeps): CalendarReader {
   async function ask(token: string, url: string, continued: boolean, signal: AbortSignal): Promise<Asked> {
     const answer = await deps.http.request(url, {
       method: "GET",
       headers: { accept: "application/json" },
       body: null,
-      auth: { credential: { kind: "bearer", token }, admits: (host) => host === GOOGLE_API_HOST, tlsOnly: true },
+      auth: googleAuthorization(token),
       validators: null,
       signal,
     });

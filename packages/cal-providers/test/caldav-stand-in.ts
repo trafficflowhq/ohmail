@@ -72,6 +72,8 @@ export interface StandInOptions {
   readonly deadTokenStatus?: number;
   /** A sign-in that is not accepted: a 401, or a 207 whose principal is nobody. */
   readonly refusedSignIn?: "status" | "unauthenticated";
+  /** Say `calendar-auto-schedule` in the `DAV` line: the server sends invitations itself (RFC 6638). */
+  readonly autoSchedule?: boolean;
 }
 
 interface Member {
@@ -124,6 +126,7 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     truncateAt: given.truncateAt ?? null,
     deadTokenStatus: given.deadTokenStatus ?? 403,
     refusedSignIn: given.refusedSignIn ?? "status",
+    autoSchedule: given.autoSchedule ?? false,
   };
   const start = options.context;
   const principal = `${start}principals/${options.user}/`;
@@ -253,7 +256,8 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers[k] = v;
     seen.push({ method: req.method ?? "", path, host: req.headers.host ?? "", withCredential: credential !== undefined, signedIn, depth, body, asks, headers });
     const send = (status: number, text: string, extra: Record<string, string> = {}): void => {
-      res.writeHead(status, { "content-type": "application/xml; charset=utf-8", dav: "1, 3, calendar-access", ...extra });
+      const dav = options.autoSchedule ? "1, 3, calendar-access, calendar-auto-schedule" : "1, 3, calendar-access";
+      res.writeHead(status, { "content-type": "application/xml; charset=utf-8", dav, ...extra });
       res.end(text);
     };
 
@@ -283,6 +287,30 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
       if (c === undefined || asks === null) return send(404, "");
       const made = report(c, asks, body, asked);
       return send(made.status, made.body);
+    }
+    // A member written or removed as RFC 4791 and RFC 7232 say: the preconditions decide, the tag moves.
+    if (req.method === "PUT" || req.method === "DELETE") {
+      const c = [...calendars.values()].find((x) => path.startsWith(paths.collection(x.slug)) && path !== paths.collection(x.slug));
+      if (c === undefined) return send(404, "");
+      if (c.privileges !== null && !c.privileges.includes("write-content")) return send(403, failed("need-privileges"));
+      const name = decodeURIComponent(path.slice(paths.collection(c.slug).length));
+      const member = c.members.get(name);
+      const ifMatch = typeof req.headers["if-match"] === "string" ? req.headers["if-match"] : null;
+      const ifNoneMatch = typeof req.headers["if-none-match"] === "string" ? req.headers["if-none-match"] : null;
+      if (ifNoneMatch === "*" && member !== undefined) return send(412, "");
+      if (ifMatch !== null && (member === undefined || member.etag !== ifMatch)) return send(member === undefined && req.method === "DELETE" ? 404 : 412, "");
+      if (req.method === "DELETE") {
+        if (member === undefined) return send(404, "");
+        c.members.delete(name);
+        c.rev += 1;
+        c.removed.set(name, c.rev);
+        return send(204, "");
+      }
+      c.rev += 1;
+      c.removed.delete(name);
+      const etag = `"${c.slug}-${name}-${c.rev}"`;
+      c.members.set(name, { ics: body, etag, rev: c.rev });
+      return send(member === undefined ? 201 : 204, "", { etag });
     }
     return send(405, "");
   }

@@ -13,11 +13,11 @@
  */
 import type { ZoneSource } from "@ohmail/cal-core";
 import { SsrfRefusal, assertPublicHttpUrlShape, type HostResolver } from "@trafficflow/core/net";
-import { makeReader as caldavReader } from "./caldav/index.js";
-import { GOOGLE_HOSTS, makeReader as googleReader } from "./google/index.js";
+import { makeReader as caldavReader, makeWriter as caldavWriter } from "./caldav/index.js";
+import { GOOGLE_HOSTS, makeReader as googleReader, makeWriter as googleWriter } from "./google/index.js";
 import { makeReader as icsReader } from "./ics/index.js";
-import { makeReader as microsoftReader, microsoftHosts } from "./microsoft/index.js";
-import type { CalendarReader, Clock, ProviderWord } from "./port.js";
+import { makeReader as microsoftReader, makeWriter as microsoftWriter, microsoftHosts } from "./microsoft/index.js";
+import type { CalendarReader, CalendarWriter, Clock, ProviderWord } from "./port.js";
 import { fixedHostRequest, namedHostRequest, type AdapterDeps, type AddressPolicy, type HttpPort } from "./request/index.js";
 
 export interface ProviderDeps {
@@ -36,10 +36,20 @@ export interface ProviderDeps {
    * fault, never a quiet fall back to an address nobody named.
    */
   readonly microsoft: { readonly graphBase: string } | null;
+  /**
+   * Whether the program writes to providers: the worker's composition says yes, and only there is a
+   * provider's `writer` made. No default: an absent word must not open the writing branch.
+   */
+  readonly writes: boolean;
 }
 
 export interface CalendarProvider {
   readonly reader: CalendarReader;
+  /**
+   * The writing half: `null` for a subscription, which takes no writes, for a provider whose writer is
+   * not built yet, and for every provider of a program that does not write (`writes: false`).
+   */
+  readonly writer: CalendarWriter | null;
   /** The request port the provider is reached through. Its sign-in's trades leave through it too. */
   readonly http: HttpPort;
 }
@@ -63,7 +73,7 @@ function hostedBase(graphBase: string): void {
 }
 
 export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
-  const way = { resolver: deps.resolver, policy: deps.policy };
+  const way = { resolver: deps.resolver, policy: deps.policy, writes: deps.writes };
   const adapter = (http: HttpPort): AdapterDeps => ({ http, clock: deps.clock, zones: deps.zones });
 
   const made = new Map<ProviderWord, CalendarProvider>();
@@ -73,12 +83,14 @@ export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
       case "caldav": {
         // A host a person named: redirects are followed, each through the gate again.
         const http = namedHostRequest(way);
-        made.set(word, { reader: word === "ics" ? icsReader(adapter(http)) : caldavReader(adapter(http)), http });
+        // A subscription takes no writes, ever.
+        const writer = word === "caldav" && deps.writes ? caldavWriter(adapter(http)) : null;
+        made.set(word, { reader: word === "ics" ? icsReader(adapter(http)) : caldavReader(adapter(http)), writer, http });
         break;
       }
       case "google": {
         const http = fixedHostRequest(GOOGLE_HOSTS, way);
-        made.set(word, { reader: googleReader(adapter(http)), http });
+        made.set(word, { reader: googleReader(adapter(http)), writer: deps.writes ? googleWriter(adapter(http)) : null, http });
         break;
       }
       case "microsoft": {
@@ -87,7 +99,9 @@ export function makeCalendarProviders(deps: ProviderDeps): CalendarProviders {
         // A person's own computer may name a base on its own network (a double on this machine); a hosted server may not.
         if (deps.policy.kind === "cloud") hostedBase(graphBase);
         const http = fixedHostRequest(microsoftHosts(graphBase), way);
-        made.set(word, { reader: microsoftReader({ ...adapter(http), graphBase }), http });
+        made.set(word, {
+          reader: microsoftReader({ ...adapter(http), graphBase }), writer: deps.writes ? microsoftWriter({ ...adapter(http), graphBase }) : null, http,
+        });
         break;
       }
       default:

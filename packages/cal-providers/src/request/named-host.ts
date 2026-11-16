@@ -9,10 +9,12 @@ import type { HttpPort } from "./index.js";
 
 export type { AddressPolicy } from "./guarded.js";
 
-/** What the composing program names. Neither has a default: an absent policy must not select the open one, nor an absent resolver the refusing branch alone. */
+/** What the composing program names. None has a default: an absent policy must not select the open one, nor an absent resolver the refusing branch alone, nor an absent word the writing one. */
 export interface RequestDeps {
   readonly resolver: HostResolver;
   readonly policy: AddressPolicy;
+  /** Whether the port may write: the worker's composition only. */
+  readonly writes: boolean;
 }
 
 export function namedHostRequest(deps: RequestDeps): HttpPort {
@@ -21,6 +23,7 @@ export function namedHostRequest(deps: RequestDeps): HttpPort {
     policy: deps.policy,
     request: pinnedHttpRequest,
     hosts: null,
+    writes: deps.writes,
     limits: { connectMs: CONNECT_TIMEOUT_MS, totalMs: ANSWER_TIMEOUT_MS, maxRedirects: MAX_REDIRECTS, maxBodyBytes: FETCH_BODY_MAX_BYTES },
   });
 }
