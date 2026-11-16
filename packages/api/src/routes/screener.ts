@@ -1,6 +1,7 @@
 import {
   ServiceError, dismissHeldRelease, heldReleaseSummary, releaseHeld, HELD_RELEASE_GROUPS_MAX,
   screenUnscreened, unscreenedSummary, organizeDecisionCount, OHBOX_UNSCREENED_GROUPS_MAX, isUnscreenedPile,
+  UNSCREENED_CURSOR_MAX_CHARS,
   autoFiledSummary, undoAutoFiled, AUTO_FILED_PAGE_MAX, whyStayed, WHY_STAYED_IDS_MAX,
   type ScreenBody,
 } from "@trafficflow/services/mail";
@@ -178,6 +179,10 @@ export const screenerRoutes: Route[] = [
      * NO STEP-UP, on either door, for the held-release pair's reason: the answer is a summary of
      * the caller's own Ohbox against their own rules, and the local twin comes for free because
      * `localRoutes` spreads this table whole.
+     *
+     * ONE REQUEST READS FOR A BOUNDED TIME. A large account's answer comes in parts: one that the
+     * read's budget stopped carries `next`, and the same request with `?after=<next>` goes on from
+     * there. The parts add up; a client that never asks again holds a true floor.
      */
     method: "GET",
     pattern: "/screener/unscreened",
@@ -186,13 +191,19 @@ export const screenerRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
+      const query = new URL(req.url).searchParams;
       // `pile` asks News or Receipts instead of the Ohbox, with no window: that pile's note.
-      const pile = new URL(req.url).searchParams.get("pile");
+      const pile = query.get("pile");
       if (pile !== null && !isUnscreenedPile(pile)) {
         throw new ServiceError("validation_failed", 400, "pile must be news or receipts");
       }
-      const { groups, total, complete } = await unscreenedSummary(
-        ctx.db, ctx.accountId, ctx.now(), pile ?? undefined, ctx.loopTurn,
+      // Bounded before it is read: the service refuses anything that is not an earlier answer's `next`.
+      const after = query.get("after");
+      if (after !== null && after.length > UNSCREENED_CURSOR_MAX_CHARS) {
+        throw new ServiceError("validation_failed", 400, "after must be the next of an earlier answer");
+      }
+      const { groups, total, complete, next } = await unscreenedSummary(
+        ctx.db, ctx.accountId, ctx.now(), pile ?? undefined, ctx.loopTurn, after === null ? {} : { after },
       );
       // `total` is the SHOWN groups' messages: every message has one sender, so a list cut at the
       // bound must not report the mail behind the cut as offered. `max` travels so a client learns
@@ -202,6 +213,7 @@ export const screenerRoutes: Route[] = [
       // answer's missing `pile` as "this door has no such note".
       return answer<"GET /screener/unscreened">()({
         groups, total, complete, max: OHBOX_UNSCREENED_GROUPS_MAX, ...(pile === null ? {} : { pile }),
+        ...(next === undefined ? {} : { next }),
       });
     },
   },

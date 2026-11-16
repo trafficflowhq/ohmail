@@ -230,8 +230,8 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("a save refused before the send (validation_failed, from_mailbox_unconfirmed) says not sent and never kept", () => {
-    for (const code of ["validation_failed", "from_mailbox_unconfirmed"] as const) {
+  it("a save refused before the send (validation_failed, from_mailbox_unconfirmed, bcc_unsupported) says not sent and never kept", () => {
+    for (const code of ["validation_failed", "from_mailbox_unconfirmed", "bcc_unsupported"] as const) {
       const send: SendState = { phase: "failed", reason: "the server's own words", code };
       for (const scope of ["reply", "compose"] as const) {
         const en1 = render(send, en, "en", scope);

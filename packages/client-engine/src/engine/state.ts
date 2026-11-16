@@ -354,10 +354,12 @@ export abstract class EngineState {
    * `owed`: a page changed what it counts (a rule's walk ended, a mailbox or the settings changed),
    * so the settle asks again. `ohboxDue`: Ohbox mail came or went, asked at most once per
    * {@link UNSCREENED_REASK_MS} from `askedAt` and kept until a settle makes it. `bell`: the ask in flight.
+   * `reading`: the read in the air, and `queued` the one read every caller that came meanwhile shares.
    */
   protected unscreenedAsk: {
     armed: boolean; owed: boolean; ohboxDue: boolean; askedAt: number | null; bell: Promise<void> | null;
-  } = { armed: false, owed: false, ohboxDue: false, askedAt: null, bell: null };
+    reading: Promise<void> | null; queued: Promise<void> | null;
+  } = { armed: false, owed: false, ohboxDue: false, askedAt: null, bell: null, reading: null, queued: null };
   /** Representatives served on pages past the first, which the mirror never holds (capped). */
   protected readonly screenerPageReps = new Set<string>();
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
