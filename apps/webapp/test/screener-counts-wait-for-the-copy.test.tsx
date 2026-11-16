@@ -22,10 +22,10 @@ import {
   NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
 } from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerState } from "../app/shell/screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * THE SCREENED OUT AND SPAM COUNTS WAIT FOR THE COPY. They count this mirror's rows, and on the
@@ -199,11 +199,12 @@ async function door(o: { behind: boolean }) {
 }
 
 async function mountLive(engine: OhmailEngine, p: { owed: boolean; storeImportOpen: boolean }) {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   function Live(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     return view(state, p);
   }
   return render(provided(h(Live)));
@@ -238,14 +239,15 @@ describe("an account with older screened-out mail and a fresh import, on the rea
 // ── A mailbox removed with its copy kept, on the real engine over the real route ─────────────
 
 async function mountPresented(engine: OhmailEngine, own: string) {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   function Live(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const presented = React.useMemo(
       () => presentationReader(engine.read(), consentPartition(engine.read(), { now: WORLD_NOW, ownAddresses: [own] })), [v],
     );
-    const state = useScreenerState(engine, v, (() => {}) as never, undefined, presented);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), undefined, presented);
     return view(state, { owed: false, storeImportOpen: false });
   }
   return render(provided(h(Live)));

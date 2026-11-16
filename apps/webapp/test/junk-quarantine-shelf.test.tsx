@@ -8,7 +8,7 @@ import {
   type EngineMessage, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import type { JunkWindowControl } from "../app/shell/junk-window.js";
 import type { JunkItemWire } from "../app/api-client.js";
 import messages from "../messages/en.json";
@@ -117,15 +117,16 @@ let host: HTMLDivElement | null = null;
 async function mount(
   engine: OhmailEngine, junk: JunkWindowControl | undefined, opts: { locale?: "en" | "de" } = {},
 ): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     const [sel, setSel] = React.useState<string | null>(null);
     const [full, setFull] = React.useState(false);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state: ScreenerState = useScreenerState(engine, v, (() => {}) as never);
+    const state: ScreenerState = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     return h(ScreenerView, {
       owed: false, state, segment: "spam", settled: true,
       selection: { waiting: null, screened: null, spam: sel } as never,

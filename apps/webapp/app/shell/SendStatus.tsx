@@ -14,9 +14,9 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { formatFileSize } from "@ohmail/ui";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
-import { SENDING_LONG_MS, type SendState, type ShowSend } from "./mail-send";
+import { SENDING_LONG_MS, type SendState, type ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale } from "./locale";
-import { readColumnHidden } from "./narrow";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
 
 /** The reading column the layout hides below its breakpoint (app.css and zero-layout.css). */
 const HIDABLE_COLUMN = ".view.split > .read-col";

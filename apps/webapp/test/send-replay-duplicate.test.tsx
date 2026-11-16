@@ -8,8 +8,9 @@ import {
   type EngineMutation, type MirrorStore,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import type { ComposeFields } from "../app/shell/compose";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import type { ComposeFields } from "@ohmail/app-logic/writing/compose";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 
@@ -232,17 +233,18 @@ interface Surface {
 async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
   const {
     useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox,
-  } = await import("../app/shell/mail-send.js");
-  const { useComposeAutosave } = await import("../app/shell/compose-autosave.js");
+  } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
   const {
     clearComposeDraft, composeSessionId, writeComposeDraft,
-  } = await import("../app/shell/compose.js");
+  } = await import("@ohmail/app-logic/writing/compose");
   /* THE SCRATCH BUFFER, WHICH THE SHELL WRITES ON EVERY KEYSTROKE (`AppShell.onComposeFields`)
      and which this harness did not model at all — measured, and it made the hold impossible to
      see: the identity a restored mount latches on IS that buffer, so a harness without one had a
      composer with no message in it and every hold read as OFF. Written BEFORE the mount, because
      that is the order a reload happens in: `localStorage` is already on disk when React starts. */
-  writeComposeDraft(fieldsFor(body));
+  writeComposeDraft(fieldsFor(body), storageOwner());
   let api!: Surface;
   let setFields!: (f: ComposeFields) => void;
   const Probe = (): null => {
@@ -256,8 +258,9 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
     const settleRef = React.useRef<(rowId: string | null, about: boolean) => void>(() => {});
     const mail = useMailSend(
       engine as never,
+      storageOwner(),
       (() => { /* the sentences are another file's subject */ }) as never,
-      ((key: string, m: { draftId?: string | null }, about: boolean) => {
+      useMailSendText(), ((key: string, m: { draftId?: string | null }, about: boolean) => {
         if (key === "compose") settleRef.current(m.draftId ?? null, about);
       }) as never,
     );
@@ -272,6 +275,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
          only the body left the subject standing, `worthCreating` still said yes, and the pause
          wrote a row for a message with no words in it. */
       onCleared: () => { setF(EMPTY_FIELDS); },
+      scope: storageOwner(),
     });
     settleRef.current = (rowId, about) => {
       autosave.settleCompose({ kind: "sentByMirror", rowId, aboutThisCompose: about });
@@ -282,7 +286,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
           setF((f) => {
             const next = { ...f, body: f.body.replace(from, to) };
             // The shell's own pairing: the form state and the scratch buffer move together.
-            writeComposeDraft(next);
+            writeComposeDraft(next, storageOwner());
             return next;
           });
         });
@@ -302,9 +306,9 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
       phase: () => mail.stateOf("compose").phase,
       newMessage: async (next: string) => {
         await act(async () => {
-          clearComposeDraft();          // takes the scratch draft AND the session with it
+          clearComposeDraft(storageOwner());          // takes the scratch draft AND the session with it
           const f = fieldsFor(next);
-          writeComposeDraft(f);         // which mints a NEW session on the next read
+          writeComposeDraft(f, storageOwner());         // which mints a NEW session on the next read
           setF(f);
         });
       },
@@ -346,12 +350,12 @@ async function killTab(): Promise<void> {
  * neither can be written by pressing Send with this build.
  */
 async function editJar(fn: (rows: Array<Record<string, unknown>>) => void): Promise<void> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  const raw = window.localStorage.getItem(sendLocksKey());
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  const raw = window.localStorage.getItem(sendLocksKey(storageOwner()));
   const rows = JSON.parse(raw ?? "[]") as Array<Record<string, unknown>>;
   expect(rows.length, "the jar is empty, so this case is staging nothing").toBeGreaterThan(0);
   fn(rows);
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify(rows));
+  window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify(rows));
 }
 
 /** Cross the task boundary the press defers over, and let the queue's own timers run. */
@@ -678,13 +682,13 @@ describe("a send whose result the replay discarded", () => {
 
     // ── THE POSITIVE CONTROL: A IS STILL PARKED, BY ITS OWN RECORD ──────────────────────────
     const { parkedComposeRecord, unresolvedSendRows } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     expect(
-      [...unresolvedSendRows("compose")],
+      [...unresolvedSendRows("compose", storageOwner())],
       "A's record stopped naming its row, so the message nobody knows the fate of is unparked",
     ).toEqual([rowA]);
     expect(
-      parkedComposeRecord("compose", rowA, null),
+      parkedComposeRecord("compose", rowA, null, storageOwner()),
       "A no longer parks by its own record — the older message lost the sentence that is true "
       + "about it, which is what arm 1 yields for",
     ).not.toBeNull();
@@ -781,9 +785,9 @@ describe("a send whose result the replay discarded", () => {
     await drain();
     await pause();
 
-    const { allSendLocks } = await import("../app/shell/send-lock.js");
+    const { allSendLocks } = await import("@ohmail/app-logic/writing/send-lock");
     expect(
-      allSendLocks(Date.now(), NONE_OWED).filter((r) => r.lane === "compose"),
+      allSendLocks(Date.now(), NONE_OWED, storageOwner()).filter((r) => r.lane === "compose"),
       "the jar still holds a claim for a send that was refused for good, so every later mount "
       + "reads the composer as held and the next press cannot reuse the key either",
     ).toHaveLength(0);
@@ -1080,7 +1084,7 @@ describe("a send whose result the replay discarded", () => {
     const w = wire();
     const store = new MemoryMirrorStore();
     await store.load();
-    const { composeSessionKey } = await import("../app/shell/compose.js");
+    const { composeSessionKey } = await import("@ohmail/app-logic/writing/compose");
 
     w.loseResponse = true;
     const first = engineOver(store, w);
@@ -1097,7 +1101,7 @@ describe("a send whose result the replay discarded", () => {
     /* THE RE-MINT. `composeSessionId` names the message-in-progress and is minted beside the
        scratch draft, so a door that starts something else writes a new name here — which is
        exactly the state this line puts the jar in. */
-    window.localStorage.setItem(composeSessionKey(), "a-different-compose");
+    window.localStorage.setItem(composeSessionKey(storageOwner()), "a-different-compose");
 
     w.loseResponse = false;
     const second = engineOver(store, w);

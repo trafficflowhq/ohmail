@@ -114,9 +114,10 @@ async function mount(
   presented = false,
   claimsOnly?: readonly string[],
 ): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(mail, extra, claimsOnly);
   toasts = [];
 
@@ -135,7 +136,7 @@ async function mount(
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const raw = engine.read();
-    const state = useScreenerState(engine, v, ((m: string) => { toasts.push(m); }) as never, suggestions as never,
+    const state = useScreenerState(engine, null, v, ((m: string) => { toasts.push(m); }) as never, useScreenerText(), suggestions as never,
       presented ? presentationReader(raw, consentPartition(raw, { now: NOW })) : undefined);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,

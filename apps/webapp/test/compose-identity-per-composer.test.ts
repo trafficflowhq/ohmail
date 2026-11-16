@@ -4,7 +4,7 @@ import {
   COMPOSER_KEY, EMPTY_COMPOSE, clearComposeDraft, composeDraftKey, composeRowKey, composeSessionId,
   composeSessionKey, composeStillHolds, handOffComposer, readComposeDraft, readComposeRow,
   resetComposerForTest, setComposerScope, writeComposeDraft, writeComposeRow,
-} from "../app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 
 /**
  * CROSS-TAB-COMPOSE-IDENTITY-CLEARED-BY-ANOTHER-TAB. The scratch buffer, the compose session and
@@ -29,67 +29,67 @@ beforeEach(() => {
 describe("each tab's composer owns its own message-in-progress", () => {
   it("CONTROL: two tabs build different keys for all three halves", () => {
     tab("tab-a");
-    const a = [composeDraftKey(), composeSessionKey(), composeRowKey()];
+    const a = [composeDraftKey(null), composeSessionKey(null), composeRowKey(null)];
     tab("tab-b");
-    const b = [composeDraftKey(), composeSessionKey(), composeRowKey()];
+    const b = [composeDraftKey(null), composeSessionKey(null), composeRowKey(null)];
     a.forEach((k, i) => expect(k).not.toBe(b[i]));
   });
 
   it("one tab clearing its message leaves the other tab's text, session and row standing", () => {
     tab("tab-a");
-    writeComposeDraft(message("from A"));
-    const sessionA = composeSessionId();
-    writeComposeRow("row-a");
+    writeComposeDraft(message("from A"), null);
+    const sessionA = composeSessionId(null);
+    writeComposeRow("row-a", null);
     tab("tab-b");
-    writeComposeDraft(message("from B"));
-    const sessionB = composeSessionId();
-    writeComposeRow("row-b");
+    writeComposeDraft(message("from B"), null);
+    const sessionB = composeSessionId(null);
+    writeComposeRow("row-b", null);
     expect(sessionB).not.toBe(sessionA);
 
     tab("tab-a");
-    clearComposeDraft();
-    expect(readComposeDraft()).toEqual(EMPTY_COMPOSE);
+    clearComposeDraft(null);
+    expect(readComposeDraft(null)).toEqual(EMPTY_COMPOSE);
 
     tab("tab-b");
-    expect(readComposeDraft().subject).toBe("from B");
-    expect(composeSessionId(), "B's session survived A's clear").toBe(sessionB);
-    expect(readComposeRow(), "B's row survived A's clear").toBe("row-b");
-    expect(composeStillHolds({ draftId: "row-b", session: sessionB })).toBe(true);
-    expect(composeStillHolds({ draftId: null, session: sessionB })).toBe(true);
+    expect(readComposeDraft(null).subject).toBe("from B");
+    expect(composeSessionId(null), "B's session survived A's clear").toBe(sessionB);
+    expect(readComposeRow(null), "B's row survived A's clear").toBe("row-b");
+    expect(composeStillHolds({ draftId: "row-b", session: sessionB }, null)).toBe(true);
+    expect(composeStillHolds({ draftId: null, session: sessionB }, null)).toBe(true);
   });
 
   it("a tab that closes hands its message to the next composer, as one unit", () => {
     tab("tab-a");
-    writeComposeDraft(message("unsent"));
-    const session = composeSessionId();
-    writeComposeRow("row-a");
+    writeComposeDraft(message("unsent"), null);
+    const session = composeSessionId(null);
+    writeComposeRow("row-a", null);
     window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false }));
-    expect(window.localStorage.getItem(composeDraftKey()), "nothing left under the closed tab").toBeNull();
+    expect(window.localStorage.getItem(composeDraftKey(null)), "nothing left under the closed tab").toBeNull();
 
     tab("tab-c");
-    expect(readComposeDraft().subject).toBe("unsent");
-    expect(composeSessionId()).toBe(session);
-    expect(readComposeRow()).toBe("row-a");
+    expect(readComposeDraft(null).subject).toBe("unsent");
+    expect(composeSessionId(null)).toBe(session);
+    expect(readComposeRow(null)).toBe("row-a");
     for (const k of slotKeys) expect(window.localStorage.getItem(k), `${k} still waiting`).toBeNull();
   });
 
   it("a page kept for back/forward keeps its message where it is", () => {
     tab("tab-a");
-    writeComposeDraft(message("kept"));
+    writeComposeDraft(message("kept"), null);
     window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
-    expect(readComposeDraft().subject).toBe("kept");
+    expect(readComposeDraft(null).subject).toBe("kept");
     for (const k of slotKeys) expect(window.localStorage.getItem(k)).toBeNull();
   });
 
   it("a composer already holding a message leaves a handed-off one for the next", () => {
     tab("tab-b");
-    writeComposeDraft(message("B's own"));
+    writeComposeDraft(message("B's own"), null);
     tab("tab-a");
-    writeComposeDraft(message("A's"));
-    composeSessionId();
+    writeComposeDraft(message("A's"), null);
+    composeSessionId(null);
     handOffComposer();
     tab("tab-b");
-    expect(readComposeDraft().subject).toBe("B's own");
+    expect(readComposeDraft(null).subject).toBe("B's own");
     expect(window.localStorage.getItem("ohmail.ui.compose.local"), "A's message still waits").not.toBeNull();
   });
 
@@ -98,10 +98,10 @@ describe("each tab's composer owns its own message-in-progress", () => {
     window.localStorage.setItem("ohmail.compose.session.local", "older-session");
     window.localStorage.setItem("ohmail.compose.row.local", "older-row");
     tab("tab-b");
-    writeComposeRow(null);
-    writeComposeDraft(message("newer"));
+    writeComposeRow(null, null);
+    writeComposeDraft(message("newer"), null);
     // B read nothing yet, so it adopted nothing; its own unit is text and a session, no row.
-    const sessionB = window.localStorage.getItem(composeSessionKey()) ?? composeSessionId();
+    const sessionB = window.localStorage.getItem(composeSessionKey(null)) ?? composeSessionId(null);
     handOffComposer();
     expect(window.localStorage.getItem("ohmail.compose.row.local"), "the older row went with the older text").toBeNull();
     expect(window.localStorage.getItem("ohmail.compose.session.local")).toBe(sessionB);
@@ -109,14 +109,14 @@ describe("each tab's composer owns its own message-in-progress", () => {
 
   it("a window the host names keeps its message across a restart that fired no pagehide", () => {
     setComposerScope("window");
-    writeComposeDraft(message("before the quit"));
-    const session = composeSessionId();
+    writeComposeDraft(message("before the quit"), null);
+    const session = composeSessionId(null);
     // A restart: a fresh page, sessionStorage gone, nothing handed off.
     resetComposerForTest();
     window.sessionStorage.clear();
     setComposerScope("window");
-    expect(readComposeDraft().subject).toBe("before the quit");
-    expect(composeSessionId()).toBe(session);
+    expect(readComposeDraft(null).subject).toBe("before the quit");
+    expect(composeSessionId(null)).toBe(session);
     for (const k of slotKeys) expect(window.localStorage.getItem(k)).toBeNull();
   });
 
@@ -125,8 +125,8 @@ describe("each tab's composer owns its own message-in-progress", () => {
     window.localStorage.setItem("ohmail.compose.session.local", "session-before");
     window.localStorage.setItem("ohmail.compose.row.local", "row-before");
     tab("tab-a");
-    expect(readComposeDraft().subject).toBe("before the upgrade");
-    expect(composeSessionId()).toBe("session-before");
-    expect(readComposeRow()).toBe("row-before");
+    expect(readComposeDraft(null).subject).toBe("before the upgrade");
+    expect(composeSessionId(null)).toBe("session-before");
+    expect(readComposeRow(null)).toBe("row-before");
   });
 });

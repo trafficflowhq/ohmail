@@ -9,7 +9,7 @@ import {
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { createEngine } from "../app/shell/engine-config.js";
-import { impersonationSeenKey } from "../app/shell/impersonation-filed.js";
+import { impersonationSeenKey } from "@ohmail/app-logic/screener/impersonation-filed";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -108,7 +108,7 @@ beforeEach(() => {
   incoming = [];
   reads = 0;
   gate = null;
-  try { localStorage.removeItem(impersonationSeenKey()); } catch { /* none to clear */ }
+  try { localStorage.removeItem(impersonationSeenKey(null)); } catch { /* none to clear */ }
 });
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
@@ -129,14 +129,16 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
 }
 
-async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+/** `scope` is the storage scope the mount hands in. */
+async function mount(engine: OhmailEngine, scope: string | null = null): Promise<void> {
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, scope, v, (() => {}) as never, useScreenerText());
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true,
       selection: { waiting: null, screened: null, spam: null } as never, onSelect: () => {},
@@ -187,7 +189,7 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
     await mount(await engineWith(true));
     await press(button("OK"));
     expect(line()).toBeNull();
-    expect(localStorage.getItem(impersonationSeenKey())).toBe(PHISH.filedAt);
+    expect(localStorage.getItem(impersonationSeenKey(null))).toBe(PHISH.filedAt);
     await act(async () => { root!.unmount(); });
     root = null;
     host?.remove();
@@ -250,5 +252,27 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
     const adapter = (engine as unknown as { adapter: Record<string, unknown> }).adapter;
     expect(typeof adapter.autoFiled).toBe("function");
     expect(typeof adapter.undoAutoFiled).toBe("function");
+  });
+
+  it("OK is kept for the scope it was pressed in, whatever the storage owner says meanwhile", async () => {
+    const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    const A = "mailbox-aaaa1111";
+    const B = "mailbox-bbbb2222";
+    try {
+      setStorageOwner(B);
+      await mount(await engineWith(true), A);
+      await press(button("OK"));
+      expect(localStorage.getItem(impersonationSeenKey(A)), "the mark was not kept for its own mount").toBe(PHISH.filedAt);
+      expect(localStorage.getItem(impersonationSeenKey(B)), "another mailbox's mark was written").toBeNull();
+      await act(async () => { root!.unmount(); });
+      root = null;
+      host?.remove();
+      await mount(await engineWith(true), B);
+      expect(line()?.querySelector(".scn-held-lead")?.textContent, "another mailbox's line was acknowledged")
+        .toBe("1 letter that claimed to be a company went to Spam");
+    } finally {
+      setStorageOwner(null);
+      localStorage.removeItem(impersonationSeenKey(A));
+    }
   });
 });

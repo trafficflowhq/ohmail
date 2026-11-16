@@ -1,7 +1,7 @@
 "use client";
 
 import { LoadFailed, lazyView } from "./lazy-view";
-import { isRichEmpty } from "./rich-text";
+import { isRichEmpty } from "@ohmail/app-logic/writing/rich-text";
 import type { RichEditorProps } from "./RichEditor";
 
 /**

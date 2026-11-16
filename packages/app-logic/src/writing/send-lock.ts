@@ -44,10 +44,10 @@
  * Owner-keyed, wrapped, `"local"`-defaulted: the same three rules as `composeDraftKey`.
  */
 
-import type { MailSend } from "./compose";
+import type { MailSend } from "./compose.js";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
-import { durableRemove, durableSet, type DurableWrite } from "@ohmail/app-logic/storage/durable";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { durableRemove, durableSet, type DurableWrite } from "../storage/durable.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /**
  * The record shape this build writes. `1` and `2` were 0.14.0 and 0.14.1, retired at {@link load};
@@ -145,8 +145,8 @@ export const SEND_LOCK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SEND_LOCKS_PREFIX = "ohmail.send.locks.";
 
 /** One key per ACCOUNT, holding every lane — see the header for why it is owner-keyed. */
-export function sendLocksKey(owner: string | null = storageOwner()): string {
-  return `${SEND_LOCKS_PREFIX}${owner ?? "local"}`;
+export function sendLocksKey(owner: StorageScope): string {
+  return `${SEND_LOCKS_PREFIX}${scopeSuffix(owner)}`;
 }
 
 function isLock(x: unknown): x is SendLock {
@@ -192,7 +192,7 @@ function isLock(x: unknown): x is SendLock {
  * a `JSON.parse` failure keeps `[]`.
  */
 
-function load(owner: string | null = storageOwner()): SendLock[] | null {
+function load(owner: StorageScope): SendLock[] | null {
   let raw: string | null;
   try {
     raw = window.localStorage.getItem(sendLocksKey(owner));
@@ -213,7 +213,7 @@ function load(owner: string | null = storageOwner()): SendLock[] | null {
 }
 
 /** What the jar holds, with an unreadable jar read as empty — for the readers that admit on it. */
-function loadOrEmpty(owner: string | null = storageOwner()): SendLock[] {
+function loadOrEmpty(owner: StorageScope): SendLock[] {
   return load(owner) ?? [];
 }
 
@@ -226,7 +226,7 @@ function loadOrEmpty(owner: string | null = storageOwner()): SendLock[] {
  * shell's once-per-session notice: the press is still admitted — a browser with no jar must
  * not lose the ability to send — but nobody is told a key is held across a reload when it is not.
  */
-function save(rows: SendLock[], owner: string | null = storageOwner()): DurableWrite {
+function save(rows: SendLock[], owner: StorageScope): DurableWrite {
   const key = sendLocksKey(owner);
   return rows.length === 0
     ? durableRemove(key, "send.locks")
@@ -309,7 +309,7 @@ export function resumeSendLock(
   id: SendIdentity,
   nowMs: number,
   owed: SendLockOwed,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): string | null {
   const rows = load(owner);
   // AN UNREADABLE JAR RESUMES NOTHING and mints nothing: the press goes out under a fresh
@@ -404,7 +404,7 @@ export function sendIdentity(m: MailSend, session: string | null = null): SendId
  * goes through {@link resumeSendLock} with a real identity.
  */
 export function readSendLock(
-  lane: string, fp: string, nowMs: number, owed: SendLockOwed, owner: string | null = storageOwner(),
+  lane: string, fp: string, nowMs: number, owed: SendLockOwed, owner: StorageScope,
 ): string | null {
   return resumeSendLock(lane, {
     fp, subjects: [], session: null, draftId: null,
@@ -418,7 +418,7 @@ export function readSendLock(
  * exact window this file exists to close: a process killed between the POST and the write comes
  * back with the mail possibly sent and no record of the key it went under.
  */
-export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: string | null = storageOwner()): void {
+export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: StorageScope): void {
   /**
    * IT EVICTS THE LANE'S ORDINARY CLAIM AND NOTHING ELSE.
    *
@@ -456,7 +456,7 @@ export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: string 
  * has now observed is no longer unknown — and leaves every other record on the lane alone.
  */
 export function releaseSendLock(
-  lane: string, fp: string, owed: SendLockOwed, owner: string | null = storageOwner(), key?: string,
+  lane: string, fp: string, owed: SendLockOwed, owner: StorageScope, key?: string,
 ): boolean {
   // Nothing read, nothing to release — and nothing written, so an unreadable jar cannot lose a
   // record it never handed over. `false`: a record for this message stayed (its key still owed), and
@@ -479,7 +479,7 @@ export function allSendLocks(
   nowMs: number,
   /** Which keys may still produce an ending — see {@link SendLockOwed}. An owed record is kept and returned. */
   owed: SendLockOwed,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): SendLock[] {
   const live = dropSendLocks(() => "aged", owed, nowMs, owner);
   // RETURNED, not stored: a record from a later format stays in the jar and stays out of this
@@ -610,7 +610,7 @@ function lockSubjects(r: SendLock): string[] {
  * Naming the messages lets the uncertain one stay protected while a genuinely different message sends, which is the
  * whole of what a person needs here.
  */
-export function unverifiedSendIntents(lane: string, owner: string | null = storageOwner()): SendIntent[] {
+export function unverifiedSendIntents(lane: string, owner: StorageScope): SendIntent[] {
   // EMPTY on an unreadable jar, and that is the ADMIT arm of invariant S(4) rather than an
   // oversight: this feeds `canSend`, and a browser that will not let this app keep a record must
   // still be able to send. The recovery sites fail closed instead, through {@link holdOf}.
@@ -659,7 +659,7 @@ export function parkedComposeMessage(
   lane: string,
   draftId: string | null,
   session: string | null,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): boolean {
   return parkedComposeRecord(lane, draftId, session, owner) !== null;
 }
@@ -685,7 +685,7 @@ export function parkedComposeRecord(
   lane: string,
   draftId: string | null,
   session: string | null,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): ParkedIdentity | null {
   const rows = loadOrEmpty(owner)
     .filter((r) => r.lane === lane && r.unverified === true && r.v <= SEND_LOCK_FORMAT);
@@ -782,7 +782,7 @@ export interface HoldMirror {
 export function holdOf(
   engine: HoldMirror,
   q: { lane: string; draftId: string | null; session: string | null },
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): Hold {
   // THE JAR FIRST. A browser that will not answer about its own records cannot be read as a
   // browser with none — see {@link load}, which is where the two used to collapse.
@@ -828,7 +828,7 @@ export function holdOf(
  * cannot be read answers `true`: it cannot say no.
  */
 export function sendRecordNames(
-  lane: string, draftId: string, session: string | null, owner: string | null = storageOwner(),
+  lane: string, draftId: string, session: string | null, owner: StorageScope,
 ): boolean {
   const all = load(owner);
   if (all === null) return true;
@@ -844,7 +844,7 @@ export function sendRecordNames(
  * build's format only; a jar that cannot be read names none.
  */
 export function sendRecordsNaming(
-  lane: string, draftId: string | null, session: string | null, owner: string | null = storageOwner(),
+  lane: string, draftId: string | null, session: string | null, owner: StorageScope,
 ): Array<{ key: string; fp: string; bfp?: string; unverified: boolean }> {
   // The jar as stored, not through `load`: a reader that sweeps would write.
   let parsed: unknown;
@@ -875,7 +875,7 @@ export function sendRecordsNaming(
  */
 export function releaseSendLockForRow(
   lane: string, draftId: string, session: string | null, owed: SendLockOwed,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): void {
   // BOTH NAMES, for the reason everything else in this file reads both: the record was written at
   // one moment in the message's life and is settled at another. A press before the first autosave
@@ -921,7 +921,7 @@ export function holdRefusesWrite(hold: Hold): boolean {
  * site decided for itself. Exported on its own because a test can read a set and cannot read a
  * boolean's reasons.
  */
-export function unresolvedSendRows(lane: string, owner: string | null = storageOwner()): Set<string> {
+export function unresolvedSendRows(lane: string, owner: StorageScope): Set<string> {
   const out = new Set<string>();
   for (const r of loadOrEmpty(owner)) {
     if (r.lane !== lane || r.unverified !== true || r.v > SEND_LOCK_FORMAT) continue;
@@ -945,7 +945,7 @@ export function attachSendLockDraft(
   lane: string,
   subjects: ReadonlyArray<string>,
   draftId: string | null,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): void {
   if (subjects.length === 0 || draftId === null) return;
   const rows = loadOrEmpty(owner);
@@ -968,7 +968,7 @@ export function attachSendLockDraft(
  * this build cannot read is one whose meaning it would be guessing at.
  */
 export function recordForSendKey(
-  key: string, nowMs: number, owner: string | null = storageOwner(),
+  key: string, nowMs: number, owner: StorageScope,
 ): SendLock | null {
   const rows = load(owner);
   if (rows === null) return null;
@@ -983,7 +983,7 @@ export function recordForSendKey(
  * sent words in an editable composer, one edit away from a second copy. It prunes nothing, and it
  * reads this build's format only, as {@link recordForSendKey}.
  */
-export function recordForEndedSend(key: string, owner: string | null = storageOwner()): SendLock | null {
+export function recordForEndedSend(key: string, owner: StorageScope): SendLock | null {
   const rows = load(owner);
   if (rows === null) return null;
   return rows.find((r) => r.key === key && r.v <= SEND_LOCK_FORMAT) ?? null;
@@ -996,7 +996,7 @@ export function recordForEndedSend(key: string, owner: string | null = storageOw
  * more than one record, and marking "the first one for this lane" would stamp the ambiguity onto
  * whichever message happened to be listed first.
  */
-export function markSendLockUnverified(lane: string, fp: string, owner: string | null = storageOwner()): void {
+export function markSendLockUnverified(lane: string, fp: string, owner: StorageScope): void {
   const rows = loadOrEmpty(owner);
   const found = rows.find((r) => r.lane === lane && r.fp === fp);
   if (!found || found.unverified === true) return;

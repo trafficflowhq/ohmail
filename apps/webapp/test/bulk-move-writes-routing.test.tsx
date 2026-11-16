@@ -7,7 +7,7 @@ import { type EngineMutation } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * ═══ "MOVE TO <PLACE>" OVER A SELECTION WRITES ROUTING, NOT FOLDER MOVES ════════════════════

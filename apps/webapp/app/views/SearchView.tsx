@@ -30,11 +30,11 @@ import { showSimilar, substringOpen } from "@trafficflow/core/search-rank";
 import { Facets, SearchBox, type FacetGroup } from "@ohmail/ui";
 import { useSessionReask } from "@ohmail/app-logic/session/session-reask";
 import { displayTime, metaLine, PLACE_LABEL, placeLabel, senderName } from "../shell/format";
-import { displayAddress } from "../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { addressHref } from "../shell/address-view";
-import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { useZoneIs, useZoneNav } from "../shell/zone-nav";
-import { useFocusFollows } from "../shell/focus-follows";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { useZoneIs, useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { searchSortKey, usePersistedChoice } from "@ohmail/app-logic/storage/persisted-ui";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -622,7 +622,7 @@ export function SearchView({
    * opening a hit instead of the rail row under the cursor. `!inList` declares them
    * inert exactly where the rail owns the keys; the `?` sheet reads the same statement.
    */
-  useZoneNav({});
+  useZoneNav(useTranslations("shortcuts"), {});
   const inList = useZoneIs("list");
 
   const keys: KeyBinding[] = [

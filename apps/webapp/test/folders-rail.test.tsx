@@ -6,7 +6,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { shellFrameOf } from "./source-anchor.js";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { WithListGone } from "./_list-gone";
 import type { FolderEntity } from "@ohmail/client-engine";
 import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";

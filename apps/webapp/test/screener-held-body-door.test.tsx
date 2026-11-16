@@ -113,14 +113,15 @@ async function mount(
   const { EngineProvider, useDerivedVersion } = await import("../app/shell/engine.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
   const { useMessageAttachments } = await import("../app/shell/attachments.js");
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView, ScreenerWarmup } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   /* `AppShell`'s door, as it resolves a target: the mirror's own row, else a resting snippet. */
   const door = (m: BodyTarget) => bodyOf(engine.read(), engine.read().get<EngineMessage>("message", m.id) ?? m);
   function Probe(): React.ReactElement {
     const version = useDerivedVersion();
-    const state = useScreenerState(engine, version, (() => {}) as never);
+    const state = useScreenerState(engine, null, version, (() => {}) as never, useScreenerText());
     const [seg, setSeg] = React.useState(segment);
     switchTo = setSeg;
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });

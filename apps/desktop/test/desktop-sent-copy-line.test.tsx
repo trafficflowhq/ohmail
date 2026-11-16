@@ -9,7 +9,7 @@ import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import { SendingLine } from "../../webapp/app/shell/SendingLine";
 import { fillFrom } from "../../webapp/app/shell/locale";
-import type { SendLineItem, SentCopyNote } from "../../webapp/app/shell/mail-send";
+import type { SendLineItem, SentCopyNote } from "@ohmail/app-logic/writing/mail-send";
 import { shellMessagesOnly } from "../vite.config.js";
 
 /**

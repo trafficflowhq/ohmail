@@ -59,11 +59,12 @@ const PARENT = {
 const REPLY = { kind: "mail_send", inReplyTo: "m-1", body: "Thanks, Ada.", subject: "Re: Invoice", to: [{ name: null, address: "ada@fake.test" }], mailboxId: "mb" };
 
 async function mount(engine: OhmailEngine, messages: AbstractIntlMessages, locale: string) {
-  const { useMailSend, canSend } = await import("../app/shell/mail-send.js");
+  const { useMailSend, canSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   const { SendStatus } = await import("../app/shell/SendStatus.js");
   let api!: { send: (m: unknown, o: unknown) => void; withdraw: (lane: string) => Promise<string>; state: () => { phase: string; code?: string }; canSend: () => boolean };
   const Probe = (): React.ReactElement => {
-    const mail = useMailSend(engine as never, (() => {}) as never, (() => {}) as never, (() => false) as never);
+    const mail = useMailSend(engine as never, null, (() => {}) as never, useMailSendText(), (() => {}) as never, (() => false) as never);
     api = {
       send: (m, o) => (mail.send as unknown as (m: unknown, o: unknown) => void)(m, o),
       withdraw: (lane) => (mail.withdraw as unknown as (l: string) => Promise<string>)(lane),

@@ -17,8 +17,9 @@ import {
   resolveComposeFrom,
   resolveReplyFrom,
 } from "../app/shell/compose-from";
-import { composeDraftKey } from "../app/shell/compose";
+import { composeDraftKey } from "@ohmail/app-logic/writing/compose";
 import { settleFirstPaint } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * WHICH ADDRESS IS ANSWERING.
@@ -1346,7 +1347,7 @@ describe("ACCEPTANCE: composing to a domain you own switches the From (R10-4)", 
     // The buffer is written on every keystroke and is what a reload restores from. A derived
     // default in `fromMailboxId` would come back as an explicit pick and silence the rule for
     // every later recipient in this draft.
-    const buffered = JSON.parse(window.localStorage.getItem(composeDraftKey()) ?? "{}") as
+    const buffered = JSON.parse(window.localStorage.getItem(composeDraftKey(storageOwner())) ?? "{}") as
       { to?: string; fromMailboxId?: string | null };
     expect(buffered.to, "the draft buffer was never written").toContain("piet@lichtgrat.example");
     expect(

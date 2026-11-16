@@ -73,11 +73,12 @@ async function mount(senders: number): Promise<{ scroller: HTMLElement; ids: () 
       fetchBody: async () => null,
     },
   });
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
-    const state = useScreenerState(engine, 0, (() => {}) as never, new Map() as never, undefined as never);
+    const state = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), new Map() as never, undefined as never);
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true, selection: sel as never,

@@ -33,17 +33,17 @@ import {
 } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
-import { readColumnHidden } from "../shell/narrow";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import { goFirstRun, goSettings } from "../shell/routing";
 import { sharedNotOrganizedWhy, type NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
-import { displayAddress } from "../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import type { UndoLink } from "@ohmail/app-logic/press/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
 import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useKeyBindings } from "../shell/keymap";
-import { useZoneNav } from "../shell/zone-nav";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { BootSkeleton } from "../shell/BootSkeleton";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useMailState } from "../shell/MailStateProvider";
@@ -371,7 +371,7 @@ export function OhboxView({
     pickState, pointer,
   } = model;
   useKeyBindings(model.keys);
-  useZoneNav({ list: model.zone.list, reader: { selector: ".view-ohbox .read-col", ...model.zone.reader } });
+  useZoneNav(useTranslations("shortcuts"), { list: model.zone.list, reader: { selector: ".view-ohbox .read-col", ...model.zone.reader } });
 
   /**
    * A message's circle in the participant-stack's shape — the SAME derivation the row's own

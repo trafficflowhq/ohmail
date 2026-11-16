@@ -202,7 +202,8 @@ describe("the census — every bar-twinned key the sheet lists, pressed in each 
      bound to nothing and then to a binding that raises a strip. A probe that cannot read the
      first as dead would pass every view for nothing. */
   it("the planted control: the probe reads a key bound to nothing as dead, and a live one as live", async () => {
-    const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     function Surface({ live }: { live: boolean }): React.ReactElement {
       const [open, setOpen] = React.useState(false);
       useKeyBindings([{ chord: "m", group: "message", label: "Move to another place", run: () => { if (live) setOpen(true); } }]);
@@ -421,7 +422,8 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
      its own: its Undo raised through the door is live under z, raised beside it is dead. A probe
      that cannot read the second as a miss would pass every press above for nothing. */
   it("the planted control: z reads an offer raised beside the door as dead, and one at the door as live", async () => {
-    const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+    const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     const { createUndoDoor } = await import("@ohmail/app-logic/press/undo-door");
     const { useToast } = await import("@ohmail/ui");
     let commits = 0;
@@ -513,8 +515,8 @@ async function sheetTable(): Promise<SheetRow[]> {
 
 /** Keycaps back to key events, inverted from `chordKeys` itself; a cap it cannot invert refuses. */
 async function strokesOf(caps: string[]): Promise<Array<{ key: string; init: KeyboardEventInit }>> {
-  const { chordKeys } = await import("../app/shell/keymap.js");
-  const { modGlyph } = await import("../app/shell/mod-glyph.js");
+  const { chordKeys } = await import("@ohmail/app-logic/keys/keymap");
+  const { modGlyph } = await import("@ohmail/app-logic/keys/mod-glyph");
   const mod = modGlyph();
   const named = new Map(["Enter", "Escape", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]
     .map((n) => [chordKeys(n, mod)[0]!, n] as const));

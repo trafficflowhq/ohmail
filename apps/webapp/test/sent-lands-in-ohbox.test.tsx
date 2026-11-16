@@ -92,7 +92,7 @@ const drain = async (): Promise<void> => {
  * between "navigates on the confirmation" and "navigates on the press".
  */
 const settled = async (): Promise<void> => {
-  const { SENT_BEAT_MS } = await import("../app/shell/mail-send.js");
+  const { SENT_BEAT_MS } = await import("@ohmail/app-logic/writing/mail-send");
   await act(async () => { await new Promise((r) => { setTimeout(r, SENT_BEAT_MS + 80); }); });
   await drain();
 };

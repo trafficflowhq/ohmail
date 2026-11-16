@@ -4,8 +4,8 @@ import { draftsList, type EmailAddress, type EngineDraft, type EngineMutation } 
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { SENT_COPY_NOTES_PREFIX, SENT_LINE_MS } from "../app/shell/mail-send";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import { SENT_COPY_NOTES_PREFIX, SENT_LINE_MS } from "@ohmail/app-logic/writing/mail-send";
 import { readSendingList, sendingList } from "./_handoff-steps.js";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,

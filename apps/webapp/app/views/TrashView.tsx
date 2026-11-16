@@ -28,14 +28,14 @@ import {
   senderName, tagsOfMessage,
 } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { displayAddressee, displayAddressUnder } from "../shell/idn";
+import { displayAddressee, displayAddressUnder } from "@ohmail/app-logic/text/idn";
 import { BodyText } from "../letter-body";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { ListEmpty, ListReadColumn, ListSentence, useListView } from "../shell/list-view";
-import { useFocusFollows } from "../shell/focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
-import { useKeyBindings } from "../shell/keymap";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 import type { TrashPage } from "@ohmail/app-logic/lists/trash-page";
 import {
@@ -213,7 +213,7 @@ export function TrashView({
      verbs are the filing keys, and none of them may act on a row that is in Trash — the shell
      declares the two this view does have (`⇧⌫` and the disabled delete keys) so the `?` sheet
      documents both, which is the rule a view-local declaration would break. */
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: {
       followId: shown?.id ?? null,
       up: {

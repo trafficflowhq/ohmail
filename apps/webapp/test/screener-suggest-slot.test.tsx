@@ -122,9 +122,10 @@ const cloudControl = {
 };
 
 async function mount(props: Record<string, unknown>): Promise<HTMLElement> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith([
     held("m1", "one@example.test", 9),
     held("m2", "two@example.test", 10),
@@ -134,7 +135,7 @@ async function mount(props: Record<string, unknown>): Promise<HTMLElement> {
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     return h(ScreenerView, {
       owed: false,
       state,

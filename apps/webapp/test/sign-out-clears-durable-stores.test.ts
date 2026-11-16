@@ -5,15 +5,15 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
-import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
+import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
-} from "../app/shell/mail-send";
+} from "@ohmail/app-logic/writing/mail-send";
 import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
-import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { SEND_LOCKS_PREFIX } from "../app/shell/send-lock";
+import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
 import { SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "../app/session-refresh";
 import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
@@ -442,7 +442,7 @@ describe("sign-out clears the durable decision stores", () => {
 
   it("signOut forgets the row a jar-less browser was remembering", async () => {
     const { writeComposeRow, readComposeRow, forgetComposeRows } =
-      await import(`${APP}/shell/compose.ts`);
+      await import("@ohmail/app-logic/writing/compose");
     const jar = Object.getOwnPropertyDescriptor(window, "localStorage");
     const refuse = (): never => { throw new DOMException("denied", "SecurityError"); };
     Object.defineProperty(window, "localStorage", {
@@ -454,8 +454,8 @@ describe("sign-out clears the durable decision stores", () => {
     });
     try {
       forgetComposeRows();
-      writeComposeRow("d-departed");
-      expect(readComposeRow(), "the row is not remembered at all").toBe("d-departed");
+      writeComposeRow("d-departed", null);
+      expect(readComposeRow(null), "the row is not remembered at all").toBe("d-departed");
       const src = readFileSync(`${APP}/sign-out.ts`, "utf8");
       expect(
         src,
@@ -464,7 +464,7 @@ describe("sign-out clears the durable decision stores", () => {
       /* And the call does what the name says, driven through the real function. */
       forgetComposeRows();
       expect(
-        readComposeRow(),
+        readComposeRow(null),
         "the row remembered for a jar-less browser survived the sign-out — an id on the departed "
         + "account, held by the next account's composer",
       ).toBeNull();

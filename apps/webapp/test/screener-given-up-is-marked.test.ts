@@ -18,7 +18,7 @@ import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_MAX_SERVER_FAILURES,
   type EngineMutation, type ScreenerSenderDTO,
 } from "@ohmail/client-engine";
-import { givenUpRowIds } from "../app/shell/screener-given-up";
+import { givenUpRowIds } from "@ohmail/app-logic/screener/screener-given-up";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick, act,
 } from "./fixtures/live-walk-shell";

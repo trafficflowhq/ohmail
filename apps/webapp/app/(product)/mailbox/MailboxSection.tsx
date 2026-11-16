@@ -76,7 +76,7 @@ import {
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { useMailState } from "../../shell/MailStateProvider";
 import { useEngineOrNull } from "../../shell/engine";
-import { displayAddress } from "../../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale } from "../../shell/locale";
 /* WHICH BUILD THIS IS, at compile time — the same constant `AccountSection` and `LoginScreen`
    read for the same kind of question. It decides one word of copy below and nothing else. */

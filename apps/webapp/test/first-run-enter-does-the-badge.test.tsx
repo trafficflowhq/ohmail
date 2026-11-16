@@ -5,8 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import { FocusFollows } from "../app/shell/focus-follows";
+import { KeymapProvider } from "@ohmail/app/keys";
+import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 

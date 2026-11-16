@@ -40,7 +40,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { RichEditor } from "./RichEditorLazy";
-import { isRichEmpty, type RichValue } from "./rich-text";
+import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
 import { holdLeave } from "./routing";
 import { isRemovedMailbox } from "@ohmail/app-logic/mail-state/mail-state";

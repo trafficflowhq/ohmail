@@ -33,7 +33,8 @@ import messages from "../messages/en.json";
 /* ── the component under test ─────────────────────────────────────────────────────────── */
 
 import { ShortcutHint } from "../app/shell/ShortcutHint";
-import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
+import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -215,7 +216,7 @@ const LIST_PANE = bare("packages/ui/src/composites/list-pane.css");
 const STREAM = bare("packages/ui/src/composites/stream.css");
 const HINT = bare("apps/webapp/app/shell/shortcut-hint.css");
 const APP = bare("apps/webapp/app/app.css");
-const TOUCH = bare("apps/webapp/app/shell/touch-keys.css");
+const TOUCH = bare("packages/app/src/keys/touch-keys.css");
 const TOKENS = bare("packages/tokens/src/tokens.css");
 
 /** The declarations of one selector's rule, media blocks included. */

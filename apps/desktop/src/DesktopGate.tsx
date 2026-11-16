@@ -29,7 +29,7 @@ import { EngineProvider } from "../../webapp/app/shell/engine";
 import { DesktopFrame } from "./DesktopFrame.js";
 import { linkSlot } from "./link-in.js";
 import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { setComposerScope } from "../../webapp/app/shell/compose";
+import { setComposerScope } from "@ohmail/app-logic/writing/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { goCompose } from "../../webapp/app/shell/compose-door";

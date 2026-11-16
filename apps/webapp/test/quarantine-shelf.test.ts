@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ScreenerSenderDTO } from "@ohmail/client-engine";
-import type { SpamRow } from "../app/shell/screener-state";
+import type { SpamRow } from "@ohmail/app-logic/screener/screener-state";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
 
 /** The shelf's two rules: a row keeps only its held letters, and the filter reads what is drawn. */

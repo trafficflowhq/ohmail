@@ -83,7 +83,7 @@ const inNew = (r: Row): boolean =>
 /** Render the view over the mirror as it is NOW — one shell re-render. */
 async function draw(): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
     children: h(KeymapProvider as never, { children: h(OhboxView as never, {

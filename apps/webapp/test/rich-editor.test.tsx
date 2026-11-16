@@ -11,7 +11,7 @@ import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
 import { Slice } from "@tiptap/pm/model";
 import { RichEditor } from "../app/shell/RichEditor";
-import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "../app/shell/rich-text";
+import { EMPTY_RICH, escapeAsParagraphs, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 
 /**
  * THE EDITOR, MOUNTED — what it offers, and what it refuses to offer.

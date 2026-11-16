@@ -4,11 +4,11 @@ import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere, type 
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
-} from "./shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 import { FACE_ACCOUNT_KEY, FACE_ACCOUNT_OWNER_KEY } from "./shell/face-mirror";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
-} from "./shell/mail-send";
+} from "@ohmail/app-logic/writing/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, revokeWakeRegistration,
 } from "./shell/notification-settings";
@@ -16,12 +16,12 @@ import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending, readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
-import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
 import { ACCESS_VERDICT_PREFIX, HANDOFF_KEY } from "@ohmail/app-logic/doors/wall-lift";
-import { SEND_LOCKS_PREFIX } from "./shell/send-lock";
+import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
 import {
   SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY, forgetLateAnswerWatch, forgetRenewalName,
   forgetSplashPresentation, purgeSiteCache,

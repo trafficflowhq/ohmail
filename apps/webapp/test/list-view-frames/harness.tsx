@@ -16,7 +16,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { AppShell } from "../_todays-shell.js";
 import { TrashView } from "../../app/views/TrashView";
 import { AddressView } from "../../app/views/AddressView";
-import { KeymapProvider } from "../../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { ListGoneProvider, listGoneFacts } from "../../app/shell/list-view";
 import messages from "../../messages/en.json";
 import "../../app/app.css";

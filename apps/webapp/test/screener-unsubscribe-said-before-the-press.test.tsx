@@ -8,7 +8,7 @@ import {
   type EngineMessage, type EngineMutation, type Folder, type SyncChange, type UnsubscribeHeaderState,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
@@ -139,9 +139,10 @@ async function mount(opts: {
   claimsOnly?: readonly string[];
 }): Promise<{ latest: () => ScreenerState }> {
   setWidth(opts.width);
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(opts.held, opts.claimsOnly);
   const overlay = new Map(Object.entries(opts.suggestions ?? {}).map(([a, dest]) => [
     senderKey(a), { dest, confidence: 0.9, rationale: "because" },
@@ -152,11 +153,11 @@ async function mount(opts: {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const state = useScreenerState(
-      engine, v,
+      engine, null, v,
       ((message: string, o?: { onAction?: () => void; undo?: boolean }) => {
         toasts.push({ message, ...(o?.onAction ? { onAction: o.onAction } : {}), ...(o?.undo ? { undo: true } : {}) });
       }) as never,
-      overlay as never,
+      useScreenerText(), overlay as never,
       (opts.pastTheGate ? presentationReader(engine.read(), consentPartition(engine.read(), { now: NOW })) : undefined) as never,
       opts.autoUnsubscribe,
     );

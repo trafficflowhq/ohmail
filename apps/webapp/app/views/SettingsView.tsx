@@ -49,7 +49,7 @@ import { TextSizeRow } from "../shell/TextSizeRow";
 import { ImageQualityRow } from "../shell/ImageQualityRow";
 import { AfterVerbRow } from "../shell/AfterVerbRow";
 import { PANE_IDS, type PaneId } from "../shell/routing";
-import { readColumnHidden, watchNarrow } from "../shell/narrow";
+import { readColumnHidden, watchNarrow } from "@ohmail/app-logic/layout/narrow";
 import {
   browserNotificationHost,
   readChannels,
@@ -60,7 +60,7 @@ import {
   type PushSyncOutcome,
 } from "../shell/notification-settings";
 import { isDemoOwned, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes } from "./settings-panes";
 import { RulesView, type RuleOutcome } from "./RulesView";
 import type { RulesPosture } from "@ohmail/app-logic/press/rules-posture";
@@ -990,7 +990,7 @@ export function SettingsView({
     }
     items[Math.min(Math.max(at + dir, 0), items.length - 1)]?.focus();
   };
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: {
       up: { disabled: false, run: () => roveNav(-1), label: tz("zoneMenuUp") },
       down: { disabled: false, run: () => roveNav(1), label: tz("zoneMenuDown") },

@@ -17,11 +17,11 @@ import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import type { AttributedMessage } from "@ohmail/app-logic/press/sender-audit";
 import { placeLabel } from "./format";
-import { displayAddress, displayRuleMatch } from "./idn";
+import { displayAddress, displayRuleMatch } from "@ohmail/app-logic/text/idn";
 // The panel is opened from the sheet but can outlive it on screen, so it imports the
 // stylesheet itself rather than relying on `SenderMenu` having been mounted first.
 import "./sender-sheet.css";
-import { useFocusFollows } from "./focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 export interface SenderAuditState {
   /** What the panel is about — an address, or a domain when the scope switch says so. */

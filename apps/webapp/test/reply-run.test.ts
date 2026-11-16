@@ -12,7 +12,8 @@ import {
 import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
-import { replyDraftKey } from "../app/shell/mail-send";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE REPLY RUN MUST NOT DISCHARGE A DEBT IT DID NOT PAY.
@@ -291,7 +292,7 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
     expect(editorOf(editor(el)!).getText(), "the typed reply was discarded by a failed send")
       .toBe(TYPED);
     // …and in the per-message scratch buffer, so a reload does not lose them either.
-    expect(window.localStorage.getItem(replyDraftKey(FIRST_ID))).toBe(TYPED);
+    expect(window.localStorage.getItem(replyDraftKey(FIRST_ID, storageOwner()))).toBe(TYPED);
 
     // The reminder is intact, so the user can discover what they still owe.
     expect(answerLater(el), "a failed send emptied the pile").toEqual(pileBefore);
@@ -331,7 +332,7 @@ describe("a Reply Run step is discharged by a DELIVERED reply, or not at all", (
     );
     expect(answerLater(el), "the answered message is still in the pile").not.toContain(FIRST_TITLE);
     // `settle` owns the scratch buffer too — the draft is spent, not left behind.
-    expect(window.localStorage.getItem(replyDraftKey(FIRST_ID))).toBeNull();
+    expect(window.localStorage.getItem(replyDraftKey(FIRST_ID, storageOwner()))).toBeNull();
   });
 
   /**

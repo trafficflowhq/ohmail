@@ -8,12 +8,12 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { OhmailEngine, type EngineAdapter, type EngineMutation } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import {
   composeDraftKey, clearComposeDraft, readComposeDraft, writeComposeDraft,
   EMPTY_COMPOSE, LEGACY_COMPOSE_DRAFT_KEY, type ComposeFields,
-} from "../app/shell/compose";
-import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
+} from "@ohmail/app-logic/writing/compose";
+import { resetStorageOwnerForTest, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -386,7 +386,7 @@ describe("a written compose is cancelled with a confirm", () => {
     await mountCompose();
     await typeTo("sam@example.com");
     expect(
-      window.localStorage.getItem(composeDraftKey()),
+      window.localStorage.getItem(composeDraftKey(storageOwner())),
       "typing wrote no scratch buffer, so clearing one proves nothing",
     ).toContain("sam@example.com");
 
@@ -395,7 +395,7 @@ describe("a written compose is cancelled with a confirm", () => {
 
     expect(window.location.hash, "the confirm did not leave the view").toBe("#/ohbox");
     expect(
-      window.localStorage.getItem(composeDraftKey()),
+      window.localStorage.getItem(composeDraftKey(storageOwner())),
       "the discarded message is still in the local scratch buffer — the next time this browser "
         + "opens Compose it comes back",
     ).toBeNull();
@@ -515,7 +515,7 @@ function recordingAdapter(): EngineAdapter {
 }
 
 function Harness({ engine, fields }: { engine: OhmailEngine; fields: ComposeFields }) {
-  seen = useComposeAutosave({ engine, fields, mailboxId: "mb-1", active: true });
+  seen = useComposeAutosave({ engine, fields, mailboxId: "mb-1", active: true, scope: storageOwner() });
   return null;
 }
 
@@ -779,7 +779,7 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(body, "there is no `cancelCompose` in the shell").toBeDefined();
     expect(body!, "cancelling does not delete the account row").toContain("autosave.discard()");
     expect(body!, "cancelling leaves the message in the local scratch buffer")
-      .toContain("clearComposeDraft()");
+      .toContain("clearComposeDraft(scope)");
     expect(body!, "cancelling leaves the message in the form").toContain("EMPTY_COMPOSE");
     expect(body!, "cancelling does not leave the compose view").toMatch(/go\("ohbox"\)/);
   });
@@ -817,7 +817,7 @@ describe("the shell is the consumer, not just the harness", () => {
         + "decided nowhere",
     ).toMatch(/settleComposeRef\.current = autosave\.settleCompose;/);
     expect(
-      readSource("app/shell/compose-autosave.ts"),
+      readSource("../../packages/app-logic/src/writing/compose-autosave.ts"),
       "`settleCompose` stopped calling the hook's own `settled`, so release-vs-discard is decided "
         + "nowhere",
     ).toMatch(/settledRef\.current\(fate\.rowId\);/);
@@ -842,7 +842,7 @@ describe("the shell is the consumer, not just the harness", () => {
        save door's ceiling and the sentence it renders are one decision), and pinning the list
        spelling made an unrelated addition red about nothing. `worthSaving` is still required. */
     expect(view, "the compose view no longer imports the autosave predicate")
-      .toMatch(/import \{[^}]*\bworthSaving\b[^}]*\} from "\.\.\/shell\/compose-autosave"/);
+      .toMatch(/import \{[^}]*\bworthSaving\b[^}]*\} from "@ohmail\/app-logic\/writing\/compose-autosave"/);
     expect(
       view,
       "the confirm is gated on something other than `worthSaving` — a second rule about what "
@@ -884,12 +884,12 @@ describe("the compose scratch buffer is scoped to the signed-in account", () => 
     writeComposeDraft({
       ...EMPTY_COMPOSE, to: "counterparty@example.com",
       subject: "the acquisition price", body: "we can go to 4.2",
-    });
-    expect(readComposeDraft().subject, "the writer still reads their own draft")
+    }, storageOwner());
+    expect(readComposeDraft(storageOwner()).subject, "the writer still reads their own draft")
       .toBe("the acquisition price");
 
     asOwner("22222222-2222-4222-8222-222222222222");
-    const next = readComposeDraft();
+    const next = readComposeDraft(storageOwner());
     expect(next.subject, "the second account must not inherit the first's message").toBe("");
     expect(next.to).toBe("");
     expect(next.body).toBe("");
@@ -903,8 +903,8 @@ describe("the compose scratch buffer is scoped to the signed-in account", () => 
       JSON.stringify({ to: "stranger@example.com", subject: "left behind", body: "x" }),
     );
     asOwner("33333333-3333-4333-8333-333333333333");
-    expect(readComposeDraft().subject, "the legacy key is not a source").toBe("");
-    clearComposeDraft();
+    expect(readComposeDraft(storageOwner()).subject, "the legacy key is not a source").toBe("");
+    clearComposeDraft(storageOwner());
     expect(window.localStorage.getItem(LEGACY_COMPOSE_DRAFT_KEY)).toBeNull();
   });
 });

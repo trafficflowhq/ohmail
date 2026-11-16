@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { STORE_ANSWER_TIMEOUT_MS, type OhmailEngine, type TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { HistoryView as HistoryViewRaw } from "../app/views/HistoryView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { WithListGone } from "./_list-gone";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,

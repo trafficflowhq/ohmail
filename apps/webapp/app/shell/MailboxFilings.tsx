@@ -12,7 +12,7 @@ import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
 import { ApiError } from "../api-client";
 import { PILE_KEY_OF_FOLDER } from "./decision-copy";
 import { waterlineStamp } from "./format";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
 import { useMailState, useMailboxFacts } from "./MailStateProvider";

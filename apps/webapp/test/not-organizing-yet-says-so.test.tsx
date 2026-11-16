@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import {
   nothingOrganizesOf, notOrganizingYetOf, readerStandDown, type MailboxFacts, type NotOrganizingYet, type ScreenerRole,
 } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerState } from "../app/shell/screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A MAILBOX NOBODY AGREED TO ORGANIZE IS NOT CALLED SCREENED (self-host 0.25.19): the first run left
@@ -102,7 +102,7 @@ function screenerState(): ScreenerState {
 }
 
 async function mount(node: React.ReactElement): Promise<HTMLElement> {
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

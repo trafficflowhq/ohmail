@@ -19,7 +19,7 @@ import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../app/shell/AwayResponderRow";
-import type { ComposePrefill } from "../app/shell/compose";
+import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import type { ConsentTransport } from "../app/shell/consent-state";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";

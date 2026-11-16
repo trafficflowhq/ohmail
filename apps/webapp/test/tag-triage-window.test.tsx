@@ -7,7 +7,7 @@ import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { TagView } from "../app/views/TagView";
 import { TriageView } from "../app/views/TriageView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { WithListGone } from "./_list-gone";
 import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 

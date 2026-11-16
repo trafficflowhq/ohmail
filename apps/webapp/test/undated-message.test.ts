@@ -133,7 +133,7 @@ describe("the separator is never printed without a value on both sides", () => {
 
   it("a search hit for an undated message says where it is and stops", async () => {
     const { SearchView } = await import("../app/views/SearchView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
 
     const store = new MemoryMirrorStore();
     await store.load();

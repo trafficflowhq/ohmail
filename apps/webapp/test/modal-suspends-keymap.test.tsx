@@ -35,7 +35,8 @@ const act = (React as unknown as {
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as unknown as { React: unknown }).React = React;
 
-const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap");
+const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+const { KeymapProvider } = await import("@ohmail/app/keys");
 const { resetModalGateForTests, useModalGate } = await import("@ohmail/app-logic/session/modal-gate");
 
 /** What the keys did. `park`/`delete` stand for the two acts the defect actually reached. */

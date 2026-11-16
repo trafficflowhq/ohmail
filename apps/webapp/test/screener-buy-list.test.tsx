@@ -109,7 +109,8 @@ interface Observed {
 }
 
 async function mountProbe(engine: OhmailEngine): Promise<Observed> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let seen: Observed | null = null;
 
   function Probe(): React.ReactElement {
@@ -118,7 +119,7 @@ async function mountProbe(engine: OhmailEngine): Promise<Observed> {
     const reader = engine.read();
     const view = consentPartition(reader, { now: NOW });
     const presented = presentationReader(reader, view);
-    const state = useScreenerState(engine, 0, (() => {}) as never, undefined, presented);
+    const state = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), undefined, presented);
     seen = {
       unsuggested: state.unsuggestedSenders,
       waiting: state.waiting.map((x) => ({ address: x.from.address, gatePhysical: x.gatePhysical })),

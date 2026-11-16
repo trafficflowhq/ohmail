@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * THE RECEIPTS "APPLICATION ERROR" — the windowed list must not measure its own leading row and

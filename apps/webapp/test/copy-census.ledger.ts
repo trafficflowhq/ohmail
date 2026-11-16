@@ -136,10 +136,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/shell/todays-feeds.tsx": [
     { text: "rail open", why: "machine text — the class names the frame's rail zone carries, which today's keys (`zone-nav`) find it by; no person reads it" },
   ],
-  "apps/webapp/app/shell/zone-nav.tsx": [
-    { text: "[role=\"dialog\"], [role=\"alertdialog\"], [role=\"menu\"]", why: "a CSS selector — what counts as a layer above the deck" },
-    { text: "{} button:not([disabled])", why: "a CSS selector, composed per zone" },
-  ],
   "apps/webapp/app/shell/ThreadMarks.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
   ],

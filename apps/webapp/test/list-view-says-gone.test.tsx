@@ -8,7 +8,7 @@ import messages from "../messages/en.json";
 import { FolderView } from "../app/views/FolderView";
 import { TrashView } from "../app/views/TrashView";
 import { TriageView } from "../app/views/TriageView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { listGoneFacts } from "../app/shell/list-view";
 import { WithListGone } from "./_list-gone";
 import { GONE, NOW, S, act, click, engineOver, msg, setup, shell, storeWith, teardown, text, tombstone, waitFor } from "./_view-shell";

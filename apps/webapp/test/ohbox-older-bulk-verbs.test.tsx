@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import en from "../messages/en.json";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 import { act, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 import {
   OLDER, installOlderStore, mountSettled, olderRows, pressLoadOlder, store,

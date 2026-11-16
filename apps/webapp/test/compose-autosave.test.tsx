@@ -6,11 +6,14 @@ import { OhmailEngine, type EngineAdapter, type EngineDraft, type EngineMutation
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import {
   useComposeAutosave, worthSaving, reopenWouldOverwrite, draftNoteKey, AUTOSAVE_DELAY_MS,
-} from "../app/shell/compose-autosave";
+} from "@ohmail/app-logic/writing/compose-autosave";
 import {
   EMPTY_COMPOSE, composePlan, composeRowKey, composeSessionKey, type ComposeFields,
-} from "../app/shell/compose";
-import { claimSendLock, sendLocksKey, type SendLock } from "../app/shell/send-lock";
+} from "@ohmail/app-logic/writing/compose";
+import { claimSendLock, sendLocksKey, type SendLock } from "@ohmail/app-logic/writing/send-lock";
+import { useReplyAutosave, type ReplyDraftForm } from "@ohmail/app-logic/writing/reply-autosave";
+import { readReplyMeta, replyMetaKey } from "@ohmail/app-logic/writing/mail-send";
+import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /* The census below reads the shell AS SOURCE and has to find one declaration in it. The rule,
    and what a hook spelling costs, are written out in the helper. */
 import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
@@ -91,18 +94,20 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let seen: ReturnType<typeof useComposeAutosave>;
 
-function Harness({ engine, fields, mailboxId, active, keepRowMailbox }: {
+function Harness({ engine, fields, mailboxId, active, keepRowMailbox, scope = null }: {
   engine: OhmailEngine;
   fields: ComposeFields;
   mailboxId: string | null;
   active: boolean;
   keepRowMailbox?: boolean;
+  /** The storage scope the mount hands in. */
+  scope?: string | null;
 }) {
-  seen = useComposeAutosave({ engine, fields, mailboxId, active, keepRowMailbox });
+  seen = useComposeAutosave({ engine, fields, mailboxId, active, keepRowMailbox, scope });
   return null;
 }
 
-interface Opts { mailboxId?: string | null; active?: boolean; keepRowMailbox?: boolean }
+interface Opts { mailboxId?: string | null; active?: boolean; keepRowMailbox?: boolean; scope?: string | null }
 
 /* `"mailboxId" in opts` and NOT `opts.mailboxId ?? "mb-1"` — `null` is the case under test (no
    mailbox to send from) and `??` treats it as "not supplied", which silently handed the test a
@@ -113,6 +118,7 @@ const propsOf = (engine: OhmailEngine, fields: ComposeFields, opts: Opts) => ({
   mailboxId: "mailboxId" in opts ? (opts.mailboxId ?? null) : "mb-1",
   active: opts.active ?? true,
   keepRowMailbox: opts.keepRowMailbox ?? false,
+  scope: opts.scope ?? null,
 });
 
 async function mount(engine: OhmailEngine, fields: ComposeFields, opts: Opts = {}): Promise<void> {
@@ -148,17 +154,17 @@ const SESSION = "S-1";
  * actually stores (`v` is stamped there, not by the caller); the session is seeded beside it
  * because that is the half that survives a reload whether or not a row does.
  */
-function park(over: Partial<SendLock> = {}): void {
-  window.localStorage.setItem(composeSessionKey(), SESSION);
+function park(over: Partial<SendLock> = {}, scope: string | null = storageOwner()): void {
+  window.localStorage.setItem(composeSessionKey(scope), SESSION);
   claimSendLock({
     v: 1, lane: "compose", key: "idem-1", at: Date.now(),
     draftId: "srv-1", subject: "draft:srv-1", session: SESSION, fp: "fp-1", unverified: true,
     ...over,
-  }, NONE_OWED);
+  }, NONE_OWED, scope);
 }
 
 /** The jar's bytes, for "this reload changed nothing about the record". */
-const jarBytes = (): string | null => window.localStorage.getItem(sendLocksKey());
+const jarBytes = (): string | null => window.localStorage.getItem(sendLocksKey(storageOwner()));
 
 beforeEach(() => {
   sent = [];
@@ -546,7 +552,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     await settle();
     expect(seen.draftId, "the create\u0027s id was not adopted").toBe("srv-1");
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the row was never written down, so a reload cannot know which message this is",
     ).toBe("srv-1");
 
@@ -602,7 +608,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     await mount(engine, typed());
     await settle();
     expect(seen.draftId, "the create\u0027s id was not adopted at all").toBe("srv-1");
-    expect(window.localStorage.getItem(composeRowKey())).toBe("srv-1");
+    expect(window.localStorage.getItem(composeRowKey(storageOwner()))).toBe("srv-1");
 
     await reload(engine, typed());
     expect(
@@ -616,7 +622,7 @@ describe("the row survives the reload that loses this hook's state", () => {
        server's own `unverified` is the ONE witness for a row this browser never recorded — the row
        the send made for itself, whose id nothing here can name. So it is held. */
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the row of a send the server could not confirm was thrown away — the next pause creates "
       + "another for the same message",
     ).toBe("srv-1");
@@ -669,7 +675,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     await reload(engine, typed());
     expect(seen.draftId, "a frozen row was adopted — every PUT would answer 409").toBeNull();
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "a row the server has moved past `draft` was thrown away — the next pause mints another "
         + "for the same message",
     ).toBe("srv-1");
@@ -708,14 +714,14 @@ describe("the row survives the reload that loses this hook's state", () => {
      * or drop the `readComposeRow() !== null && hold.kind === "unknown"` line.
      */
     const engine = new OhmailEngine({ adapter: adapterWith() });
-    window.localStorage.setItem(composeRowKey(), "deleted-on-another-device");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "deleted-on-another-device");
     await mount(engine, typed());
     expect(
       seen.draftId,
       "an id the mirror does not know was adopted — the PUT would resurrect a deleted row",
     ).toBeNull();
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "an unanswered id was thrown away — on a cold reload that is the row being lost",
     ).toBe("deleted-on-another-device");
     await settle();
@@ -779,7 +785,7 @@ describe("the row survives the reload that loses this hook's state", () => {
 
     await reload(engine, typed());
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the row of a message we are still waiting on was thrown away — the next pause mints a "
       + "second one",
     ).toBe("srv-1");
@@ -824,7 +830,7 @@ describe("the row survives the reload that loses this hook's state", () => {
         cursor: "1", hasMore: false, serverTime: "2026-08-07T00:00:00.000Z",
       }) as never,
     }) });
-    window.localStorage.setItem(composeRowKey(), "srv-1");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "srv-1");
     park();
 
     await mount(engine, typed());
@@ -838,7 +844,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     await act(async () => { await engine.start(); });
     expect(seen.draftId, "the parked row was adopted once the mirror answered").toBeNull();
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the row was dropped once the mirror could name it, which is the same second row one "
       + "notification later",
     ).toBe("srv-1");
@@ -877,8 +883,8 @@ describe("the row survives the reload that loses this hook's state", () => {
     ).toHaveLength(0);
 
     // THE DOOR: a different message replaces the form, so the session goes with it.
-    const { clearComposeDraft } = await import("../app/shell/compose");
-    clearComposeDraft();
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(storageOwner());
     await rerender(engine, typed({ subject: "Something else" }));
     await settle();
     const ids = sent.map((m) => (m.kind === "draft_save" ? m.draftId : "not-a-save"));
@@ -909,7 +915,7 @@ describe("the row survives the reload that loses this hook's state", () => {
    *   length of +0 but got 1
    */
   it("the save armed before the press does not land once the press is unresolved", async () => {
-    const { parkedComposeRecord } = await import("../app/shell/send-lock");
+    const { parkedComposeRecord } = await import("@ohmail/app-logic/writing/send-lock");
     const engine = new OhmailEngine({ adapter: adapterWith() });
     await mount(engine, typed());
     /* THE PRESS LANDS INSIDE THE DEBOUNCE. The save effect has already armed its timer. */
@@ -924,7 +930,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     ).toHaveLength(0);
     expect(seen.draftId, "a row was adopted for a message whose send is unresolved").toBeNull();
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "a row was written down for a message the record names by its session alone",
     ).toBeNull();
 
@@ -932,18 +938,18 @@ describe("the row survives the reload that loses this hook's state", () => {
        The press with no row makes the ADAPTER create one, server-side, and that is the row the
        server marks. The client is never told its id, so no record here can name it — the server's
        own mark is what parks it, and the send gate refuses while it is held. */
-    const { canSend, heldRowUnverified } = await import("../app/shell/mail-send");
-    const { holdOf } = await import("../app/shell/send-lock");
+    const { canSend, heldRowUnverified } = await import("@ohmail/app-logic/writing/mail-send");
+    const { holdOf } = await import("@ohmail/app-logic/writing/send-lock");
     const mirrorRows = [{ id: "A", status: "unverified" }, { id: "ordinary", status: "draft" }];
     const mirrorOf = { read: () => ({ get: (_t: string, id: string) => mirrorRows.find((r) => r.id === id) }) };
     const holdFor = (id: string): ReturnType<typeof holdOf> =>
-      holdOf(mirrorOf as never, { lane: "compose", draftId: id, session: SESSION });
+      holdOf(mirrorOf as never, { lane: "compose", draftId: id, session: SESSION }, storageOwner());
     const msg = {
       kind: "mail_send", inReplyTo: null, body: "Kommst du noch?", subject: "Bis Montag",
       to: [{ name: null, address: "lena@atelier.example" }], mailboxId: "mb-1",
     } as never;
     expect(
-      parkedComposeRecord("compose", "A", null),
+      parkedComposeRecord("compose", "A", null, storageOwner()),
       "a record names the row the send made for itself — it cannot, the id never reached here",
     ).toBeNull();
     expect(
@@ -957,7 +963,7 @@ describe("the row survives the reload that loses this hook's state", () => {
          about — correctly, and not what is under test here. */
       canSend(heldRowUnverified({ phase: "idle" }, "ordinary", holdOf(mirrorOf as never, {
         lane: "compose", draftId: "ordinary", session: null,
-      }), null), msg),
+      }, storageOwner()), null), msg),
       "an ordinary draft row is refused — every reopened draft in the account becomes unsendable",
     ).toBe(true);
   });
@@ -997,7 +1003,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     /* THE REOPEN. The parked message is a different row entirely, and its session is restored —
        the two writes the shell's parked branch makes. `release` is deliberately not called. */
     park({ draftId: "d-parked", subject: "draft:d-parked" });
-    window.localStorage.setItem(composeRowKey(), "d-parked");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "d-parked");
     await rerender(engine, typed({ subject: "Bis Montag", body: "Kommst du noch?" }));
     await settle();
 
@@ -1014,7 +1020,7 @@ describe("the row survives the reload that loses this hook's state", () => {
       "a row was deleted across the reopen of a parked message",
     ).toHaveLength(0);
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the held row moved off the parked message",
     ).toBe("d-parked");
   });
@@ -1061,8 +1067,8 @@ describe("the row survives the reload that loses this hook's state", () => {
     await act(async () => { await engine.start(); });
 
     // THE REOPEN, as the parked branch leaves things: A held, nothing adopted, session s2 intact.
-    window.localStorage.setItem(composeSessionKey(), "s2");
-    window.localStorage.setItem(composeRowKey(), "A");
+    window.localStorage.setItem(composeSessionKey(storageOwner()), "s2");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "A");
     await mount(engine, typed({ subject: "Bis Montag", body: "Kommst du noch?" }));
     await settle();
 
@@ -1071,23 +1077,23 @@ describe("the row survives the reload that loses this hook's state", () => {
       "two seconds after opening the row, the composer decided the message was new and wrote for it",
     ).toHaveLength(0);
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the hold on the row the server could not confirm was replaced by a row of this hook's own",
     ).toBe("A");
     expect(seen.draftId, "the unconfirmed row was adopted — a PUT or a Discard would go at it")
       .toBeNull();
     /* …and the send gate therefore still refuses, which is the end of the sequence. */
-    const { canSend, heldRowUnverified } = await import("../app/shell/mail-send");
-    const { holdOf: holdOf2 } = await import("../app/shell/send-lock");
+    const { canSend, heldRowUnverified } = await import("@ohmail/app-logic/writing/mail-send");
+    const { holdOf: holdOf2 } = await import("@ohmail/app-logic/writing/send-lock");
     const rows2 = [{ id: "A", status: "unverified" }];
     const mirror2 = { read: () => ({ get: (_t: string, id: string) => rows2.find((r) => r.id === id) }) };
     expect(
       canSend(
         heldRowUnverified(
-          { phase: "idle" }, window.localStorage.getItem(composeRowKey()),
+          { phase: "idle" }, window.localStorage.getItem(composeRowKey(storageOwner())),
           holdOf2(mirror2 as never, {
-            lane: "compose", draftId: window.localStorage.getItem(composeRowKey()), session: "s2",
-          }), "s2",
+            lane: "compose", draftId: window.localStorage.getItem(composeRowKey(storageOwner())), session: "s2",
+          }, storageOwner()), "s2",
         ),
         {
           kind: "mail_send", inReplyTo: null, body: "Kommst du noch?", subject: "Bis Montag",
@@ -1135,7 +1141,7 @@ describe("the row survives the reload that loses this hook's state", () => {
     await act(async () => { await engine.start(); });
 
     // THE DOOR'S COMPOSE: a new message under its own session, one keystroke in, save armed.
-    window.localStorage.setItem(composeSessionKey(), "s2");
+    window.localStorage.setItem(composeSessionKey(storageOwner()), "s2");
     await mount(engine, typed({ subject: "Etwas anderes", body: "Kurz:" }));
     await act(async () => { vi.advanceTimersByTime(AUTOSAVE_DELAY_MS - 100); });
     expect(sent, "the armed save fired early, so nothing is armed when the reopen happens")
@@ -1143,7 +1149,7 @@ describe("the row survives the reload that loses this hook's state", () => {
 
     /* THE REOPEN, mid-flight: the held row becomes the unconfirmed one. The session is NOT
        restored — no record names this row, which is exactly the case under test. */
-    window.localStorage.setItem(composeRowKey(), "A");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "A");
     await settle();
 
     expect(
@@ -1151,7 +1157,7 @@ describe("the row survives the reload that loses this hook's state", () => {
       "the save armed for the previous message fired against the held row and made a row of its own",
     ).toHaveLength(0);
     expect(
-      window.localStorage.getItem(composeRowKey()),
+      window.localStorage.getItem(composeRowKey(storageOwner())),
       "the hold on the unconfirmed row was replaced by the armed save's own row",
     ).toBe("A");
     expect(seen.draftId, "the unconfirmed row was adopted by the armed save").toBeNull();
@@ -1176,8 +1182,8 @@ describe("the row survives the reload that loses this hook's state", () => {
       }) as never,
     }) });
     await act(async () => { await engine.start(); });
-    window.localStorage.setItem(composeSessionKey(), "s2");
-    window.localStorage.setItem(composeRowKey(), "ordinary");
+    window.localStorage.setItem(composeSessionKey(storageOwner()), "s2");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "ordinary");
     await mount(engine, typed());
     await settle();
 
@@ -1217,7 +1223,7 @@ describe("the row survives the reload that loses this hook's state", () => {
         cursor: "1", hasMore: false, serverTime: "2026-08-07T00:00:00.000Z",
       }) as never,
     }) });
-    window.localStorage.setItem(composeRowKey(), "srv-cold");
+    window.localStorage.setItem(composeRowKey(storageOwner()), "srv-cold");
     await mount(engine, typed());
     expect(seen.draftId, "a row the mirror had not loaded yet was adopted on faith").toBeNull();
 
@@ -1292,7 +1298,7 @@ describe("the shell is the consumer, not just the harness", () => {
 
     const doors = lines
       .map((line, i) => ({ line, i }))
-      .filter(({ line }) => line.includes("writeComposeDraft(seeded)"));
+      .filter(({ line }) => line.includes("writeComposeDraft(seeded, scope)"));
     // The reopen, and `replaceComposer` (Compose, Write-to and a mail link share it).
     expect(
       doors.length,
@@ -1313,7 +1319,7 @@ describe("the shell is the consumer, not just the harness", () => {
      * exactly ONE door, its condition must be the `parked` question, and that question must be
      * asked from `holdOf` above it. Every other door stays unconditional.
      */
-    const GUARDED = "if (!parked || waiting) clearComposeDraft();";
+    const GUARDED = "if (!parked || waiting) clearComposeDraft(scope);";
     let guarded = 0;
     for (const { i } of doors) {
       // Upwards past blank lines and comment lines to the previous STATEMENT.
@@ -1355,7 +1361,7 @@ describe("the shell is the consumer, not just the harness", () => {
         prev,
         `the door at shell-compose.ts:${i + 1} seeds a new message without re-minting the compose `
         + "session, so an unresolved send parks whatever replaced it",
-      ).toBe("clearComposeDraft();");
+      ).toBe("clearComposeDraft(scope);");
     }
     expect(
       guarded,
@@ -1405,11 +1411,13 @@ describe("the shell is the consumer, not just the harness", () => {
     const { readFileSync } = await import("node:fs");
     const read = (f: string): string =>
       readFileSync(`${process.cwd()}/apps/webapp/app/shell/${f}`, "utf8");
+    const readWriting = (f: string): string =>
+      readFileSync(`${process.cwd()}/packages/app-logic/src/writing/${f}`, "utf8");
     const shell = read("shell-compose.ts");
-    const autosave = read("compose-autosave.ts");
-    const send = read("mail-send.ts");
-    const lock = read("send-lock.ts");
-    const creates = read("draft-creates.ts");
+    const autosave = readWriting("compose-autosave.ts");
+    const send = readWriting("mail-send.ts");
+    const lock = readWriting("send-lock.ts");
+    const creates = readWriting("draft-creates.ts");
 
     /* ── THE PREDICATE ITSELF, IN ONE PLACE, WITH BOTH WITNESSES ─────────────────────────────
        The record speaks for a row the server still calls `draft`; the server's mark speaks for the
@@ -1463,10 +1471,10 @@ describe("the shell is the consumer, not just the harness", () => {
        the reload duplicate) and it answers the CLOSE, which is why it returns a flush outcome
        rather than nothing. Both are pinned so neither can be rewritten into the other. */
     const scheduleAsk = [...autosave.matchAll(
-      /if \(holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(\), session: composeSessionId\(\),\n\s*\}\)\.kind === "parked"\) return;/g,
+      /if \(holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(owner\.current\), session: composeSessionId\(owner\.current\),\n\s*\}, owner\.current\)\.kind === "parked"\) return;/g,
     )].map((m) => m.index ?? -1);
     const writeAsk = [...autosave.matchAll(
-      /const hold = holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(\), session: composeSessionId\(\),\n\s*\}\);\n\s*if \(hold\.kind === "parked"\) return \{ kind: "nothing" \};/g,
+      /const hold = holdOf\(engine, \{\n\s*lane: COMPOSE_SEND_KEY, draftId: readComposeRow\(owner\.current\), session: composeSessionId\(owner\.current\),\n\s*\}, owner\.current\);\n\s*if \(hold\.kind === "parked"\) return \{ kind: "nothing" \};/g,
     )].map((m) => m.index ?? -1);
     expect(
       scheduleAsk.length + writeAsk.length,
@@ -1488,7 +1496,7 @@ describe("the shell is the consumer, not just the harness", () => {
     //    each door: `cancelCompose` calls it, `settled`'s phantom branch calls it, and a door
     //    added later would call it too. A held row is released, never deleted.
     expect(autosave, "Discard deletes a row without asking whether the message is held")
-      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,220}\}\);\n\s*if \(hold\.kind !== "free"\) \{/);
+      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,220}\}, owner\.current\);\n\s*if \(hold\.kind !== "free"\) \{/);
     expect(autosave, "the adoption stopped refusing a held row")
       .toMatch(/if \(hold\.kind !== "free"\) return false;/);
 
@@ -1531,7 +1539,7 @@ describe("the shell is the consumer, not just the harness", () => {
     //    whether THAT LANE's send is already on its way, and it is asked with the same three
     //    witnesses (queue, durable outbox, jar record) before the lane is touched at all.
     expect(shell, "the promotion writes a row for a lane whose send may already have gone")
-      .toMatch(/sendPendingInOutbox\(engine, lane\)\s*\|\| sendPendingInDurableOutbox\(engine, lane\)\s*\|\| holdOf\(engine, \{ lane, draftId: null, session: null \}\)\.kind !== "free"\s*\) continue;/);
+      .toMatch(/sendPendingInOutbox\(engine, lane\)\s*\|\| sendPendingInDurableOutbox\(engine, lane\)\s*\|\| holdOf\(engine, \{ lane, draftId: null, session: null \}, scope\)\.kind !== "free"\s*\) continue;/);
     //    …and the lane is cleared only once the row is CONFIRMED — the server's id for a create,
     //    the row it wrote for an update — so a refusal leaves the words where they were.
     expect(send, "the promoted lane is cleared before its row exists")
@@ -1540,7 +1548,7 @@ describe("the shell is the consumer, not just the harness", () => {
     /* ── AND THE THREE SITES THAT DECIDE WHAT THE MESSAGE IS ─────────────────────────────────
        Not writes, but they choose the row every later write goes to. All ask the predicate. */
     expect(shell, "the reopen decides without the predicate")
-      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,200}\}\);\n\s*const parked = hold\.kind !== "free";/);
+      .toMatch(/const hold = holdOf\(engine, \{[\s\S]{0,200}\}, scope\);\n\s*const parked = hold\.kind !== "free";/);
     expect(send, "the send gate reads a row's status for itself instead of consuming the answer")
       .toMatch(/if \(hold\.kind !== "parked"\) return state;/);
     expect(send, "the press does not ask the predicate, so a caller that is not the button gets past "
@@ -2051,5 +2059,101 @@ describe("a save that lands after its message was sent", () => {
       unsaved: engine.abandoned().length,
       puts: sent.filter((m) => m.kind === "draft_save" && m.draftId !== null).length,
     }).toEqual({ draftId: null, unsaved: 0, puts: 1 });
+  });
+});
+
+/**
+ * ═══ A SAVE STAYS UNDER THE SCOPE OF THE MOUNT THAT MADE IT ══════════════════════════════
+ *
+ * The desktop and the paired page change the storage owner as they switch mailboxes, before the
+ * old composer has gone. A composer that read the storage owner at each touch wrote a late first save's
+ * row into the next mailbox's key, whose own first save was then refused until a reload, and its
+ * closing save asked the next mailbox whether the message was parked.
+ */
+describe("a composer's saves stay under the scope of its mount", () => {
+  const A = "mailbox-aaaa1111";
+  const B = "mailbox-bbbb2222";
+  afterEach(() => { setStorageOwner(null); });
+
+  /** An engine whose saves wait for `answer`, as a slow round trip does. */
+  function slowEngine(): { engine: OhmailEngine; answer: () => void } {
+    let answer!: () => void;
+    const gate = new Promise<void>((r) => { answer = r; });
+    const inner = adapterWith();
+    const engine = new OhmailEngine({ adapter: adapterWith({ mutate: async (m, o) => { await gate; return inner.mutate(m, o); } }) });
+    return { engine, answer };
+  }
+  const drain = async (): Promise<void> => {
+    await act(async () => { for (let i = 0; i < 40; i += 1) await Promise.resolve(); });
+  };
+
+  it("a first save that lands after its composer closed names its row under its own scope, and the next mailbox's first save goes out", async () => {
+    setStorageOwner(A);
+    const { engine, answer } = slowEngine();
+    await mount(engine, typed(), { scope: A });
+    await settle();
+    await act(async () => root!.unmount());
+    root = null;
+    setStorageOwner(B);
+    await act(async () => { answer(); });
+    await drain();
+    expect(sent.filter((m) => m.kind === "draft_save"), "the first save did not go").toHaveLength(1);
+    expect(window.localStorage.getItem(composeRowKey(A)), "the row was not written down for its own mailbox").toBe("srv-1");
+    expect(window.localStorage.getItem(composeRowKey(B)), "the next mailbox was handed the row").toBeNull();
+
+    sent = [];
+    await mount(new OhmailEngine({ adapter: adapterWith() }), typed({ body: "B's own words" }), { scope: B });
+    await settle();
+    expect(
+      sent.filter((m) => m.kind === "draft_save" && m.draftId === null),
+      "the next mailbox's first save was refused",
+    ).toHaveLength(1);
+  });
+
+  it("the closing save asks its own scope's records: parked there, nothing is sent", async () => {
+    setStorageOwner(B);
+    park({ draftId: null, subject: `compose:${SESSION}` }, A);
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, typed(), { scope: A });
+    await rerender(engine, typed(), { scope: A, active: false });
+    await drain();
+    expect(sent.filter((m) => m.kind === "draft_save"), "a parked message was saved over").toHaveLength(0);
+  });
+
+  it("…and parked only under another scope, it is saved", async () => {
+    setStorageOwner(B);
+    park({ draftId: null, subject: `compose:${SESSION}` }, B);
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, typed(), { scope: A });
+    await rerender(engine, typed(), { scope: A, active: false });
+    await drain();
+    expect(sent.filter((m) => m.kind === "draft_save"), "another mailbox's park held this message").toHaveLength(1);
+  });
+
+  it("a reply's first save landing late keeps its create's record in its own lane's meta", async () => {
+    setStorageOwner(A);
+    const { engine, answer } = slowEngine();
+    const form: ReplyDraftForm = {
+      lane: "m-1", threadId: null, mailboxId: "mb-1", subject: "Re: Friday", subjectEdited: false,
+      body: "Yes, Friday.", html: "", to: [{ name: null, address: "sam@example.com" }], cc: [], bcc: [],
+    };
+    const doors = {
+      rowOf: () => null, refuses: () => false, took: () => {}, baseOf: () => null, changed: () => {}, forked: () => {},
+    };
+    function Reply(): null {
+      useReplyAutosave(engine, form, doors, A);
+      return null;
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(h(Reply)));
+    await settle();
+    expect(readReplyMeta("m-1", A).creates, "the create in the air was not recorded for its lane").toHaveLength(1);
+    setStorageOwner(B);
+    await act(async () => { answer(); });
+    await drain();
+    expect(readReplyMeta("m-1", A).creates ?? [], "the answered create stayed recorded as waiting").toEqual([]);
+    expect(window.localStorage.getItem(replyMetaKey("m-1", B)), "another mailbox's reply meta was written").toBeNull();
   });
 });

@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   COPY_CENSUS_ROOTS,
+  filesHandedAReader,
+  HANDED_READERS,
+  handedReaderNamespaces,
   isProse,
   scanCopy,
   scanKeyReads,
@@ -136,6 +139,35 @@ describe("every key the code reads is in BOTH catalogues", () => {
 
   it("finds the reads at all", () => {
     expect(reads.length).toBeGreaterThan(500);
+  });
+
+  /**
+   * A HOOK HANDED ITS READER binds no `useTranslations`, so without its row in `HANDED_READERS`
+   * every key it reads is outside this census and the case below stays green over a key no
+   * catalogue has. Three cases keep the table honest: each row's file still resolves reads, each
+   * row says what its glue binds, and a file that takes a `Translator`, binds none and reads a key
+   * through one has a row.
+   */
+  it("reads every file that is handed its reader", () => {
+    const empty = Object.keys(HANDED_READERS).filter((file) => !reads.some((r) => r.file === file));
+    expect(empty, "these files are handed a reader and the scan resolved no key in them").toEqual([]);
+  });
+
+  it("each handed reader's namespace is the one its caller binds", () => {
+    const drift: string[] = [];
+    for (const [file, row] of Object.entries(HANDED_READERS)) {
+      const table = [...new Set(Object.values(row.readers))].sort();
+      const glued = [...handedReaderNamespaces(REPO, KEY_ROOTS, row.glue)].map(String).sort();
+      if (JSON.stringify(table) !== JSON.stringify(glued)) {
+        drift.push(`${file}: the table says ${JSON.stringify(table)}, ${JSON.stringify(row.glue)} binds ${JSON.stringify(glued)}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("every file that takes a Translator, binds none and reads a key has its readers in the table", () => {
+    const unlisted = filesHandedAReader(REPO, KEY_ROOTS).filter((file) => !(file in HANDED_READERS));
+    expect(unlisted, "add a row to HANDED_READERS in copy-census.scan.ts").toEqual([]);
   });
 
   /**

@@ -453,7 +453,7 @@ interface FirstRunHarness {
 
 async function firstRun(mailbox: OnboardingMailbox): Promise<FirstRunHarness> {
   const { FirstRun } = await import("../app/shell/FirstRun.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);

@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
@@ -220,7 +221,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
       const { apiOwnerVerdict, bindApiOwner } = await import("../app/api-client.js");
       const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
       const { storageOwnerState, resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
-      const { sendLocksKey } = await import("../app/shell/send-lock.js");
+      const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
       const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
 
       resetStorageOwnerForTest();
@@ -237,7 +238,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
       // has no account", which is how a signed-in window's send records went missing.
       expect(state.marker).toBe(row.shape);
       // The KEY BYTES do not move — records already written under either suffix stay findable.
-      expect(sendLocksKey()).toBe(row.lockKey);
+      expect(sendLocksKey(storageOwner())).toBe(row.lockKey);
     });
   }
 

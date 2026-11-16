@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { takeoverState } from "@ohmail/app-logic/reading/reader-holder";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";

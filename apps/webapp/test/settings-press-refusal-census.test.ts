@@ -95,7 +95,7 @@ const PANES: Pane[] = [
   { file: "app/shell/AutoSuggestRow.tsx", doors: /\bsetAutoSuggest\(/g },
   { file: "app/shell/AutoUnsubscribeRow.tsx", doors: /\bsetBlockAutoUnsubscribe\(/g },
   // The Screener's decision, at the gate and past it: each refusal names its reason.
-  { file: "app/shell/screener-state.ts", doors: /kind: "screener_decide"|\bdispatchScreeningChange\(/g },
+  { file: "../../packages/app-logic/src/screener/screener-state.ts", doors: /kind: "screener_decide"|\bdispatchScreeningChange\(/g },
 ];
 
 /** Every door call in a source, with its verdict. Doors are matched in comment-free code. */

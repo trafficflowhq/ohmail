@@ -9,13 +9,14 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { usePinnedScope, type StorageScope } from "../storage/scope.js";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, EngineDraft, OhmailEngine } from "@ohmail/client-engine";
-import { AUTOSAVE_DELAY_MS } from "./compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "./compose-autosave.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, twins, type CreateClaim,
-} from "./draft-creates";
-import { readReplyMeta, writeReplyMeta } from "./mail-send";
+} from "./draft-creates.js";
+import { readReplyMeta, writeReplyMeta } from "./mail-send.js";
 
 /** What the open reply editor would store — `null` while no reply editor is open. */
 export interface ReplyDraftForm {
@@ -129,7 +130,10 @@ export function replyWorthCreating(f: ReplyDraftForm): boolean {
 
 export function useReplyAutosave(
   engine: OhmailEngine, form: ReplyDraftForm | null, doors: ReplyRowDoors,
+  /** Whose reply keys these are: the mount's storage scope, kept for the life of the mount. */
+  scope: StorageScope,
 ): ReplyAutosave {
+  const owner = useRef(usePinnedScope(scope));
   const formRef = useRef(form);
   formRef.current = form;
   const doorsRef = useRef(doors);
@@ -179,9 +183,9 @@ export function useReplyAutosave(
   /** The lane's claims under its binding, beside its meta: a reload claims them again. */
   const storeClaims = useCallback((l: string) => {
     const keys = [...(claims.current.get(l) ?? [])].filter(([, c]) => c.binding === (bound.current.get(l) ?? 0)).map(([k]) => k);
-    const meta = readReplyMeta(l);
+    const meta = readReplyMeta(l, owner.current);
     if (keys.length === 0 && meta.creates === undefined) return;
-    writeReplyMeta(l, { ...meta, creates: keys.slice(-STORED_CREATES) });
+    writeReplyMeta(l, { ...meta, creates: keys.slice(-STORED_CREATES) }, owner.current);
   }, []);
   const claim = useCallback((l: string, key: string, c: CreateClaim) => {
     const keys = claims.current.get(l) ?? new Map<string, CreateClaim>();
@@ -264,7 +268,7 @@ export function useReplyAutosave(
       }
       // Its message ended while it was in the air (a Discard): the row it made is a copy.
       if (key !== undefined && result.status === "confirmed" && result.entityId && ended.current.get(lane)?.has(on)) {
-        dropCopy(engine, lane, result.entityId, sentRows.current.get(lane) ?? null);
+        dropCopy(engine, lane, result.entityId, sentRows.current.get(lane) ?? null, owner.current);
         return false;
       }
       // A Send pressed while a create was in the air sent without it: the row made here is a copy,
@@ -459,7 +463,7 @@ export function useReplyAutosave(
     resolveRef.current();
   }, [claim]);
   const restore = useCallback((l: string) => {
-    const keys = readReplyMeta(l).creates ?? [];
+    const keys = readReplyMeta(l, owner.current).creates ?? [];
     if (keys.length === 0) return;
     const set = stored.current.get(l) ?? new Set<string>();
     for (const key of keys) if (!claims.current.get(l)?.has(key)) set.add(key);
@@ -527,14 +531,14 @@ export function useReplyAutosave(
         // A copy holding the very words of the row beside it goes at once, shown or not.
         if (at === "carry" && row !== null && twins(accountSigOf(engine, made.id), accountSigOf(engine, row))) {
           unclaim(lane, key);
-          dropCopy(engine, lane, made.id, sentRows.current.get(lane) ?? null);
+          dropCopy(engine, lane, made.id, sentRows.current.get(lane) ?? null, owner.current);
           continue;
         }
         // Beside a row, the copy waits for the lane's words: shown, or last shown in this page.
         if (at === "carry" && formRef.current?.lane !== lane && !lastOf.current.has(lane)) continue;
         unclaim(lane, key);
         if (at === "keep") continue;
-        if (at === "drop") { dropCopy(engine, lane, made.id, sentRows.current.get(lane) ?? null); continue; }
+        if (at === "drop") { dropCopy(engine, lane, made.id, sentRows.current.get(lane) ?? null, owner.current); continue; }
         if (at === "take") {
           doorsRef.current.took(
             lane, made.id, engine.read().get<EngineDraft>("draft", made.id)?.body ?? "", true, true, made.revision ?? undefined,
@@ -552,7 +556,7 @@ export function useReplyAutosave(
   };
   /** The row the lane last stored, still a draft in the mirror: a reload's empty `rowOf` is not "no row". */
   const storedRow = (lane: string): string | null => {
-    const id = readReplyMeta(lane).row?.id;
+    const id = readReplyMeta(lane, owner.current).row?.id;
     return id !== undefined && engine.read().get<EngineDraft>("draft", id)?.status === "draft" ? id : null;
   };
   /** The lane's row takes its newest words, shown or last shown; the copy goes once a later write reached it. */
@@ -565,7 +569,7 @@ export function useReplyAutosave(
     // Or the server's copy of the row holds every word the copy does (a reload's claim knows no words).
     const same = row !== null && row !== copy && twins(accountSigOf(engine, copy), accountSigOf(engine, row));
     if (same || copyGoes(c, reached.current.get(lane) ?? null, confirmedSig.current.get(lane) ?? null)) {
-      dropCopy(engine, lane, copy, sentRows.current.get(lane) ?? null);
+      dropCopy(engine, lane, copy, sentRows.current.get(lane) ?? null, owner.current);
     }
   };
   /* A lane shown again decides what waited for its words. */

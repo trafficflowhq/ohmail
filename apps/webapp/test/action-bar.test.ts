@@ -168,7 +168,8 @@ type MountOpts = { disabled?: readonly string[]; foldersEnabled?: boolean; mirro
 async function barModules() {
   const { MessagePane } = await import("../app/shell/MessagePane.js");
   const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+  const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   return { MessagePane, MessageChromeProvider, KeymapProvider, useKeyBindings };
 }
 

@@ -628,8 +628,8 @@ describe("the Screener: the newest letter clears the decision bar, the first row
         contents: `import { createElement as h, useEffect, useState } from "react"; import { createRoot } from "react-dom/client";
           import { NextIntlClientProvider } from "next-intl"; import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
           import { ThemeProvider } from "@ohmail/ui"; import messages from "./messages/en.json";
-          import { useScreenerState } from "./app/shell/screener-state"; import { ScreenerView } from "./app/views/ScreenerView";
-          import { KeymapProvider } from "./app/shell/keymap"; import { withBodyDoor } from "./test/_body-door";
+          import { useScreenerState } from "@ohmail/app-logic/screener/screener-state"; import { useScreenerText } from "./app/shell/screener-text"; import { ScreenerView } from "./app/views/ScreenerView";
+          import { KeymapProvider } from "@ohmail/app/keys"; import { withBodyDoor } from "./test/_body-door";
           const NOW = new Date("2026-08-10T12:00:00.000Z");
           const msg = (s, i) => ({ id: "m" + s + "-" + i, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
             subject: "Offer " + s + "/" + i + ": quarry invoice glacier review", from: { name: "Vane Offers " + s, address: "offers" + s + "@vane.invalid" },
@@ -649,7 +649,7 @@ describe("the Screener: the newest letter clears the decision bar, the first row
             function Probe() {
               const [v, setV] = useState(0);
               useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-              const state = useScreenerState(engine, v, () => {});
+              const state = useScreenerState(engine, null, v, () => {}, useScreenerText());
               const [sel, setSel] = useState({ waiting: null, screened: null, spam: null });
               return h(ScreenerView, { owed: false, state, segment: "screened", settled: true,
                 selection: { ...sel, screened: sel.screened ?? state.screenedOut[0]?.id ?? null },

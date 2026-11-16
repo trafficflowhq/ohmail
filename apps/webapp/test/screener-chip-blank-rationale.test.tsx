@@ -92,9 +92,10 @@ async function flush(): Promise<void> {
 
 /** One waiting sender, whose open row renders the why-block under test. */
 async function mount(rationale: string): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith([held("m0", "synced@example.test", 9)]);
   const suggestions = new Map<string, unknown>([
     [senderKey("synced@example.test"), { dest: "ohbox", confidence: 0.9, rationale }],
@@ -103,7 +104,7 @@ async function mount(rationale: string): Promise<void> {
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions as never);
     return h(ScreenerView, {
       state,
       segment: "waiting", settled: true,

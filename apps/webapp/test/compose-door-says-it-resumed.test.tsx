@@ -5,10 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { composeRowKey } from "../app/shell/compose";
-import { sendLocksKey, SEND_LOCK_FORMAT } from "../app/shell/send-lock";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { composeRowKey } from "@ohmail/app-logic/writing/compose";
+import { sendLocksKey, SEND_LOCK_FORMAT } from "@ohmail/app-logic/writing/send-lock";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THE PLAIN COMPOSE DOOR SAYS IT RESUMED A MESSAGE. `#/compose` opens the message left unfinished
@@ -73,14 +74,14 @@ async function makeADraft(): Promise<string> {
   await typeInto("#compose-subject", "Bis Montag");
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey());
+  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
   expect(id, "the compose never wrote a row").not.toBeNull();
   return id!;
 }
 
 /** A send record naming the row, its outcome unknown — what a browser holds after a lost answer. */
 function parkTheRow(draftId: string): void {
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify([{
+  window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
     v: SEND_LOCK_FORMAT, lane: "compose", key: "KEY-HELD", at: Date.now(),
     draftId, fp: "fp-held", subject: `draft:${draftId}`, unverified: true,
   }]));

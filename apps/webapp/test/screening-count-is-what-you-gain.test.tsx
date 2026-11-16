@@ -19,7 +19,7 @@ import {
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { shellSliceOf } from "./source-anchor";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import { shellConsentOptions, type ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
 import { screeningReadBack, screeningShown } from "@ohmail/app-logic/press/press-verdict";
 import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
@@ -101,7 +101,8 @@ interface StateLike {
 
 /** The hook as `AppShell` wires it: the projected queue, and the count read over the same partition. */
 async function mountScreener(engine: OhmailEngine, said: string[]): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
   function Probe(): null {
     const [v, setV] = React.useState(0);
@@ -109,7 +110,7 @@ async function mountScreener(engine: OhmailEngine, said: string[]): Promise<{ ge
     const reader = engine.read();
     const presented = presentationReader(reader, consentPartition(reader, shellConsentOptions(FACTS, NOW, [])));
     latest = useScreenerState(
-      engine, v, ((m: string) => { said.push(m); }) as never, undefined, presented, true,
+      engine, null, v, ((m: string) => { said.push(m); }) as never, useScreenerText(), undefined, presented, true,
       undefined, [], [],
       (subject, dest) => screeningShown(engine.read(), subject, dest, { consent: FACTS, now: NOW, ownAddresses: [] }),
     ) as unknown as StateLike;

@@ -16,11 +16,11 @@ import {
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import de from "../messages/de.json";
-import { screenerIntentsKey, type ScreenerIntent } from "../app/shell/screener-intents";
+import { screenerIntentsKey, type ScreenerIntent } from "@ohmail/app-logic/screener/screener-intents";
 import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { ScreenerState } from "../app/shell/screener-state";
+import { KeymapProvider } from "@ohmail/app/keys";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * ═══ A READER MAY NOT DECIDE, AND MAY NOT BE TOLD IT DID ════════════════════════════════════
@@ -153,7 +153,8 @@ async function mountState(
   role: ScreenerRole,
   locale: "en" | "de" = "en",
 ): Promise<{ get: () => ScreenerState; bump: () => Promise<void> }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerState | null = null;
   let force: (() => void) | null = null;
 
@@ -163,9 +164,9 @@ async function mountState(
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      undefined,
+      useScreenerText(), undefined,
       undefined,
       true,
       role,
@@ -232,7 +233,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
        the engine will not make), and the queue (the row left, and the count dropped). */
     expect(sent, "a decide reached the wire on a mailbox this install does not organize")
       .toHaveLength(0);
-    expect(window.localStorage.getItem(screenerIntentsKey()),
+    expect(window.localStorage.getItem(screenerIntentsKey(null)),
       "a refused decision was journalled and would replay at the next boot").toBeNull();
     expect(s.get().isExiting(waiting[0]!.id), "the row was hidden for a decision nobody took")
       .toBe(false);
@@ -309,7 +310,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
     await act(async () => { vi.advanceTimersByTime(60_000); });
 
     expect(sent, "a writing verb escaped the read-only wall").toEqual([]);
-    expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toBeNull();
     expect(toasts, "every verb owes the person a sentence").toHaveLength(presses.length);
     /* PER VERB BY NAME, so a verb moved to the wrong wall is named in the failure rather than
        reported as "one of seven sentences differs". */
@@ -329,7 +330,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
       at: NOW.getTime(), derived: false, heldIds: [],
       from: { name: null, address: HELD.from.address },
     };
-    window.localStorage.setItem(screenerIntentsKey(), JSON.stringify([armed]));
+    window.localStorage.setItem(screenerIntentsKey(null), JSON.stringify([armed]));
 
     const store = await freshStore();
     const s = await mountState(engineOver(store), HOLDER);
@@ -338,7 +339,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
 
     expect(sent, "the boot replay dispatched a decision on a mailbox this install reads")
       .toHaveLength(0);
-    expect(window.localStorage.getItem(screenerIntentsKey()),
+    expect(window.localStorage.getItem(screenerIntentsKey(null)),
       "the entry was consumed by an attempt that could not be made").toContain(HELD.id);
   });
 
@@ -350,7 +351,7 @@ describe("the Screener state refuses every write on a mailbox this install does 
       s.get().decide(s.get().waiting[0]!, "ohbox", { read: false, scope: "sender" });
     });
     expect(s.get().isExiting(HELD.id), "the ordinary decide stopped hiding the row").toBe(true);
-    expect(window.localStorage.getItem(screenerIntentsKey()),
+    expect(window.localStorage.getItem(screenerIntentsKey(null)),
       "the ordinary decide stopped journalling").toContain(HELD.id);
     await act(async () => { vi.advanceTimersByTime(20_000); });
     expect(sent.filter((m) => m.kind === "screener_decide"),

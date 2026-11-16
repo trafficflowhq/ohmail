@@ -11,9 +11,10 @@ import {
   type MirrorStore,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { sendLocksKey, sendFingerprint } from "../app/shell/send-lock";
-import { canSend, SENT_BEAT_MS, type SendState } from "../app/shell/mail-send";
-import type { MailSend } from "../app/shell/compose";
+import { sendLocksKey, sendFingerprint } from "@ohmail/app-logic/writing/send-lock";
+import { canSend, SENT_BEAT_MS, type SendState } from "@ohmail/app-logic/writing/mail-send";
+import type { MailSend } from "@ohmail/app-logic/writing/compose";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 /** The record's own send is still unsettled — the one state a record resumes in. */
@@ -211,14 +212,16 @@ async function probe(engine: OhmailEngine): Promise<Probe> {
   // every reply is rejected as `not_found` before the send path is reached — a harness that cannot
   // see the thing it was extended to test.
   await act(async () => { await engine.start(); });
-  const { useMailSend } = await import("../app/shell/mail-send.js");
+  const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let send!: (m: Mut) => void;
   let stateOf!: (key: string) => SendState;
   const Probe = (): null => {
     const api = useMailSend(
       engine as never,
+      storageOwner(),
       (() => { /* the sentences are another file's subject */ }) as never,
-      (() => { /* nor is the surface's close */ }) as never,
+      useMailSendText(), (() => { /* nor is the surface's close */ }) as never,
     );
     send = api.send as unknown as (m: Mut) => void;
     stateOf = api.stateOf;
@@ -302,7 +305,7 @@ describe("the send lock outlives the component that held it", () => {
     expect(w.attempts, "the first press never reached the wire").toHaveLength(1);
     expect(w.deliveries, "a failed attempt must reserve nothing").toHaveLength(0);
     const firstKey = w.attempts[0]!.key;
-    expect(window.localStorage.getItem(sendLocksKey()), "the key was not persisted with the lane")
+    expect(window.localStorage.getItem(sendLocksKey(storageOwner())), "the key was not persisted with the lane")
       .toContain(firstKey);
 
     // 2 — the tab dies inside the window.
@@ -376,7 +379,7 @@ describe("the send lock outlives the component that held it", () => {
     await beat();
     expect(w.deliveries).toHaveLength(1);
     expect(
-      window.localStorage.getItem(sendLocksKey()),
+      window.localStorage.getItem(sendLocksKey(storageOwner())),
       "a confirmed send must not leave its spent key claiming the lane",
     ).toBeNull();
 
@@ -591,7 +594,7 @@ describe("an unresolved send parks the message it is of", () => {
       "the reloaded surface refuses a conversation that has nothing to do with it",
     ).toBe(true);
     expect(
-      window.localStorage.getItem(sendLocksKey()) ?? "<the jar holds nothing at all>",
+      window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "<the jar holds nothing at all>",
       "the reload dropped the record",
     ).toContain(ambiguousKey);
   });
@@ -607,7 +610,7 @@ describe("an unresolved send parks the message it is of", () => {
      * The earlier fix let the new message send immediately, on the fingerprint. That was a
      * designed escape: the same composer, one edit, a fresh key.
      */
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -636,13 +639,13 @@ describe("an unresolved send parks the message it is of", () => {
     ).toEqual(["a genuinely new message"]);
     expect(w.deliveries[0]!.key, "the new message reused the ambiguous key").not.toBe(ambiguousKey);
     expect(
-      window.localStorage.getItem(sendLocksKey()) ?? "<the jar holds nothing at all>",
+      window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "<the jar holds nothing at all>",
       "the ambiguous record was deleted on the way past",
     ).toContain(ambiguousKey);
   });
 
   it("two unresolved sends coexist on one lane, and a third message still goes out", async () => {
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -656,7 +659,7 @@ describe("an unresolved send parks the message it is of", () => {
     const keys = w.attempts.map((a) => a.key);
     expect(new Set(keys).size, "the second ambiguous send reused the first one's key").toBe(2);
 
-    const jar = window.localStorage.getItem(sendLocksKey()) ?? "";
+    const jar = window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "";
     for (const k of keys) {
       expect(jar, "one unresolved record replaced the other; a message's key is gone").toContain(k);
     }
@@ -679,7 +682,7 @@ describe("an unresolved send parks the message it is of", () => {
      */
     await killTab();
     const after = await probe(engineOver(st, w));
-    const parked = (window.localStorage.getItem(sendLocksKey()) ?? "");
+    const parked = (window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "");
     for (const k of keys) {
       expect(parked, "an unresolved record did not survive the reload").toContain(k);
     }
@@ -720,8 +723,8 @@ describe("an unresolved send parks the message it is of", () => {
       canSend(p.stateOf("compose"), withDraft("draft-40", "a different draft entirely") as unknown as MailSend),
       "a second draft opened WITHOUT the session being re-minted was admitted — the row must not outrank the session",
     ).toBe(false);
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
-    clearComposeDraft();
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(storageOwner());
     expect(
       canSend(p.stateOf("compose"), withDraft("draft-40", "a different draft entirely") as unknown as MailSend),
       "opening a different draft left it parked by the message before it",
@@ -739,7 +742,7 @@ describe("an unresolved send parks the message it is of", () => {
      * and offered another. Asserted against the request the adapter received, so a future change
      * that fingerprints a UI twin fails here rather than in somebody's inbox.
      */
-    const { sendFingerprint } = await import("../app/shell/send-lock.js");
+    const { sendFingerprint } = await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -752,7 +755,7 @@ describe("an unresolved send parks the message it is of", () => {
     });
     await drain();
     expect(w.sent, "the reply never reached the wire").toHaveLength(1);
-    const rows = JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ fp: string }>;
+    const rows = JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]") as Array<{ fp: string }>;
     expect(rows, "the send claimed no record").toHaveLength(1);
     expect(
       rows[0]!.fp,
@@ -782,7 +785,7 @@ describe("an unresolved send parks the message it is of", () => {
 describe("an unresolved send survives autosave giving the message a draft row", () => {
   const jar = (): Array<{
     key: string; draftId: string | null; subject?: string; session?: string; unverified?: boolean;
-  }> => JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]");
+  }> => JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]");
 
   it("the retry after autosave mints a row is REFUSED, and the record picks up the row", async () => {
     const w = wire();
@@ -918,8 +921,8 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     await drain();
     const firstKey = w.attempts[0]!.key;
 
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
-    clearComposeDraft();
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(storageOwner());
 
     w.unverify = false;
     const next = compose("Ganz andere Nachricht.");
@@ -1041,8 +1044,8 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     const firstKey = w.attempts[0]!.key;
 
     // THE DOOR: a `mailto:` click, the contact popover's Write, or opening another draft.
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
-    clearComposeDraft();
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(storageOwner());
 
     w.unverify = false;
     const replacement = compose("Ganz andere Nachricht.");
@@ -1151,7 +1154,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * it sends the message again: expected [] to deeply equal [ 'srv-9' ]
      */
     const { unresolvedSendRows, parkedComposeMessage } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1164,17 +1167,17 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     expect(w.attempts, "the press never reached the wire").toHaveLength(1);
     expect(jar()[0]!.unverified, "the record does not say the outcome is unknown").toBe(true);
     expect(
-      [...unresolvedSendRows("compose")],
+      [...unresolvedSendRows("compose", storageOwner())],
       "the row the send made for itself is not on the record, so the Drafts list shows it as an "
         + "ordinary draft and reopening it sends the message again",
     ).toEqual(["srv-9"]);
     expect(
-      parkedComposeMessage("compose", "srv-9", null),
+      parkedComposeMessage("compose", "srv-9", null, storageOwner()),
       "reopening the row the send made for itself is not parked — it takes the ordinary door",
     ).toBe(true);
     /* THE CONTROL: a row nothing named is not parked, or every draft in the account would be. */
     expect(
-      parkedComposeMessage("compose", "some-other-row", null),
+      parkedComposeMessage("compose", "some-other-row", null, storageOwner()),
       "an unrelated row is parked, which refuses every other draft in the account",
     ).toBe(false);
   });
@@ -1188,8 +1191,8 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * named, which is the smaller half of the states this reaches.
      */
     const { unresolvedSendRows, parkedComposeMessage } =
-      await import("../app/shell/send-lock.js");
-    const { composeSessionId } = await import("../app/shell/compose.js");
+      await import("@ohmail/app-logic/writing/send-lock");
+    const { composeSessionId } = await import("@ohmail/app-logic/writing/compose");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1198,10 +1201,10 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     w.unverifiedRow = null;
     await act(async () => { p.send(compose("Kommst du noch?")); });
     await drain();
-    expect([...unresolvedSendRows("compose")], "a row was invented for a refusal that named none")
+    expect([...unresolvedSendRows("compose", storageOwner())], "a row was invented for a refusal that named none")
       .toEqual([]);
     expect(
-      parkedComposeMessage("compose", null, composeSessionId()),
+      parkedComposeMessage("compose", null, composeSessionId(storageOwner()), storageOwner()),
       "the message is not parked at all once the row is missing — the press that follows mints a "
         + "fresh key for mail that may already have gone",
     ).toBe(true);
@@ -1229,7 +1232,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * the record after the press by `attachSendLockDraft`.
      */
     const { unresolvedSendRows, parkedComposeMessage } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1242,11 +1245,11 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     expect(jar()[0]!.subject, "the record was not named by the row the press carried").toBe("draft:d1");
 
     expect(
-      [...unresolvedSendRows("compose")],
+      [...unresolvedSendRows("compose", storageOwner())],
       "the row an unresolved send belongs to is not reported, so the reopen takes the recovery door",
     ).toEqual(["d1"]);
     expect(
-      unresolvedSendRows("compose").has("d9"),
+      unresolvedSendRows("compose", storageOwner()).has("d9"),
       "an unrelated row is reported as parked, which would refuse every other draft in the account",
     ).toBe(false);
 
@@ -1255,11 +1258,11 @@ describe("an unresolved send survives autosave giving the message a draft row", 
        session still names the message being left behind, and every draft in the account would
        answer to it. The row alone decides which message is being opened. */
     expect(
-      parkedComposeMessage("compose", "d1", null),
+      parkedComposeMessage("compose", "d1", null, storageOwner()),
       "the row an unresolved send belongs to is not parked when the row is the only name asked",
     ).toBe(true);
     expect(
-      parkedComposeMessage("compose", "d9", null),
+      parkedComposeMessage("compose", "d9", null, storageOwner()),
       "an unrelated row is parked by another message's unresolved send",
     ).toBe(false);
 
@@ -1305,14 +1308,14 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * Mutation: drop the `writeComposeSession(parkedRecord.session)` line. Real failure text:
      *   AssertionError: the reopened parked message is sendable — one press is a second copy
      */
-    const { parkedComposeRecord } = await import("../app/shell/send-lock.js");
+    const { parkedComposeRecord } = await import("@ohmail/app-logic/writing/send-lock");
     const { clearComposeDraft, composeSessionId, writeComposeRow, writeComposeSession } =
-      await import("../app/shell/compose.js");
+      await import("@ohmail/app-logic/writing/compose");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
 
-    const s1 = composeSessionId();
+    const s1 = composeSessionId(storageOwner());
     w.unverify = true;
     await act(async () => { p.send({ ...compose("Bis Montag."), draftId: "d1" }); });
     await drain();
@@ -1320,8 +1323,8 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     const firstKey = w.attempts[0]!.key;
 
     // THE DOOR. Autosave releases its row and the form is replaced, so a new message begins.
-    clearComposeDraft();
-    const s2 = composeSessionId();
+    clearComposeDraft(storageOwner());
+    const s2 = composeSessionId(storageOwner());
     expect(s2, "the door minted no new session, so this case measures nothing").not.toBe(s1);
 
     /* WHAT THE REOPEN ARRIVES HOLDING: no row (the parked branch holds one, it does not adopt
@@ -1333,14 +1336,14 @@ describe("an unresolved send survives autosave giving the message a draft row", 
       "the message is already refused before the restore, so the restore is not what is measured",
     ).toBe(true);
 
-    const rec = parkedComposeRecord("compose", "d1", null);
+    const rec = parkedComposeRecord("compose", "d1", null, storageOwner());
     expect(
       rec,
       "the reopen cannot name the message it has just recognised as parked",
     ).toEqual({ session: s1, draftId: "d1" });
     // The two writes the parked branch makes, in its order.
-    writeComposeRow(rec!.draftId!);
-    writeComposeSession(rec!.session!);
+    writeComposeRow(rec!.draftId!, storageOwner());
+    writeComposeSession(rec!.session!, storageOwner());
 
     expect(
       canSend(p.stateOf("compose"), reopened),
@@ -1372,14 +1375,14 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      *   AssertionError: the record was written naming no row, so the row in Drafts is traceable
      *   to nothing: expected null to be 'B'
      */
-    const { parkedComposeRecord } = await import("../app/shell/send-lock.js");
-    const { writeComposeRow } = await import("../app/shell/compose.js");
+    const { parkedComposeRecord } = await import("@ohmail/app-logic/writing/send-lock");
+    const { writeComposeRow } = await import("@ohmail/app-logic/writing/compose");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
 
     // The armed autosave landed first: this surface is holding B when the press is answered.
-    writeComposeRow("B");
+    writeComposeRow("B", storageOwner());
     w.unverify = true;
     await act(async () => { p.send(compose("Kommst du noch?")); });
     await drain();
@@ -1390,7 +1393,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
       "the record was written naming no row, so the row in Drafts is traceable to nothing",
     ).toBe("B");
     expect(
-      parkedComposeRecord("compose", "B", null),
+      parkedComposeRecord("compose", "B", null, storageOwner()),
       "reopening that row from Drafts finds nothing, so it recovers and sends a second copy",
     ).not.toBeNull();
   });
@@ -1404,7 +1407,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * Two rows here on purpose: the one an unresolved send belongs to, and an ordinary one beside
      * it. Only the first is reported, and the second sends under a key of its own.
      */
-    const { unresolvedSendRows } = await import("../app/shell/send-lock.js");
+    const { unresolvedSendRows } = await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1415,18 +1418,18 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     const firstKey = w.attempts[0]!.key;
 
     expect(
-      unresolvedSendRows("compose").has("d5"),
+      unresolvedSendRows("compose", storageOwner()).has("d5"),
       "an ordinary saved draft was reported as parked — every reopen would refuse",
     ).toBe(false);
-    const { parkedComposeMessage } = await import("../app/shell/send-lock.js");
+    const { parkedComposeMessage } = await import("@ohmail/app-logic/writing/send-lock");
     expect(
-      parkedComposeMessage("compose", "d5", null),
+      parkedComposeMessage("compose", "d5", null, storageOwner()),
       "an ordinary saved draft is parked — every reopen in the account would refuse",
     ).toBe(false);
 
     // The ordinary draft is reopened through the door that DOES re-mint, and sends.
-    const { clearComposeDraft } = await import("../app/shell/compose.js");
-    clearComposeDraft();
+    const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+    clearComposeDraft(storageOwner());
     w.unverify = false;
     const ordinary = { ...compose("Ein anderer Entwurf."), draftId: "d5" };
     expect(
@@ -1452,7 +1455,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      *
      * Mutation: drop the `r.draftId` arm of `unresolvedSendRows` and keep only the subjects.
      */
-    const { unresolvedSendRows } = await import("../app/shell/send-lock.js");
+    const { unresolvedSendRows } = await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1470,7 +1473,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     expect(jar()[0]!.draftId, "the row the message acquired was never attached").toBe("late-row");
 
     expect(
-      [...unresolvedSendRows("compose")],
+      [...unresolvedSendRows("compose", storageOwner())],
       "a row acquired after the press is not reported, so reopening it takes the recovery door",
     ).toEqual(["late-row"]);
   });
@@ -1494,7 +1497,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
      * Mutation (each arm, one case): drop the `lockSubjects` arm — expected [ 'd2' ] to deeply
      * equal [ 'd1', 'd2' ]; drop the `r.draftId` arm — the case above this one.
      */
-    const { unresolvedSendRows } = await import("../app/shell/send-lock.js");
+    const { unresolvedSendRows } = await import("@ohmail/app-logic/writing/send-lock");
     const w = wire();
     const st = await store();
     const p = await probe(engineOver(st, w));
@@ -1511,7 +1514,7 @@ describe("an unresolved send survives autosave giving the message a draft row", 
     expect(jar()[0]!.subject, "the identity moved with the row — it must not").toBe("draft:d1");
 
     expect(
-      [...unresolvedSendRows("compose")].sort(),
+      [...unresolvedSendRows("compose", storageOwner())].sort(),
       "a row the record still NAMES is not reported, so reopening it takes the recovery door",
     ).toEqual(["d1", "d2"]);
     expect(w.deliveries, "a second reservation was made for one message").toHaveLength(0);
@@ -1557,19 +1560,19 @@ describe("a record of this build's format, or a later one, is kept", () => {
   const OTHER = { ...REOPENED, body: "Ganz andere Nachricht." } as unknown as MailSend;
   const AT = NOW.getTime();
   const jar = (): Array<Record<string, unknown>> =>
-    JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]");
+    JSON.parse(window.localStorage.getItem(sendLocksKey(storageOwner())) ?? "[]");
 
   it("(c) a current-format record is untouched by the load", async () => {
     const { resumeSendLock, sendIdentity, claimSendLock, sendFingerprint, SEND_LOCK_FORMAT } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     claimSendLock({
       v: SEND_LOCK_FORMAT, lane: "compose", key: "KEY-CURRENT", at: AT,
       draftId: "draft-0140", fp: sendFingerprint(REOPENED),
       subject: "draft:draft-0140", session: "sess-current",
-    }, NONE_OWED);
+    }, NONE_OWED, storageOwner());
     const before = JSON.stringify(jar());
     expect(
-      resumeSendLock("compose", sendIdentity(REOPENED, "sess-current"), AT, OWED("KEY-CURRENT")),
+      resumeSendLock("compose", sendIdentity(REOPENED, "sess-current"), AT, OWED("KEY-CURRENT"), storageOwner()),
       "a current record stopped resuming its own message",
     ).toBe("KEY-CURRENT");
     expect(JSON.stringify(jar()), "the load rewrote a current-format record").toBe(before);
@@ -1580,26 +1583,26 @@ describe("a record of this build's format, or a later one, is kept", () => {
   });
 
   it("(d) a record from a LATER format is neither matched nor deleted", async () => {
-    const { resumeSendLock, sendIdentity, allSendLocks } = await import("../app/shell/send-lock.js");
+    const { resumeSendLock, sendIdentity, allSendLocks } = await import("@ohmail/app-logic/writing/send-lock");
     // Shaped as a build after this one might write it: a version this build has never seen, and a
     // field it knows nothing about, and a fingerprint in an algebra this build does not compute.
     const future = { v: 9, lane: "compose", key: "KEY-FUTURE", at: AT, draftId: "draft-0140",
       fp: "some-later-algebra-hash", unverified: true, somethingNew: { kind: "unknown" } };
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([future]));
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([future]));
 
     expect(
-      resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), AT, NONE_OWED),
+      resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), AT, NONE_OWED, storageOwner()),
       "a record from a later format was resumed for a message it does not name",
     ).toBeNull();
     expect(jar(), "a later format's record was deleted by this build").toEqual([future]);
     expect(
-      allSendLocks(AT, NONE_OWED).map((r) => r.key),
+      allSendLocks(AT, NONE_OWED, storageOwner()).map((r) => r.key),
       "a later format's record was handed to a caller that cannot read its shape",
     ).toEqual([]);
 
     // AND a press for a DIFFERENT message on that lane still does not eat it: the spent-record
     // sweep is where the deletion would happen.
-    expect(resumeSendLock("compose", sendIdentity(OTHER, "sess-upgrade"), AT, NONE_OWED)).toBeNull();
+    expect(resumeSendLock("compose", sendIdentity(OTHER, "sess-upgrade"), AT, NONE_OWED, storageOwner())).toBeNull();
     expect(jar(), "the spent-record sweep deleted a later format's record").toEqual([future]);
   });
 
@@ -1614,13 +1617,13 @@ describe("a record of this build's format, or a later one, is kept", () => {
      * Keeping it matters because deletion is not recoverable and the record may be load-bearing
      * for the build that wrote it — this one cannot tell whether it is, which is the whole point.
      */
-    const { resumeSendLock, sendIdentity } = await import("../app/shell/send-lock.js");
+    const { resumeSendLock, sendIdentity } = await import("@ohmail/app-logic/writing/send-lock");
     const ordinaryFuture = { v: 9, lane: "compose", key: "KEY-FUTURE-2", at: AT,
       draftId: null, fp: "some-later-algebra-hash", somethingNew: { kind: "unknown" } };
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([ordinaryFuture]));
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([ordinaryFuture]));
 
     expect(
-      resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), AT, NONE_OWED),
+      resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), AT, NONE_OWED, storageOwner()),
       "a later format's ordinary record was resumed for a message it does not name",
     ).toBeNull();
     expect(
@@ -1646,21 +1649,21 @@ describe("a record of this build's format, or a later one, is kept", () => {
      * `isLive`.
      */
     const { resumeSendLock, sendIdentity, allSendLocks, SEND_LOCK_TTL_MS } =
-      await import("../app/shell/send-lock.js");
+      await import("@ohmail/app-logic/writing/send-lock");
     const aged = { v: 9, lane: "compose", key: "KEY-FUTURE-3", at: AT,
       draftId: null, fp: "some-later-algebra-hash", somethingNew: { kind: "unknown" } };
     const eightDays = AT + SEND_LOCK_TTL_MS + 24 * 60 * 60 * 1000;
 
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([aged]));
-    expect(resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), eightDays, NONE_OWED)).toBeNull();
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([aged]));
+    expect(resumeSendLock("compose", sendIdentity(REOPENED, "sess-upgrade"), eightDays, NONE_OWED, storageOwner())).toBeNull();
     expect(
       jar(),
       "the age sweep inside resumeSendLock deleted a later format's record",
     ).toEqual([aged]);
 
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([aged]));
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([aged]));
     expect(
-      allSendLocks(eightDays, NONE_OWED).map((r) => r.key),
+      allSendLocks(eightDays, NONE_OWED, storageOwner()).map((r) => r.key),
       "a later format's record was handed to a caller that cannot read its shape",
     ).toEqual([]);
     expect(
@@ -1712,7 +1715,7 @@ describe("the fingerprint THIS build writes is pinned to the released 0.14.2 out
   const AT_0142 = new Date("2026-09-08T10:00:00.000Z").getTime();
 
   it("the live algebra still reproduces what the released 0.14.2 build printed", async () => {
-    const { sendFingerprint: live } = await import("../app/shell/send-lock.js");
+    const { sendFingerprint: live } = await import("@ohmail/app-logic/writing/send-lock");
     for (const [name, m] of [["REOPENED", REOPENED], ["RICH", RICH]] as const) {
       expect(
         live(m),
@@ -1730,13 +1733,13 @@ describe("the fingerprint THIS build writes is pinned to the released 0.14.2 out
      * unchanged message: it must go out under the ORIGINAL key so the server replays or verifies
      * rather than sending a second copy.
      */
-    const { resumeSendLock, sendIdentity } = await import("../app/shell/send-lock.js");
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([{
+    const { resumeSendLock, sendIdentity } = await import("@ohmail/app-logic/writing/send-lock");
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
       v: 3, lane: "compose", key: "KEY-" + "0142", at: AT_0142, draftId: "draft-0140",
       fp: GOLDEN_0142.REOPENED, subject: "draft:draft-0140", session: "sess-0142",
     }]));
     expect(
-      resumeSendLock("compose", sendIdentity(REOPENED, "sess-0142"), AT_0142, OWED("KEY-" + "0142")),
+      resumeSendLock("compose", sendIdentity(REOPENED, "sess-0142"), AT_0142, OWED("KEY-" + "0142"), storageOwner()),
       "a record this very build wrote was not resumed — the next press mints a fresh key for a "
         + "message that may already have gone",
     ).toBe("KEY-" + "0142");
@@ -1745,14 +1748,14 @@ describe("the fingerprint THIS build writes is pinned to the released 0.14.2 out
   it("and does NOT resume for a message that was changed", async () => {
     /* Without this the case above is satisfied by resuming every key for every message, which is
        the silently-unsent half of the pair. */
-    const { resumeSendLock, sendIdentity } = await import("../app/shell/send-lock.js");
-    window.localStorage.setItem(sendLocksKey(), JSON.stringify([{
+    const { resumeSendLock, sendIdentity } = await import("@ohmail/app-logic/writing/send-lock");
+    window.localStorage.setItem(sendLocksKey(storageOwner()), JSON.stringify([{
       v: 3, lane: "compose", key: "KEY-" + "0142", at: AT_0142, draftId: "draft-0140",
       fp: GOLDEN_0142.REOPENED, subject: "draft:draft-0140", session: "sess-0142",
     }]));
     const changed = { ...(REOPENED as object), body: "Doch lieber Freitag." } as unknown as MailSend;
     expect(
-      resumeSendLock("compose", sendIdentity(changed, "sess-0142"), AT_0142, NONE_OWED),
+      resumeSendLock("compose", sendIdentity(changed, "sess-0142"), AT_0142, NONE_OWED, storageOwner()),
       "an edited message was handed the key its unedited version went out under",
     ).toBeNull();
   });

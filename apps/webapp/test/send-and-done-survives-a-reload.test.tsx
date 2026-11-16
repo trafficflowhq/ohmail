@@ -49,11 +49,12 @@ function engineOver(store: MirrorStore, net: { offline: boolean }, copy: Record<
 
 /** One send lane, and the shell's outcome door modelled: the intent that arrives is recorded. */
 async function surface(engine: OhmailEngine, released: SendAndDonePlan[], copies: unknown[] = []) {
-  const { useMailSend } = await import("../app/shell/mail-send.js");
+  const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let api!: { send: (m: Record<string, unknown>, opts?: { andDone?: SendAndDonePlan }) => void; phase: () => string };
   const Probe = (): null => {
     const mail = useMailSend(
-      engine as never, noToast as never, (() => {}) as never,
+      engine as never, null, noToast as never, useMailSendText(), (() => {}) as never,
       ((_key: string, _m: unknown, accepted: boolean, _phase: unknown, detail?: { andDone?: SendAndDonePlan; copy?: unknown }) => {
         const intent = detail?.andDone;
         if (intent === undefined || !accepted) return false;

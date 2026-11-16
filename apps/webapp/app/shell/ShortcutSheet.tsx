@@ -15,8 +15,8 @@ import { Icon, Kbd } from "@ohmail/ui";
 import {
   chordKeys, groupedBindings, useKeymap,
   type BindingGroup, type BoundKey, type DisabledReason,
-} from "./keymap";
-import { useFocusFollows } from "./focus-follows";
+} from "@ohmail/app-logic/keys/keymap";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 /**
  * `KeyboardEvent.key` values that are a modifier being held, not a keystroke being made.

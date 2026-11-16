@@ -12,7 +12,7 @@ import {
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -114,14 +114,15 @@ let hostFull = false;
 let fullCalls: boolean[] = [];
 
 async function mount(engine: OhmailEngine, opts: { full?: boolean; sticky?: boolean } = {}): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Probe(): React.ReactElement {
     const toast = useToast();
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, toast);
+    const state = useScreenerState(engine, null, v, toast, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     const [full, setFull] = React.useState(opts.full ?? false);
     hostFull = full;

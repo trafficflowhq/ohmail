@@ -90,7 +90,7 @@ const waitUntil = async (cond: () => boolean): Promise<boolean> => {
 /** …and run out the closing beat, for the cases that assert the dock is gone. */
 const settleClosed = async (): Promise<void> => {
   await settle();
-  const { SENT_BEAT_MS } = await import("../app/shell/mail-send.js");
+  const { SENT_BEAT_MS } = await import("@ohmail/app-logic/writing/mail-send");
   await act(async () => { await new Promise((r) => { setTimeout(r, SENT_BEAT_MS + 80); }); });
   await settle();
 };

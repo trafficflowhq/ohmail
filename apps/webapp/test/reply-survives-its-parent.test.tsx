@@ -621,7 +621,7 @@ describe("a reply whose draft was deleted elsewhere is not saved again when its 
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   };
-  const sig = async (text: string): Promise<string> => (await import("../app/shell/compose-autosave.js")).sigOf(text);
+  const sig = async (text: string): Promise<string> => (await import("@ohmail/app-logic/writing/compose-autosave")).sigOf(text);
   /** A lane left by an earlier session: its words, and the row it last wrote. */
   const laneLeft = (words: string, row: Record<string, unknown>): void => {
     window.localStorage.setItem("ohmail.ui.reply:m1", words);

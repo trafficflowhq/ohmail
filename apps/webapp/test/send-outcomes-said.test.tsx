@@ -5,7 +5,8 @@ import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { readComposeDraft } from "../app/shell/compose";
+import { readComposeDraft } from "@ohmail/app-logic/writing/compose";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
   act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -260,7 +261,7 @@ describe("Open never puts older words over the ones refused", () => {
     s.refuseSend.on = false;
     await press(held()!.querySelector(".toast-act"), "Open");
     await waitFor(() => (forwardDock(s)?.textContent ?? "").includes("FORWARD NOTE"), "the forward's own dock");
-    expect(readComposeDraft()?.subject, "the letter in the composer").toBe("LETTER B");
+    expect(readComposeDraft(storageOwner())?.subject, "the letter in the composer").toBe("LETTER B");
   }, 60_000);
 
   it("9 — a row that would open in the composer never replaces the letter being written there", async () => {
@@ -274,7 +275,7 @@ describe("Open never puts older words over the ones refused", () => {
     s.refuseSend.on = false;
     await press(held()!.querySelector(".toast-act"), "Open");
     await waitFor(() => toasts().includes(en.compose.notSentOpenBlocked), "the refusal in words");
-    expect(readComposeDraft()?.subject, "the letter in the composer").toBe("LETTER B");
+    expect(readComposeDraft(storageOwner())?.subject, "the letter in the composer").toBe("LETTER B");
     expect(s.el.querySelector<HTMLInputElement>("#compose-subject")?.value).toBe("LETTER B");
   }, 60_000);
 });

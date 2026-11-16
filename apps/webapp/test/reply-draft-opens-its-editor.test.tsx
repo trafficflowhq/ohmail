@@ -4,11 +4,12 @@ import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-eng
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { writeReplyDraft } from "../app/shell/mail-send";
+import { writeReplyDraft } from "@ohmail/app-logic/writing/mail-send";
 import {
   act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, pressRestart, replyDraft, replySurface, stubDom, unmountAll, waitFor,
   type DraftShell,
 } from "./_draft-shell.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * A REPLY DRAFT PRESSED IN DRAFTS OPENS ITS CONVERSATION WITH THE DRAFT IN THE EDITOR. The press
@@ -137,7 +138,7 @@ describe("a reply draft deleted on another device while ohmail was closed", () =
     await rounds(10);
     await unmountAll();
     stubDom();
-    if (more !== undefined) writeReplyDraft("m1", { text: `A reply deleted on the desktop${more}`, html: "" });
+    if (more !== undefined) writeReplyDraft("m1", { text: `A reply deleted on the desktop${more}`, html: "" }, storageOwner());
     return row;
   }
 
