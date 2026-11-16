@@ -303,6 +303,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "markKickstarted", "upsertContacts", "upsertMailboxFolder", "upsertMailboxFolders", "recordMessageFailure",
   // `list_addresses` (mail 0150) — a table this projection does not join.
   "recordListAddresses",
+  // `message_invitations` (mail 0204) — a table this projection does not join.
+  "writeInvitation",
   /* `mailbox_folders`, two columns, mail 0115 — where a budgeted pass stopped. The same table
      `upsertMailboxFolder` writes and the same reason: this projection does not join it. */
   "setMailboxBudgetStop",
@@ -356,6 +358,9 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // (message_bodies, the storage counter, the search document, messages.updated_at, one change_log
   // row) and the counter's recount — never an instance, a locator or a read-state column.
   "listStorageCapHusks", "storageRefillCounter", "storageRefillHold", "refillStorageCapBody", "recountAccountStorage",
+  // the invitation pass (mail 0204): its page read, and its settle (pass_progress, message_invitations
+  // and change_log) — never an instance, a locator or a read-state column.
+  "invitationBackfillPage", "invitationBackfillSettle",
   // the folder-op pass's NARROW half (mail 0074): the pending-command read, the create's
   // completion (folder_ops + mailbox_folders.updated_at + change_log), the failure/deferral
   // stamps, the subtree read. None of these touches an instance row or a projected column.

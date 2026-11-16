@@ -15,6 +15,8 @@ export * from "./identity.js";
 export * from "./mime.js";
 export * from "./mime-sections.js";
 export * from "./ics.js";
+export * from "./invitation-mail.js";
+export * from "./invitation-reply.js";
 export * from "./html-storage.js";
 export * from "./sensitive.js";
 export * from "./rules.js";
@@ -111,4 +113,7 @@ export * from "./sent-record.js";
 export * from "./outbound-text.js";
 export * from "./crypto.js";
 export * from "./log.js";
+// Whose fault a store's refusal of one statement is: the worker's ingest classifier and a writer
+// that keeps a letter without one of its rows read the same classes.
+export * from "./statement-fault.js";
 export * from "./privacy/tracker-blocker.js";

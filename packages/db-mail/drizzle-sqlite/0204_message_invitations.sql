@@ -14,6 +14,9 @@ CREATE TABLE "message_invitations" (
   "starts_at" integer,
   "organizer" text,
   "invited_address" text,
+  "answer" text,
+  "answered_at" integer,
+  "stamped_at" integer,
   "created_at" integer NOT NULL DEFAULT (cast(unixepoch('subsec') * 1000 as integer)),
   PRIMARY KEY ("account_id", "message_id")
 );

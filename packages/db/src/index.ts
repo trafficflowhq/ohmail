@@ -77,6 +77,15 @@ export {
   cursorBehind, readPassProgress, writePassProgress, updatePassProgress, markPassDone, requestPass,
   type PassName, type PassKey, type PassMarks, type PassWrite,
 } from "./pass-progress.js";
+// The one door to `message_invitations` (mail 0204): an invitation's identity and the answer on it.
+export {
+  INVITATION_UID_MAX_BYTES, INVITATION_RECURRENCE_ID_MAX_BYTES, INVITATION_ADDRESS_MAX_CHARS, sameAddress,
+  writeInvitation, recordInvitationAnswer, invitationStanding, putInvitationCopy, invitationFieldOf,
+  type InvitationWrite, type InvitationAnswerRecord, type InvitationStandingAsk, type InvitationCopyOf,
+} from "./message-invitations.js";
+export {
+  invitationBackfillPage, settleInvitationBackfill, type InvitationCandidate, type InvitationBackfillPage,
+} from "./invitation-backfill.js";
 export {
   PRESS_AGED_MS, PRESS_AGE_MAX_MS, clampPressInstant, decisionInstant, placementDecidedAfter, pressIsAged,
   readDecidedAfter, tagAssignedAfter, triageDecidedAfter,

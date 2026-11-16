@@ -11,7 +11,7 @@ import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
   invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses, heldForIdentitySql,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
-  tags, messageTags,
+  tags, messageTags, messageInvitations, invitationFieldOf,
   SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -309,6 +309,12 @@ export function messageRowToDTO(
    * reason. Omitted ⇒ false: the fact carries no `list`.
    */
   listAddress?: boolean,
+  /**
+   * THE INVITATION THE LETTER CARRIES (mail 0204), from the `message_invitations` row the batch
+   * below joins. A TENTH PARAMETER for the fifth's reason. Undefined (no row, or a caller that did
+   * not ask) ⇒ the key is ABSENT, never null: `MessageDTO.invitation`.
+   */
+  invitation?: MessageDTO["invitation"],
 ): MessageDTO {
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
@@ -399,6 +405,8 @@ export function messageRowToDTO(
     ...(itipReplyHeader === undefined ? {} : { itipReplyHeader }),
     // Mail 0164: the mail server holds no copy ohmail knows of; the mirror's is the only one.
     ...(m.serverMissingAt != null ? { missingOnServer: true as const } : {}),
+    // Mail 0204: spread-in, so a letter without an invitation carries no key at all.
+    ...(invitation === undefined ? {} : { invitation }),
   };
 }
 
@@ -475,6 +483,7 @@ async function materializeRows(
     m: messages,
     fs: prefixed(folderState, "fs"),
     st: prefixed(messageStates, "st"),
+    inv: prefixed(messageInvitations, "inv"),
     tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
     awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
@@ -494,8 +503,8 @@ async function materializeRows(
   };
   type Row = {
     m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
-    st: typeof messageStates.$inferSelect; tagId: string | null; awaySentAt: Date | null;
-    autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
+    st: typeof messageStates.$inferSelect; inv: typeof messageInvitations.$inferSelect; tagId: string | null;
+    awaySentAt: Date | null; autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
   // scoped-by: the `.where` below carries `eq(messages.accountId, accountId)`; every join keys on this row
@@ -503,6 +512,8 @@ async function materializeRows(
   const q = (source ? base.innerJoin(sql`(${source.rows}) p`, sql`p.id = ${messages.id}`) : base)
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
     .leftJoin(messageStates, eq(messageStates.messageId, messages.id))
+    // The invitation the letter carries (mail 0204): its key is `(account_id, message_id)`, one row at most.
+    .leftJoin(messageInvitations, and(eq(messageInvitations.messageId, messages.id), eq(messageInvitations.accountId, accountId)))
     .leftJoin(messageTags, and(eq(messageTags.messageId, messages.id), eq(messageTags.accountId, accountId)))
     /**
      * The away answer stamp, on the ORIGINAL: `outcome in ('sent','unverified')` — "the claim is
@@ -542,6 +553,7 @@ async function materializeRows(
         isYes(r.invitation),
         isYes(r.itipReply),
         isYes(r.listAddress),
+        r.inv?.messageId == null ? undefined : invitationFieldOf(r.inv),
       ),
       keys: (source?.keys ?? []).map((_, i) => r[`k${i}`]),
     });

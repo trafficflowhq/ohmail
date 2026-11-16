@@ -12,6 +12,7 @@ export type * from "./complete.js";
 export type * from "./base.js";
 export type * from "./records.js";
 export type * from "./mail.js";
+export type * from "./invitations.js";
 export type * from "./bodies.js";
 export type * from "./organizing.js";
 export type * from "./mailbox-states.js";

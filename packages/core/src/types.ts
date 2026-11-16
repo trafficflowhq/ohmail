@@ -1,4 +1,5 @@
 import type { Assert, Complete, EmailAddress, Folder } from "@ohmail/wire";
+import type { LetterCalendar } from "./invitation-mail.js";
 
 export type { EmailAddress };
 
@@ -385,4 +386,10 @@ export interface NormalizedMessage {
   htmlBody: string | null;
   hasAttachments: boolean;
   attachments: AttachmentMeta[];        // metadata only — bytes are fetched on-demand from IMAP (§13.2/§14)
+  /**
+   * What the letter's calendar parts said, read at the parse while their bytes are in hand and
+   * handed to the commit as values. IN MEMORY ONLY: never stored as such, and read by no identity
+   * (`messageFingerprint`, `canonical`, a dedup key). Absent when no calendar part said anything.
+   */
+  calendar?: LetterCalendar;
 }

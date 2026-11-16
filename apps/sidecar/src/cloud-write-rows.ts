@@ -108,6 +108,9 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /mailboxes/probe": none,
   "POST /messages/:id/attachments/download-all": none,
   "POST /messages/:id/draft": direct,
+  // An invitation's answer is a send: the letter's field and its answer's draft drain from `/sync`,
+  // and the send can record the mailbox's Sent folder, as `POST /drafts/:id/send` can.
+  "POST /messages/:id/invitation/answer": { rows: "sync+mailboxes", verbs: [] },
   "POST /messages/:id/load-remote": direct,
   "POST /messages/:id/move": verbs("move"),
   "POST /messages/:id/restore": direct,

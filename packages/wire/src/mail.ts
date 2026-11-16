@@ -3,6 +3,7 @@
  * about its sender, its conversation, the routing decision and the approval it may wait on.
  */
 import type { AuthVerdict, EmailAddress, Folder, ISODateTime, SensitivityFlags } from "./base.js";
+import type { MessageInvitationDTO } from "./invitations.js";
 
 /**
  * Every state a `message_states` row can hold. `none` plus the four bottom piles, then
@@ -153,6 +154,11 @@ export interface MessageDTO {
    * person's own writing. ABSENT where no such decision stands, and from an older server.
    */
   placeDecided?: true;
+  /**
+   * THE INVITATION THIS LETTER CARRIES (mail 0204): its event's identity, what it asks and the
+   * answer on record. ABSENT, never null, on a letter without one and from an older server.
+   */
+  invitation?: MessageInvitationDTO;
 }
 
 /** The identity fact as every surface reads it — one sentence per field, outside any AI advice. */

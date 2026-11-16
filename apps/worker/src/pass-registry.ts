@@ -134,6 +134,21 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
       + "row locked before the room is read",
   },
   {
+    name: "invitation_backfill",
+    module: `${W}/invitation-backfill.ts`, entry: "invitationBackfillPass",
+    // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
+    triggers: ["visit"],
+    cadence: "at the visit's tail after storage_refill, only when the cycle deferred nothing, until the mailbox's "
+      + "pass_progress done mark is written (mail 0203)",
+    budget: "INVITATION_BACKFILL_PAGES pages of INVITATION_BACKFILL_PAGE letters, INVITATION_BACKFILL_READS letters read "
+      + "again in FETCHes of INVITATION_BACKFILL_CHUNK, INVITATION_BACKFILL_BUDGET_MS and INVITATION_BACKFILL_MAX_BYTES "
+      + "per letter, per visit",
+    owns: "every letter a mailbox stored before 0204 that carries an invitation gets the row ingest gives one now, with a "
+      + "message change",
+    fence: "the visit's leased adapter, read-only (BODY.PEEK); each letter's settle (cursor, row, changes) through the "
+      + "fenced group, after its read",
+  },
+  {
     name: "blank_repair",
     module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
     // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the

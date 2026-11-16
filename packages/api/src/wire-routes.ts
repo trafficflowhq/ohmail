@@ -22,7 +22,7 @@ export const WIRE_ROUTES = [
   "POST /folders", "DELETE /folders/:id", "PATCH /folders/:id", "DELETE /folders/:id/op", "GET /hello",
   "GET /messages", "PATCH /messages", "DELETE /messages/:id", "GET /messages/:id", "PATCH /messages/:id",
   "GET /messages/:id/attachments", "POST /messages/:id/attachments/download-all", "GET /messages/:id/body",
-  "POST /messages/:id/move", "POST /messages/:id/restore", "POST /messages/:id/tags",
+  "POST /messages/:id/invitation/answer", "POST /messages/:id/move", "POST /messages/:id/restore", "POST /messages/:id/tags",
   "POST /messages/:id/triage", "POST /messages/:id/unsubscribe", "GET /messages/bodies",
   "GET /messages/timeline", "GET /organizer-requests", "POST /rules", "DELETE /rules/:id", "PATCH /rules/:id",
   "GET /screener", "POST /screener/:id", "GET /screener/auto-filed", "POST /screener/auto-filed/undo",

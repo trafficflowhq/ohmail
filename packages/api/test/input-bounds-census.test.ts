@@ -824,6 +824,10 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   /* One body field, `draftId`, shape-checked as an id and recorded only when the account holds that
      draft; the key is the `Idempotency-Key` header, one equality predicate on the reservation. */
   "POST /sends/withdraw": { scalarsOnly: true },
+  /* An invitation's answer: two body fields, each one of three words refused by shape, and the key is
+     the send's own `Idempotency-Key`, bounded as the send's. What it sends is written from the
+     stored row, never from the request. */
+  "POST /messages/:id/invitation/answer": { scalarsOnly: true },
   "POST /drafts/:id/resolve": { door: "the only body field is a two-member enum, bounded by shape; the ids it writes are its own path parameter and the ledger rows already attached to it" },
   "POST /drafts/:id/send": {
     // `forwardZone`/`forwardLocale` name how the quoted header dates the original, capped at the parsers.

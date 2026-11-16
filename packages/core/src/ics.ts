@@ -494,15 +494,49 @@ const WINDOWS_TZ: Record<string, string> = {
 
 /* ── time resolution ───────────────────────────────────────────────────────────────────────── */
 
-/** Per-zone formatter cache — constructing `Intl.DateTimeFormat` is the expensive part. */
-const ZONE_FMT = new Map<string, Intl.DateTimeFormat | null>();
+/**
+ * Per-zone formatter cache — constructing `Intl.DateTimeFormat` is the expensive part, and a
+ * formatter weighs about 50 kB outside the heap. The zone name is sender text, and this reader runs
+ * at ingest on a server, so the memory holds one formatter per ZONE (its name in lower case: the
+ * platform folds ASCII case, so every spelling of one name is one formatter) and has a ceiling, the
+ * one used longest ago going first. A name the platform refused is remembered as asked, in a memory
+ * of its own with its own ceiling, so no number of names that are none pushes out a zone that is
+ * known. The two ceilings are the calendar package's (`PLATFORM_ZONES_HELD`, `UNKNOWN_ZONE_NAMES_HELD`).
+ */
+const ZONE_FORMATTERS_HELD = 1_024;
+const UNKNOWN_ZONES_HELD = 256;
+const ZONE_FMT = new Map<string, Intl.DateTimeFormat>();
+const ZONE_UNKNOWN = new Map<string, true>();
+const OUTSIDE_ASCII = /[^\u0000-\u007f]/;
+
+/** The value held under `key`, which is then the last to go. */
+function heldGet<V>(held: Map<string, V>, key: string): V | undefined {
+  const value = held.get(key);
+  if (value !== undefined) {
+    held.delete(key);
+    held.set(key, value);
+  }
+  return value;
+}
+
+/** Hold `value` under `key` as the last to go; at the ceiling the entry used longest ago goes. */
+function heldSet<V>(held: Map<string, V>, key: string, value: V, ceiling: number): void {
+  held.delete(key);
+  if (held.size >= ceiling) {
+    const oldest = held.keys().next();
+    if (!oldest.done) held.delete(oldest.value);
+  }
+  held.set(key, value);
+}
 
 function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
-  const held = ZONE_FMT.get(zone);
+  // A name with a character outside ASCII is no name of the platform's and is not folded onto one.
+  const spelling = OUTSIDE_ASCII.test(zone) ? zone : zone.toLowerCase();
+  const held = heldGet(ZONE_FMT, spelling);
   if (held !== undefined) return held;
-  let made: Intl.DateTimeFormat | null;
+  if (heldGet(ZONE_UNKNOWN, zone) !== undefined) return null;
   try {
-    made = new Intl.DateTimeFormat("en-US", {
+    const made = new Intl.DateTimeFormat("en-US", {
       timeZone: zone,
       hourCycle: "h23",
       year: "numeric",
@@ -512,11 +546,12 @@ function zoneFormatter(zone: string): Intl.DateTimeFormat | null {
       minute: "2-digit",
       second: "2-digit",
     });
+    heldSet(ZONE_FMT, spelling, made, ZONE_FORMATTERS_HELD);
+    return made;
   } catch {
-    made = null; // the runtime does not know this zone
+    heldSet(ZONE_UNKNOWN, zone, true, UNKNOWN_ZONES_HELD); // the runtime does not know this zone
+    return null;
   }
-  ZONE_FMT.set(zone, made);
-  return made;
 }
 
 /** The zone's UTC offset in ms at a given instant, read off the platform's own tz database. */
@@ -562,7 +597,7 @@ function validWall(w: IcsWallTime): boolean {
  * One DATE or DATE-TIME property value → {@link IcsTime}, or null.
  * `tzidParam` arrives already unquoted (the param scanner strips DQUOTEs).
  */
-function parseIcsDate(value: string, tzidParam: string | null, valueParam: string | null): IcsTime | null {
+export function parseIcsDate(value: string, tzidParam: string | null, valueParam: string | null): IcsTime | null {
   const v = value.trim();
   const dateOnly = /^(\d{4})(\d{2})(\d{2})$/.exec(v);
   if (dateOnly || valueParam === "DATE") {
@@ -615,7 +650,12 @@ function parseIcsDuration(value: string): number | null {
 
 /* ── content-line machinery ────────────────────────────────────────────────────────────────── */
 
-interface ContentLine {
+/** Unfold (CRLF + WSP, tolerating bare LF): one logical line per line break left. */
+export function unfoldIcs(text: string): string {
+  return text.replace(/\r?\n[ \t]/g, "");
+}
+
+export interface ContentLine {
   name: string; // upper-cased
   params: Map<string, string>; // upper-cased keys, unquoted values (first occurrence wins)
   value: string; // raw — text unescaping is the caller's per-property decision
@@ -625,7 +665,7 @@ interface ContentLine {
  * NAME;PARAM=VAL;PARAM="quoted,val":value — scanned, not split: a `:` inside a quoted param
  * (`CN="Doe: the first"`) or a `;` inside one must not end the parameter section.
  */
-function parseContentLine(line: string): ContentLine | null {
+export function parseContentLine(line: string): ContentLine | null {
   let i = 0;
   let inQuotes = false;
   for (; i < line.length; i++) {
@@ -665,7 +705,7 @@ function parseContentLine(line: string): ContentLine | null {
 }
 
 /** RFC 5545 §3.3.11 TEXT unescaping. `\n`/`\N` → newline; `\\`, `\,`, `\;` → the literal. */
-function unescapeText(v: string): string {
+export function unescapeText(v: string): string {
   let out = "";
   for (let i = 0; i < v.length; i++) {
     const c = v[i]!;
@@ -760,7 +800,7 @@ function wallKey(w: IcsWallTime): string {
  * RECURRENCE-ID as a comparable key: the instant where it resolves, else zone, wall time and day
  * form. The zone is the TZID as written, never its drawn label: an identity is compared whole.
  */
-function canonicalRecurrenceId(line: ContentLine): string | null {
+export function canonicalRecurrenceId(line: ContentLine): string | null {
   const tzid = line.params.get("TZID") ?? null;
   const t = parseIcsDate(line.value, tzid, line.params.get("VALUE") ?? null);
   if (!t) return null;
@@ -778,7 +818,7 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
   if (!/BEGIN:VCALENDAR/i.test(text)) return null;
 
   // Unfold (CRLF + WSP, tolerating bare LF), then split into lines.
-  const lines = text.replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+  const lines = unfoldIcs(text).split(/\r?\n/);
 
   let method: IcsMethod | null = null;
   let inEvent = false;

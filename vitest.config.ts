@@ -147,6 +147,8 @@ export default defineConfig({
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
       { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
+      // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
+      { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
       { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },

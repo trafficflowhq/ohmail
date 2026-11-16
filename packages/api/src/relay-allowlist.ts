@@ -186,6 +186,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/mailboxes/probe" },
   { method: "POST", pattern: "/messages/:id/attachments/download-all" },
   { method: "POST", pattern: "/messages/:id/draft" },
+  { method: "POST", pattern: "/messages/:id/invitation/answer" },
   { method: "POST", pattern: "/messages/:id/load-remote" },
   { method: "POST", pattern: "/messages/:id/move" },
   { method: "POST", pattern: "/messages/:id/restore" },

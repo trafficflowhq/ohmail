@@ -26,6 +26,7 @@ import type {
 } from "./screener-answers.js";
 import type { AddressSearchResult, SearchResult } from "./search.js";
 import type { AttachmentWire, DraftDTO } from "./drafts.js";
+import type { InvitationAnswerBody, InvitationAnswerResult } from "./invitations.js";
 import type { QueuedAnswer, RuleQueuedAnswer, RuleTravel, WithdrawSendOutcome } from "./act-answers.js";
 import type { UnboundCall } from "./unbound-calls.js";
 import type {
@@ -189,6 +190,12 @@ export interface Routes {
       authVerdict: AuthVerdict;
     };
   };
+  /**
+   * Yes, Maybe or No on the invitation a letter carries, sent by mail under the `Idempotency-Key`
+   * header. 200 a delivery or a settled state, 202 still being handed over, 409 a failure or a
+   * press in flight; a refusal is the error envelope with an `invitation_*` word.
+   */
+  "POST /messages/:id/invitation/answer": { params: Id; body: InvitationAnswerBody; answer: InvitationAnswerResult };
   "GET /messages/:id/attachments": { params: Id; body: never; answer: { items: AttachmentWire[] } };
   "POST /messages/:id/attachments/download-all": { params: Id; body: never; answer: Bytes };
   "GET /attachments/:id": { params: Id; body: never; answer: Bytes };

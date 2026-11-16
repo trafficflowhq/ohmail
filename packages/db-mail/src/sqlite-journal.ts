@@ -793,7 +793,7 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
   {
     "name": "0204_message_invitations.sql",
     "statements": [
-      "CREATE TABLE \"message_invitations\" (\n  \"account_id\" text NOT NULL,\n  \"message_id\" text NOT NULL REFERENCES \"messages\"(\"id\") ON DELETE CASCADE,\n  \"mailbox_id\" text NOT NULL,\n  \"uid\" text NOT NULL,\n  \"recurrence_id\" text NOT NULL DEFAULT '',\n  \"sequence\" integer NOT NULL DEFAULT 0,\n  \"method\" text NOT NULL,\n  \"start_raw\" text,\n  \"starts_at\" integer,\n  \"organizer\" text,\n  \"invited_address\" text,\n  \"created_at\" integer NOT NULL DEFAULT (cast(unixepoch('subsec') * 1000 as integer)),\n  PRIMARY KEY (\"account_id\", \"message_id\")\n);",
+      "CREATE TABLE \"message_invitations\" (\n  \"account_id\" text NOT NULL,\n  \"message_id\" text NOT NULL REFERENCES \"messages\"(\"id\") ON DELETE CASCADE,\n  \"mailbox_id\" text NOT NULL,\n  \"uid\" text NOT NULL,\n  \"recurrence_id\" text NOT NULL DEFAULT '',\n  \"sequence\" integer NOT NULL DEFAULT 0,\n  \"method\" text NOT NULL,\n  \"start_raw\" text,\n  \"starts_at\" integer,\n  \"organizer\" text,\n  \"invited_address\" text,\n  \"answer\" text,\n  \"answered_at\" integer,\n  \"stamped_at\" integer,\n  \"created_at\" integer NOT NULL DEFAULT (cast(unixepoch('subsec') * 1000 as integer)),\n  PRIMARY KEY (\"account_id\", \"message_id\")\n);",
       "CREATE INDEX \"message_invitations_account_uid_idx\" ON \"message_invitations\" (\"account_id\", \"uid\", \"recurrence_id\");"
     ]
   },

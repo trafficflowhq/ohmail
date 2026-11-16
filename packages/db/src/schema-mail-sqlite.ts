@@ -2089,6 +2089,11 @@ export const messageInvitations = sqliteTable("message_invitations", {
   startsAt: integer("starts_at", { mode: "timestamp_ms" }),
   organizer: text("organizer"),
   invitedAddress: text("invited_address"),
+  /** The answer on record (a REQUEST) or carried (a REPLY), and when. */
+  answer: text("answer"),
+  answeredAt: integer("answered_at", { mode: "timestamp_ms" }),
+  /** The letter's DTSTAMP: it orders one revision's letters. */
+  stampedAt: integer("stamped_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
   pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),

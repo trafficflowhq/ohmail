@@ -428,6 +428,7 @@ apps/sidecar/test/idle-drain-cadence.test.ts	source-text	reads source as text (t
 apps/sidecar/test/idle-drain-is-a-comparison.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/idle-drain-statement-ratchet.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/impersonation-filing-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/invitation-copy.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	cal-invite	
 apps/sidecar/test/launch-arm-shrinks-meta.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/launch-bearer-renewal.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/launch-drain-first-page.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
