@@ -14,7 +14,7 @@ import type { Tx } from "@trafficflow/db";
 import {
   makeSubscriber, openAes128Gcm, parseVapidAuthorization, type FakeSubscriber,
 } from "../../../packages/core/test/webpush-subscriber.js";
-import { farSide, SWITCH } from "../../../packages/core/test/far-side.js";
+import { farSide, NOT_HTTP, SWITCH } from "../../../packages/core/test/far-side.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -888,10 +888,13 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
     }
   });
 
-  it("a change of protocol (101) is a non-delivery, not a hold — the endpoint beside it is still woken", async () => {
+  it.each([
+    ["a change of protocol (101)", SWITCH],
+    ["an answer that is no HTTP", NOT_HTTP],
+  ])("%s is a non-delivery, not a hold — the endpoint beside it is still woken", async (_shape, bytes) => {
     // The 101 endpoint first: a request that never settled held the whole pass, so the second row never got its wake.
     let switched = 0;
-    const switching = await farSide((socket) => { switched += 1; socket.write(SWITCH); });
+    const switching = await farSide((socket) => { switched += 1; socket.write(bytes); });
     let goodHits = 0;
     const good = createServer((req, res) => {
       req.resume();

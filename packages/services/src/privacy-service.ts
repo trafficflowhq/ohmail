@@ -96,9 +96,10 @@ async function withDeadline<T>(p: Promise<T>, ms: number, why: string): Promise<
  * Is this the network failing, or is it us?
  *
  * Transport failures carry a `code` (`ECONNRESET`, `ENOTFOUND`, `ECONNREFUSED`, `EAI_AGAIN`,
- * TLS `CERT_*`, …) or arrive as the `AbortError` a timeout raises. A `TypeError` from our own
- * code has neither, and must NOT be dressed up as somebody else's outage — that is precisely
- * how a real fault becomes invisible to 5xx alerting.
+ * TLS `CERT_*`, the HTTP parser's `HPE_*` for an answer that is no HTTP, …) or arrive as the
+ * `AbortError` a timeout raises. A `TypeError` from our own code has neither, and must NOT be
+ * dressed up as somebody else's outage — that is precisely how a real fault becomes invisible to
+ * 5xx alerting.
  */
 export function isTransportFailure(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -111,15 +112,27 @@ export function isTransportFailure(err: unknown): boolean {
   // whole failure this predicate exists to prevent. A code nobody has classified is OURS until
   // someone says otherwise: absent by default rather than present by default, exactly as the
   // content-type allow-list on the route is.
-  return TRANSPORT_ERROR_CODES.has(e.code) || /^(CERT_|ERR_TLS_|ERR_SSL_)/.test(e.code);
+  // `HPE_` is the parser reading the far side's bytes, `UNABLE_TO_`, `ERROR_IN_` and `CRL_` the check of the
+  // certificate it presents: a sender chooses both, and neither is a fault of ours. Every code and family the
+  // calendar's request port reads as a failed request is one here too, but two (`test/transport-failure-parity.test.ts`
+  // holds both halves): `OUT_OF_MEM` is this server's memory, and `ERR_OSSL_` a cryptography call on our own inputs.
+  return TRANSPORT_ERROR_CODES.has(e.code) || /^(CERT_|CRL_|ERR_TLS_|ERR_SSL_|HPE_|UNABLE_TO_|ERROR_IN_)/.test(e.code);
 }
 
 /** Socket- and DNS-level failures. TLS is matched by prefix above rather than enumerated. */
 const TRANSPORT_ERROR_CODES: ReadonlySet<string> = new Set([
   "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT",
   "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EPIPE", "EADDRNOTAVAIL", "EHOSTDOWN",
+  // A handshake that is no TLS at all: a plain server on an https address.
+  "EPROTO",
   "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET", "ERR_SOCKET_CONNECTION_TIMEOUT",
+  // A socket closed before a write reached it, and a stream closed before its end: the far side going away.
+  "ERR_SOCKET_CLOSED", "ERR_STREAM_PREMATURE_CLOSE",
   "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "HOSTNAME_MISMATCH",
+  // A fault of the certificate that the platform's table does not name (a weak signature, a name its issuer excludes,
+  // a critical extension nobody knows): the sender chose that chain too.
+  "UNSPECIFIED",
 ]);
 
 export interface PrivacyServiceDeps {
