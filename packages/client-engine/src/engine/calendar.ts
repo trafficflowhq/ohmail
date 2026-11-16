@@ -15,7 +15,8 @@
  * the prune holds what a loaded span covers. Which spans to ask for, and when to let them go, is
  * the views' to decide.
  */
-import type { Assert, CalendarRecordKind, Complete, SyncSnapshotPage } from "@ohmail/wire";
+import type { Assert, CalendarRecordKind, Complete, PlaceSuggestBody, SyncSnapshotPage } from "@ohmail/wire";
+import { askPlaces, type PlaceSuggestOutcome, type PlaceSuggestTransport } from "../place-suggest.js";
 import type { SyncChange } from "../types.js";
 import { EngineLifecycle } from "./lifecycle.js";
 
@@ -40,6 +41,17 @@ function switchOf(entity: unknown): string | null {
 export abstract class EngineCalendar extends EngineLifecycle {
   /** The switch the held settings record states, kept from the pages; `undefined` until read once. */
   private heldSwitch: string | null | undefined;
+
+  /**
+   * PLACE SUGGESTIONS for an event's place field (`place-suggest.ts`): one question to the account's
+   * server, given up through `signal`, never asked offline, never queued, never kept. Never rejects;
+   * every state but `ok` is no suggestions. A server that does not offer them is never asked: its
+   * `/hello` says so, and the field reads that first.
+   */
+  suggestPlaces(question: PlaceSuggestBody, opts: { signal?: AbortSignal } = {}): Promise<PlaceSuggestOutcome> {
+    const transport = this.adapter as Partial<PlaceSuggestTransport>;
+    return askPlaces(typeof transport.suggestPlaces === "function" ? (transport as PlaceSuggestTransport) : null, question, opts);
+  }
 
   /**
    * Read before a page lands: the switch its last settings record states. A page that carries no

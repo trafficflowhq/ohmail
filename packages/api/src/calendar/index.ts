@@ -2,7 +2,8 @@
  * `@trafficflow/api/calendar` — the calendar's routes, mounted only by a composition that keeps a
  * calendar (the one that hands `ApiServices.calendar` in, and says `features.calendar` on
  * `/hello`). No route table re-exports them: the phone's engine carries every byte of those
- * tables, and none of the calendar's. Every later calendar route asks `requireCalendarOn` first.
+ * tables, and none of the calendar's. Every later calendar route that reads or writes the
+ * account's calendar asks `requireCalendarOn` first; the place suggestions read nothing of it.
  */
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
@@ -13,6 +14,13 @@ import { serviceContext } from "../context.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
+import { placesOff, readPlaceQuestion } from "./places.js";
+
+export {
+  makePlaceSuggester, readPlaceQuestion,
+  type PlaceQuestion, type PlaceSuggester, type PlaceSuggesterConfig, type PlaceSuggesterDeps,
+} from "./places.js";
+export { placeRowsOf } from "./place-rows.js";
 
 /**
  * A calendar write's key, as a device makes it for one press: required, printable, short. It is the
@@ -95,6 +103,27 @@ export const calendarRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const { answer: answered, seq } = await dismissCalendarWrite(serviceContext(deps, req), params.id!);
       return answer<"DELETE /calendar/writes/:id">()(answered, { seq });
+    },
+  },
+  {
+    /**
+     * PLACES FOR AN EVENT'S PLACE FIELD (`places.ts`). What the person typed rides in the body, goes
+     * on to the geocoder alone and is written nowhere; a refusal never repeats it. The session's
+     * own read is the one this question costs the database. `connection`: this process asks a
+     * geocoder for the caller, as `GET /img` asks a sender's host. 200 for every well-formed
+     * question, the geocoder's troubles in the answer's state; `off` where no geocoder is set.
+     */
+    method: "POST",
+    pattern: "/calendar/places/suggest",
+    wire: true,
+    relay: true,
+    cost: "connection",
+    handler: async (req, deps) => {
+      const question = readPlaceQuestion(await readBody<unknown>(req));
+      const places = deps.services?.places;
+      return answer<"POST /calendar/places/suggest">()(places === undefined
+        ? placesOff()
+        : await places.suggest(deps.session!.accountId, question, { signal: req.signal, ...(deps.logger ? { logger: deps.logger } : {}) }));
     },
   },
 ];

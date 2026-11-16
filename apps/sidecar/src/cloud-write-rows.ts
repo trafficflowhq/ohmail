@@ -76,6 +76,8 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /auth/step-up/webauthn/options": none,
   "POST /auth/step-up/webauthn/verify": none,
   "POST /auth/verify-email/resend": none,
+  // A question, not a write: it changes nothing anywhere, and its answer goes back at once.
+  "POST /calendar/places/suggest": none,
   // The calendar's writes: until the window's engine carries the calendar's acts, the echo-await alone covers them.
   "POST /calendar/writes": direct,
   "POST /calendar/writes/:id/retry": direct,

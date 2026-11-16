@@ -162,6 +162,7 @@ No name an operator has in a file changed. A refusal names the variable and neve
 | `TF_VAPID_PUBLIC_KEY` | none | its generated public key |
 | `TF_API_CLOCKS` | off | nothing (see Clocks) |
 | `OHMAIL_CALENDAR` | off: no calendar routes, and `/hello` says nothing of one | nothing yet |
+| `PLACES_SUGGEST_URL`, `PLACES_SUGGEST_TOKEN` | none: the calendar's place field suggests nothing, and `/hello` does not offer it | a geocoder of its own, if any: its address (https, or plain http to a private service name) and its bearer if it takes one; checked at every start, used only beside `OHMAIL_CALENDAR`, the token never without the address |
 
 Mail to customers is one setting: the transport is whichever of `SMTP_URL` and `RESEND_API_KEY` is set.
 Both refuse; so does either without `MAIL_FROM`, or `MAIL_FROM` alone. `TF_ALERT_EMAIL` without a mailer

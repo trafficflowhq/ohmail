@@ -45,7 +45,8 @@ import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import type {
-  AddressSearchResult, AnswerOf, CalendarEventAct, CalendarWriteAnswer, MessageDTO, RequestOf, RouteName, SearchResult, Untrusted,
+  AddressSearchResult, AnswerOf, CalendarEventAct, CalendarWriteAnswer, MessageDTO, PlaceSuggestAnswer, PlaceSuggestBody,
+  RequestOf, RouteName, SearchResult, Untrusted,
 } from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
 import { calendarWindowOf } from "../calendar-window.js";
@@ -887,6 +888,17 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"DELETE /calendar/writes/:id">(res), seq: this.noteSeq(res) };
+  }
+
+  /**
+   * PLACE SUGGESTIONS for the place field (`place-suggest.ts`, its `PlaceSuggestTransport`): what the
+   * person typed travels in the body, never in the address. Asked once, under the caller's signal; a
+   * refusal throws as every call's does.
+   */
+  async suggestPlaces(question: PlaceSuggestBody, signal: AbortSignal | undefined): Promise<PlaceSuggestAnswer> {
+    const res = await this.call("POST /calendar/places/suggest", { body: question, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res, "read");
+    return this.readAnswer<"POST /calendar/places/suggest">(res);
   }
 
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {

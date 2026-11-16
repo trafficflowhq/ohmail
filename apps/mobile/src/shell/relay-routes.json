@@ -133,6 +133,7 @@
   "POST /auth/step-up/webauthn/options",
   "POST /auth/step-up/webauthn/verify",
   "POST /auth/verify-email/resend",
+  "POST /calendar/places/suggest",
   "POST /calendar/writes",
   "POST /calendar/writes/:id/retry",
   "POST /consent/reset",

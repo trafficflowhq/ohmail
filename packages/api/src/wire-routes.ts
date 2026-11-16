@@ -16,7 +16,7 @@ import type { Assert, Complete, RouteName, UnboundCall } from "@ohmail/wire";
 /** The routes whose request and answer both sides take from the wire. */
 export const WIRE_ROUTES = [
   "GET /attachments/:id", "POST /attachments/staging", "GET /calendar/settings", "PATCH /calendar/settings",
-  "POST /calendar/writes", "DELETE /calendar/writes/:id", "POST /calendar/writes/:id/retry",
+  "POST /calendar/writes", "DELETE /calendar/writes/:id", "POST /calendar/writes/:id/retry", "POST /calendar/places/suggest",
   "POST /drafts", "DELETE /drafts/:id", "GET /drafts/:id",
   "PUT /drafts/:id", "POST /drafts/:id/resolve", "DELETE /drafts/:id/schedule", "POST /drafts/:id/schedule",
   "POST /drafts/:id/schedule-with-files", "POST /drafts/:id/send", "GET /drafts/:id/send-attempt",
