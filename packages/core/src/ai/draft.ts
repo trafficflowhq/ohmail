@@ -1,7 +1,7 @@
 import type { AnthropicLike } from "./classify.js";
 import type { DraftCallOptions, DraftInput, DraftPort, DraftResult } from "../draft-port.js";
 import {
-  DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, coerceDraftResult, draftUserPayload,
+  DRAFT_RESULT_SCHEMA, coerceDraftResult, draftSystemPrompt, draftUserPayload,
 } from "../draft-prompt.js";
 import { declineOf } from "../model-declined.js";
 import { thinkingOffFor } from "../model-rules.js";
@@ -20,11 +20,11 @@ import { thinkingOffFor } from "../model-rules.js";
 /* Re-exported so that consumers importing the drafting vocabulary from this module — or from the
  * package barrel, which re-exports this file — are unaffected by the port having moved out. */
 export type {
-  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
+  DraftIncoming, DraftContext, DraftInput, DraftOwnWords, DraftResult, DraftPort, DraftCallOptions,
 } from "../draft-port.js";
 /* The question, re-exported from the leaf that now owns it. */
 export {
-  DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, assertRedacted, coerceDraftResult, draftUserPayload,
+  DRAFT_OWN_PREFIX, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, NO_LETTER, assertRedacted, coerceDraftResult, draftSystemPrompt, draftUserPayload,
 } from "../draft-prompt.js";
 export type { DraftUserPayload } from "../draft-prompt.js";
 
@@ -72,7 +72,7 @@ export function buildDraftParams(input: DraftInput, opts: SonnetDrafterOpts = {}
      */
     thinking: thinkingOffFor(model),
     system: [
-      { type: "text", text: DRAFT_PREFIX, cache_control: { type: "ephemeral" } },
+      { type: "text", text: draftSystemPrompt(input), cache_control: { type: "ephemeral" } },
     ],
     messages: [
       { role: "user", content: JSON.stringify(userPayload) },

@@ -9,7 +9,7 @@ import {
 import {
   ATTACHMENT_MAX_FETCH_BYTES, BODIES_IDS_MAX, CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT,
   DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS, FORWARD_MAX_PARTS,
-  DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
+  DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
   MAILBOX_SIGNATURE_MAX_CHARS, MARK_SEEN_MAX_IDS, MAX_PAGE_LIMIT, OHBOX_BAR_MAX_BYTES,
   PROFILE_IMPORT_MAX, SCHEDULE_MAX_AHEAD_MS, SEARCH_QUERY_MAX_CHARS,
   SEED_MAX_ADDRESSES, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -809,6 +809,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
       DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
+  // A draft from the person's own words: the words, and their own subject; the two ids are equalities.
+  "POST /drafts/from-text": { bounds: [DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS] },
   // Send later with files (mail 0180): the send's two transports with their own bounds, the year,
   // a server's seven days and its per-account quota, each refused before any download.
   "POST /drafts/:id/schedule-with-files": {

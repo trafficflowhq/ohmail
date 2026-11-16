@@ -1,8 +1,8 @@
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload,
+  draftSystemPrompt, draftUserPayload,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -175,7 +175,7 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);
       return coerceDraftResult(
-        await chat(opts.draftModel, DRAFT_PREFIX, userPayload, DRAFT_RESULT_SCHEMA, "drafter", OLLAMA_MAX_TOKENS.draft),
+        await chat(opts.draftModel, draftSystemPrompt(input), userPayload, DRAFT_RESULT_SCHEMA, "drafter", OLLAMA_MAX_TOKENS.draft),
       );
     },
 

@@ -357,7 +357,7 @@ export {
   // attempt key; whoever answers composes `<namespace>:<key>` through `sourceFor` and nowhere
   // else. `assertAttemptKey` is what refuses a key that is already a source.
   SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey, isSpendAction,
-  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
+  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, draftFromTextAttemptKey, workflowAttemptKey,
   // The exclusive claim's TTL. The claim is the entitlements program's; this is the CEILING the
   // organizer's classifier timeout has to fit under, and that timeout is open code.
   AI_CLAIM_TTL_MS,

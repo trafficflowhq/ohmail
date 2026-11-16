@@ -279,7 +279,7 @@ export {
   type CreateDraftBody, type PatchDraftBody, type DraftMutation, type SendResolution,
 } from "./drafts-service.js";
 export {
-  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION,
+  DraftingService, draftingService, makeDraftingService, draftWindow, DRAFT_ADMISSION, DRAFT_OWN_TEXT_MAX_CHARS,
   type DraftFromMessageDeps,
 } from "./drafting-service.js";
 export {
