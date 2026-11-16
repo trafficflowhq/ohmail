@@ -3,10 +3,10 @@ import { expect } from "vitest";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import {
   accountPass, accountSettings, drafts as draftsTbl, mailboxFolders, mailboxes, messageBodies,
-  outboundSends, recordChange, requestPass, rules as rulesTbl, type LedgerTx, type Tx,
+  outboundSends, recordChange, requestPass, rules as rulesTbl, type LedgerTx, type Tx, bindDb,
 } from "@trafficflow/db";
 import {
-  FolderOpsService, setFoldersEnabled, runScheduledSendPass,
+  dbFor, FolderOpsService, setFoldersEnabled, runScheduledSendPass,
   type Db, type ServiceContext,
 } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -291,7 +291,7 @@ export async function verbWorld(): Promise<VerbWorld> {
   };
 
   const svcCtx = (): ServiceContext => ({
-    db, accountId: s.accountId, userId: null, now: () => clock.now(), requestId: "verb-parity",
+    db: dbFor(db, s.accountId), accountId: s.accountId, userId: null, now: () => clock.now(), requestId: "verb-parity",
   });
 
   const w: VerbWorld = {
@@ -451,7 +451,7 @@ export async function verbWorld(): Promise<VerbWorld> {
         }, clock.now());
       },
       async scheduledSend(at) {
-        return runScheduledSendPass(db, { openSendAdapter: sendAdapter, now: () => at });
+        return runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: sendAdapter, now: () => at });
       },
     },
   };

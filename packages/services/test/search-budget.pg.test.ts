@@ -11,7 +11,7 @@ import {
 } from "@trafficflow/db/admin";
 import { pgTestUrl, throwawayDb } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { SearchFilters, ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 import {
@@ -276,7 +276,7 @@ const KEY_FUNCTION_CALL = "messages_recipient_keys(";
 interface PersonCase { name: string; q: string; filters: SearchFilters; account?: string; buffers?: number; rows?: number }
 
 function ctx(accountId: string = A): ServiceContext {
-  return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
 }
 
 /** The shared buffers (hit and read) a statement touched as it ran, under the session settings. */

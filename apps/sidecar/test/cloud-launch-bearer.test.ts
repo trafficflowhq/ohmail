@@ -1,3 +1,4 @@
+import { bindDb } from "@trafficflow/db";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveSession } from "@trafficflow/services/mail";
@@ -67,10 +68,10 @@ describe("the held launch-bearer decision", () => {
     expect(spy.reads(), "no decision read the store").toBe(0);
     spy.stop();
 
-    const fromStore = await resolveSession(db, bearer.token, LAUNCH);
+    const fromStore = await resolveSession(bindDb(db, { account: null }), bearer.token, LAUNCH);
     expect(fromStore).not.toBeNull();
     expect(held).toEqual({ held: fromStore });
-    expect(late).toEqual({ held: await resolveSession(db, bearer.token, justBefore) });
+    expect(late).toEqual({ held: await resolveSession(bindDb(db, { account: null }), bearer.token, justBefore) });
   });
 
   it("is refused from the store's close on, with no store read", async () => {
@@ -89,8 +90,8 @@ describe("the held launch-bearer decision", () => {
     const next = await mintLaunchBearer(db, world, new Date(LAUNCH.getTime() + 60_000));
     expect(await next.decide(first.token, LAUNCH), "not this launch's bearer").toBe("unknown");
     expect(await next.decide("not-a-bearer", LAUNCH)).toBe("unknown");
-    expect(await resolveSession(db, first.token, LAUNCH), "the next mint revoked the old row").toBeNull();
-    expect(await next.decide(next.token, LAUNCH)).toEqual({ held: await resolveSession(db, next.token, LAUNCH) });
+    expect(await resolveSession(bindDb(db, { account: null }), first.token, LAUNCH), "the next mint revoked the old row").toBeNull();
+    expect(await next.decide(next.token, LAUNCH)).toEqual({ held: await resolveSession(bindDb(db, { account: null }), next.token, LAUNCH) });
   });
 });
 
@@ -151,6 +152,6 @@ describe("the Cloud door asks no store for its own launch bearer", () => {
     expect(out.status).toBe(200);
     const res = await ask(sidecar, sidecar.sessionToken);
     expect(res.status, "admitted, then refused as signed out").toBe(409);
-    expect(await resolveSession(sidecar.db, sidecar.sessionToken, new Date())).not.toBeNull();
+    expect(await resolveSession(bindDb(sidecar.db, { account: null }), sidecar.sessionToken, new Date())).not.toBeNull();
   });
 });

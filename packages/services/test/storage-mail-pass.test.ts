@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accountStorage, accounts, users,
-  type AccessReadOpts, type AccessVerdict, type EntitlementsPort, type StorageOffer,
+  type AccessReadOpts, type AccessVerdict, type EntitlementsPort, type StorageOffer, bindDb,
 } from "@trafficflow/db";
 import { accountStoragePrefs, storageMailSent } from "@trafficflow/db/cloud";
 import {
@@ -77,7 +77,7 @@ async function setup(o: { bytes: number; locale?: "en" | "de" }) {
   });
   const plane: Plane = { cap: 4 * GB, state: "trialing", offer: OFFER, asked: [] };
   let now = START;
-  const run = () => runStorageMailPass(db, { port: portOf(plane), mail, now: () => now });
+  const run = () => runStorageMailPass(bindDb(db, { account: null }), { port: portOf(plane), mail, now: () => now });
   return { db, accountId, spy, plane, run, at: (days: number) => { now = new Date(START.getTime() + days * DAY); } };
 }
 

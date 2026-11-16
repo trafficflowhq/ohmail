@@ -11,7 +11,7 @@ import {
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
   type AuthVerdict, type Destination, type Logger, type UnsubscribeHeaderState,
 } from "@trafficflow/core/mail";
-import { bridgeTx, passContext, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, passContext, type Db, type ServiceContext, type UnboundDb } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
@@ -1089,7 +1089,7 @@ export class UnsubscribeService {
    * what actually stops a run.
    */
   async drainScreenedOut(
-    db: Db,
+    db: UnboundDb,
     opts: {
       now: () => Date; requestId: string;
       accounts?: number; perAccount?: number; budgetMs?: number; budget?: DrainBudget;

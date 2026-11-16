@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { sessions } from "@trafficflow/db";
+import { sessions, bindDb } from "@trafficflow/db";
 import { resolveSession } from "@trafficflow/services/mail";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
@@ -74,7 +74,7 @@ describe("the Cloud-paired door keeps its window's session", () => {
     for (const at of [25, 73]) {
       clock = LAUNCH + at * HOUR;
       expect(await codeOf(await ask(s.handle, s.sessionToken, "/sync?cursor=")), `+${at} h`).toBe("200 -");
-      expect(await resolveSession(s.db, s.sessionToken, now()), `the row at +${at} h`).not.toBeNull();
+      expect(await resolveSession(bindDb(s.db, { account: null }), s.sessionToken, now()), `the row at +${at} h`).not.toBeNull();
     }
   });
 
@@ -216,7 +216,7 @@ describe("the renewing holder", () => {
     spy.stop();
     expect(await bearer.decide(bearer.token, at(24.1)), "the store is back").not.toBe("refused");
     expect(lines.filter((l) => l === "launch_bearer_renew_failed").length).toBe(2);
-    expect(await resolveSession(db, bearer.token, at(24.1))).not.toBeNull();
+    expect(await resolveSession(bindDb(db, { account: null }), bearer.token, at(24.1))).not.toBeNull();
   });
 
   it("a revoked row ends the holder at its next renewal, and it stays ended", async () => {

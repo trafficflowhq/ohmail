@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, ServiceError, TransientDialRefusal } from "../src/index.js";
+import { SendService, ServiceError, TransientDialRefusal, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -21,10 +18,12 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+// The factory's pools, one per request: the binder takes a server handle only from the factory that
+// registered its door.
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-10-05T12:00:00.000Z");
 const MIN = 60 * 1000;
@@ -41,8 +40,8 @@ async function seeded(body = "words") {
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctxA: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "a" };
-  const ctxB: ServiceContext = { db: dbB, accountId, userId: null, now: () => NOW, requestId: "b" };
+  const ctxA: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "a" };
+  const ctxB: ServiceContext = { db: dbFor(dbB, accountId), accountId, userId: null, now: () => NOW, requestId: "b" };
   return { ctxA, ctxB, accountId, mailboxId: mb!.id, draftId: d!.id };
 }
 
@@ -75,7 +74,7 @@ async function refusal(p: Promise<unknown>): Promise<string> {
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); });
 
 describe.skipIf(!PG_UP)("a Cancel decided by the server", () => {
   it("(a) no row: a tombstone; the key's send is refused with nothing sent; the same words under a new key go once", async () => {

@@ -5,10 +5,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
@@ -35,8 +35,11 @@ import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing"
  * count under the box described the noise. Case (1) below is that corpus.
  */
 const URL = pgTestUrl(import.meta.url);
+// The factory's handle: the binder takes a server handle only from the factory that registered its
+// door. `client` is the raw client the page's plan is read on.
 const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-08-20T12:00:00.000Z");
@@ -44,7 +47,7 @@ const A = randomUUID();
 const ids: Record<string, string> = {};
 
 function ctx(): ServiceContext {
-  return { db, accountId: A, userId: null, now: () => NOW, requestId: "search-tiers" };
+  return { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-tiers" };
 }
 
 async function seed(o: {
@@ -147,6 +150,7 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
     await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from messages where account_id = ${A}`);
     await db.execute(sql`delete from mailboxes where account_id = ${A}`);
+    await owned.close();
     await client.end({ timeout: 5 });
   });
 
@@ -231,7 +235,7 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
     const traced = brandDialect(drizzle(client, { schema, logger: { logQuery: (q, p) => { logged.push({ q, p }); } } }), "pg");
     const trigramLoops = async (q: string): Promise<number[]> => {
       logged.length = 0;
-      await svc.search({ ...ctx(), db: traced }, { q, parts: "page" });
+      await svc.search({ ...ctx(), db: dbFor(traced, A) }, { q, parts: "page" });
       const page = logged.find((l) => l.q.includes("fused_s"));
       expect(page, `${q}: the page's statement was not logged`).toBeDefined();
       const plan = await client.begin(async (tx) => {

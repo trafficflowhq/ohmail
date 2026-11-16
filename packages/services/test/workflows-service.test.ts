@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { workflowRuns, workflows, workflowProposals, idempotencyKeys, changeLog } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
-import { WorkflowsService } from "../src/index.js";
+import { WorkflowsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { ServiceError, IdempotencyRaceLost } from "../src/errors.js";
 
@@ -13,7 +13,7 @@ const svc = new WorkflowsService();
 async function ctxFor(): Promise<{ db: Awaited<ReturnType<typeof makeTestDb>>; ctx: ServiceContext; accountId: string }> {
   const db = await makeTestDb();
   const accountId = randomUUID();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, ctx, accountId };
 }
 
@@ -165,8 +165,10 @@ describe("WorkflowsService — REST-only + cross-account", () => {
 
   it("cross-account get / update / softDelete / enqueueRun → 404", async () => {
     const { db } = await ctxFor();
-    const owner: ServiceContext = { db, accountId: randomUUID(), userId: null, now: () => NOW, requestId: "r" };
-    const other: ServiceContext = { db, accountId: randomUUID(), userId: null, now: () => NOW, requestId: "r" };
+    const ownerId = randomUUID();
+    const otherId = randomUUID();
+    const owner: ServiceContext = { db: dbFor(db, ownerId), accountId: ownerId, userId: null, now: () => NOW, requestId: "r" };
+    const other: ServiceContext = { db: dbFor(db, otherId), accountId: otherId, userId: null, now: () => NOW, requestId: "r" };
     const wf = await svc.create(owner, { name: "wf", enabled: true });
 
     expect(await statusOf(svc.get(other, wf.id))).toBe(404);

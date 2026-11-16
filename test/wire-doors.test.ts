@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { STAFF_DOOR_KEY } from "@trafficflow/db/cloud";
 import { BINDER_SQL, flightsOf, type PgWireFlight, type PgWireStatement } from "@trafficflow/db/testing";
-import { OWED, doorOf, namedBy, refusedOf, unmetOf } from "./support/wire-doors.js";
+import { OWED, doorOf, namedBy, refusedOf, statementShape, unmetOf } from "./support/wire-doors.js";
 
 /**
  * THE DOORS' LISTS, held against statements written by hand. The two wire tests read every
@@ -109,15 +109,30 @@ describe("refusedOf holds a statement against its door's list", () => {
     expect(refusals("api", flightOf(["", ""], `select 1 from "contacts"`, `select 1 from "auth_throttle"`))).toEqual(["nothing read contacts"]);
   });
 
-  it("an owed row admits exactly its login, door, table and verb, and is recorded as met", () => {
+  it("an owed row admits exactly its login, door, table and verb, and only the statements it lists, and is recorded as met", () => {
     const met = new Set<string>();
-    // Owed: the worker's batch stamp writes `mailboxes` on the view that names no account.
-    expect(refusals("worker", flightOf(["", ""], `update "mailboxes" set "last_sync_at" = $1`), met)).toEqual([]);
+    // Owed: the worker's batch stamp writes `mailboxes` on the view that names no account, by the texts its row lists.
+    const stamp = OWED.find((r) => r.login === "worker" && r.door === "nothing" && r.verb === "write" && r.table === "mailboxes")!;
+    expect(stamp.statements.length, "the row lists what it admits").toBeGreaterThan(0);
+    // Its own text, with its white space laid out otherwise, is the row's.
+    const sentText = stamp.statements[0]!.replace(/\(\$…\)/g, "($1, $2)").replace(/#/g, "7");
+    expect(refusals("worker", flightOf(["", ""], `  ${sentText.replace(/ /g, "\n  ")} `), met)).toEqual([]);
     expect([...met]).toEqual(["worker nothing write mailboxes"]);
-    // The same statement through the API's handle that names nothing is another row's, and is owed too; a
-    // table no row names is not admitted by its neighbour.
+    // Another statement on the same table, door and verb is no statement of the row's: refused, and not met.
+    const other = new Set<string>();
+    expect(refusals("worker", flightOf(["", ""], `update "mailboxes" set "status" = $1`), other)).toEqual(["nothing write mailboxes"]);
+    expect(other.size).toBe(0);
+    // A table no row names is not admitted by its neighbour.
     expect(refusals("worker", flightOf(["", ""], `update "contacts" set "name" = $1`), met)).toEqual(["nothing write contacts"]);
     expect(met.size).toBe(1);
+  });
+
+  it("the size probe's owed write admits its token rotation and nothing else", () => {
+    const row = OWED.find((r) => r.login === "api" && r.door === "nothing" && r.verb === "write" && r.table === "mailbox_credentials")!;
+    const rotation = `update "mailbox_credentials" set "secret_enc" = $1, "key_version" = $2, "updated_at" = $3 where ("mailbox_credentials"."mailbox_id" = $4 and "mailbox_credentials"."transport" = $5)`;
+    expect(row.statements).toEqual([statementShape(rotation)]);
+    expect(refusals("api", flightOf(["", ""], rotation))).toEqual([]);
+    expect(refusals("api", flightOf(["", ""], `delete from "mailbox_credentials" where "mailbox_id" = $1`))).toEqual(["nothing write mailbox_credentials"]);
   });
 });
 
@@ -130,6 +145,9 @@ describe("the owed list", () => {
       expect(r.why.length, `${r.table}: why`).toBeGreaterThan(10);
       expect(r.to.length, `${r.table}: to`).toBeGreaterThan(0);
       for (const task of r.to) expect(["walks", "keyed doors", "console", "lock"]).toContain(task);
+      // A row a wire test meets admits the statements that test sends, and lists them.
+      if (r.metBy !== "none") expect(r.statements.length, `${r.table}: its statements`).toBeGreaterThan(0);
+      for (const t of r.statements) expect(t, `${r.table}: a shape as the rows list it`).toBe(statementShape(t));
     }
   });
 

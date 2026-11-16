@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages,
+  awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies, messages, bindDb,
 } from "@trafficflow/db";
 import type { OutboundMessage, SendAdapter } from "@trafficflow/core";
 import { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -96,7 +96,7 @@ describe("the reservation's own row is what every ending keys on", () => {
       },
     });
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never, now: () => NOW, mailboxIds: [w.mailboxId],
     });
 
@@ -115,7 +115,7 @@ describe("a lease refusal at the dial releases the reservation", () => {
     await arrive(w, "the roof");
     const t = transport();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never, stillOrganizing: answering(true, false),
       now: () => NOW, mailboxIds: [w.mailboxId],
     });
@@ -130,7 +130,7 @@ describe("a lease refusal at the dial releases the reservation", () => {
     const w = await world();
     await arrive(w, "the roof", 30);
     const EARLIER = new Date(NOW.getTime() - 10 * 60_000);
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: transport().factory as never, now: () => EARLIER, mailboxIds: [w.mailboxId],
     });
     const before = await state(w);
@@ -138,7 +138,7 @@ describe("a lease refusal at the dial releases the reservation", () => {
     await arrive(w, "the drains");
     const t = transport();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never, stillOrganizing: answering(true, false),
       now: () => NOW, mailboxIds: [w.mailboxId],
     });
@@ -155,7 +155,7 @@ describe("a lease refusal at the dial releases the reservation", () => {
     const t = transport();
     const asks = [true, false];
 
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never,
       stillOrganizing: async () => {
         const answer = asks.shift() ?? true;
@@ -176,17 +176,17 @@ describe("a lease refusal at the dial releases the reservation", () => {
   it("and the reply is still owed: the next pass that holds the mailbox sends it, once", async () => {
     const w = await world();
     await arrive(w, "the roof");
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: transport().factory as never, stillOrganizing: answering(true, false),
       now: () => NOW, mailboxIds: [w.mailboxId],
     });
     const t = transport();
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never, stillOrganizing: async () => true,
       now: () => new Date(NOW.getTime() + 60_000), mailboxIds: [w.mailboxId],
     });
-    const again = await runAwayResponderPass(w.db, {
+    const again = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: t.factory as never, stillOrganizing: async () => true,
       now: () => new Date(NOW.getTime() + 120_000), mailboxIds: [w.mailboxId],
     });
@@ -201,12 +201,12 @@ describe("a lease refusal at the dial releases the reservation", () => {
     const w = await world();
     await arrive(w, "the roof");
 
-    const out = await runAwayResponderPass(w.db, {
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: transport({ fail: true }).factory as never, stillOrganizing: async () => true,
       now: () => NOW, mailboxIds: [w.mailboxId],
     });
     const later = transport();
-    await runAwayResponderPass(w.db, {
+    await runAwayResponderPass(bindDb(w.db, { account: null }), {
       openSendAdapter: later.factory as never, stillOrganizing: async () => true,
       now: () => new Date(NOW.getTime() + 60_000), mailboxIds: [w.mailboxId],
     });
@@ -254,7 +254,7 @@ describe("a letter gone from the server before the pass decided it is never answ
     }
     const t = transport();
 
-    const out = await runAwayResponderPass(w.db, { openSendAdapter: t.factory as never, now: () => NOW, mailboxIds: [w.mailboxId] });
+    const out = await runAwayResponderPass(bindDb(w.db, { account: null }), { openSendAdapter: t.factory as never, now: () => NOW, mailboxIds: [w.mailboxId] });
 
     expect(t.delivered.map((m) => m.subject), "a letter gone from the server was answered").toEqual(["Re: the roof"]);
     expect(out).toMatchObject({ sent: 1, examined: 1, suppressed: 0 });

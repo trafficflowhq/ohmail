@@ -9,6 +9,7 @@ import {
   AttachmentsService, readerFor, repairedPart, type AttachmentAdapter, type OpenAdapter,
 } from "../src/attachments-service.js";
 import { sendService } from "../src/send-service.js";
+import { dbFor } from "../src/context.js";
 import { ServiceError } from "../src/errors.js";
 import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage as seedApiMessage, seedSession, seedBody } from "../../api/test/helpers.js";
@@ -165,7 +166,7 @@ describe("the forward refuses before any SMTP write", () => {
       to: [{ name: null, address: "sam@example.test" }], cc: [], bcc: [], status: "draft",
       createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
-    const ctx = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "part-gate" };
+    const ctx = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "part-gate" };
     const delivered: OutboundMessage[] = [];
     const openSendAdapter = async (): Promise<SendAdapter> => ({
       async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },
@@ -476,7 +477,7 @@ describe("a read the server's tree vouches for is read again before anything is 
       to: [{ name: null, address: "sam@example.test" }], cc: [], bcc: [], status: "draft",
       createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
-    const ctx = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "part-reread" };
+    const ctx = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "part-reread" };
     const delivered: OutboundMessage[] = [];
     const openSendAdapter = async (): Promise<SendAdapter> => ({
       async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },

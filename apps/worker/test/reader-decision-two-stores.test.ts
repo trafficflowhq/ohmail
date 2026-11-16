@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, mailboxFolders, messages, folderState, rules, organizerRequests } from "@trafficflow/db";
-import { MessageService, ScreenerService } from "@trafficflow/services/mail";
+import { dbFor, MessageService, ScreenerService } from "@trafficflow/services/mail";
 import {
   deriveRequestKey, formatRequest, formatAck, acksIn,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
@@ -103,7 +103,7 @@ describe("a reader's decision reaches an organizer with its own store", () => {
 
     const svc = new ScreenerService({});
     const decided = await svc.decide(
-      { db: phone.db, accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
+      { db: dbFor(phone.db, phone.accountId), accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
       phone.messageId, { decision: "yes" },
     );
     expect("pending" in decided && decided.pending).toBe(true);
@@ -130,7 +130,7 @@ describe("a reader's decision reaches an organizer with its own store", () => {
     const desktop = await install("organizer");
     const svc = new ScreenerService({});
     await svc.decide(
-      { db: phone.db, accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
+      { db: dbFor(phone.db, phone.accountId), accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
       phone.messageId, { decision: "yes" },
     );
     const meta = sharedMeta();
@@ -271,7 +271,7 @@ describe("the reader reads the answer from its organizer and only from it", () =
   async function phoneAwaiting(named: (phone: Awaited<ReturnType<typeof install>>) => Promise<string>) {
     const phone = await install("reader");
     await new ScreenerService({}).decide(
-      { db: phone.db, accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
+      { db: dbFor(phone.db, phone.accountId), accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
       phone.messageId, { decision: "yes" },
     );
     const meta = sharedMeta();
@@ -315,7 +315,7 @@ describe("a reader's move into a person's own folder reaches an organizer with i
     await phone.db.insert(mailboxFolders).values({ mailboxId: phone.mailboxId, accountId: phone.accountId, folder: "Clients/Acme" });
     if (desktopLists) await desktop.db.insert(mailboxFolders).values({ mailboxId: desktop.mailboxId, accountId: desktop.accountId, folder: "Clients/Acme" });
     const moved = await new MessageService().move(
-      { db: phone.db, accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
+      { db: dbFor(phone.db, phone.accountId), accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
       phone.messageId, { folder: "Clients/Acme" },
     );
     expect("pending" in moved && moved.pending).toBe(true);

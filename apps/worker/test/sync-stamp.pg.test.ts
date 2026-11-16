@@ -253,8 +253,8 @@ describe("the worker actually calls it", () => {
   // API stamps with SQL `now()`, so the cycle's stamps must come off the DATABASE's clock. A
   // mutation that reintroduces `new Date()` here re-inserts the worker host's wall clock into
   // that comparison and turns this anchor red.
-  const BATCHED = "stampMailboxSyncNow(db, synced, Date.now() - passStartedMs)";
-  const IMPORT_DONE = "stampInitialImportComplete(db, rt.mailboxId, new Date())";
+  const BATCHED = "stampMailboxSyncNow(roster, synced, Date.now() - passStartedMs)";
+  const IMPORT_DONE = "stampInitialImportComplete(forAccount(rt.accountId).db, rt.mailboxId, new Date())";
 
   it("every mailbox that completed a cycle is collected and stamped", () => {
     // A writer nobody calls leaves the column exactly as broken as it was. The collection

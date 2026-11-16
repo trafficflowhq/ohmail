@@ -6,7 +6,7 @@ import { UNMETERED_STORAGE_CAP, type NativeLocator } from "@trafficflow/core/mai
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { attachments, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { AttachmentsService, ServiceError, type ServiceContext } from "@trafficflow/services";
+import { AttachmentsService, dbFor, ServiceError, type ServiceContext } from "@trafficflow/services";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { byMessageId, dbUrlFor, makeHarness, rawClient } from "../../../packages/organizer/test/_workerenv.js";
@@ -72,7 +72,7 @@ async function world() {
     await a.connect();
     return a;
   };
-  const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
 
   /** Park the door's second chunk while the message moves; the mirror learns where per `write`. */
   const moveMidRead = (write: MirrorWrite): void => {

@@ -304,7 +304,7 @@ export function stateSection(scope: EngineScope, box: MailboxScope, config: Side
           // stays silent on every stand-down and every launch, the rule every pass here follows.
           if (r.closed > 0) scope.log("scheduled_sends_stood_down", { closed: r.closed, disabledReason: reason });
           // The closed appointments' kept files go with them (mail 0179).
-          if (r.closed > 0) await sweepScheduledSendFiles(scope.db as never, { mailboxIds: [mb.id] }).catch(() => 0);
+          if (r.closed > 0) await sweepScheduledSendFiles(scope.unbound, { mailboxIds: [mb.id] }).catch(() => 0);
         } catch (err) {
           scope.log("scheduled_sends_stand_down_failed", {
             err,

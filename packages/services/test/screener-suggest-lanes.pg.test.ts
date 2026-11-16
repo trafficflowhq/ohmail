@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
-import { ScreenerService, suggestLaneGate, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, dbFor, suggestLaneGate, type ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import { PLANE_PRICING } from "./helpers/plane-pricing.js";
@@ -44,9 +41,9 @@ import { PLANE_PRICING } from "./helpers/plane-pricing.js";
  */
 const URL = pgTestUrl(import.meta.url);
 
-/** PRODUCTION'S SHAPE. See the header — this number is the point of the file, not a default. */
-const sql = postgres(URL, { max: 1 });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+/** PRODUCTION'S SHAPE. See the header — this number is the point of the file, not a default. The
+ *  factory's pool of one: the binder takes a server handle only from the factory that registered its door. */
+const db = makePooledDb(URL, { max: 1 });
 
 const NOW = new Date("2026-09-02T12:00:00Z");
 
@@ -95,7 +92,7 @@ function slowClassifier(t: Trace): ClassifierPort {
 const credits = fakeSpendPort();
 
 const ctxFor = (accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: randomUUID() });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: randomUUID() });
 
 /** `granted` is the number of spends the port will admit before it answers `insufficient`. */
 async function seedAccount(granted: number, senders: string[]): Promise<string> {
@@ -130,7 +127,7 @@ const SENDERS = (n: number, tag: string): string[] =>
 
 describe("a suggest request buys its senders in bounded lanes", () => {
   beforeAll(async () => { await runMigrations(URL); });
-  afterAll(async () => { await sql.end({ timeout: 5 }); });
+  afterAll(async () => { await closePooledDbs(); });
 
   it("overlaps the model calls, and the overlap is BOUNDED", async () => {
     const senders = SENDERS(15, "lane");

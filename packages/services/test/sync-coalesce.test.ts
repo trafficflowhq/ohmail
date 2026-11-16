@@ -7,7 +7,7 @@ import {
   type EntityType,
 } from "@trafficflow/db";
 import {
-  COALESCE_SCAN_WINDOW, STALE_COALESCE_SPAN, SyncService,
+  COALESCE_SCAN_WINDOW, STALE_COALESCE_SPAN, SyncService, dbFor,
   type ServiceContext, type SyncResponse,
 } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
@@ -31,7 +31,7 @@ async function setup() {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-29T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };

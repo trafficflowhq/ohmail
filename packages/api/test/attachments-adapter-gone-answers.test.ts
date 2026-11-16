@@ -10,7 +10,7 @@ import {
   UnsupportedAuthTypeError, WriteDeclinedError,
 } from "@trafficflow/core/adapters/imap";
 import type { MimeStructure, NativeLocator, OutboundMessage, SendAdapter } from "@trafficflow/core/mail";
-import { sendService, type AttachmentAdapter, type ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, sendService, type AttachmentAdapter, type ServiceContext } from "@trafficflow/services/mail";
 import { makeOpenAdapter } from "../src/attachments-adapter.js";
 import type { ApiDeps } from "../src/deps.js";
 import { FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession } from "./helpers.js";
@@ -209,7 +209,7 @@ describe("a forward whose original moved goes out on the first press", () => {
       createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
     const ctx: ServiceContext = {
-      db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "fwd-moved",
+      db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "fwd-moved",
     };
     // The worker's adoption, landing while the first read is refused: the mirror now names FRESH.
     const repoint = async (): Promise<void> => {

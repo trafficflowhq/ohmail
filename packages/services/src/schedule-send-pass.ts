@@ -4,6 +4,7 @@ import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type StorageCap } from "@trafficflow/core/mail";
 import {
   bridgeTx, bridgeDb, passContext, type Db, type OpenPassSendAdapter, type PassContext, type ServiceContext,
+  type UnboundDb,
 } from "./context.js";
 import { ServiceError } from "./errors.js";
 import {
@@ -169,7 +170,7 @@ interface ClaimedRow {
  * {@link closeAppointment}) is handed that context and never the walk.
  */
 export async function runScheduledSendPass(
-  walk: Db, deps: ScheduledSendPassDeps,
+  walk: UnboundDb, deps: ScheduledSendPassDeps,
 ): Promise<ScheduledSendPassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
@@ -350,7 +351,7 @@ async function sendOne(
  * statements: account deletion locks files and then drafts, so no transaction here holds both. A
  * draft in the claim window or `sending` is never closed here. Never throws.
  */
-async function tidyKeptFiles(walk: Db, now: Date, log: Logger): Promise<void> {
+async function tidyKeptFiles(walk: UnboundDb, now: Date, log: Logger): Promise<void> {
   try {
     const overdue = await bridgeTx(walk).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
       .where(and(
@@ -422,7 +423,7 @@ export const SCHEDULED_SEND_SCAN_ACCOUNTS = 200;
  * none, and the eligibility read rides inside it.
  */
 async function claimDue(
-  walk: Db, now: Date, batch: number,
+  walk: UnboundDb, now: Date, batch: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
   log: Logger,
   mailboxIds: readonly string[] | undefined,

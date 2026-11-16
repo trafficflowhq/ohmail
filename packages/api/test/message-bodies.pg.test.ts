@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -71,7 +72,7 @@ const app = createApp(apiRoutes);
 /** A full real-Postgres `ApiDeps`; `session: null` — the bearer resolves it through the stack. */
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -107,7 +108,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 /** An OTP email — sensitive in BOTH text and html; the html part is what lets the mutation-watch bite. */

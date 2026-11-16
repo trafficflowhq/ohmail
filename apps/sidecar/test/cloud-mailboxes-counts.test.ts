@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, messageBodies } from "@trafficflow/db";
-import type { ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**
@@ -61,7 +61,7 @@ const corpus = async (
     });
   }
   const ctx: ServiceContext = {
-    db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "fix-0192-sidecar",
+    db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "fix-0192-sidecar",
   };
   return { ctx, filled: mb!.id, empty };
 };

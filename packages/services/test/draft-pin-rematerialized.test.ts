@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, drafts, mailboxes, messages } from "@trafficflow/db";
 import { asc, eq } from "drizzle-orm";
-import { DraftsService } from "../src/index.js";
+import { DraftsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -37,7 +37,7 @@ async function setup() {
     nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
   const now = new Date("2026-07-28T12:00:00Z");
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => now, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "r" };
   return { db, accountId, ctx, mailboxId: mb!.id, messageId: msg!.id };
 }
 

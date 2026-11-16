@@ -43,8 +43,8 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * A STAND-DOWN WRITE, in the two spellings that exist.
  *
  * Cloud goes through the fenced lifecycle helper; the desktop writes its own row inline, because
- * its store has no shard, no leader and therefore no fence to apply. `markMailboxStoodDown(db,`
- * and not the bare name, so the helper's own DEFINITION in `apps/worker/src/mailboxes.ts` is not
+ * its store has no shard, no leader and therefore no fence to apply. `markMailboxStoodDown(` with
+ * the handle it is called on, and not the bare name, so the helper's own DEFINITION in `apps/worker/src/mailboxes.ts` is not
  * counted as a stand-down — it is the write, not a decision to stand down, and it has no mailbox
  * whose appointments it could close.
  *
@@ -91,7 +91,7 @@ const STAND_DOWN_NEEDLES = [
  *
  * `apps/worker/src/mailboxes.ts` holds `markMailboxStoodDown` itself, so it necessarily contains
  * the inline spelling the second needle looks for. It is the same carve-out the FIRST needle
- * makes with `(db,` rather than the bare name, and for the same stated reason: it is the write,
+ * makes with the call's handle rather than the bare name, and for the same stated reason: it is the write,
  * not a decision to stand down, and it has no mailbox whose appointments it could close.
  *
  * A path exclusion rather than a cleverer regex, because the alternative is a needle that has to

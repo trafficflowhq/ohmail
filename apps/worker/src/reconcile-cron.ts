@@ -7,7 +7,6 @@ import {
   type EntitlementsComposition, type Tx,
 } from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
-import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
 import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import { ImapAdapter, WriteDeclinedError } from "@trafficflow/core/adapters/imap";
@@ -24,6 +23,7 @@ import { applyMetaRequests } from "@ohmail/organizer/request-drain";
 import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { profileProducerVersion } from "./build-version.js";
 import { makeStorageCapResolver } from "./storage-cap.js";
+import { bindWorker } from "./start/bind.js";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit, writeDoorOf,
   cycleWriteAuthority,
@@ -79,6 +79,11 @@ export async function runReconcileCron(
 
   const owned = makeOwnedDb(config.databaseUrl);
   const db = owned.db;
+  // The pool's two views, as the organizer has them. The mailbox's row is read on the one that
+  // names no account; everything this sweep does for the mailbox runs on the handle of the account
+  // THAT ROW carries (`own`, below). The pool's own handle keeps the shard's heartbeat and the
+  // entitlement faults, which are no account's rows.
+  const binding = bindWorker(db);
   const selection = selectionOf(config);
 
   // ONE cleanup path for every exit below. The pass grew from three early returns to seven when
@@ -91,7 +96,7 @@ export async function runReconcileCron(
   let adapter: ImapAdapter | null = null;
   let claimedHeartbeat = false;
   try {
-    const row = await loadMailboxById(db, mailboxId);
+    const row = await loadMailboxById(binding.roster, mailboxId);
     if (!row || row.accountId !== accountId) {
       // NAME the two ids before throwing. The message below carries them, and `runCronCli`
       // reduces a thrown value to class + code, so without this line the operator gets
@@ -107,12 +112,14 @@ export async function runReconcileCron(
         `${row ? `belongs to account ${row.accountId}, not TF_ACCOUNT_ID ${accountId}` : "does not exist"}`,
       );
     }
-    if (!(await accountInShard(db, row.accountId, selection))) {
+    if (!(await accountInShard(binding.roster, row.accountId, selection))) {
       log.info(cronEvent("reconcile", "other_shard"), {
         accountId: row.accountId, shard: selection.shardIndex ?? 0, shards: selection.shards ?? 1,
       });
       return { ran: false, reason: "other-shard" };
     }
+    // The handle of the account the mailbox's row carries (the configured id was held equal to it above).
+    const own = binding.forAccount(row.accountId);
     // THE ROSTER'S OWN PREDICATE, applied to the one mailbox this pass serves.
     // `loadEnabledMailboxes` selects `status <> 'disabled'`, so the always-on worker never
     // attaches a disabled mailbox; this pass took its mailbox from the environment and therefore
@@ -226,7 +233,7 @@ export async function runReconcileCron(
       try {
         // The holder columns ride the same write : the demotion IS the banner, and the
         // claim this verdict was reached from is the claim the row should name.
-        const written = await markMailboxStoodDown(db, mailboxId, err.reason, {
+        const written = await markMailboxStoodDown(own.db, mailboxId, err.reason, {
           fence,
           // The one-shots as this sweep read them — see `spendOneShot`.
           asRead: row,
@@ -260,7 +267,7 @@ export async function runReconcileCron(
       // LEASE (a fact about `ohmail/_meta`), and a close gated on the fenced write would never run for a
       // `disabled` mailbox — the population that needs it most.
       try {
-        const closed = await closeStoodDownAppointments(db as unknown as Tx, {
+        const closed = await closeStoodDownAppointments(own.db as unknown as Tx, {
           accountId: row.accountId, mailboxId, reason: err.reason, now: new Date(),
         });
         if (closed.closed > 0) {
@@ -295,7 +302,7 @@ export async function runReconcileCron(
       try {
         // The one-shots as this sweep read them, at `loadMailboxById` — the same rule the
         // always-on gate keeps, and the same function. See `spendOneShot`.
-        const promoted = await clearOrganizerStandDown(db, mailboxId, { fence, asRead: row });
+        const promoted = await clearOrganizerStandDown(own.db, mailboxId, { fence, asRead: row });
         if (promoted) return;
         log.warn(cronEvent("reconcile", "organizer_promotion_fenced"), {
           mailboxId, accountId: row.accountId,
@@ -384,7 +391,7 @@ export async function runReconcileCron(
     // Read-only against the mailbox; the write-behind stays the always-on worker's — this pass
     // never calls `onOrganize`.
     const profileSync = new OrganizerProfileSync({
-      db: db as unknown as Tx, accountId, mailboxId, adapter,
+      db: own.db as unknown as Tx, accountId, mailboxId, adapter,
       self: {
         installId: config.organizer?.installId ?? cloudInstallId(config.environment ?? "production"),
         kind: "cloud",
@@ -398,7 +405,7 @@ export async function runReconcileCron(
     await profileSync.armHoldFromFolder();
     /* The account's one-click switch, read once for the sweep: while a screen-out may unsubscribe,
        a one-click letter's sender is worth confirming. A failed read confirms none of them. */
-    const listLetters = await db.select({ at: accountSettings.blockAutoUnsubscribeAt })
+    const listLetters = await own.db.select({ at: accountSettings.blockAutoUnsubscribeAt })
       .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1)
       .then(([settings]) => (settings?.at ?? null) === null, () => false);
     // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
@@ -413,13 +420,13 @@ export async function runReconcileCron(
           onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
         })
         : (UNMETERED satisfies EntitlementsComposition),
-      db as unknown as Tx,
+      (id) => binding.forAccount(id).db as unknown as Tx,
       log,
     );
     /* WITHOUT THE PERMIT, and the type says so: this object is the sweep's two cycles' shared
        facts, and the receipt every page inside a cycle asks is named at each call below. */
     const deps: Omit<SyncDeps, "writeAuthority"> = {
-      repo: makeDrizzleRepo(db), adapter, accountId, mailboxId,
+      repo: own.repo, adapter, accountId, mailboxId,
       // ORGANIZER, always, and typed rather than derived . This pass reached here only
       // by passing the reader refusal above AND the lease permit, so the role is a fact about the
       // path rather than a value to look up — and typing it is what makes the census over
@@ -433,7 +440,7 @@ export async function runReconcileCron(
       storagePlanLimit: await capFor.planLimit(accountId),
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
-      fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),
+      fence: makeSyncWriteFence(own.db, mailboxId, fence, () => lockLost),
       // The build this process is, as its configuration resolved it: the worker's own label, so a
       // write-off the worker recorded under this build is not read again by its backstop.
       buildVersion: config.buildVersion ?? UNLABELLED_BUILD,
@@ -517,7 +524,7 @@ export async function runReconcileCron(
       if (mayStillWrite) {
         try {
           await applyMetaRequests(
-            db, {
+            own.db, {
               mailboxId, accountId: row.accountId, adapter,
               installId: config.organizer?.installId ?? cloudInstallId(config.environment ?? "production"),
               requestKey: deriveRequestKey({ auth: { user: config.imap.user, pass: config.imap.pass }, address: row.address }),
@@ -590,7 +597,7 @@ export async function runReconcileCron(
       // could plant a future value for `stampMailboxSyncNow`'s GREATEST to preserve (2026-08-26
       // review, round 4). Backdated to the first cycle's start: an adopted external move is
       // stamped with this column as a lower bound of the move (mail 0145).
-      await stampMailboxSyncNow(db, [mailboxId], Date.now() - passStartedMs);
+      await stampMailboxSyncNow(own.db, [mailboxId], Date.now() - passStartedMs);
     } catch (err) {
       log.error(cronEvent("reconcile", "stamp_failed"), { mailboxId, err });
     }

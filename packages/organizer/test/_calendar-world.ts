@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { DEFAULT_LIMITS, intlZones, readCalendar, type CalEvent, type EventTime, type RRule } from "@ohmail/cal-core";
 import {
@@ -21,9 +20,8 @@ import {
   accounts, calAlarms, calAttendees, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, mailboxes,
   type Tx,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { parseCalendarAct, writePayloadOf, type CalendarWritePayload } from "@trafficflow/db/calendar";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -50,11 +48,18 @@ export interface World {
   close(): Promise<void>;
 }
 
+/**
+ * `db` is a pool of `max` connections the server's own factory makes, so a turn's handle can be bound
+ * to its connection's account over it; `sql` is a client of its own for what a test reads and writes raw.
+ */
 export async function openWorld(max = 4): Promise<World> {
   await runMigrations(PG_TEST_URL);
   const client = postgres(PG_TEST_URL, { max, onnotice: () => {} });
-  const db = brandDialect(drizzle(client, { schema }), "pg") as unknown as Tx;
-  return { db, sql: client, keys: keyRing(), close: () => client.end({ timeout: 5 }) };
+  const db = makePooledDb(PG_TEST_URL, { max }) as unknown as Tx;
+  return {
+    db, sql: client, keys: keyRing(),
+    close: async () => { await closePooledDbs(); await client.end({ timeout: 5 }); },
+  };
 }
 
 export interface Seeded {

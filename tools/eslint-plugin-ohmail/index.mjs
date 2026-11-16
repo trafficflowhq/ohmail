@@ -408,6 +408,60 @@ const ownerLookup = {
   },
 };
 
+/**
+ * The binder's callers: only the files tools/binders.json lists name a function that binds a database handle to an
+ * account or to none. A name is refused wherever it stands in a file outside the list: imported under any local
+ * name, re-exported, read off a namespace or a module by a string, declared. A listed file that names none leaves
+ * the list, so the list only shrinks.
+ */
+const binderCallers = {
+  meta: {
+    type: "problem",
+    schema: [
+      {
+        type: "object",
+        properties: {
+          root: { type: "string" },
+          names: { type: "array", items: { type: "string" } },
+          files: { type: "array", items: { type: "string" } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      named:
+        "{{name}} binds a database handle to an account or to none, and only the files of tools/binders.json name it; a context takes its handle from the request, a pass's row from its pass",
+      stale: "{{file}} is listed in tools/binders.json and names no binder; it leaves the list",
+      noList: "ohmail/binder-callers has no list of callers (tools/binders.json), so every file is refused",
+    },
+  },
+  create(context) {
+    const { names, files } = context.options[0] ?? {};
+    if (!Array.isArray(files) || files.length === 0 || !Array.isArray(names) || names.length === 0) {
+      return { Program: (node) => context.report({ node, messageId: "noList" }) };
+    }
+    const root = context.options[0]?.root ?? context.cwd;
+    const rel = path.relative(root, context.filename).split(path.sep).join("/");
+    const listed = files.includes(rel);
+    const binders = new Set(names);
+    /* Each binder is refused once in a file, where it is first named: an import names it twice by itself. */
+    const namedHere = new Set();
+    const named = (node, name) => {
+      if (!binders.has(name) || namedHere.has(name)) return;
+      namedHere.add(name);
+      if (!listed) context.report({ node, messageId: "named", data: { name } });
+    };
+    return {
+      Identifier: (node) => named(node, node.name),
+      // A binder read by a string: `db["bindDb"]`, `import { "bindDb" as mint }`.
+      Literal: (node) => typeof node.value === "string" && named(node, node.value),
+      "Program:exit": (node) => {
+        if (listed && namedHere.size === 0) context.report({ node, messageId: "stale", data: { file: rel } });
+      },
+    };
+  },
+};
+
 const isTypeDeclaration = (node) =>
   node?.type === "TSInterfaceDeclaration" || node?.type === "TSTypeAliasDeclaration";
 
@@ -583,6 +637,16 @@ export function readOwnerReaders(root) {
   }
 }
 
+/** tools/binders.json as the options of `ohmail/binder-callers`: the binders' names and every file that may name one. */
+export function readBinders(root) {
+  try {
+    const { names, binders } = JSON.parse(readFileSync(path.join(root, "tools/binders.json"), "utf8"));
+    return { names, files: binders.flatMap((entry) => entry.files) };
+  } catch {
+    return { names: [], files: [] }; // the rule then refuses every file
+  }
+}
+
 /** tools/doors.json as the platform rule's options: the door files, and the platforms to look for. */
 export function readDoors(root) {
   try {
@@ -600,6 +664,7 @@ export default {
     "declared-dependency": declaredDependency,
     "platform-name": platformName,
     "owner-lookup": ownerLookup,
+    "binder-callers": binderCallers,
     "wire-exports-no-value": wireExportsNoValue,
     "no-inline-config": noInlineConfig,
     "no-config-comment": noConfigComment,

@@ -1,16 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createLogger, SendNotSubmitted } from "@trafficflow/core";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
-import { SendService } from "../src/index.js";
+import { SendService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -34,10 +32,14 @@ import type { ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+// The factory's pools, one per request: the binder takes a server handle only from the factory that
+// registered its door.
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
+// A reader of pg_stat_activity, never handed to a service.
+const sqlA = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
 
 const NOW = new Date("2026-09-02T12:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -67,14 +69,14 @@ async function seeded() {
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctxA: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "a" };
+  const ctxA: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "a" };
   // The RETRY arrives on its own connection, the way a second HTTP request does.
-  const ctxB: ServiceContext = { db: dbB, accountId, userId: null, now: () => NOW, requestId: "b" };
+  const ctxB: ServiceContext = { db: dbFor(dbB, accountId), accountId, userId: null, now: () => NOW, requestId: "b" };
   return { ctxA, ctxB, accountId, draftId: d!.id };
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); await sqlB.end({ timeout: 5 }); });
+afterAll(async () => { await ownedA.close(); await ownedB.close(); await sqlA.end({ timeout: 5 }); });
 
 describe.skipIf(!PG_UP)("a retry racing a submission that landed after the ceiling", () => {
   it("the late success wins and the retry offers NOTHING — one envelope, one delivery", async () => {
@@ -200,19 +202,28 @@ const codeOf = (e: unknown): string => {
   return String(x?.code ?? x?.cause?.code ?? x?.message ?? e);
 };
 
-/** One party of a race: its own pool under its own application name, and every error a transaction of it ended on. */
+/**
+ * One party of a race: a pool of the factory's under its own application name (a parameter of the
+ * address is one of the connection), and every error a transaction of it ended on. The transaction
+ * is read on the pool's handle and runs as the handle it was asked on, so a view bound to an
+ * account opens its own bound transaction.
+ */
 function party(app: string) {
-  const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { application_name: app } });
-  const db = brandDialect(drizzle(client, { schema }), "pg");
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  const pool = makeOwnedDb(address.toString());
+  const db = pool.db;
   const ended: string[] = [];
   const h = db as unknown as { transaction: (fn: unknown, ...rest: unknown[]) => Promise<unknown> };
-  const inner = h.transaction.bind(h);
+  const inner = h.transaction;
   // A deadlock a caller swallows (the abandoned submission only logs) is still read here.
   Object.defineProperty(h, "transaction", {
     configurable: true, writable: true,
-    value: (fn: unknown, ...rest: unknown[]) => inner(fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; }),
+    value(this: unknown, fn: unknown, ...rest: unknown[]) {
+      return inner.call(this, fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; });
+    },
   });
-  return { app, client, db, ended };
+  return { app, pool, db, ended };
 }
 
 /** The statement a backend of `waiter` is blocked on by a backend of `holder`; null when it never is within `ms`. */
@@ -283,8 +294,8 @@ describe.skipIf(!PG_UP)("the late landing against its own replay, forced by gate
         to: [{ name: null, address: "you@example.com" }], status: "draft", createdAt: NOW, updatedAt: NOW,
       }).returning();
       const draftId = d!.id;
-      const ctxA: ServiceContext = { db: a.db, accountId, userId: null, now: () => NOW, requestId: "a" };
-      const ctxB: ServiceContext = { db: b.db, accountId, userId: null, now: () => NOW, requestId: "b" };
+      const ctxA: ServiceContext = { db: dbFor(a.db, accountId), accountId, userId: null, now: () => NOW, requestId: "a" };
+      const ctxB: ServiceContext = { db: dbFor(b.db, accountId), accountId, userId: null, now: () => NOW, requestId: "b" };
       const lines: string[] = [];
       const log = createLogger({ service: "send", sink: (line) => { lines.push(line); } });
       const abandoned = (): boolean => lines.some((l) => l.includes("send_abandoned_after_ceiling"));
@@ -351,8 +362,8 @@ describe.skipIf(!PG_UP)("the late landing against its own replay, forced by gate
     } finally {
       commitThird();
       await third.end({ timeout: 5 });
-      await a.client.end({ timeout: 5 });
-      await b.client.end({ timeout: 5 });
+      await a.pool.close();
+      await b.pool.close();
     }
   }, 60_000);
 });

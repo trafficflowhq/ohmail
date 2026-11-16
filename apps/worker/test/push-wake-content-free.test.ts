@@ -511,7 +511,7 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       const { source, emit } = fakeSource();
       // The REAL default post — no injected double — so what is asserted is what goes on a socket.
       const wake = startPushWake({
-        db,
+        dbOf: () => db,
         source,
         ownsAccount: OWN_ALL,
         // Loopback is only dialable under the relaxed policy; the pin is the literal itself.
@@ -567,7 +567,7 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       const { db } = fakeDb([{ id: "raw", endpoint: `http://127.0.0.1:${l.port}/up/raw` }]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: withVapid().vapid,
         debounceMs: 5, minIntervalMs: 0,
@@ -602,7 +602,7 @@ describe("census 3b — the SEALED wire carries the same constant and nothing el
       ]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid, debounceMs: 5, minIntervalMs: 0,
       });
@@ -716,7 +716,7 @@ describe("a deployment with NO keypair skips keyed rows rather than sending a di
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
       log: { info: () => {}, warn: (e) => { warned.push(e); } },
     });
@@ -747,7 +747,7 @@ describe("a deployment with NO keypair skips keyed rows rather than sending a di
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: withVapid().vapid, debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -775,7 +775,7 @@ describe("an INVALID keypair stops the sender dead — including the arm that wo
     };
     const { db } = fakeDb([{ id: "raw", endpoint: "https://p.example/up/raw" }]);
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: { kind: "invalid", why: "TF_VAPID_PUBLIC_KEY and TF_VAPID_PRIVATE_KEY are not a pair" },
       debounceMs: 5, minIntervalMs: 0,
       log: { info: () => {}, warn: (e) => { warned.push(e); } },
@@ -795,7 +795,7 @@ describe("an INVALID keypair stops the sender dead — including the arm that wo
     const fields: Record<string, unknown>[] = [];
     const { db } = fakeDb([]);
     startPushWake({
-      db, source: { subscribeAll: () => () => {} }, ownsAccount: OWN_ALL, guard: PERMIT,
+      dbOf: () => db, source: { subscribeAll: () => () => {} }, ownsAccount: OWN_ALL, guard: PERMIT,
       vapid: { kind: "invalid", why: "TF_VAPID_PRIVATE_KEY is 2 bytes, expected 32" },
       log: { info: () => {}, warn: (_e, f) => { fields.push(f ?? {}); } },
     });
@@ -858,7 +858,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       const { db } = fakeDb([{ id: "r", endpoint: `http://127.0.0.1:${port}/up/drip` }]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: NO_VAPID,
         debounceMs: 5, minIntervalMs: 0,
@@ -911,7 +911,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       ]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: NO_VAPID,
         debounceMs: 5, minIntervalMs: 0, timeoutMs: 1_000,
@@ -951,7 +951,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       ]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: NO_VAPID,
         debounceMs: 5, minIntervalMs: 0, timeoutMs: 1_000,
@@ -994,7 +994,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -1017,7 +1017,7 @@ describe("a window of the calendar's records alone dials nothing", () => {
     let posts = 0;
     const post: PushWakePost = () => { posts += 1; return Promise.resolve({ status: 201 }); };
     const { source, emit } = fakeSource();
-    const wake = startPushWake({ db, source, guard: PERMIT, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0 });
+    const wake = startPushWake({ dbOf: () => db, source, guard: PERMIT, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0 });
     emit("acct-1", 4n);
     emit("acct-1", 9n);
     await tick(200);
@@ -1050,7 +1050,7 @@ describe("a window of the calendar's records alone dials nothing", () => {
       const refuseFirst: PushEndpointGuard = { async check(url) { if (url.endsWith("/refused")) throw new Error("no"); return ["203.0.113.9"]; } };
       const post: PushWakePost = (...args) => { sent.push(args); return Promise.resolve({ status: 410 }); };
       const { source, emit } = fakeSource();
-      const wake = startPushWake({ db, source, guard: refuseFirst, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, log, debounceMs: 5, minIntervalMs: 0 });
+      const wake = startPushWake({ dbOf: () => db, source, guard: refuseFirst, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, log, debounceMs: 5, minIntervalMs: 0 });
       for (const seq of SEQS) emit("acct-1", seq);
       await tick(200);
       wake.stop();
@@ -1081,7 +1081,7 @@ describe("the shard filter — only the owning shard's leader wakes an account",
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, guard: PERMIT, post, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
+      dbOf: () => db, source, guard: PERMIT, post, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
       // The sharded answer: this account belongs to somebody else's lock.
       ownsAccount: async () => false,
     });
@@ -1106,7 +1106,7 @@ describe("census 4 — the POST seam has no parameter content could ride", () =>
     const { db } = fakeDb([{ id: "r", endpoint: "https://push.example.com/up/abc" }]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -1139,7 +1139,7 @@ describe("census 4 — the POST seam has no parameter content could ride", () =>
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: withVapid().vapid,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: withVapid().vapid,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);

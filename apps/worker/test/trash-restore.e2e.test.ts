@@ -6,7 +6,7 @@ import { changeLog, contacts, folderState, mailboxes, mailboxFolders, messages }
 import { makeDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, MessageService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
 import { byMessageId, imapCfg, rawClient, emlOf, uidInFolder, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
@@ -49,7 +49,7 @@ import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_d
 let DB: string;
 
 const ctxOf = (db: ReturnType<typeof makeDb>, accountId: string): ServiceContext => ({
-  db, accountId, userId: null, now: () => new Date(), requestId: "trash-e2e",
+  db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "trash-e2e",
 });
 
 describe("delete → Trash → restore, against real GreenMail", () => {

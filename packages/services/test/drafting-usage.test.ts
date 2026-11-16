@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import type { AnthropicCallReport, DraftCallOptions, DraftPort } from "@trafficflow/core";
-import { DraftingService, DraftsService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE } from "../src/index.js";
+import { DraftingService, DraftsService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 
@@ -60,7 +60,7 @@ async function setup() {
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `use:${randomUUID()}`,
     subject: "Seed subject", fromAddress: "sender@example.com", snippet: "seed", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const credits = fakeSpendPort();
   const order: string[] = [];
   /** The same port, noting how many drafts were stored when each release arrived. */

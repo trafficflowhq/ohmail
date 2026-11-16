@@ -1,8 +1,14 @@
-import { bindDb, bindingOf, rebindTx, type AccountBound, type NothingBound } from "@trafficflow/db";
+import { bindDb, bindingOf, rebindTx, type AccountBound, type NoBinding, type NothingBound } from "@trafficflow/db";
+import { ensureHotPathIndexes, ensureSearchExtensions } from "@trafficflow/db/admin";
 import type { AdminDb, Roster, RosterDb } from "@trafficflow/db/cloud";
-import type { BoundDb, Db, ServiceContext, UnboundDb } from "@trafficflow/services";
-import { serviceContext } from "../../src/context.js";
-import type { ApiDeps } from "../../src/deps.js";
+import {
+  dbFor, passContext, resolveSession, runAccountLifecyclePass, runAwayResponderPass, runOwedSentCopyPass,
+  runScheduledSendPass, runSendReconcilePass, runStorageMailPass, sweepAgedScheduledFiles, sweepScheduledSendFiles,
+  type BoundDb, type ContextDb, type Db, type ServiceContext, type UnboundDb,
+} from "@trafficflow/services";
+import { doorDb, serviceContext } from "../../src/context.js";
+import type { ApiDeps, AttachmentStagingFactory } from "../../src/deps.js";
+import { recordStaffEvents, staffDb } from "../../src/staff-audit.js";
 
 /**
  * A SERVICE CONTEXT HOLDS A BOUND HANDLE, AND NOTHING ELSE COMPILES.
@@ -76,3 +82,128 @@ type CarriesRoster<T> =
 type RosterMembers = { [K in keyof ApiDeps]-?: CarriesRoster<ApiDeps[K]> extends true ? K : never }[keyof ApiDeps];
 // No member of the request's container is, or answers, the roster handle.
 export type NoRosterOnDeps = Expect<Equal<RosterMembers, never>>;
+
+// ── A PLAIN HANDLE NO LONGER COMPILES ─────────────────────────────────────────────────────────
+// The pool's own handle reaches nothing that runs a request's or a pass's statement. Each
+// directive below is one place it used to fit.
+
+// A request's container holds a minted handle: bound to nothing by its host, to an account by its session.
+export const mintedDeps: Pick<ApiDeps, "db"> = { db: unbound };
+export const boundDeps: Pick<ApiDeps, "db"> = { db: bound };
+// @ts-expect-error — a container on the pool's own handle: its routes would run for no named account.
+export const plainDeps: Pick<ApiDeps, "db"> = { db: plain };
+// @ts-expect-error — nor on the roster's handle.
+export const rosterDeps: Pick<ApiDeps, "db"> = { db: roster };
+// @ts-expect-error — nor on the staff's.
+export const staffDeps: Pick<ApiDeps, "db"> = { db: staff };
+// @ts-expect-error — the session doors' second handle is minted too.
+export const plainSessionDb: Pick<ApiDeps, "sessionDb"> = { sessionDb: () => plain };
+// The request's handle is exactly the context's: either minted type, and nothing else.
+export type DepsHoldAContextsHandle = Expect<Equal<ApiDeps["db"], ContextDb>>;
+export type ContextDbIsTheTwo = Expect<Equal<ContextDb, BoundDb | UnboundDb>>;
+
+/** True when `T`, or what a function member answers, is a database handle that carries no binding. */
+type IsPlainHandle<T> = [T] extends [never] ? false : T extends Db ? (T extends AccountBound | NothingBound ? false : true) : false;
+type AnswersPlain<T> =
+  IsPlainHandle<NonNullable<T>> extends true ? true
+  : NonNullable<T> extends (...args: never[]) => infer R ? (IsPlainHandle<Awaited<R>> extends true ? true : false)
+  : false;
+// The staff's handle is its role's and never bound (`adminDb`): it is the one member that answers a handle with no binding.
+type PlainMembers = { [K in keyof ApiDeps]-?: AnswersPlain<ApiDeps[K]> extends true ? K : never }[keyof ApiDeps];
+export type NoPlainHandleOnDeps = Expect<Equal<Exclude<PlainMembers, "adminDb">, never>>;
+// The positive control of that reading: a member typed by the pool's own handle is seen.
+export type APlainMemberIsSeen = Expect<Equal<AnswersPlain<Db>, true>>;
+export type APlainFactoryIsSeen = Expect<Equal<AnswersPlain<() => Promise<Db>>, true>>;
+export type AMintedMemberIsNot = Expect<Equal<AnswersPlain<ContextDb>, false>>;
+
+// The upload staging is built over the request's handle.
+declare const staging: AttachmentStagingFactory;
+export const stagedOnTheRequest = staging(bound);
+// @ts-expect-error — never over the pool's own.
+export const stagedOnPlain = staging(plain);
+
+// The binder answers a handle, never `never`, whatever it is bound over.
+declare const own: Db & NoBinding;
+export function binderAnswers(): void {
+  const overNothing = bindDb(unbound, { account: "" });
+  const overTheOwn = bindDb(own, { account: "" });
+  const nothingOverTheOwn = bindDb(own, { account: null });
+  const accountOverNothing: Expect<Equal<typeof overNothing, BoundDb>> = true;
+  const accountOverTheOwn: Expect<Equal<typeof overTheOwn, BoundDb>> = true;
+  const nothingOverOwn: Expect<Equal<typeof nothingOverTheOwn, UnboundDb>> = true;
+  void [accountOverNothing, accountOverTheOwn, nothingOverOwn];
+}
+// @ts-expect-error — and a bound handle is not the pool's own: a session-level statement takes no view.
+export const viewAsTheOwn: Db & NoBinding = bound;
+// @ts-expect-error — the search set-up runs on the pool's own handle.
+void ensureSearchExtensions(bound);
+// @ts-expect-error — and so do the hot-path indexes, on a view bound to nothing as on one bound to an account.
+void ensureHotPathIndexes(unbound);
+
+// A context's handle for an account is bound to an account, and to nothing never.
+export type DbForAnswersBound = Expect<Equal<ReturnType<typeof dbFor>, BoundDb>>;
+
+// A pass walks a handle bound to nothing, and binds each row's account over it.
+declare const passDeps: never;
+export const walked = passContext(unbound, "", { userId: null, now: () => new Date(0), requestId: "" });
+// @ts-expect-error — a pass's row is not bound over the pool's own handle.
+export const walkedPlain = passContext(plain, "", { userId: null, now: () => new Date(0), requestId: "" });
+// @ts-expect-error — nor over a handle that names another account already.
+export const walkedBound = passContext(bound, "", { userId: null, now: () => new Date(0), requestId: "" });
+export const passes = [
+  () => runScheduledSendPass(unbound, passDeps), () => runSendReconcilePass(unbound, passDeps),
+  () => runOwedSentCopyPass(unbound, passDeps), () => runAwayResponderPass(unbound, passDeps),
+  () => runAccountLifecyclePass(unbound, passDeps), () => runStorageMailPass(unbound, passDeps),
+  () => sweepScheduledSendFiles(unbound), () => sweepAgedScheduledFiles(unbound, new Date(0)),
+];
+export const passesOnPlain = [
+  // @ts-expect-error — each pass entry refuses the pool's own handle.
+  () => runScheduledSendPass(plain, passDeps),
+  // @ts-expect-error
+  () => runSendReconcilePass(plain, passDeps),
+  // @ts-expect-error
+  () => runOwedSentCopyPass(plain, passDeps),
+  // @ts-expect-error
+  () => runAwayResponderPass(plain, passDeps),
+  // @ts-expect-error
+  () => runAccountLifecyclePass(plain, passDeps),
+  // @ts-expect-error
+  () => runStorageMailPass(plain, passDeps),
+  // @ts-expect-error
+  () => sweepScheduledSendFiles(plain),
+  // @ts-expect-error
+  () => sweepAgedScheduledFiles(plain, new Date(0)),
+];
+export const passesOnAnAccount = [
+  // @ts-expect-error — and a handle bound to one account: a pass walks rows of many.
+  () => runScheduledSendPass(bound, passDeps),
+  // @ts-expect-error
+  () => runSendReconcilePass(bound, passDeps),
+  // @ts-expect-error
+  () => runOwedSentCopyPass(bound, passDeps),
+  // @ts-expect-error
+  () => runAwayResponderPass(bound, passDeps),
+  // @ts-expect-error
+  () => runAccountLifecyclePass(bound, passDeps),
+  // @ts-expect-error
+  () => runStorageMailPass(bound, passDeps),
+  // @ts-expect-error
+  () => sweepScheduledSendFiles(bound),
+  // @ts-expect-error
+  () => sweepAgedScheduledFiles(bound, new Date(0)),
+];
+
+// The session's look-up runs before any account is bound: on a handle bound to nothing.
+export const lookedUp = () => resolveSession(unbound, "", new Date(0));
+// @ts-expect-error — not on the pool's own handle.
+export const lookedUpPlain = () => resolveSession(plain, "", new Date(0));
+// @ts-expect-error — and not on a handle that names an account.
+export const lookedUpBound = () => resolveSession(bound, "", new Date(0));
+
+// The operators' trail is written on the staff door's handle.
+export const trail = () => recordStaffEvents(staffDb(deps), []);
+export const door: UnboundDb = doorDb(deps);
+// @ts-expect-error — not on the pool's own handle.
+export const trailPlain = () => recordStaffEvents(plain, []);
+// @ts-expect-error — and never on a customer's.
+export const trailBound = () => recordStaffEvents(bound, []);

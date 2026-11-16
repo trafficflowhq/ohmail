@@ -6,7 +6,7 @@ import {
   mailboxes, messages, folderState, messageStates, changeLog, accountSyncState, threads,
   recordChange, type EntityType,
 } from "@trafficflow/db";
-import { SyncService, type CalendarFeedPort, type ServiceContext, type SyncResponse } from "../src/index.js";
+import { SyncService, dbFor, type CalendarFeedPort, type ServiceContext, type SyncResponse } from "../src/index.js";
 import { ServiceError } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 
@@ -19,7 +19,7 @@ async function setup() {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-07-27T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };
@@ -313,7 +313,7 @@ describe("SyncService.getChanges — cursor above the log's max → 410", () => 
     const id = await addMessage(db, quiet.accountId, quiet.mailboxId);
     await rec(db, quiet.accountId, "message", id, "create");
 
-    const neighbour: ServiceContext = { ...quiet.ctx, accountId: busyAccountId };
+    const neighbour: ServiceContext = { ...quiet.ctx, accountId: busyAccountId, db: dbFor(db, busyAccountId) };
     expect(flatten(await svc.getChanges(neighbour, { since: svc.encodeCursor(3n) }))).toHaveLength(2);
     await expect(svc.getChanges(quiet.ctx, { since: svc.encodeCursor(3n) })).rejects.toMatchObject({
       httpStatus: 410,
@@ -434,7 +434,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // The page must actually contain the messages — a query-count assertion over an empty
     // result would pass for the very outage it exists to prevent.
     expect(res.changes.creates).toHaveLength(messageCount);
@@ -491,7 +491,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // Same trap as above: the count only means something over a page that holds the threads.
     expect(res.changes.creates.filter((c) => c.type === "thread")).toHaveLength(threadCount);
     return counted.selects();
@@ -526,7 +526,7 @@ describe("sync — a page costs a constant number of queries", () => {
       }));
     }
     const counted = counting(db);
-    const res = await svc.getChanges({ ...ctx, db: counted.db }, { since: "0", limit: 500 });
+    const res = await svc.getChanges({ ...ctx, db: dbFor(counted.db, accountId) }, { since: "0", limit: 500 });
     // The count only means something over a page that holds the states.
     expect(res.changes.creates.filter((c) => c.type === "message_state")).toHaveLength(stateCount);
     return counted.selects();

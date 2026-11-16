@@ -10,7 +10,7 @@ import {
   type AwayAudience, type AwaySuppression, type Logger, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
-import { bridgeTx, passContext, type BoundDb, type Db, type OpenPassSendAdapter } from "./context.js";
+import { bridgeTx, passContext, type BoundDb, type Db, type OpenPassSendAdapter, type UnboundDb } from "./context.js";
 
 /**
  * The away responder's pass — reply-only, throttled per person, on all three hosts. It moved out
@@ -257,7 +257,7 @@ interface Candidate {
  * stop the rest, and the caller's own catch is for the probe alone.
  */
 export async function runAwayResponderPass(
-  walk: Db, deps: AwayResponderPassDeps,
+  walk: UnboundDb, deps: AwayResponderPassDeps,
 ): Promise<AwayResponderPassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());

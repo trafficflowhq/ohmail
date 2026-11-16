@@ -12,7 +12,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import {
   ProfileUnavailableError, signatureReceipt, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { effectiveMailboxSignatures, makeMailboxService, profileImportService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, effectiveMailboxSignatures, makeMailboxService, profileImportService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ERASING ONE MAILBOX HAS TO RUN ON THE STORE A STANDALONE PHONE CARRIES.
@@ -37,7 +37,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "erase-dialect" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "erase-dialect" });
 
 /** Every row of every table the store declares, as text: where a receipt would have to hide. */
 async function everyRow(db: Db): Promise<string[]> {
@@ -130,7 +130,7 @@ describe("removing one mailbox WITH erase, on either store", () => {
     const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId));
     expect(row!.signature, "the erased mailbox kept its signature").toBeNull();
     expect(row!.signatureHtml).toBeNull();
-    const maps = await effectiveMailboxSignatures(db, accountId);
+    const maps = await effectiveMailboxSignatures(dbFor(db, accountId), accountId);
     expect(maps.signatures[mailboxId]).toBeUndefined();
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
   });
@@ -249,7 +249,7 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect(await read(mailboxId)).toMatchObject({ signature: null, signatureHtml: null });
     expect(await read(removed!.id), "a plain removal stays reversible with its signature").toMatchObject(sig);
     expect(await read(live!.id)).toMatchObject(sig);
-    const maps = await effectiveMailboxSignatures(db, accountId);
+    const maps = await effectiveMailboxSignatures(dbFor(db, accountId), accountId);
     expect(maps.signatures[mailboxId]).toBeUndefined();
     expect(maps.signaturesHtml[mailboxId]).toBeUndefined();
     expect(await clearErasedSignatures(db), "a second run finds nothing").toBe(0);

@@ -5,7 +5,7 @@ import { mailboxes, drafts } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
   SendService, SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MAX_ATTACHMENT_PARTS,
-  dedupeStagedIds, sendSurfaceFor, ServiceError,
+  dbFor, dedupeStagedIds, sendSurfaceFor, ServiceError,
 } from "../src/index.js";
 import type {
   ServiceContext, SendAttachment, StagedAttachmentSource,
@@ -131,7 +131,7 @@ async function setup(smtpMaxSizeBytes: number | null) {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: "mila@lichtgrat.example", smtpMaxSizeBytes,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   async function newDraft() {
     const [d] = await db.insert(drafts).values({
       accountId, mailboxId: mb!.id, subject: "with a file", body: "here",

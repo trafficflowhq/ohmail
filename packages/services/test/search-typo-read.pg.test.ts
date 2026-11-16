@@ -4,10 +4,10 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { seedTypoMailbox, typoOracle, TYPO_CASES, typoPages, typoPaths, type TypoFilters } from "./_typo-read-fixture.js";
 
@@ -24,9 +24,12 @@ const URL = pgTestUrl(import.meta.url);
 const client = postgres(URL, { max: 3, onnotice: () => {} });
 const logged: Array<{ q: string; p: unknown[] }> = [];
 const db = brandDialect(drizzle(client, { schema, logger: { logQuery: (q, p) => { logged.push({ q, p }); } } }), "pg");
+// The context's handle is the factory's: the binder takes a server handle only from the factory that
+// registered its door.
+const owned = makeOwnedDb(URL);
 const svc = new SearchService();
 const A = randomUUID();
-const ctx = (): ServiceContext => ({ db, accountId: A, userId: null, now: () => new Date("2026-08-20T12:00:00Z"), requestId: "typo-read" });
+const ctx = (): ServiceContext => ({ db: dbFor(owned.db, A), accountId: A, userId: null, now: () => new Date("2026-08-20T12:00:00Z"), requestId: "typo-read" });
 
 /** The page statement's plan, run under the search session's settings. */
 async function planOf(q: string, filters?: TypoFilters): Promise<Record<string, unknown>> {
@@ -54,6 +57,7 @@ afterAll(async () => {
   await db.execute(sql`delete from account_settings where account_id = ${A}`);
   await db.execute(sql`delete from messages where account_id = ${A}`);
   await db.execute(sql`delete from mailboxes where account_id = ${A}`);
+  await owned.close();
   await client.end({ timeout: 5 });
 });
 

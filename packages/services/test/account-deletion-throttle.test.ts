@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
 import {
-  deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, LIVE_BODY_WINDOW_MS, type ServiceContext,
+  dbFor, deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, LIVE_BODY_WINDOW_MS, type ServiceContext,
 } from "../src/index.js";
 import { NOTICE_EVERY_MS } from "../src/auth/auth-service.js";
 import { NOW, seedFullAccount } from "./helpers/erasure-fixture.js";
@@ -58,7 +58,7 @@ describe("erasure and the sign-in throttle", () => {
     await db.insert(authThrottle).values([...myKeys, ...theirKeys].filter((k) => !k.startsWith("probe-rate:"))
       .map((key) => ({ key, failures: 1 })));
 
-    const ctx: ServiceContext = { db, accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
+    const ctx: ServiceContext = { db: dbFor(db, mine.accountId), accountId: mine.accountId, userId: mine.userId, now: () => NOW, requestId: "del" };
     await deleteAccount(ctx, { throttleKeys: keys });
 
     const left = new Set((await db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key));

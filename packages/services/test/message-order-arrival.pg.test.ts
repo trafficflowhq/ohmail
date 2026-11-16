@@ -4,9 +4,9 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { messageService, syncService } from "@trafficflow/services";
+import { dbFor, messageService, syncService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, realPgAvailable } from "@trafficflow/db/testing";
 
@@ -27,10 +27,14 @@ const db = brandDialect(drizzle(client, {
   schema, logger: { logQuery: (query, params) => { logged.push({ query, params }); } },
 }), "pg");
 
+// The context's handle is the factory's: the binder takes a server handle only from the factory that
+// registered its door.
+const owned = makeOwnedDb(URL);
+
 const ACCOUNT = randomUUID();
 const GROWN = 20_000;
 const NOW = new Date("2026-09-29T08:00:00.000Z");
-const ctx = (): ServiceContext => ({ db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan" });
+const ctx = (): ServiceContext => ({ db: dbFor(owned.db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "arrival-plan" });
 
 /** The one statement a read issued that walks the arrival order — the page's own keyset select. */
 function pageStatement(from: number): { query: string; params: unknown[] } {
@@ -80,6 +84,7 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
     await client.unsafe("delete from folder_state where message_id in (select id from messages where account_id = $1::uuid)", [ACCOUNT]);
     await client.unsafe("delete from messages where account_id = $1::uuid", [ACCOUNT]);
     await client.unsafe("delete from mailboxes where account_id = $1::uuid", [ACCOUNT]);
+    await owned.close();
     await client.end({ timeout: 5 });
   });
 

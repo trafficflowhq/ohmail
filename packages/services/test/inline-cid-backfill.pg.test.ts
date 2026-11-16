@@ -9,7 +9,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, attachments, auditLog, changeLog, mailboxes, messageBodies, messages,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { HTML_TRUNCATION_MARKER } from "@trafficflow/core/mail";
 import {
   runAttachmentFlagBackfill, planAttachmentFlagBackfill,
@@ -17,7 +17,7 @@ import {
 import { runInlineCidBackfill, planInlineCidBackfill } from "../src/inline-cid-backfill.js";
 import { main as cliMain } from "../src/inline-cid-backfill-cli.js";
 import { AttachmentsService } from "../src/attachments-service.js";
-import type { Db, ServiceContext } from "../src/context.js";
+import { dbFor, type Db, type ServiceContext } from "../src/context.js";
 
 /**
  * a part the stored html references by `cid:` is inline on every row, old and new.
@@ -35,14 +35,17 @@ interface Body { html?: string | null; withheld?: string; none?: true }
 describe.skipIf(!AVAILABLE)("the inline-cid backfill", () => {
   let db: Db;
   let sql: ReturnType<typeof postgres>;
+  // The factory's handle: the binder takes a server handle only from the factory that registered its door.
+  let owned: OwnedDb | undefined;
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
 
-  afterAll(async () => { await sql?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await sql?.end({ timeout: 5 }); });
 
   async function newWorld(): Promise<World> {
     const accountId = randomUUID();
@@ -141,7 +144,7 @@ describe.skipIf(!AVAILABLE)("the inline-cid backfill", () => {
     const w = await newWorld();
     const m = await seed(w, { html: img("logo@corp") }, [{ cid: "logo@corp" }, { name: "invoice.pdf" }]);
     const ctx: ServiceContext = {
-      db, accountId: w.accountId, userId: null, now: () => new Date(), requestId: "at5",
+      db: dbFor(db, w.accountId), accountId: w.accountId, userId: null, now: () => new Date(), requestId: "at5",
     };
     const svc = new AttachmentsService();
     const filesBefore = (await svc.listFiles(ctx, { type: "all" })).items.map((f) => f.id);

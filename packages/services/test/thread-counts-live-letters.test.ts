@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MemoryMirrorStore, threadSizeIndex } from "@ohmail/client-engine";
-import { SyncService, ThreadService, type ServiceContext } from "@trafficflow/services";
+import { SyncService, ThreadService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { materializeThread, materializeThreads } from "../src/dto/materialize.js";
 
 /**
@@ -22,7 +22,7 @@ const NOW = new Date("2026-09-27T05:00:00.000Z");
 const sync = new SyncService();
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "thread-live-letters" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "thread-live-letters" });
 
 async function seed(db: Db) {
   const [a] = await db.insert(accounts).values({ name: "thread-live-letters" }).returning();

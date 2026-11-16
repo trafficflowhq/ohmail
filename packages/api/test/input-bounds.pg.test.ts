@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { accounts, attachments, mailboxes, messages, sessions, users } from "@trafficflow/db";
@@ -42,7 +43,7 @@ const FIXED_NOW = new Date("2026-07-28T12:00:00.000Z");
 
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -78,7 +79,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 const app = createApp(apiRoutes);

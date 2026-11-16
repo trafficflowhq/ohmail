@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { accounts, mailboxes, messages, folderState, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { ScreenerService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { screenerAttemptKey } from "@trafficflow/db";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
@@ -47,9 +44,9 @@ import { PLANE_PRICING } from "./helpers/plane-pricing.js";
  */
 const URL = pgTestUrl(import.meta.url);
 
-/** Six independent connections — one per racer, plus a reader. */
-const pools = Array.from({ length: 7 }, () => postgres(URL, { max: 2 }));
-const dbs = pools.map((p) => brandDialect(drizzle(p, { schema }), "pg"));
+/** Six independent connections — one per racer, plus a reader: the factory's pools, whose door the binder takes. */
+const pools = Array.from({ length: 7 }, () => makeOwnedDb(URL));
+const dbs = pools.map((p) => p.db);
 const reader = dbs[6]!;
 
 const NOW = new Date("2026-07-28T12:00:00Z");
@@ -89,8 +86,8 @@ function spy(counter: { n: number }, ms = MODEL_MS): ClassifierPort {
 const credits = fakeSpendPort();
 credits.exclusive();
 
-function ctxFor(db: Tx, accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: randomUUID() };
+function ctxFor(db: (typeof dbs)[number], accountId: string): ServiceContext {
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 async function seedAccount(granted: number, senders: string[]): Promise<{ accountId: string; ids: Map<string, string> }> {
@@ -123,7 +120,7 @@ const debitsOf = async (accountId: string) =>
 
 describe("SEC3-MONEY-1 — the spend claim is exclusive, not just deduplicated", () => {
   beforeAll(async () => { await runMigrations(URL); });
-  afterAll(async () => { await Promise.all(pools.map((p) => p.end({ timeout: 5 }))); });
+  afterAll(async () => { await Promise.all(pools.map((p) => p.close())); });
 
   it("SIX concurrent purchases of ONE sender make ONE model call and ONE debit", async () => {
     // THE FINDING, as a number. Before the claim this was six calls for one credit — the ledger

@@ -6,7 +6,7 @@ import {
   accountSettings, changeLog, mailboxes, messages, routingDecisions,
   storeScreenerSuggestion, SCREENER_SUGGESTION_PROVENANCE,
 } from "@trafficflow/db";
-import { SyncService, type ServiceContext, type SyncChange } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext, type SyncChange } from "../src/index.js";
 import { resetScreeningState } from "../src/consent-reset.js";
 
 /**
@@ -38,7 +38,7 @@ async function setup() {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-09-18T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb!.id, ctx };

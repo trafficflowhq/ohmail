@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { DraftsService, SendService, sendContentFingerprint } from "../src/index.js";
+import { DraftsService, SendService, dbFor, sendContentFingerprint } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -40,7 +40,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: "author@lichtgrat.example",
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const { draft } = await draftsSvc.create(ctx, {
     mailboxId: mb!.id,
     subject: "the invoice",

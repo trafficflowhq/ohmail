@@ -1,3 +1,4 @@
+import type { Db } from "@trafficflow/services";
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
@@ -19,9 +20,9 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
 interface Case {
   name: string;
   /** Build the request path and body; may seed whatever parent the row hangs off. */
-  arrange(db: ApiDeps["db"], accountId: string): Promise<{ path: string; body: unknown }>;
+  arrange(db: Db, accountId: string): Promise<{ path: string; body: unknown }>;
   /** How many rows this account now holds of the kind the create writes. */
-  count(db: ApiDeps["db"], accountId: string): Promise<number>;
+  count(db: Db, accountId: string): Promise<number>;
 }
 
 const rows = async (q: Promise<unknown[]>): Promise<number> => (await q).length;

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes } from "@trafficflow/db";
 import { DRAFT_BODY_MAX_BYTES, utf8ByteLength } from "@trafficflow/core/outbound-text";
-import { DraftsService, SyncService, type ServiceContext } from "../src/index.js";
+import { DraftsService, SyncService, dbFor, type ServiceContext } from "../src/index.js";
 import { draftRowToDTO, draftRowToSnapshotDTO } from "../src/dto/materialize.js";
 import type { DraftDTO } from "../src/dto/types.js";
 
@@ -31,7 +31,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `a-${accountId}@x.example`,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
 

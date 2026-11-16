@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, drafts, mailboxes } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
-import { DraftsService } from "../src/index.js";
+import { DraftsService, dbFor } from "../src/index.js";
 import { draftContentRevision } from "../src/draft-revision.js";
 import type { ServiceContext } from "../src/index.js";
 import { seedMessage } from "../../api/test/helpers.js";
@@ -24,7 +24,7 @@ async function setup() {
   const A = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "a@x-ch.example" }).returning();
   const now = new Date("2026-10-03T12:00:00Z");
-  const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => now, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => now, requestId: "r" };
   return { db, ctx, A, mb: mb!.id };
 }
 

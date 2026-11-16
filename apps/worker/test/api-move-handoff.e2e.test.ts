@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { messages, folderState } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, MessageService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
@@ -42,7 +42,7 @@ describe("API move → worker IMAP handoff (real GreenMail)", () => {
 
     // ── API side (NO IMAP): write DESIRED state only, via the same service the HTTP handler calls. ──
     const ctx: ServiceContext = {
-      db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "e2e",
+      db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "e2e",
     };
     // `move` answers a union: written here, or a request routed to the install that organizes
     // the mailbox. This rig organizes it, so the local arm is the one under test — narrowed

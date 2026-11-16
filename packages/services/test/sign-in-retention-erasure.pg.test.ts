@@ -4,16 +4,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
-import { pruneSignInRecords, schema, SIGN_IN_RECORD_RETENTION_MS } from "@trafficflow/db/cloud";
+import { bindDb, refreshTokens, sessions, type Tx } from "@trafficflow/db";
+import { makeOwnedDb, pruneSignInRecords, SIGN_IN_RECORD_RETENTION_MS, type OwnedDb } from "@trafficflow/db/cloud";
 import { ERASED_REFRESH_KEEP_DAYS } from "../../db/src/erased-bearers.js";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { AuthService, deleteAccount, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
+import { AuthService, dbFor, deleteAccount, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
 
 /**
  * THE HOURLY PASS AND THE ERASURE AGREE ABOUT AN APP THAT WENT QUIET. An app never signed out keeps
@@ -26,11 +24,13 @@ import { AuthService, deleteAccount, hashToken, makeTestAuthDeps, type ServiceCo
  */
 const PG_UP = await realPgAvailable();
 type Sql = ReturnType<typeof postgres>;
-type Db = ReturnType<typeof drizzle<typeof schema>>;
+type Db = OwnedDb["db"];
 const T = new Date("2010-06-01T00:00:00.000Z");
 const DAY = 86_400_000;
 
 let client: Sql;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let db: Db;
 let ipCell = 0;
 
@@ -38,8 +38,11 @@ interface Person { userId: string; accountId: string; refresh: string; sessionId
 async function person(svc: AuthService): Promise<Person> {
   let t = new Date(T.getTime() - 450 * DAY);
   const ip = `10.42.${(ipCell += 1)}.1`;
-  const at = (over: Partial<ServiceContext> = {}): ServiceContext =>
-    ({ db, accountId: "", userId: null, now: () => t, requestId: `sir-${randomUUID()}`, ip, ...over });
+  // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
+  const at = (over: Partial<ServiceContext> = {}): ServiceContext => ({
+    db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+    accountId: "", userId: null, now: () => t, requestId: `sir-${randomUUID()}`, ip, ...over,
+  });
   const totp = (secret: string): string => generateSync({ secret, epoch: Math.floor(t.getTime() / 1000) });
   const email = `sir-${randomUUID()}@trafficflow.test`;
   const reg = await svc.register(at(), { email, password: "account-signin-password", displayName: "S", inviteCode: "INVITE-OK" });
@@ -82,10 +85,15 @@ describe.skipIf(!PG_UP)("the sign-in retention pass leaves the erasure what it n
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { TimeZone: "UTC" } });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    // The same UTC session as the raw client's: a parameter of the address is one of the connection.
+    const utc = new URL(PG_TEST_URL);
+    utc.searchParams.set("TimeZone", "UTC");
+    owned = makeOwnedDb(utc.toString());
+    db = owned.db;
   }, 120_000);
   afterAll(async () => {
     for (const p of made) if (!erased.has(p.accountId)) await erase(p);
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 

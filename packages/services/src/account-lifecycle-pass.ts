@@ -4,7 +4,7 @@ import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
-import { bridgeTx, passContext, type Db } from "./context.js";
+import { bridgeTx, passContext, type Db, type UnboundDb } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
@@ -280,7 +280,7 @@ export function erasureDue(lc: AccessLifecycle, now: Date): boolean {
 }
 
 export async function runAccountLifecyclePass(
-  walk: Db, deps: AccountLifecyclePassDeps,
+  walk: UnboundDb, deps: AccountLifecyclePassDeps,
 ): Promise<AccountLifecyclePassResult> {
   const log = deps.log ?? silentLogger;
   const now = deps.now;
@@ -429,7 +429,7 @@ export type EraseOneOutcome =
  * erasure. An id no row answers binds nothing and is `not_due`.
  */
 export async function eraseOneDueAccount(
-  walk: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, asked: string,
+  walk: UnboundDb, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, asked: string,
 ): Promise<EraseOneOutcome> {
   const log = deps.log ?? silentLogger;
   const now = deps.now;

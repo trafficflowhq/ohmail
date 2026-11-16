@@ -5,10 +5,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState, accountPass, writePassProgress } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureWordIndex } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { SearchFilters, ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
@@ -20,8 +20,20 @@ import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing"
  * filters are correct; and accountId isolation holds.
  */
 const URL = pgTestUrl(import.meta.url);
+// The seeds and the set-up's session statements (its advisory lock is taken and given back on one
+// session) on the raw client, as before.
 const client = postgres(URL, { max: 5 });
 const db = brandDialect(drizzle(client, { schema }), "pg");
+// The contexts' handles are the factory's pools: the binder takes a server handle only from the
+// factory that registered its door.
+const pools: OwnedDb[] = [];
+/** A pool of its own: the store's facts are remembered per pool, so a new one reads them afresh. */
+const pool = (): OwnedDb["db"] => {
+  const made = makeOwnedDb(URL);
+  pools.push(made);
+  return made.db;
+};
+const served = pool();
 const svc = new SearchService();
 
 // Fixed clock so the date-bucket facets are deterministic.
@@ -33,7 +45,7 @@ const B = randomUUID();   // a second account — must never leak into A's resul
 const ids: Record<string, string> = {};
 
 function ctx(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: "search-test" };
+  return { db: dbFor(served, accountId), accountId, userId: null, now: () => NOW, requestId: "search-test" };
 }
 
 async function seedMsg(o: {
@@ -58,8 +70,8 @@ async function seedMsg(o: {
   ids[o.key] = m!.id;
 }
 
-// One client for both blocks, ended after the last.
-afterAll(async () => { await client.end({ timeout: 5 }); });
+// One client and the pools of every block, ended after the last.
+afterAll(async () => { for (const made of pools) await made.close(); await client.end({ timeout: 5 }); });
 
 describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
   beforeAll(async () => {
@@ -274,8 +286,8 @@ describe("past the cap, the chosen orders read the exact matches (real Postgres,
   const U = randomUUID();
   const N = 5_100;
   // A handle of its own, so the store's index facts are read after the word index exists.
-  const keyed = brandDialect(drizzle(client, { schema }), "pg");
-  const kctx = (): ServiceContext => ({ db: keyed, accountId: U, userId: null, now: () => NOW, requestId: "search-cap-keyed" });
+  const keyed = pool();
+  const kctx = (): ServiceContext => ({ db: dbFor(keyed, U), accountId: U, userId: null, now: () => NOW, requestId: "search-cap-keyed" });
   const ageOf = (m: { date: string | null; subject: string }): number =>
     (m.date === null ? Number.POSITIVE_INFINITY : (NOW.getTime() - Date.parse(m.date)) / 60_000);
   const heron = (g: number): boolean => g <= 3_000 || g % 200 === 0;
@@ -366,8 +378,8 @@ describe("a chosen order answers the exact tier while a match exists (real Postg
   const NEWEST = randomUUID();
   const GAP = randomUUID();
   const EVERY = randomUUID();
-  const keyed = brandDialect(drizzle(client, { schema }), "pg");
-  const rctx = (accountId: string): ServiceContext => ({ db: keyed, accountId, userId: null, now: () => NOW, requestId: "search-exact-orders" });
+  const keyed = pool();
+  const rctx = (accountId: string): ServiceContext => ({ db: dbFor(keyed, accountId), accountId, userId: null, now: () => NOW, requestId: "search-exact-orders" });
   const ageOf = (m: { date: string | null }): number => (m.date === null ? -1 : (NOW.getTime() - Date.parse(m.date)) / 60_000);
   const seed = async (account: string, n: number, subject: string, folder: string): Promise<void> => {
     const [mb] = await db.insert(mailboxes).values({ accountId: account, provider: "imap", address: `${account.slice(0, 8)}@exact.example` }).returning();
@@ -465,8 +477,8 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     { name: "21,000", id: randomUUID(), n: 21_000, moved: [15_001, 15_050], late: [16_001, 16_100] },
     { name: "60,000", id: randomUUID(), n: 60_000, moved: [40_001, 40_050], late: [55_001, 55_100] },
   ];
-  const keyed = brandDialect(drizzle(client, { schema }), "pg");
-  const sctx = (a: Acct): ServiceContext => ({ db: keyed, accountId: a.id, userId: null, now: () => NOW, requestId: "search-sweep" });
+  const keyed = pool();
+  const sctx = (a: Acct): ServiceContext => ({ db: dbFor(keyed, a.id), accountId: a.id, userId: null, now: () => NOW, requestId: "search-sweep" });
   const ageOf = (m: { date: string | null }): number => (m.date === null ? -1 : (NOW.getTime() - Date.parse(m.date)) / 60_000);
   const IN: Record<string, (g: number, n: number) => boolean> = {
     item: () => true, wren: () => true, finch: () => true, heron: (g) => g <= 2_300, osprey: (g) => g >= 501 && g <= 2_700,

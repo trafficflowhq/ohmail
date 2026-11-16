@@ -7,6 +7,7 @@ import {
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
+import { bindWorker } from "./start/bind.js";
 import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedProposer, type UsageHook } from "./ai-usage.js";
@@ -175,6 +176,9 @@ export async function runProposalCron(
 
   const owned = makeOwnedDb(config.databaseUrl);
   const db = owned.db;
+  // The pool's two views, as the organizer's own tail has them: the accounts this shard serves are
+  // read on the one that names none, and each account's proposals are made on that account's handle.
+  const binding = bindWorker(db);
   try {
     const now = new Date();
     const port = config.proposer ?? unconfiguredProposer;
@@ -200,9 +204,9 @@ export async function runProposalCron(
     const usageRelay = metered && spend ? config.aiUsage : undefined;
     usageRelay?.arm();
     let generated = 0;
-    for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
+    for (const accountId of await loadServedAccounts(binding.roster, selectionOf(config))) {
       try {
-        const res = await proposalGeneratePass(db as unknown as Tx, {
+        const res = await proposalGeneratePass(binding.forAccount(accountId).db as unknown as Tx, {
           accountId, port, log,
           // ONE port for the invocation; the account is an argument to the spend and the terms
           // come from `SPEND_ACTIONS.propose`.

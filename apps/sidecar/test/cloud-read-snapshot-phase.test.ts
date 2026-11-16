@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, messageTags, tags } from "@trafficflow/db";
-import type { ServiceContext, SnapshotResponse } from "@trafficflow/services/mail";
+import { dbFor, type ServiceContext, type SnapshotResponse } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**
@@ -34,7 +34,7 @@ async function corpus(): Promise<{ ctx: ServiceContext; tagged: string; recent: 
   const tagged = await add(3, 400);
   const [t] = await db.insert(tags).values({ accountId: ACCOUNT, name: "Invoices", hue: "moss" }).returning();
   await db.insert(messageTags).values({ accountId: ACCOUNT, messageId: tagged, tagId: t!.id });
-  return { ctx: { db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cloud-snapshot-phase" }, tagged, recent };
+  return { ctx: { db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cloud-snapshot-phase" }, tagged, recent };
 }
 
 async function snapshot(ctx: ServiceContext, query: string): Promise<SnapshotResponse> {

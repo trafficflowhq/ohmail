@@ -36,7 +36,7 @@ function passWith(result: Partial<AlertPassResult>, ping: AlertHeartbeat) {
   });
   const lines: string[] = [];
   const scope = {
-    db: {}, roster: {}, config: {}, alertSinks: [], shards: 1, shardIndex: 1, environment: "test", alertReaders: {},
+    roster: {}, config: {}, alertSinks: [], shards: 1, shardIndex: 1, environment: "test", alertReaders: {},
     parkedAccountsReader: null, apiCron: null, signalPoll: null, alertDeliveryStreak: newDeliveryStreak(),
     alertLastResort: newLastResortState(), alertHeartbeat: ping, alertHeartbeatLogged: { last: null },
     log: createLogger({ service: "worker", level: "debug", sink: (l) => lines.push(l) }),

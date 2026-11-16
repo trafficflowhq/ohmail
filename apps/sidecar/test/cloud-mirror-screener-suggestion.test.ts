@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { routingDecisions } from "@trafficflow/db/mail";
 import { SCREENER_SUGGESTION_PROVENANCE } from "@trafficflow/db";
-import { syncService } from "@trafficflow/services/mail";
+import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
   MailboxDTO, MessageDTO, ScreenerSuggestionDTO, ServiceContext, SnapshotResponse, SyncChange,
   SyncResponse,
@@ -121,7 +121,7 @@ function fakeAuth(pages: SyncResponse[]): CloudAuth {
 }
 
 const ctxFor = (opened: OpenLocalDb, world: LocalWorld): ServiceContext => ({
-  db: opened.db, accountId: world.accountId, userId: world.userId, sessionId: null,
+  db: dbFor(opened.db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null,
   now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined,
 });
 

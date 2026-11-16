@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
@@ -76,7 +77,7 @@ async function threadOf(w: Awaited<ReturnType<typeof world>>): Promise<string> {
 }
 
 const ctxOf = (w: Awaited<ReturnType<typeof world>>): ServiceContext => ({
-  db: w.db as unknown as ServiceContext["db"], accountId: w.accountId, userId: null,
+  db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null,
   now: () => NOW, requestId: `oud-${randomUUID().slice(0, 8)}`,
 });
 

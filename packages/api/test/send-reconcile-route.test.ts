@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { accountOfMailbox, drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
+import { accountOfMailbox, drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies, bindDb } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE, SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
@@ -372,7 +372,7 @@ describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's do
         async close() { alive = false; },
       };
     };
-    const r = await runOwedSentCopyPass(db, {
+    const r = await runOwedSentCopyPass(bindDb(db, { account: null }), {
       openSendAdapter: (mailboxId) => admittedFilingAdapter(deps, mailboxId, open),
       resolveStorageCap: async () => UNMETERED_STORAGE_CAP, now: deps.now, budgetMs: 60_000,
     });

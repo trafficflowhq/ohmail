@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 /**
  * A PERSON'S PRESS, FROM THE DOOR TO THE PROVIDER, on a real Postgres. The services' door records the
  * act in one transaction, whose change rings the worker's bell at its commit, and pulls the act's
@@ -11,7 +12,7 @@ import type { CalendarEventAct } from "@ohmail/wire";
 import { CHANGE_LOG_CHANNEL, calConnections, changeWakePayload } from "@trafficflow/db";
 import { makeChangeWakeHub } from "@trafficflow/db/cloud";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
-import type { ServiceContext } from "@trafficflow/services";
+import type { Db, ServiceContext } from "@trafficflow/services";
 import { CALENDAR_BUILDERS, recordCalendarWrite } from "@trafficflow/services/calendar";
 import {
   CALENDAR_RING_GAP_MS, CALENDAR_RING_SETTLE_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections,
@@ -42,7 +43,7 @@ describe.skipIf(!AVAILABLE)("a press, from the door to the provider", () => {
   afterAll(async () => { await w?.close(); });
 
   const ctx = (accountId: string): ServiceContext => ({
-    db: w.db as unknown as ServiceContext["db"], accountId, userId: null, now: () => new Date(), requestId: `cp-${randomUUID().slice(0, 8)}`,
+    db: dbFor(w.db as unknown as Db, accountId), accountId, userId: null, now: () => new Date(), requestId: `cp-${randomUUID().slice(0, 8)}`,
   });
   const retitle = (e: StoredEvent, title: string): CalendarEventAct =>
     ({ kind: "calendar_event_update", eventId: e.id, base: e.base, scope: { kind: "record" }, change: { title } });

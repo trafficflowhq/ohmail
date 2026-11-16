@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, SyncService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, SyncService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * AN ERASED MAILBOX'S CONVERSATIONS LEAVE EVERY MIRROR.
@@ -24,7 +24,7 @@ const sync = new SyncService();
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "erase-thread-tombstone" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "erase-thread-tombstone" });
 
 async function seed(db: Db) {
   const [a] = await db.insert(accounts).values({ name: "erase-thread-tombstone" }).returning();

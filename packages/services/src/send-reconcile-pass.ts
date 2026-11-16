@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, passContext, type Db, type OpenPassSendAdapter } from "./context.js";
+import { bridgeTx, bridgeDb, passContext, type Db, type OpenPassSendAdapter, type UnboundDb } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import {
@@ -245,7 +245,7 @@ interface StaleRow {
  * the others, and the summary counts what happened instead.
  */
 export async function runSendReconcilePass(
-  walk: Db, deps: SendReconcilePassDeps,
+  walk: UnboundDb, deps: SendReconcilePassDeps,
 ): Promise<SendReconcilePassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());

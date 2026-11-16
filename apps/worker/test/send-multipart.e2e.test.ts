@@ -4,7 +4,7 @@ import { normalizeMime } from "@trafficflow/core";
 import { messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import {
-  DraftingService, DraftsService, SendService, type ServiceContext,
+  dbFor, DraftingService, DraftsService, SendService, type ServiceContext,
 } from "@trafficflow/services";
 import type { DraftPort, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { makeHarness, rawClient, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
@@ -48,7 +48,7 @@ describe("a generated reply leaves as multipart/alternative (GreenMail SMTP+IMAP
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
     const ctx: ServiceContext = {
-      db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r",
+      db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r",
     };
 
     // The message being replied to.

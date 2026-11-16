@@ -5,7 +5,7 @@ import { accounts, mailboxes } from "@trafficflow/db";
 import { calCalendars, calConnections, calEvents, calSuggestions } from "@trafficflow/db/mail";
 import { calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
 import type { CalendarWindow, SnapshotResponse, SyncChange } from "@ohmail/wire";
-import { SyncService, ServiceError, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS, type ServiceContext } from "../src/index.js";
+import { SyncService, ServiceError, dbFor, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS, type ServiceContext } from "../src/index.js";
 import { CALENDAR_SPAN_CASES, heldBySpan, type CalendarSpan } from "@ohmail/testing/calendar-span-twin";
 
 /**
@@ -28,7 +28,7 @@ async function world(opts: { on?: boolean } = {}) {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `snap-${accountId.slice(0, 8)}` });
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   if (opts.on ?? true) await setCalendarSettings(ctx, { enabled: true });
   const connectionId = randomUUID();
   const calendarId = randomUUID();

@@ -315,7 +315,7 @@ describe.skipIf(!AVAILABLE)("the storage refill against real Postgres", () => {
         access: async () => ({ ok: true, limits: { mailboxes: null, storageBytes: limit, canAddMailbox: true, aiEnabled: true } }),
       } as unknown as EntitlementsPort;
       // The production resolver, asked afresh at every pass.
-      const storageCap = makeStorageCapResolver(port, db as unknown as Tx, { warn: () => {} }, { ttlMs: 0, now: () => clock });
+      const storageCap = makeStorageCapResolver(port, () => db as unknown as Tx, { warn: () => {} }, { ttlMs: 0, now: () => clock });
       const pass = async (now: Date) => {
         clock = now;
         for (let i = 0; i < 10; i++) {

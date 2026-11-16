@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, mailboxes, mailboxFolders, messages } from "@trafficflow/db";
 import {
-  MessageService, SyncService, consentSettings, mailboxFoldersOff, setFoldersEnabled,
+  MessageService, SyncService, consentSettings, dbFor, mailboxFoldersOff, setFoldersEnabled,
   setMailboxFoldersEnabled, userFolderExclusion,
   type FolderDTO, type ServiceContext,
 } from "../src/index.js";
@@ -39,7 +39,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: "own@example.com" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-23T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };
@@ -213,7 +213,7 @@ describe("account scoping", () => {
     const [otherMb] = await db.insert(mailboxes)
       .values({ accountId: otherId, provider: "imap", address: "other@example.com" }).returning();
     const otherFolder = await addFolder(db, otherMb.id, "Their Project");
-    const otherCtx: ServiceContext = { ...ctx, accountId: otherId };
+    const otherCtx: ServiceContext = { ...ctx, accountId: otherId, db: dbFor(db, otherId) };
     await setFoldersEnabled(otherCtx, true);
 
     // The first account's snapshot never carries the second's folder…
@@ -298,7 +298,8 @@ describe("the folder page — the reach past a windowed mirror (GET /messages?vi
     const { db, ctx, mailboxId } = await setup();
     const { acme } = await seedInventory(db, mailboxId);
     await setFoldersEnabled(ctx, true);
-    const otherCtx: ServiceContext = { ...ctx, accountId: randomUUID() };
+    const other = randomUUID();
+    const otherCtx: ServiceContext = { ...ctx, accountId: other, db: dbFor(db, other) };
     await setFoldersEnabled(otherCtx, true);
     expect(await msgSvc.list(otherCtx, { view: "folder", folderId: acme }))
       .toEqual({ items: [], nextCursor: null });
@@ -391,7 +392,8 @@ describe("per-mailbox enablement (§17)", () => {
 
   it("a mailbox of ANOTHER account is a 404, and nothing persists", async () => {
     const { db, ctx, accountId, mb2 } = await twoMailboxSetup();
-    const otherCtx: ServiceContext = { ...ctx, accountId: randomUUID() };
+    const other = randomUUID();
+    const otherCtx: ServiceContext = { ...ctx, accountId: other, db: dbFor(db, other) };
     await expect(setMailboxFoldersEnabled(otherCtx, mb2, false))
       .rejects.toMatchObject({ httpStatus: 404 });
     // The refused write left the column untouched for the real owner.
@@ -438,7 +440,7 @@ describe("the delta's folder page is BATCH-materialized (the empty-rail case)", 
         return Reflect.get(target, prop, receiver);
       },
     }) as typeof db;
-    const delta = await svc.getChanges({ ...ctx, db: counting }, { since: "0" });
+    const delta = await svc.getChanges({ ...ctx, db: dbFor(counting, ctx.accountId) }, { since: "0" });
     expect(folderChanges(delta)).toHaveLength(40);
     // The bound is deliberately loose (page read, seq bounds, prefetches, flag read, bulk
     // folder read, and headroom) — what it must never be is proportional to the 40 rows.

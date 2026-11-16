@@ -7,7 +7,7 @@ import {
 import type { Db } from "@trafficflow/services";
 import { createLogger, type Logger } from "@trafficflow/core/mail";
 import { resetSseCounters } from "../src/routes/events.js";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, req, FIXED_NOW, perRequest } from "./helpers.js";
 
 /**
  * AN OPEN `/events` STREAM IS ADMITTED CONTINUOUSLY. Every read the stream makes asks the door's
@@ -106,7 +106,7 @@ async function watch(deps: ApiDeps, token: string): Promise<Watched> {
       return fn.bind(target);
     },
   }) as Db;
-  const res = await H(req("GET", "/events", { bearer: token }), { ...deps, db }, SSE);
+  const res = await H(req("GET", "/events", { bearer: token }), perRequest({ ...deps, db }), SSE);
   expect(res.status).toBe(200);
   const reader = res.body!.getReader();
   const dec = new TextDecoder();

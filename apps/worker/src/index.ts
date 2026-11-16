@@ -1267,7 +1267,7 @@ export async function startWorkerWithLock(
     // baseline or a read fault resolves to `undefined` (no cutoff, the consent-gate direction). And
     // the storage cap per account: the hosted worker is THE metered composition (`SyncDeps.storageCap`
     // required, local engines `UNMETERED_STORAGE_CAP`), refreshed per cycle so a limit change moves within one.
-    const storageCapFor = makeStorageCapResolver(entitlements, db as unknown as Tx, log);
+    const storageCapFor = makeStorageCapResolver(entitlements, (accountId) => binding.forAccount(accountId).db as unknown as Tx, log);
     /* ONE KEY LOOKUP FOR THE PROCESS: the sender-signature check where a mailbox's provider names no
        authserv-id (`pipeline.ts#signatureVerdict`). Its cache holds public DNS answers only. */
     const signatureCheck = makeSignatureCheck({ keys: makeDnsDkimKeys() });
@@ -1671,7 +1671,8 @@ export async function startWorkerWithLock(
        */
       const vapid = vapidFromEnv();
       scope.pushWake = startPushWake({
-        db: db as unknown as Tx,
+        // Each wake's statements on the handle of the account it is for, once the shard owns it.
+        dbOf: (accountId) => binding.forAccount(accountId).db as unknown as Tx,
         source: changeSignals,
         // The env-read policy, and the SAME variable `apps/server` reads — the process that
         // validates a registration and the process that dials it must not disagree.
@@ -1684,7 +1685,7 @@ export async function startWorkerWithLock(
          * "which accounts are mine" has one answer in this app rather than two. On the shipped
          * single-shard configuration it returns true without a query.
          */
-        ownsAccount: (accountId) => accountInShard(db, accountId, selection),
+        ownsAccount: (accountId) => accountInShard(binding.roster, accountId, selection),
         /**
          * Passing the whole discriminated answer rather than a nullable identity is what lets the
          * sender distinguish "the operator configured nothing" (degrade: the plaintext arm still

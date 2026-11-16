@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  MAILBOX_SIGNATURE_MAX_CHARS, MailboxService, SyncService, mailboxSignatures, setMailboxSignature,
+  MAILBOX_SIGNATURE_MAX_CHARS, MailboxService, SyncService, dbFor, mailboxSignatures, setMailboxSignature,
   type ServiceContext, type SettingsDTO,
 } from "../src/index.js";
 
@@ -35,7 +35,7 @@ async function setup() {
     .values({ accountId, provider: "imap", address: "two@example.com" }).returning();
   let tick = 0;
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date(Date.parse("2026-08-27T00:00:00.000Z") + ++tick * 1_000),
     requestId: "r",
   };
@@ -151,12 +151,12 @@ describe("a removed mailbox keeps its signature inert; the same address added ag
 describe("mailboxSignatures — only the mailboxes that HAVE one travel", () => {
   it("absent key IS the resting state; a clear removes the key", async () => {
     const { db, accountId, mb1, mb2, ctx } = await setup();
-    expect(await mailboxSignatures(db, accountId)).toEqual({});
+    expect(await mailboxSignatures(dbFor(db, accountId), accountId)).toEqual({});
     await setMailboxSignature(ctx, mb1, "— one");
-    expect(await mailboxSignatures(db, accountId)).toEqual({ [mb1]: "— one" });
+    expect(await mailboxSignatures(dbFor(db, accountId), accountId)).toEqual({ [mb1]: "— one" });
     await setMailboxSignature(ctx, mb2, "— two");
     await setMailboxSignature(ctx, mb1, null);
-    expect(await mailboxSignatures(db, accountId)).toEqual({ [mb2]: "— two" });
+    expect(await mailboxSignatures(dbFor(db, accountId), accountId)).toEqual({ [mb2]: "— two" });
   });
 });
 
@@ -194,6 +194,6 @@ describe("the write rings the wake and travels the settings entity", () => {
     // exactly once per re-ask.
     expect("signatures" in (after as unknown as Record<string, unknown>),
       "the settings entity grew a signatures field — the amplification bound is gone").toBe(false);
-    expect(await mailboxSignatures(db, accountId)).toEqual({ [mb1]: "second" });
+    expect(await mailboxSignatures(dbFor(db, accountId), accountId)).toEqual({ [mb1]: "second" });
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { mailboxes, mailboxProfileMirror } from "@trafficflow/db";
-import { effectiveMailboxSignatures } from "../src/index.js";
+import { dbFor, effectiveMailboxSignatures } from "../src/index.js";
 import { makeCtx } from "./helpers.js";
 
 /**
@@ -58,7 +58,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC());
 
-    const { signatures } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId], "the reader composed with its own dead row")
       .toBe("-- \nfrom the organizer");
   });
@@ -68,7 +68,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC({ signatureHtml: "<p>-- <br>from the organizer</p>" }));
 
-    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId]).toBe("-- \nfrom the organizer");
     expect(signaturesHtml[w.mailboxId]).toBe("<p>-- <br>from the organizer</p>");
   });
@@ -84,7 +84,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC());
 
-    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId]).toBe("-- \nfrom the organizer");
     expect(signaturesHtml[w.mailboxId], "the local markup rode out under the organizer's words")
       .toBeUndefined();
@@ -96,7 +96,7 @@ describe("the signature a reader composes with is the organizer's", () => {
       .where(eq(mailboxes.id, w.mailboxId));
     await readsOnly(w);
 
-    const { signatures } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId]).toBe("-- \nmine");
   });
 
@@ -107,7 +107,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC({ signature: null }));
 
-    const { signatures } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     /* `?? local` on a document whose `signature` is null would put the dead row back — the state
        measured on the rig, reached from the other side. A published "no sign-off" is a decision
        somebody made and the reader honours it. */
@@ -127,7 +127,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC());
 
-    const { signatures, signatureSources } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signatureSources } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatureSources[w.mailboxId]).toBe("organizer");
     expect(signatures[w.mailboxId]).toBe("-- \nfrom the organizer");
   });
@@ -138,7 +138,7 @@ describe("the signature a reader composes with is the organizer's", () => {
       .where(eq(mailboxes.id, w.mailboxId));
     await readsOnly(w);
 
-    const { signatures, signatureSources } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signatureSources } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     /* The pair that decides the editor: the value is this install's own, so the row must not be
        reported as somebody else's and must keep its Save. */
     expect(signatureSources[w.mailboxId]).toBe("local");
@@ -151,7 +151,7 @@ describe("the signature a reader composes with is the organizer's", () => {
       .where(eq(mailboxes.id, w.mailboxId));
     await mirrorDoc(w, DOC({ signature: "-- \nwhoever held it last" }));
 
-    const { signatureSources } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatureSources } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatureSources[w.mailboxId], "a stale document sourced an organizer's own row away")
       .toBe("local");
   });
@@ -164,7 +164,7 @@ describe("the signature a reader composes with is the organizer's", () => {
     await readsOnly(w);
     await mirrorDoc(w, DOC({ signature: null }));
 
-    const { signatures, signatureSources } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signatureSources } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatureSources[w.mailboxId]).toBe("organizer");
     expect(signatures[w.mailboxId]).toBeUndefined();
   });
@@ -181,7 +181,7 @@ describe("the signature a reader composes with is the organizer's", () => {
        read the mirror for an organizer for this exact reason, and the two must not disagree. */
     await mirrorDoc(w, DOC({ signature: "-- \nwhoever held it last" }));
 
-    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId]).toBe("-- \nmine");
     expect(signaturesHtml[w.mailboxId]).toBe("<p>-- <br>mine</p>");
   });
@@ -202,7 +202,7 @@ describe("the signature a reader composes with is the organizer's", () => {
       readAt: new Date("2026-09-13T19:00:00Z"),
     });
 
-    const { signatures } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId]).toBe("-- \nmine");
     expect(signatures[other!.id]).toBe("-- \nthe other one's organizer");
   });
@@ -231,7 +231,7 @@ describe("the signature a reader composes with is the organizer's", () => {
       drop constraint mailbox_profile_mirror_mailbox_id_account_fk`);
     await w.db.insert(mailboxProfileMirror).values(stranger);
 
-    const { signatures } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     expect(signatures[w.mailboxId], "a stranger's document reached this account's composer")
       .toBe("-- \nmine");
   });
@@ -251,7 +251,7 @@ describe("the signature a reader composes with is the organizer's", () => {
         accountId: w.accountId, provider: "imap", address: "mila@lichtgrat.example",
       }).returning();
 
-      const maps = await effectiveMailboxSignatures(w.db, w.accountId);
+      const maps = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
       for (const map of [maps.signatures, maps.signaturesHtml, maps.signatureSources]) {
         expect(map[w.mailboxId], "a removed copy's signature was served").toBeUndefined();
       }
@@ -263,7 +263,7 @@ describe("the signature a reader composes with is the organizer's", () => {
   it("no signature anywhere leaves the key absent, never an empty string", async () => {
     const w = await makeCtx();
     await readsOnly(w);
-    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(w.db, w.accountId);
+    const { signatures, signaturesHtml } = await effectiveMailboxSignatures(dbFor(w.db, w.accountId), w.accountId);
     /* Absent is the resting state: `effectiveSignature` reads an empty string as no block, but an
        empty VALUE in the map would make the Settings pane render "Added to messages…" over
        nothing, and the pre-0075 interface is a map with no key. */

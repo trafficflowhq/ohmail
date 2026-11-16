@@ -5,7 +5,7 @@ import { drafts, mailboxes } from "@trafficflow/db";
 import { PAGE_MAX_ROW_BYTES } from "@trafficflow/core/transport-frame";
 import { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "../src/sync-page-byte-budget.js";
 import { draftRowToDTO, draftRowWithheldDTO } from "../src/dto/materialize.js";
-import { SyncService, type ServiceContext } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
 import type { DraftDTO, SnapshotResponse } from "../src/dto/types.js";
 
 /**
@@ -25,7 +25,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `b-${accountId}@x.example`,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { reindexMessageSearch } from "@trafficflow/core/mail";
-import { MessageService, SearchService, SyncService, ServiceError, type ServiceContext } from "../src/index.js";
+import { MessageService, SearchService, SyncService, ServiceError, dbFor, type ServiceContext } from "../src/index.js";
 import { changesFor, makeCtx, movedHere, otherAccount, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
@@ -95,7 +95,7 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
   it("the already-gone read is the presser's own: another account's press is a 404, its copy counts for nothing", async () => {
     const { db, accountId, mailboxId, ctx } = await makeCtx();
     const b = await otherAccount(db);
-    const ctxB: ServiceContext = { ...ctx, accountId: b.accountId };
+    const ctxB: ServiceContext = { ...ctx, accountId: b.accountId, db: dbFor(db, b.accountId) };
     await db.update(mailboxes).set({ trashFolder: TRASH }).where(inArray(mailboxes.id, [mailboxId, b.mailboxId]));
     const gone = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
     const kept = await seedMessage(db, b.accountId, b.mailboxId, { folder: "INBOX" });

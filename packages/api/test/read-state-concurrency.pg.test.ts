@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
@@ -44,7 +45,7 @@ const app = createApp(apiRoutes);
 
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -81,7 +82,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 const patch = (token: string, body: unknown): Request =>

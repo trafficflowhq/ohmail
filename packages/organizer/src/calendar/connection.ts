@@ -8,7 +8,7 @@
  * The reads made before an account is bound are the roster's (`roster.ts`), of `cal_connections`.
  */
 import { and, eq } from "drizzle-orm";
-import { AccountErasedError, MailboxErasedError, bindDb, bindingOf, calConnections, type Tx } from "@trafficflow/db";
+import { AccountErasedError, MailboxErasedError, bindDb, calConnections, type Tx } from "@trafficflow/db";
 import { CalendarConnectionGone, fencedConnectionWrite } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 
@@ -63,12 +63,11 @@ export function unboundPool(pool: CalendarPool): Tx {
  * first. `accountId` is a connection's own, from one roster row (`ConnectionKey`): never an id a
  * provider answered or a push carried. An id that is no account id is refused.
  *
- * A store nobody bound a view of (a device's own, which has one person and no policy) is left as
- * it is: its turn runs on the store's handle, as it always has.
+ * Whatever store the pool is: the binder is asked every time, so no turn runs on a handle that
+ * does not name its connection's account, and the writer's fence finds the account it is asked for.
  */
 export function passDb(pool: CalendarPool, accountId: string): ConnectionDb {
-  const held = pool[POOL];
-  return { [BOUND]: bindingOf(held) === undefined ? held : bindDb(held, { account: accountId }), accountId };
+  return { [BOUND]: bindDb(pool[POOL], { account: accountId }), accountId };
 }
 
 /** A transaction of one turn, with the connection row it holds. */

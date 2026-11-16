@@ -46,7 +46,7 @@ describe("passContext", () => {
   });
 
   it("takes a handle no host minted, as a device's pass hands its store", () => {
-    const ctx = passContext(store, A, rest);
+    const ctx = passContext(bindDb(store, { account: null }), A, rest);
     expect(bindingOf(ctx.db)?.account).toBe(A);
     expect(bindingOf(store)).toBeUndefined();
   });
@@ -69,11 +69,13 @@ describe("passContext", () => {
 
   it("refuses a handle bound to another account: a row's context is never made over another row's", () => {
     const rowOfA = passContext(walk(), A, rest);
+    // @ts-expect-error — the type refuses an account's handle as a walk; the case is the refusal at run time
     expect(() => passContext(rowOfA.db, B, rest)).toThrow(expect.objectContaining({ code: "binding_refused" }));
   });
 
   it("names no id in a refusal", () => {
     let said = "";
+    // @ts-expect-error — the type refuses a walk that names an account; the case is the refusal at run time
     try { passContext(bindDb(store, { account: A }), B, rest); } catch (err) { said = String((err as Error).message); }
     expect(said).not.toBe("");
     expect(said).not.toContain(A);

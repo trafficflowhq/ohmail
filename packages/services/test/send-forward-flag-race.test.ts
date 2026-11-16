@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { normalizeMime } from "@trafficflow/core/mail";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
-import { sendService, type ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, sendService, type ServiceContext } from "@trafficflow/services/mail";
 import { ServiceError } from "../src/errors.js";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { FIXED_NOW, seedBody, seedMailbox, seedMessage, seedSession } from "../../api/test/helpers.js";
@@ -97,7 +97,7 @@ async function world(server: { host: string; port: number; pass: string }) {
     }).returning();
     return d!.id;
   };
-  const ctx: ServiceContext = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "flag-race" };
+  const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "flag-race" };
   // Both adapters are the product's own, one fresh connection per open, as the hosts build them.
   const imap: ImapConfig = { host: server.host, port: server.port, secure: false, auth };
   const deps = {

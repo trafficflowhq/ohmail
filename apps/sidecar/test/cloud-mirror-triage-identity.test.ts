@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, messageStates } from "@trafficflow/db/mail";
-import { syncService } from "@trafficflow/services/mail";
+import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
   MailboxDTO, MessageDTO, MessageStateDTO, ServiceContext, SnapshotResponse, SyncChange,
   SyncResponse, ThreadDTO,
@@ -225,7 +225,7 @@ function fakeAuthBySince(feed: SyncResponse, resumeCursor: string): CloudAuth {
 }
 
 const ctxFor = (opened: OpenLocalDb, world: LocalWorld): ServiceContext => ({
-  db: opened.db, accountId: world.accountId, userId: world.userId, sessionId: null,
+  db: dbFor(opened.db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null,
   now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined,
 });
 

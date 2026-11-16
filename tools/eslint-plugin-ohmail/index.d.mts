@@ -9,6 +9,8 @@ export function isPlatformPackage(source: string, platforms: Platform[]): boolea
 export function isPlatformName(text: string, platforms: Platform[]): boolean;
 export function isDoorFile(rel: string, doors: string[]): boolean;
 export function readDoors(root: string): { doors: string[]; platforms: Platform[] };
+/** tools/binders.json as the options of `ohmail/binder-callers`. */
+export function readBinders(root: string): { names: string[]; files: string[] };
 /** A row of tools/shell-adapters.json: a file of the old shell's side of the frame, and the feeds it declares. */
 export interface ShellAdapter {
   file: string;

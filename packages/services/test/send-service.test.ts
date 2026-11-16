@@ -4,7 +4,7 @@ import net from "node:net";
 import { Duplex } from "node:stream";
 import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads } from "@trafficflow/db";
+import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads, bindDb } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { createLogger, SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
 import { ImapAdapter, outboundToMail } from "@trafficflow/core/adapters/imap";
@@ -13,7 +13,7 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
   OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_OWED_DEFER_MS, SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_SETTLE_MS,
-  SEND_COPY_OWED_STAGED_NOT_DUE, SEND_COPY_OWED_CLAIM_MS, SENT_COPY_PASS_WINDOW, runOwedSentCopyPass, sentCopyRefusalOf,
+  SEND_COPY_OWED_STAGED_NOT_DUE, SEND_COPY_OWED_CLAIM_MS, SENT_COPY_PASS_WINDOW, dbFor, runOwedSentCopyPass, sentCopyRefusalOf,
 } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
 import { ServiceError } from "../src/errors.js";
@@ -57,8 +57,8 @@ async function setup() {
   const A = randomUUID();
   const B = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "mila@lichtgrat.example" }).returning();
-  const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => NOW, requestId: "r" };
-  const ctxB: ServiceContext = { db, accountId: B, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "r" };
+  const ctxB: ServiceContext = { db: dbFor(db, B), accountId: B, userId: null, now: () => NOW, requestId: "r" };
   async function newDraft(status = "draft", over: { subject?: string; body?: string } = {}) {
     const [d] = await db.insert(drafts).values({
       accountId: A, mailboxId: mb!.id, subject: "Re: hi", body: "Thanks!",
@@ -679,7 +679,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
   }
   /** The server's late pass, as a restarted host runs it (a new `SendService`). */
   const serverPass = (o: Awaited<ReturnType<typeof owedSend>>, more: Partial<Parameters<typeof runOwedSentCopyPass>[1]> = {}) =>
-    runOwedSentCopyPass(o.db, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap, sends: new SendService(), now: () => NOW, ...more });
+    runOwedSentCopyPass(bindDb(o.db, { account: null }), { openSendAdapter: o.smtp.factory, resolveStorageCap: cap, sends: new SendService(), now: () => NOW, ...more });
   const MIN = 60_000;
   const HOUR = 60 * MIN;
   /** Cloud's clock: the next poke is armed five minutes and its jitter after the last one started. */
@@ -734,7 +734,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
         sum.letters.push(await oweRow(w, (at - NOW.getTime()) / 1000, { due: at + MIN }));
       }
       const started = clock.at;
-      const r = await runOwedSentCopyPass(w.db, {
+      const r = await runOwedSentCopyPass(bindDb(w.db, { account: null }), {
         openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at), ...more,
       });
       sum.passes += 1;
@@ -1495,7 +1495,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
         async messageInSent() { return false; },
         async close() { /* nothing held */ },
       });
-      const r = await runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW, log });
+      const r = await runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW, log });
       expect({ gaveUp: r.gaveUp, onLadder: r.onLadder, files, owed: (await owedRows(w.db)).length }).toEqual({ gaveUp: 1, onLadder: 0, files: 1, owed: 0 });
       const missing = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.event === "send_sent_copy_missing");
       expect(missing).toMatchObject([{ kind: "too_big", attempts: 4 }]);
@@ -1512,7 +1512,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
       async messageInSent() { return false; },
       async close() { /* nothing held */ },
     });
-    const r = await runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW });
+    const r = await runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW });
     expect({ gaveUp: r.gaveUp, owed: (await owedRows(w.db)).map((row) => ownAttempts(row.attempts)) }).toEqual({ gaveUp: 0, owed: [0, 0] });
   });
 
@@ -1573,7 +1573,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
         expect({ copy: res.sentCopy, reason: res.sentCopyReason }).toEqual({ copy: "pending", reason: "full" });
         letters.push(res.providerMessageId!);
       }
-      await runOwedSentCopyPass(w.db, { openSendAdapter: mail, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at) });
+      await runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: mail, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at) });
     }
     expect([...filedAt.keys()].sort(), "each letter's copy in Sent").toEqual([...letters].sort());
     expect((Math.max(...filedAt.values()) - roomAt) / MIN, "minutes from room to the last copy in Sent").toBeLessThanOrEqual(11);
@@ -1601,7 +1601,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
           async close() { /* nothing held */ },
         };
       };
-      const pass = () => runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at) });
+      const pass = () => runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at) });
       const waits = async (): Promise<number[]> => (await owedRows(w.db)).map((r) => (r.nextAttemptAt.getTime() - clock.at) / MIN);
       const whileFull: number[] = [];
       for (; clock.at <= NOW.getTime() + 70 * MIN; clock.at += MIN) if ((await pass()).claimed > 0) whileFull.push(...await waits());
@@ -1652,7 +1652,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
         };
       };
       let clock = NOW.getTime();
-      const poke = () => runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock) });
+      const poke = () => runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock) });
       await poke();
       clock += POKE_MS;
       await poke();
@@ -1689,7 +1689,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
       };
     };
     for (poke = 1; poke <= 24; poke += 1) {
-      await runOwedSentCopyPass(w.db, {
+      await runOwedSentCopyPass(bindDb(w.db, { account: null }), {
         openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(NOW.getTime() + (poke - 1) * POKE_MS),
       });
     }
@@ -1777,7 +1777,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
           ...(saysSo ? { isLive: () => alive } : {}),
         };
       };
-      const r = await runOwedSentCopyPass(w.db, { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW });
+      const r = await runOwedSentCopyPass(bindDb(w.db, { account: null }), { openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => NOW });
       expect({ filed: r.filed, dials: seen.dials, onLadder: r.onLadder }).toEqual({ filed: 4, dials: 2, onLadder: 0 });
     },
   );
@@ -1929,7 +1929,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     });
     const sum = await pokeUntilFiled(w, open, clock, {}, { until: bounds[1]! });
     // A poke a minute past the second copy's seventh day, whatever its mailbox's ladder says.
-    const last = await runOwedSentCopyPass(w.db, {
+    const last = await runOwedSentCopyPass(bindDb(w.db, { account: null }), {
       openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(bounds[1]! + MIN),
     });
     expect({ gaveUp: sum.gaveUp + last.gaveUp, dropped: sum.dropped + last.dropped, owed: (await owedRows(w.db)).length })
@@ -2088,7 +2088,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
       async messageInSent(id: string) { return appended.includes(id); },
       async close() { /* nothing held */ },
     });
-    const pass = (at: number) => runOwedSentCopyPass(w.db, {
+    const pass = (at: number) => runOwedSentCopyPass(bindDb(w.db, { account: null }), {
       openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(at),
     });
     const firstPass = pass(NOW.getTime());
@@ -2129,7 +2129,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
       async messageInSent() { return false; },
       async close() { /* nothing held */ },
     });
-    const pass = () => runOwedSentCopyPass(w.db, {
+    const pass = () => runOwedSentCopyPass(bindDb(w.db, { account: null }), {
       openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(clock.at), budgetMs: 60_000,
     });
     const first = await pass();
@@ -2231,7 +2231,7 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
         async messageInSent() { return false; },
         async close() { /* nothing held */ },
       });
-      const pass = (at: number) => runOwedSentCopyPass(w.db, {
+      const pass = (at: number) => runOwedSentCopyPass(bindDb(w.db, { account: null }), {
         openSendAdapter: open, resolveStorageCap: cap, sends: new SendService(), now: () => new Date(at),
       });
       const filing = pass(NOW.getTime());
