@@ -77,6 +77,57 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e30
    }
  
    function ErrorResponse(x) {
+diff --git a/cjs/src/index.js b/cjs/src/index.js
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf787dc61b 100644
+--- a/cjs/src/index.js
++++ b/cjs/src/index.js
+@@ -236,6 +236,8 @@ function Postgres(a, b) {
+     const queries = Queue()
+     let savepoints = 0
+       , connection
++      , own = null
++      , closing = null
+       , prepare = null
+ 
+     try {
+@@ -267,15 +269,15 @@ function Postgres(a, b) {
+       } catch (e) {
+         await (name
+           ? sql`rollback to ${ sql(name) }`
+-          : sql`rollback`
++          : (closing = sql`rollback`)
+         )
+         throw e instanceof PostgresError && e.code === '25P02' && uncaughtError || e
+       }
+ 
+       if (!name) {
+         prepare
+-          ? await sql`prepare transaction '${ sql.unsafe(prepare) }'`
+-          : await sql`commit`
++          ? await (closing = sql`prepare transaction '${ sql.unsafe(prepare) }'`)
++          : await (closing = sql`commit`)
+       }
+ 
+       return result
+@@ -290,6 +292,9 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
++        if (c.reserved !== own || (closing && q !== closing))
++          return q.reject(Object.assign(new Error('write CONNECTION_CLOSED'), { code: 'CONNECTION_CLOSED', errno: 'CONNECTION_CLOSED', reason: 'statement sent on a transaction whose connection closed' }))
++
+         c.queue === full
+           ? queries.push(q)
+           : c.execute(q) || move(c, full)
+@@ -299,7 +304,7 @@ function Postgres(a, b) {
+     function onexecute(c) {
+       connection = c
+       move(c, reserved)
+-      c.reserved = () => queries.length
++      own = c.reserved = () => queries.length
+         ? c.execute(queries.shift())
+         : move(c, reserved)
+     }
 diff --git a/src/connection.js b/src/connection.js
 index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af37642403cc6 100644
 --- a/src/connection.js
@@ -156,3 +207,54 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af376
    }
  
    function ErrorResponse(x) {
+diff --git a/src/index.js b/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..045b2cf0bb60d2c898ad13a385cec67e94a2253a 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -236,6 +236,8 @@ function Postgres(a, b) {
+     const queries = Queue()
+     let savepoints = 0
+       , connection
++      , own = null
++      , closing = null
+       , prepare = null
+ 
+     try {
+@@ -267,15 +269,15 @@ function Postgres(a, b) {
+       } catch (e) {
+         await (name
+           ? sql`rollback to ${ sql(name) }`
+-          : sql`rollback`
++          : (closing = sql`rollback`)
+         )
+         throw e instanceof PostgresError && e.code === '25P02' && uncaughtError || e
+       }
+ 
+       if (!name) {
+         prepare
+-          ? await sql`prepare transaction '${ sql.unsafe(prepare) }'`
+-          : await sql`commit`
++          ? await (closing = sql`prepare transaction '${ sql.unsafe(prepare) }'`)
++          : await (closing = sql`commit`)
+       }
+ 
+       return result
+@@ -290,6 +292,9 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
++        if (c.reserved !== own || (closing && q !== closing))
++          return q.reject(Object.assign(new Error('write CONNECTION_CLOSED'), { code: 'CONNECTION_CLOSED', errno: 'CONNECTION_CLOSED', reason: 'statement sent on a transaction whose connection closed' }))
++
+         c.queue === full
+           ? queries.push(q)
+           : c.execute(q) || move(c, full)
+@@ -299,7 +304,7 @@ function Postgres(a, b) {
+     function onexecute(c) {
+       connection = c
+       move(c, reserved)
+-      c.reserved = () => queries.length
++      own = c.reserved = () => queries.length
+         ? c.execute(queries.shift())
+         : move(c, reserved)
+     }
