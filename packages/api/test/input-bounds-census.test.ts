@@ -739,7 +739,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── search ──────────────────────────────────────────────────────────────────────────────
   "GET /search": {
     bounds: [SEARCH_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT],
-    door: "`folder`/`sender` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
+    door: "`folder`/`sender`/`to`/`party` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
   },
 
   // ── privacy ─────────────────────────────────────────────────────────────────────────────
@@ -1333,6 +1333,10 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // shape it does not decode to.
   "routes/search.ts#cursor": "length-capped",
   "routes/search.ts#sender": "request-line",
+  // `sender`'s twins on the other side: `to` is an equality on the recipients' keys, `party` that
+  // or `sender`'s, each one comparison a letter whatever its length.
+  "routes/search.ts#to": "request-line",
+  "routes/search.ts#party": "request-line",
   "routes/search.ts#sort": "closed-set",
   "routes/search.ts#unread": "closed-set",
   // ── The ADMIN console's four, invisible until the query extractor resolved local aliases ──

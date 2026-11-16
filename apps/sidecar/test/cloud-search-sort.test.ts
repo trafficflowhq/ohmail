@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, messageBodies } from "@trafficflow/db";
 import { reindexMessageSearch } from "@trafficflow/core/mail";
@@ -120,5 +121,15 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
     const estimate = (await (await search(ctx, "q=heron&parts=estimate")).json()) as { total: number; totalExact: boolean };
     expect(estimate).toMatchObject({ total: 3, totalExact: true });
     expect((await search(ctx, "q=heron&parts=guess")).status).toBe(400);
+  });
+
+  it("the person filters narrow here as on the hosted route: To, and either side", async () => {
+    const { ctx, old, mid, recent } = await corpus();
+    const db = ctx.db as unknown as Awaited<ReturnType<typeof makeTestDb>>;
+    await db.update(messages).set({ toAddresses: [{ name: null, address: "Zoe@Late.example" }] }).where(eq(messages.id, mid));
+    expect(await idsOf(await search(ctx, "q=heron&to=zoe@late.example"))).toEqual([mid]);
+    expect((await idsOf(await search(ctx, "q=heron&party=zoe@late.example"))).sort()).toEqual([old, mid].sort());
+    expect(await idsOf(await search(ctx, "q=heron&sender=mike@mid.example&party=mike@mid.example"))).toEqual([recent]);
+    expect(await idsOf(await search(ctx, "q=heron&to=zoe@late"))).toEqual([]);
   });
 });

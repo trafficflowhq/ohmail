@@ -56,12 +56,16 @@ function searchFiltersOf(url: URL): SearchFilters {
   const filters: SearchFilters = {};
   const folder = url.searchParams.get("folder");
   const sender = url.searchParams.get("sender");
+  const to = url.searchParams.get("to");
+  const party = url.searchParams.get("party");
   const dateFrom = url.searchParams.get("dateFrom");
   const dateTo = url.searchParams.get("dateTo");
   const unread = boolParam(url.searchParams.get("unread"));
   const hasAttachments = boolParam(url.searchParams.get("hasAttachments"));
   if (folder) filters.folder = folder;
   if (sender) filters.sender = sender;
+  if (to) filters.to = to;
+  if (party) filters.party = party;
   if (dateFrom) filters.dateFrom = dateFrom;
   if (dateTo) filters.dateTo = dateTo;
   if (unread !== undefined) filters.unread = unread;
