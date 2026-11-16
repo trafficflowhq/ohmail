@@ -2796,6 +2796,21 @@
   ]
  },
  {
+  "key": "device=phone&screen=ohbox&show=swipe-read",
+  "reason": "the drawn travel: at the reference's 96 the phone draws 82.67 against its 80 (a third past 76, at most 88, the phone's own arithmetic), eased a second time by the kit's row until the kit stands the row at `pulled` with no easing of its own; the studio's simulation draws 0.2 up to 260 (core.js:2513), a row for the studio; the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
+ },
+ {
+  "key": "device=phone&screen=ohbox&show=swipe-later",
+  "reason": "the drawn travel: at the reference's 96 the phone draws 82.67 against its 80 (a third past 76, at most 88, the phone's own arithmetic), eased a second time by the kit's row until the kit stands the row at `pulled` with no easing of its own; the studio's simulation draws 0.2 up to 260 (core.js:2513), a row for the studio; the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
+ },
+ {
+  "key": "device=phone&screen=ohbox&show=pulldown",
+  "reason": "the pull's mark: the room opens but no mark is drawn in it until the kit has its pull mark (the reference's pull dot); the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
+ },
+ {
   "key": "device=phone&screen=ohbox",
   "reason": "a row is an option in a named listbox, named 'Sender: Subject' and saying its state in its description (what the shipped row says to a screen reader), where the simulator draws a list of buttons; the states page's people keep their first names where the reference's full names meet the push gate's guard list; the group headings count the states page's world, which holds more letters than the reference's New and Earlier; the head's doorbell and Mark all read keep the shipped accessible names, the count in the name; the list's menu is named 'Ohbox actions'; the rail, the landmarks, the mail/calendar switch, the palette and the scheme control are the frame's and cal-views' (today's fed rail names its landmark Main and a counted entry 'Ohbox 5'); the column handle ('List width') is today's columns' and says its width, which the reference's draws none of",
   "since": "2026-11-15",

@@ -198,6 +198,7 @@ export function hostFromTodaysInputs(
       hostConnection: props.hostConnection ? constant(props.hostConnection) : NONE,
       linkIn,
       sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+      posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
     },
   } as HostContract;
 }
