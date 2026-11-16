@@ -116,7 +116,7 @@ describe.skipIf(!AVAILABLE)("the calendar's passes in the worker", () => {
   }, 60_000);
 
   it("sixty-four connections whose turn throws do not keep another connection from being read, whether or not their rows can be moved", async () => {
-    const basic: StoredCredential = { kind: "basic", user: "mila", password: new Secret(["kiln", "wheel"].join("-")) };
+    const basic: StoredCredential = { kind: "basic", server: "https://dav.example.test/dav/", user: "mila", password: new Secret(["kiln", "wheel"].join("-")) };
     /** A key the worker's ring does not hold: every turn of a connection sealed under it throws before anything is asked. */
     const foreign = new StaticKeyProvider({ 7: Buffer.alloc(32, 77) });
     const scenario = async (rowsCanBeMoved: boolean) => {
@@ -235,7 +235,9 @@ describe.skipIf(!AVAILABLE)("the calendar's passes in the worker", () => {
       const [unopenable] = await w.db.insert(calConnections).values({
         accountId: good.accountId, provider: "caldav", label: "", status: "active", serverUrl: `http://127.0.0.1:${dav.port}${dav.paths.start}`,
       }).returning({ id: calConnections.id });
-      await sealCredential(w, good.accountId, unopenable!.id, { kind: "basic", user: dav.options.user, password: new Secret(dav.options.password) }, null,
+      await sealCredential(w, good.accountId, unopenable!.id, {
+        kind: "basic", server: `http://127.0.0.1:${dav.port}${dav.paths.start}`, user: dav.options.user, password: new Secret(dav.options.password),
+      }, null,
         new StaticKeyProvider({ 7: Buffer.alloc(32, 77) }));
       const { log, lines } = capturedLog();
       const scope = await scopeFor(good.accountId, OWN_NETWORK, log);

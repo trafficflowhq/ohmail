@@ -26,9 +26,9 @@ import {
 } from "./_calendar-world.js";
 
 const never = new AbortController().signal;
-const caldav: StoredCredential = { kind: "basic", user: "mila", password: new Secret(["kiln", "wheel", "glaze"].join("-")) };
-const google: StoredCredential = { kind: "oauth", provider: "google", refreshToken: new Secret(["lasting", "google", "fixture"].join("-")) };
 const SERVER = "https://dav.example.test/dav/";
+const caldav: StoredCredential = { kind: "basic", server: SERVER, user: "mila", password: new Secret(["kiln", "wheel", "glaze"].join("-")) };
+const google: StoredCredential = { kind: "oauth", provider: "google", refreshToken: new Secret(["lasting", "google", "fixture"].join("-")) };
 const GOOGLE_REGISTRATION = { clientId: "calendar-test.apps.example", clientSecret: ["registration", "fixture"].join("-") };
 
 /** Pages of single events, ids `<prefix><i>.ics`, all at version `v`. */

@@ -7,6 +7,7 @@ import type { ZoneSource } from "@ohmail/cal-core";
 import { MAX_RETRY_AFTER_MS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { Clock } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
+import type { Hop } from "./shape.js";
 
 /**
  * The methods reading needs, and the three a writer adds. No other: a calendar is never made or
@@ -26,12 +27,16 @@ export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer";
 
 /**
  * A sign-in for one request. The Authorization line is built inside the port, for each hop anew, and
- * only for a host `admits` says yes to; a hop to any other host is not made (`host_changed`).
+ * only for an address `admits` says yes to; a hop to any other is not made (`host_changed`).
  */
 export interface Authorization {
   readonly credential: { readonly kind: "basic"; readonly user: string; password(): string } | { readonly kind: "bearer"; readonly token: string };
-  /** May the credential travel to this host? Asked with the host in lower case and without a root dot. */
-  admits(host: string): boolean;
+  /**
+   * May the credential travel to this address? Asked before every hop and before any lookup: of the
+   * address the caller asked for, and of each address a redirect sends the request on to, with the
+   * origin whose answer sent it there.
+   */
+  admits(to: Hop): boolean;
   /**
    * The sign-in travels with TLS and never without: a plain address is not asked with it
    * (`address_not_allowed`), whoever named it: a person, a server's answer, a caller's stored address.
@@ -84,6 +89,7 @@ export interface AdapterDeps {
 
 export { namedHostRequest, type AddressPolicy, type RequestDeps } from "./named-host.js";
 export { fixedHostRequest } from "./fixed-host.js";
+export { hopOf, originOf, type Hop } from "./shape.js";
 
 /**
  * How long the answer asks to be left alone (Retry-After, in seconds or as a date), in milliseconds:

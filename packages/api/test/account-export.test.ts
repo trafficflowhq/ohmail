@@ -182,6 +182,12 @@ describe("GET /account/export carries the calendar's configuration, and nothing 
     expect(res.status).toBe(200);
     const text = await res.text();
     expect((JSON.parse(text) as { calendar?: unknown }).calendar).toBeDefined();
+    // Which calendar new events go to is said once, from the settings: a calendar carries no second word for it.
+    const carriedCalendars = (JSON.parse(text) as { calendar: { connections: { calendars: Record<string, unknown>[] }[] } }).calendar.connections
+      .flatMap((k) => k.calendars);
+    expect(carriedCalendars.map((k) => [Object.keys(k).sort(), k.newEvents])).toEqual([
+      [["access", "color", "defaultAlerts", "name", "newEvents", "shown", "timeZone"], true],
+    ]);
     const found = textColumns.filter((k) => text.includes(canary(k)));
     const carried = textColumns.filter((k) => {
       const answer = CALENDAR_EXPORT[k.split(".")[0] as keyof typeof CALENDAR_EXPORT];

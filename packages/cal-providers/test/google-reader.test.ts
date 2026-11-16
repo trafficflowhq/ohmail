@@ -16,7 +16,7 @@ import { makeReader, provider } from "../src/google/index.js";
 import { MAX_RETRY_AFTER_MS } from "../src/limits.js";
 import type { ChangeItem, Connection, Credential } from "../src/port.js";
 import type { ProviderRefusal } from "../src/refusals.js";
-import type { HttpPort } from "../src/request/index.js";
+import { hopOf, type HttpPort } from "../src/request/index.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const recorded = (name: string): any => JSON.parse(readFileSync(join(HERE, "support", "fixtures", "google", `${name}.json`), "utf8")).response.body;
@@ -42,7 +42,7 @@ function serving(routes: Record<string, Reply | Reply[]>) {
     async request(url, o) {
       const hosts = ["www.googleapis.com", "oauth2.googleapis.com", "accounts.google.com", "evil.example"];
       const token = o.auth !== null && o.auth.credential.kind === "bearer" ? o.auth.credential.token : null;
-      sent.push({ url, method: o.method, token, tokenGoesTo: Object.fromEntries(hosts.map((h) => [h, o.auth?.admits(h) ?? false])) });
+      sent.push({ url, method: o.method, token, tokenGoesTo: Object.fromEntries(hosts.map((h) => [h, o.auth?.admits(hopOf(new URL(`https://${h}/`), null)) ?? false])) });
       const route = routes[url];
       if (route === undefined) throw new Error(`the test serves nothing at ${url}`);
       const reply = Array.isArray(route) ? route.shift() : route;

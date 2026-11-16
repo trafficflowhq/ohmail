@@ -53,6 +53,7 @@ const MAIL_UNPINNED: Record<string, string> = {
   "0032_unsubscribe_records": "the unsubscribe ledger: no API path selects it (a staff read would be a delivery oracle)",
   "0068_retire_device_sync_fn": "drops 0067's function; nothing to probe, and its absence is the same tolerated state",
   "0069_folders_enabled_reissue": "a reissue of 0066 (REISSUED_ORIGINALS); folders_enabled_at is probed at 0066",
+  "0211_cal_calendars_default_leaves": "a column DROP only (cal_calendars.is_default, which nothing reads or writes): an untaken drop costs a boolean a row, and no class probes an absence",
 };
 
 /** Provable cloud migrations no marker pins, each with its reason. The list may only shrink. */

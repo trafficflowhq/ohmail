@@ -18,7 +18,7 @@ import { makeReader } from "../src/caldav/index.js";
 import { FETCH_BODY_MAX_BYTES, MAX_CALENDAR_NAME_CHARS, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, MAX_VALIDATOR_CHARS } from "../src/limits.js";
 import type { CalendarReader, CalendarRef, ChangeItem, ChangePage, ChangeToken, Connection } from "../src/port.js";
 import { guardedRequest } from "../src/request/guarded.js";
-import type { HttpAnswer, HttpPort } from "../src/request/index.js";
+import { hopOf, type HttpAnswer, type HttpPort } from "../src/request/index.js";
 import { startCalDavStandIn, type StandIn, type StandInOptions } from "./caldav-stand-in.js";
 
 const ZONES = intlZones();
@@ -84,8 +84,10 @@ function recorded(row: ServerRow) {
     async request(url, req) {
       const body = req.body ?? "";
       const depth = req.headers.depth ?? null;
+      if (req.auth === null) throw new Error(`asked without the sign-in: ${url}`);
+      // As the real request port: an address the sign-in may not travel to is refused, and no request is made.
+      if (!req.auth.admits(hopOf(new URL(url), null))) return { arrived: false, reason: "host_changed" };
       asked.push({ method: req.method, url, depth, body });
-      if (req.auth === null || !req.auth.admits(new URL(url).hostname)) throw new Error(`asked without the sign-in, or of a host it may not travel to: ${url}`);
       if (req.method === "PROPFIND" && depth === "0" && url === `${row.origin}/.well-known/caldav`) return answer(`${row.origin}/`, written("/", `<current-user-principal><href>${row.principal}</href></current-user-principal>`));
       if (req.method === "PROPFIND" && depth === "0" && url === `${row.origin}${row.principal}`) return answer(url, written(row.principal, `<C:calendar-home-set><href>${row.home}</href></C:calendar-home-set>`));
       if (req.method === "PROPFIND" && depth === "1" && url === home.request.url) return answer(url, home.response.body);
@@ -138,7 +140,11 @@ describe.each(CALDAV_READER_ROWS)("the recorded answers of $name", (row) => {
     for (const item of page.items) expect(item.kind === "upsert" && item.text !== null && item.text.startsWith("BEGIN:VCALENDAR") && item.text.trimEnd().endsWith("END:VCALENDAR")).toBe(true);
 
     // What was asked: the sync report and one multiget, and never a query, with or without a filter on one identifier.
-    expect(asked.map((a) => [a.method, a.depth])).toEqual([["REPORT", "0"], ["REPORT", null]]);
+    // Where the calendar is kept on another host than the typed one, the server is asked first where its calendars are
+    // (the start, the principal): a calendar's own address names no host the sign-in travels to.
+    const elsewhere = new URL(collection).origin !== row.origin;
+    expect(asked.map((a) => [a.method, a.depth])).toEqual([...(elsewhere ? [["PROPFIND", "0"], ["PROPFIND", "0"]] : []), ["REPORT", "0"], ["REPORT", null]]);
+    expect(elsewhere).toBe(row.name === "icloud");
     expect(asked.filter((a) => a.body.includes("calendar-query") || a.body.includes("prop-filter") || a.body.includes("expand"))).toEqual([]);
   });
 });

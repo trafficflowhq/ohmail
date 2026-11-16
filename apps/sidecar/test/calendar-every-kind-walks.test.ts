@@ -69,7 +69,7 @@ async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}
   });
   await db.insert(calCalendars).values({
     id: ids.calendar, accountId: s.accountId, connectionId: ids.connection, providerId: "/cal/me/work/", name: "Work",
-    color: "#336699", access: "owner", isDefault: true, timeZone: "Europe/Zurich", syncToken: "never-sent",
+    color: "#336699", access: "owner", timeZone: "Europe/Zurich", syncToken: "never-sent",
   });
   await db.insert(calAlarms).values({ accountId: s.accountId, calendarId: ids.calendar, minutesBefore: 15 });
   for (let i = 0; i < events; i++) {

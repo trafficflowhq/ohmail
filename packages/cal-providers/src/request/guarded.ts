@@ -10,14 +10,14 @@
  * may also reach this machine and private addresses, and those alone without encryption.
  */
 import {
-  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, canonicalHost, isBlockedAddress,
+  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, isBlockedAddress,
   isPrivateNetworkAddress, resolvePinUnchecked, type HostResolver, type PinnedRequestOptions, type PinnedResponse,
 } from "@trafficflow/core/net";
 import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { readCapped } from "./capped-body.js";
 import { sendableTag, type HttpAnswer, type HttpPort, type HttpRequest } from "./index.js";
-import { shapeRefusal, type AddressPolicy } from "./shape.js";
+import { hopOf, originOf, shapeRefusal, type AddressPolicy } from "./shape.js";
 
 export type { AddressPolicy } from "./shape.js";
 
@@ -219,6 +219,8 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
   try {
     let current = first;
     let cameByHttps = false;
+    /** The origin whose redirect sent the request on to `current`; `null` while that is the address the caller asked for. */
+    let sentOnBy: string | null = null;
     for (let hop = 0; ; hop++) {
       // What is wrong with an address has the address's word on every hop; what is wrong with the
       // redirect itself (no address, too long, a step down to http) is the redirect's.
@@ -234,8 +236,9 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
       const head = setTimeout(end, deps.limits.connectMs);
       let res: PinnedResponse;
       try {
-        // Before any lookup: a host the credential may not travel to is not asked about either.
-        if (req.auth !== null && !req.auth.admits(canonicalHost(url.hostname))) return refused("host_changed");
+        // Before any lookup: an address the credential may not travel to is not asked about either. The sign-in's own
+        // rule is asked of every hop, with the scheme, host and port of the address and with who sent the request there.
+        if (req.auth !== null && !req.auth.admits(hopOf(url, sentOnBy))) return refused("host_changed");
         const cleared = await unlessAborted(clear(url, deps), ac.signal);
         if (cleared === "late") return refused("timeout");
         if ("refused" in cleared) return refused(cleared.refused);
@@ -275,6 +278,7 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
         const next = parse(location, url.href);
         if (next === null) return refused("redirect_invalid");
         cameByHttps = url.protocol === "https:";
+        sentOnBy = originOf(url);
         current = next.href;
         continue;
       }

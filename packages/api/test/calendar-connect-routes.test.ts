@@ -242,7 +242,8 @@ describe("POST /calendar/connections", () => {
     expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: userAgain, password: pwAgain })).status).toBe(202);
     expect((await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: `https://feeds.example.test/${pathAgain}/basic.ics` })).status).toBe(202);
     expect((await errorOf(await r.ask("POST", `/calendar/connections/${sub.id}/check`))).slice(0, 2)).toEqual([429, "rate_limited"]);
-    expect((await r.ask("GET", "/calendar/connect")).status).toBe(200);
+    // What the account holds is listed by the read, and the read's answer is searched like every other.
+    expect(((await (await r.ask("GET", "/calendar/connect")).json()) as CalendarConnectWire).connections.map((c) => c.id)).toEqual([dav.id, sub.id]);
     // A refusal of the door's own, and a host fault while a sign-in is in hand: each names nothing typed.
     const badWay = made("mkrefused");
     expect((await r.ask("POST", "/calendar/connections", ics(`https://10.0.0.5/${badWay}.ics`), key())).status).toBe(400);
@@ -271,7 +272,7 @@ describe("POST /calendar/connections", () => {
     ];
     for (const ceremonies of settings) {
       const r = await rig({ port: portOf({ ceremonies }) });
-      expect(await (await r.ask("GET", "/calendar/connect")).json() as CalendarConnectWire).toEqual({ ways: ["icloud", "caldav", "ics"] });
+      expect(await (await r.ask("GET", "/calendar/connect")).json() as CalendarConnectWire).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [] });
       for (const way of ["google", "microsoft"]) {
         expect(await errorOf(await r.ask("POST", "/calendar/connections", { way, connectionId: randomUUID() }, key())))
           .toEqual([400, "validation_failed", "provider_off"]);
@@ -284,7 +285,7 @@ describe("POST /calendar/connections", () => {
     expect(offeredWays(portOf({ ceremonies: { google: { on: true, configured: false }, microsoft: { on: false, configured: true } } }), built))
       .toEqual(["icloud", "caldav", "ics"]);
     const bare = await rig({ port: null });
-    expect(await (await bare.ask("GET", "/calendar/connect")).json()).toEqual({ ways: [] });
+    expect(await (await bare.ask("GET", "/calendar/connect")).json()).toEqual({ ways: [], connections: [] });
     expect(await errorOf(await bare.ask("POST", "/calendar/connections", icloud(), key()))).toEqual([400, "validation_failed", "provider_off"]);
     expect(await connectionsOf(bare.db, bare.s.accountId)).toEqual([]);
   });
@@ -308,20 +309,50 @@ describe("POST /calendar/connections", () => {
     expect(await changesOf(r.db, r.s.accountId)).toEqual(["calendar_connection:create"]);
   });
 
-  it("7. writes nothing while the account's calendar is off, and offers no way", async () => {
-    const r = await rig({ on: false });
-    expect(await (await r.ask("GET", "/calendar/connect")).json()).toEqual({ ways: [] });
-    const id = randomUUID();
-    const asked: [string, string, unknown][] = [
-      ["POST", "/calendar/connections", icloud()], ["DELETE", `/calendar/connections/${id}`, undefined],
-      ["POST", `/calendar/connections/${id}/check`, undefined], ["POST", `/calendar/connections/${id}/sign-in`, { address: "https://feeds.example.test/a.ics" }],
-      ["PATCH", `/calendar/calendars/${id}`, { shown: false }],
+  it("7. while the account's calendar is off: nothing is connected, asked, signed in or set, and no way is offered; what stands is listed and can be removed, its sealed sign-in with it", async () => {
+    // Off from the beginning: no way, nothing held, and a removal of nothing is what it is while on.
+    const never = await rig({ on: false });
+    expect(await (await never.ask("GET", "/calendar/connect")).json()).toEqual({ ways: [], connections: [] });
+    expect((await errorOf(await never.ask("POST", "/calendar/connections", icloud(), key()))).slice(0, 2)).toEqual([409, "calendar_off"]);
+    expect(await codeOf(await never.ask("DELETE", `/calendar/connections/${randomUUID()}`))).toEqual([404, "not_found"]);
+    expect([await connectionsOf(never.db, never.s.accountId), await credentialsOf(never.db, never.s.accountId)]).toEqual([[], []]);
+
+    // Switched off with two connections standing.
+    const r = await rig();
+    const dav = await connect(r, caldav("https://dav.studio.example.test/"));
+    const sub = await connect(r, ics("https://feeds.example.test/a.ics"));
+    const calendarId = randomUUID();
+    await r.db.insert(calCalendars).values({ id: calendarId, accountId: r.s.accountId, connectionId: sub.id, providerId: "subscription", name: "Team", access: "reader" });
+    await r.db.update(calSettings).set({ enabledAt: null }).where(eq(calSettings.accountId, r.s.accountId));
+    const standing = async (): Promise<unknown[]> =>
+      [await connectionsOf(r.db, r.s.accountId), await credentialsOf(r.db, r.s.accountId), await changesOf(r.db, r.s.accountId)];
+    const before = await standing();
+    const refused: [string, string, unknown][] = [
+      ["POST", "/calendar/connections", icloud()],
+      ["POST", `/calendar/connections/${dav.id}/check`, undefined],
+      ["POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila", password: made("pw") }],
+      ["POST", `/calendar/connections/${sub.id}/sign-in`, { address: "https://feeds.example.test/b.ics" }],
+      ["PATCH", `/calendar/calendars/${calendarId}`, { shown: false }],
     ];
-    for (const [method, path, body] of asked) {
+    for (const [method, path, body] of refused) {
       expect((await errorOf(await r.ask(method, path, body, key()))).slice(0, 2), `${method} ${path}`).toEqual([409, "calendar_off"]);
     }
-    expect(await connectionsOf(r.db, r.s.accountId)).toEqual([]);
-    expect(await credentialsOf(r.db, r.s.accountId)).toEqual([]);
+    // No way is offered. What the account holds is still listed: the feed sends no calendar record while the calendar is off.
+    expect(await (await r.ask("GET", "/calendar/connect")).json()).toEqual({ ways: [], connections: [dav, sub] });
+    expect(await standing()).toEqual(before);
+
+    // A removal is let through: the connection and its sealed sign-in are gone, each record's deletion recorded.
+    const removed = await r.ask("DELETE", `/calendar/connections/${dav.id}`);
+    expect([removed.status, await removed.json()]).toEqual([200, { removed: true }]);
+    expect((await credentialsOf(r.db, r.s.accountId)).map((c) => c.connectionId)).toEqual([sub.id]);
+    // Nothing else moved and nothing was made due: the connection beside it stands as it stood.
+    expect(await connectionsOf(r.db, r.s.accountId)).toEqual((before[0] as { id: string }[]).filter((c) => c.id === sub.id));
+    expect((await changesOf(r.db, r.s.accountId)).slice((before[2] as string[]).length)).toEqual(["calendar_connection:update", "calendar_connection:delete"]);
+    expect(((await (await r.ask("GET", "/calendar/connect")).json()) as CalendarConnectWire).connections).toEqual([sub]);
+    // The subscription goes the same way, with its calendar.
+    expect(await codeOf(await r.ask("DELETE", `/calendar/connections/${sub.id}`))).toEqual([200, null]);
+    expect([await connectionsOf(r.db, r.s.accountId), await credentialsOf(r.db, r.s.accountId)]).toEqual([[], []]);
+    expect(await r.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, r.s.accountId))).toEqual([]);
   });
 
   it("8. an erasure leaves no sealed sign-in and no connection", async () => {
@@ -374,6 +405,20 @@ describe("the routes that name a connection or a calendar", () => {
     });
     return { calendar, event };
   }
+
+  it("lists what the account holds as the feed's records, in the order it was connected, and nothing of another account's", async () => {
+    const r = await rig();
+    const o = await r.other();
+    const first = await connect(r, caldav("https://dav.studio.example.test/"));
+    const theirs = await connect(r, ics("https://feeds.example.test/theirs.ics"), o);
+    const second = await connect(r, ics("https://feeds.example.test/mine.ics"));
+    expect(await (await r.ask("GET", "/calendar/connect")).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [first, second] });
+    expect(await (await r.ask("GET", "/calendar/connect", undefined, {}, o)).json()).toEqual({ ways: ["icloud", "caldav", "ics"], connections: [theirs] });
+    // A record is what the feed sends of a connection: its host, and nothing that signs in.
+    expect(Object.keys(first).sort()).toEqual([
+      "consentedAt", "createdAt", "errorCode", "grantMailboxId", "id", "label", "lastSyncedAt", "provider", "serverHost", "status", "updatedAt",
+    ]);
+  });
 
   it("4. another account's id answers byte for byte as a random id does, and changes nothing of theirs", async () => {
     const r = await rig();
@@ -525,6 +570,111 @@ describe("the routes that name a connection or a calendar", () => {
     expect((await moved.json() as CalendarConnectionRecord).serverHost).toBe("calendars.example.test");
   });
 
+  it("a server's sign-in typed again is sealed for the server its connect typed, never for one read off its row: where the row's server was moved, or the kept sign-in does not open for this connection, nothing is sealed and the person connects again", async () => {
+    const r = await rig();
+    const START = "https://dav.studio.example.test/remote.php/dav";
+    const APPLE = "https://caldav.icloud.com/";
+    const ELSEWHERE = "https://dav.elsewhere.example.net/";
+    const dav = await connect(r, caldav(START));
+    const cloud = await connect(r, icloud());
+    const beside = await connect(r, caldav("https://dav.beside.example.test/"));
+    const keptOf = async (id: string) => (await credentialsOf(r.db, r.s.accountId)).filter((c) => c.connectionId === id)[0]!;
+    const openedOf = async (id: string): Promise<Record<string, unknown>> => {
+      const k = await keptOf(id);
+      return JSON.parse(await r.deps.keyProvider.decrypt(k.secretEnc, k.keyVersion)) as Record<string, unknown>;
+    };
+    // Sealed at the connect: the start as it was placed, beside what was typed. At iCloud it is Apple's own.
+    expect([(await openedOf(dav.id)).server, (await openedOf(cloud.id)).server]).toEqual([START, APPLE]);
+    // Typed again: what was typed replaces what was typed, and the server is the one the kept sign-in was sealed for.
+    const pw = made("pw");
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila-again", password: pw })).status).toBe(202);
+    expect(await openedOf(dav.id)).toEqual({ v: 2, account: r.s.accountId, connection: dav.id, kind: "basic", server: START, user: "mila-again", password: pw });
+
+    /** The connection's row, its sealed sign-in's row and the account's changes: what a refused sign-in leaves as it stood. */
+    const standing = async (id: string): Promise<string> => JSON.stringify([
+      await r.db.select().from(calConnections).where(eq(calConnections.id, id)),
+      await r.db.select().from(calCredentials).where(eq(calCredentials.connectionId, id)),
+      await changesOf(r.db, r.s.accountId),
+    ]);
+    const typed: string[] = [];
+    /** The sign-in typed again as the row stands now: refused with the door's word, and nothing written. */
+    const refused = async (id: string, why: string): Promise<void> => {
+      const before = await standing(id);
+      typed.push(made("mkpw"));
+      const res = await r.ask("POST", `/calendar/connections/${id}/sign-in`, { user: "mila", password: typed[typed.length - 1] });
+      expect([why, ...await errorOf(res)]).toEqual([why, 400, "validation_failed", "sign_in_incomplete"]);
+      expect([why, await standing(id) === before]).toEqual([why, true]);
+    };
+    const serverIs = (id: string, serverUrl: string | null) => r.db.update(calConnections).set({ serverUrl }).where(eq(calConnections.id, id));
+    const keptIs = (id: string, k: { secretEnc: string; keyVersion: number }) =>
+      r.db.update(calCredentials).set({ secretEnc: k.secretEnc, keyVersion: k.keyVersion }).where(eq(calCredentials.connectionId, id));
+
+    // The row's server written by somebody who holds no key: to another host, to another path of the same host, to none.
+    for (const [id, own] of [[dav.id, START], [cloud.id, APPLE]] as const) {
+      for (const to of [ELSEWHERE, `${own}/elsewhere`, null]) {
+        await serverIs(id, to);
+        await refused(id, `the row's server reads ${to === null ? "nothing" : to === ELSEWHERE ? "another host" : "another path"}`);
+      }
+      await serverIs(id, own);
+    }
+    // The kept sign-in is another connection's, is opened by no key of this host, or is gone.
+    const own = await keptOf(dav.id);
+    await keptIs(dav.id, await keptOf(beside.id));
+    await refused(dav.id, "the kept sign-in is another connection's");
+    await keptIs(dav.id, { secretEnc: "sealed-by-nobody", keyVersion: own.keyVersion });
+    await refused(dav.id, "the kept sign-in opens with no key of this host");
+    await r.db.delete(calCredentials).where(eq(calCredentials.connectionId, dav.id));
+    await refused(dav.id, "the kept sign-in is gone");
+    // No refusal carried what was typed, in its answer or in a line of the log.
+    const said = [r.answers.join("\n"), r.lines.join("\n")].join("\n");
+    expect(typed.filter((t) => said.includes(t))).toEqual([]);
+    // The controls: the connection beside it was never touched and takes its sign-in, and so does iCloud's with its row as it was.
+    for (const id of [beside.id, cloud.id]) {
+      expect((await r.ask("POST", `/calendar/connections/${id}/sign-in`, { user: "mila", password: made("pw") })).status).toBe(202);
+    }
+    expect([(await openedOf(beside.id)).server, (await openedOf(cloud.id)).server]).toEqual(["https://dav.beside.example.test/", APPLE]);
+  });
+
+  it("a subscription's address typed again forgets where the old address's reading stood, with the address and never without it; a server's sign-in typed again forgets nothing", async () => {
+    const r = await rig();
+    const sub = await connect(r, ics("https://feeds.example.test/a.ics"));
+    const dav = await connect(r, caldav("https://dav.studio.example.test/"));
+    // Where a reading stands is the calendar's token: for a subscription, the old address's validators and the hash of its text.
+    const stood = JSON.stringify({ v: 1, e: '"v7"', m: "Fri, 13 Nov 2026 08:00:00 GMT", h: "the-old-text-hashed", r: 3_600_000 });
+    const [feed, work] = [randomUUID(), randomUUID()];
+    await r.db.insert(calCalendars).values([
+      { id: feed, accountId: r.s.accountId, connectionId: sub.id, providerId: "subscription", name: "Team", access: "reader", syncToken: stood },
+      { id: work, accountId: r.s.accountId, connectionId: dav.id, providerId: "/cal/work/", name: "Work", access: "owner", syncToken: "sync:token-7" },
+    ]);
+    const tokens = async (): Promise<Record<string, string | null>> => Object.fromEntries((await r.db.select({ id: calCalendars.id, token: calCalendars.syncToken })
+      .from(calCalendars).where(eq(calCalendars.accountId, r.s.accountId))).map((c) => [c.id, c.token]));
+    const sealedNow = async (): Promise<string> => JSON.stringify(await credentialsOf(r.db, r.s.accountId));
+
+    // An address that is refused replaces nothing and forgets nothing.
+    expect((await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: "http://10.0.0.5/a.ics" })).status).toBe(400);
+    expect(await tokens()).toEqual({ [feed]: stood, [work]: "sync:token-7" });
+
+    // One transaction: a sign-in that dies on its way is neither kept nor has it forgotten anything.
+    const before = await sealedNow();
+    await r.db.execute(sql.raw("create function sign_in_cut_short() returns trigger language plpgsql as $$ begin raise exception 'cut short'; end $$"));
+    await r.db.execute(sql.raw("create trigger sign_in_cut_short before insert on change_log for each row execute function sign_in_cut_short()"));
+    const cut = await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: "https://calendars.example.test/a.ics" });
+    await r.db.execute(sql.raw("drop trigger sign_in_cut_short on change_log"));
+    expect(cut.status).toBe(500);
+    expect([await tokens(), await sealedNow() === before]).toEqual([{ [feed]: stood, [work]: "sync:token-7" }, true]);
+
+    // The new address is kept: the old address's validators and text hash are gone with the old address.
+    expect((await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: "https://calendars.example.test/a.ics" })).status).toBe(202);
+    expect([await tokens(), await sealedNow() === before]).toEqual([{ [feed]: null, [work]: "sync:token-7" }, false]);
+    // Inside the connection's minute a sign-in is kept all the same, and forgets all the same.
+    await r.db.update(calCalendars).set({ syncToken: stood }).where(eq(calCalendars.id, feed));
+    expect((await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: "https://third.example.test/a.ics" })).status).toBe(202);
+    expect(await tokens()).toEqual({ [feed]: null, [work]: "sync:token-7" });
+    // A server's address does not change with its sign-in: where its calendars' readings stand is kept.
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila", password: made("pw") })).status).toBe(202);
+    expect(await tokens()).toEqual({ [feed]: null, [work]: "sync:token-7" });
+  });
+
   it("removes a connection with everything that hangs on it, each record's deletion recorded, and leaves the others", async () => {
     const r = await rig();
     const gone = await connect(r, caldav("https://dav.studio.example.test/"));
@@ -617,11 +767,131 @@ describe("the routes that name a connection or a calendar", () => {
     expect([same.status, same.headers.get("x-sync-seq")]).toEqual([200, null]);
     expect((await errorOf(await r.ask("PATCH", `/calendar/calendars/${listed}`, { name: "Mine" }))).slice(0, 2)).toEqual([409, "calendar_read_only"]);
     const named = await r.ask("PATCH", `/calendar/calendars/${file}`, { name: "  Holidays  ", color: "#AA3311" });
-    expect(await named.json()).toMatchObject({ id: file, name: "Holidays", color: "#aa3311", shown: true });
+    const record = await named.json() as CalendarRecord;
+    expect(record).toMatchObject({ id: file, name: "Holidays", color: "#aa3311", shown: true });
+    // A calendar's record says nothing of being the default: which calendar new events go to is the settings' one member.
+    expect(Object.keys(record).sort()).toEqual([
+      "access", "color", "connectionId", "defaultAlarms", "errorCode", "id", "lastSyncedAt", "name", "shown", "timeZone", "updatedAt", "window",
+    ]);
     for (const bad of [{}, { shown: "no" }, { name: "" }, { name: "x".repeat(300) }, { color: "red" }, { isDefault: true }]) {
       expect((await errorOf(await r.ask("PATCH", `/calendar/calendars/${file}`, bad))).slice(0, 2), JSON.stringify(bad)).toEqual([400, "validation_failed"]);
     }
     const feed = await (await r.ask("GET", "/sync?since=0&types=settings,calendar")).json() as SyncResponse;
     expect([...feed.changes.creates, ...feed.changes.updates].filter((c) => c.type === "calendar").map((c) => c.id).sort()).toEqual([listed, file].sort());
+  });
+});
+
+/**
+ * WHY THE DOOR ASKS NO SECOND FACTOR. A recent factor guards, at the mailbox doors, an edit that
+ * keeps a stored password and moves the host it is sent to. Here no route can make that edit: of
+ * the routes that name a connection that stands, none takes a server, and an address is taken
+ * only as a subscription's whole sign-in. This case holds it over all six routes: whatever a body
+ * names beside what its route takes, the place a connection's sign-in is sent to moves only in a
+ * request that typed that sign-in whole, and then the sealed text holds what was typed. Of what
+ * was kept it holds one thing: the server a CalDAV connection was typed with at its connect,
+ * which no request names. The wire's own types hold the same at compile time (`routes.ts`).
+ */
+describe("no route sends a kept sign-in to a place a request names", () => {
+  const ELSEWHERE = "https://elsewhere.example.test/";
+  /** Every name a request could give a place under. */
+  const PLACE_NAMES = ["server", "serverUrl", "server_url", "sourceHost", "source_host", "host", "url", "start", "address", "principal"] as const;
+
+  it("a connection's place moves only with its sign-in typed whole in the same request, and a sign-in typed again replaces what was typed whole and is sealed for no server a request names", async () => {
+    const r = await rig();
+    const o = await r.other();
+    /** The server the CalDAV connection is typed with at its connect: the one server its sealed sign-in ever names. */
+    const CONNECTED = "https://dav.studio.example.test/dav";
+    const dav = await connect(r, { ...caldav(CONNECTED), user: "mila" });
+    const sub = await connect(r, ics(`https://feeds.example.test/${made("mk")}/a.ics`));
+    const theirs = await connect(r, caldav("https://dav.their.example.test/"), o);
+    const davCalendar = randomUUID();
+    await r.db.insert(calCalendars).values({ id: davCalendar, accountId: r.s.accountId, connectionId: dav.id, providerId: "/cal/work/", name: "Work", access: "owner" });
+
+    /** Where a connection's sign-in is sent, and the sealed sign-in opened: all a request could move. */
+    const standing = async (accountId: string, id: string): Promise<{ place: unknown; sealed: Record<string, unknown> | null }> => {
+      const [c] = (await connectionsOf(r.db, accountId)).filter((x) => x.id === id);
+      const [k] = (await credentialsOf(r.db, accountId)).filter((x) => x.connectionId === id);
+      return {
+        place: c === undefined ? null : [c.serverUrl, c.sourceHost],
+        sealed: k === undefined ? null : JSON.parse(await r.deps.keyProvider.decrypt(k.secretEnc, k.keyVersion)) as Record<string, unknown>,
+      };
+    };
+    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+    const theirsBefore = await standing(o.accountId, theirs.id);
+    const answered: string[] = [];
+
+    /**
+     * One request, and the rule read off the store around it. `whole` is the sign-in the body
+     * typed whole, where it typed one: only then may the place move, and the sealed text must be
+     * exactly it.
+     */
+    const asked = async (
+      id: string, method: string, path: string, body: unknown, whole: Record<string, unknown> | null = null,
+    ): Promise<number> => {
+      const before = await standing(r.s.accountId, id);
+      const res = await r.ask(method, path, body, method === "POST" && path === "/calendar/connections" ? key() : {});
+      const after = await standing(r.s.accountId, id);
+      const label = `${method} ${path.replace(id, ":id")} ${JSON.stringify(Object.keys((body ?? {}) as object))}`;
+      const moved = !same(after.place, before.place);
+      const kept = same(after.sealed, before.sealed);
+      expect([label, moved && kept], "the place moved and the sign-in was kept").toEqual([label, false]);
+      if (moved || !kept) {
+        // Nothing but a sign-in typed whole changes either, and then the sealed text is what was typed: no typed member of the old one stays.
+        expect([label, res.status, whole !== null]).toEqual([label, 202, true]);
+        expect(after.sealed, label).toEqual({ v: 2, account: r.s.accountId, connection: id, ...whole });
+      }
+      // Neither the place nor the sealed text ever names what a request named.
+      expect(JSON.stringify([after.place, after.sealed]).includes("elsewhere.example.test"), label).toBe(false);
+      answered.push(`${res.status} ${label}`);
+      return res.status;
+    };
+
+    // GET: no body; a query that names a place is no part of it.
+    expect(await asked(dav.id, "GET", `/calendar/connect?server=${encodeURIComponent(ELSEWHERE)}`, undefined)).toBe(200);
+    // POST connect under the id of a connection that stands, mine or another account's, with another server and sign-in: the id is taken.
+    for (const id of [dav.id, theirs.id]) {
+      expect(await asked(dav.id, "POST", "/calendar/connections", { ...caldav(ELSEWHERE), connectionId: id, user: "mila" })).toBe(400);
+      expect(await asked(sub.id, "POST", "/calendar/connections", { ...ics(`${ELSEWHERE}a.ics`), connectionId: sub.id })).toBe(400);
+    }
+    // A check takes no body: one that names a place under any name is not read.
+    expect(await asked(dav.id, "POST", `/calendar/connections/${dav.id}/check`, Object.fromEntries(PLACE_NAMES.map((n) => [n, ELSEWHERE])))).toBe(202);
+
+    // A sign-in typed again. A place named WITHOUT a whole sign-in is refused; the address of another kind of sign-in is refused.
+    for (const name of PLACE_NAMES) {
+      const signIn = `/calendar/connections/${dav.id}/sign-in`;
+      for (const part of [{}, { user: "mila" }, { password: made("pw") }]) {
+        expect(await asked(dav.id, "POST", signIn, { ...part, [name]: ELSEWHERE }), name).toBe(400);
+      }
+      // Beside a sign-in typed whole, a place under a name the door does not read moves nothing: the server stays the
+      // connection's own, in its row and in the sealed text, which names the server the connect typed.
+      const typed = { user: `mila-${name}`, password: made("pw") };
+      const status = await asked(dav.id, "POST", signIn, { ...typed, [name]: ELSEWHERE }, { kind: "basic", server: CONNECTED, ...typed });
+      expect(status, name).toBe(name === "address" ? 400 : 202);
+      // A calendar's own fields: a member the door does not know is refused.
+      expect(await asked(dav.id, "PATCH", `/calendar/calendars/${davCalendar}`, { shown: false, [name]: ELSEWHERE }), name).toBe(400);
+    }
+    expect((await standing(r.s.accountId, dav.id)).place).toEqual([CONNECTED, "dav.studio.example.test"]);
+
+    // A subscription's address IS its sign-in: typed again it moves the host, and the sealed text is that address and nothing kept.
+    const next = `https://calendars.example.test/${made("mk")}/b.ics`;
+    expect(await asked(sub.id, "POST", `/calendar/connections/${sub.id}/sign-in`, { address: next }, { kind: "address", url: next })).toBe(202);
+    expect((await standing(r.s.accountId, sub.id)).place).toEqual([null, "calendars.example.test"]);
+    const third = `https://third.example.test/${made("mk")}/c.ics`;
+    expect(await asked(sub.id, "POST", `/calendar/connections/${sub.id}/sign-in`, { address: third, server: ELSEWHERE, host: ELSEWHERE }, { kind: "address", url: third })).toBe(202);
+    for (const beside of [{ user: "mila" }, { password: made("pw") }, { user: "mila", password: made("pw") }]) {
+      expect(await asked(sub.id, "POST", `/calendar/connections/${sub.id}/sign-in`, { address: `${ELSEWHERE}d.ics`, ...beside })).toBe(400);
+    }
+    expect(await asked(sub.id, "POST", `/calendar/connections/${sub.id}/sign-in`, { user: "mila", password: made("pw") })).toBe(400);
+
+    // A removal takes no body, and leaves no sign-in that could be sent anywhere.
+    const removal = await r.ask("DELETE", `/calendar/connections/${dav.id}`, { server: ELSEWHERE });
+    expect([removal.status, await standing(r.s.accountId, dav.id)]).toEqual([200, { place: null, sealed: null }]);
+    // Nothing of another account's moved, and the case asked what it says: every route of the six, each kind of answer.
+    expect(await standing(o.accountId, theirs.id)).toEqual(theirsBefore);
+    expect([...new Set(answered.map((a) => a.split(" ").slice(0, 3).join(" ")))].sort()).toEqual([
+      "200 GET /calendar/connect?server=https%3A%2F%2Felsewhere.example.test%2F", "202 POST /calendar/connections/:id/check",
+      "202 POST /calendar/connections/:id/sign-in", "400 PATCH /calendar/calendars/" + davCalendar, "400 POST /calendar/connections",
+      "400 POST /calendar/connections/:id/sign-in",
+    ]);
   });
 });

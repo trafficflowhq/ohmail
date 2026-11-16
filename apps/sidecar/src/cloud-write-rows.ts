@@ -25,6 +25,8 @@ const verbs = (...v: string[]): WriteRoute => ({ rows: "sync", verbs: v });
 export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "DELETE /account": none,
   "DELETE /auth/2fa/totp": none,
+  // A calendar's connection removed: its records' deletions drain from `/sync`; a direct call, never a verb.
+  "DELETE /calendar/connections/:id": direct,
   "DELETE /calendar/writes/:id": direct,
   "DELETE /devices/:id": none,
   "DELETE /drafts/:id": verbs("draft_discard"),
@@ -46,6 +48,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "PATCH /account/ai": none,
   "PATCH /account/screening": none,
   "PATCH /account/storage": none,
+  "PATCH /calendar/calendars/:id": direct,
   "PATCH /calendar/settings": direct,
   "PATCH /consent/settings": direct,
   "PATCH /contacts/:id": none,
@@ -76,6 +79,12 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /auth/step-up/webauthn/options": none,
   "POST /auth/step-up/webauthn/verify": none,
   "POST /auth/verify-email/resend": none,
+  // The calendar's connect door. DIRECT CALLS, AND NEVER A VERB: a verb is a queued, stored record, and a connect
+  // and a sign-in typed again carry what a person typed (a password, a subscription's whole address) in
+  // their body. The connection's record drains from `/sync`; the echo-await alone covers it.
+  "POST /calendar/connections": direct,
+  "POST /calendar/connections/:id/check": direct,
+  "POST /calendar/connections/:id/sign-in": direct,
   // A question, not a write: it changes nothing anywhere, and its answer goes back at once.
   "POST /calendar/places/suggest": none,
   // The calendar's writes: until the window's engine carries the calendar's acts, the echo-await alone covers them.

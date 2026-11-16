@@ -17,6 +17,7 @@ import type {
   CalendarConnectBody, CalendarConnectWire, CalendarConnectionRecord, CalendarEventAct, CalendarPatchBody, CalendarRecord,
   CalendarRemovalWire, CalendarSettingsBody, CalendarSettingsWire, CalendarSignInBody, CalendarWriteAnswer,
 } from "./calendar.js";
+import type { Assert, Same } from "./complete.js";
 import type { PlaceSuggestAnswer, PlaceSuggestBody } from "./places.js";
 import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
@@ -158,7 +159,7 @@ export interface Routes {
   "DELETE /calendar/writes/:id": { params: Id; body: never; answer: CalendarWriteAnswer };
   /** Places for an event's place field. 200 for every well-formed question, its state in the answer. */
   "POST /calendar/places/suggest": { params: None; body: PlaceSuggestBody; answer: PlaceSuggestAnswer };
-  /** The ways this server offers the account now; none while its calendar is off. */
+  /** The ways this server offers the account now (none while its calendar is off), and the connections it holds, on or off. */
   "GET /calendar/connect": { params: None; body: never; answer: CalendarConnectWire };
   /**
    * A calendar connected, under the press's `Idempotency-Key` (required). `202`: the sign-in is
@@ -166,7 +167,7 @@ export interface Routes {
    * of it is the record's `status` and `errorCode`, by the feed.
    */
   "POST /calendar/connections": { params: None; body: CalendarConnectBody; answer: CalendarConnectionRecord };
-  /** A connection removed with everything that hangs on it. `200` gone; `202` its records are still going. */
+  /** A connection removed with everything that hangs on it, also while the account's calendar is off. `200` gone; `202` its records are still going. */
   "DELETE /calendar/connections/:id": { params: Id; body: never; answer: CalendarRemovalWire };
   /** Ask the provider now, once a minute for each connection: `202`, or `429` inside the minute. */
   "POST /calendar/connections/:id/check": { params: Id; body: never; answer: CalendarConnectionRecord };
@@ -356,6 +357,39 @@ export type AnswerOf<R extends RouteName> = Routes[R]["answer"];
 
 /** Every name any member of `T` has. */
 export type NamesOf<T> = T extends unknown ? keyof T : never;
+
+/**
+ * WHY THE CALENDAR'S CONNECT DOOR ASKS NO SECOND FACTOR, HELD BY THE COMPILER.
+ *
+ * A stored sign-in is never sent to a place a request names. A recent second factor guards that
+ * at the mailbox doors (an edit that keeps the stored password and moves its host); here the
+ * bodies themselves rule it out, and these lines hold them to it:
+ *
+ * - the routes that name a connection that stands, or a calendar of one, are these four;
+ * - a check and a removal carry no body;
+ * - a sign-in typed again carries no server, and an address only alone: a subscription's address
+ *   is its whole sign-in, so nothing is kept beside it;
+ * - a calendar's own fields are these three;
+ * - a connect names a server or an address only together with the sign-in typed for it.
+ *
+ * A ROUTE OR A MEMBER ADDED HERE DOES NOT COMPILE UNTIL ITS LINE NAMES IT. Before it does: if the
+ * change lets a connection's server or address move while its sign-in is kept, or adds a
+ * provider's sign-in whose grant can do more than read and write the calendar, whether the door
+ * asks a second factor is decided again first.
+ */
+type ConnectionRoute = Extract<RouteName, `${string} /calendar/connections/${string}` | `${string} /calendar/calendars/${string}`>;
+type _StandingConnectionRoutes = Assert<Same<
+  ConnectionRoute,
+  "DELETE /calendar/connections/:id" | "POST /calendar/connections/:id/check" | "POST /calendar/connections/:id/sign-in" | "PATCH /calendar/calendars/:id"
+>>;
+type _CheckAndRemovalCarryNothing = Assert<Same<RequestOf<"POST /calendar/connections/:id/check" | "DELETE /calendar/connections/:id">, never>>;
+type _SignInAgainNamesNoServer = Assert<Same<NamesOf<RequestOf<"POST /calendar/connections/:id/sign-in">>, "user" | "password" | "address">>;
+type _AnAddressIsTheWholeSignIn = Assert<Same<NamesOf<Extract<RequestOf<"POST /calendar/connections/:id/sign-in">, { address: unknown }>>, "address">>;
+type _ACalendarsOwnFields = Assert<Same<NamesOf<RequestOf<"PATCH /calendar/calendars/:id">>, "shown" | "name" | "color">>;
+type _AServerComesWithItsSignIn = Assert<Same<
+  NamesOf<Extract<RequestOf<"POST /calendar/connections">, { server: unknown }>>, "way" | "connectionId" | "server" | "user" | "password"
+>>;
+type _AnAddressComesAlone = Assert<Same<NamesOf<Extract<RequestOf<"POST /calendar/connections">, { address: unknown }>>, "way" | "connectionId" | "address">>;
 
 /**
  * A BODY HELD TO THE WIRE'S NAMES. A value can carry a name the wire's type does not have and

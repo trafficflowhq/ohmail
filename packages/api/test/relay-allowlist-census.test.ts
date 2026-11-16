@@ -125,7 +125,11 @@ describe("the projection the sidecar reads matches the table", () => {
     // install drains nothing of its own, so a write it is asked for is the account's server's.
     // 203 -> 204 with the place field's question: the account's server holds the geocoder, and a
     // Cloud-mode install asks it there, as the window would itself.
-    expect(RELAY_ALLOWLIST.length).toBe(204);
+    // 204 -> 210 with the calendar's connect door, all six: a phone and a desktop on a hosted account
+    // connect a calendar in the app, as `POST /mailboxes` adds a mailbox with its password. Each is a
+    // signed-in session's route that reads every id with its account; none signs in, pairs or ends
+    // a session; a typed sign-in rides in a body alone, as a mailbox's password does.
+    expect(RELAY_ALLOWLIST.length).toBe(210);
   });
 
   it("every pattern in the projection is a real route", () => {

@@ -35,10 +35,15 @@ export type Credential =
   /** A subscription: the address is the secret. */
   | { readonly kind: "address"; url(): string };
 
+/**
+ * A connection's sign-in, as a caller hands it to every call of ONE TURN. For CalDAV the object
+ * itself is the turn: the hosts a server names are admitted for the calls made with this very
+ * object and for no other, so a caller makes a new one for each turn and keeps none.
+ */
 export interface Connection {
   readonly provider: ProviderWord;
   readonly credential: Credential;
-  /** CalDAV: the address the person typed. `null` for the other three. */
+  /** CalDAV: the address the person typed, as the sign-in was sealed for it. `null` for the other three. */
   readonly start: string | null;
 }
 

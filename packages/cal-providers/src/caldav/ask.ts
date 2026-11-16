@@ -1,7 +1,8 @@
 /**
  * One WebDAV request and what came of it: a multistatus read under bounds, or a word of the closed
- * list. Every request leaves through the request port that was handed in, which is given the
- * sign-in together with the hosts it may travel to; no header is built here.
+ * list. Every request of this adapter, a read and a write alike, leaves through {@link leave}: by
+ * the request port that was handed in, which is given the sign-in together with the turn's rule on
+ * where it may travel (`hosts.ts`); no header is built here.
  *
  * An address a server writes into an answer (where the person's resources begin, where the
  * calendars are, a member) is a stranger's text: it is read against the address that answered and
@@ -10,7 +11,8 @@
 import { MAX_URL_CHARS } from "../limits.js";
 import type { Clock } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
-import { retryAfterMs, type AdapterDeps, type Authorization, type HttpResponse } from "../request/index.js";
+import { retryAfterMs, type AdapterDeps, type Authorization, type HttpAnswer, type HttpRequest, type HttpResponse } from "../request/index.js";
+import type { TurnHosts } from "./hosts.js";
 import { readMultistatus, type Multistatus } from "./multistatus.js";
 
 export interface Refused {
@@ -20,11 +22,49 @@ export interface Refused {
 }
 export const refuse = (reason: ProviderRefusal, retryAfterMs: number | null = null): Refused => ({ ok: false, reason, retryAfterMs });
 
-/** What one call of the port asks with: the way out, the sign-in with the hosts it may travel to, the caller's signal. */
+/** What one call of the port asks with: the way out, the sign-in, the turn's hosts, the caller's signal. */
 export interface Session {
   readonly deps: AdapterDeps;
+  /** The sign-in. Its `admits` is the turn's: {@link TurnHosts.admits}, or in a session of the discovery {@link TurnHosts.admitsFound}. */
   readonly auth: Authorization;
   readonly signal: AbortSignal;
+  /** Where the sign-in may travel in this turn. */
+  readonly hosts: TurnHosts;
+  /**
+   * Asks the server where the person's calendars are, once in the turn, so that the hosts it names
+   * are admitted: the word of an asking that failed, or `null`. No function in a session of that
+   * asking itself ({@link finding}).
+   */
+  readonly locate: (() => Promise<ProviderRefusal | null>) | null;
+}
+
+/**
+ * The session the discovery asks with: a redirect its requests are answered with names the origin
+ * it sends them on to, and a host that stays refused is not asked about a second time.
+ */
+export const finding = (s: Session): Session => ({ ...s, auth: { ...s.auth, admits: s.hosts.admitsFound }, locate: null });
+
+/** The same session with a sign-in that travels with TLS alone from here on. */
+export const tlsAlone = (s: Session): Session => ({ ...s, auth: { ...s.auth, tlsOnly: true } });
+
+/**
+ * THE ONE WAY A CALDAV REQUEST LEAVES. The request port sends the sign-in only to an origin the
+ * turn admits and refuses every other address before it looks anything up (`host_changed`). An
+ * address a caller's stored row names is refused so until the server itself has named its host in
+ * this turn: the server is then asked where the calendars are, once in the turn, and the request is
+ * made again. Where it names that host, the request goes there; where it does not, the port
+ * refuses it again and that is the answer; where the asking itself failed, its word is. A host the
+ * server could not name at all is not asked about: its refusal stands, and nobody was asked.
+ *
+ * A write is never sent twice by this: a refused address is refused before anything is sent, and a
+ * write follows no redirect.
+ */
+export async function leave(s: Session, url: string, req: Pick<HttpRequest, "method" | "headers" | "body" | "precondition">): Promise<HttpAnswer> {
+  const send = (): Promise<HttpAnswer> => s.deps.http.request(url, { ...req, auth: s.auth, validators: null, signal: s.signal });
+  const answer = await send();
+  if (answer.arrived || answer.reason !== "host_changed" || s.locate === null || !s.hosts.couldName(url)) return answer;
+  const failed = await s.locate();
+  return failed === null ? send() : { arrived: false, reason: failed };
 }
 
 /** `url` is the address that answered, after the redirects the request port followed. `status` is `null` when no answer arrived. */
@@ -55,7 +95,7 @@ function wordOf(res: HttpResponse, clock: Clock): Refused {
 /** `depth`: `null` sends no Depth line (a multiget report is asked without one, RFC 4791 section 7.9). */
 export async function ask(s: Session, method: "PROPFIND" | "REPORT", url: string, depth: "0" | "1" | null, body: string): Promise<Asked> {
   const lines = { accept: "application/xml, text/xml", "content-type": "application/xml; charset=utf-8" };
-  const answer = await s.deps.http.request(url, { method, headers: depth === null ? lines : { ...lines, depth }, body, auth: s.auth, validators: null, signal: s.signal });
+  const answer = await leave(s, url, { method, headers: depth === null ? lines : { ...lines, depth }, body });
   if (!answer.arrived) return { ...refuse(answer.reason), status: null };
   if (answer.status !== 207) return { ...wordOf(answer, s.deps.clock), status: answer.status };
   const read = readMultistatus(answer.body);

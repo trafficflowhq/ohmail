@@ -5,9 +5,10 @@
  * own words: it shares no line with the reader it is asked by.
  *
  * What servers do differently is a switch each, so that one reader is seen against all of it: a
- * well-known address that redirects or is missing, a home named on another host, a report that
- * names the collection itself, a calendar that keeps no token, an answer cut short with "more to
- * come", a sign-in refused by a status or by an answer that names nobody.
+ * well-known address that redirects or is missing, a home named on another host, a path that sends
+ * every caller on to another address, a report that names the collection itself, a calendar that
+ * keeps no token, an answer cut short with "more to come", a sign-in refused by a status or by an
+ * answer that names nobody.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -74,6 +75,8 @@ export interface StandInOptions {
   readonly refusedSignIn?: "status" | "unauthenticated";
   /** Say `calendar-auto-schedule` in the `DAV` line: the server sends invitations itself (RFC 6638). */
   readonly autoSchedule?: boolean;
+  /** Paths that answer every request with a redirect (301) to the address beside them, whoever asks: a server that sends a caller on. */
+  readonly sendsOn?: Readonly<Record<string, string>>;
 }
 
 interface Member {
@@ -92,7 +95,7 @@ interface Held extends StandInCalendar {
 export interface StandIn {
   readonly port: number;
   readonly seen: Seen[];
-  readonly options: Required<Omit<StandInOptions, "homeHref" | "principalHref" | "strays" | "listsEscaped" | "silentOn" | "rewordsTokens">>;
+  readonly options: Required<Omit<StandInOptions, "homeHref" | "principalHref" | "strays" | "listsEscaped" | "silentOn" | "rewordsTokens" | "sendsOn">>;
   /** The paths, as the server itself would write them. */
   readonly paths: { readonly start: string; readonly principal: string; readonly home: string; collection(slug: string): string; member(slug: string, name: string): string };
   addCalendar(slug: string, init?: Partial<Omit<StandInCalendar, "slug">>): StandInCalendar;
@@ -280,6 +283,8 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
       forced = null;
       return send(status, text, retryAfter === undefined ? {} : { "retry-after": retryAfter });
     }
+    const onward = given.sendsOn?.[path];
+    if (onward !== undefined) return send(301, "", { location: onward });
     if (path === "/.well-known/caldav") {
       if (options.wellKnown === "missing") return send(404, "");
       return send(301, "", { location: options.wellKnown === "redirect" ? start : options.wellKnown });
