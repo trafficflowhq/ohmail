@@ -738,6 +738,9 @@ export function SearchView({
       {device}
       {t("scopeNoArchive")}
     </>
+  ) : passState === "unfinished" ? (
+    /* Nothing in the newest mail and the end not reached: no verdict yet (the search screen's words). */
+    device
   ) : passState === "unanswered" || ready === null ? (
     /* The retry stays: a stated dead end with no way out of it is half a sentence. A server that
        answered with a fault could not run the search; it did answer. */
@@ -836,10 +839,12 @@ export function SearchView({
   const rootRef = useRef<HTMLElement>(null);
   useFocusFollows(rootRef, { enter: false });
 
-  /* Near the end of the list, the next store page. */
+  /* Near the end of the list, the next store page; past the walk's bound, the person's scroll looks further. */
   const onScroll = (e: { currentTarget: HTMLElement }) => {
     const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - PAGE_AHEAD_PX) walker.more();
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - PAGE_AHEAD_PX) return;
+    if (walker.atBound()) walker.further();
+    else walker.more();
   };
 
   return (
@@ -912,7 +917,8 @@ export function SearchView({
               {/* "Nothing matched." stands only where the verdict says no count: the verdict
                   already says nothing matched, and saying it twice reads as two answers. */}
               {indexing ? <b>{t("emptyTitleIndexing")}</b>
-                : passState !== "idle" && passState !== "searching" && !verdictCounts ? <b>{t("emptyTitle")}</b> : null}
+                : passState !== "idle" && passState !== "searching" && passState !== "unfinished" && !verdictCounts
+                  ? <b>{t("emptyTitle")}</b> : null}
               {scope}
               {verdictCounts && ready?.total === 0 ? <p className="empty-reach" data-testid="search-depth">{t("scopeDepth")}</p> : null}
               {/* The address door, offered at the moment its two scopes apply. There is no typed
