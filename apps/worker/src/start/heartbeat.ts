@@ -237,13 +237,9 @@ export function heartbeatSection(scope: WorkerScope): void {
           // The billing plane's own failures (`/v1/ops`), shard 0 only; `null` reads nothing.
           planeOps: scope.shardIndex === 0 ? scope.alertReaders.planeOps : null,
         });
-        // The pass completed: close a last-resort episode, then the bounded dead-man ping.
-        logLastResort(await lastResortSucceeded(scope.alertLastResort, lastResortCtx()));
-        if (scope.alertHeartbeat.state === "on") {
-          const line = heartbeatLogLine(scope.alertHeartbeatLogged, await scope.alertHeartbeat.ping());
-          if (line?.event === "alert_heartbeat_failed") scope.log.warn("alert_heartbeat_failed", line.fields);
-          else if (line) scope.log.info("alert_heartbeat_restored", line.fields);
-        }
+        // What the pass did is written HERE, before any further await: `/health`'s pager verdict
+        // reads the streak this pass just moved, so a line that waited on a later step lagged it,
+        // and was lost for the streak when a later step threw.
         const planeLine = planeOpsStateLine(planeOpsLogged, result);
         if (planeLine?.level === "warn") scope.log.warn("plane_ops_state", planeLine.fields);
         else if (planeLine) scope.log.info("plane_ops_state", planeLine.fields);
@@ -263,13 +259,6 @@ export function heartbeatSection(scope: WorkerScope): void {
         if (result.resolutionsTold.length > 0) {
           scope.log.info("alert_resolutions_told", { alertKeys: result.resolutionsTold });
         }
-        // `api_faults`' seven-day retention, on the cadence of the arm that reads the table.
-        // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
-        // them could only ever delete rows they were about to ignore — and if it throws, the
-        // pass has already delivered. It swallows its own faults; see the module.
-        await apiFaultPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
-        // `alert_driver_gaps`' hundred days, on the same terms.
-        await alertGapPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
         if (result.notified.length > 0) {
           scope.log.warn("alert_notified", {
             alertKeys: result.notified.map((a) => a.key),
@@ -322,6 +311,20 @@ export function heartbeatSection(scope: WorkerScope): void {
               "(with RESEND_API_KEY + MAIL_FROM) or TF_ALERT_WEBHOOK_URL",
           });
         }
+        // The pass completed: close a last-resort episode, then the bounded dead-man ping.
+        logLastResort(await lastResortSucceeded(scope.alertLastResort, lastResortCtx()));
+        if (scope.alertHeartbeat.state === "on") {
+          const line = heartbeatLogLine(scope.alertHeartbeatLogged, await scope.alertHeartbeat.ping());
+          if (line?.event === "alert_heartbeat_failed") scope.log.warn("alert_heartbeat_failed", line.fields);
+          else if (line) scope.log.info("alert_heartbeat_restored", line.fields);
+        }
+        // `api_faults`' seven-day retention, on the cadence of the arm that reads the table.
+        // AFTER the pass, never before: the rules read a ten-minute window, so a prune ahead of
+        // them could only ever delete rows they were about to ignore — and if it throws, the
+        // pass has already delivered. It swallows its own faults; see the module.
+        await apiFaultPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
+        // `alert_driver_gaps`' hundred days, on the same terms.
+        await alertGapPrunePass(scope.db as unknown as Tx, new Date(), scope.log);
         // A drill the API queued for this driver (`alert-drill-pass.ts`): last, after every line of
         // the real pass, so it cannot delay a page. Shard 0 only; it never throws.
         await alertDrillPass(scope.db as unknown as Tx, { sinks: scope.alertSinks, environment: scope.environment, now: new Date(), log: scope.log, shardIndex: scope.shardIndex });
