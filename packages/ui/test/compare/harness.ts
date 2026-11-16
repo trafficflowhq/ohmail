@@ -18,7 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { decode, encode } from "../../../../test/compare/png.mjs";
 import { shoot } from "../../../../test/compare/render.mjs";
 import type { Scene, Variant } from "../../../../test/compare/scene.d.mts";
-import { cutScene, readAlone } from "./cut.mjs";
+import { cutScene, folded, readAlone } from "./cut.mjs";
 import { LOOKS } from "./reference.mjs";
 
 export { BASELINE, LOOKS, looksOf, referenceKey, stateKey } from "./reference.mjs";
@@ -66,8 +66,12 @@ export interface KitSubject {
   place?: "cell" | "block" | "window";
   /** The stage's width in CSS pixels, where the sheet gives the part a column. A block without one is as wide as its reference. */
   width?: number;
-  /** What the part stands on: the ground (the default) or a sheet. The whole page is painted so. */
-  on?: "ground" | "sheet" | ((look: Look) => "ground" | "sheet");
+  /**
+   * What the part stands on: the ground (the default) or a sheet. The page's body is painted so, as the
+   * sheet paints its own: hidden while the part is read alone, so a part's fill of the same colour is read.
+   * `screen`: a screen of the app's own, which paints the ground on the root, the window's canvas.
+   */
+  on?: "ground" | "sheet" | "screen" | ((look: Look) => "ground" | "sheet");
   /** Further root attributes of this state, without the `data-` (`{ icons: "0", product: "cal" }`). */
   root?: Record<string, string>;
   /** The node that is compared, as a selector inside the stage. Left out: everything the stage holds. */
@@ -169,10 +173,15 @@ export async function pageOf(entry: Entry, subject: KitSubject, look: Look, wide
   const held = subject.width ?? (subject.place === "block" ? wide : undefined);
   const side = Math.max(0, Math.min(PAD, Math.floor((DEVICES[look.device].window[0] - (held ?? 0)) / 2)));
   const pad = subject.place === "window" ? "0" : `${PAD}px ${side}px`;
+  const on = typeof subject.on === "function" ? subject.on(look) : subject.on;
+  const paint =
+    on === "screen"
+      ? "html.oh-root{background:var(--ground)}"
+      : `html.oh-root{background:none}body{background:var(--${on === "sheet" ? "sheet" : "ground"})}`;
   return `<!doctype html><html lang="en" class="oh-root"${attributes(root)}><head><meta charset="utf-8">
 <style>${await fontsCss()}</style>
 <style>${await entryCss(entry)}</style>
-<style>html,body{margin:0}body{padding:${pad}}${(typeof subject.on === "function" ? subject.on(look) : subject.on) === "sheet" ? "html.oh-root{background:var(--sheet)}" : ""}</style></head>
+<style>html,body{margin:0}body{padding:${pad}}${paint}</style></head>
 <body><div data-stage style="${stageStyle(subject, wide)}">${renderToStaticMarkup(subject.render(look))}</div></body></html>`;
 }
 
@@ -286,13 +295,15 @@ export function force(
 /**
  * Draws one state of the kit as its reference was drawn, and cuts both readings to the part.
  * The picture is cut to the reference's size from the part's own corner, so a box that is off by a
- * pixel is a finding about the box and the pictures can still be laid over each other.
+ * pixel is a finding about the box and the pictures can still be laid over each other. `plain` names
+ * the part's nodes the reference draws as plain boxes (declared): they are read so.
  */
 export async function draw(
   browser: Browser,
   entry: Entry,
   subject: KitSubject,
   reference: KitReference,
+  plain: string[] = [],
 ): Promise<{ png: Buffer; scene: Scene; target: Box }> {
   const look = lookOf(reference.look);
   const variant: Variant = reference.variant;
@@ -331,7 +342,7 @@ export async function draw(
       await page.evaluate(stood);
       target = await page.evaluate(boxOf, selector);
     }
-    alone = await readAlone(page, variant, { root: STAGE, selector: subject.target ?? null });
+    alone = await readAlone(page, variant, { root: STAGE, selector: subject.target ?? null, plain });
   });
   if (!target || !alone) throw new Error(`harness: ${subject.key} drew nothing at "${selector}"`);
   const at: Box = target;
@@ -341,7 +352,7 @@ export async function draw(
       : [Math.floor(at[0]), Math.floor(at[1]), reference.clip[2], reference.clip[3]];
   return {
     png: cutPicture(drew.png, window, variant.scale),
-    scene: cutScene(alone, at, reference.place),
+    scene: cutScene(folded(alone), at, reference.place),
     target: at,
   };
 }

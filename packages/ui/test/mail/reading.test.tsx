@@ -49,6 +49,23 @@ describe("ActionPanel", () => {
     expect(within(bar).getByText("2 of 5")).toBeTruthy();
   });
 
+  it("hands a verb's press, and More's, the button that was pressed, where its menu stands", () => {
+    const [onTag, onMore] = [vi.fn(), vi.fn()];
+    render(
+      <ActionPanel
+        label="Actions"
+        items={[{ id: "tag", label: "Tag", icon: "tags", onPress: onTag }]}
+        more={{ label: "More", behind: true, onPress: onMore }}
+      />,
+    );
+    const tag = screen.getByRole("button", { name: "Tag" });
+    const more = screen.getByRole("button", { name: "More" });
+    fireEvent.click(tag);
+    fireEvent.click(more);
+    expect(onTag).toHaveBeenCalledWith(tag);
+    expect(onMore).toHaveBeenCalledWith(more);
+  });
+
   it("draws More only while something stands behind it", () => {
     const { rerender } = render(
       <ActionPanel label="Actions" items={verbs.slice(0, 2)} more={{ label: "More", behind: false }} />,
@@ -155,6 +172,13 @@ describe("MessageHead", () => {
     expect(sender.getAttribute("aria-haspopup")).toBe("dialog");
     fireEvent.click(sender);
     expect(onPress).toHaveBeenCalledWith(sender);
+  });
+
+  it("marks its sender line, where the read rule looks for it", () => {
+    const { container } = render(<MessageHead {...head} />);
+    expect(container.querySelector("[data-sender-line]")).toBe(
+      screen.getByRole("button", { name: /Ben Arnold ben@lichtgrat\.example/ }),
+    );
   });
 
   it("prints your own name as the app hands it, and keeps the circle the person's", () => {

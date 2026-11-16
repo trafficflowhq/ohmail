@@ -718,7 +718,10 @@ const overlays: KitSubject[] = [
   },
 ];
 
-/* What stands over the whole window: drawn in the device's window, where the part keeps its own place. */
+/*
+ * What stands over the whole window: drawn in the device's window, where the part keeps its own place.
+ * The sheet stands its dialogs over a sheet: the scrim darkens that, and shows in their round corners.
+ */
 const standing = (
   key: string,
   node: (look: Look) => React.ReactNode,
@@ -727,6 +730,7 @@ const standing = (
   key,
   place: "window",
   target: ".oh-overlay",
+  on: key.startsWith("Dialog/") ? "sheet" : "ground",
   act,
   render: node,
 });
@@ -1003,6 +1007,8 @@ const pages: KitSubject[] = [
   {
     key: "Opening/window",
     place: "window",
+    /* The app's own screen: its ground is the window's canvas. */
+    on: "screen",
     target: ".oh-opening",
     /* Ohmarchy's window stands inside the screen's edge: the frame's, drawn here by what holds the part. */
     render: ({ face }) => (
@@ -1016,6 +1022,7 @@ const pages: KitSubject[] = [
   {
     key: "Opening/phone",
     place: "window",
+    on: "screen",
     target: ".oh-opening",
     render: () => (
       <div style={{ height: "100vh" }}>
@@ -1024,6 +1031,13 @@ const pages: KitSubject[] = [
     ),
   },
 ];
+
+/* Where the sheet stands a specimen on a sheet, not on the ground: what shows around its round corners. */
+const STANDS: Record<string, KitSubject["on"]> = {
+  "Notice/full": (look) => (look.device.startsWith("fold") ? "sheet" : "ground"),
+  "Report/why": "sheet",
+};
+const stood = (s: KitSubject): KitSubject => (s.key in STANDS ? { ...s, on: STANDS[s.key] } : s);
 
 export const subjects: KitSubject[] = [
   ...overWindow,
@@ -1042,4 +1056,4 @@ export const subjects: KitSubject[] = [
   ...avatar,
   ...tag,
   ...count,
-];
+].map(stood);

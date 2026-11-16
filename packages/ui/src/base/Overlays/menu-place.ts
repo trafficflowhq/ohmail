@@ -1,4 +1,5 @@
 /** Where a menu stands: at its anchor or at a point, flipped and held inside the window. */
+import { cssPoint } from "../ui-zoom.js";
 
 export interface Point {
   x: number;
@@ -58,7 +59,7 @@ export function contextTrigger(open: (at: Point | Element) => void): {
   return {
     onContextMenu: (e) => {
       e.preventDefault();
-      open({ x: e.clientX, y: e.clientY });
+      open(cssPoint(e));
     },
     onKeyDown: (e) => {
       if (e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;

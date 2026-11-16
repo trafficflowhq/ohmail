@@ -98,6 +98,14 @@
     margin-inline: var(--oh-sheet-side);
     pointer-events: none;
   }
+  /* The way back stands at the right corner of what is read: a step over the foot, or at the column's foot. */
+  .oh-sheet > .oh-button.oh-jumpback {
+    margin-inline: var(--oh-sheet-side);
+  }
+
+  .oh-sheet-foot > .oh-button.oh-jumpback {
+    bottom: calc(100% + var(--s3));
+  }
 
   .oh-sheet[data-gutter] > .oh-sheet-foot {
     left: var(--oh-sheet-lead);
@@ -173,6 +181,11 @@
     right: var(--s4);
   }
 
+  /* The foot keeps its room at the screen's edge; the way back keeps the column's corner. */
+  :root[data-device="phone"] .oh-sheet-foot > .oh-button.oh-jumpback {
+    right: calc(var(--s3) - var(--s4));
+  }
+
   /* Ohmarchy: a tile's ring stands outside it, so the column reaches one ring further on three sides. */
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"] {
     --oh-sheet-lead: calc(var(--sq-gutter) + var(--ringw));
@@ -187,6 +200,11 @@
 
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-gutter] > .oh-sheet-foot {
     left: var(--oh-sheet-lead);
+  }
+
+  /* The foot stands a ring in; the way back keeps the column's corner. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet-foot > .oh-button.oh-jumpback {
+    right: calc(var(--s3) - var(--ringw));
   }
 
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"][data-focused]::after {

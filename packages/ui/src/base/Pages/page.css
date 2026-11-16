@@ -24,6 +24,23 @@
     height: var(--oh-page-top);
     padding: var(--oh-page-top-pad);
   }
+  /* The way back stands out by its sign: the sign in line with the page's edge. */
+  .oh-page-back > .oh-button[data-bare] {
+    --oh-page-back-out: calc((var(--h-m) - 20px) / -2);
+    margin-left: var(--oh-page-back-out);
+  }
+  /* On touch it is a white circle in the control ring, its sign larger, on the page's edge. */
+  :root[data-touch="1"] .oh-page-back > .oh-button[data-bare] {
+    --oh-page-back-out: 0;
+    --oh-page-back-ring: inset 0 0 0 1px var(--ctl-ring);
+    background: var(--sheet);
+    box-shadow: var(--oh-page-back-ring);
+    color: var(--ink);
+  }
+  :root[data-touch="1"] .oh-page-back > .oh-button[data-bare] > .oh-icon {
+    width: 22px;
+    height: 22px;
+  }
   .oh-page-aside {
     display: flex;
     align-items: center;
@@ -103,6 +120,10 @@
   .oh-page-note {
     flex: 1 1 100%;
   }
+  .oh-page-break {
+    flex: 0 1 100%;
+    height: 0;
+  }
   .oh-page-note {
     color: var(--ink2);
     font-weight: var(--w-text);
@@ -145,6 +166,24 @@
     column-gap: var(--oh-page-pad);
   }
 
+  /* The unfolded phone held upright: a page that stacks takes the whole width, its material under the buttons, and scrolls as one. */
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] {
+    --oh-page-lead: 96px;
+  }
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] > .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--s7);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto auto;
+    --oh-page-areas: "trail" "say" "line" "acts" "mat";
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden auto;
+  }
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] .oh-page-material {
+    --oh-page-material-pad: 0;
+    min-height: auto;
+    margin-top: var(--s5);
+    overflow: visible;
+  }
+
   /* The phone: the buttons stay at the foot. */
   :root[data-device="phone"] .oh-page {
     --oh-page-pad: var(--s5);
@@ -158,6 +197,9 @@
   }
   :root[data-device="phone"] .oh-page[data-line-first] > .oh-page-body {
     --oh-page-areas: "trail" "say" "line" "mat" "." "acts";
+  }
+  :root[data-device="phone"] .oh-page[data-smaller] .oh-page-say > .oh-sentence[data-size="xl"] {
+    font-size: var(--t-head);
   }
   :root[data-device="phone"] .oh-page-trail {
     --oh-page-trail-pad: var(--s2) 0 var(--s4);
@@ -215,5 +257,10 @@
   :root[data-face="ohmarchy"][data-device="desktop"] .oh-page-say > .oh-sentence {
     max-width: none;
     text-wrap: wrap;
+  }
+
+  /* A page with two sheets to read beside its sentence starts higher on a desktop, in either face. */
+  :root[data-device="desktop"] .oh-page[data-high] {
+    --oh-page-lead: 96px;
   }
 }

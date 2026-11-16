@@ -615,12 +615,29 @@ const listed = (
 ): KitSubject => ({
   key: `AgendaRow/${state}`,
   place: "block",
-  on: "sheet",
+  /* On a phone the list stands on the ground; elsewhere on the list's sheet, which the specimen's row tops. */
+  on: "ground",
   target: ".oh-erow",
   root: cal.root,
   act: act ? then(inCalendar, act) : inCalendar,
-  render,
+  render: (look) => (look.device === "phone" ? render(look) : <ListTop>{render(look)}</ListTop>),
 });
+/**
+ * The top of the list's sheet: its round corners stand 8.5 px out from the row on the left and 7.5 px on
+ * the right, as the specimen's list does (measured on the reference's pictures).
+ */
+const ListTop = ({ children }: { children: ReactNode }) => (
+  <div
+    style={{
+      margin: "0 -7.5px 0 -8.5px",
+      padding: "0 7.5px 0 8.5px",
+      background: "var(--sheet)",
+      borderRadius: "var(--r-sheet) var(--r-sheet) 0 0",
+    }}
+  >
+    {children}
+  </div>
+);
 const annaRow = (look: Look) => (
   <AgendaRow mark={mark(look, "mila")} title="Lunch with Anna" time="12:15–13:15" second="Gartenlokal Rosa" />
 );
@@ -1202,7 +1219,7 @@ const fullForm = (look: Look) => (
           {
             kind: "person",
             name: "Anna Odermatt",
-            address: "anna@lichtgrat.example",
+            address: "anna@gartenlokal-rosa.example",
             note: "optional",
             label: "Anna Odermatt, optional",
             remove: { label: "Remove Anna Odermatt" },
@@ -1248,6 +1265,7 @@ const fullForm = (look: Look) => (
 );
 /* The view's column the panel stands at the foot of: a window's, the phone's, a half of the unfolded phone. */
 const COLUMN = { desktop: 1164, phone: 390, fold: 339.5, foldl: 400.5 } as const;
+const OVER_THE_VIEW: KitSubject["on"] = (look) => (look.face === "paper" ? "sheet" : "ground");
 const quick = (
   state: string,
   text: string,
@@ -1259,6 +1277,8 @@ const quick = (
   place: "block",
   target: part === "QuickAdd" ? ".oh-qa" : ".oh-evform",
   ...cal,
+  /* The panel floats over the view's sheet: its round corners and its shadow show that. */
+  ...(part === "QuickAdd" ? { on: OVER_THE_VIEW } : {}),
   render: (look) =>
     room(
       <QuickAdd
@@ -1329,21 +1349,25 @@ const questions: KitSubject[] = [
     ),
     '[role="menuitem"]',
   ),
-  ask("tell", () => (
-    <QuestionBeforeAct
-      open
-      onClose={() => {}}
-      anchor={POINT}
-      question="Tell Ben Arnold, Giulia Ferrari and 2 more"
-      follows="now Fri 13 Nov, 16:00"
-      note={{ label: "A note to the invitees", placeholder: "Add a note", value: "" }}
-      answers={[
-        { id: "send", label: "Send update", keyHint: "↵" },
-        { id: "quiet", label: "Don’t send", keyHint: "⇧↵" },
-      ]}
-      cancel="Cancel"
-    />
-  )),
+  ask(
+    "tell",
+    () => (
+      <QuestionBeforeAct
+        open
+        onClose={() => {}}
+        anchor={POINT}
+        question="Tell Ben Arnold, Giulia Ferrari and 2 more"
+        follows="now Fri 13 Nov, 16:00"
+        note={{ label: "A note to the invitees", placeholder: "Add a note", value: "" }}
+        answers={[
+          { id: "send", label: "Send update", keyHint: "↵" },
+          { id: "quiet", label: "Don’t send", keyHint: "⇧↵" },
+        ]}
+        cancel="Cancel"
+      />
+    ),
+    ".oh-ask-answers > :first-child",
+  ),
 ];
 
 /* The calendar's rail, as tall as the window leaves it. */
@@ -1690,6 +1714,18 @@ const letters: KitSubject[] = [
   },
 ];
 
+/*
+ * Where the sheet stands a specimen on a sheet, not on the ground: what shows around the part's round
+ * corners, and the colour a fill of the ground is read against.
+ */
+const STANDS: Record<string, KitSubject["on"]> = {
+  "MiniMonth/rail": (look) => (look.face === "ohmarchy" ? "sheet" : "ground"),
+  "MiniMonth/menu": "sheet",
+  "MiniMonth/widget": "sheet",
+  "CalendarRow/rest": (look) => (look.face === "ohmarchy" ? "sheet" : "ground"),
+};
+const stood = (s: KitSubject): KitSubject => (s.key in STANDS ? { ...s, on: STANDS[s.key] } : s);
+
 export const subjects: KitSubject[] = [
   ...squares,
   ...chips,
@@ -1706,4 +1742,4 @@ export const subjects: KitSubject[] = [
   ...questions,
   ...rails,
   ...letters,
-];
+].map(stood);

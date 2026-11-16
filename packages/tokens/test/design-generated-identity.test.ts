@@ -50,6 +50,18 @@ describe("the stylesheets", () => {
     expect(css.match(/@media \(prefers-color-scheme: dark\)\{/g)).toHaveLength(stamped.length);
   });
 
+  it("name the scheme on each face's light and dark block, so the browser's own parts follow it", () => {
+    const schemeOf = (selector: string) => rules(css).find(([s]) => s === selector)?.[1].match(/^ {2}color-scheme: (\w+);$/m)?.[1];
+    expect(schemeOf(":root")).toBe("light");
+    expect(schemeOf(':root[data-scheme="dark"]')).toBe("dark");
+    expect(schemeOf(":root:not([data-scheme])")).toBe("dark");
+    expect(schemeOf(':root[data-face="ohmarchy"]')).toBe("light");
+    expect(schemeOf(':root[data-face="ohmarchy"][data-scheme="dark"]')).toBe("dark");
+    expect(schemeOf(':root[data-face="ohmarchy"]:not([data-scheme])')).toBe("dark");
+    /* Only those: an accent's or the calendar's block leaves the scheme to the face. */
+    expect(css.match(/^ {2}color-scheme: /gm)).toHaveLength(6);
+  });
+
   it("reduce motion the same way for the attribute and for the system's own setting", () => {
     const [slick, byAttribute, bySystem] = rules(motionCss);
     expect(slick[0]).toBe(":root");

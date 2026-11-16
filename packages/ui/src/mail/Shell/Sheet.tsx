@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import "./sheet.css";
 
 interface PaperProps {
@@ -24,6 +24,10 @@ interface ReadingProps {
   head?: ReactNode;
   /** What floats over the column's foot: the action panel. */
   foot?: ReactNode;
+  /** The way back to the column's start (`JumpBack`): it stands at the column's right corner, over the foot. */
+  jump?: ReactNode;
+  /** The box the sheets scroll in, handed out: the read rule and the way back read it. */
+  scroller?: Ref<HTMLDivElement>;
   /** The sheets, oldest first. */
   children?: ReactNode;
 }
@@ -46,7 +50,7 @@ export function Sheet(props: SheetProps) {
       </div>
     );
   }
-  const { top, gutter, head, foot, children } = props;
+  const { top, gutter, head, foot, jump, scroller, children } = props;
   return (
     <div
       className="oh-sheet"
@@ -58,12 +62,19 @@ export function Sheet(props: SheetProps) {
       {top ? <div className="oh-sheet-top">{top}</div> : null}
       <div className="oh-sheet-body">
         <div className="oh-sheet-gutter">{gutter}</div>
-        <div className="oh-sheet-scroll" tabIndex={-1}>
+        <div ref={scroller} className="oh-sheet-scroll" tabIndex={-1}>
           {head}
           <div className="oh-sheet-run">{children}</div>
         </div>
       </div>
-      {foot ? <div className="oh-sheet-foot">{foot}</div> : null}
+      {foot ? (
+        <div className="oh-sheet-foot">
+          {jump}
+          {foot}
+        </div>
+      ) : (
+        jump
+      )}
     </div>
   );
 }

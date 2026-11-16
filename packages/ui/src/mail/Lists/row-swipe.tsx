@@ -1,4 +1,5 @@
 import { useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
+import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 
 /** The verb a swipe lands on. */
@@ -18,7 +19,8 @@ export interface RowSwipe {
   pulled?: number;
 }
 
-/* A finger claims the row after this much sideways travel, and the verb fires from here on. */
+/* A finger claims the row after this much sideways travel, in the window's px as the finger moves; the row
+   travels in the page's px, and the verb fires from here on. */
 const CLAIM = 12;
 const FIRE = 76;
 const LIMIT = 112;
@@ -45,7 +47,8 @@ interface Swiping {
 
 /** What a row needs to be swiped: its listeners, its place while it is pulled, and the verb behind it. */
 export function useRowSwipe(swipe: RowSwipe | undefined): Swiping {
-  const start = useRef<{ x: number; y: number; claimed: boolean } | null>(null);
+  /* `x`, `y`: where the finger came down, in the window's px, for the claim; `at`: the same in the page's. */
+  const start = useRef<{ x: number; y: number; at: number; claimed: boolean } | null>(null);
   const [drag, setDrag] = useState(0);
   const dx = swipe?.pulled ?? drag;
   const side = dx > 0 ? "right" : "left";
@@ -55,7 +58,7 @@ export function useRowSwipe(swipe: RowSwipe | undefined): Swiping {
     ? {
         onPointerDown(event) {
           if (event.pointerType !== "touch" || (event.target as Element).closest("button")) return;
-          start.current = { x: event.clientX, y: event.clientY, claimed: false };
+          start.current = { x: event.clientX, y: event.clientY, at: cssPoint(event).x, claimed: false };
         },
         onPointerMove(event) {
           const from = start.current;
@@ -67,13 +70,14 @@ export function useRowSwipe(swipe: RowSwipe | undefined): Swiping {
             from.claimed = true;
             event.currentTarget.setPointerCapture?.(event.pointerId);
           }
-          setDrag(swipe[mx > 0 ? "right" : "left"] ? mx : 0);
+          const by = cssPoint(event).x - from.at;
+          setDrag(swipe[by > 0 ? "right" : "left"] ? by : 0);
         },
         onPointerUp(event) {
           const from = start.current;
           start.current = null;
           if (!from?.claimed) return;
-          const mx = event.clientX - from.x;
+          const mx = cssPoint(event).x - from.at;
           setDrag(0);
           if (Math.abs(mx) >= FIRE && swipe[mx > 0 ? "right" : "left"])
             swipe.onSwipe?.(mx > 0 ? "right" : "left");

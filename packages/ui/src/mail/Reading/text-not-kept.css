@@ -11,8 +11,21 @@
     margin-top: var(--s5);
   }
 
-  .oh-messagehead + .oh-notkept {
+  /* Under the head it stands the head's 16 away: directly, or first in the body the app draws. */
+  .oh-messagehead + .oh-notkept,
+  .oh-messagehead + * > .oh-notkept:first-child {
     margin-top: var(--s1);
+  }
+
+  /* The letter's preview over the notice: muted, in the letter's face. */
+  .oh-notkept-preview {
+    max-width: var(--measure);
+    color: var(--ink2);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
   }
 
   .oh-notkept-label {

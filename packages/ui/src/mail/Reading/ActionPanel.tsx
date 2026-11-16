@@ -33,7 +33,8 @@ export interface PanelVerb {
   counted?: { count: string; word: string };
   /** Its sign is the unread mark: the face that colours that mark draws the icon hot. */
   hotIcon?: boolean;
-  onPress?: () => void;
+  /** A press: with the verb's own button, where a menu it opens stands. */
+  onPress?: (at: HTMLElement) => void;
 }
 
 /** A label in the panel that is no button: "2 of 5". */
@@ -48,7 +49,7 @@ export interface ActionPanelProps {
   label: string;
   items: readonly (PanelVerb | PanelNote)[];
   /** What stands behind the panel. It is drawn only while something is behind it or something folded. */
-  more?: { label: string; behind: boolean; expanded?: boolean; onPress?: () => void };
+  more?: { label: string; behind: boolean; expanded?: boolean; onPress?: (at: HTMLElement) => void };
   /** Key hints are switched on. */
   keysShown?: boolean;
   /** How it stands before it has measured its room: the verbs that are folded, and those that show their icon alone. */
@@ -129,7 +130,7 @@ export function ActionPanel({ label, items, more, keysShown, folded, short, onFo
             title={more.label}
             aria-haspopup="menu"
             aria-expanded={more.expanded}
-            onClick={more.onPress}
+            onClick={(event) => more.onPress?.(event.currentTarget)}
           >
             <Icon name="more" size={20} />
           </button>
@@ -168,7 +169,7 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       title={verb.keyHint ? `${verb.label} · ${verb.keyHint}` : verb.label}
       aria-pressed={verb.pressed}
       disabled={verb.disabled}
-      onClick={verb.onPress}
+      onClick={(event) => verb.onPress?.(event.currentTarget)}
     >
       {verb.icon ? <Icon name={verb.icon} size={20} /> : null}
       <span className="oh-actionpanel-label" data-wide={verb.widest ? "" : undefined}>

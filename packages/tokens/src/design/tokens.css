@@ -145,6 +145,7 @@
   --slot-soft: color-mix(in oklch,var(--ink) 8%,transparent);
   --slot-soft-on: color-mix(in oklch,var(--ink) 15%,transparent);
   --link-line: color-mix(in oklch,currentColor 38%,transparent);
+  color-scheme: light;
 }
 
 :root[data-scheme="dark"]{
@@ -181,6 +182,7 @@
   --av-bg: 0.38 0.06;
   --av-fg: 0.91 0.065;
   --tag-dot: 0.74 0.12;
+  color-scheme: dark;
 }
 @media (prefers-color-scheme: dark){
 :root:not([data-scheme]){
@@ -217,6 +219,7 @@
   --av-bg: 0.38 0.06;
   --av-fg: 0.91 0.065;
   --tag-dot: 0.74 0.12;
+  color-scheme: dark;
 }
 }
 
@@ -347,6 +350,7 @@
   --float: 0 0 0 2px var(--hot);
   --lift: 0 0 0 2px #B7B5AC;
   --ring-up: #B7B5AC;
+  color-scheme: light;
 }
 
 :root[data-face="ohmarchy"][data-scheme="dark"]{
@@ -385,6 +389,7 @@
   --av-bg: 0.31 0.035;
   --av-fg: 0.84 0.075;
   --tag-dot: 0.74 0.11;
+  color-scheme: dark;
 }
 @media (prefers-color-scheme: dark){
 :root[data-face="ohmarchy"]:not([data-scheme]){
@@ -423,6 +428,7 @@
   --av-bg: 0.31 0.035;
   --av-fg: 0.84 0.075;
   --tag-dot: 0.74 0.11;
+  color-scheme: dark;
 }
 }
 

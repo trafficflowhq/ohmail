@@ -59,16 +59,103 @@ function showAgain() {
   delete (/** @type {any} */ (window).__kitAlone);
 }
 
+/** What the scene reader takes for a node (`scene.mjs`), and the role a plain box that holds nodes is read in. */
+const NODES =
+  "[role],h1,h2,h3,h4,h5,h6,button,a[href],input,select,textarea,[aria-label],[aria-labelledby],main,nav,header,aside,details,summary,progress,meter,[aria-checked],[aria-pressed],[aria-expanded],[aria-selected],[aria-current],[aria-disabled],[aria-invalid],[aria-readonly]";
+const PLAIN = "kit-plain";
+/** The role a node is read in that is folded into what holds it (`folded`). */
+export const PLAIN_ROLE = PLAIN;
+
+/**
+ * A scene with every node read in the plain role folded into the node around it, or into what stands
+ * outside every node: its words after that node's own, its surfaces with that node's.
+ * @param {import("../../../../test/compare/scene.d.mts").Scene} scene
+ * @returns {import("../../../../test/compare/scene.d.mts").Scene}
+ */
+export function folded(scene) {
+  if (!scene.nodes.some((n) => n.role === PLAIN)) return scene;
+  const inside = (/** @type {number[]} */ a, /** @type {number[]} */ b) =>
+    a[0] >= b[0] && a[1] >= b[1] && a[0] + a[2] <= b[0] + b[2] && a[1] + a[3] <= b[1] + b[3];
+  const nodes = scene.nodes.map((n) => ({
+    ...n,
+    text: n.text && [...n.text],
+    surfaces: n.surfaces && [...n.surfaces],
+  }));
+  const loose = { text: [...scene.loose.text], surfaces: [...scene.loose.surfaces] };
+  nodes.forEach((n, i) => {
+    if (n.role !== PLAIN) return;
+    /** @type {any} */
+    let into = loose;
+    for (let j = i - 1; j >= 0; j--)
+      if (nodes[j].role !== PLAIN && inside(n.box, nodes[j].box)) {
+        into = nodes[j];
+        break;
+      }
+    if (n.text?.length) into.text = [...(into.text ?? []), ...n.text];
+    if (n.surfaces?.length) into.surfaces = [...(into.surfaces ?? []), ...n.surfaces];
+  });
+  return { ...scene, nodes: /** @type {any} */ (nodes.filter((n) => n.role !== PLAIN)), loose };
+}
+
+/**
+ * In the page: reads the elements `plain` names under `root` as the plain boxes the reference draws in
+ * their place, for the reading only. Their role and ARIA attributes are set aside, so their words and
+ * surfaces stand in the node around them, as the reference's do; an element that is a node by its tag (a
+ * heading, a button) is also hidden from the reader, which leaves its words and paint where they are.
+ * Attributes change nothing that is drawn: no stylesheet of the kit reads one of these.
+ */
+function plainOut(
+  /** @type {{ root: string, plain: string[], nodes: string, role: string }} */ { root, plain, nodes, role },
+) {
+  const host = document.querySelector(root);
+  /** @type {[Element, [string, string][]][]} */
+  const was = [];
+  for (const el of plain.flatMap((s) => [...(host?.querySelectorAll(s) ?? [])])) {
+    const attrs = [...el.attributes].filter((a) => a.name === "role" || a.name.startsWith("aria-"));
+    was.push([el, attrs.map((a) => [a.name, a.value])]);
+    for (const a of attrs) el.removeAttribute(a.name);
+    if (
+      !el.matches(
+        "h1,h2,h3,h4,h5,h6,button,a[href],input,select,textarea,main,nav,header,aside,details,summary,progress,meter",
+      )
+    )
+      continue;
+    /* Hidden from the reader, its words stand in the node around it; one that holds nodes keeps them and is folded afterwards (`folded`). */
+    if (el.querySelector(nodes)) el.setAttribute("role", role);
+    else el.setAttribute("aria-hidden", "true");
+  }
+  /** @type {any} */ (window).__kitPlain = was;
+  return was.length;
+}
+
+/** In the page: gives back what `plainOut` set aside. */
+function plainBack() {
+  const was = /** @type {any} */ (window).__kitPlain ?? [];
+  for (const [el, attrs] of was) {
+    el.removeAttribute("aria-hidden");
+    el.removeAttribute("role");
+    for (const [name, value] of attrs) el.setAttribute(name, value);
+  }
+  delete (/** @type {any} */ (window).__kitPlain);
+}
+
 /**
  * Reads the scene of the part alone: the nodes `selector` names under `root` (or the root's children),
- * with what stands around them, and nothing beside them.
+ * with what stands around them, and nothing beside them. `plain` names nodes of the part that the
+ * reference draws as plain boxes (a declared row says why): they are read as such.
  * @param {import("@playwright/test").Page} page
  * @param {import("../../../../test/compare/scene.d.mts").Variant} variant
- * @param {{ root: string, selector: string | null }} where
+ * @param {{ root: string, selector: string | null, plain?: string[] }} where
  * @returns {Promise<import("../../../../test/compare/scene.d.mts").Scene>}
  */
 export async function readAlone(page, variant, where) {
-  await page.evaluate(hideAround, where);
+  const plain = where.plain ?? [];
+  if (
+    plain.length &&
+    !(await page.evaluate(plainOut, { root: where.root, plain, nodes: NODES, role: PLAIN }))
+  )
+    throw new Error(`cut: nothing to read as a plain box at ${plain.join(", ")}`);
+  await page.evaluate(hideAround, { root: where.root, selector: where.selector });
   try {
     return await page.evaluate(readScene, {
       variant,
@@ -76,6 +163,7 @@ export async function readAlone(page, variant, where) {
     });
   } finally {
     await page.evaluate(showAgain);
+    if (plain.length) await page.evaluate(plainBack);
   }
 }
 

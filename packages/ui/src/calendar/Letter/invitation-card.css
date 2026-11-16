@@ -48,6 +48,10 @@
   .oh-invcard-around + .oh-invcard-around {
     margin-top: var(--s1);
   }
+  /* The tags around it stand on the card's soft sheet in the sheet's own fill, in both faces. */
+  :root[data-face="ohmarchy"] .oh-invcard .oh-invcard-tag {
+    background: var(--oh-tag-ground);
+  }
   /* The answer stands on the card as the one decision of the letter: a full row's height. */
   .oh-invcard-answers {
     margin-top: var(--s4);

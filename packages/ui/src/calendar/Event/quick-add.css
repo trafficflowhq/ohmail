@@ -108,9 +108,6 @@
     margin-top: var(--s3);
   }
 
-  :root[data-face="ohmarchy"] .oh-qa {
-    --oh-qa-ring: var(--float);
-  }
   /* The unfolded phone: as wide as the half it stands in. */
   :root[data-device="fold"] .oh-qa {
     width: 100%;

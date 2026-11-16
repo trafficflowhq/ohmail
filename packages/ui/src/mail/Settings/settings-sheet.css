@@ -16,8 +16,16 @@
     --oh-soft: var(--sheet);
     --oh-tag-ground: var(--sheet);
     --oh-settingline-wash: var(--sheet);
+  }
 
+  /* The sheet itself is tinted, so no white of it shows at the round corners under a tint. */
+  .oh-sheet:has(> .oh-settingssheet[data-wants]) {
     background: var(--sheet-new);
+  }
+
+  /* A tag on the tinted sheet takes the sheet's white in every face. */
+  .oh-settingssheet[data-wants] .oh-tag:not([data-own]) {
+    background: var(--sheet);
   }
 
   .oh-settingssheet[data-wants] > .oh-settingssheet-head > .oh-avatar[data-sign] {

@@ -43,11 +43,29 @@ describe("Row", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
+  it("turns the list's times to their other form from a press on its time, and does not open", () => {
+    const [onOpen, onWhen] = [vi.fn(), vi.fn()];
+    render(<Row {...base} whenTitle="Monday 9 November 2026, 08:47" onOpen={onOpen} onWhen={onWhen} />);
+    const when = within(row()).getByText("08:47");
+    expect(when.getAttribute("title")).toBe("Monday 9 November 2026, 08:47");
+    fireEvent.click(when);
+    expect([onWhen.mock.calls.length, onOpen.mock.calls.length]).toEqual([1, 0]);
+    fireEvent.click(within(row()).getByText("Your talk is on the programme"));
+    expect([onWhen.mock.calls.length, onOpen.mock.calls.length]).toEqual([1, 1]);
+  });
+
+  it("opens from its time where nothing turns the times", () => {
+    const onOpen = vi.fn();
+    render(<Row {...base} onOpen={onOpen} />);
+    fireEvent.click(within(row()).getByText("08:47"));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it("runs its quick verb without opening", () => {
     const onOpen = vi.fn();
     const onPress = vi.fn();
     render(<Row {...base} unread onOpen={onOpen} quick={{ label: "Done", icon: "check", onPress }} />);
-    fireEvent.click(within(row()).getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onOpen).not.toHaveBeenCalled();
   });
@@ -56,11 +74,64 @@ describe("Row", () => {
     const onOpen = vi.fn();
     const onPress = vi.fn();
     render(<Row {...base} onOpen={onOpen} own={{ label: "Discard", onPress }} />);
-    const own = within(row()).getByRole("button", { name: "Discard" });
+    const own = screen.getByRole("button", { name: "Discard" });
     fireEvent.click(own);
     fireEvent.keyDown(own, { key: "Enter" });
     expect(onPress).toHaveBeenCalledTimes(1);
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("stands its verbs beside the option, not inside it, and the keys reach the option and each verb once", () => {
+    const [onOpen, done, discard] = [vi.fn(), vi.fn(), vi.fn()];
+    render(
+      <Rows label="Ohbox">
+        <Row
+          {...base}
+          onOpen={onOpen}
+          listing={{ name: "Petra Wyss: Your talk is on the programme", selected: false }}
+          quick={{ label: "Done", icon: "check", onPress: done }}
+          own={{ label: "Discard", onPress: discard }}
+        />
+      </Rows>,
+    );
+    const option = screen.getByRole("option");
+    expect(option.querySelectorAll("button, a, input, [tabindex]")).toHaveLength(0);
+    const list = screen.getByRole("listbox");
+    const stops = [...list.querySelectorAll<HTMLElement>("button, [tabindex]")].filter(
+      (el) => el.tabIndex >= 0,
+    );
+    expect(stops.map((el) => el.getAttribute("role") ?? el.textContent)).toEqual([
+      "option",
+      "Done",
+      "Discard",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect([done.mock.calls.length, discard.mock.calls.length, onOpen.mock.calls.length]).toEqual([1, 1, 0]);
+  });
+
+  it("as a button too, holds no button of its verbs", () => {
+    render(<Row {...base} quick={{ label: "Done", icon: "check" }} own={{ label: "Discard" }} />);
+    expect(row().querySelectorAll("button")).toHaveLength(0);
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      row().textContent,
+      "Done",
+      "Discard",
+    ]);
+  });
+
+  it("hands a right click on a verb beside it to the app as the row's menu, once", () => {
+    const onMenu = vi.fn();
+    render(
+      <Row {...base} onMenu={onMenu} quick={{ label: "Done", icon: "check" }} own={{ label: "Discard" }} />,
+    );
+    for (const at of [
+      screen.getByRole("button", { name: "Done" }),
+      screen.getByRole("button", { name: "Discard" }),
+      row(),
+    ])
+      expect(fireEvent.contextMenu(at, { clientX: 40, clientY: 12 })).toBe(false);
+    expect(onMenu).toHaveBeenCalledTimes(3);
   });
 
   it("says that it is picked, and nothing while it is not", () => {

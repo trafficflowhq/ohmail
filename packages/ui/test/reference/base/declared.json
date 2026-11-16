@@ -49,24 +49,21 @@
   },
   {
     "key": "Menu/field",
-    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "menu", "name": "" }]
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself. The menu is read as that box, so its sheet, its rules and its words stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["[role=\"menu\"]"]
   },
   {
     "key": "Menu/context",
-    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "menu", "name": "" }]
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself. The menu is read as that box, so its sheet, its rules and its words stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["[role=\"menu\"]"]
   },
   {
     "key": "Dialog/delete",
-    "reason": "The reference's specimen is a still box: no dialog role, and its sentence is a paragraph. The kit's is the dialog, named by its sentence as a heading.",
-    "since": "2026-11-14",
-    "nodes": [
-      { "role": "dialog", "name": "" },
-      { "role": "heading", "name": "Move to Trash" }
-    ]
+    "reason": "The reference's specimen is a still box: no dialog role, and its sentence is a paragraph. The kit's dialog and its heading are read as such boxes, so their words, their dot and their sheet stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay", ".oh-overlay h2"]
   },
   {
     "key": "JumpBack/end@paper-light-phone",
@@ -88,27 +85,27 @@
   },
   {
     "key": "Dialog/keys",
-    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "heading", "name": "Sign out ohmail on a phone" }]
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
   },
   {
     "key": "Dialog/field",
-    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "heading", "name": "Delete this account" }]
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
   },
   {
     "key": "Dialog/waiting",
-    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "heading", "name": "Waiting for the other ohmail" }]
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
   },
   {
     "key": "Dialog/store",
-    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "heading", "name": "ohcal is the calendar beside ohmail" }]
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog. The heading is read as a paragraph, so its words and its dot stand in the dialog as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-overlay h2"]
   },
   {
     "key": "NoticeSlot/listed",
@@ -239,5 +236,77 @@
     "reason": "The kit marks a refused field invalid (aria-invalid), so a screen reader says it with the field; the reference's field carries only the line under it.",
     "since": "2026-11-15",
     "alike": [{ "role": "textbox", "unstated": ["invalid"] }]
+  },
+  {
+    "key": "Page/refused",
+    "reason": "The reference's page is a plain block under its banner; the kit's is the page's main landmark. The landmark is read as that block, so its words and its dot stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": ["main"]
+  },
+  {
+    "key": "Count/plain",
+    "question": "drawn",
+    "reason": "The sheet's lone count specimen sets its digit without tabular figures; every place the sheet sets a count (a rail entry's, a segment's, the doorbell's, a row's) sets it in tabular figures, as the part does everywhere. Names, boxes and the picture bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/window@ohmarchy-light-desktop",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/window@ohmarchy-dark-desktop",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/phone@ohmarchy-light-phone",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Opening/phone@ohmarchy-dark-phone",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's specimen stands inside its frame's window, whose fill the capture does not read as the specimen's; the kit's opening fills its own window (opening.css, its stage), read as a surface of the same box. The pictures are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Page/refused@ohmarchy-light-fold",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Page/refused@ohmarchy-light-foldl",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Page/refused@ohmarchy-dark-fold",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Page/refused@ohmarchy-dark-foldl",
+    "question": "boxes",
+    "reason": "In ohmarchy the sheet's page stands inside its frame's ringed window, whose ring the capture does not read as the page's; the kit's page draws its window's ring itself (page.css, ohmarchy's rule), read as a surface of the page's box. The pictures, ring included, are equal; names and drawn values bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Menu/titled",
+    "question": "drawn",
+    "since": "2026-11-15",
+    "reason": "The sheet's time field never resets the browser's appearance (it draws its own box over it); the part starts every control from nothing, as the kit's control does, and draws the same box itself. Of the drawn values that and, in the dark, the field's colour scheme differ (the design names color-scheme per scheme since 2026-11-15; the studio's sheet takes the line next); names, boxes and the picture bind."
+  },
+  {
+    "key": "Menu/titled@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The time field's clock is the browser's own drawing, and it now follows the dark scheme the design names (color-scheme, ruled 2026-11-15): drawn light on the dark field, where the reference, taken before the studio's sheet named the scheme, draws it dark. The rest of the picture is equal."
   }
 ]

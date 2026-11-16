@@ -7,8 +7,11 @@ export interface RailProps {
   label: string;
   /** The way between the two products, where both are there. It stands first. */
   switcher?: ReactNode;
-  /** The way to write: a second button at the head, under the switch; it never scrolls away with the places. */
-  write?: { label: string; keyHint?: string; onPress?: () => void };
+  /**
+   * The way to write: a second button at the head, under the switch; it never scrolls away with the places.
+   * `shortcut` is its key in `aria-keyshortcuts`' own spelling ("c"), said to a screen reader on the button.
+   */
+  write?: { label: string; keyHint?: string; shortcut?: string; onPress?: () => void };
   /** The places, a group after a group, in the app's order. */
   groups: readonly ReactNode[];
   /** What stays on screen while the places scroll: the foot. */
@@ -60,7 +63,13 @@ export function Rail({ label, switcher, write, groups, foot, focused, clip }: Ra
       {switcher}
       {write ? (
         <div className="oh-rail-write">
-          <Button kind="two" icon="write" keyHint={write.keyHint} onPress={write.onPress}>
+          <Button
+            kind="two"
+            icon="write"
+            keyHint={write.keyHint}
+            shortcut={write.shortcut}
+            onPress={write.onPress}
+          >
             {write.label}
           </Button>
         </div>

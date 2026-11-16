@@ -159,6 +159,27 @@ describe("Empty, WaitRow, RefusalLine", () => {
     expect(write).toHaveBeenCalledTimes(1);
   });
 
+  it("an empty place's way on can be an address: a link to it, named once by its word", () => {
+    render(<Empty label="No mail yet" act={{ label: "Connect", icon: "plus", href: "/join" }} />);
+    const way = screen.getByRole("link", { name: "Connect" });
+    expect(way.tagName).toBe("A");
+    expect(way.getAttribute("href")).toBe("/join");
+    expect(way.hasAttribute("aria-label")).toBe(false);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("an empty place's way on with a press is a button, as before, and never both", () => {
+    const write = vi.fn();
+    render(<Empty label="No drafts" act={{ label: "Write", onPress: write }} />);
+    const way = screen.getByRole("button", { name: "Write" });
+    expect([way.tagName, way.hasAttribute("href")]).toEqual(["BUTTON", false]);
+    expect(screen.queryByRole("link")).toBeNull();
+    // @ts-expect-error a way on either runs or goes somewhere, never both
+    render(<Empty label="No mail" act={{ label: "Connect", href: "/join", onPress: write }} />);
+    // @ts-expect-error a way on does one of the two
+    render(<Empty label="No mail" act={{ label: "Connect" }} />);
+  });
+
   it("the mark is named as the product's name with its full stop", () => {
     render(<Empty mark="oh" label="6 decided" />);
     expect(screen.getByLabelText("oh.")).toBeTruthy();

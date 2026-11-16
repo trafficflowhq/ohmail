@@ -3,6 +3,7 @@
   .oh-dot {
     --oh-dot-gap: 0.08em;
     --oh-dot-ring: inset 0 0 0 var(--oh-focus) var(--hot);
+    --oh-dot-todo: inset 0 0 0 var(--oh-focus) var(--ink2);
     display: inline-block;
     flex: none;
     width: var(--dot-size);
@@ -19,6 +20,11 @@
   .oh-dot[data-kind="ring"] {
     background: transparent;
     box-shadow: var(--oh-dot-ring);
+  }
+  /* A step still ahead: hollow, ringed in the second ink. */
+  .oh-dot[data-kind="todo"] {
+    background: transparent;
+    box-shadow: var(--oh-dot-todo);
   }
   .oh-dot[data-kind="none"] {
     background: transparent;

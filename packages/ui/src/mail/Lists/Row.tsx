@@ -1,5 +1,6 @@
-import { useId, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useId, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Avatar, Sign, Where } from "../../base/index.js";
+import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
 import { useRowSwipe, type RowSwipe } from "./row-swipe.js";
@@ -65,6 +66,10 @@ export interface RowProps {
   preview?: string;
   /** When it arrived, as it is printed. */
   when?: string;
+  /** What a pointer reads on the time: the same instant in the form not on screen. */
+  whenTitle?: string;
+  /** A press on the time: the list turns every time to its other form. The row does not open. */
+  onWhen?: () => void;
   /** An amount in place of the time. */
   amount?: string;
   /** It carries a file: the paper-clip, by this name. */
@@ -83,6 +88,8 @@ export interface RowProps {
   cursor?: boolean;
   /** It is picked: the circle becomes the check. */
   picked?: boolean;
+  /** The row a search or a link took you to: a wash that settles once, so you see which row it is. */
+  located?: boolean;
   /** The verb a row offers while the pointer or the keys are on it: Done. */
   quick?: { label: string; icon: IconName; onPress?: () => void };
   /** A button of its own that always stands: Discard, Cancel send. */
@@ -107,6 +114,7 @@ export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, onOpen, onContact, onMenu } = props;
   const swipe = useRowSwipe(props.swipe);
   const { listing, mark } = props;
+  const slotted = Boolean(props.swipe || quick || own);
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
   const said = listing?.spoken ? saidId : undefined;
@@ -119,7 +127,7 @@ export function Row(props: RowProps) {
   const menu = onMenu
     ? (event: MouseEvent<HTMLDivElement>) => {
         event.preventDefault();
-        onMenu({ x: event.clientX, y: event.clientY });
+        onMenu(cssPoint(event));
       }
     : undefined;
   const contact = onContact
@@ -148,13 +156,14 @@ export function Row(props: RowProps) {
       data-open={open ? "" : undefined}
       data-cursor={props.cursor ? "" : undefined}
       data-picked={picked ? "" : undefined}
+      data-located={props.located ? "" : undefined}
       data-own={own ? "" : undefined}
       data-swiping={swipe.moving ? "" : undefined}
       aria-selected={listing ? listing.selected : picked ? true : undefined}
       style={swipe.style}
       onClick={onOpen}
       onKeyDown={key}
-      onContextMenu={menu}
+      onContextMenu={slotted ? undefined : menu}
       {...swipe.handlers}
     >
       <RowFace {...props} />
@@ -169,18 +178,20 @@ export function Row(props: RowProps) {
           </span>
         ) : null}
       </span>
-      <RowVerbs quick={quick} own={own} />
+      {own ? <OwnRoom own={own} /> : null}
       {said ? <span id={said} hidden aria-label={listing?.spoken} /> : null}
     </div>
   );
-  /* Where a row can be swiped it lies in a slot of its own, and the verb it lands on stands on the ground behind it. */
-  return props.swipe ? (
-    <div className="oh-row-slot" data-index={mark?.index}>
+  /* A row with verbs, or one that can be swiped, lies in a slot of its own. The verbs stand there beside it (a
+     button inside an option or a button is no button to a screen reader), over the room the row keeps for them;
+     the verb a swipe lands on stands on the ground behind it. A right click on a verb is the row's menu. */
+  if (!slotted) return row;
+  return (
+    <div className="oh-row-slot" data-index={props.swipe ? mark?.index : undefined} onContextMenu={menu}>
       {swipe.back}
       {row}
+      <RowVerbs quick={quick} own={own} travel={swipe.style} />
     </div>
-  ) : (
-    row
   );
 }
 
@@ -216,7 +227,13 @@ function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread }: RowPr
 
 /** Line one: who, the address, and at its end the marks and the time. */
 function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>) => void }) {
-  const { who, address, contact } = props;
+  const { who, address, contact, onWhen } = props;
+  const flip = onWhen
+    ? (event: MouseEvent<HTMLElement>) => {
+        event.stopPropagation();
+        onWhen();
+      }
+    : undefined;
   return (
     <span className="oh-row-first">
       <b className="oh-row-who">{who}</b>
@@ -237,14 +254,31 @@ function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>)
       {props.amount ? (
         <span className="oh-row-amount">{props.amount}</span>
       ) : props.when ? (
-        <time className="oh-row-when">{props.when}</time>
+        <time
+          className="oh-row-when"
+          title={props.whenTitle}
+          data-press={onWhen ? "" : undefined}
+          onClick={flip}
+        >
+          {props.when}
+        </time>
       ) : null}
     </span>
   );
 }
 
-/** The row's verbs: the quick one, and its own button. A press on either leaves the row shut. */
-function RowVerbs({ quick, own }: Pick<RowProps, "quick" | "own">) {
+/** The room the row keeps for its own button, which stands beside it over this room: the same box, unseen. */
+function OwnRoom({ own }: { own: NonNullable<RowProps["own"]> }) {
+  return (
+    <span className="oh-row-verb" data-own="" data-room="" aria-hidden="true">
+      {own.icon ? <Icon name={own.icon} size={16} /> : null}
+      <span data-label={own.label} />
+    </span>
+  );
+}
+
+/** The row's verbs, beside it: the quick one, and its own button, which travels with a pulled row. */
+function RowVerbs({ quick, own, travel }: Pick<RowProps, "quick" | "own"> & { travel?: CSSProperties }) {
   return (
     <>
       {quick ? (
@@ -265,6 +299,7 @@ function RowVerbs({ quick, own }: Pick<RowProps, "quick" | "own">) {
           type="button"
           className="oh-control oh-row-verb"
           data-own=""
+          style={travel}
           onClick={(event) => (stop(event), own.onPress?.())}
           onKeyDown={stop}
         >

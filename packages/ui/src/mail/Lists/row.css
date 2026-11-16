@@ -4,10 +4,22 @@
     padding: 0 var(--s2) var(--s1);
   }
 
-  .oh-row {
+  /* The row's measures, and its slot's: a row's verbs stand beside it in the slot, over the room it keeps. */
+  .oh-row,
+  .oh-row-slot {
     --oh-under: var(--sheet);
+    --oh-row-end: var(--s3);
+    --oh-row-in: 0 var(--oh-row-end) 0 var(--s1);
+    --oh-row-verb-h: 26px;
+    --oh-row-verb-at: 11px;
+    --oh-row-verb-ring: inset 0 0 0 1px var(--btn-ring), var(--lift);
+    --oh-row-reach: -5px -4px;
+    --oh-row-layer: 1;
+    --oh-row-layer-up: 2;
+  }
+
+  .oh-row {
     --oh-row-second: var(--ink2);
-    --oh-row-in: 0 var(--s3) 0 var(--s1);
     --oh-row-between: 2px;
     --oh-row-under-off: 0.16em;
     --oh-row-pair-in: 0 3px 3px 0;
@@ -17,12 +29,6 @@
     --oh-row-peek-size: var(--t-meta);
     --oh-row-peek-track: -0.02em;
     --oh-row-peek-ring: inset 0 0 0 var(--av-ring) var(--btn-ring), 0 0 0 2px var(--oh-under);
-    --oh-row-verb-h: 26px;
-    --oh-row-verb-at: 11px;
-    --oh-row-verb-ring: inset 0 0 0 1px var(--btn-ring), var(--lift);
-    --oh-row-reach: -5px -4px;
-    --oh-row-layer: 1;
-    --oh-row-layer-up: 2;
     --oh-row-layer-check: 3;
     --oh-row-cursor: none;
 
@@ -50,7 +56,8 @@
     outline-offset: calc(var(--oh-focus) * -1);
   }
 
-  .oh-row:hover,
+  /* Under the pointer: the row, or a verb beside it. */
+  .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
   .oh-row[data-cursor],
   .oh-row[data-picked] {
     --oh-under: var(--hover);
@@ -209,6 +216,44 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* A time that turns every time of the list to its other form: pressed as the address is. */
+  :root[data-touch="0"] .oh-row-when[data-press] {
+    cursor: pointer;
+  }
+
+  :root[data-touch="0"] .oh-row-when[data-press]:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-row-under-off);
+  }
+
+  :root[data-touch="0"] .oh-row[data-open] .oh-row-when[data-press]:hover {
+    color: var(--on-row-open);
+  }
+
+  /* The row you were taken to: a wash that settles once. Without motion it stays washed while it is the one. */
+  .oh-row[data-located] {
+    animation: oh-row-located var(--d-tint) var(--e-std) both;
+  }
+
+  @keyframes oh-row-located {
+    from {
+      background: var(--wash);
+    }
+  }
+
+  :root[data-rm="1"] .oh-row[data-located] {
+    animation: none;
+    background: var(--wash);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-row[data-located] {
+      animation: none;
+      background: var(--wash);
+    }
+  }
+
   .oh-row .oh-where {
     color: var(--oh-row-second);
   }
@@ -320,12 +365,31 @@
     display: none;
   }
 
-  .oh-row:hover > .oh-row-quick,
-  .oh-row[data-cursor] > .oh-row-quick,
-  .oh-row:focus-visible > .oh-row-quick,
+  .oh-row-slot:hover > .oh-row-quick,
+  .oh-row[data-cursor] ~ .oh-row-quick,
+  .oh-row:focus-visible ~ .oh-row-quick,
   .oh-row-quick:focus-within {
     opacity: 1;
+  }
+
+  /* The fade lies over the row beside it and stays the row's to press: only the verb itself takes the pointer. */
+  .oh-row-slot:hover > .oh-row-quick > .oh-row-verb,
+  .oh-row[data-cursor] ~ .oh-row-quick > .oh-row-verb,
+  .oh-row:focus-visible ~ .oh-row-quick > .oh-row-verb,
+  .oh-row-quick:focus-within > .oh-row-verb {
     pointer-events: auto;
+  }
+
+  /* The ground the verbs fade over beside the row: the row's own, in each of its states. */
+  .oh-row-slot:hover,
+  .oh-row-slot:has(> .oh-row[data-cursor], > .oh-row[data-picked]) {
+    --oh-under: var(--hover);
+  }
+
+  .oh-row-slot:has(> .oh-row[data-open]) {
+    --oh-under: var(--row-open);
+
+    color: var(--on-row-open);
   }
 
   .oh-row-verb {
@@ -388,17 +452,38 @@
     font-size: var(--t-ui);
   }
 
+  /* The room is the button's box, kept in the row's third column; the button stands over it, beside the row. */
+  .oh-row-verb[data-room] {
+    visibility: hidden;
+  }
+
+  .oh-row-verb[data-room] > [data-label]::before {
+    content: attr(data-label);
+  }
+
+  .oh-row-slot > .oh-row-verb[data-own] {
+    position: absolute;
+    top: 0;
+    right: var(--oh-row-end);
+    bottom: 0;
+    margin-block: auto;
+  }
+
+  .oh-row[data-swiping] ~ .oh-row-verb[data-own] {
+    z-index: var(--oh-row-layer-up);
+  }
+
   :root[data-touch="0"] .oh-row[data-own] .oh-row-preview {
     display: none;
   }
 
-  :root[data-touch="0"] .oh-row:not([data-open]):hover > .oh-row-verb[data-own],
-  :root[data-touch="0"] .oh-row[data-cursor] > .oh-row-verb[data-own] {
+  :root[data-touch="0"] .oh-row-slot:hover > .oh-row:not([data-open]) ~ .oh-row-verb[data-own],
+  :root[data-touch="0"] .oh-row[data-cursor] ~ .oh-row-verb[data-own] {
     background: var(--sheet);
     box-shadow: var(--oh-row-verb-ring);
   }
 
-  .oh-row[data-open] > .oh-row-verb[data-own] {
+  .oh-row[data-open] ~ .oh-row-verb[data-own] {
     background: var(--sheet);
     color: var(--ink);
   }
@@ -436,6 +521,7 @@
     --oh-row-reach: -8px -4px;
 
     position: absolute;
+    top: auto;
     right: var(--s3);
     bottom: 6px;
     grid-area: auto;
@@ -507,6 +593,11 @@
   }
 
   /* Ohmarchy: three lines everywhere, quieter second voices, the keys' ring on the row. */
+  :root[data-face="ohmarchy"] :is(.oh-row, .oh-row-slot) {
+    --oh-row-verb-h: 22px;
+    --oh-row-verb-at: 9px;
+  }
+
   :root[data-face="ohmarchy"] .oh-row {
     --oh-row-second: var(--ink3);
     --oh-row-peek: 18px;
@@ -514,8 +605,6 @@
     --oh-row-peek-in: 0 1px;
     --oh-row-peek-size: 11px;
     --oh-row-peek-track: -0.04em;
-    --oh-row-verb-h: 22px;
-    --oh-row-verb-at: 9px;
     --oh-row-subject-size: 13.5px;
   }
 
@@ -525,11 +614,12 @@
     padding: var(--oh-rows-in);
   }
 
-  :root[data-face="ohmarchy"][data-device="desktop"] .oh-row {
-    --oh-row-in: 0 14px 0 var(--s2);
+  :root[data-face="ohmarchy"][data-device="desktop"] :is(.oh-row, .oh-row-slot) {
+    --oh-row-end: 14px;
+    --oh-row-in: 0 var(--oh-row-end) 0 var(--s2);
   }
 
-  :root[data-face="ohmarchy"] .oh-row:hover,
+  :root[data-face="ohmarchy"] .oh-row:is(:hover, :where(.oh-row-slot:hover) > *),
   :root[data-face="ohmarchy"] .oh-row[data-cursor],
   :root[data-face="ohmarchy"] .oh-row[data-open] {
     --oh-row-second: var(--ink2);

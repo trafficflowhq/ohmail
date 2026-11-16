@@ -355,6 +355,8 @@
     border-radius: var(--r-sq);
     background: var(--line);
     cursor: grab;
+    /* The pull is the hand's: the sheet around it lets the browser pan (pan-y), which takes a finger's pull away. */
+    touch-action: none;
   }
   /* The grabber is taken with a finger: its room is larger than its drawing. */
   .oh-ecard-grab::after {

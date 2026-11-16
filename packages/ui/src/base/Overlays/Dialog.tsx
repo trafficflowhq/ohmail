@@ -34,6 +34,8 @@ export interface DialogProps {
   children?: ReactNode;
   /** The body is a list: of what waits. */
   list?: boolean;
+  /** Other ways to the same answer, under the answers: small quiet buttons, one under the other ("Use a passkey instead"). */
+  under?: ReactNode;
 }
 
 /* The way out is the last of the answers. */
@@ -58,6 +60,7 @@ export function Dialog(props: DialogProps) {
     keysShown,
     children,
     list,
+    under,
   } = props;
   const name = useId();
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -101,6 +104,7 @@ export function Dialog(props: DialogProps) {
           {cancel.label}
         </Button>
       </div>
+      {under ? <div className="oh-dialog-under">{under}</div> : null}
     </Overlay>
   );
 }

@@ -14,6 +14,8 @@
     padding: var(--oh-erow-pad);
     border-radius: var(--r-row);
     text-align: left;
+    /* Its words are drawn as a button's are: the sheet's row is one. */
+    text-rendering: auto;
     cursor: pointer;
     transition: background-color var(--d-hover) var(--e-std);
   }

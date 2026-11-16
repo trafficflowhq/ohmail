@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { animate } from "../../motion/motion.js";
+import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
 import "./overlay.css";
 
@@ -24,8 +25,9 @@ const firstButton = (box: HTMLElement) => box.querySelector<HTMLElement>("button
 
 /**
  * The frame of everything that stands over the whole window: a scrim, and one modal part on it. The
- * keys land in the part and stay inside; Esc and a press on the scrim close it, and the keys go back
- * to what opened it. A key pressed over it is never the window's underneath.
+ * keys land in the part and stay inside; Esc (wherever the keys are, the topmost first) and a press on
+ * the scrim close it, and the keys go back to what opened it. A key pressed over it is never the window's
+ * underneath.
  */
 export function Overlay({
   open,
@@ -40,6 +42,7 @@ export function Overlay({
 }: OverlayProps) {
   const box = useRef<HTMLDivElement | null>(null);
   useOverlayFocus(open, box, first ?? firstButton);
+  useOverlayEscape(open, box, onClose);
   useLayoutEffect(() => {
     if (open && box.current) animate(box.current, "pop", { ease: "--e-pop" });
   }, [open]);
@@ -50,7 +53,7 @@ export function Overlay({
     if (onKey?.(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
-      onClose();
+      closeTopmost();
     } else cycleTab(e, e.currentTarget);
   };
 

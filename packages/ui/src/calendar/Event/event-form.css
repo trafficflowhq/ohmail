@@ -209,19 +209,18 @@
     width: 14px;
     height: 14px;
   }
+  /* A word that acts, as the form's words do: underlined only under the pointer. */
   .oh-evform-link {
-    max-width: 100%;
-    overflow: hidden;
+    --oh-evform-link-line: 2px;
+    --oh-evform-link-under: 0.18em;
     border-radius: var(--r-sq);
     font-weight: var(--w-mid);
-    text-decoration: underline;
-    text-decoration-color: var(--line);
-    text-overflow: ellipsis;
-    text-underline-offset: 0.2em;
-    white-space: nowrap;
   }
   .oh-evform-link:hover {
-    text-decoration-color: var(--ink);
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-thickness: var(--oh-evform-link-line);
+    text-underline-offset: var(--oh-evform-link-under);
   }
   /* The last line: what can still be added, as words, and Add at its end. */
   .oh-evform-last {

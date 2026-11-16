@@ -15,6 +15,8 @@
     font-size: var(--t-ui);
     font-weight: var(--w-bold);
     line-height: var(--oh-lh-tight);
+    /* The browser's own for a button: said here too, so that a link drawn as one sets its word alike. */
+    text-rendering: auto;
     white-space: nowrap;
     transition:
       transform var(--d-press) var(--e-press),

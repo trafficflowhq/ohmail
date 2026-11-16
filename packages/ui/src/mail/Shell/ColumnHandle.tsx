@@ -1,4 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { cssPoint } from "../../base/ui-zoom.js";
 import "./column-handle.css";
 
 export interface ColumnHandleProps {
@@ -31,12 +32,12 @@ export function ColumnHandle({ column, label, value, min, max, onChange, onReset
     set(to);
   };
   const down = (event: PointerEvent<HTMLDivElement>) => {
-    from.current = { x: event.clientX, width: value };
+    from.current = { x: cssPoint(event).x, width: value };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setDragging(true);
   };
   const move = (event: PointerEvent<HTMLDivElement>) => {
-    if (from.current) set(from.current.width + event.clientX - from.current.x);
+    if (from.current) set(from.current.width + cssPoint(event).x - from.current.x);
   };
   const up = () => {
     from.current = null;
