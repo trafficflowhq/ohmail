@@ -13,6 +13,7 @@ import { endLegacyOrganizerPauses, loadLocalRoster, loadUnattachedLocalRoster } 
 import { mirrorRowsRemain, stripSettingsHashes, wipeLocalMirror } from "./local-mirror.js";
 // An earlier build's sign-out left the outgoing password behind; the boot removes it.
 import { removeSignedOutResidue } from "./signed-out-residue.js";
+import { forgetStoreCopies } from "./store-copies.js";
 import type { SidecarConfig } from "./engine-types.js";
 import type { EngineScope } from "./engine-scope.js";
 
@@ -133,6 +134,8 @@ export async function rosterStartSection(scope: EngineScope, config: SidecarConf
         await clearRemovedHashes(row.id);
         if (!(await mirrorRowsRemain(scope.db, row.id))) continue;
         await wipeLocalMirror(scope.db, { accountId: scope.world.accountId, mailboxId: row.id });
+        // …and every earlier copy of the store, which still holds it; one left is removed by the next start.
+        try { forgetStoreCopies(config.dataDir, "start_cleanup", scope.log); } catch { /* said by the removal's own line */ }
         scope.log("local_mirror_wipe_finished", {
           mailboxId: row.id,
           reason: "this mailbox was removed here and its mail was still on this computer — a "
@@ -320,6 +323,8 @@ export async function rosterStartSection(scope: EngineScope, config: SidecarConf
        (`signed-out-residue.ts`); one line per mailbox, never again once removed. */
     try {
       for (const done of await removeSignedOutResidue(scope.db, scope.world.accountId)) {
+        // An earlier copy of the store still holds that password; one left is removed by the next start.
+        try { forgetStoreCopies(config.dataDir, "start_cleanup", scope.log); } catch { /* said by the removal's own line */ }
         scope.log("signed_out_residue_removed", {
           mailboxId: done.mailboxId,
           count: done.count,

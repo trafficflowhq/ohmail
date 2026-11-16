@@ -673,6 +673,19 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // `kind` says which evidence decided (unfinished / holds-nothing); no path. `info`: the store
   // held nothing, and making it again is the recovery, not a failure.
   store_set_aside: "info",
+  // store-copies.ts — the copies a store's update keeps beside it left: by their mark, or because
+  // somebody asked (`kind` says which, a closed set). A count and bytes; no path, no name.
+  store_copies_removed: "info",
+  // store-copies.ts — one could not be removed. `count` is how many are left; the removal stays
+  // owed and the next start tries again. `error`: a copy somebody asked gone is still there.
+  store_copies_removal_failed: "error",
+  // db.ts — the copy a desktop takes of its store before 2.0 moves it. Bytes, a file count and a
+  // duration; no path. `info`: the ordinary first start of 2.0 over a 1.0 store.
+  store_copied: "info",
+  // db.ts — that copy could not be taken, so the store was not updated and is as it was. `kind`
+  // says which: `no_room` carries what the update needs (`bytes`) and what the disk has free
+  // (`remaining`); `copy` carries the fault's class. `error`: the start is refused.
+  store_copy_failed: "error",
   // db.ts — a new store could not be made in memory (`fresh-store.ts`), so it was made on disk as
   // before. `err` and a reason, no path. `error`: the start still serves, seconds slower.
   fresh_store_copy_failed: "error",

@@ -650,6 +650,11 @@ export const TAKEOVER_MESSAGES: Record<TakeoverAuthorizationOutcome, string> = {
   no_mailbox: "This machine has no mailbox for that address.",
 };
 
+/** What the command says over a store that 2.0 has not updated yet: nothing was changed. */
+export const STORE_NOT_UPDATED_MESSAGE =
+  "This computer's mail store was made by an earlier version of ohmail and has not been updated yet. "
+  + "Nothing was changed. Open ohmail once so it can update the store, quit it, then run this again.";
+
 /**
  * The command's body. `organize-here-cli.ts` is what RUNS it, and the separation is deliberate:
  * this module is imported by the engine, and a module the engine imports must never execute
@@ -669,7 +674,17 @@ export async function runOrganizeHere(env: NodeJS.ProcessEnv = process.env): Pro
     return 2;
   }
 
-  const opened = await openLocalDb(dataDir);
+  let opened: Awaited<ReturnType<typeof openLocalDb>>;
+  try {
+    opened = await openLocalDb(dataDir);
+  } catch (err) {
+    /* This command names no way for a store 1.0 made to cross to 2.0, so such a store is refused
+       untouched: the app updates it, with a copy taken first, at its own start. Read by the
+       refusal's name, not its class: the phone's store has no such class to import. */
+    if ((err as { name?: unknown } | null)?.name !== "StoreUpdateRefusedError") throw err;
+    process.stderr.write(`${STORE_NOT_UPDATED_MESSAGE}\n`);
+    return 3;
+  }
   try {
     /* `"takeover"`, as the command's own name says: `organize-here` is a person at this machine
        asking for this mailbox whoever holds it. */

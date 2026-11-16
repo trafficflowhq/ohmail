@@ -11,3 +11,8 @@
 import type { Route } from "@trafficflow/api/local";
 
 export const hostPairRoutes: Route[] = [];
+
+/** The same table as the desktop's door would mount it: empty here too. */
+export function hostPairRoutesFor(): Route[] {
+  return hostPairRoutes;
+}

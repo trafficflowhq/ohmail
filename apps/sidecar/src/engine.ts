@@ -60,7 +60,7 @@ import { createSignOutFence, type SignOutFence } from "./signout-fence.js";
 import {
   COMPOSITION_WALKS,
 } from "./composition-passes.js";
-import { hostPairRoutes } from "./host-pair-routes.js";
+import { hostPairRoutesFor } from "./host-pair-routes.js";
 // The static half of the host door — the built browser client the QR sends a phone to, served
 // beside the API out of one `handleHost`. The route table wins; this covers everything else.
 // See `host-static.ts` for the traversal defense, the caching rule and the credential-page CSP.
@@ -286,6 +286,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     // A store 1.0 made is moved to 2.0 at this open, and every value it sealed is opened under this
     // install's own key ring before the move commits. No ring: nothing opens, and such a store stays.
     transition: {
+      // The way such a store crosses, named here and nowhere defaulted: a whole copy of it is taken first.
+      way: "copy",
       openSealed: Object.keys(config.keks ?? {}).length > 0 ? new StaticKeyProvider(config.keks!) : refusingKeyProvider(),
     },
   });
@@ -499,7 +501,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       ...attachmentFileRoutes(config.attachmentStagingDir),
       // The window-only pairing mint (mint/list/revoke), on this door alone and only when host
       // mode is armed. The machine's own login is the step-up; see `host-pair-routes.ts`.
-      ...(hostMode ? hostPairRoutes : []),
+      ...(hostMode ? hostPairRoutesFor(config.dataDir, log) : []),
     ]);
     /**
      * THE DESKTOP-HOST DOOR's app — the composition a paired phone reaches, built ONLY when host

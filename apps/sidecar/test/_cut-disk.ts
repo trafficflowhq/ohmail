@@ -70,7 +70,13 @@ export class Disk {
     F.renameSync = (a, b) => {
       const r = real.renameSync!.call(fs, a, b);
       const ra = this.rel(a), rb = this.rel(b);
-      if (ra !== null && rb !== null) { this.files.set(rb, this.files.get(ra) ?? Buffer.alloc(0)); this.files.delete(ra); }
+      if (ra !== null && rb !== null) {
+        if (this.files.has(ra) || !fs.statSync(b as string).isDirectory()) { this.files.set(rb, this.files.get(ra) ?? Buffer.alloc(0)); this.files.delete(ra); }
+        // A folder renamed: what is durable of each file under it is durable under its new name.
+        for (const [rel, bytes] of [...this.files]) {
+          if (rel.startsWith(ra + sep)) { this.files.set(rb + rel.slice(ra.length), bytes); this.files.delete(rel); }
+        }
+      }
       return r;
     };
     F.unlinkSync = (p) => { const r = real.unlinkSync!.call(fs, p); const rp = this.rel(p); if (rp !== null) this.files.delete(rp); return r; };
@@ -101,6 +107,50 @@ export class Disk {
     walk(root);
     return dest;
   }
+}
+
+/**
+ * The data folder after the cut, for a {@link Disk} whose root IS the data folder: every entry as
+ * it stands, every file's bytes as last made durable. A file nothing made durable is there, empty.
+ */
+export function imageOfFolder(disk: Disk, dataDir: string): string {
+  const dest = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-cut-folder-"));
+  const skip = new Set([resolve(dataDir, HOLD_FILE), resolve(dataDir, "sidecar.lock")]);
+  cpSync(dataDir, dest, { recursive: true, filter: (src) => !skip.has(resolve(src)) });
+  const walk = (dir: string): void => {
+    for (const n of readdirSync(dir)) {
+      const abs = join(dir, n);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else fs.writeFileSync(abs, disk.files.get(abs.slice(dest.length + 1)) ?? Buffer.alloc(0));
+    }
+  };
+  walk(dest);
+  return dest;
+}
+
+/**
+ * A FOLDER'S FLUSH, SEEN. The emulator above takes directory entries as they stand, so a rename
+ * nobody made durable passes every cut. This is the witness beside it: each `fs.fsyncSync` of a
+ * descriptor `fs.openSync` opened on a folder `named` gives a name for is told to `said`, as
+ * `<name> flushed`. Returns its undo.
+ */
+export function tellFolderFlushes(named: (path: string) => string | null, said: (what: string) => void): () => void {
+  const real = { openSync: F.openSync!, fsyncSync: F.fsyncSync!, closeSync: F.closeSync! };
+  const open = new Map<number, string>();
+  F.openSync = (p, flags, mode) => {
+    const fd = real.openSync.call(fs, p, flags, mode) as number;
+    const name = typeof p === "string" ? named(p) : null;
+    if (name === null) open.delete(fd); else open.set(fd, name);
+    return fd;
+  };
+  F.fsyncSync = (fd) => {
+    const r = real.fsyncSync.call(fs, fd);
+    const name = open.get(fd as number);
+    if (name !== undefined) said(`${name} flushed`);
+    return r;
+  };
+  F.closeSync = (fd) => { open.delete(fd as number); return real.closeSync.call(fs, fd); };
+  return () => { Object.assign(F, real); };
 }
 
 /** Node on Windows: only O_APPEND O_CREAT O_EXCL O_RDONLY O_RDWR O_TRUNC O_WRONLY, so no sync flag. */

@@ -2,6 +2,8 @@ import { errorResponse, jsonResponse, serviceContext, type ApiDeps, type Route }
 import {
   mintPairingToken, listPairingTokens, revokePairingToken, ServiceError, type SessionLifecycle,
 } from "@trafficflow/services/auth";
+import type { Diagnostic } from "./log.js";
+import { forgetStoreCopies, oweStoreCopies } from "./store-copies.js";
 
 /**
  * The window's own pairing surface — token mint/list/revoke AND the device list/take-back, on the
@@ -108,3 +110,29 @@ export const hostPairRoutes: Route[] = [
     },
   },
 ];
+
+/**
+ * THE TABLE AS THE WINDOW'S DOOR MOUNTS IT. Every take-back here (a pairing code, a paired device:
+ * each `DELETE` of the table) also removes every earlier copy of the store on this computer: a
+ * copy still holds the session the take-back ends, and put back by hand it would admit that device
+ * again. The removal is written down as owed before the take-back runs and done after it,
+ * whatever the take-back answered; a take-back is never refused over a copy, and one that cannot
+ * be removed now is removed by the next start, before the store opens.
+ */
+export function hostPairRoutesFor(dataDir: string, log?: Diagnostic): Route[] {
+  return hostPairRoutes.map((route): Route => (route.method !== "DELETE" || route.wire !== undefined ? route : {
+    ...route,
+    handler: async (req, deps, params) => {
+      try {
+        oweStoreCopies(dataDir, "taken_back");
+      } catch { /* the removal below is still tried */ }
+      try {
+        return await route.handler(req, deps, params);
+      } finally {
+        try {
+          forgetStoreCopies(dataDir, "taken_back", log);
+        } catch { /* said by the removal's own line; it stays owed */ }
+      }
+    },
+  }));
+}

@@ -351,6 +351,7 @@ apps/sidecar/test/cloud-launch-bearer.test.ts	data	through apps/sidecar/test/_da
 apps/sidecar/test/cloud-mailbox-refresh.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/cloud-mirror-apply-order.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/cloud-mirror-auth-verdict.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-body-search-offline.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/cloud-mirror-erased-account.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/cloud-mirror-erased-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/cloud-mirror-fence-statements.test.ts	data	reads data files (json)	none	desktop-engine	
@@ -485,6 +486,7 @@ apps/sidecar/test/overrun-ladder-local.test.ts	data	through apps/sidecar/test/_d
 apps/sidecar/test/overrun-set-aside.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/own-mail-at-the-gate.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/pair-undo-latch.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/paired-store-is-set-aside.test.ts	data	reads a data folder it made: a store set aside, its place in the feed and the files that stay beside it	none	desktop-engine	
 apps/sidecar/test/pairing-local.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/pending-door.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/pglite-concurrent-dispatch.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
@@ -562,6 +564,7 @@ apps/sidecar/test/slow/kill-mid-drain.test.ts	data	through apps/sidecar/test/_da
 apps/sidecar/test/slow/local-db.test.ts	source-text	reads source as text (mjs, rs, ts)	layer 1	desktop-engine	
 apps/sidecar/test/slow/mirror-owner-signin.test.ts	data	reads data files (email, json, seal)	none	desktop-engine	
 apps/sidecar/test/slow/search-budget-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/store-copy-killed.test.ts	data	lists a data folder it made: the copy a killed start left	none	desktop-engine	
 apps/sidecar/test/slow/sync-liveness.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/stand-down-mid-drain-is-a-state-change.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/standalone-consent-and-removal.test.ts	source-text	through apps/sidecar/test/_mailbox-rows.ts, apps/sidecar/test/_datadir.ts: reads the mail schema's source and the migrations; the migrations and a data folder it made	layer 1	desktop-engine	
@@ -569,9 +572,19 @@ apps/sidecar/test/standalone-open-read.e2e.test.ts	data	through apps/sidecar/tes
 apps/sidecar/test/standalone-read-writeback.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-checkpoint-waits-for-the-window.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-close-door.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/store-copies-local-door.test.ts	data	reads a data folder it made: the store's copy and its own record	none	desktop-engine	
+apps/sidecar/test/store-copies-ordinary-rule.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-copies-owed-removal.test.ts	data	reads a data folder it made: the copies left and a folder outside it	none	desktop-engine	
+apps/sidecar/test/store-copies-paired-door.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-copies-start-cleanup.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-copy-before-the-window.test.ts	data	reads a data folder it made: the store, its copy and the copy's own record	none	desktop-engine	
+apps/sidecar/test/store-copy-cut-emulated.test.ts	data	through apps/sidecar/test/_cut-disk.ts: reads a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-copy-settled.test.ts	data	through apps/sidecar/test/_old-head-store.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-fatal-ends-the-engine.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/store-lanes-person.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-lanes.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-open-names-its-way.test.ts	data	lists a data folder it made: nothing was added to it	none	desktop-engine	
+apps/sidecar/test/store-update-phases.test.ts	data	through apps/sidecar/test/_old-head-store.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/stored-login-clear.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/sync-log-wiring.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/takeover-publishes-beside-the-held-settings.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
