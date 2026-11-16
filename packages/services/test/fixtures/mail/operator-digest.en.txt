@@ -1,0 +1,16 @@
+Subject: [production] ohmail: daily alert summary — 4 incidents
+
+[production] ohmail: daily alert summary — 4 incidents
+
+Incidents since 2026-08-20T09:05:00.000Z.
+
+[critical] 1 send stuck — sends_stuck — opened 2026-08-21T07:40:00.000Z
+
+[warning] imap_admission_refused — imap_admission_refused — opened 2026-08-20T22:10:00.000Z — resolved 2026-08-20T23:30:00.000Z
+
+2 more — open the console.
+
+Admin console: https://admin.ohmail.app/
+
+—
+Sent at most once every 24 h, listing every incident that opened, stood or cleared since the last summary. Nothing is sent when there is nothing to list.

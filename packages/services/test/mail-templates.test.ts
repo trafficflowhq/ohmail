@@ -4,17 +4,21 @@ import {
   renderTemplate, safeUrl, esc, TEMPLATE_NAMES, providerClassOf,
   type TemplateDataMap, type TemplateName, type WaitlistTier,
 } from "../src/index.js";
+import { DARK_BLOCK } from "../src/mail/frame.js";
 
 /**
  * The template gate.
  *
- * Three things are asserted here and each one is a rule the product cannot break:
- *  1. Snapshots of subject + text + html for all FIVE templates. Copy that reaches a
- *     stranger's inbox does not change by accident.
- *  2. The HTML loads NOTHING remote. ohmail strips tracking pixels out of other
- *     people's mail (`privacy-service.ts`); a remote image, webfont or stylesheet in
- *     our own would be the same beacon with our name on it.
- *  3. Every interpolation is escaped and every URL is scheme-checked.
+ * What it holds, each a rule the product cannot break:
+ *  1. Every template, in every state and language it has, renders to its golden files
+ *     (`fixtures/mail/<mail>[.<state>].<lang>.{txt,html}`). Words that reach a stranger's inbox do
+ *     not change by accident.
+ *  2. The HTML loads NOTHING remote. ohmail strips tracking pixels out of other people's mail; a
+ *     remote image, webfont or stylesheet in our own would be the same beacon with our name on it.
+ *     The one style element is the frame's dark block, and the one conditional comment is the
+ *     capsule's Outlook fallback, which is parsed and held to its own allow-list.
+ *  3. Every value is text: a hostile value in any field renders as its own characters.
+ *  4. The html says what the text part says.
  */
 
 const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
@@ -79,17 +83,12 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     },
     consoleUrl: "https://admin.ohmail.app",
   },
-  // The mail that carries the "you already have an account" news that `POST /auth/register`
-  // stopped putting in its response. It is the only template with NO credential in it at all —
-  // nothing was created and nothing was proven, so there is nothing to mint — which is why the
-  // fixture has no token, no code and no query string to get wrong.
+  // The "you already have an account" news `POST /auth/register` no longer puts in its response.
+  // The only template with NO credential at all: no token, no code, no query string to get wrong.
   account_exists: {
     signInUrl: "https://ohmail.app/login",
     supportEmail: "support@ohmail.app",
   },
-  // The wall's notice family (cloud 0040). One fixture drives the closed-set and remote-resource
-  // sweeps like every sibling; the per-kind and per-locale copy is rendered in its own describe
-  // below, because a fixture can only pin one member of a closed union at a time.
   // The sign-in throttle's notices (`drainSecurityNotices`): a closed kind, a time and config.
   security_notice: {
     kind: "factor_refused",
@@ -97,12 +96,13 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     devicesUrl: "https://ohmail.app/settings/devices",
     supportEmail: "support@ohmail.app",
   },
+  // The wall's notice family (cloud 0040); every kind and language is in STATES below.
   lifecycle_notice: {
     kind: "closed",
     locale: "en",
     anchorDate: "16 September 2026, 00:00 UTC",
     erasureDate: "16 October 2026, 00:00 UTC",
-    accountUrl: "https://app.ohmail.app/settings/account",
+    accountUrl: "https://app.ohmail.app/#/settings/account",
     setupUrl: "https://app.ohmail.app/login?next=join",
     noMailbox: false,
     supportEmail: "support@ohmail.app",
@@ -142,63 +142,233 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
 
 const ALL = TEMPLATE_NAMES;
 
-/** Hosts a rendered mail is allowed to LINK to. Anything else is a leak or a typo.
- *  `admin.ohmail.app` is the staff console — reachable ONLY from `operator_alert` and
- *  `operator_digest`, which no customer ever receives. */
+/** Hosts a rendered mail is allowed to LINK to. `admin.ohmail.app` is the staff console — reachable
+ *  ONLY from `operator_alert` and `operator_digest`, which no customer ever receives. */
 const ALLOWED_HOSTS = new Set(["ohmail.app", "app.ohmail.app", "admin.ohmail.app", "localhost"]);
+
+// ── Every state, in every language, as the brand kit lists them ─────────────
+
+interface State { id: string; template: TemplateName; lang: "en" | "de"; data: unknown }
+
+const GB = 1_000_000_000;
+const date = (lang: "en" | "de", en: string, de: string): string => (lang === "de" ? de : en);
+const storage = (over: Partial<TemplateDataMap["storage_near"]>) => (lang: "en" | "de") =>
+  ({ ...FIXTURES.storage_near, locale: lang, ...over });
+const lifecycle = (over: Partial<TemplateDataMap["lifecycle_notice"]>) => (lang: "en" | "de") => ({
+  ...FIXTURES.lifecycle_notice, locale: lang,
+  anchorDate: date(lang, "16 September 2026, 00:00 UTC", "16. September 2026, 00:00 UTC"),
+  erasureDate: date(lang, "16 October 2026, 00:00 UTC", "16. Oktober 2026, 00:00 UTC"),
+  ...over,
+});
+
+const MAILS: Array<{ id: string; template: TemplateName; langs: Array<"en" | "de">; states: Array<[string, (lang: "en" | "de") => unknown]> }> = [
+  { id: "waitlist", template: "waitlist_confirmation", langs: ["en"],
+    states: (["plus", "desktop", "solo", "pro", "undecided"] as const).map((tier) => [tier, () => ({ ...FIXTURES.waitlist_confirmation, tier })]) },
+  { id: "beta-invite", template: "invite", langs: ["en"], states: [["default", () => FIXTURES.invite]] },
+  { id: "confirm-address", template: "email_verification", langs: ["en", "de"],
+    states: [["default", (lang) => ({ ...FIXTURES.email_verification, locale: lang, expiresIn: date(lang, "24 hours", "24 Stunden") })]] },
+  { id: "account-exists", template: "account_exists", langs: ["en", "de"], states: [["default", (lang) => ({ ...FIXTURES.account_exists, locale: lang })]] },
+  { id: "connect-mailbox", template: "connect_reminder", langs: ["en", "de"],
+    states: (["other", "gmail", "microsoft"] as const).map((provider) => [provider, (lang) => ({ ...FIXTURES.connect_reminder, locale: lang, provider })]) },
+  { id: "new-sign-in", template: "new_device_signin", langs: ["en"], states: [
+    ["default", () => ({ ...FIXTURES.new_device_signin, device: "ohmail for Mac" })],
+    ["unknown", () => ({ ...FIXTURES.new_device_signin, device: "Unknown device", ip: "unknown" })],
+  ] },
+  { id: "sign-in-slowed", template: "security_notice", langs: ["en", "de"], states: [["default", (lang) => ({
+    ...FIXTURES.security_notice, kind: "sign_in_slowed", locale: lang, at: date(lang, "26 September 2026, 12:00 UTC", "26. September 2026, 12:00 UTC") })]] },
+  { id: "second-step-failed", template: "security_notice", langs: ["en", "de"], states: [["default", (lang) => ({
+    ...FIXTURES.security_notice, locale: lang, at: date(lang, "26 September 2026, 12:00 UTC", "26. September 2026, 12:00 UTC") })]] },
+  { id: "trial-ends", template: "lifecycle_notice", langs: ["en", "de"], states: [
+    ["default", lifecycle({ kind: "trial_two_days" })],
+    ["no-mailbox", lifecycle({ kind: "trial_two_days", noMailbox: true })],
+  ] },
+  { id: "subscription-ended", template: "lifecycle_notice", langs: ["en", "de"], states: [
+    ["default", lifecycle({ kind: "closed" })],
+    ["no-date", lifecycle({ kind: "closed", erasureDate: null })],
+  ] },
+  { id: "account-closed", template: "lifecycle_notice", langs: ["en", "de"], states: [
+    ["default", lifecycle({ kind: "closed", noMailbox: true })],
+    ["no-date", lifecycle({ kind: "closed", noMailbox: true, erasureDate: null })],
+  ] },
+  { id: "erasure-week", template: "lifecycle_notice", langs: ["en", "de"], states: [["default", lifecycle({ kind: "erasure_week" })]] },
+  { id: "subscription-page", template: "billing_link", langs: ["en", "de"], states: [["default", (lang) => ({ ...FIXTURES.billing_link, locale: lang })]] },
+  { id: "storage-near", template: "storage_near", langs: ["en", "de"], states: [
+    ["default", storage({ usedBytes: 1.8 * GB, capBytes: 2 * GB, limitReason: "plan", expectedBytes: 3.6 * GB, importing: false,
+      fit: { plan: "plus", addonUnits: 0, roomBytes: 5 * GB, amount: 1_500, keepsAll: true }, addonBytes: 0 })],
+    ["trial-import", storage({})],
+    ["held", storage({ usedBytes: 4.6 * GB, capBytes: 5 * GB, limitReason: "held", limitDropsAt: "2026-11-21T00:00:00.000Z",
+      expectedBytes: 4.8 * GB, importing: false, fit: { plan: "plus", addonUnits: 0, roomBytes: 5 * GB, amount: 1_500, keepsAll: true }, addonBytes: 0 })],
+    ["most", storage({ usedBytes: 9.1 * GB, capBytes: 10 * GB, limitReason: "plan", expectedBytes: 140 * GB, importing: false,
+      fit: { plan: "pro", addonUnits: 10, roomBytes: 110 * GB, amount: 12_900, keepsAll: false }, addonBytes: 100 * GB })],
+  ] },
+  { id: "storage-full", template: "storage_full", langs: ["en", "de"], states: [
+    ["default", (lang) => ({ ...FIXTURES.storage_full, locale: lang })],
+    ["no-month", (lang) => ({ ...FIXTURES.storage_full, locale: lang, keptFrom: null })],
+    ["trial", (lang) => ({ ...FIXTURES.storage_full, locale: lang, limitReason: "trial", keptFrom: "2021-06" })],
+  ] },
+  { id: "operator-alert", template: "operator_alert", langs: ["en"], states: [["default", () => FIXTURES.operator_alert]] },
+  { id: "operator-digest", template: "operator_digest", langs: ["en"], states: [["default", () => FIXTURES.operator_digest]] },
+];
+
+const STATES: State[] = MAILS.flatMap((m) => m.states.flatMap(([state, data], i) => m.langs.map((lang) => ({
+  id: `${m.id}${i === 0 ? "" : `.${state}`}.${lang}`, template: m.template, lang, data: data(lang),
+}))));
+const CUSTOMER = STATES.filter((s) => s.template !== "operator_alert" && s.template !== "operator_digest");
+const render = (s: State) => renderTemplate(s.template, s.data as never);
+
+// ── The self-contained check, shared by every state and by the planted documents ──
+
+/**
+ * Tags and attributes a mail client fetches WITHOUT the reader doing anything. A denylist is only as
+ * good as its author's imagination, so the PARSED allow-list below is the real rule; the regexes stay
+ * because they read as documentation and the planted documents keep them honest.
+ */
+const AUTOLOAD = [
+  /<img\b/i, /<script\b/i, /<iframe\b/i, /<link\b/i, /<video\b/i, /<audio\b/i,
+  /<object\b/i, /<embed\b/i, /<svg\b/i, /<image\b/i, /<use\b/i, /<input\b/i, /<base\b/i,
+  /\bsrc\s*=/i, /\bsrcset\s*=/i, /\bbackground\s*=/i, /\bposter\s*=/i,
+  /\bxlink:href/i, /\bformaction\s*=/i, /\bhttp-equiv/i,
+  /\burl\s*\(/i, /@import/i, /@font-face/i, /image-set/i, /expression\s*\(/i, /\\[0-9a-f]/i,
+];
+
+/** Every element a customer mail may emit. Anything else fails. */
+const ALLOWED_ELEMENTS = new Set([
+  "html", "head", "meta", "title", "style", "body",
+  "table", "tbody", "tr", "td", "a", "p", "h1", "span", "strong",
+]);
+
+/** Every attribute those elements may carry. `src` is deliberately absent. */
+const ALLOWED_ATTRS = new Set([
+  "lang", "charset", "name", "content", "style", "href", "class", "xmlns:v", "xmlns:o",
+  "role", "width", "cellpadding", "cellspacing", "border", "align",
+]);
+
+/** The capsule's Outlook fallback, parsed on its own, may hold only these. */
+const MSO_ELEMENTS = new Set(["v:roundrect", "w:anchorlock", "center"]);
+const MSO_ATTRS = new Set(["xmlns:v", "xmlns:w", "href", "style", "arcsize", "stroke", "fillcolor"]);
+const URNS: Record<string, string> = {
+  "xmlns:v": "urn:schemas-microsoft-com:vml",
+  "xmlns:o": "urn:schemas-microsoft-com:office:office",
+  "xmlns:w": "urn:schemas-microsoft-com:office:word",
+};
+const DARK_CLASSES = new Set([...DARK_BLOCK.matchAll(/^\.([a-z])\{/gm)].map((m) => m[1]!));
+
+function hrefProblem(href: string): string | null {
+  if (href.startsWith("mailto:")) return /^mailto:[^\s<>"?&#%,;@]+@[^\s<>"?&#%,;@]+$/.test(href) ? null : `mailto ${href}`;
+  try {
+    const u = new URL(href);
+    return (u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost")) && ALLOWED_HOSTS.has(u.hostname)
+      ? null : `href ${href}`;
+  } catch { return `href ${href}`; }
+}
+
+function commentsOf(doc: Document): string[] {
+  const out: string[] = [];
+  const walk = doc.createTreeWalker(doc, 128 /* NodeFilter.SHOW_COMMENT */);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) out.push((n as Comment).data);
+  return out;
+}
+
+/** Every reason this document is not a self-contained mail; empty when it is. */
+function problems(html: string): string[] {
+  const found: string[] = [];
+  for (const re of AUTOLOAD) if (re.test(html)) found.push(`matched ${re}`);
+  const doc = new JSDOM(html).window.document;
+  for (const el of doc.querySelectorAll("*")) {
+    const tag = el.tagName.toLowerCase();
+    if (!ALLOWED_ELEMENTS.has(tag)) found.push(`element ${tag}`);
+    for (const a of el.getAttributeNames()) {
+      if (!ALLOWED_ATTRS.has(a)) found.push(`attribute ${a} on ${tag}`);
+      if (a in URNS && el.getAttribute(a) !== URNS[a]) found.push(`${a} value`);
+    }
+    const style = el.getAttribute("style");
+    if (style !== null && /[(\\@{}<]|\/\*/.test(style)) found.push(`style attribute on ${tag}: ${style}`);
+    const cls = el.getAttribute("class");
+    if (cls !== null) for (const c of cls.split(" ")) if (!DARK_CLASSES.has(c)) found.push(`class ${c}`);
+  }
+  for (const a of doc.querySelectorAll("a")) {
+    const p = hrefProblem(a.getAttribute("href") ?? "");
+    if (p) found.push(p);
+  }
+  const styles = [...doc.querySelectorAll("style")];
+  if (styles.length !== 1) found.push(`${styles.length} style elements`);
+  for (const s of styles) {
+    if (s.parentElement?.tagName.toLowerCase() !== "head") found.push("style outside head");
+    if (s.getAttributeNames().length > 0) found.push("style with attributes");
+    if (s.textContent !== `\n${DARK_BLOCK}\n`) found.push("style is not the dark block");
+  }
+  const capsule = doc.querySelector("a.k")?.getAttribute("href") ?? null;
+  for (const c of commentsOf(doc)) {
+    if (c === "[if !mso]><!" || c === "<![endif]") continue;
+    const mso = /^\[if mso\]>([\s\S]*)<!\[endif\]$/.exec(c);
+    if (!mso) { found.push(`comment ${c.slice(0, 40)}`); continue; }
+    for (const re of AUTOLOAD) if (re.test(mso[1]!)) found.push(`mso matched ${re}`);
+    const frag = new JSDOM(`<body>${mso[1]}</body>`).window.document.body;
+    for (const el of frag.querySelectorAll("*")) {
+      const tag = el.tagName.toLowerCase();
+      if (!MSO_ELEMENTS.has(tag)) found.push(`mso element ${tag}`);
+      for (const a of el.getAttributeNames()) if (!MSO_ATTRS.has(a)) found.push(`mso attribute ${a}`);
+      if (el.hasAttribute("href") && el.getAttribute("href") !== capsule) found.push("mso href is not the capsule's");
+    }
+  }
+  return found;
+}
+
+describe("the dark block holds nothing a client could fetch", () => {
+  it("is the media query and one-class colour rules, nothing else", () => {
+    const lines = DARK_BLOCK.split("\n");
+    expect(lines[0]).toBe(":root{color-scheme:light dark;supported-color-schemes:light dark}");
+    expect(lines[1]).toBe("@media (prefers-color-scheme:dark){");
+    expect(lines.at(-1)).toBe("}");
+    for (const l of lines.slice(2, -1)) {
+      expect(l).toMatch(/^\.[a-z]\{(?:(?:color|background):#[0-9A-F]{6} !important;?)+\}$/);
+    }
+    for (const bad of ["url(", "@import", "@font-face", "http", "//", "\\", "expression", "'", "\"", ","]) {
+      expect(DARK_BLOCK, bad).not.toContain(bad);
+    }
+  });
+});
 
 describe("templates — the set is closed and complete", () => {
   it("is exactly the thirteen templates — eleven customer mails and two operator mails", () => {
     expect(ALL).toEqual([
       "waitlist_confirmation", "invite", "new_device_signin",
       // The sign-in throttle's notices, argued at the definition: a closed kind, a time and the
-      // support address — no caller prose, no link (there is no password rotation to point at).
+      // support address — no caller prose, no capsule (there is no password rotation to point at).
       "security_notice",
       "email_verification",
-      // Added deliberately and argued for in `templates.ts`: the pager needs a second
-      // delivery path that shares no infrastructure with the webhook, and the closed-set
-      // guarantee (no free-form body can become outbound mail) is untouched by it.
+      // The pager needs a second delivery path that shares no infrastructure with the webhook,
+      // and the closed-set guarantee (no free-form body can become outbound mail) is untouched by it.
       "operator_alert",
-      // The pager's daily summary, argued at its definition: the operator address only, and
-      // what a resolve mail already printed (keys, kinds, titles, timestamps).
+      // The pager's daily summary: the operator address only, keys, kinds, titles, timestamps.
       "operator_digest",
-      // Also argued at its definition. This one is LOAD-BEARING for a security property
-      // rather than a convenience: `POST /auth/register`'s public path answers a constant 202
-      // for every address, so "you already have an account, sign in instead" has nowhere to be
-      // said except in the inbox of the person it is about.
+      // LOAD-BEARING for a security property: `POST /auth/register`'s public path answers a constant
+      // 202 for every address, so "you already have an account" can only be said in the inbox.
       "account_exists",
-      // Cloud 0040, the wall. Three notices in one entry (a closed `kind` union), argued at its
-      // definition: the data is dates, closed words and configuration — no caller prose — and
-      // the copy follows the account's locale because these reach people who stopped paying
-      // attention. No price and no plan name; a census below pins that.
+      // Cloud 0040, the wall: dates, closed words and configuration, in the account's language.
       "lifecycle_notice",
-      // The one mail staff send by hand (`POST /admin/accounts/:id/billing-link`): a language,
-      // the app's billing door and the support address; capped per account by the route.
+      // The one mail staff send by hand: a language, the app's billing door and the support address.
       "billing_link",
-      // Once per trial, to a trial that connected no mailbox (the lifecycle pass, behind its switch):
-      // a language, a closed provider class, the sign-in door and the support address.
+      // Once per trial, to a trial that connected no mailbox.
       "connect_reminder",
-      // Cloud 0057, the storage mails at 90% and when full: numbers, closed words, the program's
-      // fitted choice with its price, and the Settings › Storage door, which asks for sign-in.
+      // Cloud 0057, the storage mails at 90% and when full.
       "storage_near",
       "storage_full",
     ]);
   });
 
+  it("the state table covers every template, and every state the brand kit draws", () => {
+    expect([...new Set(STATES.map((s) => s.template))].sort()).toEqual([...ALL].sort());
+    expect(CUSTOMER).toHaveLength(52);
+  });
+
   it("the closed-set guarantee still holds: no template can carry a free-form body", () => {
-    // The reason "closed" survives two additions. What was ever promised is that no data shape in
-    // this registry can express arbitrary text destined for a stranger's inbox — not that the
-    // count never changes. Every field of every fixture is either a first-party URL, a
-    // deployment-config string, a credential we minted, or an enum; none is a caller's prose.
-    //
-    // `operator_alert.alerts[].detail` is the closest thing to free text in the set and it is not
-    // an exception: it is produced by `packages/db/src/alerts.ts` from counts and ages, it goes
-    // ONLY to the configured operator address (`sendOperatorAlert` refuses any other recipient),
-    // and it reaches no customer. Asserted rather than trusted, so a template added later that
-    // takes a `message` or `body` field has to break this line to ship.
+    // Every field of every fixture is a first-party URL, a deployment-config string, a credential we
+    // minted, or an enum; none is a caller's prose. `operator_alert.alerts[].detail` comes from
+    // `packages/db/src/alerts.ts` and goes only to the configured operator address.
     const FORBIDDEN = /^(body|message|text|html|content|note|comment|subject)$/i;
     for (const name of ALL) {
-      const fixture = FIXTURES[name] as Record<string, unknown>;
+      const fixture = FIXTURES[name] as unknown as Record<string, unknown>;
       for (const key of Object.keys(fixture)) {
         expect(FORBIDDEN.test(key), `${name}.${key} looks like a free-form body field`).toBe(false);
       }
@@ -206,45 +376,35 @@ describe("templates — the set is closed and complete", () => {
   });
 
   it("ONLY the operator mails may name the staff console — no customer mail links there", () => {
-    for (const name of ALL) {
-      const { html, text } = renderTemplate(name, FIXTURES[name] as never);
-      const linksToAdmin = html.includes("admin.ohmail.app") || text.includes("admin.ohmail.app");
-      expect(linksToAdmin, `${name} must not link to the staff console`)
-        .toBe(name === "operator_alert" || name === "operator_digest");
+    for (const s of STATES) {
+      const { html, text } = render(s);
+      expect(html.includes("admin.ohmail.app") || text.includes("admin.ohmail.app"), s.id)
+        .toBe(s.template === "operator_alert" || s.template === "operator_digest");
     }
   });
 
-  it("every template renders a non-empty subject, text and html", () => {
-    for (const name of ALL) {
-      const out = renderTemplate(name, FIXTURES[name] as never);
-      expect(out.subject.length, name).toBeGreaterThan(8);
-      expect(out.text.length, name).toBeGreaterThan(120);
-      expect(out.html.length, name).toBeGreaterThan(400);
-      // The subject line must name the product — it is what the recipient sees first.
-      expect(out.subject, name).toMatch(/ohmail/);
-      // And it must name it the way the brand is written. The product is
-      // "ohmail", lower-case, everywhere a human reads it; a subject line is
-      // the most-read surface there is, so the old casing is pinned out of
-      // the subject, the body and the HTML rather than merely snapshotted.
-      for (const part of [out.subject, out.text, out.html])
-        expect(part, name).not.toMatch(/OhMail|Ohmail/);
+  it("every state renders a subject naming ohmail, and a text and an html part", () => {
+    for (const s of STATES) {
+      const out = render(s);
+      expect(out.subject, s.id).toMatch(/ohmail/);
+      expect(out.text.length, s.id).toBeGreaterThan(120);
+      expect(out.html.length, s.id).toBeGreaterThan(400);
+      for (const part of [out.subject, out.text, out.html]) expect(part, s.id).not.toMatch(/OhMail|Ohmail/);
     }
   });
 });
 
-describe("templates — snapshots", () => {
-  for (const name of ALL) {
-    it(`${name} subject/text/html is unchanged`, () => {
-      const out = renderTemplate(name, FIXTURES[name] as never);
-      expect(out.subject).toMatchSnapshot(`${name}.subject`);
-      expect(out.text).toMatchSnapshot(`${name}.text`);
-      expect(out.html).toMatchSnapshot(`${name}.html`);
-      expect(out.headers ?? null).toMatchSnapshot(`${name}.headers`);
+describe("templates — every state as its golden files", () => {
+  for (const s of STATES) {
+    it(`${s.id}`, async () => {
+      const out = render(s);
+      await expect(`Subject: ${out.subject}\n\n${out.text}`).toMatchFileSnapshot(`fixtures/mail/${s.id}.txt`);
+      await expect(out.html).toMatchFileSnapshot(`fixtures/mail/${s.id}.html`);
     });
   }
 
   it("the waitlist confirmation is the only one carrying List-Unsubscribe", () => {
-    const withHeaders = ALL.filter((n) => renderTemplate(n, FIXTURES[n] as never).headers != null);
+    const withHeaders = [...new Set(STATES.filter((s) => render(s).headers != null).map((s) => s.template))];
     expect(withHeaders).toEqual(["waitlist_confirmation"]);
     const h = renderTemplate("waitlist_confirmation", FIXTURES.waitlist_confirmation).headers!;
     expect(h["List-Unsubscribe"]).toBe(
@@ -252,131 +412,178 @@ describe("templates — snapshots", () => {
     );
   });
 
-  it("every waitlist tier renders its own label", () => {
+  it("every waitlist tier renders its own line, and a tier outside the set drops it", () => {
     const tiers: WaitlistTier[] = ["desktop", "solo", "plus", "pro", "undecided"];
-    const labels = tiers.map((tier) =>
-      renderTemplate("waitlist_confirmation", { ...FIXTURES.waitlist_confirmation, tier }).text
-        .split("\n").find((l) => l.startsWith("You leaned toward")));
-    expect(labels).toMatchSnapshot("waitlist tier labels");
-    expect(new Set(labels).size).toBe(tiers.length);
+    const lines = tiers.map((tier) => renderTemplate("waitlist_confirmation", { ...FIXTURES.waitlist_confirmation, tier }).text
+      .split("\n").find((l) => /^You (leaned|are still)/.test(l)));
+    expect(new Set(lines).size).toBe(tiers.length);
+    const odd = renderTemplate("waitlist_confirmation", { ...FIXTURES.waitlist_confirmation, tier: "x" as never }).text;
+    expect(odd).not.toMatch(/undefined|You leaned/);
   });
 });
 
-describe("templates — no remote resource, in any template", () => {
-  /**
-   * Tags/attributes a mail client fetches WITHOUT the reader doing anything.
-   *
-   * A regex list is a denylist, and a denylist is only ever as good as its author's
-   * imagination — an independent review pointed out this one missed SVG `<image href>`
-   * and `<meta http-equiv="refresh">`. Both are added, but the real answer is the
-   * PARSED allow-list below: a denylist says "not these", an allow-list says "only
-   * these", and only the second one is still correct against a tag nobody has thought
-   * of yet. The regexes stay because they are fast, they read as documentation, and the
-   * adversarial control at the end of this block keeps them honest.
-   */
-  const AUTOLOAD = [
-    /<img\b/i, /<script\b/i, /<iframe\b/i, /<link\b/i, /<video\b/i, /<audio\b/i,
-    /<object\b/i, /<embed\b/i, /<svg\b/i, /<image\b/i, /<use\b/i, /<input\b/i,
-    /\bsrc\s*=/i, /\bsrcset\s*=/i, /\bbackground\s*=/i, /\bposter\s*=/i,
-    /\bxlink:href/i, /\bformaction\s*=/i, /\bhttp-equiv/i,
-    /\burl\s*\(/i, /@import/i, /<style\b/i,
-  ];
-
-  /** Every element an ohmail template is allowed to emit. Anything else fails. */
-  const ALLOWED_ELEMENTS = new Set([
-    "html", "head", "meta", "title", "body",
-    "table", "tbody", "tr", "td", "a", "p", "h1", "span", "strong", "br",
-  ]);
-
-  /** Every attribute those elements are allowed to carry. `src` is deliberately absent. */
-  const ALLOWED_ATTRS = new Set([
-    "lang", "charset", "name", "content", "style", "href",
-    "role", "width", "cellpadding", "cellspacing", "border", "align",
-  ]);
-
-  for (const name of ALL) {
-    it(`${name} html auto-loads nothing`, () => {
-      const { html } = renderTemplate(name, FIXTURES[name] as never);
-      for (const pattern of AUTOLOAD) {
-        expect(pattern.test(html), `${name} html matched ${pattern}`).toBe(false);
-      }
-    });
-
-    it(`${name} html links only to first-party hosts, and only from href`, () => {
-      const { html } = renderTemplate(name, FIXTURES[name] as never);
-      // Every http(s) URL anywhere in the document — href, visible link text, anything.
-      const all = html.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
-      expect(all.length, `${name}: rendered no link at all`).toBeGreaterThan(0);
-      for (const raw of all) {
-        expect(ALLOWED_HOSTS.has(new URL(raw).hostname), `${name}: foreign host ${raw}`).toBe(true);
-      }
-      // …and the ONLY attribute a URL is ever the value of is `href`. `src`,
-      // `background`, `poster`, `data-*` — any of those would be a fetch on render.
-      const attrs = [...html.matchAll(/([a-zA-Z][\w-]*)\s*=\s*"[^"]*https?:\/\//g)]
-        .map((m) => m[1]!.toLowerCase());
-      expect(new Set(attrs), `${name}: URL in a non-href attribute`).toEqual(new Set(["href"]));
-    });
-
-    it(`${name} text part is plain — no markup, and its links are first-party`, () => {
-      const { text } = renderTemplate(name, FIXTURES[name] as never);
-      expect(text).not.toMatch(/<[a-z!/]/i);
-      for (const raw of text.match(/https?:\/\/[^\s]+/g) ?? []) {
-        expect(ALLOWED_HOSTS.has(new URL(raw).hostname), `${name}: foreign host ${raw}`).toBe(true);
-      }
-    });
-  }
-
-  for (const name of ALL) {
-    it(`${name} html contains ONLY allow-listed elements and attributes`, () => {
-      const { html } = renderTemplate(name, FIXTURES[name] as never);
+describe("templates — no remote resource, in any state", () => {
+  it("every state is self-contained: allow-listed markup, the dark block, the capsule's fallback, first-party links", () => {
+    const elements = new Set<string>();
+    const attrs = new Set<string>();
+    for (const s of CUSTOMER) {
+      const { html } = render(s);
+      expect(problems(html), s.id).toEqual([]);
       const doc = new JSDOM(html).window.document;
-      const elements = new Set<string>();
-      const attrs = new Set<string>();
       for (const el of doc.querySelectorAll("*")) {
         elements.add(el.tagName.toLowerCase());
-        for (const a of el.getAttributeNames()) attrs.add(a.toLowerCase());
+        for (const a of el.getAttributeNames()) attrs.add(a);
       }
-      const badElements = [...elements].filter((e) => !ALLOWED_ELEMENTS.has(e));
-      const badAttrs = [...attrs].filter((a) => !ALLOWED_ATTRS.has(a));
-      expect(badElements, `${name}: element outside the allow-list`).toEqual([]);
-      expect(badAttrs, `${name}: attribute outside the allow-list`).toEqual([]);
-      // The parsed form of the same rule as the regexes: no element in the DOM has a
-      // property the client would dereference before the reader clicks anything.
-      for (const el of doc.querySelectorAll("*")) {
-        for (const a of el.getAttributeNames()) {
-          expect(["src", "srcset", "poster", "background", "data", "formaction", "xlink:href"])
-            .not.toContain(a.toLowerCase());
+    }
+    // The lists are no wider than what the mails use.
+    expect([...elements].sort()).toEqual([...ALLOWED_ELEMENTS].sort());
+    expect([...attrs].sort()).toEqual([...ALLOWED_ATTRS].sort());
+  });
+
+  it("every capsule has its Outlook fallback with the same address, and the same address in words in the footer", () => {
+    for (const s of CUSTOMER) {
+      const doc = new JSDOM(render(s).html).window.document;
+      const capsule = doc.querySelector("a.k");
+      const mso = commentsOf(doc).filter((c) => c.startsWith("[if mso]"));
+      if (!capsule) { expect(mso, s.id).toEqual([]); continue; }
+      expect(mso, s.id).toHaveLength(1);
+      expect(mso[0], s.id).toContain(`href="${esc(capsule.getAttribute("href")!)}"`);
+      const footerLinks = [...doc.querySelectorAll("td.j a")].map((a) => a.getAttribute("href"));
+      expect(footerLinks, s.id).toContain(capsule.getAttribute("href"));
+    }
+  });
+
+  it("the text part is plain, and its links are first-party", () => {
+    for (const s of STATES) {
+      const { text } = render(s);
+      expect(text, s.id).not.toMatch(/<[a-z!/]/i);
+      for (const raw of text.match(/https?:\/\/[^\s)]+/g) ?? []) {
+        expect(ALLOWED_HOSTS.has(new URL(raw).hostname), `${s.id}: foreign host ${raw}`).toBe(true);
+      }
+    }
+  });
+
+  it("the guards bite: each planted document is refused", () => {
+    const base = render(CUSTOMER.find((s) => s.id === "confirm-address.en")!).html;
+    expect(problems(base)).toEqual([]);
+    const plants: Array<[string, string]> = [
+      ["an image", base.replace("<h1 ", `<img src="https://tracker.example.com/o.gif" width="1"><h1 `)],
+      ["a data picture", base.replace("<h1 ", `<img src="data:image/png;base64,AAAA"><h1 `)],
+      ["a cid picture", base.replace("<h1 ", `<img src="cid:mark"><h1 `)],
+      ["an svg image", base.replace("<h1 ", `<svg><image href="https://tracker.example.com/o.gif"/></svg><h1 `)],
+      ["a refresh", base.replace("<title>", `<meta http-equiv="refresh" content="0;url=https://tracker.example.com/"><title>`)],
+      ["a cell background", base.replace(`<td class="s"`, `<td background="https://tracker.example.com/bg.png" class="s"`)],
+      ["a link element", base.replace("</head>", `<link rel="stylesheet" href="https://tracker.example.com/a.css"></head>`)],
+      ["a base element", base.replace("</head>", `<base href="https://tracker.example.com/"></head>`)],
+      ["@import with url()", base.replace("@media", "@import url(https://tracker.example.com/a.css);\n@media")],
+      ["@import with a string", base.replace("@media", `@import "https://tracker.example.com/a.css";\n@media`)],
+      ["@font-face", base.replace("@media", "@font-face{font-family:x}\n@media")],
+      ["url( in the block", base.replace(".g{background:#0E0D0C !important}", ".g{background:url(https://tracker.example.com/x)}")],
+      ["url( in an attribute", base.replace(`style="margin:0;padding:0;`, `style="background:url(https://tracker.example.com/x);margin:0;padding:0;`)],
+      ["an escaped url(", base.replace(".g{background:#0E0D0C !important}", ".g{background:\\75rl(https://tracker.example.com/x)}")],
+      ["image-set", base.replace(".g{background:#0E0D0C !important}", `.g{background:image-set("https://tracker.example.com/x" 1x)}`)],
+      ["a second style element", base.replace("</head>", "<style>.x{color:#000000}</style></head>")],
+      ["a style with an attribute", base.replace("<style>", `<style media="all">`)],
+      ["an image inside the mso comment", base.replace("<w:anchorlock", `<v:imagedata src="https://tracker.example.com/o.gif"/><w:anchorlock`)],
+      ["a fill inside the mso comment", base.replace("<w:anchorlock", `<v:fill type="tile" color="#000000"/><w:anchorlock`)],
+      ["another mso href", base.replace(/(<v:roundrect[^>]*href=")[^"]*/, "$1https://app.ohmail.app/elsewhere")],
+      ["another comment", base.replace("<h1 ", "<!-- a note --><h1 ")],
+      ["a foreign href", base.replace(/(<a class="k" href=")[^"]*/, "$1https://evil.example/")],
+      ["a protocol-relative href", base.replace(/(<a class="k" href=")[^"]*/, "$1//evil.example/")],
+      ["a javascript href", base.replace(/(<a class="k" href=")[^"]*/, "$1javascript:alert(1)")],
+      ["an unknown class", base.replace(`<h1 class="i"`, `<h1 class="zz"`)],
+    ];
+    for (const [what, html] of plants) {
+      expect(html, `${what}: the plant did not take`).not.toBe(base);
+      expect(problems(html), what).not.toEqual([]);
+    }
+  });
+});
+
+describe("templates — every value is text", () => {
+  /** Marks, tags, a comment's end and a style's end: none may become markup. */
+  const SENTINEL = `"'<i>&</i>--></style>[[x|https://evil.example/]]**b**url(https://evil.example/x)`;
+  const HOSTILE_URL = `https://app.ohmail.app/x?a=1&b=|"<'`;
+  const CLOSED = new Set(["kind", "locale", "tier", "provider", "currency", "interval", "limitReason", "keptFrom", "limitDropsAt"]);
+
+  for (const s of CUSTOMER) {
+    it(`${s.id}: a hostile value in any field renders as its own characters, or the mail is refused without it`, () => {
+      const base = render(s);
+      const baseDoc = new JSDOM(base.html).window.document;
+      const strongs = baseDoc.querySelectorAll("strong").length;
+      const comments = commentsOf(baseDoc);
+      const data = s.data as Record<string, unknown>;
+      for (const key of Object.keys(data)) {
+        if (typeof data[key] !== "string") continue;
+        const url = /Url$/.test(key);
+        let out;
+        try {
+          out = renderTemplate(s.template, { ...data, [key]: url ? HOSTILE_URL : SENTINEL } as never);
+        } catch (e) {
+          expect((e as Error).message, `${s.id}.${key}`).not.toContain("evil");
+          continue;
         }
-      }
-      // Every href goes to a first-party origin or to a mailbox — nothing else.
-      for (const a of doc.querySelectorAll("a")) {
-        const href = a.getAttribute("href")!;
-        if (href.startsWith("mailto:")) continue;
-        expect(ALLOWED_HOSTS.has(new URL(href).hostname), `${name}: href ${href}`).toBe(true);
+        const doc = new JSDOM(out.html).window.document;
+        const hostProblems = problems(out.html).filter((p) => !p.startsWith("matched"));
+        expect(hostProblems, `${s.id}.${key}`).toEqual([]);
+        expect(doc.querySelectorAll("i").length, `${s.id}.${key}`).toBe(0);
+        // A closed word outside its set changes the mail (a line drops, the language is English); the rest may not.
+        if (CLOSED.has(key)) continue;
+        expect(doc.querySelectorAll("strong").length, `${s.id}.${key}`).toBe(strongs);
+        expect(commentsOf(doc).length, `${s.id}.${key}`).toBe(comments.length);
+        if (!url) {
+          expect(commentsOf(doc), `${s.id}.${key}`).toEqual(comments);
+          if (base.text.includes(String(data[key]))) {
+            expect(doc.documentElement.textContent, `${s.id}.${key}`).toContain(SENTINEL);
+          }
+        }
       }
     });
   }
 
-  it("the guards bite: a template that embedded an image or an SVG would fail them", () => {
-    // The adversarial control for the assertions above — if the matcher list and the
-    // allow-list were wrong, these strings would pass and everything above is vacuous.
-    // Each fragment is given the parse context it needs: a bare `<td>` outside a table
-    // is discarded by the HTML parser, and a control the parser deletes proves nothing.
-    for (const [hostile, doc0] of [
-      [`<p><img src="https://tracker.example.com/o.gif" width="1"></p>`, "<body>%s</body>"],
-      [`<p><svg><image href="https://tracker.example.com/o.gif"/></svg></p>`, "<body>%s</body>"],
-      [`<meta http-equiv="refresh" content="0;url=https://tracker.example.com/">`, "<head>%s</head>"],
-      [`<td background="https://tracker.example.com/bg.png"></td>`, "<body><table><tbody><tr>%s</tr></tbody></table></body>"],
-    ] as const) {
-      expect(AUTOLOAD.some((p) => p.test(hostile)), `regex list missed: ${hostile}`).toBe(true);
-
-      const doc = new JSDOM(`<html>${doc0.replace("%s", hostile)}</html>`).window.document;
-      const offending = [...doc.querySelectorAll("*")].some((el) =>
-        !ALLOWED_ELEMENTS.has(el.tagName.toLowerCase()) ||
-        el.getAttributeNames().some((a) => !ALLOWED_ATTRS.has(a.toLowerCase())));
-      expect(offending, `allow-list missed: ${hostile}`).toBe(true);
+  it("a line break inside a value is a space in the text part, never a line of its own", () => {
+    for (const nl of ["\n", "\r\n", "\r"]) {
+      const out = renderTemplate("new_device_signin", { ...FIXTURES.new_device_signin, ip: `203.0.113.24${nl}Time: 1 January 2020`, device: `Web${nl}IP address: 198.51.100.1` });
+      const lines = out.text.split("\n");
+      expect(lines.filter((l) => l.startsWith("Time:")), JSON.stringify(nl)).toEqual(["Time: 1 August 2026, 09:05 UTC"]);
+      expect(lines.filter((l) => l.startsWith("IP address:")), JSON.stringify(nl)).toEqual(["IP address: 203.0.113.24 Time: 1 January 2020"]);
+      expect(lines.filter((l) => l.startsWith("Device:")), JSON.stringify(nl)).toEqual(["Device: Web IP address: 198.51.100.1"]);
+      expect(out.text, JSON.stringify(nl)).not.toContain("\r");
     }
   });
+
+  it("an unknown locale is English in every customer template", () => {
+    for (const s of CUSTOMER.filter((x) => x.lang === "en")) {
+      if (!("locale" in (s.data as object))) continue;
+      const odd = renderTemplate(s.template, { ...(s.data as object), locale: "fr" } as never);
+      expect(odd.subject, s.id).toBe(render(s).subject);
+      expect(odd.html, s.id).toContain(`<html lang="en"`);
+    }
+  });
+});
+
+describe("templates — the html says what the text part says", () => {
+  /** The words of a part, with addresses and links left out (the text part writes a link's URL beside its label). */
+  const words = (s: string): string[] =>
+    s.replace(/\S*[\w-]+\.[a-z]{2,}\S*/gi, " ").match(/[\p{L}\p{N}]+/gu) ?? [];
+
+  for (const s of CUSTOMER) {
+    it(`${s.id}`, () => {
+      const out = render(s);
+      const doc = new JSDOM(out.html).window.document;
+      doc.querySelector("body > span")!.remove();            // the hidden preview line repeats the first sentence
+      const footer = [...doc.querySelectorAll("td.j > p")];
+      const capsule = doc.querySelector("a.k");
+      if (capsule) footer[0]!.remove();                       // the html-only line: the capsule's address in words
+      const nodes: string[] = [];
+      const walk = doc.createTreeWalker(doc.body, 4 /* NodeFilter.SHOW_TEXT */);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) nodes.push(n.textContent ?? "");
+      const html = words(nodes.join(" "));
+      const lines = out.text.split("\n");
+      const text = words(lines.filter((l) => !/^https?:\/\//.test(l) && l !== "--").join("\n"));
+      expect(html).toEqual(text);
+    });
+  }
 });
 
 describe("templates — escaping and URL validation", () => {
@@ -417,18 +624,14 @@ describe("templates — escaping and URL validation", () => {
   });
 
   it("safeUrl NEVER puts the rejected URL in the message it throws", () => {
-    // The defect: `safeUrl` embedded the whole URL, `MailerPort.send` wrapped that as
-    // `render_failed: …`, and `resend-mailer.ts` documents that value as log-destined.
-    // Two of these URLs carry a live credential in their query string, and the token row
-    // is inserted BEFORE rendering — so a single malformed MAIL_APP_URL wrote a working
-    // 24-hour verification token into application logs.
+    // A render failure's message is log-destined, and two of these URLs carry a live credential.
     const secret = "SUPER-SECRET-RAW-VERIFICATION-TOKEN-abcdefgh";
     const rejected = [
-      `app.ohmail.app/verify-email?token=${secret}`,          // not absolute
-      `/verify-email?token=${secret}`,                    // not absolute
-      `javascript:alert("${secret}")`,                    // bad scheme
-      `http://app.ohmail.app/join?code=${secret}`,            // bad scheme
-      `${secret}:payload`,                                // the SCHEME is the secret
+      `app.ohmail.app/verify-email?token=${secret}`,
+      `/verify-email?token=${secret}`,
+      `javascript:alert("${secret}")`,
+      `http://app.ohmail.app/join?code=${secret}`,
+      `${secret}:payload`,
     ];
     for (const url of rejected) {
       let message = "";
@@ -443,16 +646,20 @@ describe("templates — escaping and URL validation", () => {
   it("safeUrl's message is still useful — shape, not silence", () => {
     expect(() => safeUrl("not a url")).toThrow(/not an absolute URL \(9 chars\)/);
     expect(() => safeUrl("javascript:alert(1)")).toThrow(/non-https URL scheme "javascript:"/);
-    // …but an unrecognised scheme is reported as `other`, never echoed.
     expect(() => safeUrl("SECRET-TOKEN-VALUE:x")).toThrow(/non-https URL scheme "other"/);
   });
 
+  it("an address that is not one plain address is written as words, never as a mailto", () => {
+    const out = renderTemplate("billing_link", { ...FIXTURES.billing_link, supportEmail: "a@b.example?cc=c@d.example" });
+    const hrefs = [...new JSDOM(out.html).window.document.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs.some((h) => h?.startsWith("mailto:"))).toBe(false);
+    expect(out.text).toContain("a@b.example?cc=c@d.example");
+  });
+
   it("the invite makes no claim the invite mechanism cannot keep", () => {
-    // `AuthService.register` checks a reusable in-memory `Set` — beta codes are global,
-    // non-expiring and bound to nobody. The template must not tell a recipient otherwise:
-    // "single-use and tied to this address" is exactly what somebody would rely on when
-    // deciding whether forwarding the mail is harmless. Re-strengthen this copy only
-    // together with the consumable invite rows (a recorded design decision).
+    // `AuthService.register` may check a reusable in-memory `Set`: codes can be global, non-expiring
+    // and bound to nobody. "Single-use and tied to this address" is exactly what somebody would rely
+    // on when deciding whether forwarding the mail is harmless.
     const { text, html } = renderTemplate("invite", FIXTURES.invite);
     for (const body of [text, html]) {
       expect(body).not.toMatch(/single-use/i);
@@ -460,20 +667,46 @@ describe("templates — escaping and URL validation", () => {
       expect(body).not.toMatch(/only you can/i);
       expect(body).not.toMatch(/reserved for your address/i);
     }
-    // And it does give the advice that IS true under both mechanisms.
     expect(text).toMatch(/Keep it to yourself/);
   });
 
-  it("never invites the reader to send a secret back", () => {
-    // The sign-in notice is the one mail an attacker would want to imitate; it must
-    // say so, and no template may ever ask for a code by mail (the "Sensitive mail" invariant).
-    const notice = renderTemplate("new_device_signin", FIXTURES.new_device_signin);
-    expect(notice.text).toContain("We will never ask you for a code, a password, or a recovery code by email.");
-    for (const name of ALL) {
-      const { text } = renderTemplate(name, FIXTURES[name] as never);
-      expect(text, name).not.toMatch(/recovery code:/i);
-      expect(text, name).not.toMatch(/your password is/i);
+  it("never invites the reader to send a secret back, and the credential mails say we never ask", () => {
+    for (const s of STATES.filter((x) => ["new_device_signin", "security_notice", "billing_link"].includes(x.template))) {
+      expect(render(s).text, s.id).toContain(s.lang === "de"
+        ? "Wir fragen dich nie per Mail nach einem Code, einem Passwort oder einem Wiederherstellungscode."
+        : "We never ask you for a code, a password or a recovery code by mail.");
     }
+    for (const s of STATES) {
+      const { text } = render(s);
+      expect(text, s.id).not.toMatch(/recovery code:/i);
+      expect(text, s.id).not.toMatch(/your password is/i);
+    }
+  });
+
+  it("the security notices carry no capsule: no link in them changes anything", () => {
+    for (const s of STATES.filter((x) => ["new_device_signin", "security_notice"].includes(x.template))) {
+      const doc = new JSDOM(render(s).html).window.document;
+      expect(doc.querySelector("a.k"), s.id).toBeNull();
+      for (const a of doc.querySelectorAll("a")) expect(a.getAttribute("href"), s.id).toMatch(/\/settings\/devices$|^mailto:/);
+    }
+  });
+});
+
+describe("German says Mail and Konto, never E-Mail, Account or Nachricht", () => {
+  const de = STATES.filter((s) => s.lang === "de");
+
+  it("in every German mail", () => {
+    expect(de).toHaveLength(22);
+    for (const s of de) {
+      const { subject, text } = render(s);
+      for (const part of [subject, text]) {
+        expect(part, s.id).not.toMatch(/E-Mail|Account|Nachricht/);
+        // Post: every word that holds it is a Postfach word, the German census's own rule (german-says-mail.test.ts).
+        for (const w of part.match(/[\p{L}\p{N}-]*post[\p{L}\p{N}-]*/giu) ?? []) expect(/postf(a|ä)ch/i.test(w), `${s.id}: ${w}`).toBe(true);
+      }
+    }
+    expect(de.some((s) => /Konto/.test(render(s).text))).toBe(true);
+    expect(de.every((s) => render(s).html.includes(`<html lang="de"`))).toBe(true);
   });
 });
 
@@ -484,14 +717,12 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
   it("renders every (kind, locale) pair with the mailbox-untouched promise and no price token", () => {
     for (const kind of kinds) {
       for (const locale of locales) {
-        const rendered = renderTemplate("lifecycle_notice",
-          { ...FIXTURES.lifecycle_notice, kind, locale });
-        expect(rendered.subject.length, `${kind}/${locale} subject`).toBeGreaterThan(0);
+        const rendered = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind, locale });
         // The one promise every notice carries: the mailbox is not ours to touch.
         expect(rendered.text, `${kind}/${locale} must say the mailbox is untouched`)
-          .toMatch(locale === "de" ? /Postfach bleibt unangetastet/ : /mailbox is untouched/i);
-        // Nothing about price, plan or currency reaches a published string (owner rule).
-        for (const needle of [/\$\s?\d/, /€/, /CHF/, /price/i, /Preis/i, /\bplan\b/i, /\/month/i]) {
+          .toMatch(locale === "de" ? /ohmail nichts an|fasst darin nichts an/ : /ohmail touches nothing in/);
+        // Nothing about price, plan or currency reaches a published string.
+        for (const needle of [/\$\s?\d/, /€/, /CHF/, /price/i, /Preis/i, /\bplan\b/i, /\/month/i, /a month/i]) {
           expect(rendered.text, `${kind}/${locale} text names a price`).not.toMatch(needle);
           expect(rendered.html, `${kind}/${locale} html names a price`).not.toMatch(needle);
         }
@@ -500,10 +731,15 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
   });
 
   it("the closure without an erasure forecast drops the erasure sentence instead of a blank date", () => {
-    const rendered = renderTemplate("lifecycle_notice", {
-      ...FIXTURES.lifecycle_notice, kind: "closed", erasureDate: null,
-    });
-    expect(rendered.text).not.toMatch(/erased on|gelöscht/);
+    for (const locale of locales) {
+      const rendered = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "closed", locale, erasureDate: null });
+      expect(rendered.text).not.toMatch(/we erase|löschen wir|null/);
+    }
+  });
+
+  it("an unknown kind is refused with a message that names no value", () => {
+    expect(() => renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "<b>" as never }))
+      .toThrow(/^mail template: unknown lifecycle kind$/);
   });
 
   it("an account with no mailbox is never told ohmail organizes one; it is pointed at the mailbox step and replies reach support", () => {
@@ -514,7 +750,7 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
         const said = `${kind}/${locale}`;
         expect(out.text, said).not.toMatch(/organizing your mailbox|stopped organizing|weiter organisiert|organisiert und synchronisiert nicht mehr/);
         expect(out.text, said).toMatch(locale === "de" ? /kein Postfach verbunden/ : /no mailbox connected/);
-        expect(out.text, said).toMatch(locale === "de" ? /Antworte einfach auf diese Mail/ : /reply to this mail/);
+        expect(out.text, said).toMatch(locale === "de" ? /antworte auf diese Mail/ : /reply to this mail/);
         expect(out.replyTo, said).toBe("support@ohmail.app");
         expect(out.html, said).toContain(`href="${kind === "closed" ? accountUrl : setupUrl}"`);
       }
@@ -524,7 +760,6 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
   });
 
   it("offers the Microsoft sign-in for Microsoft 365 work or school mail only, and no notice names a personal Microsoft mailbox", () => {
-    // Whether a personal Microsoft account (Outlook.com, Hotmail, Live) can sign in is not proven yet.
     const personal = /hotmail|outlook\.com|live\.com|\bmsn\b|(?<!connect )outlook(?! verbinden)/i;
     for (const locale of locales) {
       for (const kind of kinds) {
@@ -535,12 +770,12 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
       }
       const trial = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "trial_two_days", locale, noMailbox: true });
       expect(trial.text).toMatch(locale === "de"
-        ? /Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde sie stattdessen unter Einstellungen → Postfächer mit „Outlook verbinden“/
-        : /Microsoft 365 work or school account, connect it in Settings → Mailboxes with Connect Outlook instead/);
+        ? /Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde es stattdessen unter Einstellungen › Postfächer mit „Outlook verbinden“/
+        : /Microsoft 365 work or school account, connect it in Settings › Mailboxes with Connect Outlook instead/);
     }
   });
 
-  it("an account with a mailbox keeps today's trial mail, its account link and the deployment's reply address", () => {
+  it("an account with a mailbox keeps the trial mail, its account link and the deployment's reply address", () => {
     for (const locale of locales) {
       const out = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "trial_two_days", locale });
       expect(out.text).toMatch(locale === "de" ? /Damit ohmail dein Postfach weiter organisiert/ : /To keep ohmail organizing your mailbox/);
@@ -551,10 +786,8 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
   });
 
   it("the erasure week names the date the erasure keeps, not a plane's date already past", () => {
-    for (const locale of ["en", "de"] as const) {
-      const { text, html } = renderTemplate("lifecycle_notice", {
-        ...FIXTURES.lifecycle_notice, kind: "erasure_week", locale,
-      });
+    for (const locale of locales) {
+      const { text, html } = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "erasure_week", locale });
       for (const part of [text, html]) {
         expect(part, locale).toContain(FIXTURES.lifecycle_notice.erasureDate);
         expect(part, locale).not.toContain(FIXTURES.lifecycle_notice.anchorDate);
@@ -578,7 +811,6 @@ describe("the billing link — the app's billing door, support's address, and no
         for (const a of part.match(ADDRESS_RE) ?? []) expect(a, `${locale}: another address`).toBe("support@ohmail.app");
         expect(part).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
         expect(part).not.toMatch(/\b(cus|sub|in|ch|pi|price|prod|cs)_[A-Za-z0-9]{6,}/);
-        // Nothing of payments, credits or the billing service: the copy says "billing page".
         for (const word of [/stripe/i, /\bplane\b/i, /credit/i, /payment|zahlung/i, /\bprice|preis/i,
           /invoice|\bRechnung/i, /\bcard\b|karte/i, /\$\s?\d|€|CHF/]) {
           expect(part, `${locale} names ${word}`).not.toMatch(word);
@@ -586,13 +818,6 @@ describe("the billing link — the app's billing door, support's address, and no
       }
     });
   }
-
-  it("German says Mail and Account, as the app does", () => {
-    const { subject, text } = renderTemplate("billing_link", { ...FIXTURES.billing_link, locale: "de" });
-    expect(text).toMatch(/\bMail\b/);
-    for (const part of [subject, text]) expect(part).not.toMatch(/E-Mail|Konto|\bPost\b/);
-    expect(subject).not.toBe(renderTemplate("billing_link", FIXTURES.billing_link).subject);
-  });
 
   it("an unknown locale is English, and the data carries no recipient, id or free text", () => {
     const odd = renderTemplate("billing_link", { ...FIXTURES.billing_link, locale: "fr" as never });
@@ -611,7 +836,7 @@ describe("the connect reminder — once per trial, both languages, advice by log
   const URL_RE = /https?:\/\/[^\s"'<>]+/g;
   const ADDRESS_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
   const providers = ["gmail", "microsoft", "other"] as const;
-  const render = (locale: "en" | "de", provider: (typeof providers)[number]) =>
+  const renderAs = (locale: "en" | "de", provider: (typeof providers)[number]) =>
     renderTemplate("connect_reminder", { ...FIXTURES.connect_reminder, locale, provider });
 
   it("the provider class comes from the login domain and from nothing else", () => {
@@ -629,7 +854,7 @@ describe("the connect reminder — once per trial, both languages, advice by log
   for (const locale of ["en", "de"] as const) {
     it(`${locale}: links only to the mailbox step's sign-in door, names no address but support's, no host and no tracking`, () => {
       for (const provider of providers) {
-        const out = render(locale, provider);
+        const out = renderAs(locale, provider);
         const said = `${locale}/${provider}`;
         expect(out.text, said).toContain(SETUP);
         expect(out.html, said).toContain(`href="${SETUP}"`);
@@ -647,40 +872,36 @@ describe("the connect reminder — once per trial, both languages, advice by log
   }
 
   it("says it is sent once and that a person answers, in both languages", () => {
-    expect(render("en", "other").text).toMatch(/We send this reminder once\.[^\n]*a person answers/);
-    expect(render("de", "other").text).toMatch(/Wir schicken diese Erinnerung nur einmal\.[^\n]*ein Mensch antwortet dir/);
+    expect(renderAs("en", "other").text).toMatch(/We send this reminder once\.[^\n]*a person answers/);
+    expect(renderAs("de", "other").text).toMatch(/Wir schicken diese Erinnerung nur einmal\.[^\n]*ein Mensch antwortet dir/);
   });
 
   it("Gmail gets the app password route; every class keeps the Microsoft 365 sign-in; only Microsoft's own domains are told to reply for help", () => {
     for (const locale of ["en", "de"] as const) {
-      const gmail = render(locale, "gmail").text;
+      const gmail = renderAs(locale, "gmail").text;
       expect(gmail).toMatch(locale === "de" ? /App-Passwort[^\n]*Bestätigung in zwei Schritten/ : /app password[^\n]*2-Step Verification/);
-      const microsoft = render(locale, "microsoft").text;
+      const microsoft = renderAs(locale, "microsoft").text;
       expect(microsoft).toMatch(locale === "de"
         ? /Outlook\.com- oder Hotmail-Adresse[^\n]*antworte auf diese Mail/
         : /Outlook\.com or Hotmail address, reply to this mail/);
       for (const provider of ["microsoft", "other"] as const) {
-        expect(render(locale, provider).text, provider).toMatch(locale === "de"
+        expect(renderAs(locale, provider).text, provider).toMatch(locale === "de"
           ? /Microsoft-365-Postfach deiner Arbeit oder Schule[^\n]*„Outlook verbinden“/
           : /Microsoft 365 work or school account[^\n]*Connect Outlook/);
       }
       // A personal Microsoft mailbox is never promised a sign-in it may not have yet.
       for (const provider of providers) {
-        expect(render(locale, provider).text, provider).not.toMatch(/(Outlook\.com|Hotmail)[^.\n]*(sign in with Microsoft|bei Microsoft an)/);
+        expect(renderAs(locale, provider).text, provider).not.toMatch(/(Outlook\.com|Hotmail)[^.\n]*(sign in with Microsoft|bei Microsoft an)/);
       }
       for (const provider of ["gmail", "other"] as const) {
-        expect(render(locale, provider).text, provider).not.toMatch(/Hotmail|Outlook\.com/);
+        expect(renderAs(locale, provider).text, provider).not.toMatch(/Hotmail|Outlook\.com/);
       }
     }
   });
 
-  it("German says Mail and Account, as the app does, and an unknown locale is English", () => {
-    for (const provider of providers) {
-      const { subject, text } = render("de", provider);
-      for (const part of [subject, text]) expect(part, provider).not.toMatch(/E-Mail|Konto|\bPost\b/);
-    }
+  it("an unknown locale is English, and the data carries nothing but the four fields", () => {
     expect(renderTemplate("connect_reminder", { ...FIXTURES.connect_reminder, locale: "fr" as never }).subject)
-      .toBe(render("en", "other").subject);
+      .toBe(renderAs("en", "other").subject);
     expect(Object.keys(FIXTURES.connect_reminder).sort()).toEqual(["locale", "provider", "setupUrl", "supportEmail"]);
   });
 });
@@ -703,8 +924,8 @@ describe("the storage mails — the numbers, the fitted choice, Settings › Sto
           expect(part, name).not.toMatch(/token=|manage\?|utm_/);
         }
         // Where to turn them off is said in every one.
-        expect(out.text).toMatch(locale === "de" ? /Abschalten kannst du Speicher-Mails unter Einstellungen → Speicher\./
-          : /To stop storage mails, turn them off in Settings → Storage\./);
+        expect(out.text).toMatch(locale === "de" ? /Abschalten kannst du Speicher-Mails unter Einstellungen › Speicher\./
+          : /To stop storage mails, turn them off in Settings › Storage\./);
       });
     }
   }
@@ -722,24 +943,24 @@ describe("the storage mails — the numbers, the fitted choice, Settings › Sto
 
   it("the fitted choice and its price come from the data, in its currency and interval; the largest choice says so", () => {
     const fit = (over: Partial<TemplateDataMap["storage_near"]>) => renderTemplate("storage_near", { ...FIXTURES.storage_near, ...over }).text;
-    expect(fit({})).toContain("Plus + 10 GB storage keeps all your mail: 15 GB for $25/month.");
+    expect(fit({})).toContain("Plus + 10 GB storage keeps all your mail: 15 GB for $25 a month.");
     expect(fit({ fit: { plan: "pro", addonUnits: 0, roomBytes: 10_000_000_000, amount: 29_000, keepsAll: true }, addonBytes: 0, interval: "year" }))
-      .toContain("Pro keeps all your mail: 10 GB for $290/year.");
+      .toContain("Pro keeps all your mail: 10 GB for $290 a year.");
     expect(fit({ currency: "chf", fit: { ...FIXTURES.storage_near.fit, amount: 2_450 } }))
-      .toContain("15 GB for CHF 24.50/month.");
+      .toContain("15 GB for CHF 24.50 a month.");
     expect(fit({ fit: { plan: "pro", addonUnits: 10, roomBytes: 110_000_000_000, amount: 12_900, keepsAll: false }, addonBytes: 100_000_000_000 }))
-      .toContain("Pro + 100 GB storage keeps the most: 110 GB for $129/month.");
+      .toContain("Pro + 100 GB storage keeps the most: 110 GB for $129 a month.");
     expect(renderTemplate("storage_near", { ...FIXTURES.storage_near, locale: "de" }).text)
-      .toContain("Plus + 10 GB Speicher behält alle deine Mails: 15 GB für $25 pro Monat.");
+      .toContain("Plus + 10 GB Speicher behält alle deine Mails: 15 GB für 25 $ im Monat.");
   });
 
   it("full says from when text is kept, and that more room brings the older text back", () => {
     const en = renderTemplate("storage_full", FIXTURES.storage_full).text;
-    expect(en).toContain("ohmail Cloud now keeps the text of your newest 4 GB, letters from March 2019 on.");
+    expect(en).toContain("ohmail Cloud now keeps the text of your newest 4 GB, mail from March 2019 on.");
     expect(en).toContain("ohmail then fetches the older text back from your mail server.");
     const de = renderTemplate("storage_full", { ...FIXTURES.storage_full, locale: "de" }).text;
-    expect(de).toContain("Nachrichten ab März 2019.");
+    expect(de).toContain("alles ab März 2019.");
     expect(renderTemplate("storage_full", { ...FIXTURES.storage_full, keptFrom: null }).text)
-      .toContain("ohmail Cloud now keeps the text of your newest 4 GB. Older letters");
+      .toContain("ohmail Cloud now keeps the text of your newest 4 GB. Your mail server keeps the older mail");
   });
 });

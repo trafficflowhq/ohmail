@@ -364,8 +364,8 @@ describe.skipIf(!ENABLED)("the signup, from /join to a connected mailbox — a p
 
       const mail = world.mailer.sent.find((m) => m.to === who.email && m.template === "email_verification");
       expect(mail, `no verification mail: ${await said(p)}`).toBeTruthy();
-      expect(mail!.rendered.subject).toBe("Bestätige deine E-Mail-Adresse für ohmail");
-      expect(mail!.rendered.html).toContain('<html lang="de">');
+      expect(mail!.rendered.subject).toBe("Bestätige deine Adresse für ohmail");
+      expect(mail!.rendered.html).toContain('<html lang="de" ');
 
       const token = new URL((mail!.data as { verifyUrl: string }).verifyUrl).searchParams.get("token");
       await p.goto(`http://localhost:${webPort}/verify-email?token=${encodeURIComponent(token!)}`);

@@ -1,0 +1,16 @@
+Subject: Deine ohmail-Kontodaten werden in einer Woche gelöscht
+
+ohmail.
+
+In einer Woche löschen wir deine Kontodaten.
+
+Am 16. Oktober 2026, 00:00 UTC, löschen wir deine ohmail-Kontodaten: deine Regeln, deine Screener-Entscheidungen und deine Einstellungen. In deinem Postfach fasst ohmail nichts an. Deine Mails waren nie bei uns.
+
+Melde dich vorher an, um das Konto zu behalten, oder exportiere zuerst deine Einstellungen.
+
+ohmail-Konto öffnen:
+https://app.ohmail.app/#/settings/account
+
+--
+Schreib an support@ohmail.app, und ein Mensch antwortet.
+TrafficFlow GmbH, Zürich, Schweiz

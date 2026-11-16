@@ -1,0 +1,18 @@
+Subject: Verbinde dein Postfach mit ohmail
+
+ohmail.
+
+Verbinde dein Postfach.
+
+Du hast eine ohmail-Testphase gestartet, und noch ist kein Postfach verbunden. ohmail hat also keine Mails, die es für dich organisieren kann.
+
+Gmail nimmt ein App-Passwort, nicht dein Google-Passwort. Schalte in deinem Google-Konto die Bestätigung in zwei Schritten ein, erstelle ein App-Passwort mit beliebigem Namen und füge seine 16 Buchstaben im Postfach-Schritt ein.
+
+Der Button unten öffnet den Postfach-Schritt, falls nötig über die Anmeldung. Das Verbinden dauert ein paar Minuten.
+
+Postfach verbinden:
+https://app.ohmail.app/login?next=join
+
+--
+Wir schicken diese Erinnerung nur einmal. Hast du Fragen oder hängst du fest, antworte auf diese Mail, und ein Mensch antwortet dir.
+TrafficFlow GmbH, Zürich, Schweiz

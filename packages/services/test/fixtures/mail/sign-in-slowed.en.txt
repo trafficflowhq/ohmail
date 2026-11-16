@@ -1,0 +1,21 @@
+Subject: Failed sign-in attempts on your ohmail account
+
+ohmail.
+
+Many sign-in attempts failed.
+
+In the last few minutes, many attempts to sign in to your ohmail account failed. They came from devices that had not signed in before, and none of them had your password.
+
+ohmail has slowed sign-in from new devices for a while. The devices you already use sign in as before.
+
+If you are signing in from a new device, wait a few minutes and try again.
+
+Settings › Devices lists the devices signed in to your account (https://ohmail.app/settings/devices).
+
+Time: 26 September 2026, 12:00 UTC
+
+We never ask you for a code, a password or a recovery code by mail.
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

@@ -1,0 +1,19 @@
+Subject: Dein ohmail-Speicher ist zu 90 % voll
+
+ohmail.
+
+Dein Speicher ist zu 90 % voll.
+
+3,6 GB von 4 GB belegt, der Speicher deiner Testphase. Deine Mails brauchen etwa 12,5 GB, wenn der Import fertig ist.
+
+Ist er voll, behält ohmail Cloud den Text deiner neuesten Mails. Die älteren Mails behält dein Mailserver vollständig, und ohmail listet und findet sie weiterhin.
+
+Plus + 10 GB Speicher behält alle deine Mails: 15 GB für 25 $ im Monat.
+
+Speicher wählen:
+https://app.ohmail.app/#/settings/storage
+
+--
+Es zählt nur der Text deiner Mails, Anhänge nie.
+ohmail schickt diese Mail einmal bei 90 % und einmal, wenn der Speicher voll ist. Abschalten kannst du Speicher-Mails unter Einstellungen › Speicher.
+TrafficFlow GmbH, Zürich, Schweiz

@@ -1,0 +1,18 @@
+Subject: Connect your mailbox to ohmail
+
+ohmail.
+
+Connect your mailbox.
+
+You started an ohmail trial, and no mailbox is connected yet. So ohmail has no mail to organize for you.
+
+Gmail takes an app password, not your Google password. Turn on 2-Step Verification in your Google account, create an app password with any name and paste its 16 letters into the mailbox step.
+
+The button below opens the mailbox step, through sign-in if needed. Connecting takes a few minutes.
+
+Connect your mailbox:
+https://app.ohmail.app/login?next=join
+
+--
+We send this reminder once. If you have questions or are stuck, reply to this mail and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

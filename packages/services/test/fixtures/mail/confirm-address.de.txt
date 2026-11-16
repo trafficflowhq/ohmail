@@ -1,0 +1,18 @@
+Subject: Bestätige deine Adresse für ohmail
+
+ohmail.
+
+Bestätige deine Adresse.
+
+Bestätige diese Adresse, dann ist dein ohmail-Konto fertig eingerichtet.
+
+Der Link funktioniert einmal und läuft in 24 Stunden ab. Die Seite dahinter fragt nach dem Passwort, das du gewählt hast.
+
+Hast du das nicht gestartet, ignoriere diese Mail. Ohne den Link kann das Konto kein Postfach verbinden und nichts abonnieren.
+
+Adresse bestätigen:
+https://app.ohmail.app/verify-email?token=Zm9vYmFyLXRva2Vu
+
+--
+Schreib an support@ohmail.app, und ein Mensch antwortet.
+TrafficFlow GmbH, Zürich, Schweiz

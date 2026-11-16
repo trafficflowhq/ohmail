@@ -3,7 +3,7 @@ import { randomInt, randomUUID } from "node:crypto";
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
-  accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
+  accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
   markFenced, accountOfUser, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -3323,16 +3323,20 @@ export class AuthService extends SessionLifecycle {
     const db = asTx(ctx);
     const owed = await db.select({ key: authThrottle.key }).from(authThrottle)
       .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1))).limit(limit);
-    let byAddress: Map<string, { id: string; email: string }> | null = null;
+    let byAddress: Map<string, { id: string; email: string; accountId: string }> | null = null;
     for (const { key } of owed) {
       const [, kind = "", subject = ""] = key.split(":");
-      let who: { id: string; email: string } | undefined;
+      let who: { id: string; email: string; accountId: string } | undefined;
       if (kind === "factor" && UUID_SHAPE.test(subject)) {
-        who = (await db.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, subject)).limit(1))[0];
+        who = (await db.select({ id: users.id, email: users.email, accountId: users.accountId }).from(users)
+          .where(eq(users.id, subject)).limit(1))[0];
       } else if (kind === "ceiling") {
         byAddress ??= await this.usersByAddressHash(db);
         who = byAddress.get(subject);
       }
+      // The notice is written in the account's own language: its settings row, read for this account alone,
+      // before the claim, so a read that throws leaves the notice owed for the next drain.
+      const settings = who ? (await db.select({ locale: accountSettings.locale }).from(accountSettings).where(eq(accountSettings.accountId, who.accountId)).limit(1))[0] : undefined;
       const claimed = await db.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
         .where(and(eq(authThrottle.key, key), eq(authThrottle.failures, 1))).returning({ key: authThrottle.key });
       if (claimed.length === 0) continue;
@@ -3341,6 +3345,7 @@ export class AuthService extends SessionLifecycle {
       try {
         const r = await mail.sendSecurityNotice(ctx, {
           to: who.email, kind: kind === "factor" ? "factor_refused" : "sign_in_slowed", at: ctx.now(),
+          locale: mailLocaleOf(settings?.locale) ?? "en",
         });
         sent = r.status !== "failed";
       } catch {
@@ -3355,8 +3360,8 @@ export class AuthService extends SessionLifecycle {
   }
 
   /** Every user by the keyed hash of their address — read only while a ceiling notice is owed. */
-  private async usersByAddressHash(db: Tx): Promise<Map<string, { id: string; email: string }>> {
-    const all = await db.select({ id: users.id, email: users.email }).from(users);
+  private async usersByAddressHash(db: Tx): Promise<Map<string, { id: string; email: string; accountId: string }>> {
+    const all = await db.select({ id: users.id, email: users.email, accountId: users.accountId }).from(users);
     return new Map(all.map((u) => [this.keys.address(u.email.trim().toLowerCase()), u]));
   }
 

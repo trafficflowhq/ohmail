@@ -1,0 +1,19 @@
+Subject: Your ohmail storage is full
+
+ohmail.
+
+Your storage is full.
+
+4 GB of 4 GB used, your trial room. Your mail needs about 12.5 GB.
+
+ohmail Cloud now keeps the text of your newest 4 GB. Your mail server keeps the older mail complete, and ohmail still lists it and finds it.
+
+Plus + 10 GB storage keeps all your mail: 15 GB for $25 a month. ohmail then fetches the older text back from your mail server.
+
+Choose storage:
+https://app.ohmail.app/#/settings/storage
+
+--
+Only the text of your mail counts. Attachments never do.
+This is the last storage mail until something changes. To stop storage mails, turn them off in Settings › Storage.
+TrafficFlow GmbH, Zürich, Switzerland

@@ -35,7 +35,12 @@
 # that as a healthy install serving nothing. So this door says what it is instead — the build
 # token, proxied from the web container so there is one truth about it, and a 421 (the request
 # reached the wrong authority) naming the real origin for everything else. NO product route is
-# reachable here: `{$OHMAIL_ORIGIN}` stays the only door into the application.
+# reachable here: `{$OHMAIL_ORIGIN}` stays the only door into the application. The 421 is one
+# page with its style inline: nothing to fetch, nothing to press, and nothing of the request in
+# it; the origin is the only value, substituted when Caddy reads this file (entrypoint.sh admits
+# only an origin's characters). The page is one backtick-quoted token, not a heredoc: a heredoc ends
+# wherever the text read so far ends in its marker, and the gate admits no backtick, so no origin
+# can end this one.
 #
 # The port is the one the site above listens on: 80 in every install, the whole reason this
 # compose publishes 80 and 443. A development overlay that moves the front door elsewhere sets
@@ -51,6 +56,34 @@ http://:{$OHMAIL_FRONT_DOOR_PORT:80} {
 		reverse_proxy web:3000
 	}
 	handle {
-		respond "This install answers at {$OHMAIL_ORIGIN}" 421
+		header Content-Type "text/html; charset=utf-8"
+		header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		header X-Content-Type-Options nosniff
+		header Cache-Control no-store
+		respond `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>This server answers at another address</title>
+<style>
+:root{color-scheme:light dark}
+@media (prefers-color-scheme:dark){
+.g{background:#0E0D0C !important}
+.s{background:#23201C !important}
+.i{color:#F6F1E9 !important}
+.j{color:#B8AFA3 !important}
+}
+</style>
+</head>
+<body class="g" style="margin:0;padding:48px 16px;background:#F0EBE3;font:400 17px/27px Arial,Helvetica,sans-serif;">
+<main class="s" style="display:block;max-width:536px;margin:0 auto;padding:32px;background:#FFFFFF;border-radius:20px;">
+<h1 class="i" style="margin:0 0 16px;font:900 28px/32px 'Arial Black',Arial,Helvetica,sans-serif;color:#12100E;letter-spacing:-0.02em;">This server answers at another address.</h1>
+<p class="i" style="margin:0 0 14px;font-weight:700;color:#12100E;overflow-wrap:anywhere;">Open it at {$OHMAIL_ORIGIN}.</p>
+<p class="j" style="margin:0;color:#5A534B;">It was reached by its number or by another name, and it only answers at the one address it was set up with.</p>
+</main>
+</body>
+</html>` 421
 	}
 }
