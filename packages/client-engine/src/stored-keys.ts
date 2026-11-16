@@ -842,15 +842,57 @@ export const STORED_KEYS = [
   },
   {
     key: "pgdata", store: "file", owner: "desktop-engine",
-    at: ["apps/sidecar/src/db.ts", "apps/desktop/src-tauri/src/engine.rs"],
+    at: ["apps/sidecar/src/db.ts", "apps/sidecar/src/store-copies.ts", "apps/desktop/src-tauri/src/engine.rs"],
     holds: "the engine's store: the mail, rules and settings of the accounts on this computer",
     words: true, erased: "account-erase", mark: "kept",
   },
   {
     key: "set-aside-", family: true, store: "file", owner: "desktop-engine",
-    at: ["apps/sidecar/src/db.ts", "apps/desktop/src-tauri/src/engine.rs"],
+    at: ["apps/sidecar/src/db.ts", "apps/sidecar/src/store-copies.ts", "apps/desktop/src-tauri/src/engine.rs"],
     holds: "a store moved aside rather than deleted, with its time in the name",
-    words: true, erased: "never", mark: "kept",
+    words: true, erased: "both", mark: "kept",
+  },
+  {
+    key: "set-aside-refill-", family: true, store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "the mirror a paired desktop held under 1.0, moved aside whole when 2.0 fills a new one",
+    words: true, erased: "account-erase", mark: "kept",
+  },
+  {
+    key: "store-before-2.0", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "a copy of the store as 1.0 left it, taken before the update to 2.0 moves it",
+    words: true, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "copy.json", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/db.ts"],
+    holds: "a store copy's own record: when it was taken, the head it stood at, its files and bytes",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: ".partial", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "the ending of a store's copy while it is still being made",
+    words: true, erased: "both", mark: "kept",
+  },
+  {
+    key: ".removing", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "the ending of a store's copy while it is being removed",
+    words: true, erased: "both", mark: "kept",
+  },
+  {
+    key: "proven", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "that a store's copy has done what it was kept for and goes at the next start",
+    words: false, erased: "both", mark: "kept",
+  },
+  {
+    key: "store-copies.owed", store: "file", owner: "desktop-engine",
+    at: ["apps/sidecar/src/store-copies.ts"],
+    holds: "that the removal of every copy of the store was asked for and is not finished",
+    words: false, erased: "never", mark: "kept",
   },
   {
     key: "sidecar.lock", store: "file", owner: "desktop-engine",
@@ -902,7 +944,7 @@ export const STORED_KEYS = [
   },
   {
     key: "cloud-bootstrap-gen.marks", store: "file", owner: "desktop-engine",
-    at: ["apps/sidecar/src/cloud-mirror.ts"],
+    at: ["apps/sidecar/src/cloud-mirror.ts", "apps/sidecar/src/db.ts"],
     holds: "which run of the copy each first fill belongs to",
     words: false, erased: "sign-out", mark: "kept",
   },
@@ -950,7 +992,7 @@ export const STORED_KEYS = [
   },
   {
     key: "cloud-cursor.json", store: "file", owner: "desktop-engine",
-    at: ["apps/sidecar/src/cloud-engine.ts", "apps/desktop/src-tauri/src/engine.rs"],
+    at: ["apps/sidecar/src/cloud-engine.ts", "apps/sidecar/src/db.ts", "apps/desktop/src-tauri/src/engine.rs"],
     holds: "where the copy on this computer stands in its account's feed; set aside with the store it names a point in, removed when the copy's mail is taken off this computer",
     words: false, erased: "account-erase", mark: "kept",
   },

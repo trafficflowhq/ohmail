@@ -501,6 +501,17 @@ export interface CloudMirrorConfig {
    * mailbox a launch serves from it (`cloud-engine.ts`). Never throws into the pull.
    */
   onMailboxes?: () => Promise<void>;
+  /**
+   * A page carries the receipt of a mailbox ERASED on the account, and is about to be applied.
+   * The engine removes what else on this computer still holds that mailbox's mail (an earlier
+   * copy of the mirror). A throw leaves the page unapplied, and the pull asks for it again.
+   */
+  onMailboxErased?: () => void;
+  /**
+   * The first fill's opening window has landed and its place is written, or the fill completed on
+   * a server that serves no window. Never throws into the pull.
+   */
+  onFirstWindow?: () => void;
 }
 
 export interface CloudMirror {
@@ -3177,6 +3188,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       sawDeletes = true;
       hostedCounts = new Map();
     }
+    /* A MAILBOX ERASED ON THE ACCOUNT: told before its receipt is applied, and outside the page's
+       transaction. A refusal here is the pull's: the page stays unapplied and is asked for again. */
+    if (body.changes.deletes.some((d) => d.type === "mailbox")) cfg.onMailboxErased?.();
     let applied: number;
     try {
       applied = await applyPage(cfg.db, cfg.world, body, now(), gen, knownMailboxes, appliedKeys);
@@ -3300,6 +3314,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         ? { phase: "paging", next: snap.nextCursor }
         : { phase: "complete" };
       writeCursor(cfg.cursorPath, cursor);
+      if (cursor.window.phase === "complete") {
+        try { cfg.onFirstWindow?.(); } catch { /* the hook is a hint; the pull goes on */ }
+      }
       // A page LANDED, so Cloud demonstrably answers — the replay's own rule, from the first page.
       reachable = true;
     }
@@ -4362,6 +4379,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cursor.version = CURSOR_VERSION;
         settleOverflowAfterBootstrap(overflow);
         writeCursor(cfg.cursorPath, cursor);
+        // A fill that never had a window to land (a server without one) is done here.
+        try { cfg.onFirstWindow?.(); } catch { /* the hook is a hint; the pull goes on */ }
         // The generation completed and swept: its marks have no further reader. AFTER the cursor
         // write, so a crash between the two leaves a stale file a fresh generation truncates,
         // never a finished bootstrap the next launch mistakes for an interrupted one.

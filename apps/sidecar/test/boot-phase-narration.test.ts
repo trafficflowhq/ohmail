@@ -103,6 +103,8 @@ describe("the schema upgrade says how far it has got", () => {
       ...opts,
       log: (event, detail) => lines.push({ event, detail }),
       onPhase: (phase, progress) => phases.push({ phase, progress }),
+      // The way is named, as the desktop's own engine names it: a store 1.0 made is refused without one.
+      transition: { way: "copy" },
     });
     const { migrations } = opened;
     await opened.close();
@@ -165,13 +167,16 @@ describe("the schema upgrade says how far it has got", () => {
     expect(upgrade.phases[0]!.phase).toBe("opening_store");
     const counted = upgrade.phases.filter((p) => p.phase === "migrating");
     // 0 before the first migration, N after the last: the sequence the window renders as
-    // "(3 of 11)", and the one thing a counter that never advanced could not produce. The three
+    // "(2 of 11)", and the one thing a counter that never advanced could not produce. The three
     // entries of the 1.0 road are a step each; the 2.0 window's entries are applied together in one
-    // transaction, so the count goes from 3 to 3 and the window at once; an entry after the window
-    // is a step again.
+    // transaction under a word of their own (`updating_store`), so the count goes from 2 to 3 and the
+    // window across it; an entry after the window is a step again.
     expect(WINDOW, "the window: mail 0200 to 0205, 0207 and 0208").toBe(8);
     expect(counted.map((p) => p.progress?.applied))
-      .toEqual([0, 1, 2, 3, 3 + WINDOW, ...Array.from({ length: AFTER_WINDOW }, (_, i) => 4 + WINDOW + i)]);
+      .toEqual([0, 1, 2, 3 + WINDOW, ...Array.from({ length: AFTER_WINDOW }, (_, i) => 4 + WINDOW + i)]);
+    // The store is copied before any of it, and the move's word stands between the road and the count after it.
+    expect(upgrade.phases.map((p) => p.phase).filter((p, i, all) => p !== all[i - 1]))
+      .toEqual(["opening_store", "copying_store", "opening_store", "migrating", "updating_store", "migrating"]);
     expect([...new Set(counted.map((p) => p.progress?.pending))]).toEqual([owed.length]);
     expect(upgrade.migrations).toEqual({
       pending: owed.length,

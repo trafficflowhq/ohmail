@@ -303,14 +303,15 @@ describe("the substitutes reach no Node builtin and open no socket", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("is not vacuous — it read nineteen real files with content in them", () => {
-    // A path list that stopped resolving would make both cases above pass over nothing. NINETEEN
+  it("is not vacuous — it read twenty real files with content in them", () => {
+    // A path list that stopped resolving would make both cases above pass over nothing. TWENTY
+    // since the desktop's store copies (`store-copies.ts`), nineteen
     // since a mailbox erasure's calendar step (`calendar-erasure.ts`), eighteen since the local
     // door's certificate reader (`host-pin-probe.ts`), seventeen since the blank
     // repair's two twins, fifteen since the desktop's streamed save (`attachment-file-route.ts`),
     // fourteen since the three workspace twins. The count moves with the table on purpose, so a row
     // that disappears is a red and not a silence.
-    expect(files).toHaveLength(19);
+    expect(files).toHaveLength(20);
     for (const file of files) {
       expect(readFileSync(file, "utf8").length, basename(file)).toBeGreaterThan(200);
     }

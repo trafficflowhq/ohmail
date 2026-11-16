@@ -22,6 +22,7 @@ import type { CandidateClaim, DialAnswer, LocalMailboxRuntime } from "./roster.j
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
 import { wipeLocalMirror } from "./local-mirror.js";
+import { forgetStoreCopies } from "./store-copies.js";
 import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
   WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
@@ -1138,6 +1139,17 @@ export function requestDoorSection(scope: EngineScope, config: SidecarConfig): v
                 * `detach()`; past that the pass's own writes are refused by `assertMailboxStillHere`.
                 * The login is NOT closed here — the claim release below needs it. */
               await scope.runtimes.get(mailboxId)?.quiesce();
+              /* EVERY EARLIER COPY OF THE STORE GOES BEFORE THE ROW: each still holds this mailbox's
+                 mail and its sealed password. One that cannot be removed refuses the removal with
+                 nothing removed, under the code a mirror that could not be cleared answers. */
+              try {
+                forgetStoreCopies(config.dataDir, "mailbox_removed", scope.log);
+              } catch {
+                throw Object.assign(
+                  new Error("an earlier copy of this mailbox's mail could not be cleared from this computer"),
+                  { code: "local_mirror_not_cleared", httpStatus: 503 },
+                );
+              }
               // The SHARED service, through the same `services` factory every other route on this
               // door resolves — never a second implementation of the tombstone, the credential
               // deletion or the appointment close. The context is the request's own: this install
@@ -1289,6 +1301,23 @@ export function requestDoorSection(scope: EngineScope, config: SidecarConfig): v
             }
           }
           if (req.method === "DELETE") {
+            /* EVERY EARLIER COPY OF THE STORE GOES FIRST, before the fence: each holds the sealed
+               passwords this sign-out removes, with the key beside it. One that cannot be removed
+               refuses the sign-out whole: nothing was forgotten and no password was fenced. */
+            try {
+              forgetStoreCopies(config.dataDir, "signed_out", scope.log);
+            } catch {
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: "store_copy_not_removed",
+                    message: "an earlier copy of your mail on this computer could not be removed, so "
+                      + "you have not been signed out. Try signing out again.",
+                  },
+                }),
+                { status: 503, headers: { "content-type": "application/json" } },
+              );
+            }
               /* Signing out forgets EVERY mailbox's password, not the first one's. This route is
                * the shell signing out of the local door, whose contract is that the credential is
                * the only thing on this machine a sign-out asks to be gone. Forgetting one would
