@@ -20,6 +20,7 @@ import {
   ensureHotPathIndexes, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
 import { dropInvalidLeftovers } from "./concurrent-index.js";
+import { ensureLock, type LockReport } from "./row-security/apply.js";
 import { namesOfWindow, readWindow } from "./transition/index.js";
 import { transactionPoolerReason, sessionUrlRejection } from "./session-url.js";
 import {
@@ -197,6 +198,11 @@ export interface ProdSetupReport {
     role: string;
     verified: Record<keyof typeof ROLE_DEFAULT_TIMEOUTS, boolean>;
   } | null;
+  /**
+   * The lock, where the runtime logins exist: absent on a server without them (a self-hosted
+   * server's report is what it always was). See `row-security/apply.ts`.
+   */
+  lock?: LockReport;
 }
 
 /** Options for {@link setupProdDatabase}. */
@@ -219,6 +225,12 @@ export interface ProdSetupOptions {
    * with nothing changed.
    */
   transition?: MigrateOptions["transition"];
+  /**
+   * `apply`: make the lock (row security and the listed policies) where the runtime logins exist.
+   * Without it the step acts only where the lock already stands; on a server without the logins
+   * it never acts. See `row-security/apply.ts`.
+   */
+  lock?: "apply";
 }
 
 /** How long the endpoint half's config change is given to propagate before the probe fires. */
@@ -674,6 +686,10 @@ export async function setupProdDatabase(
       };
     }
 
+    // THE LOCK, where the runtime logins exist; on a server without them one catalog read and
+    // nothing else. Its refusals join `problems` below.
+    const lock = await ensureLock(url, client, { asked: opts.lock === "apply", log });
+
     // The Supabase Data API lockdown's second pass, and the census that is the verdict. A stock
     // project grants every table in `public` to the host roles at CREATE time and serves them
     // over PostgREST to the anon key — a PUBLIC key. The lockdown lived only in a hand-run CLI,
@@ -902,9 +918,10 @@ export async function setupProdDatabase(
       supabaseLockdown,
       supabaseDataApi,
       roleDefaults,
+      ...(lock.report ? { lock: lock.report } : {}),
     };
 
-    const problems: string[] = [...journalProblems(statuses)];
+    const problems: string[] = [...journalProblems(statuses), ...lock.problems];
     if (lockdownVerdict) {
       // Fail closed on a Supabase-shaped target: an open grant after the lockdown ran is a
       // world-readable schema, and this function must not say OK over one. The verdict carries

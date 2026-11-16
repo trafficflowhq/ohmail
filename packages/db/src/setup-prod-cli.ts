@@ -46,9 +46,15 @@ function storeKindOf(argv: readonly string[]): "cloud" | "server" | undefined {
  * host that holds the ring calls `setupProdDatabase` with `transition.openSealed` instead, as the
  * self-hosted server does at its start.
  */
+/*
+ * `--lock`: where the runtime logins exist, make the lock (row security on every locked table and
+ * the listed policies). Without it a database whose lock already stands is kept as listed, and one
+ * without a lock is left without one. A server without the logins is never locked.
+ */
 async function runCli(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   try {
     const store = storeKindOf(argv);
+    const lock = argv.includes("--lock");
     const url = assertSessionUrl(process.env.DATABASE_URL_SESSION);
     const expectedHost = process.env[PROD_DB_HOST_ENV]?.trim();
     if (!expectedHost) {
@@ -70,6 +76,7 @@ async function runCli(argv: readonly string[] = process.argv.slice(2)): Promise<
       // key reading tables over HTTP.
       dataApi: dataApiPolicyFromEnv(process.env),
       ...(store ? { transition: { kind: store, openSealed: NOTHING_OPENS } } : {}),
+      ...(lock ? { lock: "apply" as const } : {}),
     });
     console.log(JSON.stringify(report, null, 2));
     console.log(

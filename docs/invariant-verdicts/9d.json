@@ -1,0 +1,27 @@
+{
+  "id": "9d",
+  "base": "cbb104abef1d34fe922ae57218e9311d6a69023e",
+  "recorded": "2026-11-15",
+  "command": "npx vitest run packages/services/test/row-security-isolation.pg.test.ts",
+  "tests": [
+    "packages/services/test/row-security-isolation.pg.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/db/src/bound.ts",
+      "line": "  \"select set_config('ohmail.account', $1, true) as account, set_config('ohmail.key', $2, true) as key\";",
+      "to": "  \"select $1::text as account, set_config('ohmail.key', $2, true) as key\";",
+      "failed": 10
+    },
+    {
+      "file": "packages/db/src/row-security/names.ts",
+      "line": "export const ACCOUNT_SETTING = \"ohmail.account\";",
+      "to": "export const ACCOUNT_SETTING = \"ohmail.unbound\";",
+      "failed": 10
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 27
+  }
+}

@@ -547,6 +547,23 @@ export interface AlertSinkSummary {
  */
 export type BuildIdentitySource = "platform" | "file" | "variable" | "none";
 
+/**
+ * The lock's line on `/health`, as the hosted database package's `lockHealthLine` writes it. Its
+ * shape is stated here because this file names no hosted entry point; `health-lock.test.ts` holds
+ * the two to one shape.
+ */
+export interface LockHealthLine {
+  verdict: "absent" | "locked" | "off" | "stale_marker" | "broken";
+  role: string;
+  listed: number;
+  forced: number;
+  census: "equal" | "drift";
+  policies: "equal" | "differ" | "not-judged";
+  since?: string;
+  by?: string;
+  why?: string;
+}
+
 export interface HealthConfig {
   /** Build identity — the deployment's commit sha where the platform provides one. */
   version: string;
@@ -626,6 +643,13 @@ export interface HealthConfig {
    * configuration. The fault is named in a body one curl reads.
    */
   staffDbAttestation?: (() => Promise<string | null>) | null;
+  /**
+   * THE LOCK'S LINE: the database's verdict on the account lock (row security on every locked
+   * table and the listed policies), as the host reads it (`readLock` and `lockHealthLine` of the
+   * hosted database package). Published as `lock` beside the staff faults; it never changes the
+   * status, and a reading that throws publishes nothing. Absent on a host that injects none.
+   */
+  lock?: (() => Promise<LockHealthLine | null>) | null;
   /**
    * Run the content-blind attestation and publish its result, non-fatally. A capability, not
    * a value: `/health` calls it and merges a `staffDbFault` string when one returns. It
