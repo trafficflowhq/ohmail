@@ -1590,6 +1590,21 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => { (setTimeout(resolve, ms) as { unref?: () => void }).unref?.(); });
 }
 
+/**
+ * The waits between a settle's tries (`settling`): one try, then one more after each
+ * wait. Postgres has already spent its deadlock timeout before it kills a victim; these only let
+ * the other party commit first.
+ */
+export const SEND_SETTLE_WAITS_MS: readonly number[] = [50, 200, 800];
+
+/** Postgres' two "run this transaction again" answers: a deadlock's victim, a serialization failure. */
+const RUN_AGAIN_CODES: ReadonlySet<string> = new Set(["40P01", "40001"]);
+function askedToRunAgain(err: unknown): boolean {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.code ?? e?.cause?.code;
+  return typeof code === "string" && RUN_AGAIN_CODES.has(code);
+}
+
 async function raceCeiling<T>(work: Promise<T>, ceiling: AttemptCeiling): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
   const outcome = await Promise.race([
     work.then((value) => ({ timedOut: false as const, value })),
@@ -1701,6 +1716,67 @@ export function fileOnly(real: SendAdapter): SendAdapter {
     close: () => real.close(),
     ...(real.forceClose ? { forceClose: () => real.forceClose!() } : {}),
   };
+}
+
+/**
+ * THE SEND PATH'S LOCK ORDER. Every transaction that takes more than one of these takes them in
+ * this order, first take of each:
+ *
+ *   1. the account row, FOR SHARE (the erasure fence: `withAccountTx`, `readAccountErasedAt`);
+ *   2. a mailbox row that is WAITED for (the fence's mailbox arm, a lifecycle writer's FOR UPDATE);
+ *   3. the draft row;
+ *   4. the draft's `outbound_sends` rows;
+ *   5. `outbound_send_fingerprints`;
+ *   6. `contacts`, by address;
+ *   7. the mailbox doorbell, `SKIP LOCKED`: it never waits, so it may come this late;
+ *   8. the change-log counter (`recordChange`), last.
+ *
+ * THE DRAFT ROW BEFORE ITS RESERVATIONS: the draft is what a press, its same-key replay, a Send
+ * again, the person's answer for a held send, a discard and a schedule each take first, every one
+ * for a measured reason. The settles wrote the reservation row and then the draft, and met all of
+ * them crosswise; Postgres kills one side of such a pair (40P01), and when it killed the settle
+ * that follows a server's 250, a delivered letter stayed `pending` and its Sent copy was never
+ * filed (`send-ceiling-race.pg.test.ts`). So every settle opens with {@link settleLocks} and holds
+ * nothing of the reservation while it waits for the draft, and is run again when Postgres kills it
+ * all the same ({@link settling}). A new transaction on these rows takes them in this order, or it
+ * is the next cycle; `send-settle-lock-order.pg.test.ts` holds the settles to it.
+ */
+
+/**
+ * A SETTLE'S FIRST TWO LOCKS: the account row FOR SHARE, then the draft row FOR NO KEY UPDATE, the
+ * lock the settle's own draft UPDATE takes, taken before anything of the reservation. NO KEY UPDATE
+ * waits behind a press or a replay (`reserve`, FOR UPDATE) and passes a cancel (`withdraw`, KEY
+ * SHARE). The account row comes first because an account's erasure deletes reservations before
+ * drafts: fenced, a settle waits on the erasure's first statement holding nothing. Answers the
+ * erasure stamp, read and never thrown on (a letter already delivered is still settled, and an
+ * erased account has no rows left to write), and the draft's appointment (`undefined`: no draft).
+ */
+async function settleLocks(
+  tx: LedgerTx, ctx: ServiceContext, draftId: string,
+): Promise<{ erasedAt: Date | null | undefined; sendAt: Date | null | undefined }> {
+  const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
+  const [d] = await dialect(ctx.db).forUpdate(tx.select({ sendAt: drafts.sendAt }).from(drafts)
+    .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1), { mode: "no key update" });
+  return { erasedAt, sendAt: d?.sendAt };
+}
+
+/**
+ * RUN A SETTLE'S TRANSACTION, AND AGAIN WHEN POSTGRES ASKS FOR IT: a deadlock's victim (40P01) or
+ * a serialization failure (40001) rolled the whole try back, so nothing of it was written, and the
+ * next try decides again from the rows as they then stand (every settle is a compare-and-swap).
+ * {@link SEND_SETTLE_WAITS_MS} bounds it; any other error, and the last try's, is thrown as it is.
+ */
+async function settling<T>(ctx: ServiceContext, sendId: string, attempt: () => Promise<T>): Promise<T> {
+  for (let tried = 0; ; tried += 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      const wait = SEND_SETTLE_WAITS_MS[tried];
+      if (wait === undefined || !askedToRunAgain(err)) throw err;
+      defaultLog.warn("send_settle_retried", { sendId, accountId: ctx.accountId, attempt: tried + 1, err });
+      await delay(wait);
+    }
+  }
 }
 
 export class SendService {
@@ -2124,7 +2200,25 @@ export class SendService {
 
           // ── 3. FINALIZE (short tx) — on the 250, before the copy ─────────────────────────
           const tFinalize = Date.now();
-          const seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
+          let seq: number | null;
+          try {
+            seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
+          } catch (err) {
+            // ACCEPTED, AND THE RECORD COULD NOT BE WRITTEN (the settle's tries are spent, or the
+            // database failed it another way). The row stays `pending` and `complete`, so the copy is
+            // filed all the same: the mailbox is the master, and with the letter in Sent a later
+            // verify-by-Sent settles it `sent` and a Send again finds it there. Without the copy it
+            // closed `unverified` beside an empty Sent folder, and a Send again delivered it twice.
+            (deps.log ?? defaultLog).error("send_accepted_not_settled", { draftId, accountId: ctx.accountId, sendId, err });
+            if (unfiled !== undefined) {
+              handedOff = true;
+              // The settle's error is the one thrown, whatever became of the copy.
+              await this.fileCopy(
+                ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId, sendId, (msg.attachments?.length ?? 0) > 0, copyStop.signal,
+              ).catch(() => undefined);
+            }
+            throw err;
+          }
           phases.finalizeMs = Date.now() - tFinalize;
           const result: SendResult = { status: "sent", providerMessageId, draftId, seq, sentCopy: "filed" };
 
@@ -2239,7 +2333,9 @@ export class SendService {
         v: 1, sha256: createHash("sha256").update(raw).digest("hex"), skeleton: trimmed.skeleton.toString("base64"),
         parts: trimmed.parts.map((p, i) => ({ ticket: uploads.ids[i]!, ...p })),
       };
-      // After the finalize committed and outside it: the window between the accept and the finalize stays as it was.
+      // After the finalize and outside it: the window between the accept and the finalize stays as it was.
+      // After a finalize that could not be written the row is owed all the same, and a late pass drops it
+      // (`fileOwedCopy`: only a send recorded `sent`): that copy is this request's to file.
       const owed = (whole || staged !== null) && await this.recordOwedCopy(
         ctx, log, sendId, mailboxId, staged !== null ? null : raw, draftId, dueAt,
         staged !== null && uploads !== null ? { parts: staged, until: uploads.until } : null,
@@ -3809,10 +3905,9 @@ export class SendService {
       defaultLog.info("send_again_held_again", { sendId: row.id, accountId: ctx.accountId, draftId });
       return { status: "unverified", providerMessageId: null, draftId, seq, by: "earlier_unverified" };
     }
-    const done = await asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept" | "drop"> => {
-      const [d] = await tx.select({ sendAt: drafts.sendAt }).from(drafts)
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
-      const scheduled = d !== undefined && d.sendAt !== null;
+    const done = await settling(ctx, row.id, () => asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept" | "drop"> => {
+      const { sendAt } = await settleLocks(tx, ctx, draftId);
+      const scheduled = sendAt != null;
       if (scheduled && read !== "uploading") return "kept";
       const [held] = await dialect(ctx.db).forUpdate(tx.select({ id: outboundSends.id }).from(outboundSends)
         .where(and(
@@ -3841,7 +3936,7 @@ export class SendService {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
       return "forgotten";
-    });
+    }));
     if (done === "kept") return null;
     if (done === "lost") return this.answerWinner(ctx, row);
     if (done === "drop") {
@@ -4017,7 +4112,8 @@ export class SendService {
   ): Promise<number | null> {
     const now = ctx.now();
     const draftId = draftOfOpenAttempt(row);
-    const seq = await asTx(ctx).transaction(async (tx) => {
+    const seq = await settling(ctx, row.id, () => asTx(ctx).transaction(async (tx) => {
+      await settleLocks(tx, ctx, draftId);
       // scoped-by: row.id names one reservation; the status + resolved_by predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
         .set({ status: "sent", providerMessageId: row.mintedMessageId, sentAt: now, resolvedBy: "sent_folder", resolvedAt: now })
@@ -4040,7 +4136,7 @@ export class SendService {
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
-    });
+    }));
     return seq === null ? null : Number(seq);
   }
 
@@ -4128,11 +4224,12 @@ export class SendService {
     resolvedBy: "sent_folder" | null = null,
   ): Promise<number | null> {
     const now = ctx.now();
-    const seq = await asTx(ctx).transaction(async (tx) => {
-      /* The account's erasure stamp, FIRST — the fence's lock order against `deleteAccount`. Read,
-         never thrown on: a message already delivered must still finalize `sent`, and all it
-         decides is whether this send may teach the address book (the contacts write below). */
-      const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
+    const seq = await settling(ctx, sendId, () => asTx(ctx).transaction(async (tx) => {
+      /* The account's erasure stamp, FIRST — the fence's lock order against `deleteAccount` — and
+         then the draft row (`settleLocks`). The stamp is read, never thrown on: a message already
+         delivered must still finalize `sent`, and all it decides is whether this send may teach the
+         address book (the contacts write below). */
+      const { erasedAt } = await settleLocks(tx, ctx, draftId);
       // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
         .set({ status: "sent", providerMessageId, sentAt: now, ...(resolvedBy ? { resolvedBy, resolvedAt: now } : {}) })
@@ -4185,13 +4282,15 @@ export class SendService {
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
-    });
+    }));
     return seq === null ? null : Number(seq);
   }
 
   /**
    * Every address this draft was sent to, lower-cased and once each — To, Cc and Bcc. A person you
-   * blind-copied is a person you wrote to: what Bcc keeps private is the list on the wire.
+   * blind-copied is a person you wrote to: what Bcc keeps private is the list on the wire. IN ORDER
+   * OF ADDRESS: two settles of one account then take the contacts they share in one order, where
+   * the drafts' own orders could be opposite (the send path's lock order).
    */
   private async recipientsOf(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<string[]> {
     // scoped-by: draftId is the reservation's own draft, loaded by (id, accountId) upstream
@@ -4203,7 +4302,7 @@ export class SendService {
       [...(d.to as EmailAddress[]), ...(d.cc as EmailAddress[]), ...(d.bcc as EmailAddress[])]
         .map((a) => a?.address?.trim().toLowerCase())
         .filter((a): a is string => Boolean(a)),
-    )];
+    )].sort();
   }
 
   /** FINALIZE-failed tx: the message definitively did not go out. True if it won. */
@@ -4224,7 +4323,8 @@ export class SendService {
     // is the only channel. GATED ON `send_at` STANDING: `send_error` means "the appointment could not
     // be kept". (In the body, not on the member: esbuild keeps a member's note in the phone engine.)
     const now = ctx.now();
-    return asTx(ctx).transaction(async (tx) => {
+    return settling(ctx, sendId, () => asTx(ctx).transaction(async (tx) => {
+      await settleLocks(tx, ctx, draftId);
       // Compare-and-swap, for {@link SendService.finalizeSent}'s reason: exactly one resolver
       // writes a terminal state. This one is reachable only from the pre-SMTP window, which owns
       // the reservation it is finalizing — but "the only writer today" is not a property a
@@ -4252,7 +4352,7 @@ export class SendService {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
       return true;
-    });
+    }));
   }
 
   /**
@@ -4293,7 +4393,8 @@ export class SendService {
     onlyFrom: string | null = null,
   ): Promise<number | null> {
     const now = ctx.now();
-    const seq = await asTx(ctx).transaction(async (tx) => {
+    const seq = await settling(ctx, sendId, () => asTx(ctx).transaction(async (tx) => {
+      await settleLocks(tx, ctx, draftId);
       const won = await tx.update(outboundSends).set({ status: "unverified" })
         .where(and(
           eq(outboundSends.id, sendId), eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.status, "pending"),
@@ -4314,7 +4415,7 @@ export class SendService {
       return recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
-    });
+    }));
     return seq === null ? null : Number(seq);
   }
 }
