@@ -26,3 +26,4 @@ export * from "./itip/methods.js";
 export * from "./itip/order.js";
 export * from "./itip/match.js";
 export * from "./itip/reply.js";
+export * from "./found/types.js";
