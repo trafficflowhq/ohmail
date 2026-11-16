@@ -20,12 +20,12 @@ import {
   DEFAULT_CHANNELS, MemoryMirrorStore, NOTICE_KINDS, decideNotices, devicesOf, flattenResponse, noticeChoicesOf, noticeSampleOf,
   type Notice, type NoticeSample,
 } from "@ohmail/client-engine";
-import { changeLog, devices, sessions } from "@trafficflow/db";
+import { bindDb, changeLog, devices, sessions } from "@trafficflow/db";
 import {
   hashToken, makeAuthConfig, makeSessionLifecycle, mintPairingToken, redeemDevicePair, resolveSession,
   type ServiceContext, type SessionLifecycle,
 } from "@trafficflow/services/auth";
-import { SyncService, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
+import { SyncService, dbFor, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
 import { freshDataDir } from "./_datadir.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
@@ -58,8 +58,10 @@ async function host() {
   const lifecycle: SessionLifecycle = makeSessionLifecycle({ config: makeAuthConfig({ rpID: "localhost", origin: "http://localhost" }) });
   const sync = new SyncService();
   let clock = AT.getTime();
+  // A call with a session: the device's own account; a door before sign-in (the redeem, the refresh): nothing.
   const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-    db: db as ServiceContext["db"], accountId: world.accountId, userId: world.userId,
+    db: over.accountId === "" ? bindDb(db, { account: null }) : dbFor(db, over.accountId ?? world.accountId),
+    accountId: world.accountId, userId: world.userId,
     now: () => new Date(clock), requestId: "device-notices", ...over,
   });
 
@@ -67,8 +69,8 @@ async function host() {
   async function pair(over: Partial<ServiceContext> = {}): Promise<Phone> {
     clock += 1_000;
     const minted = await mintPairingToken(ctx(), { grant: "device-pair", label: "Pixel in the kitchen" });
-    const { tokens } = await redeemDevicePair(ctx(over), lifecycle, { token: minted.token, kind: "mobile-android" });
-    const resolved = await resolveSession(db, tokens.accessToken, new Date(clock));
+    const { tokens } = await redeemDevicePair(ctx({ accountId: "", userId: null, ...over }), lifecycle, { token: minted.token, kind: "mobile-android" });
+    const resolved = await resolveSession(bindDb(db, { account: null }), tokens.accessToken, new Date(clock));
     const [session] = await db.select({ deviceId: sessions.deviceId }).from(sessions).where(eq(sessions.id, resolved!.sessionId));
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, sessionId: resolved!.sessionId, deviceId: session!.deviceId! };
   }

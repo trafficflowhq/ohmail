@@ -8,7 +8,7 @@ import { MailboxService } from "../src/mailbox-service.js";
 import { IMAP_LIST_MAX_FOLDERS } from "@trafficflow/core/adapters/imap";
 import {
   FolderOpsService, ReadBoundExceeded, FOLDER_INVENTORY_MAX, ACCOUNT_MAILBOXES_MAX_READ,
-  setFoldersEnabled, type ServiceContext,
+  dbFor, setFoldersEnabled, type ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -33,7 +33,7 @@ async function setup() {
     .values({ accountId, provider: "imap", address: "own@example.com", trashFolder: "Trash" })
     .returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
   };
   await setFoldersEnabled(ctx, true);
@@ -148,7 +148,7 @@ describe("the account-wide mailbox read is bounded at the read", () => {
     const accountId = randomUUID();
     await connected(db, accountId, 3);
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
     };
 
@@ -164,7 +164,7 @@ describe("the account-wide mailbox read is bounded at the read", () => {
     const over = 5;
     await connected(db, accountId, ACCOUNT_MAILBOXES_MAX_READ + over);
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
     };
 

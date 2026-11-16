@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { eq, desc } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { refreshTokens, sessions } from "@trafficflow/db";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
 import {
-  AuthService, makeTestAuthDeps, hashToken, surfaceTtls,
+  AuthService, dbFor, makeTestAuthDeps, hashToken, surfaceTtls,
   type AuthDeps, type SessionUser, type ServiceContext,
 } from "../src/index.js";
 
@@ -80,8 +80,10 @@ async function harness(over: Partial<AuthDeps["config"]> = {}): Promise<Harness>
   const svc = new AuthService(deps);
   return {
     db, svc, deps, clock,
+    // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
     ctx: (o: Partial<ServiceContext> = {}): ServiceContext => ({
-      db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...o,
+      db: o.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, o.accountId),
+      accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...o,
     }),
   };
 }

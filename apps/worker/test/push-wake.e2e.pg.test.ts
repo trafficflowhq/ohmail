@@ -3,21 +3,18 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   CALENDAR_RECORD_KINDS, accounts, fencedAccountWrite, recordCalendarChanges, recordChange, sessions, users,
 } from "@trafficflow/db";
-import { schema, pushSubscriptions, makeChangeWakeHub } from "@trafficflow/db/cloud";
+import { makeOwnedDb, pushSubscriptions, makeChangeWakeHub, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   makePushEndpointGuard, makeVapidIdentity,
   type HostResolver, type VapidFromEnv,
 } from "@trafficflow/core/net";
-import { makeAuthService, makePushService, makeTestAuthDeps } from "@trafficflow/services";
+import { dbFor, makeAuthService, makePushService, makeTestAuthDeps } from "@trafficflow/services";
 import { startPushWake, WAKE_BODY, type PushWakePost } from "../src/push-wake.js";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -146,8 +143,10 @@ const waitFor = async (p: () => boolean, ms = 8_000): Promise<void> => {
 const tick = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });
 
 describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () => {
-  let sql: ReturnType<typeof postgres>;
-  let dz: ReturnType<typeof drizzle>;
+  // The worker's own pool, made by its factory: a handle a binder can name (one built straight on the
+  // driver is refused by the binder, and a context on the pool's own handle by a transaction).
+  let owned: OwnedDb;
+  let dz: OwnedDb["db"];
   let db: Tx;
   /** A wake registration names an account that exists (cloud 0103's key). */
   const anAccount = async (): Promise<string> =>
@@ -185,13 +184,13 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 6, onnotice: () => { /* quiet */ } });
-    dz = brandDialect(drizzle(sql, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    dz = owned.db;
     db = dz as unknown as Tx;
   }, 120_000);
 
   afterAll(async () => {
-    await sql?.end({ timeout: 5 });
+    await owned?.close();
   });
 
   /** A service context shaped the way the routes build one. */
@@ -199,7 +198,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     ReturnType<typeof makePushService>["subscribe"]
   >[0] => ({
     accountId,
-    db,
+    db: dbFor(dz, accountId),
     now: () => new Date(),
     ...(sessionId ? { sessionId } : {}),
   } as unknown as Parameters<ReturnType<typeof makePushService>["subscribe"]>[0]);
@@ -235,7 +234,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 150,
       // ZERO on purpose: the per-endpoint floor is asserted in its own right elsewhere, and with a
       // floor in place this test cannot tell the ACCOUNT debounce from it. Measured — deleting the
@@ -303,7 +302,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -356,7 +355,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid, debounceMs: 100, minIntervalMs: 0,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid, debounceMs: 100, minIntervalMs: 0,
     });
 
     try {
@@ -397,7 +396,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const hub = makeChangeWakeHub(PG_TEST_URL);
     // NO injected post: the real `defaultPost`, on a real socket, pinned to 127.0.0.1.
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -447,13 +446,13 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
     /** One committed calendar change through the calendar's own door, under the account's fence as its writers take it. */
     const calendar = (kind: (typeof CALENDAR_RECORD_KINDS)[number]): Promise<unknown> =>
-      fencedAccountWrite(db as never, { accountId }, (tx) =>
+      fencedAccountWrite(dbFor(dz, accountId) as never, { accountId }, (tx) =>
         recordCalendarChanges(tx as never, accountId, [{ kind, id: randomUUID(), op: "update" }]));
 
     const hub = makeChangeWakeHub(PG_TEST_URL);
     // The real POST on a real socket, so the bytes and the headers are the ones a distributor gets.
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 150, minIntervalMs: 0,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 150, minIntervalMs: 0,
     });
     /** The requests so far, once every open window has had time to close and dial. */
     const settled = async (): Promise<number> => { await tick(900); return l.captured.length; };
@@ -556,7 +555,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const hub = makeChangeWakeHub(PG_TEST_URL);
     // NO injected post: the real `defaultPost`, on a real socket, doing the real encryption.
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -656,7 +655,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -709,7 +708,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const warnings: string[] = [];
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });
@@ -779,7 +778,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });
@@ -865,7 +864,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });

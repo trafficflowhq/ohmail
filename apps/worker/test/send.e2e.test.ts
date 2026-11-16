@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
 import { drafts, outboundSends } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { SendService, SEND_STALE_AFTER_MS, type ServiceContext } from "@trafficflow/services";
+import { dbFor, SendService, SEND_STALE_AFTER_MS, type ServiceContext } from "@trafficflow/services";
 import type { EmailAddress, OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { makeHarness, rawClient, uidInFolder, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 
@@ -18,7 +18,7 @@ const DB_URL = dbUrlFor(import.meta.url);
 const svc = new SendService();
 
 function ctxFor(h: Awaited<ReturnType<typeof makeHarness>>): ServiceContext {
-  return { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+  return { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
 }
 
 /** Wrap the harness's live ImapAdapter (smtp configured) as a counting SendAdapter. */

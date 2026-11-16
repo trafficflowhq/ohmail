@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, gt, isNotNull, isNull, lt, lte, notInArray, 
 import { dialect } from "@trafficflow/db/dialect";
 import { mailboxes, outboundSentCopies } from "@trafficflow/db";
 import { createLogger, type Logger, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeDb, bridgeTx, passContext, type Db, type OpenPassSendAdapter, type PassContext } from "./context.js";
+import { bridgeDb, bridgeTx, passContext, type Db, type OpenPassSendAdapter, type PassContext, type UnboundDb } from "./context.js";
 import { ServiceError, TransientDialRefusal } from "./errors.js";
 import { SEND_RECONCILE_BATCH, SEND_RECONCILE_CLOSE_CEILING_MS } from "./send-reconcile-pass.js";
 import {
@@ -202,7 +202,7 @@ function triesFirst(a: DueRow, b: DueRow): number {
 }
 
 /** One bounded pass. Never throws for a per-row fault; a claim fault propagates (the route's 503). */
-export async function runOwedSentCopyPass(walk: Db, deps: OwedSentCopyPassDeps): Promise<OwedSentCopyPassResult> {
+export async function runOwedSentCopyPass(walk: UnboundDb, deps: OwedSentCopyPassDeps): Promise<OwedSentCopyPassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const sends = deps.sends ?? sendService;

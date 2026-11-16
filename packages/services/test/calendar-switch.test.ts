@@ -7,7 +7,7 @@ import { calCalendars, calConnections, calSettings } from "@trafficflow/db/mail"
 import {
   calendarFeed, calendarSettings, requireCalendarOn, setCalendarSettings,
 } from "@trafficflow/services/calendar";
-import { SyncService, ServiceError, type ServiceContext, type SettingsDTO } from "../src/index.js";
+import { SyncService, ServiceError, dbFor, type ServiceContext, type SettingsDTO } from "../src/index.js";
 
 /**
  * THE ACCOUNT'S CALENDAR SWITCH: one row, written in the order every settings writer keeps, with
@@ -23,7 +23,7 @@ async function world() {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `cal-${accountId.slice(0, 8)}` });
   let clock = NOW;
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => clock, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => clock, requestId: "r" };
   return { db, accountId, ctx, tick: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
 }
 

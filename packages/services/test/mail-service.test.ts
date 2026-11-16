@@ -1,4 +1,4 @@
-import { accountOfUser } from "@trafficflow/db";
+import { accountOfUser, bindDb } from "@trafficflow/db";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -45,8 +45,9 @@ async function harness(over: Partial<ConstructorParameters<typeof MailService>[0
 /** A real user row, so the `login_tokens.user_id` FK is satisfied. */
 async function seedUser(db: Db, email = "gil@example.com"): Promise<{ userId: string; email: string }> {
   const auth = new AuthService(makeTestAuthDeps());
+  // Registration runs before any session: its handle is bound to nothing.
   const ctx: ServiceContext = {
-    db, accountId: "", userId: null, now: () => START, requestId: "r", ip: "1.2.3.4",
+    db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => START, requestId: "r", ip: "1.2.3.4",
   };
   const { user } = await auth.register(ctx, {
     email, password: "mail-service-password", displayName: "Gil", inviteCode: "INVITE-OK",
@@ -711,8 +712,9 @@ describe("mail ↔ login — a mailed verification token is not a login token", 
     const raw = new URL(h.spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     const auth = new AuthService(makeTestAuthDeps());
+    // The second-factor doors run before any session: their handle is bound to nothing.
     const ctx: ServiceContext = {
-      db: h.db, accountId: "", userId: null, now: h.clock.now, requestId: "r", ip: "1.2.3.4",
+      db: bindDb(h.db, { account: null }), accountId: "", userId: null, now: h.clock.now, requestId: "r", ip: "1.2.3.4",
       origin: "http://localhost:3000",
     };
     // Every endpoint that takes a `loginToken` must reject it. Without the
@@ -740,7 +742,7 @@ describe("mail ↔ login — a mailed verification token is not a login token", 
 
     const auth = new AuthService(makeTestAuthDeps());
     const ctx: ServiceContext = {
-      db: h.db, accountId: "", userId: null, now: h.clock.now, requestId: "r", ip: "1.2.3.4",
+      db: bindDb(h.db, { account: null }), accountId: "", userId: null, now: h.clock.now, requestId: "r", ip: "1.2.3.4",
       origin: "http://localhost:3000",
     };
     await expect(auth.webauthnAssertOptions(ctx, { loginToken: raw })).resolves.toHaveProperty("options");

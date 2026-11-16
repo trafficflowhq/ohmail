@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { accounts, mailboxes } from "@trafficflow/db";
-import { makeMailboxService, type MailboxDTO, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type MailboxDTO, type ServiceContext } from "@trafficflow/services";
 import type { Db } from "./mailbox-facts-seed.js";
 
 /**
@@ -86,7 +86,7 @@ export async function seed74k(db: Db, sqlite: boolean): Promise<void> {
 }
 
 export const svc = makeMailboxService({ installId: "i", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
-export const ctxOf = (db: Db): ServiceContext => ({ db, accountId: MINE, userId: null, now: () => NOW, requestId: "r" });
+export const ctxOf = (db: Db): ServiceContext => ({ db: dbFor(db, MINE), accountId: MINE, userId: null, now: () => NOW, requestId: "r" });
 
 /** What the strip must say about the caller's two mailboxes, whatever the store. */
 export const EXPECTED_FACTS = [

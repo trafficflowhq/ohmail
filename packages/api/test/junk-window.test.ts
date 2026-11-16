@@ -8,6 +8,7 @@ import {
 } from "@trafficflow/db";
 import { acquireImapSlot, releaseImapSlot } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { dbFor } from "@trafficflow/services/mail";
 import { and, eq, sql } from "drizzle-orm";
 import {
   listJunk, junkBody, rescueJunk, searchJunk, junkSweepPreview, requestJunkSweep,
@@ -111,9 +112,9 @@ function pageOf(
   };
 }
 
-/** The ServiceContext shape the rescue takes — the tests mint it from the account id. */
-const ctxOf = (accountId: string) =>
-  ({ accountId, now: () => NOW }) as unknown as Parameters<typeof rescueJunk>[1];
+/** The ServiceContext shape the rescue takes — the tests mint it from the seed's store and account. */
+const ctxOf = (deps: ApiDeps, accountId: string) =>
+  ({ accountId, db: dbFor(deps.db, accountId), now: () => NOW }) as unknown as Parameters<typeof rescueJunk>[1];
 
 /**
  * The two mirror tables, `folder_state` and `junk_rescues` — read before and after every window
@@ -138,7 +139,7 @@ describe("the flag gate", () => {
     await expect(listJunk(deps, accountId)).rejects.toMatchObject({ httpStatus: 409, code: "folders_disabled" });
     await expect(junkBody(deps, accountId, { mailboxId, uid: 1, uidValidity: "7" }))
       .rejects.toMatchObject({ httpStatus: 409 });
-    await expect(rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 1, uidValidity: "7" }))
+    await expect(rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 1, uidValidity: "7" }))
       .rejects.toMatchObject({ httpStatus: 409 });
   });
 });
@@ -365,7 +366,7 @@ describe("a CALLER-SUPPLIED epoch must be a real one", () => {
   for (const bad of ["0", "00", "-1", "1e9", " 7", "0x7", "Infinity", "", "seven"]) {
     it(`refuses uidValidity ${JSON.stringify(bad)} with 400, on BOTH verbs`, async () => {
       const { deps, accountId, mailboxId } = await seed();
-      await expect(rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: bad }))
+      await expect(rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: bad }))
         .rejects.toMatchObject({ httpStatus: 400, code: "validation_failed" });
       await expect(junkBody(deps, accountId, { mailboxId, uid: 2, uidValidity: bad }))
         .rejects.toMatchObject({ httpStatus: 400, code: "validation_failed" });
@@ -376,7 +377,7 @@ describe("a CALLER-SUPPLIED epoch must be a real one", () => {
     // Reaching the ORDINARY ANSWER is the proof this rejects only what it means to: the `7` case
     // gets past the shape check and records its command.
     const { deps, accountId, mailboxId } = await seed();
-    await expect(rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" }))
+    await expect(rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" }))
       .resolves.toMatchObject({ status: "queued" });
   });
 });
@@ -391,7 +392,7 @@ describe("the rescue — Not junk", () => {
     const fetchByUid = vi.spyOn(ImapAdapter.prototype, "fetchByUid");
     const before = await mirrorCounts(db);
 
-    const out = await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    const out = await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     expect(out).toEqual({ status: "queued", rescueId: expect.any(String) });
     for (const spy of [move, connect, fetchByUid]) expect(spy).not.toHaveBeenCalled();
 
@@ -419,13 +420,13 @@ describe("the rescue — Not junk", () => {
 
   it("a RE-PRESS resets the one command — never a second move for one message", async () => {
     const { deps, db, accountId, mailboxId } = await seed();
-    const first = await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    const first = await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     // The organizer refused it five times and the row reached its terminal state.
     await db.update(junkRescues)
       .set({ status: "refused", attempts: 5, lastErrorClass: "read_only", nextAttemptAt: NOW })
       .where(eq(junkRescues.id, first.rescueId));
 
-    const again = await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    const again = await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     expect(again.rescueId, "the UNIQUE locator is one command, not one per press").toBe(first.rescueId);
     const rows = await db.select().from(junkRescues).where(eq(junkRescues.accountId, accountId));
     expect(rows).toHaveLength(1);
@@ -439,8 +440,8 @@ describe("the rescue — Not junk", () => {
     // A UID means nothing outside its UIDVALIDITY, which is why the epoch is in the key. A folder
     // the provider rebuilt hands the same numbers to other messages.
     const { deps, db, accountId, mailboxId } = await seed();
-    await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
-    await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "8" });
+    await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "8" });
     const rows = await db.select({ v: junkRescues.uidvalidity }).from(junkRescues)
       .where(eq(junkRescues.accountId, accountId));
     expect(rows.map((r) => String(r.v)).sort()).toEqual(["7", "8"]);
@@ -449,7 +450,7 @@ describe("the rescue — Not junk", () => {
   it("a cross-account mailbox id is a 404, and writes nothing", async () => {
     const { deps, db, accountId } = await seed();
     const other = await seed();
-    await expect(rescueJunk(deps, ctxOf(accountId), { mailboxId: other.mailboxId, uid: 2, uidValidity: "7" }))
+    await expect(rescueJunk(deps, ctxOf(deps, accountId), { mailboxId: other.mailboxId, uid: 2, uidValidity: "7" }))
       .rejects.toMatchObject({ httpStatus: 404 });
     expect(await db.select().from(junkRescues)).toEqual([]);
   });
@@ -463,7 +464,7 @@ describe("the rescue — Not junk", () => {
     const before = await listJunk(deps, accountId);
     expect(before.items.map((i) => i.rescue)).toEqual([undefined, undefined]);
 
-    await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     const after = await listJunk(deps, accountId);
     expect(after.items.find((i) => i.uid === 2)!.rescue).toBe("queued");
     expect(after.items.find((i) => i.uid === 1)!.rescue).toBeUndefined();
@@ -477,7 +478,7 @@ describe("the rescue — Not junk", () => {
 
   it("a REFUSED command renders as refused, not as queued", async () => {
     const { deps, db, accountId, mailboxId } = await seed();
-    const out = await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    const out = await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     await db.update(junkRescues).set({ status: "refused" }).where(eq(junkRescues.id, out.rescueId));
     vi.spyOn(ImapAdapter.prototype, "listFolderPage")
       .mockResolvedValue(pageOf([{ uid: 2, seq: 2 }]));
@@ -586,7 +587,7 @@ describe("the second verb — Not junk, always allow", () => {
     await db.insert(rulesTbl).values({
       accountId, kind: "domain", match: "example.invalid", destination: "ohmail/Quarantine", provenance: "promoted", enabled: true,
     });
-    const out = await rescueJunk(deps, ctxOf(accountId), {
+    const out = await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     });
     expect(out.status).toBe("queued");
@@ -623,7 +624,7 @@ describe("the second verb — Not junk, always allow", () => {
    */
   it("the allow rule asks for this sender's backlog, in the same write", async () => {
     const { deps, db, accountId, mailboxId } = await seed();
-    const rescued = await rescueJunk(deps, ctxOf(accountId), {
+    const rescued = await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     });
     const out = rescued.allowed!;
@@ -642,7 +643,7 @@ describe("the second verb — Not junk, always allow", () => {
     const [spam] = await db.insert(rulesTbl).values({
       accountId, kind: "sender", match: " spammer@example.invalid ", destination: "ohmail/Quarantine", provenance: "manual", enabled: true,
     }).returning({ id: rulesTbl.id });
-    const out = (await rescueJunk(deps, ctxOf(accountId), {
+    const out = (await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     })).allowed!;
     expect(out.disabledRuleIds).toEqual([spam!.id]);
@@ -662,7 +663,7 @@ describe("the second verb — Not junk, always allow", () => {
     });
     // Driven THROUGH the route, which is the only door `allowSender` has now: it takes the
     // caller's transaction, so there is no second way to run it and no second answer it can give.
-    const out = (await rescueJunk(deps, ctxOf(accountId), {
+    const out = (await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     })).allowed!;
     expect(out.createdRuleId).toBeNull();
@@ -673,7 +674,7 @@ describe("the second verb — Not junk, always allow", () => {
     ]);
     void reads;
     // Pressing twice mints nothing more and announces nothing more.
-    const again = (await rescueJunk(deps, ctxOf(accountId), {
+    const again = (await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     })).allowed!;
     expect(again).toEqual({ disabledRuleIds: [], createdRuleId: null });
@@ -684,7 +685,7 @@ describe("the second verb — Not junk, always allow", () => {
     await db.insert(rulesTbl).values({
       accountId, kind: "sender", match: "s2@example.invalid", destination: "ohmail/Quarantine", provenance: "promoted", enabled: true,
     });
-    const out = await rescueJunk(deps, ctxOf(accountId), { mailboxId, uid: 2, uidValidity: "7" });
+    const out = await rescueJunk(deps, ctxOf(deps, accountId), { mailboxId, uid: 2, uidValidity: "7" });
     expect(out).toEqual({ status: "queued", rescueId: expect.any(String) });
     const rows = await ruleRows(db, accountId);
     expect(rows).toEqual([expect.objectContaining({ destination: "ohmail/Quarantine", enabled: true })]);
@@ -711,7 +712,7 @@ describe("the second verb — Not junk, always allow", () => {
       begin raise exception 'interrupted after the allow' using errcode = '22003'; end $$`));
     await db.execute(sql.raw(`create trigger jr_interrupt before insert on junk_rescues
       for each row execute function jr_interrupt()`));
-    await expect(rescueJunk(deps, ctxOf(accountId), {
+    await expect(rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     })).rejects.toThrow(/interrupted after the allow/);
     await db.execute(sql.raw(`drop trigger jr_interrupt on junk_rescues`));
@@ -721,7 +722,7 @@ describe("the second verb — Not junk, always allow", () => {
     expect(await db.select().from(changeLog).where(eq(changeLog.accountId, accountId))).toEqual([]);
     // THE POSITIVE CONTROL: the same press with the trigger gone writes BOTH halves, so the case
     // above is the rollback and not a refusal at the door.
-    const ok = await rescueJunk(deps, ctxOf(accountId), {
+    const ok = await rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: SENDER },
     });
     expect(ok.allowed!.createdRuleId).not.toBeNull();
@@ -731,7 +732,7 @@ describe("the second verb — Not junk, always allow", () => {
   it("an address-less sender is refused 422 before any write or dial", async () => {
     const { deps, db, accountId, mailboxId } = await seed();
     const move = vi.spyOn(ImapAdapter.prototype, "move");
-    await expect(rescueJunk(deps, ctxOf(accountId), {
+    await expect(rescueJunk(deps, ctxOf(deps, accountId), {
       mailboxId, uid: 2, uidValidity: "7", allow: { sender: "not an address" },
     })).rejects.toMatchObject({ httpStatus: 422 });
     expect(move).not.toHaveBeenCalled();
@@ -785,7 +786,7 @@ describe("the one-time sweep offer", () => {
     const b = await seed({ db: a.db, accountId: a.accountId, junkFolder: null });
     await quarantined(a.db, a.accountId, a.mailboxId, 2);
     await quarantined(a.db, a.accountId, b.mailboxId, 2);
-    const after = await requestJunkSweep(a.deps, ctxOf(a.accountId));
+    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId));
     expect(after.pending).toBe(true);
     expect(after.mailboxes.find((m) => m.id === a.mailboxId)!.pending).toBe(true);
     expect(after.mailboxes.find((m) => m.id === b.mailboxId)!.pending).toBe(false);
@@ -796,14 +797,14 @@ describe("the one-time sweep offer", () => {
 
     // A swept pile has no candidates — the offer is gone and a press is refused, not repeated.
     const empty = await seed();
-    await expect(requestJunkSweep(empty.deps, ctxOf(empty.accountId))).rejects.toMatchObject({ code: "nothing_to_sweep", httpStatus: 409 });
+    await expect(requestJunkSweep(empty.deps, ctxOf(empty.deps, empty.accountId))).rejects.toMatchObject({ code: "nothing_to_sweep", httpStatus: 409 });
   });
 
   it("both answer 409 folders_disabled with the flag off, and never dial", async () => {
     const off = await seed({ foldersOn: false });
     const connect = vi.spyOn(ImapAdapter.prototype, "connect");
     await expect(junkSweepPreview(off.deps, off.accountId)).rejects.toMatchObject({ code: "folders_disabled" });
-    await expect(requestJunkSweep(off.deps, ctxOf(off.accountId))).rejects.toMatchObject({ code: "folders_disabled" });
+    await expect(requestJunkSweep(off.deps, ctxOf(off.deps, off.accountId))).rejects.toMatchObject({ code: "folders_disabled" });
     expect(connect).not.toHaveBeenCalled();
   });
 });
@@ -918,7 +919,7 @@ describe("the held list", () => {
   it("the press answers the held list too; folders off is still 409 and never dials", async () => {
     const a = await seed();
     const held = await letter(a.db, a.accountId, a.mailboxId, "pressed", { loc: Q, desired: Q });
-    const after = await requestJunkSweep(a.deps, ctxOf(a.accountId));
+    const after = await requestJunkSweep(a.deps, ctxOf(a.deps, a.accountId));
     expect(after.held).toEqual({ ids: [held], truncated: false });
     // No participating mailbox still carries the list (a mailbox opted out keeps its letters held).
     const off = await seed({ foldersDisabled: true });

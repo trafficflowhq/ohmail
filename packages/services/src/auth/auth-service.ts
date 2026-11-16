@@ -25,7 +25,7 @@ import {
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { bridgeTx, type Db, type ServiceContext } from "../context.js";
+import { bridgeTx, type Db, type ServiceContext, type UnboundDb } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -3212,7 +3212,7 @@ export class AuthService extends SessionLifecycle {
    * and keyed by the token's digest, as the session's own look-up is: the token resolved to
    * nothing, so no account is known, and the account answered is the row's.
    */
-  override async bearerOfErasedAccount(db: Db, token: string, now: Date): Promise<string | null> {
+  override async bearerOfErasedAccount(db: UnboundDb, token: string, now: Date): Promise<string | null> {
     const digest = hashToken(token);
     return erasedBearerAccount(bridgeTx(bindDb(db, { account: null, key: digest })), digest, now);
   }

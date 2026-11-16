@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { messageBodies, unsubscribeRecords } from "@trafficflow/db";
 import { createLogger, type Logger } from "@trafficflow/core/mail";
 import {
-  makeUnsubscribeService, unsubscribeListKey, ServiceError,
+  dbFor, makeUnsubscribeService, unsubscribeListKey, ServiceError,
   type HostResolver, type OneClickPost,
 } from "../src/index.js";
 import { LIST_REFUSED, oneClickSettleOf } from "../src/unsubscribe-service.js";
@@ -224,7 +224,7 @@ describe("the automatic pass on a person's screen-out", () => {
       post: answering(204), resolver: PUBLIC_DNS, log: h.log, trustedAuthservIdsFor: async () => { throw fault(); },
     });
     expect(await faulting.onScreenOut(ctx, [id])).toEqual({ considered: 1, posted: 0, skipped: 0, failed: 1, remaining: 0 });
-    const noSwitch = { ...ctx, db: new Proxy(db, { get: (t, p, r) => (p === "select" ? () => { throw fault(); } : Reflect.get(t, p, r)) }) };
+    const noSwitch = { ...ctx, db: dbFor(new Proxy(db, { get: (t, p, r) => (p === "select" ? () => { throw fault(); } : Reflect.get(t, p, r)) }), accountId) };
     expect(await svcWith(answering(204), h.log).onScreenOut(noSwitch, [id])).toMatchObject({ considered: 0, posted: 0 });
 
     expect(h.lines().filter((l) => l.event === "unsubscribe_sweep_failed" || l.event === "unsubscribe_switch_read_failed")

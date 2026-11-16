@@ -39,7 +39,7 @@ async function wake(url: string, address: string, heard: () => number): Promise<
     delete: () => ({ where: async () => [] }),
   } as unknown as Tx;
   const sender = startPushWake({
-    db, source, guard: { check: async () => [address] }, ownsAccount: async () => true,
+    dbOf: () => db, source, guard: { check: async () => [address] }, ownsAccount: async () => true,
     vapid: { kind: "absent", why: "none on this machine" }, debounceMs: 1, minIntervalMs: 0,
   });
   const before = heard();

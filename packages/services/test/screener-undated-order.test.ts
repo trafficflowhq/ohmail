@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { folderState, mailboxes, messages } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { ScreenerService } from "../src/screener-service.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * UNDATED MAIL SORTS AT ITS ARRIVAL, AND THE CURSOR KEEPS THAT ORDER ACROSS PAGES.
@@ -37,7 +37,7 @@ async function world() {
     });
     return m!.id;
   };
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "sud" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "sud" };
   return { db, ctx, held };
 }
 

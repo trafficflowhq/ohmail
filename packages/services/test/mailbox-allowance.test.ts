@@ -9,7 +9,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  makeMailboxService, MailboxAllowanceError, decideMailboxAllowance, readMailboxAllowance,
+  makeMailboxService, MailboxAllowanceError, dbFor, decideMailboxAllowance, readMailboxAllowance,
   ServiceError,
   type MailboxAllowance, type ServiceContext,
 } from "@trafficflow/services";
@@ -78,7 +78,7 @@ function seedSub(
 }
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 /**
  * The seam, satisfied rather than exercised.

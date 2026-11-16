@@ -6,7 +6,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, changeLog, folderOps, folderState, idempotencyKeys, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  FolderOpsService, ServiceError, setFoldersEnabled, userFolderById,
+  FolderOpsService, ServiceError, dbFor, setFoldersEnabled, userFolderById,
   type ServiceContext,
 } from "../src/index.js";
 
@@ -29,7 +29,7 @@ async function setup(opts: { enabled?: boolean } = {}) {
     .values({ accountId, provider: "imap", address: "own@example.com", trashFolder: "Trash" })
     .returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-26T00:00:00.000Z"), requestId: "r",
   };
   if (opts.enabled !== false) await setFoldersEnabled(ctx, true);

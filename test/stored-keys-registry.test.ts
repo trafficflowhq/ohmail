@@ -144,6 +144,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "ohmail.db.inTransaction": "a symbol's description on a database handle",
   "ohmail.db.erasureFence": "a symbol's description on a database handle",
   "ohmail.db.binding": "a symbol's description on a database handle",
+  "ohmail.db.serverPool": "a symbol's description on a database handle",
   "ohmail.db.savepoint": "a symbol's description on a database handle",
   "ohmail_sqlite_migrations": "a table's name inside a device's store; the store is a row",
   "ohmail-backup-exclusions": "a build plugin's name in the phone app",

@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accounts, bindDb, mailboxes } from "@trafficflow/db";
+import { accounts, bindDb, bindingOf, BindingRefusedError, mailboxes } from "@trafficflow/db";
 import { staffAuditEvents, STAFF_DOOR_KEY } from "@trafficflow/db/cloud";
 import {
   checkedDetail, isUuid, passContext, StaffAuditDetailError,
@@ -112,7 +112,6 @@ export function staffEventRow(e: StaffEventInput): typeof staffAuditEvents.$infe
   };
 }
 
-type Inserter = Pick<ApiDeps["db"], "insert">;
 
 /** The one failure a staff route answers `503 audit_failed`: its row could not be written. */
 export class StaffAuditWriteError extends Error {
@@ -122,8 +121,22 @@ export class StaffAuditWriteError extends Error {
   }
 }
 
-/** Insert rows, all or none. Any failure — a refused detail, a database fault — throws {@link StaffAuditWriteError}. */
-export async function recordStaffEvents(db: Inserter, events: readonly StaffEventInput[]): Promise<void> {
+/**
+ * Insert rows, all or none. Any failure — a refused detail, a database fault — throws {@link StaffAuditWriteError}.
+ *
+ * ON THE STAFF DOOR'S HANDLE AND NO OTHER. The operators' trail is written through {@link staffDb}
+ * (bound to no account, carrying the door's word), or inside a transaction that handle itself
+ * opened: a sign-in, a step-up or a role change at the door commits its event with the act, and
+ * that transaction carries the door's binding. Any other handle is refused before a row is
+ * written, with the binder's error and not the audit's: one that names an account, or a
+ * transaction of one (a customer's binding never carries the operators' trail), one that names
+ * nothing without the door's word, and one with no binding at all.
+ */
+export async function recordStaffEvents(db: UnboundDb, events: readonly StaffEventInput[]): Promise<void> {
+  const held = bindingOf(db);
+  if (held === undefined || held.account !== null || !held.keyed) {
+    throw new BindingRefusedError("a staff event was asked on a handle that is not the staff door's");
+  }
   if (events.length === 0) return;
   try {
     await db.insert(staffAuditEvents).values(events.map(staffEventRow));

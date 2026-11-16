@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * THE ARCHIVE HALF OF THE `D-U-N-S` MISS — measured against real Postgres, because the whole
@@ -55,8 +52,9 @@ import { brandDialect } from "@trafficflow/db/dialect";
  * and then reaches the shared box anyway.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
@@ -71,7 +69,7 @@ const ids: Record<string, string> = {};
 const DUNS_SUBJECT = "Your D-U-N-S Number is enclosed.";
 
 function ctx(): ServiceContext {
-  return { db, accountId: A, userId: null, now: () => NOW, requestId: "search-punct-test" };
+  return { db: dbFor(db, A), accountId: A, userId: null, now: () => NOW, requestId: "search-punct-test" };
 }
 
 async function seed(o: { key: string; mailboxId: string; subject: string; body: string; date?: Date }): Promise<void> {
@@ -123,7 +121,7 @@ describe("archive search over punctuation (real Postgres)", () => {
     });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("(a) the hyphenated subject IS in the archive's lexical reach — the miss was not here", async () => {
     // The predicate, alone, before the service: this is the measurement the whole slice turned on.

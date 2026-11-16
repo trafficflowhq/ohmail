@@ -7,7 +7,7 @@ import { isSentFolderOf } from "@trafficflow/core";
 import { recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
-import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
 import { makeHarness, rawClient, uidInFolder, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
@@ -59,7 +59,7 @@ describe.skipIf(!AVAILABLE)("a message deleted on the server leaves History and 
     const inbox = await idOf(inboxId);
     expect(sent, "the precondition: the Sent reply was ingested").toBeDefined();
     expect(inbox, "the precondition: the INBOX message was ingested").toBeDefined();
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
     const history = async () => (await new MessageService().list(ctx, { view: "all", limit: 50 })).items.map((m) => m.id);
     const search = async () => (await new SearchService().search(ctx, { q: tag, limit: 50 })).items.map((m) => m.id);
     expect(await history(), "the precondition: History lists both").toEqual(expect.arrayContaining([sent, inbox]));

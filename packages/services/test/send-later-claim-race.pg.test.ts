@@ -2,12 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, outboundSends, scheduledSendFiles } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSends, scheduledSendFiles, bindDb } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { StaticKeyProvider, type OpenSendAdapter, type OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, keepScheduledFilesSealed, runScheduledSendPass } from "../src/index.js";
+import { ScheduleService, dbFor, keepScheduledFilesSealed, runScheduledSendPass } from "../src/index.js";
 import type { ScheduledFilesKeeping, ServiceContext } from "../src/index.js";
 
 /**
@@ -68,7 +68,7 @@ async function seeded(
     to: [{ name: null, address: "you@example.com" }], status: "draft",
     createdAt: NOW, updatedAt: NOW,
   }).returning();
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   await schedules.schedule(ctx, d!.id, sendAt.toISOString(), files ? { files, surfaceMaxTotalBytes: null, ...(keeping ? { keeping } : {}) } : undefined);
   return { ctx, accountId, draftId: d!.id };
 }
@@ -121,7 +121,7 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     // Assertions are scoped to THIS account: the shared :5433 database accumulates residue
     // rows from earlier (including killed) runs, and the pass legitimately claims those — a
     // global `claimed === 0` here would be an assertion about other tests' leftovers.
-    await runScheduledSendPass(dbA, {
+    await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 60_000),
     });
     const [row] = await dbA.select().from(drafts).where(eq(drafts.id, w.draftId));
@@ -150,7 +150,7 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     // until the release below.
     const fake = fakeAdapter();
     const started = Date.now();
-    const r1 = await runScheduledSendPass(dbA, {
+    const r1 = await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 60_000),
     });
     expect(Date.now() - started, "the claim blocked behind a held row lock").toBeLessThan(2_000);
@@ -162,7 +162,7 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
 
     // Released ⇒ the next pass takes it and the appointment is kept — the skip deferred the
     // send by one cycle, it did not lose it.
-    const r2 = await runScheduledSendPass(dbA, {
+    const r2 = await runScheduledSendPass(bindDb(dbA, { account: null }), {
       openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 120_000),
     });
     expect(r2).toMatchObject({ claimed: 1, sent: 1 });
@@ -190,7 +190,7 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
 
     // The claim window's recovery sends the letter once, with its file.
     const fake = fakeAdapter();
-    await runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 11 * 60_000) });
+    await runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 11 * 60_000) });
     const mine = fake.state.delivered.filter((m) => m.subject === "the appointment" && m.attachments?.length);
     expect(mine.map((m) => m.attachments!.map((a) => a.filename))).toEqual([["a.pdf"]]);
   });
@@ -199,7 +199,7 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     const w = await seeded([{ filename: "b.png", contentType: "image/png", content: Buffer.from("png") }]);
     await schedules.cancel(w.ctx, w.draftId);
     expect(await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId))).toHaveLength(0);
-    await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
+    await runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
     expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
   });
 
@@ -213,8 +213,8 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     const files = { open: keeping.sealer.open.bind(keeping.sealer), tidy: true };
     const at = (): Date => new Date(DUE.getTime() + 60_000);
     await Promise.all([
-      runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: at, files }),
-      runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: at, files }),
+      runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fake.factory, now: at, files }),
+      runScheduledSendPass(bindDb(dbA, { account: null }), { openSendAdapter: fake.factory, now: at, files }),
     ]);
     const mine = fake.state.delivered.filter((m) => m.attachments?.some((a) => a.filename === "c.pdf"));
     expect(mine, "the sealed letter was delivered other than once").toHaveLength(1);

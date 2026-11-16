@@ -12,7 +12,7 @@ import {
   formatClaim, parseClaim, isMalformed, deriveRequestKey,
   REQUEST_KINDS, capabilityForKind,
 } from "@trafficflow/core/adapters/organizer-lease";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, ScreenerService, type ServiceContext } from "@trafficflow/services";
 import { ORGANIZER_CAPABILITIES, organizerCapabilitiesFor } from "@ohmail/organizer/lease";
 
 /**
@@ -96,7 +96,7 @@ async function seedHeld(db: TestDb, mailboxId: string, from: string): Promise<st
 }
 
 const ctxFor = (db: TestDb): ServiceContext =>
-  ({ db, accountId: ACCT, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, ACCT), accountId: ACCT, userId: null, now: () => NOW, requestId: "r" });
 
 describe("an organizer with NO request key offers nothing, and says so honestly", () => {
   it("organizerCapabilitiesFor answers the empty set", () => {

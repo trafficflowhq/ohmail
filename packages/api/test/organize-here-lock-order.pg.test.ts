@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -116,7 +117,7 @@ async function fixture(): Promise<Fixture> {
 /** The Agree press with a window, on `h`; the allowance gate is where it can be stopped. */
 const press = (h: OwnedDb, a: Fixture, allowance: () => Promise<void>) =>
   makeMailboxService({ allowance: async () => { await allowance(); } }).organizeHere({
-    db: h.db as unknown as ServiceContext["db"], accountId: a.accountId, userId: null,
+    db: dbFor(h.db, a.accountId), accountId: a.accountId, userId: null,
     now: () => NOW, requestId: `frc-lo-${randomUUID().slice(0, 8)}`,
   }, a.mailboxId, { intent: "join", screening: { dormancyDays: 120, scope: "window" } });
 
@@ -128,7 +129,7 @@ const settingsWrite = (h: OwnedDb, a: Fixture): Promise<Response> => SETTINGS_WR
     body: JSON.stringify({ folderMailboxes: { [a.mailboxId]: false } }),
   }),
   {
-    db: h.db, session: { accountId: a.accountId, userId: null, sessionId: null },
+    db: dbFor(h.db, a.accountId), session: { accountId: a.accountId, userId: null, sessionId: null },
     now: () => NOW, requestId: `frc-lo-${randomUUID().slice(0, 8)}`,
   } as unknown as ApiDeps,
   {},
@@ -177,7 +178,7 @@ async function triageFixture(): Promise<TriageFixture> {
 
 /** Triage with an Idempotency-Key: the counter (its two change rows), then the account row FOR SHARE (the claim's fence). */
 const triage = (h: OwnedDb, a: TriageFixture) => new TriageService().setState({
-  db: h.db as unknown as ServiceContext["db"], accountId: a.accountId, userId: null,
+  db: dbFor(h.db, a.accountId), accountId: a.accountId, userId: null,
   now: () => NOW, requestId: `frc-lo-${randomUUID().slice(0, 8)}`,
 }, a.messageId, { state: "reply_later" }, { idempotency: { key: a.key, requestHash: "frc-lo" } });
 
@@ -440,7 +441,7 @@ async function doors(): Promise<Doors> {
 }
 
 const ctxOn = (h: OwnedDb, d: Doors): ServiceContext => ({
-  db: h.db as unknown as ServiceContext["db"], accountId: d.accountId, userId: null,
+  db: dbFor(h.db, d.accountId), accountId: d.accountId, userId: null,
   now: () => NOW, requestId: `frc-lo-${randomUUID().slice(0, 8)}`,
 });
 const keyOf = (d: Doors, door: string) => ({ key: `frc-lo-${door}-${d.accountId.slice(0, 8)}`, requestHash: "frc-lo" });
@@ -507,7 +508,7 @@ const SCREEN: Door = {
 /** The request drain's apply: the same decision with no settings row and no key. */
 const DRAIN: Door = {
   name: "the Screener drain's apply",
-  run: (h, d) => fencedAccountWrite(h.db as unknown as Tx, { accountId: d.accountId }, (tx) => applyScreenerDecision(tx, {
+  run: (h, d) => fencedAccountWrite(dbFor(h.db, d.accountId) as unknown as Tx, { accountId: d.accountId }, (tx) => applyScreenerDecision(tx, {
     accountId: d.accountId, scope: "sender", address: d.heldFrom, appliedFolder: "ohmail/Screened", decision: "no",
     triggeringActionId: `screener:request:${d.held}`, now: NOW, stampBaseline: false, decidedBy: "person", overExisting: "converge",
   })),
@@ -548,7 +549,7 @@ const SAVE_TWO: Door = {
       body: JSON.stringify({ folderMailboxes: { [d.a]: false, [d.b]: false } }),
     }),
     {
-      db: h.db, session: { accountId: d.accountId, userId: null, sessionId: null },
+      db: dbFor(h.db, d.accountId), session: { accountId: d.accountId, userId: null, sessionId: null },
       now: () => NOW, requestId: `frc-lo-${randomUUID().slice(0, 8)}`,
     } as unknown as ApiDeps,
     {},

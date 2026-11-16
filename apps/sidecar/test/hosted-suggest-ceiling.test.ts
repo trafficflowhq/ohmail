@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
 import type { ClassifierInput, ClassifierPort, ClassifierResult } from "@trafficflow/core";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, ScreenerService, type ServiceContext } from "@trafficflow/services";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { cloudSuggestWire } from "../../desktop/src/cloud-suggest.js";
 import { FakeAdapter, seedMessage } from "../../../packages/services/test/helpers.js";
@@ -112,7 +112,7 @@ async function hostedDoor({ metered = true }: { metered?: boolean } = {}) {
   const svc = new ScreenerService(metered
     ? { adapter: new FakeAdapter(), classifier: model, credits: gate, pricing: PLANE_PRICING }
     : { adapter: new FakeAdapter(), classifier: model });
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "hc" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "hc" };
   const reached: Reached[] = [];
   const dir = await freshDataDir("ohmail-hosted-ceiling-");
   dirs.push(dir);

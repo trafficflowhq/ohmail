@@ -40,7 +40,7 @@ import {
   webauthnChallenges,
   webauthnCredentials,
 } from "@trafficflow/db/cloud";
-import { deleteAccount, type ServiceContext } from "../src/index.js";
+import { dbFor, deleteAccount, type ServiceContext } from "../src/index.js";
 import {
   EXPIRED_NOT_DELETED, NOW, RETAINED, accountScopedTables, rowsOf, seedFullAccount,
   unseededScopedTables,
@@ -61,7 +61,7 @@ import {
  */
 
 const ctxFor = (db: Db, accountId: string, userId: string): ServiceContext =>
-  ({ db, accountId, userId, now: () => NOW, requestId: "del" });
+  ({ db: dbFor(db, accountId), accountId, userId, now: () => NOW, requestId: "del" });
 
 describe("account deletion — Art. 17 erasure by anonymisation", () => {
   it("empties EVERY account-scoped table except the billing subject", async () => {

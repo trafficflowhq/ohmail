@@ -5,12 +5,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import { contacts, drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createLogger, SendNotSubmitted } from "@trafficflow/core";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
-import { SendService } from "../src/index.js";
+import { SendService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { SEND_SETTLE_WAITS_MS } from "../src/send-service.js";
 
@@ -53,33 +53,39 @@ const settled = <T>(p: Promise<T>): Promise<Settled<T>> =>
   p.then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, e }));
 
 /**
- * One party of a race: its own pool under its own application name, every error a transaction of
- * it ended on, and a plant. While `plant.armed`, each of its next `plant.left` transactions runs
- * its whole body and is then killed by the server with SQLSTATE 40P01, the error a deadlock's
- * victim gets, raised through the real driver.
+ * One party of a race: a pool of the factory's under its own application name (a parameter of the
+ * address is one of the connection), every error a transaction of it ended on, and a plant. While
+ * `plant.armed`, each of its next `plant.left` transactions runs its whole body and is then killed
+ * by the server with SQLSTATE 40P01, the error a deadlock's victim gets, raised through the real
+ * driver. The transaction is read on the pool's handle and runs as the handle it was asked on, so
+ * a view bound to an account opens its own bound transaction.
  */
 function party(name: string) {
   const app = `${name}-${randomUUID().slice(0, 8)}`;
-  const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { application_name: app } });
-  const db = brandDialect(drizzle(client, { schema }), "pg");
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  const pool = makeOwnedDb(address.toString());
+  const db = pool.db;
   const ended: string[] = [];
   const plant = { armed: false, left: 0, fired: 0 };
   type Body = (tx: { execute: (q: unknown) => Promise<unknown> }, ...more: unknown[]) => Promise<unknown>;
   const h = db as unknown as { transaction: (fn: Body, ...rest: unknown[]) => Promise<unknown> };
-  const inner = h.transaction.bind(h);
+  const inner = h.transaction;
   Object.defineProperty(h, "transaction", {
     configurable: true, writable: true,
-    value: (fn: Body, ...rest: unknown[]) => inner(async (tx, ...more) => {
-      const out = await fn(tx, ...more);
-      if (plant.armed && plant.left > 0) {
-        plant.left -= 1;
-        plant.fired += 1;
-        await tx.execute(sql`do $$ begin raise exception 'planted: this transaction is the deadlock victim' using errcode = '40P01'; end $$`);
-      }
-      return out;
-    }, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; }),
+    value(this: unknown, fn: Body, ...rest: unknown[]) {
+      return inner.call(this, async (tx, ...more) => {
+        const out = await fn(tx, ...more);
+        if (plant.armed && plant.left > 0) {
+          plant.left -= 1;
+          plant.fired += 1;
+          await tx.execute(sql`do $$ begin raise exception 'planted: this transaction is the deadlock victim' using errcode = '40P01'; end $$`);
+        }
+        return out;
+      }, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; });
+    },
   });
-  return { app, client, db, ended, plant };
+  return { app, pool, db, ended, plant };
 }
 type Party = ReturnType<typeof party>;
 
@@ -192,7 +198,7 @@ async function world(recipients: string[][] = [["you@example.com"]]) {
     draftIds.push(d!.id);
   }
   const ctx = (p: Party, now: Date = NOW): ServiceContext =>
-    ({ db: p.db, accountId, userId: null, now: () => now, requestId: p.app });
+    ({ db: dbFor(p.db, accountId), accountId, userId: null, now: () => now, requestId: p.app });
   return { accountId, mailboxId: mb!.id, draftIds, draftId: draftIds[0]!, ctx };
 }
 type World = Awaited<ReturnType<typeof world>>;
@@ -346,7 +352,7 @@ describe.skipIf(!PG_UP)("a settle takes the draft row before anything of the res
         await a.after();
       } finally {
         await third.end();
-        await p.client.end({ timeout: 5 });
+        await p.pool.close();
       }
     }, 60_000);
   }
@@ -391,8 +397,8 @@ describe.skipIf(!PG_UP)("two settles of one account learn their contacts in one 
     } finally {
       await gate1.end();
       await gate2.end();
-      await one.client.end({ timeout: 5 });
-      await two.client.end({ timeout: 5 });
+      await one.pool.close();
+      await two.pool.close();
     }
   }, 60_000);
 });
@@ -416,7 +422,7 @@ describe.skipIf(!PG_UP)("a settle Postgres kills is run again", () => {
       expect(t.state.filed).toEqual([row.mintedMessageId]);
       expect(t.state.delivered, "one envelope").toHaveLength(1);
     } finally {
-      await p.client.end({ timeout: 5 });
+      await p.pool.close();
     }
   }, 60_000);
 
@@ -456,8 +462,8 @@ describe.skipIf(!PG_UP)("a settle Postgres kills is run again", () => {
       expect([...t.state.delivered, ...probe.state.delivered], "THE RECIPIENT GOT IT TWICE").toHaveLength(1);
       expect(t.state.filed, "one copy").toHaveLength(1);
     } finally {
-      await p.client.end({ timeout: 5 });
-      await later.client.end({ timeout: 5 });
+      await p.pool.close();
+      await later.pool.close();
     }
   }, 60_000);
 
@@ -466,14 +472,14 @@ describe.skipIf(!PG_UP)("a settle Postgres kills is run again", () => {
     try {
       const w = await world();
       const h = p.db as unknown as { transaction: (fn: unknown, ...rest: unknown[]) => Promise<unknown> };
-      const inner = h.transaction.bind(h);
+      const inner = h.transaction;
       let settles = 0;
       let accepted = false;
       const t = transport({ onAccepted: () => { accepted = true; } });
       Object.defineProperty(h, "transaction", {
         configurable: true, writable: true,
-        value: (fn: unknown, ...rest: unknown[]) => {
-          if (!accepted) return inner(fn, ...rest);
+        value(this: unknown, fn: unknown, ...rest: unknown[]) {
+          if (!accepted) return inner.call(this, fn, ...rest);
           settles += 1;
           return Promise.reject(Object.assign(new Error("the connection is gone"), { code: "08006" }));
         },
@@ -484,7 +490,7 @@ describe.skipIf(!PG_UP)("a settle Postgres kills is run again", () => {
       expect((await sendOfDraft(w.draftId))!.status, "nothing was written").toBe("pending");
       expect(t.state.filed, "accepted all the same: the copy is filed").toHaveLength(1);
     } finally {
-      await p.client.end({ timeout: 5 });
+      await p.pool.close();
     }
   }, 60_000);
 });

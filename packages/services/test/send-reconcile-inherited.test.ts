@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSendFingerprints, outboundSends, bindDb } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mintMessageId } from "@trafficflow/core/mail";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -68,7 +68,7 @@ describe("runSendReconcilePass — a reservation an earlier run left pending", (
     const ours = await pending(w, 1 * MIN);       // this run's own, just as young
     const spy = inSent();
 
-    const r = await runSendReconcilePass(w.db, { openSendAdapter: spy.factory, now: () => NOW, inherited: [left.sendId] });
+    const r = await runSendReconcilePass(bindDb(w.db, { account: null }), { openSendAdapter: spy.factory, now: () => NOW, inherited: [left.sendId] });
 
     expect(r.claimed).toBe(1);
     expect(r.sent).toBe(1);
@@ -86,7 +86,7 @@ describe("runSendReconcilePass — a reservation an earlier run left pending", (
     const spy = inSent();
     const counting: typeof spy.factory = async (id) => { dials += 1; return spy.factory(id); };
 
-    const r = await runSendReconcilePass(w.db, {
+    const r = await runSendReconcilePass(bindDb(w.db, { account: null }), {
       openSendAdapter: counting, now: () => NOW, inherited: [quiet.sendId, spoke.sendId], batch: 1,
     });
 
@@ -103,12 +103,12 @@ describe("runSendReconcilePass — a reservation an earlier run left pending", (
     const young = await pending(w, 1 * MIN);
     const spy = inSent();
 
-    const none = await runSendReconcilePass(w.db, { openSendAdapter: spy.factory, now: () => NOW });
+    const none = await runSendReconcilePass(bindDb(w.db, { account: null }), { openSendAdapter: spy.factory, now: () => NOW });
     expect(none.claimed).toBe(0);
     expect(await status(w, young.sendId)).toBe("pending");
 
     await w.db.update(outboundSends).set({ status: "sent" }).where(eq(outboundSends.id, young.sendId));
-    const again = await runSendReconcilePass(w.db, { openSendAdapter: spy.factory, now: () => NOW, inherited: [young.sendId] });
+    const again = await runSendReconcilePass(bindDb(w.db, { account: null }), { openSendAdapter: spy.factory, now: () => NOW, inherited: [young.sendId] });
     expect(again.claimed).toBe(0);
     expect(spy.seen.probed).toHaveLength(0);
   });

@@ -89,7 +89,7 @@ export function windowServicesSection(scope: EngineScope, config: SidecarConfig)
     const launchBearerAuthorized = async (r: Request): Promise<boolean> => {
       const header = r.headers.get("authorization");
       const token = header && /^Bearer\s+/i.test(header) ? header.replace(/^Bearer\s+/i, "").trim() : "";
-      return token !== "" && (await resolveSession(scope.db, token, scope.now())) !== null;
+      return token !== "" && (await resolveSession(scope.unbound, token, scope.now())) !== null;
     };
     /** The window's queued changes, on this machine — see `window-outbox.ts`. Not on a phone. Owned as
         this door's world is (`ensureLocalWorld`, by its address); an earlier build's file is adopted. */
@@ -138,9 +138,8 @@ export function windowServicesSection(scope: EngineScope, config: SidecarConfig)
        (the desktop's own store); see `search-warmup.ts`. The answer is dropped. */
     scope.searchWarmup = runsStorePass(scope.organizerKind, "search-index-backfill")
       ? createSearchWarmup({
-          search: () => searchFor(scope.organizerKind).search({
-            db: scope.db as never, accountId: scope.world.accountId, userId: null, now: scope.now, requestId: "search-warmup",
-          }, { q: SEARCH_WARMUP_WORD, parts: "page", limit: 50 }),
+          search: () => searchFor(scope.organizerKind)
+            .search(scope.ownContext("search-warmup"), { q: SEARCH_WARMUP_WORD, parts: "page", limit: 50 }),
           ingesting: ingestIsRunning,
           quietForMs: () => attention.quietForMs(),
           log: scope.log,

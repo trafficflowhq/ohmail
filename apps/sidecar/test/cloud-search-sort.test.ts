@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, messageBodies } from "@trafficflow/db";
 import { reindexMessageSearch } from "@trafficflow/core/mail";
-import { SEARCH_PARTS, SEARCH_SORTS, type ServiceContext } from "@trafficflow/services/mail";
+import { dbFor, SEARCH_PARTS, SEARCH_SORTS, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**
@@ -72,7 +72,7 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
     const recent = await seed("heron three", "2026-07-20T09:00:00Z", "mike@mid.example");
 
     const ctx: ServiceContext = {
-      db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "r12-sidecar",
+      db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "r12-sidecar",
     };
     return { ctx, old, mid, recent };
   };

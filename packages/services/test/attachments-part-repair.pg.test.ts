@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, attachments, mailboxes, messages } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { createLogger, type Logger, type MimeStructure } from "@trafficflow/core/mail";
 import { readerFor, repairedPart, type AttachmentAdapter, type RepairRow } from "../src/attachments-service.js";
-import type { Db, ServiceContext } from "../src/context.js";
+import { dbFor, type Db, type ServiceContext } from "../src/context.js";
 
 /**
  * THE REPAIR'S WRITE, ON REAL POSTGRES. The write is a compare-and-set on the section the request
@@ -58,13 +55,14 @@ function door(meet?: () => Promise<void>): AttachmentAdapter {
 
 describe.skipIf(!AVAILABLE)("the repair's compare-and-set on real Postgres", () => {
   let db: Db;
-  let sql: ReturnType<typeof postgres>;
+  // The factory's handle: the binder takes a server handle only from the factory that registered its door.
+  let owned: OwnedDb | undefined;
   const seededAccounts: string[] = [];
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
 
   afterAll(async () => {
@@ -74,7 +72,7 @@ describe.skipIf(!AVAILABLE)("the repair's compare-and-set on real Postgres", () 
       await db.delete(mailboxes).where(inArray(mailboxes.accountId, seededAccounts));
       await db.delete(accounts).where(inArray(accounts.id, seededAccounts));
     }
-    await sql?.end({ timeout: 5 });
+    await owned?.close();
   });
 
   async function seeded(partId: string | null): Promise<{ ctx: ServiceContext; row: RepairRow; stored: () => Promise<string | null> }> {
@@ -90,7 +88,7 @@ describe.skipIf(!AVAILABLE)("the repair's compare-and-set on real Postgres", () 
       accountId, messageId: m!.id, filename: "a.pdf", contentType: "application/pdf", sizeBytes: RIGHT.byteLength,
       inline: false, partId, contentSha256: sha(RIGHT),
     }).returning();
-    const ctx: ServiceContext = { db, accountId, userId: null, now: () => new Date(), requestId: "repair-pg" };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "repair-pg" };
     const row: RepairRow = { id: a!.id, partId, contentSha256: sha(RIGHT), contentType: "application/pdf", filename: "a.pdf" };
     const stored = async () => (await db.select({ p: attachments.partId }).from(attachments).where(eq(attachments.id, a!.id)))[0]!.p;
     return { ctx, row, stored };

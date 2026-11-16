@@ -1,4 +1,4 @@
-import { accountOfMessage } from "@trafficflow/db";
+import { accountOfMessage, bindDb } from "@trafficflow/db";
 import { describe, it, expect, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { accountSettings, folderState, mailboxes, messageBodies, messages, unsubscribeRecords } from "@trafficflow/db";
@@ -178,7 +178,7 @@ describe("one drain run is bounded three ways", () => {
     await seedCandidate(db, otherAccount, otherMb!.id, ONE_CLICK, { screenedAt: ago(60 * 60 * 1000) });
 
     const post = spyPost();
-    const run = await svcWith(post).drainScreenedOut(db, {
+    const run = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), {
       now: () => NOW, requestId: "drain", accounts: 1, perAccount: 10,
     });
 
@@ -190,7 +190,7 @@ describe("one drain run is bounded three ways", () => {
     expect(run.remaining).toBe(1);
 
     // …and the SECOND run reaches the other account: the bound defers, it does not drop.
-    const second = await svcWith(post).drainScreenedOut(db, {
+    const second = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), {
       now: () => NOW, requestId: "drain", accounts: 1, perAccount: 10,
     });
     expect(second.accounts).toBe(1);
@@ -207,7 +207,7 @@ describe("one drain run is bounded three ways", () => {
     });
 
     const post = spyPost();
-    const run = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const run = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
 
     expect(run.accounts).toBe(0);
     expect(post.calls).toEqual([]);
@@ -249,7 +249,7 @@ describe("one drain run is bounded three ways", () => {
     await db.insert(accountSettings).values({ accountId, blockAutoUnsubscribeAt: NOW });
 
     const post = spyPost();
-    const run = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const run = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(run.accounts).toBe(0);
 
     // The selection is an optimisation; this is the decision. Driven separately so that removing
@@ -280,7 +280,7 @@ describe("the in-request fan-out stops, and says what it left", () => {
     // …AND THE FORTY-FIVE ARE NOT LOST. This is the half that makes the ceiling honest: the row
     // this closes refused a cap precisely because a cap without a drain converts an over-long
     // request into silently unfinished work.
-    const drained = await svcWith(post).drainScreenedOut(db, {
+    const drained = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), {
       now: () => NOW, requestId: "drain", perAccount: 100,
     });
     expect(drained.sweep.posted).toBe(50 - UNSUB_SYNC_MAX);
@@ -330,7 +330,7 @@ describe("one run is bounded, and what it leaves is counted", () => {
     const owedAfter: number[] = [];
     let ticks = 0;
     for (;;) {
-      const run = await svc.drainScreenedOut(db, {
+      const run = await svc.drainScreenedOut(bindDb(db, { account: null }), {
         now: () => NOW, requestId: "drain", perAccount: BATCH,
       });
       ticks += 1;
@@ -376,7 +376,7 @@ describe("one run is bounded, and what it leaves is counted", () => {
     try {
       const started = Date.now();
       let done = false;
-      const drained = svcWith(hang).drainScreenedOut(db, {
+      const drained = svcWith(hang).drainScreenedOut(bindDb(db, { account: null }), {
         now: () => NOW, requestId: "drain", budget: startDrainBudget(budgetMs, 0),
       }).finally(() => { done = true; });
       for (let at = 0; !done && at < 20_000; at += 100) await vi.advanceTimersByTimeAsync(100);
@@ -415,13 +415,13 @@ describe("one run is bounded, and what it leaves is counted", () => {
     // (a) DELIVERED, then killed before the run could report it — the state production was
     // measured in: one record row written late in an invocation, state `sent`.
     await seedCandidate(db, accountId, mailboxId, ONE_CLICK, { from: "news@list.example" });
-    expect((await svc.drainScreenedOut(db, { now: () => NOW, requestId: "drain" })).sweep.posted).toBe(1);
+    expect((await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" })).sweep.posted).toBe(1);
     expect(post.calls).toHaveLength(1);
 
     // A SECOND message from the same list, and a second tick: the claim is the whole mutual
     // exclusion, so the list is not left twice.
     await seedCandidate(db, accountId, mailboxId, ONE_CLICK, { from: "news@list.example" });
-    const again = await svc.drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const again = await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(post.calls).toHaveLength(1);
     expect(again.sweep.posted).toBe(0);
 
@@ -434,7 +434,7 @@ describe("one run is bounded, and what it leaves is counted", () => {
       listKey: unsubscribeListKey(ONE_CLICK, "other@elsewhere.example"),
       state: "claimed", messageId: third, createdAt: NOW, updatedAt: NOW,
     });
-    const third_run = await svc.drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const third_run = await svc.drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(post.calls).toHaveLength(1);
     expect(third_run.sweep.posted).toBe(0);
     // NOTHING IS STILL COUNTED, and that changed with mail 0116. The second message of the list
@@ -544,7 +544,7 @@ describe("a page full of ineligible rows does not hide the work behind it", () =
     await seedCandidate(db, otherAccount, otherMb!.id, ONE_CLICK, { screenedAt: ago(60 * 60 * 1000) });
 
     const post = spyPost();
-    const run = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const run = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
 
     expect(post.calls, "the candidate behind the ineligible page is delivered").toHaveLength(1);
     expect(run.sweep.posted).toBe(1);
@@ -560,7 +560,7 @@ describe("a page full of ineligible rows does not hide the work behind it", () =
 
     // A budget that cannot pay for the walk: the run stops early and says it did not measure.
     // `0` here would be the same lie the case above is about, told by a different route.
-    const run = await svcWith(spyPost()).drainScreenedOut(db, {
+    const run = await svcWith(spyPost()).drainScreenedOut(bindDb(db, { account: null }), {
       now: () => NOW, requestId: "drain", budget: startDrainBudget(1, 0),
     });
     expect(run.remaining).toBeNull();
@@ -587,7 +587,7 @@ describe("a mailbox the person disconnected sends nothing", () => {
     await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, mailboxId));
 
     const post = spyPost();
-    const off = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const off = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(post.calls, "nothing leaves in the name of a mailbox its owner stopped").toEqual([]);
     expect(off.sweep.posted).toBe(0);
     // THE PREDICATE'S OWN EFFECT, ASSERTED APART FROM THE SEAM'S. Removing the status from the
@@ -604,7 +604,7 @@ describe("a mailbox the person disconnected sends nothing", () => {
     // Reconnected, the same candidate drains — the positive control that the predicate excludes
     // a state and not the whole account.
     await db.update(mailboxes).set({ status: "connected" }).where(eq(mailboxes.id, mailboxId));
-    const on = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const on = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(on.sweep.posted).toBe(1);
     expect(post.calls).toHaveLength(1);
   });
@@ -615,7 +615,7 @@ describe("a mailbox the person disconnected sends nothing", () => {
     await db.update(mailboxes).set({ status: "error" }).where(eq(mailboxes.id, mailboxId));
 
     const post = spyPost();
-    const run = await svcWith(post).drainScreenedOut(db, { now: () => NOW, requestId: "drain" });
+    const run = await svcWith(post).drainScreenedOut(bindDb(db, { account: null }), { now: () => NOW, requestId: "drain" });
     expect(run.sweep.posted).toBe(1);
   });
 

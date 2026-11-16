@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, ServiceError } from "../src/index.js";
+import { SendService, ServiceError, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -22,11 +20,17 @@ import type { ServiceContext } from "../src/index.js";
 const PG_UP = await realPgAvailable();
 
 const conn = (name: string) => postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { application_name: name } });
-const sqlA = conn("rearm-race-a");
-const sqlB = conn("rearm-race-b");
+/** A pool of the factory's, named by its address (a parameter of the address is one of the connection). */
+const pool = (name: string) => {
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", name);
+  return makeOwnedDb(address.toString());
+};
+const ownedA = pool("rearm-race-a");
+const ownedB = pool("rearm-race-b");
 const sqlC = conn("rearm-race-hold");
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-10-19T09:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -42,7 +46,7 @@ async function waitingOnALock(name: string): Promise<void> {
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await Promise.all([sqlA, sqlB, sqlC].map((s) => s.end({ timeout: 5 }))); });
+afterAll(async () => { await Promise.all([ownedA.close(), ownedB.close(), sqlC.end({ timeout: 5 })]); });
 
 describe.skipIf(!PG_UP)("a re-arm racing a fresh press of the same words", () => {
   it("one message leaves: the fresh press is refused as a duplicate of the re-armed send", async () => {
@@ -69,7 +73,7 @@ describe.skipIf(!PG_UP)("a re-arm racing a fresh press of the same words", () =>
         async close() { /* nothing */ },
       };
     };
-    const ctx = (db: typeof dbA, id: string): ServiceContext => ({ db, accountId, userId: null, now: () => NOW, requestId: id });
+    const ctx = (db: typeof dbA, id: string): ServiceContext => ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: id });
     const svc = new SendService();
     const failed = await svc.send(ctx(dbA, "a0"), first, "k1", { openSendAdapter: open, rearmTransient: true }).catch((e: unknown) => e);
     expect((failed as ServiceError).retryable).toBe(true);

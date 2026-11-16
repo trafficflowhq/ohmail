@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
+import { bindDb, carryBinding } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { probeDatabase, type HealthProbe } from "../src/routes/health.js";
+import type { ApiDeps } from "../src/deps.js";
 import {
   CLOUD_TIER_MARKERS, CHECK_DEFINITION_MARKERS, CLOUD_INDEX_MARKERS, FUNCTION_DEFINITION_MARKERS,
   CLOUD_FK_MARKERS, EXPECTED_MARKERS,
@@ -27,7 +29,9 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   }, 180_000);
   afterAll(async () => { await owned?.close().catch(() => {}); });
 
-  const hosted = (db: OwnedDb["db"]): Promise<HealthProbe> => probeDatabase(db, {
+  /** Health's probe runs on the request's handle as its host minted it: bound to nothing. */
+  const door = (): ApiDeps["db"] => bindDb(owned.db, { account: null });
+  const hosted = (db: ApiDeps["db"]): Promise<HealthProbe> => probeDatabase(db, {
     markers: CLOUD_TIER_MARKERS, checkDefinitions: CHECK_DEFINITION_MARKERS,
     indexMarkers: CLOUD_INDEX_MARKERS, functionDefinitions: FUNCTION_DEFINITION_MARKERS,
     foreignKeys: CLOUD_FK_MARKERS,
@@ -35,24 +39,25 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   const found = (p: HealthProbe) => (p.kind === "probed" ? p.markersFound : -1);
 
   /** `body` on a transaction handle, rolled back whatever it did; returns what it returned. */
-  async function rolledBack<T>(body: (db: OwnedDb["db"]) => Promise<T>): Promise<T> {
+  async function rolledBack<T>(body: (db: ApiDeps["db"]) => Promise<T>): Promise<T> {
     let out: T | undefined;
-    await owned.db.transaction(async (tx) => {
-      out = await body(carryDialect(owned.db, tx) as unknown as OwnedDb["db"]);
+    const on = door();
+    await on.transaction(async (tx) => {
+      out = await body(carryBinding(on, carryDialect(on, tx)));
       throw new Rollback();
     }).catch((e: unknown) => { if (!(e instanceof Rollback)) throw e; });
     return out as T;
   }
 
   it("a migrated database satisfies every marker — each needle renders on this server", async () => {
-    const probe = await hosted(owned.db);
+    const probe = await hosted(door());
     expect(probe.kind).toBe("probed");
     expect(found(probe)).toBe(EXPECTED_MARKERS);
     expect(probe.kind === "probed" && probe.schemaOk).toBe(true);
   });
 
   it("a SAME-NAMED index over other columns is one short — mail 0080's IF NOT EXISTS", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const wrong = await rolledBack(async (db) => {
       await db.execute(sql.raw(`alter index "sessions_access_token_hash_idx" rename to "sessions_token_hash_away"`));
       await db.execute(sql.raw(`create index "sessions_access_token_hash_idx" on "sessions" ("id")`));
@@ -63,7 +68,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("a database without mail 0157's sender-date index is one short", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const missing = await rolledBack(async (db) => {
       await db.execute(sql.raw(`drop index "messages_account_sender_date_idx"`));
       return hosted(db);
@@ -73,7 +78,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("a database without mail 0160's and 0161's indexes is two short", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const noIndexes = await rolledBack(async (db) => {
       await db.execute(sql.raw(`drop index "folder_state_outstanding_idx"`));
       await db.execute(sql.raw(`drop index "mailboxes_account_idx"`));
@@ -83,7 +88,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("a database whose reconcile queues are not keyed by the account is two short", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     // Both queue indexes in their first, unkeyed shape: two short.
     const unkeyed = await rolledBack(async (db) => {
       for (const t of ["folder_state", "flag_state"]) {
@@ -97,7 +102,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("a database where mail 0201 never ran is short the account on the tables that borrowed it, and its two keys", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const before = await rolledBack(async (db) => {
       await db.execute(sql.raw(`alter table "message_bodies" drop constraint "message_bodies_message_id_account_fk"`));
       await db.execute(sql.raw(`alter table "folder_state" drop constraint "folder_state_message_id_account_fk"`));
@@ -109,7 +114,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("a database without mail 0163's fresh-intent function is one short", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const missing = await rolledBack(async (db) => {
       await db.execute(sql.raw(`drop trigger "folder_state_fresh_intent_tg" on "folder_state"`));
       await db.execute(sql.raw(`drop function "folder_state_fresh_intent"()`));
@@ -120,7 +125,7 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   });
 
   it("an int4 uid column is one short — the type probe on this server", async () => {
-    const healthy = found(await hosted(owned.db));
+    const healthy = found(await hosted(door()));
     const narrowed = await rolledBack(async (db) => {
       // Rows other suites stored above 2^31 would refuse the narrowing; gone only inside this tx.
       await db.execute(sql.raw(`delete from "junk_rescues" where "uid" > 2147483647`));

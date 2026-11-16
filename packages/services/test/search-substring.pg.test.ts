@@ -1,15 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
 /**
@@ -20,8 +17,9 @@ import type { ServiceContext } from "@trafficflow/services";
  * ranking and phrase cases. Every read is scoped to this file's own random accounts.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-09-23T12:00:00.000Z");
@@ -30,7 +28,7 @@ const Y = randomUUID();
 const ids: Record<string, string> = {};
 
 function ctx(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: "search-substring" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "search-substring" };
 }
 
 async function seed(o: {
@@ -81,7 +79,7 @@ describe("the store finds a word inside another word (real Postgres, pg_trgm)", 
       await db.execute(sql`delete from messages where account_id = ${acct}`);
       await db.execute(sql`delete from mailboxes where account_id = ${acct}`);
     }
-    await client.end({ timeout: 5 });
+    await owned.close();
   });
 
   it("(1) `axa` matches the subject `myAXA Portal` and the sender domain — as matches, not guesses", async () => {

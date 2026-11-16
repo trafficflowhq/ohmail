@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 import ohmail, {
+  readBinders,
   readDoors,
   readOwnerReaders,
   readShellAdapters,
@@ -29,6 +30,7 @@ const inNewTree = (...folders) => under(folders.filter((folder) => newTree.inclu
 
 // Product code: what ships, tests aside, the phone's page (`apps/mobile/web/src`) and the web app's root files and words
 // (`apps/webapp/i18n`) with it. Only a host's file reads whose storage this is (tools/owner-readers.json).
+// Only a listed file binds a database handle to an account or to none (tools/binders.json).
 const PRODUCT = under([
   "apps/*/app",
   "apps/*/src",
@@ -93,6 +95,11 @@ export default [
   ...block(["apps/webapp/app/shell/*.{ts,tsx}"], {
     "ohmail/old-shell-adapters": ["error", { root, ...readShellAdapters(root) }],
   }),
+  ...block(
+    PRODUCT,
+    { "ohmail/binder-callers": ["error", { root, ...readBinders(root) }] },
+    { ignores: TESTS },
+  ),
   ...block(
     ["packages/wire/**"],
     { "ohmail/wire-exports-no-value": "error" },

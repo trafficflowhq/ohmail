@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { accounts, users, sessions, mailboxes, messages, messageBodies } from "@trafficflow/db";
@@ -65,7 +66,7 @@ const TRANSFER_CEILING = 4 * ONE_MIB + ONE_MIB + 256 * 1024;
 
 function depsOn(db: Db): ApiDeps {
   const authDeps = makeTestAuthDeps({});
-  return {
+  return perRequest({
     db,
     now: () => FIXED_NOW,
     requestId: `pg-${randomUUID()}`,
@@ -101,7 +102,7 @@ function depsOn(db: Db): ApiDeps {
       workflows: workflowsService,
       proposals: proposalsService,
     },
-  };
+  });
 }
 
 /** Bytes of every string the driver handed back, summed across every statement. */

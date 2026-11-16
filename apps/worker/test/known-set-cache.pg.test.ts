@@ -4,7 +4,7 @@ import { eq, sql } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, MessageService, type ServiceContext } from "@trafficflow/services";
 import type { ChangeBatch, ImapCursor } from "@trafficflow/core/adapters/imap";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSyncCycle, LeaderFencedError, type SyncDeps, type SyncWriteFence } from "@ohmail/organizer/sync";
@@ -393,7 +393,7 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
     expect(before).toBe(false);                     // ingested unread
 
     const ctx: ServiceContext = {
-      db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r",
+      db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r",
     };
     await new MessageService().markSeen(ctx, { ids: [msg!.id], unread: false });
 

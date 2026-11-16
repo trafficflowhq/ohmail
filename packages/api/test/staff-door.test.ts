@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import { accounts, bindDb, bindingOf, mailboxes } from "@trafficflow/db";
+import { eq } from "drizzle-orm";
+import { accounts, bindDb, bindingOf, carryBinding, mailboxes } from "@trafficflow/db";
+import { staffAuditEvents } from "@trafficflow/db/cloud";
+import type { Db } from "@trafficflow/services";
 import { doorDb } from "../src/context.js";
-import { staffActOn, staffDb } from "../src/staff-audit.js";
+import { recordStaffEvents, staffActOn, staffDb, type StaffEventInput } from "../src/staff-audit.js";
 import type { ApiDeps } from "../src/deps.js";
-import { makeDeps } from "./helpers.js";
+import { FIXED_NOW, makeDeps, seedStaffSession } from "./helpers.js";
 
 /**
  * THE STAFF DOOR, AND AN ACT THROUGH IT ON ONE ACCOUNT.
@@ -16,12 +19,16 @@ import { makeDeps } from "./helpers.js";
  */
 
 let base: ApiDeps;
+/** The store's own handle: what a host mints over, and what no route holds. */
+let plain: Db;
+let staffId = "";
 let accountId = "";
 let otherAccountId = "";
 let mailboxId = "";
 
 beforeAll(async () => {
-  ({ deps: base } = await makeDeps());
+  ({ deps: base, db: plain } = await makeDeps());
+  ({ staffId } = await seedStaffSession(plain, { now: FIXED_NOW }));
   const [a] = await base.db.insert(accounts).values({ name: "Acme Ltd" }).returning();
   const [b] = await base.db.insert(accounts).values({ name: "Other Ltd" }).returning();
   accountId = a!.id;
@@ -104,5 +111,75 @@ describe("staffActOn: the account a staff act runs for is the target row's", () 
     expect(bindingOf(doorDb(deps))).toEqual({ account: null, keyed: false });
     deps.db = bindDb(deps.db, { account: accountId });
     expect(() => doorDb(deps)).toThrow(expect.objectContaining({ code: "binding_refused" }));
+  });
+});
+
+describe("recordStaffEvents: the operators' trail is written at the staff door and on no other handle", () => {
+  const event = (): StaffEventInput => ({
+    requestId: randomUUID(), at: FIXED_NOW, action: "staff.stepup", outcome: "ok",
+    actor: { staffId, sessionId: null, email: "operator@example.test", roles: ["support"] },
+  });
+  const written = async (e: StaffEventInput): Promise<number> =>
+    (await plain.select({ id: staffAuditEvents.id }).from(staffAuditEvents).where(eq(staffAuditEvents.requestId, e.requestId))).length;
+
+  it("writes on the staff door's handle", async () => {
+    const e = event();
+    await recordStaffEvents(staffDb(minted()), [e]);
+    expect(await written(e)).toBe(1);
+  });
+
+  it("writes inside a transaction the staff door's handle opened: the act's event commits with the act", async () => {
+    const e = event();
+    const door = staffDb(minted());
+    await door.transaction(async (tx) => { await recordStaffEvents(carryBinding(door, tx), [e]); });
+    expect(await written(e)).toBe(1);
+    // And leaves with it: nothing of a transaction that rolled back stays on the trail.
+    const gone = event();
+    await expect(door.transaction(async (tx) => {
+      await recordStaffEvents(carryBinding(door, tx), [gone]);
+      throw new Error("the act failed");
+    })).rejects.toThrow("the act failed");
+    expect(await written(gone)).toBe(0);
+  });
+
+  it("is refused on a customer's handle and inside a customer's transaction, and writes nothing there", async () => {
+    const bound = bindDb(plain, { account: accountId });
+    const direct = event();
+    // @ts-expect-error — the type refuses it too; the case is what happens at run time
+    await expect(recordStaffEvents(bound, [direct])).rejects.toMatchObject({ code: "binding_refused" });
+    const inside = event();
+    // @ts-expect-error — the type refuses it too; the case is what happens at run time
+    await expect(bound.transaction(async (tx) => { await recordStaffEvents(tx, [inside]); }))
+      .rejects.toMatchObject({ code: "binding_refused" });
+    expect(await written(direct)).toBe(0);
+    expect(await written(inside)).toBe(0);
+  });
+
+  it("is refused without the door's word: the request's handle as minted, and the store's own", async () => {
+    for (const handle of [minted().db, plain]) {
+      const e = event();
+      // @ts-expect-error — the type refuses it too; the case is what happens at run time
+      await expect(recordStaffEvents(handle, [e])).rejects.toMatchObject({ code: "binding_refused" });
+      expect(await written(e)).toBe(0);
+      // A transaction on such a handle carries no more than the handle does.
+      const inside = event();
+      // @ts-expect-error — the type refuses it too; the case is what happens at run time
+      await expect((handle as Db).transaction(async (tx) => { await recordStaffEvents(tx, [inside]); }))
+        .rejects.toMatchObject({ code: "binding_refused" });
+      expect(await written(inside)).toBe(0);
+    }
+  });
+
+  it("refuses the handle before it reads the rows: an empty list on a customer's handle is refused too", async () => {
+    // @ts-expect-error — the type refuses it too; the case is what happens at run time
+    await expect(recordStaffEvents(bindDb(plain, { account: accountId }), [])).rejects.toMatchObject({ code: "binding_refused" });
+    await expect(recordStaffEvents(staffDb(minted()), [])).resolves.toBeUndefined();
+  });
+
+  it("names no account and no key in its refusal", async () => {
+    // @ts-expect-error — the type refuses it too; the case is what happens at run time
+    const refusal = await recordStaffEvents(bindDb(plain, { account: accountId }), [event()]).then(() => null, (err: Error) => err);
+    expect(refusal?.message).toContain("not the staff door's");
+    expect(refusal?.message).not.toContain(accountId);
   });
 });

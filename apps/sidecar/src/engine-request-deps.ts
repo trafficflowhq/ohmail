@@ -12,6 +12,7 @@ import { runsPass } from "./composition-passes.js";
 /* A mail server on this computer read for its own certificate; the phone's artifact takes `phone/host-pin-probe.ts`. */
 import { readLoopbackMailCertificate } from "./host-pin-probe.js";
 import { dialectOf } from "@trafficflow/db/dialect";
+import { ownDbOf } from "./store-binding.js";
 import type { SidecarConfig } from "./engine-types.js";
 import { localServices } from "./engine-local-services.js";
 import { ONE_SHOT_DIAL, SIDECAR_NET_TIMEOUTS } from "./engine-reconnect.js";
@@ -129,13 +130,16 @@ export function requestDepsSection(scope: EngineScope, config: SidecarConfig): v
            factory lands in the fourth slot. `proveKept`: nothing reaches SMTP over a kept
            connection whose server has stopped answering; a quit then hands the press to the
            next start, which sends it with its Sent copy. */
-        ? makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true },
+        ? makeSendAdapter(ownDeps(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true },
             (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ImapAdapter)
-        : makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true });
+        : makeSendAdapter(ownDeps(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true });
     };
 
     const depsFor = (): ApiDeps => ({
-      db: scope.db,
+      /* THE REQUEST'S HANDLE, MINTED HERE AS A SERVER'S HOST MINTS ITS OWN: bound to nothing, over
+         the store's own handle, which no request is handed. The request's pipeline binds it to its
+         session's account, once (`withSession`); a route without a session keeps it as it is. */
+      db: scope.unbound,
       now: scope.now,
       requestId: "",
       /* WHICH RUN OF THIS STORE the cursors this door hands out belong to. Spread, because a
@@ -256,10 +260,19 @@ export function requestDepsSection(scope: EngineScope, config: SidecarConfig): v
      * it, because the listener refuses to start without the origin.
      */
     const hostAuthConfig = scope.hostConfig.authConfig ?? scope.authConfig;
+    /**
+     * THE ENGINE'S OWN CONTAINER, for a dial no request's container reaches: a send's transport,
+     * which the service bag opens by mailbox alone, and the submission server's probe at a sign-in.
+     * {@link depsFor}'s, its handle bound to this world's account: what such a dial reads of a
+     * mailbox (its credential, its Sent folder) it reads for the one account this store holds, and
+     * never on a handle that names nothing. No session: no request stands behind it.
+     */
+    const ownDeps = (): ApiDeps => ({ ...depsFor(), db: ownDbOf(scope.db, scope.world) });
     scope.unsubscribe = unsubscribe;
     scope.probeOpts = probeOpts;
     scope.smtpProbeOpts = smtpProbeOpts;
     scope.openLocalSend = openLocalSend;
     scope.depsFor = depsFor;
+    scope.ownDeps = ownDeps;
     scope.hostAuthConfig = hostAuthConfig;
 }

@@ -9,7 +9,7 @@ import {
   makeProfileDoc, profileFingerprint, type ProfileReadResult,
 } from "@trafficflow/core/adapters/organizer-profile";
 import {
-  SyncService, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
+  SyncService, dbFor, setAutoSuggest, setBlockAutoUnsubscribe, setBlockRemoteImages,
   setBlockTrackingPixels, setDormancyDays, setFoldersEnabled, setLocale, effectiveMailboxSignatures, profileImportService,
   setMailboxFoldersEnabled, setThemeFace,
   type ServiceContext, type SettingsDTO,
@@ -53,7 +53,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: "own@example.com" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-26T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };
@@ -171,7 +171,7 @@ describe("the delta materializes the settings entity — and never as a tombston
       .values({ accountId, provider: "imap", address: "own@example.com" }).returning();
     let tick = 0;
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date(Date.parse("2026-08-26T00:00:00.000Z") + ++tick * 1_000),
       requestId: "r",
     };
@@ -226,7 +226,7 @@ describe("Import settings brings the signature back to every window", () => {
       .values({ accountId, provider: "imap", address: "own@example.com" }).returning();
     let tick = 0;
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date(Date.parse("2026-08-26T00:00:00.000Z") + ++tick * 1_000), requestId: "r",
     };
     await setBlockRemoteImages(ctx, true); // a first stamp, as every window holds one

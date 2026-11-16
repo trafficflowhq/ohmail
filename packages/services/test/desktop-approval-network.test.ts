@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { bindDb } from "@trafficflow/db";
 import { loginTokens } from "@trafficflow/db/cloud";
-import { AuthService, makeTestAuthDeps, StaticKeyProvider, type ServiceContext } from "../src/index.js";
+import { AuthService, dbFor, makeTestAuthDeps, StaticKeyProvider, type ServiceContext } from "../src/index.js";
 
 /**
  * The approval read says whether the computer asked from the address of the browser reading it.
@@ -23,8 +24,10 @@ type Harness = {
 async function harness(): Promise<Harness> {
   const db = await makeTestDb();
   const svc = new AuthService(makeTestAuthDeps());
+  // The desktop's request runs before any session: bound to nothing; a signed-in browser's read, its account's.
   const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "", ...over,
+    db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+    accountId: "", userId: null, now: () => NOW, requestId: "r", ip: "", ...over,
   });
   return { svc, db, ctx };
 }

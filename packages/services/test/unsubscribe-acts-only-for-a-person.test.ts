@@ -1,4 +1,4 @@
-import { accountOfMessage } from "@trafficflow/db";
+import { accountOfMessage, bindDb } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -87,13 +87,13 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     const { w, person } = await world();
     const post = spy();
     const svc = svcWith(post);
-    const run = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
+    const run = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d1", accounts: 1, perAccount: 1 });
     expect(post.calls, "only the list a person screened out is left").toEqual(["https://person.example/u?t=abc"]);
     // The walk's own flag: the two unlicensed rows are read past, never handed to the seam.
     expect(run.sweep.considered).toBe(1);
     const cursor = await readDrainCursor(w.db as never, UNSUB_DRAIN_PASS);
     expect(cursor?.messageId, "the cursor stands on the newest row, past the other two").toBe(person);
-    const again = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d2" });
+    const again = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "d2" });
     expect(again.sweep.considered, "and nothing is owed afterwards").toBe(0);
     expect(again.remaining).toBe(0);
   });
@@ -129,7 +129,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     const run = (svc as unknown as {
       run(ctx: Ctx["ctx"], id: string, mode: "manual" | "automatic"): Promise<unknown>;
     }).run.bind(svc);
-    const sweep = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "p1", accounts: 1, perAccount: 1 });
+    const sweep = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "p1", accounts: 1, perAccount: 1 });
     expect(sweep.sweep.considered, "the drain took a paused screen-out as licensed").toBe(0);
     const err = await run(w.ctx, person, "automatic").catch((e: unknown) => e);
     expect((err as ServiceError).code, "the seam took a paused screen-out as licensed").toBe("unsubscribe_not_person_decided");
@@ -163,7 +163,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     expect(imported!.at).not.toBeNull();
     const post = spy();
     const svc = svcWith(post);
-    const sweep = await svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "i1", accounts: 1, perAccount: 1 });
+    const sweep = await svc.drainScreenedOut(bindDb(w.db, { account: null }), { now: () => NOW, requestId: "i1", accounts: 1, perAccount: 1 });
     expect(sweep.sweep.considered, "the drain took an imported stamp as a licence").toBe(0);
     const run = (svc as unknown as {
       run(ctx: Ctx["ctx"], id: string, mode: "manual" | "automatic"): Promise<unknown>;

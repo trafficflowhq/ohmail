@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { messages, messageBodies, attachments } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { AttachmentsService, type OpenAdapter, type ServiceContext } from "@trafficflow/services";
+import { AttachmentsService, dbFor, type OpenAdapter, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { byMessageId, makeHarness, rawClient, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
@@ -48,7 +48,7 @@ function emlWith(o: { from: string; subject: string; messageId: string; parts: P
 }
 
 function ctxFor(h: Awaited<ReturnType<typeof makeHarness>>): ServiceContext {
-  return { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+  return { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
 }
 
 describe("attachments e2e (GreenMail + Postgres)", () => {

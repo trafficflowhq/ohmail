@@ -3,7 +3,7 @@ import { eq, sql, type SQL } from "drizzle-orm";
 import { messageBodies, messages } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { SearchService, type SearchFilters } from "../src/index.js";
+import { SearchService, dbFor, type SearchFilters } from "../src/index.js";
 import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 
 /**
@@ -71,7 +71,7 @@ describe("searchByAddress answers `to` and `any` on this store", () => {
     for (const direction of ["to", "any"] as const) {
       expect(ids(await svc.searchByAddress(c.ctx, { address: "info@acme.test", direction }))).not.toContain(c.theirs);
     }
-    const theirs = { ...c.ctx, accountId: c.b.accountId };
+    const theirs = { ...c.ctx, accountId: c.b.accountId, db: dbFor(c.db, c.b.accountId) };
     expect(ids(await svc.searchByAddress(theirs, { address: "info@acme.test", direction: "to" }))).toEqual([c.theirs]);
     expect(ids(await svc.searchByAddress(theirs, { address: "info@acme.test", direction: "any" }))).toEqual([c.theirs]);
   });
@@ -218,7 +218,7 @@ describe("the person filters narrow a text search", () => {
       expect(r.total).toBe(want.length);
       expect(Object.values(r.facets.folder).reduce((a, n) => a + n, 0)).toBe(want.length);
     }
-    const theirs = await svc.search({ ...c.ctx, accountId: c.b.accountId }, { q: "budget", filters: { to: "bob@b.test" } });
+    const theirs = await svc.search({ ...c.ctx, accountId: c.b.accountId, db: dbFor(c.db, c.b.accountId) }, { q: "budget", filters: { to: "bob@b.test" } });
     expect(ids(theirs)).toEqual(c.letters.filter((l) => !l.mine).map((l) => l.id));
   });
 

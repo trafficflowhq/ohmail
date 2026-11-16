@@ -274,6 +274,40 @@
     ]
   },
   {
+    "id": "a service binds a handle by hand, the binder under another name",
+    "rule": "ohmail/binder-callers",
+    "plant": "packages/services/src/planted/binds-by-hand.ts",
+    "expect": "refused",
+    "source": [
+      "import { bindDb as viewOf } from \"@trafficflow/db\";",
+      "",
+      "export const handleOf = (db: object, accountId: string): object => viewOf(db, { account: accountId });"
+    ]
+  },
+  {
+    "id": "a route makes a context's handle for an id it was handed",
+    "rule": "ohmail/binder-callers",
+    "plant": "packages/api/src/planted/context-by-hand.ts",
+    "expect": "refused",
+    "source": [
+      "import * as services from \"@trafficflow/services\";",
+      "",
+      "export const handleOf = (db: never, accountId: string): unknown => services.dbFor(db, accountId);"
+    ]
+  },
+  {
+    "id": "a service reads what a handle is bound to",
+    "rule": "ohmail/binder-callers",
+    "plant": "packages/services/src/planted/reads-a-binding.ts",
+    "expect": "passes",
+    "source": [
+      "import { bindingOf, carryBinding } from \"@trafficflow/db\";",
+      "",
+      "export const named = (db: object): string | null => bindingOf(db)?.account ?? null;",
+      "export const carried = <P extends object>(parent: P, tx: object): P => carryBinding(parent, tx);"
+    ]
+  },
+  {
     "id": "wire exports a value",
     "rule": "ohmail/wire-exports-no-value",
     "plant": "packages/wire/src/planted/value.ts",

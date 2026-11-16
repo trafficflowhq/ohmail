@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { accounts, mailboxes, messages, messageBodies, unsubscribeRecords } from "@trafficflow/db";
 import {
-  makeUnsubscribeService, makeNodeOneClickPost, ONE_CLICK_BODY, ServiceError,
+  dbFor, makeUnsubscribeService, makeNodeOneClickPost, ONE_CLICK_BODY, ServiceError,
   type HostResolver, type OneClickPost, type ServiceContext,
 } from "../src/index.js";
 import { farSide, NOT_HTTP, SWITCH } from "../../core/test/far-side.js";
@@ -229,7 +229,7 @@ describe("UnsubscribeService — which messages may be acted on", () => {
     const [otherBox] = await a.db.insert(mailboxes).values({
       accountId: other, provider: "imap", address: `bc6-${other.slice(0, 8)}@example.test`,
     }).returning();
-    const b: ServiceContext = { db: a.db, accountId: other, userId: null, now: () => new Date(), requestId: "bc6" };
+    const b: ServiceContext = { db: dbFor(a.db, other), accountId: other, userId: null, now: () => new Date(), requestId: "bc6" };
     const messageId = await seedWithHeaders(a.db, a.accountId, a.mailboxId, ONE_CLICK_HEADERS);
     // The other account has mail of its OWN, so an empty world is not what answers here.
     await seedWithHeaders(a.db, other, otherBox!.id, ONE_CLICK_HEADERS);

@@ -14,7 +14,7 @@
  * has no role and no policy, and gets the type and the mark and no statement. No driver import
  * here, so every store can use it.
  */
-import { BINDING_BRAND, IN_TRANSACTION_BRAND, SAVEPOINT_BRAND } from "./dialect/index.js";
+import { BINDING_BRAND, IN_TRANSACTION_BRAND, SAVEPOINT_BRAND, SERVER_POOL_BRAND } from "./dialect/index.js";
 // From `logins.ts` and never `names.ts`: that one imports the staff role's grants, and this module
 // loads in a device's engine.
 import { ACCOUNT_SETTING, KEY_SETTING } from "./row-security/logins.js";
@@ -35,11 +35,13 @@ export interface NothingBound { readonly [boundTo]: "nothing" }
 export interface NoBinding { readonly [boundTo]?: never }
 
 /**
- * `D` without the nothing brand. An account bound over a handle bound to nothing is the handle's
- * own type with the account's brand in place of the other: intersecting the two brands is `never`,
- * and `never` fits every parameter unchecked.
+ * `D` without the brand that says it names nothing, or that it carries no binding at all. A handle
+ * bound over one of those is the handle's own type with the new brand in place of the other:
+ * intersecting two brands is `never`, and `never` fits every parameter unchecked. So binding the
+ * pool's own handle (typed {@link NoBinding} where a file keeps it apart from its views) answers a
+ * bound handle, never `never`.
  */
-export type Unbranded<D> = D extends infer P & NothingBound ? P : D;
+export type Unbranded<D> = D extends infer P & NothingBound ? P : D extends infer P & NoBinding ? P : D;
 
 /** What a binding names: an account or none, and the key a look-up made before sign-in compares. */
 export type BindTo =
@@ -99,9 +101,14 @@ const doors = new WeakMap<object, BindingDoor>();
 /** Each transaction a flight opened: how it is named again, on its own connection. */
 const txDoors = new WeakMap<object, (values: BindingValues) => Promise<void>>();
 
-/** Register `handle`'s door (the factory that built it does, in `client.ts`). */
+/**
+ * Register `handle`'s door (the factory that built it does, in `client.ts`). The handle is a
+ * server pool's from here on, and says so to every transaction opened on it or on a view of it
+ * ({@link onServerPool}).
+ */
 export function registerBindingDoor(handle: object, door: BindingDoor): void {
   doors.set(handle, door);
+  Object.defineProperty(handle, SERVER_POOL_BRAND, { value: true, enumerable: false, configurable: false, writable: false });
 }
 
 /** Register how the transaction `tx` is named again (the flight that opened it does). */
@@ -111,7 +118,10 @@ export function registerTxDoor(tx: object, rename: (values: BindingValues) => Pr
 
 /** A postgres.js client sits behind `db`: the shape the factory's door must have been registered for. */
 function hasDriverClient(db: object): boolean {
-  const client = (db as { $client?: unknown }).$client;
+  let client: unknown;
+  // A wrapper of a bound view reads the view's own refusal here: a view answers nothing through
+  // `$client`, and is no driver's own handle.
+  try { client = (db as { $client?: unknown }).$client; } catch { return false; }
   return typeof client === "function" && typeof (client as { unsafe?: unknown }).unsafe === "function";
 }
 
@@ -227,7 +237,7 @@ export function refuseBinding(db: object): void {
  * binds: the binder asks the database nothing.
  */
 export function bindDb<D extends object>(db: D, to: { readonly account: string; readonly key?: string | null }): Unbranded<D> & AccountBound;
-export function bindDb<D extends object>(db: D, to: { readonly account: null; readonly key?: string | null }): D & NothingBound;
+export function bindDb<D extends object>(db: D, to: { readonly account: null; readonly key?: string | null }): Unbranded<D> & NothingBound;
 export function bindDb(db: object, to: BindTo): object {
   if (to === null || typeof to !== "object") refuse("no binding was named");
   const account = to.account;
@@ -248,6 +258,13 @@ export function bindDb(db: object, to: BindTo): object {
       refuse(account === null ? "the handle is bound to an account, and nothing is not a narrower binding"
         : "the handle is bound to another account");
     }
+  }
+  // A copy or a wrapper of a bound view (a test's double, an object made over one) carries the
+  // view's mark and is no view this module made. On a server its statements would ride the wrapped
+  // view's own binding whatever was named here: refused. On a device's store no statement carries
+  // a binding, and the wrapper is bound as any handle is.
+  if (held !== undefined && !roots.has(db) && onServerPool(db)) {
+    refuse("the handle is a wrapper of a bound one; wrap the pool's own handle, then bind");
   }
   const root = roots.get(db) ?? db;
   if (unbindable.has(root)) refuse("this handle's factory refuses a binding");
@@ -319,13 +336,14 @@ export function bindingOf(db: unknown): Binding | undefined {
 }
 
 /**
- * Is `db` a server pool's handle, or a bound view of one? True where the pool's factory registered
- * a door (`client.ts`): there a role and its policies stand behind every statement. A device store
- * (PGlite, SQLite) has no door and answers false, and so do the staff handle, whose role is its
- * whole binding, and a transaction opened on a pool's own handle, which is no handle a door knows.
+ * Is `db` a server pool's handle, a bound view of one, or a transaction opened on either? True
+ * where the pool's factory registered a door (`client.ts`): there a role and its policies stand
+ * behind every statement. A device store (PGlite, SQLite) has no door and answers false, and so
+ * does the staff handle, whose role is its whole binding.
  */
 export function onServerPool(db: unknown): boolean {
-  return db !== null && typeof db === "object" && doors.has(roots.get(db) ?? db);
+  if (db === null || typeof db !== "object") return false;
+  return doors.has(roots.get(db) ?? db) || (db as Record<symbol, unknown>)[SERVER_POOL_BRAND] === true;
 }
 
 /**
@@ -334,8 +352,8 @@ export function onServerPool(db: unknown): boolean {
  * ways, and here they must agree. Refused: a mark this copy did not mint; a handle that names
  * another account, or nothing where an account is asked, or an account where none is; and a handle
  * with no binding at all. With `"device"` that last one passes off a server pool and is refused on
- * one: the two fences of this package, which a device's organizer reaches on its plain store. The
- * reason is fixed text and never an id.
+ * one, a transaction opened on the pool's own handle included: the two fences of this package,
+ * which a device's organizer reaches on its plain store. The reason is fixed text and never an id.
  */
 export function assertBinding<D extends object>(db: D, account: string): asserts db is D & AccountBound;
 export function assertBinding<D extends object>(db: D, account: null): asserts db is D & NothingBound;
@@ -345,7 +363,7 @@ export function assertBinding(db: object, account: string | null, unmarked?: "de
   const held = markOf(db);
   if (held === "foreign") refuse("the handle carries a binding this module did not mint");
   if (held === undefined) {
-    if (unmarked === "device" && !onServerPool(db)) return;
+    if (unmarked === "device" && !onServerPool(db) && !unbindable.has(rootOf(db))) return;
     refuse("a transaction was asked on a handle that names no binding");
   }
   if (held.account !== account) refuse("the context's account is not the one its handle names");

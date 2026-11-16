@@ -5,7 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   FILING_DOORBELL_MIN_GAP_MS, accounts, folderState, mailboxes, messages,
 } from "@trafficflow/db";
-import { MessageService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { eq } from "drizzle-orm";
 
 /**
@@ -38,7 +38,7 @@ const messageSvc = new MessageService();
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxAt = (db: Db, accountId: string, now: Date): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => now, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "r" });
 
 const t0 = new Date("2026-09-08T12:00:00.000Z");
 

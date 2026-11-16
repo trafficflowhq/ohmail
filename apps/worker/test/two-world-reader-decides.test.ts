@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, rules, organizerRequests } from "@trafficflow/db";
-import { ScreenerService } from "@trafficflow/services/mail";
+import { dbFor, ScreenerService } from "@trafficflow/services/mail";
 import {
   deriveRequestKey,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
@@ -109,7 +109,7 @@ describe("the two-world reader-decides rig", () => {
 
     // ── WORLD 1: the reader presses "yes" ──────────────────────────────────────────────────
     const svc = new ScreenerService({});
-    const ctx = { db, accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
     const decided = await svc.decide(ctx, msg!.id, { decision: "yes" });
     expect("pending" in decided && decided.pending).toBe(true);
 
@@ -191,7 +191,7 @@ describe("the two-world reader-decides rig", () => {
     });
 
     const svc = new ScreenerService({});
-    const ctx = { db, accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
+    const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-03T12:00:00.000Z"), requestId: "r" };
 
     const before = await svc.list(ctx, {});
     expect(before.items).toHaveLength(1);

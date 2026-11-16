@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accountStorage, attachments, drafts, messages, messageBodies, outboundSends, threads } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { FORWARD_MAX_RAW_BYTES, forwardedDate, sendService } from "@trafficflow/services/mail";
+import { FORWARD_MAX_RAW_BYTES, dbFor, forwardedDate, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import { htmlToPlainText, normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
 import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
@@ -99,7 +99,7 @@ async function world(opts: {
   }).returning();
 
   const ctx: ServiceContext = {
-    db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-forward",
+    db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-forward",
   };
   return { db, ctx, draftId: draft!.id, originalId: orig.id };
 }
@@ -685,7 +685,7 @@ describe("a forward is refused only when neither its words nor its files can be 
       to: [{ name: null, address: "sam@example.test" }],
       cc: [], bcc: [], status: "draft", createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
-    const ctx: ServiceContext = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-orig" };
+    const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-orig" };
     return { db, ctx, mbX, mbY, draftId: draft!.id, originalId: orig.id };
   }
   type World2 = Awaited<ReturnType<typeof world2>>;

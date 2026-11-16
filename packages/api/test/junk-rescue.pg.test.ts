@@ -8,6 +8,7 @@ import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { dbFor } from "@trafficflow/services/mail";
 import { dismissJunkRescue, rescueJunk } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -61,7 +62,7 @@ describe.skipIf(!AVAILABLE)("the junk rescue's command on real Postgres", () => 
       junkFolder: over.junkFolder ?? JUNK_PATH,
     }).returning({ id: mailboxes.id });
     const deps = { db, now: () => NOW } as unknown as ApiDeps;
-    const ctx = { accountId, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+    const ctx = { accountId, db: dbFor(db, accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
     return { deps, ctx, accountId, mailboxId: mb!.id };
   }
 
@@ -210,7 +211,8 @@ describe.skipIf(!AVAILABLE)("the junk rescue's command on real Postgres", () => 
     const w = await world();
     const id = await refuse(w, 23);
     // The re-press lands as the dismissal opens its transaction, after it read the row as refused.
-    const racing = new Proxy(db, {
+    // The request's one handle is the context's, bound to the account: the transaction opens on it.
+    const racing = new Proxy(w.ctx.db, {
       get(target, key, receiver) {
         if (key === "transaction") {
           return async (...args: unknown[]) => {
@@ -223,7 +225,7 @@ describe.skipIf(!AVAILABLE)("the junk rescue's command on real Postgres", () => 
       },
     });
     const deps = { db: racing, now: () => NOW } as unknown as ApiDeps;
-    await expect(dismissJunkRescue(deps, w.ctx, id)).rejects.toMatchObject({ httpStatus: 409 });
+    await expect(dismissJunkRescue(deps, { ...w.ctx, db: racing }, id)).rejects.toMatchObject({ httpStatus: 409 });
     const [row] = await rowsOf(w.accountId);
     expect(row!.status).toBe("pending");
   });

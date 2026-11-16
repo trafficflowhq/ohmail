@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import type { Tx } from "@trafficflow/db";
+import { bindDb, type Tx } from "@trafficflow/db";
 import { authThrottle } from "@trafficflow/db/cloud";
 import { like } from "drizzle-orm";
 import {
@@ -35,8 +35,9 @@ async function harness(cfg: { open: number; invite: number }) {
     maxPublicRegistrationsPerWindow: cfg.open, maxRegistrationsPerWindow: cfg.invite,
   }, mail);
   const svc = new AuthService(deps);
+  // Registration runs before any session: its handle is bound to nothing.
   const ctx = (): ServiceContext => ({
-    db, accountId: "", userId: null, now: () => NOW, requestId: "r", ip: IP,
+    db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => NOW, requestId: "r", ip: IP,
   });
   const open = (email: string) => verdict(svc.register(ctx(), { email, password: PW, displayName: "S" }));
   const invite = async (email: string) => {

@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, asc, eq } from "drizzle-orm";
 import { mailboxes, messages, folderState, changeLog, recordChange } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { syncService } from "@trafficflow/services";
+import { dbFor, syncService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 // The adapter's own ordering function, so this test asserts against the RULE the worker will
 // actually apply rather than against a copy of it. Lives in `packages/services/test` only
@@ -34,8 +31,9 @@ import { pgTestUrl } from "@trafficflow/db/testing";
  * seqs are allocated, and the seqs themselves are still a dense 1..N.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
 const A = randomUUID();
@@ -47,7 +45,7 @@ const DAY_OF = (uid: number): number => (uid * 7919) % 3000;
 const UIDS = Array.from({ length: 40 }, (_, i) => i + 1);
 
 function ctx(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: "o5-order" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "o5-order" };
 }
 
 describe("the adapter's ingest order IS the order /sync delivers (real Postgres)", () => {
@@ -59,7 +57,7 @@ describe("the adapter's ingest order IS the order /sync delivers (real Postgres)
     mailboxId = mb!.id;
   }, 120_000);
 
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); });
 
   it("commits in the adapter's order, and /sync page 1 is therefore the NEWEST mail", async () => {
     // The ordering decision the adapter makes, made here by the same function.

@@ -10,7 +10,7 @@ export {
   type ReadBoundKind,
 } from "./read-bounds.js";
 export type {
-  ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, IdempotencyClaim, SearchSupersede,
+  ServiceContext, PassContext, OpenPassSendAdapter, Db, BoundDb, UnboundDb, ContextDb, IdempotencyClaim, SearchSupersede,
 } from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.

@@ -3,7 +3,7 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, max, ne, or, type SQL } from "drizzle-orm";
 import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
+import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence, type UnboundDb } from "../context.js";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
 import { ringDeviceRevoked } from "./device-doorbell.js";
@@ -1668,7 +1668,7 @@ export class SessionLifecycle {
    * declared it understands the answer. The record is cloud-half (cloud 0043) and a local store
    * erases no accounts, so the base answers null; `AuthService` overrides it with the real read.
    */
-  async bearerOfErasedAccount(_db: Db, _token: string, _now: Date): Promise<string | null> {
+  async bearerOfErasedAccount(_db: UnboundDb, _token: string, _now: Date): Promise<string | null> {
     return null;
   }
 }

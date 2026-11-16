@@ -7,7 +7,7 @@ import {
   accounts, applyScreenerDecision, auditLog, changeLog, mailboxes, messages, folderState, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { MessageService, makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ═══ `MailboxDTO.pendingMoves` IS ONE NUMBER FOR FOUR SITUATIONS ════════════════════════════
@@ -51,7 +51,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seed(
   db: Db, over: { organizer?: boolean; reader?: boolean; address?: string } = {},

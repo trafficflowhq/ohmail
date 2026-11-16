@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { bindDb, sessions, users } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
-import type { Db } from "../context.js";
+import type { Db, UnboundDb } from "../context.js";
 
 /**
  * A session's privilege scope. `'full'` is a completed
@@ -58,7 +58,7 @@ export interface ResolvedSessionCore {
  * row answers, never what the request says. One statement, so one flight of its own. A handle that
  * names an account already is refused by the binder: the door runs before any account is bound.
  */
-export async function resolveSession(db: Db, token: string, now: Date): Promise<ResolvedSessionCore | null> {
+export async function resolveSession(db: UnboundDb, token: string, now: Date): Promise<ResolvedSessionCore | null> {
   const digest = hashToken(token);
   const rows = await bindDb(db, { account: null, key: digest })
     .select({

@@ -39,6 +39,7 @@ import {
   makeAuthConfig,
   sendService,
   ServiceError,
+  type PassContext,
   // The sign-out fence's durable half — one module for both doors, so the engine and the shared
   // mailbox service cannot hold two versions of the same rule (`signed-out-fence.ts`).
   // What a sign-out keeps of where a mailbox lives (mail 0127): the one builder the column takes
@@ -102,6 +103,7 @@ import {
   type LocalRosterRow,
 } from "./identity.js";
 import { mintLaunchBearer } from "./launch-bearer.js";
+import { ownContextOf, unboundOf } from "./store-binding.js";
 // ONE RUNTIME PER MAILBOX, held in a map. The record, the map and the seed decision live in
 // `roster.ts`; what stays here is the assembly that fills one in and the routes that add and
 // remove them. See that file's header for what is per mailbox and what is per install.
@@ -336,6 +338,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     // the other in the failure this instrumentation exists to attribute.
     const worldMs = Date.now() - tWorld;
     if (session.revoked > 0) log("stale_sessions_revoked", { count: session.revoked });
+    /* THE STORE'S HANDLES, BY WHOM EACH ACTS FOR (`store-binding.ts`). `db` stays the store's own,
+       with no binding: the organizer's and the engine's own statements ride it. `unbound` names no
+       account: a request's handle as it is minted, a session's look-up, a pass's walk. `ownContext`
+       is a context of the engine's own, bound to this world's account: made from the world this
+       launch found in its store, and from nothing a request or a mailbox says. */
+    const unbound = unboundOf(db);
+    const ownContext = (requestId: string): PassContext => ownContextOf(db, world, { now, requestId });
 
     /**
      * THE SEND RESERVATIONS THE LAST RUN LEFT `pending`, read before any door serves and before any
@@ -366,10 +375,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        restored outbox entry sends it under its own key without waiting for the drain. The rest go
        to the reconcile pass as before; a failure leaves them all to it. */
     const inheritedSends: readonly string[] = inheritedPending.length === 0 ? inheritedPending : await sendService
-      .forgetInherited(
-        { db: db as never, accountId: world.accountId, userId: null, now, requestId: "inherited-sends" },
-        inheritedPending,
-      )
+      .forgetInherited(ownContext("inherited-sends"), inheritedPending)
       .then((r) => {
         if (r.forgotten > 0) log("inherited_sends_forgotten", { count: r.forgotten });
         return r.remaining;
@@ -525,7 +531,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     Object.assign(scope, {
       log, now, monotonic, cadenceClocks, address, drainTurns, signatureCheck, organizerKind, reconnect, walkTurn,
       agreePages, agreeSlices, engineBuild, pollIntervalMs, idlePollCeilingMs, detachWaitMs, heartbeatTimeoutMs,
-      tBoot, opened, db, statisticsUpkeep, knownSetStatisticsOnce, yieldToFirstPage, world, session, worldMs,
+      tBoot, opened, db, unbound, ownContext, statisticsUpkeep, knownSetStatisticsOnce, yieldToFirstPage, world, session, worldMs,
       inheritedSends, authConfig, durableKey, keyProvider, kekIdentity, ai, hostConfig, hostMode, app,
     } satisfies Partial<EngineScope>);
 
@@ -996,7 +1002,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
       credentialState: async () => (await seedRuntime()?.credentialState()) ?? "absent",
       forgetStoredLogin: async (opts) => (await seedRuntime()?.forgetStoredLogin(opts)) ?? false,
-      probeSubmission: async (input) => makeSmtpProbe(scope.depsFor(), scope.smtpProbeOpts)({
+      probeSubmission: async (input) => makeSmtpProbe(scope.ownDeps(), scope.smtpProbeOpts)({
         accountId: world.accountId, address: input.address, smtp: input.smtp,
       }),
       /**

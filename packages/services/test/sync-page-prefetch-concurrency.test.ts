@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { POOLED_MAX_CONNECTIONS } from "@trafficflow/db/cloud";
 import { folderState, mailboxes, messages, recordChange, type EntityType } from "@trafficflow/db";
-import { SyncService, type ServiceContext } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
 import { PREFETCH_CONCURRENCY } from "../src/sync-service.js";
 
 /**
@@ -64,7 +64,7 @@ describe("the /sync page's prefetches", () => {
     for (const type of gone) await rec(type, randomUUID());
 
     const ctx: ServiceContext = {
-      db, accountId, userId: null, now: () => new Date("2026-09-26T00:00:00.000Z"), requestId: "prefetch",
+      db: dbFor(db, accountId), accountId, userId: null, now: () => new Date("2026-09-26T00:00:00.000Z"), requestId: "prefetch",
     };
     const probe = inFlight(db);
     probe.on();

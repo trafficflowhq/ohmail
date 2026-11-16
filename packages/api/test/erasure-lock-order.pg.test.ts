@@ -6,7 +6,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, accountSyncState, changeLog, folderOps, mailboxFolders, mailboxes, messages,
   refreshTokens, sessions, threads, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
-  type EntitlementsPort, type Tx,
+  bindDb, type EntitlementsPort, type Tx,
 } from "@trafficflow/db";
 import {
   credentials, invites, makeOwnedDb, pushSubscriptions, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb,
@@ -15,7 +15,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
   generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
-  FolderOpsService, MailService, SpyMailer, ThreadService, reapStaleWebSessions, throttleKeysFor, type Db, type ServiceContext,
+  FolderOpsService, MailService, SpyMailer, ThreadService, dbFor, reapStaleWebSessions, throttleKeysFor, type Db, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -57,10 +57,14 @@ function named(app: string): OwnedDb {
 /** Every transaction the handle opens reports how it ended: a 40P01 a caller swallows is still read. */
 function watched(o: OwnedDb, ended: string[]): OwnedDb {
   const h = o.db as unknown as { transaction: (fn: unknown, ...rest: unknown[]) => Promise<unknown> };
-  const inner = h.transaction.bind(h);
+  const inner = h.transaction;
   Object.defineProperty(h, "transaction", {
     configurable: true, writable: true,
-    value: (fn: unknown, ...rest: unknown[]) => inner(fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; }),
+    // Called on whatever handle asked: a view bound over this pool opens its transaction through
+    // here too, and it must open as that view's, with its binding.
+    value: function (this: unknown, fn: unknown, ...rest: unknown[]) {
+      return inner.call(this, fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; });
+    },
   });
   return o;
 }
@@ -151,8 +155,10 @@ async function family(p: Person, twofaAt: Date | null = null): Promise<Family> {
 }
 
 const auth = () => makeAuthService(makeTestAuthDeps());
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctxOn = (handle: unknown, over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db: handle as never, accountId: "", userId: null, sessionId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(handle as Db, { account: null }) : dbFor(handle as Db, over.accountId),
+  accountId: "", userId: null, sessionId: null, now: () => new Date(),
   requestId: `fix026-${randomUUID()}`, ip: scenarioIp, ...over,
 });
 const at = (msAgo: number) => ({ now: () => new Date(Date.now() - msAgo) });
@@ -172,7 +178,8 @@ function port(releases: string[]): EntitlementsPort {
 function routeDeps(handle: unknown, releases: string[]): ApiDeps {
   const authDeps = makeTestAuthDeps({});
   return {
-    db: handle, now: () => new Date(), requestId: `fix026-${randomUUID()}`, session: null, idempotency: null,
+    // A request's own container, its handle minted bound to nothing as a host mints it.
+    db: bindDb(handle as Db, { account: null }), now: () => new Date(), requestId: `fix026-${randomUUID()}`, session: null, idempotency: null,
     authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
     services: { auth: makeAuthService(authDeps), entitlementsPort: port(releases) },
   } as unknown as ApiDeps;

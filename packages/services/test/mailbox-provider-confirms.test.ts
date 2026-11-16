@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxCredentials, mailboxes, UNMETERED_ACCESS } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * DOES OHMAIL READ THIS MAILBOX'S PROVIDER'S WORD ON WHO SENT A MESSAGE — `MailboxDTO.providerConfirms`,
@@ -35,7 +35,7 @@ async function fourMailboxes() {
   const microsoft = await add("two@outlook.example", "outlook.office365.com");
   const other = await add("three@infomaniak.example", "mail.infomaniak.com");
   const unknown = await add("four@nowhere.example", null);
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { ctx, gmail, microsoft, other, unknown };
 }
 

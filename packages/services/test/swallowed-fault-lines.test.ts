@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { format } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { accounts, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { accounts, bindDb, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import type { ClassifierPort, ClassifierResult } from "@trafficflow/core";
 import {
@@ -125,18 +125,19 @@ describe("the Screener's suggest path", () => {
   it("a key release fault: the pass error stands", async () => {
     const w = await world();
     let failTx = false;
-    const db = new Proxy(w.db as unknown as object, {
+    // Over the context's own handle, bound to the account: a transaction it opens carries the binding.
+    const db = new Proxy(w.ctx.db, {
       get(target, prop) {
         if (prop === "transaction") {
           return async (fn: (tx: Tx) => Promise<unknown>) => {
             if (failTx) throw new PlantedFault();
-            return (target as { transaction: (f: typeof fn) => Promise<unknown> }).transaction(fn);
+            return Reflect.get(target, "transaction").call(target, fn);
           };
         }
         const v = Reflect.get(target, prop);
         return typeof v === "function" ? v.bind(target) : v;
       },
-    }) as typeof w.db;
+    });
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: answering, credits: w.credits, pricing: PLANE_PRICING });
     (svc as unknown as { store: () => Promise<void> }).store = async () => { failTx = true; throw new Error("store fault"); };
     const h = heard();
@@ -171,7 +172,10 @@ describe("the sign-out by refresh token", () => {
     class PruneDown extends AuthService {
       protected override async pruneWakeRegistrations(): Promise<void> { throw new PlantedFault(); }
     }
-    const ctx: ServiceContext = { db, accountId: "", userId: null, now: () => new Date(t0.getTime() + 1_000), requestId: "r-signout" };
+    // The sign-out by refresh token runs before any session: its handle is bound to nothing.
+    const ctx: ServiceContext = {
+      db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => new Date(t0.getTime() + 1_000), requestId: "r-signout",
+    };
     const h = heard();
     await expect(new PruneDown(makeTestAuthDeps()).logout(ctx, { refreshToken: r1 })).resolves.toEqual({ familyIds: [familyId] });
     expectClassAndCodeOnly(h, "auth_logout_wake_prune_failed", {

@@ -8,12 +8,12 @@ import {
   accounts, accountSettings, mailboxes, messageInstances, messages, folderState, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type Tx,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema } from "@trafficflow/db/cloud";
 import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { ledgerSources } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, ScreenerService, type ServiceContext } from "@trafficflow/services";
 import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { PLANE_PRICES, PLANE_PRICING } from "../../../packages/services/test/helpers/plane-pricing.js";
@@ -43,11 +43,13 @@ import { PLANE_PRICES, PLANE_PRICING } from "../../../packages/services/test/hel
  */
 const URL = pgTestUrl(import.meta.url);
 
-/** Two pools: the cron's connection, the request's connection, and a reader for assertions. */
+/**
+ * Two pools: the cron's connection, the request's connection, and a reader for assertions. The
+ * request's pool is the API's, made by its factory: a press runs on a handle bound to its account.
+ */
 const sqlCron = postgres(URL, { max: 2 });
-const sqlPress = postgres(URL, { max: 2 });
+const pressPool = makeOwnedDb(URL, { role: "api" });
 const dbCron = brandDialect(drizzle(sqlCron, { schema }), "pg");
-const dbPress = brandDialect(drizzle(sqlPress, { schema }), "pg");
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 const MODEL_MS = 400;
@@ -114,7 +116,7 @@ describe("SEC3-MONEY-1 — the auto-suggest cron and a Suggest press racing one 
   beforeAll(async () => { await runMigrations(URL); });
   afterAll(async () => {
     await sqlCron.end({ timeout: 5 });
-    await sqlPress.end({ timeout: 5 });
+    await pressPool.close();
   });
 
   it("buys ONE model call and ONE credit between them, whichever wins", async () => {
@@ -124,7 +126,7 @@ describe("SEC3-MONEY-1 — the auto-suggest cron and a Suggest press racing one 
 
     const press = new ScreenerService({ classifier: spy(calls), credits, pricing: PLANE_PRICING });
     const ctx: ServiceContext = {
-      db: dbPress as unknown as Tx, accountId, userId: null,
+      db: dbFor(pressPool.db, accountId), accountId, userId: null,
       now: () => NOW, requestId: randomUUID(),
     };
 

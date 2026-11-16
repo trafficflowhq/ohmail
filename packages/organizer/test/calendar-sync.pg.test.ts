@@ -71,15 +71,31 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     throw new Error("the reading did not end");
   }
 
-  /** The world's database with `before` run ahead of each of its transactions: somebody else at work between two of a pass's own. */
-  function dbWith(before: () => Promise<void>): World["db"] {
-    const real = w.db as unknown as { transaction(fn: unknown): Promise<unknown> };
-    return Object.assign(Object.create(w.db as object) as object, {
-      transaction: async (fn: unknown) => {
+  /**
+   * The world's database with `before` run ahead of each of its transactions until `end`: somebody else
+   * at work between two of a pass's own. It sits on the pool's own handle, which the binder knows, so
+   * a turn's handle bound over it opens its transactions through it too.
+   */
+  function dbWith(before: () => Promise<void>): { db: World["db"]; end(): void } {
+    const pool = w.db as unknown as { transaction(fn: unknown, config?: unknown): Promise<unknown> };
+    // What stands there is the factory's own `transaction`, an own property that stamps every
+    // transaction it opens: `end` puts it back as it was, never deletes it.
+    const stood = Object.getOwnPropertyDescriptor(pool, "transaction");
+    const real = pool.transaction;
+    Object.defineProperty(pool, "transaction", {
+      configurable: true,
+      value: async function (this: unknown, fn: unknown, config?: unknown) {
         await before();
-        return real.transaction(fn);
+        return real.call(this, fn, config);
       },
-    }) as World["db"];
+    });
+    return {
+      db: w.db,
+      end: () => {
+        if (stood) Object.defineProperty(pool, "transaction", stood);
+        else Reflect.deleteProperty(pool, "transaction");
+      },
+    };
   }
 
   /** One event written into a calendar by somebody else. */
@@ -1034,8 +1050,8 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
       if (transactions > 1) await strangersEvent(t.accountId, cal!.id, transactions);
     });
     const cut = await removeCalendar({
-      db: passDb(calendarPool(meanwhile), t.accountId), key: { accountId: t.accountId, id: t.connectionId }, memory: t.deps.memory, halted: () => false,
-    }, cal!.id);
+      db: passDb(calendarPool(meanwhile.db), t.accountId), key: { accountId: t.accountId, id: t.connectionId }, memory: t.deps.memory, halted: () => false,
+    }, cal!.id).finally(() => meanwhile.end());
     expect(cut).toMatchObject({ ok: true, whole: false });
     expect(await eventsOf(w, t.accountId)).toEqual([]);
     // The same process goes on: the first eight pages' events are gone from the store, so the reading that named them is no reading to go on with.
@@ -1060,7 +1076,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
       if (transactions > 1 && transactions <= 7) await strangersEvent(t.accountId, cal!.id, transactions);
     });
     // Two events at its count: one transaction for them and one more. Not a third, whatever was written since.
-    expect(await removal(meanwhile)).toEqual({ ok: true, changed: 4, whole: false });
+    expect(await removal(meanwhile.db).finally(() => meanwhile.end())).toEqual({ ok: true, changed: 4, whole: false });
     expect(transactions).toBe(3);
     expect((await calendarsOf(w, t.accountId)).length).toBe(1);
     // The row stays for the next listing, which goes on and ends it.

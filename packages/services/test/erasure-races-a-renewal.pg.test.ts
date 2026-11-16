@@ -5,11 +5,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { accounts, refreshTokens, sessions, users } from "@trafficflow/db";
-import { erasedBearers, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, refreshTokens, sessions, users } from "@trafficflow/db";
+import { erasedBearers, makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { AuthService, deleteAccount, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
+import { AuthService, dbFor, deleteAccount, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
+import { statementSeam } from "./helpers/statement-seam.js";
 
 /*
  * AN ERASURE RACING A RENEWAL OF THE SAME ACCOUNT ERASES IT, whichever waits first. A renewal locks
@@ -21,16 +22,20 @@ import { AuthService, deleteAccount, hashToken, makeTestAuthDeps, type ServiceCo
  */
 const PG_UP = await realPgAvailable();
 type Sql = ReturnType<typeof postgres>;
-type Db = ReturnType<typeof drizzle<typeof schema>>;
+type Db = OwnedDb["db"];
 type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };
 
 let client: Sql;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let db: Db;
 const extra: Sql[] = [];
 let ipCell = 0;
 let ip = "10.41.0.1";
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(), requestId: "erasure-race-pg", ip, ...over,
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(), requestId: "erasure-race-pg", ip, ...over,
 });
 const native = { surface: "native" } as const;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -99,6 +104,40 @@ function party(app: string, pattern?: RegExp): { db: Db; reached: Promise<void>;
   return { db: brandDialect(drizzle(wrap(base), { schema }), "pg"), reached, open };
 }
 
+const owners: OwnedDb[] = [];
+/**
+ * A HANDLE OF ITS OWN, named in pg_stat_activity, that holds nothing: a pool of the factory's, named by
+ * its address (a parameter of the address is one of the connection), so a binding can ride it.
+ */
+function named(app: string): Db {
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  const pool = makeOwnedDb(address.toString());
+  owners.push(pool);
+  return pool.db;
+}
+
+/*
+ * A RENEWAL'S HANDLE OF ITS OWN: a pool of the factory's named in pg_stat_activity, bound to nothing as
+ * the door before sign-in is, whose first statement matching `pattern` (inside a transaction too) is
+ * held at the drizzle builder until `open()`, where a bound flight's statements pass; `reached`
+ * resolves when it arrives.
+ */
+function renewing(app: string, pattern: RegExp): { db: ServiceContext["db"]; reached: Promise<void>; open: () => void } {
+  let hit = false;
+  let arrive!: () => void;
+  const reached = new Promise<void>((r) => { arrive = r; });
+  let open!: () => void;
+  const gate = new Promise<void>((r) => { open = r; });
+  const seen = statementSeam(bindDb(named(app), { account: null }), (text) => {
+    if (hit || !pattern.test(text)) return null;
+    hit = true;
+    arrive();
+    return (run) => gate.then(run);
+  });
+  return { db: seen, reached, open };
+}
+
 /** Poll, bounded, until a backend named `app` in this database waits on a lock: a reading, not a sleep. */
 async function blockedOnALock(app: string, ms = 10_000): Promise<boolean> {
   const end = Date.now() + ms;
@@ -133,10 +172,13 @@ describe.skipIf(!PG_UP)("an erasure racing a renewal of the same account", () =>
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
   afterAll(async () => {
     for (const c of extra) await c.end({ timeout: 5 }).catch(() => {});
+    for (const pool of owners) await pool.close().catch(() => {});
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 
@@ -154,7 +196,7 @@ describe.skipIf(!PG_UP)("an erasure racing a renewal of the same account", () =>
     const renewer = `erase-d1-r-${randomUUID().slice(0, 8)}`;
     const erasure = settle(erase(accountId, userId, e.db));
     await e.reached;
-    const renewal = settle(svc.refresh(ctx({ db: party(renewer).db }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native));
+    const renewal = settle(svc.refresh(ctx({ db: bindDb(named(renewer), { account: null }) }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native));
     expect(await blockedOnALock(renewer), "the renewal waits on the erasure").toBe(true);
     e.open();
     const [er, rn] = await Promise.all([erasure, renewal]);
@@ -166,7 +208,7 @@ describe.skipIf(!PG_UP)("an erasure racing a renewal of the same account", () =>
   it("the erasure waits first, before the renewal's claim: the renewal commits, then the erasure takes it", async () => {
     const svc = new AuthService(makeTestAuthDeps());
     const { userId, accountId, r1 } = await establish(svc, `erase-d2-${randomUUID()}@lichtgrat.example`);
-    const r = party(`erase-d2-r-${randomUUID().slice(0, 8)}`, /^update "refresh_tokens" set "consumed_at"/i);
+    const r = renewing(`erase-d2-r-${randomUUID().slice(0, 8)}`, /^update "refresh_tokens" set "consumed_at"/i);
     const eraser = `erase-d2-e-${randomUUID().slice(0, 8)}`;
     const renewal = settle(svc.refresh(ctx({ db: r.db }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native));
     await r.reached;
@@ -182,7 +224,7 @@ describe.skipIf(!PG_UP)("an erasure racing a renewal of the same account", () =>
   it("the erasure waits on a claimed renewal: the successor commits, and the erasure takes it too", async () => {
     const svc = new AuthService(makeTestAuthDeps());
     const { userId, accountId, r1 } = await establish(svc, `erase-f1-${randomUUID()}@lichtgrat.example`);
-    const r = party(`erase-f1-r-${randomUUID().slice(0, 8)}`, /^insert into "refresh_tokens"/i);
+    const r = renewing(`erase-f1-r-${randomUUID().slice(0, 8)}`, /^insert into "refresh_tokens"/i);
     const eraser = `erase-f1-e-${randomUUID().slice(0, 8)}`;
     const renewal = settle(svc.refresh(ctx({ db: r.db }), { refreshToken: r1, attemptId: `r${randomUUID()}` }, native));
     await r.reached;

@@ -574,6 +574,8 @@ apps/sidecar/test/stand-down-mid-drain-is-a-state-change.test.ts	data	through ap
 apps/sidecar/test/standalone-consent-and-removal.test.ts	source-text	through apps/sidecar/test/_mailbox-rows.ts, apps/sidecar/test/_datadir.ts: reads the mail schema's source and the migrations; the migrations and a data folder it made	layer 1	desktop-engine	
 apps/sidecar/test/standalone-open-read.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/standalone-read-writeback.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-binding-server-control.pg.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-binding.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-checkpoint-waits-for-the-window.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/store-close-door.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
 apps/sidecar/test/store-copies-local-door.test.ts	data	reads a data folder it made: the store's copy and its own record	none	desktop-engine	
@@ -927,6 +929,7 @@ apps/worker/test/classifier-outage.e2e.test.ts	data	through apps/worker/test/_is
 apps/worker/test/cli-lease-wiring.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
 apps/worker/test/cli.smoke.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/connection-error.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/cron-entries-binding.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/cron-logging.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/cycle-authority-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/cycle-tail-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
@@ -984,6 +987,7 @@ apps/worker/test/profile-import-ask-worker.test.ts	data	through apps/worker/test
 apps/worker/test/profile-reencodes-a-plain-message.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/proposal-cron.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/provider-refusal-soft-block.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/push-wake-binding.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/push-wake-content-free.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/reader-cycle-authority.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/refund-obligation-composition.test.ts	source-text	reads source as text (ts)	layer 1	worker	

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, tags } from "@trafficflow/db";
 import {
-  SNAPSHOT_FIRST_PAGE_MESSAGES, SyncService,
+  SNAPSHOT_FIRST_PAGE_MESSAGES, SyncService, dbFor,
   type ServiceContext, type SnapshotResponse,
 } from "../src/index.js";
 
@@ -31,7 +31,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `a-${accountId}@x.example`,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "snap" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "snap" };
   return { db, accountId, mailboxId: mb!.id, ctx };
 }
 

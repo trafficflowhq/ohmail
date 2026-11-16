@@ -6,6 +6,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { accountSettings, mailboxCredentials, mailboxes, rules as rulesTbl } from "@trafficflow/db";
 import { acquireImapSlot, releaseImapSlot } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { dbFor } from "@trafficflow/services/mail";
 import { rescueJunk } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -35,7 +36,7 @@ async function seed() {
     db, keyProvider: { decrypt: async () => "not-printed" },
     services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } }, now: () => NOW,
   } as unknown as ApiDeps;
-  const ctx = { accountId, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+  const ctx = { accountId, db: dbFor(db, accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
   return { db, deps, ctx, accountId, mailboxId: mb!.id };
 }
 

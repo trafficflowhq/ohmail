@@ -10,7 +10,7 @@ import {
 } from "@trafficflow/services/mail";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import { hostedDevices } from "./cloud-mirror-devices.js";
-import { isCalendarRecordKind } from "@trafficflow/db";
+import { carryBinding, isCalendarRecordKind } from "@trafficflow/db";
 import type { AnswerOf, OnlyNamesOf, RouteName } from "@ohmail/wire";
 
 /**
@@ -99,17 +99,13 @@ function boolParam(v: string | null): boolean | undefined {
  * read it (so the wire item carries the left join's `text: ""`) and present when the presence query
  * ran (so the id is admitted) would be answered as an ordinary empty body and cached as settled,
  * the very failure this file prevents in a narrower window. One transaction, `read only` at the same
- * isolation, so the two answers describe one instant.
+ * isolation, so the two answers describe one instant. The transaction becomes the snapshot's
+ * handle through `carryBinding`: it carries the binding of the context it was opened on, or it is
+ * refused.
  */
 async function inSnapshot<T>(ctx: ServiceContext, fn: (snap: ServiceContext) => Promise<T>): Promise<T> {
-  const tx = ctx.db as unknown as {
-    transaction<R>(
-      run: (t: ServiceContext["db"]) => Promise<R>,
-      opts: { isolationLevel: "repeatable read"; accessMode: "read only" },
-    ): Promise<R>;
-  };
-  return tx.transaction(
-    async (t) => fn({ ...ctx, db: t }),
+  return ctx.db.transaction(
+    async (t) => fn({ ...ctx, db: carryBinding(ctx.db, t) }),
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
 }

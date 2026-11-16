@@ -1,4 +1,5 @@
-import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
+import { accountOfMailbox, accountOfMessage, bindDb, bindingOf } from "@trafficflow/db";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
@@ -106,6 +107,54 @@ export function stubImapDial(): void {
   vi.spyOn(ImapAdapter.prototype, "close").mockResolvedValue(undefined);
 }
 
+/**
+ * A REQUEST'S CONTAINER AS A HOST HANDS IT, AND AGAIN FOR EVERY REQUEST: `container` with its handle
+ * minted over the store it names.
+ *
+ * A host builds a container for each request and mints its handle bound to nothing; the session's
+ * door binds that handle once, and refuses a handle no host minted or one a request before it
+ * bound. A test hands ONE container to request after request, so this one makes itself a new
+ * request's where a request begins: every pipeline's first act is to write the request's id
+ * (`withRequestId`), and with that write the handle is the minted one again, for that request alone
+ * (two requests at once each keep their own, as two containers would). What one request bound
+ * never reaches the next request; until the next request id is written, the test's own reads of
+ * `deps.db` (and a service called by hand on it) ride the last request's handle, because the mint
+ * happens in the caller's continuation.
+ *
+ * A test that puts a handle of its own on the container (a double, a counting wrapper) is the host
+ * from then on: the next request's handle is minted over it. A handle that names an account is a
+ * request's own state and is never minted over. A copy of the container (`{ ...deps }`) is a plain
+ * object holding the handle as it stood: one request's.
+ */
+export function perRequest(container: Omit<ApiDeps, "db"> & { db: Db | ApiDeps["db"] }): ApiDeps {
+  const perRequestHandle = new AsyncLocalStorage<{ handle: ApiDeps["db"] }>();
+  let hosts: Db | ApiDeps["db"] = container.db;
+  const mint = (): ApiDeps["db"] => {
+    const held = hosts;
+    return bindingOf(held) === undefined ? bindDb(held as Db, { account: null }) : held as ApiDeps["db"];
+  };
+  const outside: { handle: ApiDeps["db"] } = { handle: mint() };
+  let requestId = container.requestId;
+  const made = { ...container } as unknown as ApiDeps;
+  Object.defineProperty(made, "db", {
+    enumerable: true, configurable: true,
+    get: () => (perRequestHandle.getStore() ?? outside).handle,
+    set: (next: ApiDeps["db"]) => {
+      (perRequestHandle.getStore() ?? outside).handle = next;
+      if ((bindingOf(next)?.account ?? null) === null) hosts = next;
+    },
+  });
+  Object.defineProperty(made, "requestId", {
+    enumerable: true, configurable: true,
+    get: () => requestId,
+    set: (next: string) => {
+      requestId = next;
+      perRequestHandle.enterWith({ handle: mint() });
+    },
+  });
+  return made;
+}
+
 export async function makeDeps(
   start: Date = FIXED_NOW,
   authOver: Partial<AuthConfig> = {},
@@ -170,7 +219,7 @@ export async function makeDeps(
     },
     throttleKeys: throttleKeysFor(authDeps.keyProvider),
   });
-  const deps: ApiDeps = {
+  const deps: ApiDeps = perRequest({
     db,
     // THE STAFF HANDLE, AND AN HONEST STATEMENT OF WHAT IT PROVES HERE.
     //
@@ -271,7 +320,7 @@ export async function makeDeps(
       waitlist: makeWaitlistService({ mail, throttleKeys: throttleKeysFor(authDeps.keyProvider) }),
       ...(over.sendAdapter ? { sendAdapter: over.sendAdapter } : {}),
     },
-  };
+  });
   const clock: TestClock = { now: () => t, advance: (ms) => { t = new Date(t.getTime() + ms); } };
   return { db, deps, clock, mailer, mail, access };
 }

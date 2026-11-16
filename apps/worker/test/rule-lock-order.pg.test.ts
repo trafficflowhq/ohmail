@@ -19,7 +19,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { Logger } from "@trafficflow/core/mail";
 import {
-  ApprovalService, LearningService, MailboxService, MessageService, RulesService, ScreenerService, deleteAccount, releaseHeld,
+  ApprovalService, LearningService, MailboxService, MessageService, RulesService, ScreenerService, dbFor, deleteAccount, releaseHeld,
   resetScreeningState, setDormancyDays, type ServiceContext,
 } from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -136,7 +136,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const act = screenerAutoActPass(open(actName).db as unknown as Tx, { accountId, consent, log, now: () => NOW });
     await isParked;
     const eraseCtx = {
-      db: open(eraseName).db, accountId, userId: null, now: () => NOW, requestId: `lo-erase-${tag}`,
+      db: dbFor(open(eraseName).db, accountId), accountId, userId: null, now: () => NOW, requestId: `lo-erase-${tag}`,
     } as unknown as ServiceContext;
     const erase = deleteAccount(eraseCtx);
     await untilWaiting(eraseName);
@@ -418,7 +418,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       const resetName = `lo-reset-${tag}`;
       const decideName = `lo-rdec-${tag}`;
       const reset = resetScreeningState({
-        db: open(resetName).db, accountId, userId: null, now: () => NOW, requestId: `lo-reset-${tag}`,
+        db: dbFor(open(resetName).db, accountId), accountId, userId: null, now: () => NOW, requestId: `lo-reset-${tag}`,
       } as unknown as ServiceContext);
       await untilWaiting(resetName);
       const decideDb = open(decideName).db;
@@ -486,7 +486,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-fence-${tag}` };
     await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
     const ctxOn = (name: string, settings?: Record<string, string>) =>
-      ({ db: open(name, settings).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name, settings).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const doors = {
       press: (name: string) => new ScreenerService({}).decide(ctxOn(name), held, { decision: "yes" }),
       release: (name: string) => releaseHeld(ctxOn(name), { ruleIds: [group1!.id], senders: [sender] }),
@@ -499,7 +499,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     };
     let verdict: unknown = null;
     const group = (name: string, inside: () => Promise<void> = async () => {}) =>
-      makeSyncWriteFence(open(name).db as never, mb!.id, leader).transaction(async (repo) => {
+      makeSyncWriteFence(dbFor(open(name).db, accountId) as never, mb!.id, leader).transaction(async (repo) => {
         await inside();
         return repo.recordChange({ accountId, entityType: "message", entityId: filed, op: "update" });
       }).then((v) => { verdict = v; });
@@ -639,7 +639,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-tr-${tag}` };
     await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
     const ctxOn = (name: string) =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const doors = {
       "rule's create": (name: string) => new RulesService().create(ctxOn(name), { kind: "sender", match: `bob-${tag}@shop.example`, destination: NEWS }),
       "rule's pause": (name: string) => new RulesService().update(ctxOn(name), rule!.id, { enabled: false } as never),
@@ -647,7 +647,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       "dormancy window": (name: string) => setDormancyDays(ctxOn(name), 30),
     };
     const group = (name: string, inside: () => Promise<void>) =>
-      makeSyncWriteFence(open(name).db as never, held!.id, leader).transaction(async (repo) => {
+      makeSyncWriteFence(dbFor(open(name).db, accountId) as never, held!.id, leader).transaction(async (repo) => {
         await inside();
         return repo.recordChange({ accountId, entityType: "message", entityId: m!.id, op: "update" });
       });
@@ -727,7 +727,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     }).catch(() => undefined);
     await holding;
     const ctxOn = (name: string): ServiceContext =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const moveName = `lo-move-${tag}`;
     const pauseName = `lo-pause-${tag}`;
     const move = new MessageService().move(ctxOn(moveName), m!.id, { folder: "INBOX" });
@@ -783,7 +783,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const ctxOn = (name: string): ServiceContext =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const state = async () => {
       const [g] = await base.db.select().from(graduations)
         .where(and(eq(graduations.accountId, accountId), eq(graduations.patternKey, patternKey)));

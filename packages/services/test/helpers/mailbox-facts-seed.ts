@@ -5,7 +5,7 @@ import {
   accounts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageFailures, messages,
   ourOutstandingFiling,
 } from "@trafficflow/db";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * The seed behind `mailbox-facts-batched.golden.json`, shared by the PGlite/SQLite file and its
@@ -37,7 +37,7 @@ export const svc = makeMailboxService({
 });
 
 export const ctxFor = (db: Db, accountId: string, now: () => Date = () => NOW): ServiceContext =>
-  ({ db, accountId, userId: null, now, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now, requestId: "r" });
 
 let seq = 0;
 

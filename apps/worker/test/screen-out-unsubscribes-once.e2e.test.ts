@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { folderState, mailboxes, messages, type Tx } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import {
-  makeNodeOneClickPost, makeScreenerService, makeUnsubscribeService, ONE_CLICK_BODY,
+  dbFor, makeNodeOneClickPost, makeScreenerService, makeUnsubscribeService, ONE_CLICK_BODY,
   type HostResolver, type OneClickPost, type ServiceContext,
 } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
@@ -98,7 +98,7 @@ describe("a screen-out asks each list once, for the sender's mail now and later 
     expect(await desired(plain.id), "premise: the person waits in the Screener").toBe("ohmail/Screener");
     expect(await desired(plainOld.id), "premise: the person's older letter stayed in the INBOX").toBe("INBOX");
 
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "cell" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "cell" };
     const drain = () => unsubscribe.sweepScreenedOut(ctx, { since: new Date(Date.now() - WINDOW_MS), limit: 50 });
 
     // The list, at the press: exactly the RFC 8058 body, once.

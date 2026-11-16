@@ -7,9 +7,9 @@ import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, mailboxes, messages } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { MailboxService } from "../src/mailbox-service.js";
-import type { ServiceContext } from "../src/context.js";
+import { dbFor, type ServiceContext } from "../src/context.js";
 
 /**
  * HOW MANY MESSAGES ARE IN EACH MAILBOX, and the two things that number may not cost.
@@ -59,6 +59,9 @@ const COUNTS_SHAPE = /\bfrom "messages" where\b[\s\S]*\bgroup by\b/i;
 describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
   let db: ReturnType<typeof drizzle<typeof schema>>;
   let sqlc: ReturnType<typeof postgres>;
+  // The context's handle is the factory's: the binder takes a server handle only from the factory
+  // that registered its door.
+  let owned: OwnedDb | undefined;
   const service = new MailboxService({ signatureChecks: false });
 
   beforeAll(async () => {
@@ -69,14 +72,15 @@ describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
        implementation; this asserts the only thing that costs anything, which is what went down
        the wire. `logQuery` is drizzle's own hook and fires once per statement. */
     db = brandDialect(drizzle(sqlc, { schema, logger: { logQuery: (q) => { sent.push(q); } } }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
   }, 60_000);
 
-  afterAll(async () => { await sqlc?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await sqlc?.end({ timeout: 5 }); });
 
   beforeEach(() => { sent.length = 0; });
 
   const ctxFor = (accountId: string): ServiceContext =>
-    ({ db, accountId, userId: null, now: () => new Date(), requestId: "r" });
+    ({ db: dbFor(owned!.db, accountId), accountId, userId: null, now: () => new Date(), requestId: "r" });
 
   /** An account with `n` mailboxes; returns its id and its mailbox ids in `list` order. */
   async function seedAccount(label: string, addresses: string[]): Promise<{ id: string; mailboxIds: string[] }> {

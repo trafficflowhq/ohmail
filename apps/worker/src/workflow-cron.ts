@@ -9,6 +9,7 @@ import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type Workf
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
+import { bindWorker } from "./start/bind.js";
 import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
@@ -297,6 +298,9 @@ export async function runWorkflowCron(
 
   const owned = makeOwnedDb(config.databaseUrl);
   const db = owned.db;
+  // The pool's two views, as the organizer's own tail has them: the accounts this shard serves are
+  // read on the one that names none, and each account's runs are found and worked on its handle.
+  const binding = bindWorker(db);
   try {
     const now = new Date();
     let drained = 0;
@@ -320,12 +324,13 @@ export async function runWorkflowCron(
       ? makeAiUsageBuffer({ port: { recordUsage: client.recordUsage.bind(client) }, log, budgetMs: ENTITLEMENTS_CALL_BUDGET_MS })
       : undefined;
     usageRelay?.arm();
-    for (const accountId of await loadServedAccounts(db, selectionOf(config))) {
+    for (const accountId of await loadServedAccounts(binding.roster, selectionOf(config))) {
       try {
+        const own = binding.forAccount(accountId).db as unknown as Tx;
         // Enqueue any due time-triggered runs FIRST, then drain them this same pass.
-        await workflowTimeScanPass(db as unknown as Tx, { accountId }, now);
+        await workflowTimeScanPass(own, { accountId }, now);
         const res = await workflowDrainPass(
-          db as unknown as Tx,
+          own,
           {
             drafter: config.drafter && usageRelay && usageBuffer
               ? attributedWorkflowDrafter(config.drafter, accountId, usageRelay.hook, usageBuffer)

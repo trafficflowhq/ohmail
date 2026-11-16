@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxCredentials, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * A PASSWORD PATCH NAMING AN OAUTH MAILBOX IS REFUSED BY NAME AT THE SERVICE. The row's credential
@@ -27,7 +27,7 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 async function seed(db: Db): Promise<ServiceContext> {
   const [a] = await db.insert(accounts).values({ name: "oauth-password" }).returning();
-  return { db, accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
+  return { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 /** A probe double that counts its dials, and may act on the database while it "dials". */
