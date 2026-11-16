@@ -873,6 +873,7 @@ apps/worker/test/blank-repair-worker-mode.e2e.test.ts	data	through apps/worker/t
 apps/worker/test/box-journal-drift.pg.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
 apps/worker/test/bubble-up-inline.e2e.test.ts	source-text	reads source as text (ts)	layer 1	worker	
 apps/worker/test/bubble-up.concurrency.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/calendar-providers.pg.test.ts	data	reads data files (json): recorded Google answers	none	cal-sync	
 apps/worker/test/ceiling-named-in-log.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/classifier-outage.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
 apps/worker/test/cli-lease-wiring.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	

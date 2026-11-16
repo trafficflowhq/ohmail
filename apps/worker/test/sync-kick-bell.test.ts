@@ -162,6 +162,19 @@ describe("the kick scan's doorbell", () => {
     expect(ran).toBe(2);
   });
 
+  it("another pass's bell says its own name in both of its lines", async () => {
+    const lines: string[] = [];
+    const noop = (): void => { /* not read here */ };
+    const log = { debug: noop, info: noop, error: noop, warn: (event: string) => { lines.push(event); }, child() { return log; } };
+    const deaf = { subscribeAll(): () => void { throw new Error("no signal on this host"); } };
+    bell = startSyncKickBell({
+      pass: async () => { throw new Error("the database is away"); },
+      floorMs: FLOOR, gapMs: GAP, source: deaf, isStopped: () => false, log: log as never, label: "calendar_scan",
+    });
+    await vi.advanceTimersByTimeAsync(FLOOR);
+    expect(lines).toEqual(["calendar_scan_signal_unavailable", "calendar_scan_failed"]);
+  });
+
   it("stopped, by its own stop or the worker's, it scans nothing and listens to nothing", async () => {
     const s = scans(); const src = signals();
     let workerStopped = false;

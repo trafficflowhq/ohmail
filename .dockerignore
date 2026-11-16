@@ -54,6 +54,9 @@
 !packages/core
 !packages/db
 !packages/db-mail
+# The calendar's passes (`apps/worker/src/calendar/`) and the providers they read through.
+!packages/cal-core
+!packages/cal-providers
 # Types only, and in the closure because core and db reference it: `tsc -b` reads its sources
 # and emits no JavaScript from them.
 !packages/wire
