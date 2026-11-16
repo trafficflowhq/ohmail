@@ -817,3 +817,55 @@ describe("reconcileFolders — a delete whose source is gone looks for its lette
     expect(rec.folderStates).toEqual([]);
   });
 });
+
+/**
+ * A PERSON'S OWN FOLDER IS IN NO LINE THE PASS LOGS. Three failure lines hand the destination under
+ * `to`: a transport failure on the way there, and the bookkeeping that did not commit after a move that
+ * landed, batched or one by one. The log's field census drops `to`, so the folder's name, which is the
+ * person's own words, reaches none of them. Through the real logger, each line seen to be written.
+ */
+describe("a person's own folder, in the filing pass's failure lines", () => {
+  const FOLDER = "Kunde Zx7731q/Brünnhilde";
+  const logged = async (repo: WorkerRepo, adapter: MailboxAdapter): Promise<string[]> => {
+    const { createLogger } = await import("@trafficflow/core");
+    const lines: string[] = [];
+    await reconcileMailbox({
+      writeAuthority: FIXTURE_LEASE, repo, adapter, accountId: "acct-1", mailboxId: "mb-1",
+      log: createLogger({ service: "worker", level: "debug", sink: (l) => lines.push(l) }),
+    } as never);
+    return lines;
+  };
+  const events = (lines: readonly string[]) => lines.map((l) => (JSON.parse(l) as { event: string }).event);
+  const naming = (lines: readonly string[]) => lines.filter((l) => l.includes("Zx7731q") || l.includes("Brünnhilde"));
+  /** The write after a landed move fails the way a dropped database connection does. */
+  const failingBookkeeping = (repo: WorkerRepo): WorkerRepo => Object.assign(repo, {
+    completeFolderState: async () => { throw new Error("Connection terminated unexpectedly"); },
+  });
+  /** One letter at a time: an adapter with no batch method. */
+  const oneByOne = (move: MailboxAdapter["move"]): MailboxAdapter =>
+    ({ move, setFlags: async () => {} }) as unknown as MailboxAdapter;
+
+  it("a batch that landed and could not be written down", async () => {
+    const rec = blank();
+    const lines = await logged(failingBookkeeping(repoOf(rec, rows("b", "INBOX", FOLDER, 2))), batchingAdapter(rec));
+    expect(events(lines)).toContain("reconcile_move_batch_uncommitted");
+    expect(naming(lines), "a line named the person's folder").toEqual([]);
+  });
+
+  it("one letter that landed and could not be written down", async () => {
+    const rec = blank();
+    const lines = await logged(failingBookkeeping(repoOf(rec, rows("s", "INBOX", FOLDER, 1))),
+      oneByOne(async (l, to) => LOC(to, `9:${l.ref.split(":")[1]}`)));
+    expect(events(lines)).toContain("reconcile_move_uncommitted");
+    expect(naming(lines), "a line named the person's folder").toEqual([]);
+  });
+
+  it("one letter whose way there met a transport failure", async () => {
+    const rec = blank();
+    const lines = await logged(repoOf(rec, rows("t", "INBOX", FOLDER, 1)), oneByOne(async () => {
+      throw Object.assign(new Error("connect ECONNREFUSED 10.0.0.5:993"), { code: "ECONNREFUSED" });
+    }));
+    expect(events(lines)).toContain("reconcile_move_transport_failure");
+    expect(naming(lines), "a line named the person's folder").toEqual([]);
+  });
+});

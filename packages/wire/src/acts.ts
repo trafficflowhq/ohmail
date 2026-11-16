@@ -23,16 +23,28 @@ export type MutationKind = EngineMutation["kind"];
 /** Every act a queue may carry: the mail's, and the calendar's once it has any. */
 export type Act = EngineMutation | CalendarAct;
 
+/**
+ * A PERSON'S OWN FOLDER, named by its canonical path: `/`-joined, exactly as the server's folder
+ * list spells it (`FolderEntity.name`), with no trim, case fold or other spelling. The server takes
+ * it only when that mailbox lists it and it is the person's own: never the Imbox, a pile of
+ * ohmail's, Sent, Trash or Junk, and not while a change to that folder is being made (422
+ * `no_such_folder`, 409 `conflict`). It is never created.
+ */
+export type FolderPath = string;
+
 /** What a person does to a letter: where it is, whether it waits, who decides its sender, its tags. */
 export type MessageAct =
   /**
-   * MOVE. `from`: applied only while the letter is still in that folder — a Screener card's move by
+   * MOVE. `folder`: one of the six places, or a person's own folder of the letter's mailbox by its
+   * {@link FolderPath} (a server before 2.0 answers that with 400 and moves nothing).
+   * `from`: applied only while the letter is still in that folder — a Screener card's move by
    * id, so a press replayed after the person filed the letter elsewhere leaves it there (the server
    * answers `stale_press`, read as superseded). Absent: unconditional, every other move.
    * `pressRule`: the move of a press that also writes the sender's rule, so the server does not
-   * count it against the route that press rewrites. Older servers ignore it.
+   * count it against the route that press rewrites. Older servers ignore it. Neither goes with a
+   * person's own folder: the server refuses both there (400).
    */
-  | { kind: "move"; messageId: string; folder: Folder; from?: Folder; pressRule?: true }
+  | { kind: "move"; messageId: string; folder: Folder | FolderPath; from?: Folder; pressRule?: true }
   /**
    * DELETE — the message rides to the provider's native `\Trash` on the server (never an
    * expunge) and leaves the mirror's living views everywhere (`DELETE /messages/:id`, mail

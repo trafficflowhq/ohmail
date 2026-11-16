@@ -573,6 +573,9 @@ export default defineConfig({
       // on this store. Watched fail here with the server's spelling restored in that fragment
       // ("unrecognized token: \":\"", one case) while the same mutation stayed green on the other.
       "packages/db/test/request-apply.test.ts",
+      // Where a move into a person's own folder may go: the desktop and the phone organize over this
+      // store, and the name must match exactly here too (no case folding by the store's collation).
+      "packages/services/test/folder-destination.test.ts",
       // The Screener's act on suggestions, which the local engine runs over this store: its filing
       // is `applyScreenerDecision`, whose mark-read upsert bound a JavaScript boolean raw — this
       // driver refuses one, and the two denying cases failed here while the other store passed.

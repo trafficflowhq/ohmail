@@ -216,7 +216,9 @@ export const messageRoutes: Route[] = [
       // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR — the Screener route's rule (mail 0094), and
       // it is the same rule for the same reason: on a mailbox this install merely reads, nothing
       // has moved and the honest code is 202. `requestMove` stores exactly this status for the
-      // idempotent replay, so the first press and its replay agree.
+      // idempotent replay, so the first press and its replay agree. A person's own folder is taken
+      // by its exact name: 422 `no_such_folder` when the mailbox does not list it as theirs, 409
+      // `conflict` while a folder command overlaps it; it opens no mailbox either.
       if ("pending" in result) return answer<"POST /messages/:id/move">()(result, { status: 202 });
       return answer<"POST /messages/:id/move">()(result.dto, { status: 200, seq: result.seq });
     },

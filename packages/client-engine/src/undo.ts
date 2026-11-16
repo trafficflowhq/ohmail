@@ -1,3 +1,5 @@
+import { isOrganizedFolder } from "@trafficflow/core/destinations";
+import { movableInto, moveLanding } from "./mutations.js";
 import { filedOutOfOhbox, pinsSpentBy } from "./ohbox-rows.js";
 import type { EntityReader } from "./store.js";
 import { waterlineIdOf, type EngineMessage, type EngineMutation, type FeedView, type MutationKind, type WaterlineMeta } from "./types.js";
@@ -91,7 +93,12 @@ export function inverseMutations(reader: EntityReader, m: EngineMutation): Engin
   switch (m.kind) {
     case "move": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
-      if (!msg || msg.folder === m.folder) return [];
+      // The press moves nothing here: gone, already there, or a folder the server would refuse.
+      if (!msg || moveLanding(reader, msg, m.folder) === null) return [];
+      /* The way back is a move too, offered only where the server takes one: one of the six, or a
+         person's folder this mirror lists. A rule press's way back carries `pressRule`, which the
+         server takes only into the six. */
+      if (!movableInto(reader, msg.mailboxId, msg.folder) || (m.pressRule === true && !isOrganizedFolder(msg.folder))) return [];
       // Taking a rule press back is no correction of the route it rewrote: marked as that press's.
       const out: EngineMutation[] = [{
         kind: "move", messageId: msg.id, folder: msg.folder, ...(m.pressRule === true ? { pressRule: true as const } : {}),

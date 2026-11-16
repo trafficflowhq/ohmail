@@ -106,7 +106,7 @@ function engineOver(messages: EngineMessage[], rules: RuleDTO[]): Promise<Ohmail
               return { changes: [], seq: null };
             case "move": {
               const x = msgs.get(m.messageId)!;
-              x.folder = m.folder;
+              x.folder = m.folder as Folder;
               return answer([change("message", "move", { ...x })]);
             }
             case "screener_decide": {

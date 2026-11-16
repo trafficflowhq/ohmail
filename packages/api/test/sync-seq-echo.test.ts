@@ -113,8 +113,9 @@ describe("X-Sync-Seq is the seq /sync delivers the write at", () => {
     expect(res.status).toBe(201);
     expect(res.headers.get("x-sync-seq")).toBeNull();
     const m = await seedMessage(db, { accountId: s.accountId, folder: "INBOX" });
+    // A folder the mailbox does not list: refused, and a refusal commits nothing.
     const refused = await H(req("POST", `/messages/${m.id}/move`, { bearer: s.token, body: JSON.stringify({ folder: "Nope" }) }), deps);
-    expect(refused.status).toBe(400);
+    expect(refused.status).toBe(422);
     expect(refused.headers.get("x-sync-seq")).toBeNull();
     // A delete of a letter already gone from the server writes nothing and says so.
     const ghost = await seedMessage(db, { accountId: s.accountId, folder: "INBOX" });

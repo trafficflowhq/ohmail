@@ -8,7 +8,7 @@ import {
   encodeSeqCursor, type EngineDraft, type EngineMessage, type EngineMutation, MAILBOX_TYPE, MutationRejectedError,
   type RuleDTO, type RuleKeyAddress, type SyncChange, type SyncSnapshotPage,
 } from "../types.js";
-import { WIRE_KIND } from "./ceilings.js";
+import { wireKindOf } from "./ceilings.js";
 import type {
   AppliedRuleRequest, OrganizerRequestView, UnsettledRulePress, WaitingOnOrganizerView,
 } from "./mutation-views.js";
@@ -775,7 +775,7 @@ export abstract class EngineHydration extends EnginePastEnd {
       if (r.requestIds.some((id) => listed.has(id))) continue;
       const m = r.mutation;
       out.push({
-        requestId: r.requestId, kind: WIRE_KIND[m.kind] ?? m.kind, state: "pending", holder: r.queuedWith, mailboxId: null,
+        requestId: r.requestId, kind: wireKindOf(m), state: "pending", holder: r.queuedWith, mailboxId: null,
         decidedAt: new Date(r.at).toISOString(), refusedReason: null, target: { unknown: true },
         ruleId: "ruleId" in m ? m.ruleId : null,
         messageId: "messageId" in m ? m.messageId : null,

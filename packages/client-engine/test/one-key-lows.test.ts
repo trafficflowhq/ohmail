@@ -116,7 +116,7 @@ describe("the LOW rows, read at the engine", () => {
     const s1 = await openStore(factory, "acct-1h");
     const e1 = await engineOn(s1, srv, clock);
     srv.net.syncFails = true;
-    expect((await e1.mutate({ kind: "move", messageId: "m-1", folder: "Archive" } as unknown as EngineMutation)).status).toBe("confirmed");
+    expect((await e1.mutate({ kind: "move", messageId: "m-1", folder: "ohmail/News" } as EngineMutation)).status).toBe("confirmed");
     s1.close();
     clock.t = t0 + HOUR;
     srv.net.syncFails = false;

@@ -19,7 +19,9 @@ import { LOCAL_STORE_EXTENSIONS, PGDATA_SUBDIR, openLocalDb } from "../src/db.js
  */
 /** The install's key ring, as the engine hands it: here every envelope opens. */
 const OPENS: Decrypts = { decrypt: async () => "the secret" };
-const HEAD_2_0 = readJournalOf(MAIL_JOURNAL).filter((e) => e.tag.startsWith("0205_"))[0]!.when;
+/** Every entry above 1.0.11's head: the six of the 2.0 window, then any ordinary entry after it. */
+const PAST_OLD_HEAD = readJournalOf(MAIL_JOURNAL).filter((e) => e.when > OLD_HEADS.mail.when);
+const HEAD_2_0 = PAST_OLD_HEAD.at(-1)!.when;
 let template: string;
 const folders: string[] = [];
 
@@ -75,10 +77,11 @@ describe("a desktop's 1.0.11 data folder, opened by this engine", () => {
     expect(first.head).toBe(HEAD_2_0);
     expect(first.passProgress).toBe(true);
     expect(first.credentials).toBe(1);
-    // Each of the six entries is said once, and the open counts them as applied.
+    // Each entry is said once, the window's six first, and the open counts them as applied.
     const told = first.lines.filter((l) => l.event === "migration_applied").map((l) => String(l.detail.migration));
-    expect(told.map((t) => t.slice(0, 4))).toEqual(["0200", "0201", "0202", "0203", "0204", "0205"]);
-    expect(first.applied).toBe(6);
+    expect(told.slice(0, 6).map((t) => t.slice(0, 4))).toEqual(["0200", "0201", "0202", "0203", "0204", "0205"]);
+    expect(told).toEqual(PAST_OLD_HEAD.map((e) => e.tag));
+    expect(first.applied).toBe(PAST_OLD_HEAD.length);
     const second = await open(dir, { openSealed: OPENS });
     expect(second.head).toBe(HEAD_2_0);
     expect(second.applied).toBe(0);

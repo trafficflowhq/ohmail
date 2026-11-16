@@ -1,0 +1,7 @@
+0207_request_folder_moves — NOT CARRIED AS A STEP: THIS STORE HAS NO CHECK ON EITHER COLUMN.
+
+The shared entry widens two CHECKs on `organizer_requests`: its kinds by `message.file` and its
+refusal reasons by `no_such_folder`. This store declares neither (`0091.noop` and the twin of 0094
+say why: the Postgres twin does not declare them, and `schema-twin-parity.test.ts` compares CHECK
+names), so a `message.file` row and a `no_such_folder` refusal are already admitted here. Nothing
+to carry.

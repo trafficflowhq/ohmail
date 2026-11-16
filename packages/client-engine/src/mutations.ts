@@ -1,4 +1,5 @@
 import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { isOrganizedFolder } from "@trafficflow/core/destinations";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
@@ -259,6 +260,31 @@ function spentResurface(msg: EngineMessage, iso: string): MessageStateDTO | null
   };
 }
 
+/**
+ * MAY A MOVE PUT A LETTER OF `mailboxId` INTO `folder`, as far as this mirror can tell: one of the six
+ * places (News in either spelling), or one of the person's own folders of THAT mailbox, named exactly as
+ * this mirror lists it and with no folder command standing on it. The server refuses anything else (422
+ * `no_such_folder`, 409 `conflict`); the Imbox, ohmail's own tree and Sent are never listed. Trash and
+ * Junk are refused by the server alone: this mirror holds no letter in either, and no menu offers them.
+ */
+export function movableInto(reader: EntityReader, mailboxId: string, folder: string): boolean {
+  if (isOrganizedFolder(folder)) return true;
+  return reader.list<FolderEntity>("folder").some((f) => f.mailboxId === mailboxId && f.name === folder && f.op == null);
+}
+
+/**
+ * WHERE A MOVE OF `msg` INTO `folder` PUTS IT, or `null` when it puts it nowhere: the letter is there
+ * already, or the folder is not one {@link movableInto} takes. The one answer the paint, the Ohbox's
+ * filing (`filedOutOfOhbox`) and the Undo read, so a press the engine refuses spends no pin and offers
+ * no Undo.
+ */
+export function moveLanding(reader: EntityReader, msg: EngineMessage, folder: string): Folder | null {
+  if (msg.folder === folder || !movableInto(reader, msg.mailboxId, folder)) return null;
+  // A person's folder rides in the row's `Folder` field as every synced row's path does: the server's
+  // own projection casts the stored path the same way (`materialize.ts`, the message's folder).
+  return folder as Folder;
+}
+
 function promotedRule(
   from: EmailAddress,
   scope: "sender" | "domain",
@@ -449,7 +475,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
   switch (m.kind) {
     case "move": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
-      if (!msg || msg.folder === m.folder) return [];
+      // Nothing to paint: the letter is gone or already there, or the server would refuse the folder.
+      const to = msg ? moveLanding(reader, msg, m.folder) : null;
+      if (!msg || to === null) return [];
       // Re-filing spends the resurface — the server's `move` clears the pin in the same
       // transaction, so the overlay unpins with the same gesture (see `spentResurface`).
       const spent = spentResurface(msg, iso);
@@ -457,9 +485,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         type: "message",
         id: msg.id,
         entity: {
-          ...msg, folder: m.folder, ...(spent ? { triage: spent } : {}), updatedAt: iso,
+          ...msg, folder: to, ...(spent ? { triage: spent } : {}), updatedAt: iso,
         } satisfies EngineMessage,
-        move: { from: msg.folder, to: m.folder },
+        move: { from: msg.folder, to },
       }];
       // At the settled record's id (`stateRecordIdOf`) — a pin the mirror holds under the
       // server's row uuid would otherwise stand unspent beside this `none` for the round trip.

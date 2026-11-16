@@ -205,7 +205,7 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
   type Shape = { locator: string; observed: string; desired: string };
   type Caps = { move?: boolean; uidplus?: boolean };
   /** One letter in `path`, its row pending as `shape`, then one reconcile pass. */
-  async function filedOnce(path: string, shape: Shape, capabilityOverrides: Caps = {}) {
+  async function filedOnce(path: string, shape: Shape, capabilityOverrides: Caps = {}, personFolders: string[] = []) {
     const user = `same-${randomUUID()}@trafficflow.test`;
     const cfg: ImapConfig = { host: p.imapHost, port: p.imapPort, secure: false, auth: { user, pass: "test" } };
     const adapter = new ImapAdapter(cfg, { capabilityOverrides });
@@ -215,6 +215,8 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
     const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: false, auth: cfg.auth, logger: false });
     await c.connect();
     closers.push(() => c.logout());
+    // The person's own folders, made the way another mail app makes them, before ohmail looks.
+    for (const f of personFolders) await c.mailboxCreate(f);
     await c.append(path, eml("only@x", "only copy", user));
     const uidsIn = async (at: string): Promise<number[]> => {
       const l = await c.getMailboxLock(at);
@@ -236,15 +238,18 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
       messageId: m!.id, accountId: m!.accountId, desiredFolder: shape.desired, observedFolder: shape.observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
+    const lines: string[] = [];
     await reconcileMailbox({
       repo: makeDrizzleRepo(db), adapter, accountId: a!.id, mailboxId: mb!.id, role: "organizer", signatures: null,
       writeAuthority: FIXTURE_LEASE, storageCap: UNMETERED_STORAGE_CAP, trustedAuthservIds: new Set<string>(),
+      log: createLogger({ service: "worker", level: "debug", sink: (l) => lines.push(l) }),
     });
     const state = async () => (await db.select().from(folderState).where(eq(folderState.messageId, m!.id)))[0]!;
     const locatorNow = async () => (await db.select({ l: messages.nativeLocator }).from(messages).where(eq(messages.id, m!.id)))[0]!.l;
     const actions = async () => (await db.select({ action: auditLog.action }).from(auditLog)
       .where(eq(auditLog.accountId, a!.id))).map((r) => r.action);
-    return { uid, locator, uidsIn, state, locatorNow, actions };
+    const listed = async () => (await c.list()).map((f) => f.path);
+    return { uid, locator, uidsIn, state, locatorNow, actions, listed, lines };
   }
 
   const NEWS = "ohmail.News";
@@ -255,8 +260,9 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
     ["the old name filed to News without MOVE or UIDPLUS", NEWS, { locator: LEGACY_NEWS_FOLDER, observed: LEGACY_NEWS_FOLDER, desired: NEWS_FOLDER }, { move: false, uidplus: false }],
     ["the old name's locator, observed elsewhere", NEWS, { locator: LEGACY_NEWS_FOLDER, observed: "INBOX", desired: NEWS_FOLDER }, {}],
     ["any folder: a letter already in Screened", "ohmail.Screened", { locator: "ohmail/Screened", observed: "INBOX", desired: "ohmail/Screened" }, {}],
+    ["a person's own folder two deep: a letter already in it", "Clients.Acme", { locator: "Clients/Acme", observed: "INBOX", desired: "Clients/Acme" }, {}],
   ] as Array<[string, string, Shape, Caps]>)("%s: no command, the letter stays, the row is reconciled", async (_name, path, shape, caps) => {
-    const w = await filedOnce(path, shape, caps);
+    const w = await filedOnce(path, shape, caps, path.startsWith("Clients") ? ["Clients", "Clients.Acme"] : []);
     expect(await w.uidsIn(path), "the filing expunged the only copy").toEqual([w.uid]);
     expect(await w.state()).toMatchObject({ desiredFolder: shape.desired, observedFolder: shape.desired, reconcileStatus: "reconciled" });
     expect(await w.locatorNow(), "the locator was rewritten").toEqual(w.locator);
@@ -269,5 +275,24 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
     expect(await w.uidsIn("ohmail.Receipts")).toHaveLength(1);
     expect(await w.state()).toMatchObject({ observedFolder: "ohmail/Receipts", reconcileStatus: "reconciled" });
     expect(await w.actions()).toEqual(["reconcile.move"]);
+  }, 60_000);
+
+  it("a move into a person's own folder two deep lands there on the server, once, and no log line names it", async () => {
+    const w = await filedOnce("INBOX", { locator: "INBOX", observed: "INBOX", desired: "Zx7731q/Acme" }, {}, ["Zx7731q", "Zx7731q.Acme"]);
+    expect(await w.uidsIn("INBOX")).toEqual([]);
+    expect(await w.uidsIn("Zx7731q.Acme")).toHaveLength(1);
+    expect(await w.state()).toMatchObject({ observedFolder: "Zx7731q/Acme", reconcileStatus: "reconciled" });
+    expect(await w.actions()).toEqual(["reconcile.move"]);
+    expect(w.lines.length).toBeGreaterThan(0);
+    expect(w.lines.filter((l) => l.includes("Zx7731q")), "a filing line carried the folder's name").toEqual([]);
+  }, 60_000);
+
+  it("a person's folder the server no longer has is never created: the letter stays where it is, unnamed in the log", async () => {
+    const w = await filedOnce("INBOX", { locator: "INBOX", observed: "INBOX", desired: "Zx7731q/Gone" }, {}, ["Zx7731q"]);
+    expect(await w.uidsIn("INBOX"), "the letter left its folder").toEqual([w.uid]);
+    expect((await w.listed()).filter((f) => f.startsWith("Zx7731q")), "a person's folder was created").toEqual(["Zx7731q"]);
+    expect(await w.state()).toMatchObject({ desiredFolder: "Zx7731q/Gone", observedFolder: "INBOX" });
+    expect((await w.state()).reconcileStatus).not.toBe("reconciled");
+    expect(w.lines.filter((l) => l.includes("Zx7731q")), "a refusal line carried the folder's name").toEqual([]);
   }, 60_000);
 });

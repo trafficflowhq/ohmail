@@ -1709,7 +1709,7 @@ export class HttpAdapter implements EngineAdapter {
         if (queued) return queued;
         const dto = body as EngineMessage;
         return {
-          changes: seq !== null ? [this.messageEcho(dto, seq, "move", { from: null, to: m.folder })] : [],
+          changes: seq !== null ? [this.messageEcho(dto, seq, "move", { from: null, to: m.folder as EngineMessage["folder"] })] : [],
           seq,
         };
       }

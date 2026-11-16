@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MemoryMirrorStore } from "../src/store.js";
 import { mutationEffects } from "../src/mutations.js";
-import type { FolderEntity } from "../src/types.js";
+import { filedOutOfOhbox } from "../src/ohbox-rows.js";
+import type { EngineMessage, EngineMutation, Folder, FolderEntity } from "../src/types.js";
 
 /**
  * THE FOLDER VERBS' LOCAL EFFECTS (FOLDERS-SPEC.md stage 2) — pending MARKERS, never pretended
@@ -95,5 +96,72 @@ describe("folder_op_dismiss", () => {
     // A PENDING command has no dismiss — the worker may be mid-execution.
     expect(mutationEffects(r, { kind: "folder_op_dismiss", folderId: "f-p" }, CTX)).toEqual([]);
     expect(mutationEffects(r, { kind: "folder_op_dismiss", folderId: "f-s" }, CTX)).toEqual([]);
+  });
+});
+
+/**
+ * A MOVE INTO A PERSON'S OWN FOLDER paints only where the server takes it: a folder this mirror lists
+ * for the letter's own mailbox, spelt exactly as listed, with no command standing on it. Anywhere else
+ * the server answers 422 or 409, so the press paints nothing (the engine refuses it before the wire)
+ * and files nothing out of the Ohbox, so a pinned row's other pins are not spent for it.
+ */
+describe("move into a person's own folder", () => {
+  const letter = (over: Partial<EngineMessage> = {}): EngineMessage => ({
+    id: "m-1", accountId: "a", mailboxId: "mb-1", threadId: null, messageIdHeader: null, subject: "Offer",
+    from: { name: null, address: "sales@acme.example" }, to: [], cc: [], date: "2026-08-25T09:00:00.000Z",
+    folder: "INBOX", snippet: "", unread: false, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-25T09:00:00.000Z", ...over,
+  });
+  async function world(m: EngineMessage, folders: FolderEntity[]): Promise<MemoryMirrorStore> {
+    const store = await seeded(folders);
+    await store.putLocal("message", m.id, m);
+    return store;
+  }
+  const move = (folder: string): EngineMutation => ({ kind: "move", messageId: "m-1", folder });
+
+  it("paints the letter into the folder by its listed name, from where it was", async () => {
+    const r = await world(letter(), [folder({ name: "Clients/Acme" })]);
+    const fx = mutationEffects(r, move("Clients/Acme"), CTX);
+    expect(fx).toHaveLength(1);
+    expect((fx[0]!.entity as EngineMessage).folder).toBe("Clients/Acme");
+    expect(fx[0]!.move).toEqual({ from: "INBOX", to: "Clients/Acme" });
+    expect(filedOutOfOhbox(r, move("Clients/Acme"))?.id).toBe("m-1");
+  });
+
+  it("and from one of the person's folders into another", async () => {
+    const r = await world(letter({ folder: "Clients/Acme" as Folder }), [
+      folder({ id: "f-1", name: "Clients/Acme" }), folder({ id: "f-2", name: "Clients/Beta" }),
+    ]);
+    expect(mutationEffects(r, move("Clients/Beta"), CTX)[0]!.move).toEqual({ from: "Clients/Acme", to: "Clients/Beta" });
+  });
+
+  it("paints nothing and files nothing where the server would refuse it", async () => {
+    const cases: Array<[string, FolderEntity[], string]> = [
+      ["a folder this mirror does not list", [folder({ name: "Clients/Acme" })], "Clients/Other"],
+      ["the same name in another mailbox", [folder({ name: "Clients/Acme", mailboxId: "mb-2" })], "Clients/Acme"],
+      ["the name spelt another way", [folder({ name: "Clients/Acme" })], "clients/acme"],
+      ["a create still standing", [folder({ name: "Clients/Acme", op: { kind: "create" } })], "Clients/Acme"],
+      ["a rename standing on it", [folder({ name: "Clients/Acme", op: { kind: "rename", to: "Kunden" } })], "Clients/Acme"],
+      ["a delete standing on it", [folder({ name: "Clients/Acme", op: { kind: "delete" } })], "Clients/Acme"],
+      ["a failed command not yet dismissed", [folder({ name: "Clients/Acme", op: { kind: "rename", to: "X", error: "exists" } })], "Clients/Acme"],
+      ["Sent, which no mirror lists as a person's folder", [folder({ name: "Clients/Acme" })], "Sent"],
+    ];
+    for (const [why, folders, to] of cases) {
+      const r = await world(letter(), folders);
+      expect(mutationEffects(r, move(to), CTX), why).toEqual([]);
+      expect(filedOutOfOhbox(r, move(to)), why).toBeNull();
+    }
+  });
+
+  it("a letter already in that folder: nothing to paint", async () => {
+    const r = await world(letter({ folder: "Clients/Acme" as Folder }), [folder({ name: "Clients/Acme" })]);
+    expect(mutationEffects(r, move("Clients/Acme"), CTX)).toEqual([]);
+  });
+
+  it("CONTROL: the six places paint as they always did, folders listed or not", async () => {
+    const r = await world(letter(), []);
+    expect(mutationEffects(r, move("ohmail/News"), CTX)[0]!.move).toEqual({ from: "INBOX", to: "ohmail/News" });
+    expect(filedOutOfOhbox(r, move("ohmail/News"))?.id).toBe("m-1");
   });
 });

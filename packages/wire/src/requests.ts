@@ -46,10 +46,15 @@ export interface MarkSeenBody {
 }
 
 export interface MoveBody {
+  /**
+   * One of the six places, or a person's own folder of the letter's mailbox by its canonical path
+   * (`FolderPath`): taken only when that mailbox lists it, never created, refused 422
+   * `no_such_folder` otherwise. A server before 2.0 answers a path with 400 and moves nothing.
+   */
   folder: string;
-  /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
+  /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). One of the six. */
   from?: string;
-  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites, nor a place decided on its own. */
+  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites, nor a place decided on its own. Never with a person's own folder. */
   pressRule?: boolean;
 }
 

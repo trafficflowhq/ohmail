@@ -564,6 +564,8 @@ export {
 export {
   decideFolder,
   forwardSubject,
+  // Where a move may put a letter of a mailbox: the six, or a person's folder this mirror lists with no command on it.
+  movableInto,
   mutationEffects,
   replySubject,
   sentOverlayMessage,

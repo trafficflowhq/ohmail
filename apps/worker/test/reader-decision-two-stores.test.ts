@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, messages, folderState, rules, organizerRequests } from "@trafficflow/db";
-import { ScreenerService } from "@trafficflow/services/mail";
+import { mailboxes, mailboxFolders, messages, folderState, rules, organizerRequests } from "@trafficflow/db";
+import { MessageService, ScreenerService } from "@trafficflow/services/mail";
 import {
   deriveRequestKey, formatRequest, formatAck, acksIn,
   type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage, type MetaRecordsList,
@@ -299,5 +299,49 @@ describe("the reader reads the answer from its organizer and only from it", () =
     });
     expect(await readerPass(phone, meta, 120)).toMatchObject({ applied: 0, refused: 0 });
     expect((await rowState(phone))?.state).toBe("sent");
+  });
+});
+
+/**
+ * A MOVE INTO ONE OF THE PERSON'S OWN FOLDERS, between two stores. Each install checks the folder
+ * against its OWN list of the mailbox's folders: the phone before it queues, the desktop before it
+ * writes. A folder the desktop no longer lists is refused `no_such_folder`, and the phone reads why.
+ */
+describe("a reader's move into a person's own folder reaches an organizer with its own store", () => {
+  async function pair(desktopLists: boolean) {
+    const phone = await install("reader");
+    await phone.db.update(mailboxes).set({ organizedByCapabilities: "requests,moves,folder_moves" }).where(eq(mailboxes.id, phone.mailboxId));
+    const desktop = await install("organizer");
+    await phone.db.insert(mailboxFolders).values({ mailboxId: phone.mailboxId, accountId: phone.accountId, folder: "Clients/Acme" });
+    if (desktopLists) await desktop.db.insert(mailboxFolders).values({ mailboxId: desktop.mailboxId, accountId: desktop.accountId, folder: "Clients/Acme" });
+    const moved = await new MessageService().move(
+      { db: phone.db, accountId: phone.accountId, userId: null, now: () => t0, requestId: "r" },
+      phone.messageId, { folder: "Clients/Acme" },
+    );
+    expect("pending" in moved && moved.pending).toBe(true);
+    const meta = sharedMeta();
+    expect((await readerPass(phone, meta, 1)).sent).toBe(1);
+    return { phone, desktop, meta };
+  }
+  const placed = async (o: Awaited<ReturnType<typeof install>>) =>
+    (await o.db.select().from(folderState).where(eq(folderState.messageId, o.messageId)))[0]!;
+
+  it("the desktop files it into its own row of that folder and the phone reads the answer", async () => {
+    const { phone, desktop, meta } = await pair(true);
+    expect(await organizerPass(desktop, meta, 60)).toMatchObject({ applied: 1, refused: 0 });
+    expect(await placed(desktop)).toMatchObject({ desiredFolder: "Clients/Acme", observedFolder: "ohmail/Screener", reconcileStatus: "pending" });
+    expect((await readerPass(phone, meta, 120)).applied).toBe(1);
+    expect((await rowState(phone))?.state).toBe("applied");
+    // Only the organizer moves: the phone's own row is where it was.
+    expect(await placed(phone)).toMatchObject({ desiredFolder: "ohmail/Screener" });
+  });
+
+  it("a folder the desktop does not list is refused no_such_folder, nothing moves, and the phone reads why", async () => {
+    const { phone, desktop, meta } = await pair(false);
+    expect(await organizerPass(desktop, meta, 60)).toMatchObject({ applied: 0, refused: 1 });
+    expect(meta.acks().map((a) => [a.outcome, a.reason])).toEqual([["refused", "no_such_folder"]]);
+    expect(await placed(desktop)).toMatchObject({ desiredFolder: "ohmail/Screener" });
+    expect(await readerPass(phone, meta, 120)).toMatchObject({ refused: 1 });
+    expect(await rowState(phone)).toMatchObject({ state: "refused", refusedReason: "no_such_folder" });
   });
 });

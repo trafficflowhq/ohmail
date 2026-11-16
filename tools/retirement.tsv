@@ -1045,6 +1045,7 @@ packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads sour
 packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
 packages/client-engine/test/outbox-lifecycle.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/outbox-owner-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/outbox-records-1-0-replay.test.ts	data	reads data files (json): the queue records release 1.0.12 wrote and the requests it sent replaying them	none	move-server	
 packages/client-engine/test/own-address-never-a-queue-row.test.ts	source-text	reads source as text (js, ts)	layer 1	engine	
 packages/client-engine/test/pending-outcome-census.test.ts	source-text	reads source as text (mjs, ts)	layer 1	engine	
 packages/client-engine/test/press-import-census.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
