@@ -6,9 +6,10 @@
 # allow-lists.
 #
 # Same discipline as the root file: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This host's
-# closure is core, db, db-mail (via db), services and api — an import reaching outside it
-# resolves to a workspace link whose target holds only a manifest, and the bundle FAILS to
-# build.
+# closure is core, db, db-mail (via db), services, api and cal-core (via services) — an import
+# reaching outside it resolves to a workspace link whose target holds only a manifest, and the
+# bundle FAILS to build. test/dockerignore-carries-patches.test.ts walks the closure and holds
+# this list to it.
 *
 
 # Workspace manifests and the pinned resolution — `npm ci` validates the lockfile against
@@ -33,6 +34,8 @@
 !packages/db-mail
 !packages/services
 !packages/api
+# The calendar's core: services' calendar range and time modules read it.
+!packages/cal-core
 
 # …minus anything inside them that must never be copied in: no test trees, no stale local
 # compile output, no previous bundle run.
