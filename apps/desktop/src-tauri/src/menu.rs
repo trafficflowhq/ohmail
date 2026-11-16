@@ -72,8 +72,10 @@
 //! be a second implementation of routing and of the keymap, in a language that cannot see the
 //! client's own rules about either.
 
-use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Runtime};
+
+use crate::words::OsItem;
 
 /// The event a chosen navigation item emits. The frontend's `native.ts` listens for this name.
 pub const MENU_NAVIGATE_EVENT: &str = "menu:navigate";
@@ -87,7 +89,8 @@ pub const MENU_COMMAND_EVENT: &str = "menu:command";
 /// What a command item's id starts with. A different prefix, so one test tells the two apart.
 pub const COMMAND_PREFIX: &str = "cmd:";
 
-/// The navigable places, in menu order — id, label, accelerator.
+/// The navigable places, in menu order — id, English label, accelerator. The label drawn is the
+/// run's language's (`words.rs`); this column is its English and the fallback.
 ///
 /// FIVE, and the same five the client's rail lists first: the three streams, the Screener and the
 /// triage piles. Search has its own key, Settings is not somewhere anybody flicks to, and tags
@@ -101,11 +104,11 @@ pub const COMMAND_PREFIX: &str = "cmd:";
 /// somewhere wrong.
 #[cfg(feature = "local-engine")]
 pub const VIEWS: [(&str, &str, &str); 5] = [
-    ("ohbox", "Ohbox", "CmdOrCtrl+1"),
-    ("reads", "News", "CmdOrCtrl+2"),
-    ("receipts", "Receipts", "CmdOrCtrl+3"),
-    ("screener", "Screener", "CmdOrCtrl+4"),
-    ("triage", "Answer Later", "CmdOrCtrl+5"),
+    ("ohbox", crate::words::EN.view_ohbox, "CmdOrCtrl+1"),
+    ("reads", crate::words::EN.view_reads, "CmdOrCtrl+2"),
+    ("receipts", crate::words::EN.view_receipts, "CmdOrCtrl+3"),
+    ("screener", crate::words::EN.view_screener, "CmdOrCtrl+4"),
+    ("triage", crate::words::EN.view_triage, "CmdOrCtrl+5"),
 ];
 
 /// The view a menu id names, or `None` for every other item in the bar.
@@ -152,7 +155,8 @@ pub fn menu_act(id: &str) -> MenuAct<'_> {
     }
 }
 
-/// The commands the bar can ask the client to run — id, label, accelerator.
+/// The commands the bar can ask the client to run — id, English label, accelerator, the label
+/// read as [`VIEWS`]'s is.
 ///
 /// Every one of them is something the client ALREADY does, reached by a key or by the palette.
 /// The menu is a second way to the one implementation, never a second implementation: an id here
@@ -165,24 +169,25 @@ pub fn menu_act(id: &str) -> MenuAct<'_> {
 /// the client already binds.
 #[cfg(feature = "local-engine")]
 pub const COMMANDS: [(&str, &str, &str); 5] = [
-    ("compose", "New Message", "CmdOrCtrl+N"),
-    ("settings", "Settings…", "CmdOrCtrl+,"),
-    ("search", "Search Mail…", "CmdOrCtrl+F"),
-    ("palette", "Command Palette…", "CmdOrCtrl+K"),
-    ("shortcuts", "Keyboard Shortcuts", "CmdOrCtrl+/"),
+    ("compose", crate::words::EN.cmd_compose, "CmdOrCtrl+N"),
+    ("settings", crate::words::EN.cmd_settings, "CmdOrCtrl+,"),
+    ("search", crate::words::EN.cmd_search, "CmdOrCtrl+F"),
+    ("palette", crate::words::EN.cmd_palette, "CmdOrCtrl+K"),
+    ("shortcuts", crate::words::EN.cmd_shortcuts, "CmdOrCtrl+/"),
 ];
 
 /// One command item, by id, built from [`COMMANDS`].
 ///
 /// Looked up rather than positional: the menus below place these in four different submenus, and
-/// an index would make a reordering of the table silently move Settings into the File menu.
+/// an index would make a reordering of the table silently move Settings into the File menu. A
+/// label the language lacks is the English one, never a panic.
 #[cfg(feature = "local-engine")]
-fn command_item<R: Runtime>(app: &AppHandle<R>, id: &str) -> tauri::Result<tauri::menu::MenuItem<R>> {
-    let (_, label, accelerator) = COMMANDS
+fn command_item<R: Runtime>(app: &AppHandle<R>, w: &crate::words::Words, id: &str) -> tauri::Result<tauri::menu::MenuItem<R>> {
+    let (_, english, accelerator) = COMMANDS
         .iter()
         .find(|(cmd, _, _)| *cmd == id)
         .expect("ohmail: a menu asked for a command that is not in COMMANDS");
-    MenuItemBuilder::with_id(format!("{COMMAND_PREFIX}{id}"), label)
+    MenuItemBuilder::with_id(format!("{COMMAND_PREFIX}{id}"), w.command(id).unwrap_or(english))
         .accelerator(accelerator)
         .build(app)
 }
@@ -303,6 +308,28 @@ fn undecorate<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// One of the platform's own items, with the run's language's text: `None` is the platform's
+/// own, and exactly the call tauri's builder makes for `.undo()` and its siblings.
+fn os_item<R: Runtime>(app: &AppHandle<R>, item: OsItem, text: Option<&str>) -> tauri::Result<PredefinedMenuItem<R>> {
+    match item {
+        OsItem::About => PredefinedMenuItem::about(app, text, None),
+        OsItem::Hide => PredefinedMenuItem::hide(app, text),
+        OsItem::HideOthers => PredefinedMenuItem::hide_others(app, text),
+        OsItem::ShowAll => PredefinedMenuItem::show_all(app, text),
+        OsItem::Quit => PredefinedMenuItem::quit(app, text),
+        OsItem::Undo => PredefinedMenuItem::undo(app, text),
+        OsItem::Redo => PredefinedMenuItem::redo(app, text),
+        OsItem::Cut => PredefinedMenuItem::cut(app, text),
+        OsItem::Copy => PredefinedMenuItem::copy(app, text),
+        OsItem::Paste => PredefinedMenuItem::paste(app, text),
+        OsItem::SelectAll => PredefinedMenuItem::select_all(app, text),
+        OsItem::Minimize => PredefinedMenuItem::minimize(app, text),
+        OsItem::Maximize => PredefinedMenuItem::maximize(app, text),
+        OsItem::Fullscreen => PredefinedMenuItem::fullscreen(app, text),
+        OsItem::CloseWindow => PredefinedMenuItem::close_window(app, text),
+    }
+}
+
 /// Build and install the bar.
 ///
 /// Two halves, and the split is the artifact boundary rather than a preference. Everything the
@@ -311,6 +338,9 @@ fn undecorate<R: Runtime>(app: &AppHandle<R>) {
 /// WEBVIEW is behind the feature, because only that build's window is granted the permission to
 /// hear an event.
 fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    // The words of the language this run speaks (`shell_language.rs`), settled before `setup`.
+    let w = crate::shell_language::words();
+
     /* THE UPDATE ITEM, built here and SPOKEN FOR ELSEWHERE. Its text is not a constant: it is the
        whole of the app's update interface, so it reports the check, the download and the one press
        that installs, and `updater.rs` owns every one of those sentences. This file decides only
@@ -318,7 +348,7 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
        text comes from that module too, so the bar and the flow cannot start out disagreeing. */
     let check_item = MenuItemBuilder::with_id(
         crate::updater::CHECK_FOR_UPDATES_ID,
-        crate::updater::MENU_LABEL_IDLE,
+        crate::updater::idle_label(w),
     )
     .build(app)?;
     crate::updater::adopt_menu_item(app, check_item.clone());
@@ -336,49 +366,53 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     // Shadowed rather than mutated, for the reason the View menu below is: the preview build
     // has no Settings item to add, and a `mut` it never writes to is a warning in that build.
-    let app_menu = SubmenuBuilder::new(app, "ohmail").about(Some(about));
+    let app_menu = SubmenuBuilder::new(app, "ohmail").item(&PredefinedMenuItem::about(
+        app,
+        w.os_item(OsItem::About),
+        Some(about),
+    )?);
     #[cfg(feature = "local-engine")]
     let app_menu = {
-        let settings = command_item(app, "settings")?;
+        let settings = command_item(app, w, "settings")?;
         app_menu.separator().item(&settings)
     };
     let app_menu = app_menu
         .separator()
         .item(&check_item)
         .separator()
-        .hide()
-        .hide_others()
-        .show_all()
+        .item(&os_item(app, OsItem::Hide, w.os_item(OsItem::Hide))?)
+        .item(&os_item(app, OsItem::HideOthers, w.os_item(OsItem::HideOthers))?)
+        .item(&os_item(app, OsItem::ShowAll, w.os_item(OsItem::ShowAll))?)
         .separator();
     /* THE PLATFORM'S QUIT ENDS THE APP WITH NO CHANCE TO SAVE (macOS `terminate:`, Windows
        `PostQuitMessage`), so the engine build quits through its own item, which saves first.
        Linux has no platform Quit item, and gets none. */
     #[cfg(all(feature = "local-engine", not(target_os = "linux")))]
-    let app_menu = app_menu.item(&MenuItemBuilder::with_id(QUIT_ID, "Quit ohmail").accelerator("CmdOrCtrl+Q").build(app)?);
+    let app_menu = app_menu.item(&MenuItemBuilder::with_id(QUIT_ID, w.quit_app).accelerator("CmdOrCtrl+Q").build(app)?);
     #[cfg(not(all(feature = "local-engine", not(target_os = "linux"))))]
-    let app_menu = app_menu.quit();
+    let app_menu = app_menu.item(&os_item(app, OsItem::Quit, w.os_item(OsItem::Quit))?);
     let app_menu = app_menu.build()?;
 
     // The system's own editing items. Nothing here is a command of ours and nothing reaches the
     // webview as one — the platform applies them to whatever has focus, which is the page.
-    let edit_menu = SubmenuBuilder::new(app, "Edit")
-        .undo()
-        .redo()
+    let edit_menu = SubmenuBuilder::new(app, w.menu_edit)
+        .item(&os_item(app, OsItem::Undo, w.os_item(OsItem::Undo))?)
+        .item(&os_item(app, OsItem::Redo, w.os_item(OsItem::Redo))?)
         .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
+        .item(&os_item(app, OsItem::Cut, w.os_item(OsItem::Cut))?)
+        .item(&os_item(app, OsItem::Copy, w.os_item(OsItem::Copy))?)
+        .item(&os_item(app, OsItem::Paste, w.os_item(OsItem::Paste))?)
+        .item(&os_item(app, OsItem::SelectAll, w.os_item(OsItem::SelectAll))?)
         .build()?;
 
     /* WINDOW. The platform's items, and the reason they are worth the four lines: without a
        Window menu ⌘M does not minimise and there is no way to full-screen the app from the bar —
        two things every Mac user expects to find and neither of which the page can provide. */
-    let window_menu = SubmenuBuilder::new(app, "Window")
-        .minimize()
-        .maximize()
+    let window_menu = SubmenuBuilder::new(app, w.menu_window)
+        .item(&os_item(app, OsItem::Minimize, w.os_item(OsItem::Minimize))?)
+        .item(&os_item(app, OsItem::Maximize, w.os_item(OsItem::Maximize))?)
         .separator()
-        .fullscreen()
+        .item(&os_item(app, OsItem::Fullscreen, w.os_item(OsItem::Fullscreen))?)
         .build()?;
 
     let menu = MenuBuilder::new(app).item(&app_menu);
@@ -389,11 +423,11 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
        reads as unfinished, and because ⌘W is the other key a window is expected to answer. */
     #[cfg(feature = "local-engine")]
     let menu = {
-        let compose = command_item(app, "compose")?;
-        let file = SubmenuBuilder::new(app, "File")
+        let compose = command_item(app, w, "compose")?;
+        let file = SubmenuBuilder::new(app, w.menu_file)
             .item(&compose)
             .separator()
-            .close_window()
+            .item(&os_item(app, OsItem::CloseWindow, w.os_item(OsItem::CloseWindow))?)
             .build()?;
         menu.item(&file)
     };
@@ -404,15 +438,15 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     // View submenu exists only where a window is permitted to hear about a chosen item.
     #[cfg(feature = "local-engine")]
     let menu = {
-        let mut view = SubmenuBuilder::new(app, "View");
-        for (id, label, accelerator) in VIEWS {
-            let item = MenuItemBuilder::with_id(format!("{NAVIGATE_PREFIX}{id}"), label)
+        let mut view = SubmenuBuilder::new(app, w.menu_view);
+        for (id, english, accelerator) in VIEWS {
+            let item = MenuItemBuilder::with_id(format!("{NAVIGATE_PREFIX}{id}"), w.view(id).unwrap_or(english))
                 .accelerator(accelerator)
                 .build(app)?;
             view = view.item(&item);
         }
-        let search = command_item(app, "search")?;
-        let palette = command_item(app, "palette")?;
+        let search = command_item(app, w, "search")?;
+        let palette = command_item(app, w, "palette")?;
         view = view.separator().item(&search).item(&palette);
         menu.item(&view.build()?)
     };
@@ -424,8 +458,8 @@ fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
        be found with a key is a product whose key list is not found. */
     #[cfg(feature = "local-engine")]
     let menu = {
-        let sheet = command_item(app, "shortcuts")?;
-        menu.item(&SubmenuBuilder::new(app, "Help").item(&sheet).build()?)
+        let sheet = command_item(app, w, "shortcuts")?;
+        menu.item(&SubmenuBuilder::new(app, w.menu_help).item(&sheet).build()?)
     };
 
     app.set_menu(menu.build()?)?;

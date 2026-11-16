@@ -163,6 +163,14 @@ mod allocator_arenas;
 // Linux. Always compiled: every build opens the same window (issue #14).
 mod text_scale;
 
+// Every sentence this process draws (menu, tray, update item and dialogs, the relaunch question),
+// in English and German. Always compiled and Tauri-free: every build draws a bar.
+mod words;
+
+// Which of those languages this run speaks: the window's choice, kept for the next launch. Always
+// compiled; only the engine build has the command that sets it, so the preview speaks English.
+mod shell_language;
+
 // A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
 mod unclean_exit;
 
@@ -234,6 +242,11 @@ fn main() {
     let app = builder
         .build(context)
         .expect("ohmail: failed to start the Tauri runtime");
+    // The language of the shell's own words, read once for the run: after the build (the app's
+    // folder is known) and before `setup` builds the bar and host mode the tray. The preview has
+    // no window command to choose one and speaks English.
+    #[cfg(feature = "local-engine")]
+    shell_language::settle(&app);
 
     // A Flatpak's home is the sandbox's own, so no save falls back to it.
     #[cfg(feature = "local-engine")]

@@ -769,6 +769,12 @@ export const STORED_KEYS = [
     words: false, erased: "never", mark: "kept",
   },
   {
+    key: "shell-language", store: "file", owner: "desktop-shell",
+    at: ["apps/desktop/src-tauri/src/shell_language.rs"],
+    holds: "the language the window last chose for the menu, tray and dialogs the shell draws",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
     key: "engine-local", store: "file", owner: "desktop-shell",
     at: ["apps/desktop/src-tauri/src/config.rs"],
     holds: "the folder everything of a door that organizes on this computer is kept in: its store, its locks and its files",

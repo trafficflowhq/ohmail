@@ -652,7 +652,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these sixty files and no others", () => {
+  it("is these sixty-four files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -803,6 +803,11 @@ describe("the Rust side", () => {
       // own address again, and asks through the dialog plugin the updater already carries.
       "renderer_recovery.rs",
       "renderer_recovery_tests.rs",
+      // WHICH LANGUAGE THE SHELL SPEAKS. ALWAYS compiled: the window's choice, kept for the next
+      // launch in one file under the app's own data directory and read once, right after the
+      // runtime is built. Only the engine build has `set_shell_language`; the preview speaks English.
+      "shell_language.rs",
+      "shell_language_tests.rs",
       // THE APP OWNS ITS SCALE. ALWAYS compiled: on Linux it holds `gtk_text_dpi`'s pin from a
       // `notify::gtk-xft-dpi` handler, so a live change of the desktop's text scale never reaches
       // the canvas either, and every build applies the kept Text size as the main window's zoom.
@@ -845,6 +850,11 @@ describe("the Rust side", () => {
       // THE WINDOW'S CSP PER PLATFORM, as Tauri's own config merge reads it: test-only, declared
       // from `main.rs`, it reads the config files and compiles nothing into the binary.
       "window_csp_tests.rs",
+      // THE SHELL'S OWN WORDS: the menu, tray, update item and dialogs and the relaunch question,
+      // in English and German, as one table and its pure selectors. ALWAYS compiled and Tauri-free:
+      // it opens, spawns and reads nothing at run time; its tests read the window's catalogue.
+      "words.rs",
+      "words_tests.rs",
     ]);
   });
 
@@ -1112,6 +1122,8 @@ describe("the Rust side", () => {
     const launchModule = read("src-tauri/src/launch_window.rs");
     // …and Settings → Text size beside the GTK pin it completes.
     const textScaleModule = read("src-tauri/src/text_scale.rs");
+    // …and the shell's language beside the file it keeps.
+    const shellLanguageModule = read("src-tauri/src/shell_language.rs");
     // …and the preview's two beside the scheme they feed.
     const previewModule = read("src-tauri/src/attachment_preview.rs");
     // …and the links on screen beside the predicate that reads them.
@@ -1260,6 +1272,9 @@ describe("the Rust side", () => {
       // Settings → Text size: one of five percentages, made the main window's zoom and kept for
       // the next launch. `text_scale.rs` refuses any other number.
       "set_text_size",
+      // The shell's own words' language: "en" or "de" exactly, kept for the next launch in one
+      // file the shell names. `shell_language.rs` refuses any other text and answers one bool.
+      "set_shell_language",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -1296,7 +1311,7 @@ describe("the Rust side", () => {
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
         engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule +
-          renderedLinksModule + droppedFilesModule,
+          renderedLinksModule + droppedFilesModule + shellLanguageModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
@@ -2142,14 +2157,17 @@ describe("the auto-updater", () => {
     // others are not — an id nothing builds a menu item for is a command with no trigger at all.
     const menu = read("src-tauri/src/menu.rs");
     expect(menu).toMatch(/updater::CHECK_FOR_UPDATES_ID/);
-    expect(menu).toMatch(/updater::MENU_LABEL_IDLE/);
+    expect(menu).toMatch(/updater::idle_label\(w\)/);
     expect(menu).toMatch(/updater::adopt_menu_item\(app, check_item/);
-    expect(updater).toMatch(/MENU_LABEL_IDLE: &str = "Check for Updates…"/);
+    // The sentences are `words.rs`'s, in the language the run speaks; the flow picks which.
+    const words = read("src-tauri/src/words.rs");
+    expect(updater).toMatch(/pub fn idle_label\(w: &Words\) -> &'static str \{\s*w\.update_check\s*\}/);
+    expect(words).toMatch(/update_check: "Check for Updates…"/);
     // The item says what is happening rather than one fixed word, which is the only quiet surface
     // this design leaves for "an update is waiting".
-    expect(updater).toMatch(/"Checking for Updates…"/);
-    expect(updater).toMatch(/format!\("Downloading ohmail \{version\}…"\)/);
-    expect(updater).toMatch(/format!\("Restart to Install \{version\}"\)/);
+    expect(words).toMatch(/update_checking: "Checking for Updates…"/);
+    expect(words).toMatch(/update_downloading: "Downloading ohmail \{version\}…"/);
+    expect(words).toMatch(/update_restart: "Restart to Install \{version\}"/);
 
     /* THE SECOND TRIGGER, and it is not the webview either: one check shortly after launch, from
        `main.rs`. An updater whose only trigger is a menu item is an updater nobody runs. It is the
@@ -2333,7 +2351,7 @@ describe("the auto-updater", () => {
     /* Rust line-continuations are unwrapped before matching: the dialog's sentence is split
        across source lines with a trailing backslash, and asserting on the wrapped form would make
        this test a hostage to where somebody re-flowed a comment. */
-    const spoken = updater.replace(/\\\s*\n\s*/g, "");
+    const spoken = read("src-tauri/src/words.rs").replace(/\\\s*\n\s*/g, "");
     expect(spoken, "the dialog no longer says nothing was installed")
       .toContain("so nothing was installed");
     expect(spoken, "the dialog no longer says the installed version is untouched")
@@ -2352,10 +2370,12 @@ describe("the auto-updater", () => {
    * sentence, offers "Try again", and only appears at all when the user asked for the check.
    */
   it("answers a failure with a plain sentence and a retry, not an alert", () => {
-    expect(updater).toMatch(/"Try again"\.into\(\)/);
+    const words = read("src-tauri/src/words.rs");
+    expect(words).toMatch(/failed_retry: "Try again"/);
+    expect(updater).toMatch(/\.update_failed\(failure\)/);
     expect(updater).toMatch(/check\(retry, true\)/);
     // The sentences are the module's own, and no formatted error is interpolated into any of them.
-    expect(updater).toMatch(/ohmail could not fetch the update\./);
+    expect(words).toMatch(/ohmail could not fetch the update\./);
     expect(updater).not.toMatch(/\{e\}/);
     // A check nobody asked for fails silently — an unrequested error box over somebody's mail is
     // the interruption this flow exists to remove.
@@ -2411,7 +2431,7 @@ describe("the auto-updater", () => {
        package manager" beside a bar offering to check, or a bar offering Restart while a send waits. */
     const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(relabel, "the relabel helper was not found").toContain("set_text");
-    expect(relabel).toContain("menu_text(kind, &flow, standing.held)");
+    expect(relabel).toContain("menu_text_in(kind, &flow, standing.held, crate::shell_language::words())");
     expect(relabel).toMatch(/told\(&flow, last, kind, standing\)/);
     expect(updater).toMatch(/fn told\(flow: &Flow, last: Option<Check>, kind: InstallKind, standing: Standing\) -> serde_json::Value \{\s*let mut told = report_with\(flow, last, env!\("CARGO_PKG_VERSION"\), kind, standing\);/);
   });
@@ -2721,7 +2741,10 @@ describe("the auto-updater", () => {
       /return if refusal_is_unverifiable\(&update\.version, &update\.signature, EXPECTED_ASSET\) \{\s*unverifiable_offer\(&app, user_initiated\)\s*\} else \{\s*nothing_to_offer\(&app, user_initiated\)\s*\};/,
     );
     expect(updater).toMatch(/pub fn refusal_is_unverifiable\(/);
-    expect(updater).toMatch(/could not confirm which version the available update is/);
+    // The refusal's sentence is `words.rs`'s, in the run's language, and only it is said there.
+    expect(updater).toMatch(/fn unverifiable_offer<R: Runtime>[^}]*\.update_unverified\(\)/);
+    expect(read("src-tauri/src/words.rs").replace(/\\\s*\n\s*/g, ""))
+      .toMatch(/could not confirm which version the available update is/);
 
     /* AND THE PAYLOAD IS THE ONE FOR THIS BUILD. Which platform key a feed maps to which url is
        unsigned exactly as the version was, so `linux-x86_64` can be pointed at the genuine,
@@ -2902,7 +2925,7 @@ describe("the menu bar", () => {
        Rust binary and a TypeScript bundle can share one list from, so the two are written down
        twice and compared here — the only place that can see both. Drift is otherwise silent:
        the item emits a name the window does not recognise and simply does nothing. */
-    const inRust = [...menu.matchAll(/\("([a-z]+)", "[^"]*", "CmdOrCtrl\+\d"\)/g)].map((m) => m[1]);
+    const inRust = [...menu.matchAll(/\("([a-z]+)", crate::words::EN\.view_[a-z]+, "CmdOrCtrl\+\d"\)/g)].map((m) => m[1]);
     const inTs = /MENU_VIEWS = \[([^\]]*)\]/.exec(native)?.[1] ?? "";
     const listed = [...inTs.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
     expect(inRust.length, "no view rows found in menu.rs — the harness matched nothing").toBe(5);
@@ -2923,10 +2946,10 @@ describe("the menu bar", () => {
     const views = menu.indexOf("pub const VIEWS");
     expect(views).toBeGreaterThan(0);
     expect(menu.slice(0, views)).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*$/m);
-    // The platform's editing items are built unconditionally.
-    const edit = /SubmenuBuilder::new\(app, "Edit"\)([\s\S]*?)\.build\(\)\?/.exec(menu)?.[1] ?? "";
-    for (const item of ["undo", "redo", "cut", "copy", "paste", "select_all"]) {
-      expect(edit, `the Edit menu has no ${item}`).toContain(`.${item}()`);
+    // The platform's editing items are built unconditionally, each as the platform's own item.
+    const edit = /SubmenuBuilder::new\(app, w\.menu_edit\)([\s\S]*?)\.build\(\)\?/.exec(menu)?.[1] ?? "";
+    for (const item of ["Undo", "Redo", "Cut", "Copy", "Paste", "SelectAll"]) {
+      expect(edit, `the Edit menu has no ${item}`).toContain(`os_item(app, OsItem::${item}, w.os_item(OsItem::${item}))?`);
     }
     expect(edit).not.toMatch(/cfg\(feature/);
   });
