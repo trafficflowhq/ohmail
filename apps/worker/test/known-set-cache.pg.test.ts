@@ -7,10 +7,10 @@ import { realPgAvailable } from "@trafficflow/db/testing";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
 import type { ChangeBatch, ImapCursor } from "@trafficflow/core/adapters/imap";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle, LeaderFencedError, type SyncDeps, type SyncWriteFence } from "../src/sync.js";
-import { KnownSetCache, estimateWireBytes, watchKnownSet } from "../src/known-set.js";
-import { makeHarness, rawClient, emlOf, byMessageId, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, LeaderFencedError, type SyncDeps, type SyncWriteFence } from "@ohmail/organizer/sync";
+import { KnownSetCache, estimateWireBytes, watchKnownSet } from "@ohmail/organizer/known-set";
+import { makeHarness, rawClient, emlOf, byMessageId, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════

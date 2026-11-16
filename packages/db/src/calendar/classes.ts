@@ -3,8 +3,10 @@
  * added there without its row does not compile, and the catalog test holds the store to it. Each
  * row says what its keys run to (composite, `(column, account_id)` onto the parent's
  * `(id, account_id)`), which columns name a row with no key behind them, how far the worker reads
- * it, and which sweep takes it. Its class for row security is `TABLE_CLASSES`' (`row-classes.ts`)
- * and its staff columns are `STAFF_SELECT_GRANTS`'; neither is written here a second time.
+ * it, and which sweep takes it. Its class for row security is the lock's (`row-security/policies.ts`,
+ * the one list of a table's class) and its staff columns are `STAFF_SELECT_GRANTS`'; neither is
+ * written here a second time. `worker: "roster"` says again what the lock's `WORKER_WIDE_READ` says
+ * of a table, in the family's own words; the family's catalog case holds the two equal.
  */
 import type { PgTable } from "drizzle-orm/pg-core";
 import {

@@ -146,6 +146,8 @@ export default defineConfig({
       // standing ordering reason: the table is scanned in order and a string `find` is a prefix
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
+      // The calendar's connect door: an entry of its own, which only a server's routes import.
+      { find: "@trafficflow/services/calendar-connect", replacement: r("./packages/services/src/calendar/connect-door.ts") },
       { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
       // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
       { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
@@ -189,6 +191,8 @@ export default defineConfig({
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("./packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("./packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine/calendar-span", replacement: r("./packages/client-engine/src/engine/calendar-span.ts") },
+      { find: "@ohmail/client-engine/calendar-acts", replacement: r("./packages/client-engine/src/calendar-acts.ts") },
+      { find: "@ohmail/client-engine/calendar-writes", replacement: r("./packages/client-engine/src/calendar-writes.ts") },
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
       // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
       // out of the web app's shell are imported one by one, as they were).
@@ -198,7 +202,9 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
       // The host contract's types and its two small values.
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
+      { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
@@ -208,6 +214,8 @@ export default defineConfig({
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },
       // The next design's components, three entries, above the bare name for the same reason.
+      // The theme provider and its readers as a leaf, for the same reason: a door's device reads the theme and nothing else of today's kit.
+      { find: "@ohmail/ui/theme", replacement: r("./packages/ui/src/theme/ThemeProvider.tsx") },
       { find: "@ohmail/ui/base", replacement: r("./packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("./packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/calendar", replacement: r("./packages/ui/src/calendar/index.ts") },
@@ -231,26 +239,26 @@ export default defineConfig({
       // The project's design notes). The package's `exports` map points at source for the same reason
       // the worker deploys from source, but the suite still resolves through this table like
       // every other workspace specifier.
-      { find: "@trafficflow/worker/sync", replacement: r("./apps/worker/src/sync.ts") },
-      { find: "@trafficflow/worker/lease", replacement: r("./apps/worker/src/lease.ts") },
-      { find: "@trafficflow/worker/profile", replacement: r("./apps/worker/src/profile.ts") },
-      { find: "@trafficflow/worker/entry", replacement: r("./apps/worker/src/entry.ts") },
+      { find: "@ohmail/organizer/sync", replacement: r("./packages/organizer/src/sync.ts") },
+      { find: "@ohmail/organizer/lease", replacement: r("./packages/organizer/src/lease.ts") },
+      { find: "@ohmail/organizer/profile", replacement: r("./packages/organizer/src/profile.ts") },
+      { find: "@ohmail/organizer/entry", replacement: r("./packages/organizer/src/entry.ts") },
       // …and the scheduled-resurface flip, for the same reason: the standalone desktop door has no
       // worker behind it, so its own drain runs the worker's pass rather than a second copy of it.
-      { find: "@trafficflow/worker/bubble-up", replacement: r("./apps/worker/src/bubble-up-pass.ts") },
-      { find: "@trafficflow/worker/rule-retro", replacement: r("./apps/worker/src/rule-retro.ts") },
-      { find: "@trafficflow/worker/gap-catchup", replacement: r("./apps/worker/src/gap-catchup.ts") },
-      { find: "@trafficflow/worker/known-set", replacement: r("./apps/worker/src/known-set.ts") },
-      { find: "@trafficflow/worker/dead-letter", replacement: r("./apps/worker/src/dead-letter.ts") },
-      { find: "@trafficflow/worker/screener-auto-act", replacement: r("./apps/worker/src/screener-auto-act.ts") },
-      { find: "@trafficflow/worker/screener-impersonation", replacement: r("./apps/worker/src/screener-impersonation.ts") },
-      { find: "@trafficflow/worker/screener-correspondent-retro", replacement: r("./apps/worker/src/screener-correspondent-retro.ts") },
-      { find: "@trafficflow/worker/thread-join-heal", replacement: r("./apps/worker/src/thread-join-heal.ts") },
-      { find: "@trafficflow/worker/inbound-quiet", replacement: r("./apps/worker/src/inbound-quiet.ts") },
-      { find: "@trafficflow/worker/sender-check-backfill", replacement: r("./apps/worker/src/sender-check-backfill.ts") },
-      { find: "@trafficflow/worker/list-address-backfill", replacement: r("./apps/worker/src/list-address-backfill.ts") },
-      { find: "@trafficflow/worker/act-admission-retire", replacement: r("./apps/worker/src/act-admission-retire.ts") },
-      { find: "@trafficflow/worker/gone-letter-tidy", replacement: r("./apps/worker/src/gone-letter-tidy.ts") },
+      { find: "@ohmail/organizer/bubble-up", replacement: r("./packages/organizer/src/bubble-up-pass.ts") },
+      { find: "@ohmail/organizer/rule-retro", replacement: r("./packages/organizer/src/rule-retro.ts") },
+      { find: "@ohmail/organizer/gap-catchup", replacement: r("./packages/organizer/src/gap-catchup.ts") },
+      { find: "@ohmail/organizer/known-set", replacement: r("./packages/organizer/src/known-set.ts") },
+      { find: "@ohmail/organizer/dead-letter", replacement: r("./packages/organizer/src/dead-letter.ts") },
+      { find: "@ohmail/organizer/screener-auto-act", replacement: r("./packages/organizer/src/screener-auto-act.ts") },
+      { find: "@ohmail/organizer/screener-impersonation", replacement: r("./packages/organizer/src/screener-impersonation.ts") },
+      { find: "@ohmail/organizer/screener-correspondent-retro", replacement: r("./packages/organizer/src/screener-correspondent-retro.ts") },
+      { find: "@ohmail/organizer/thread-join-heal", replacement: r("./packages/organizer/src/thread-join-heal.ts") },
+      { find: "@ohmail/organizer/inbound-quiet", replacement: r("./packages/organizer/src/inbound-quiet.ts") },
+      { find: "@ohmail/organizer/sender-check-backfill", replacement: r("./packages/organizer/src/sender-check-backfill.ts") },
+      { find: "@ohmail/organizer/list-address-backfill", replacement: r("./packages/organizer/src/list-address-backfill.ts") },
+      { find: "@ohmail/organizer/act-admission-retire", replacement: r("./packages/organizer/src/act-admission-retire.ts") },
+      { find: "@ohmail/organizer/gone-letter-tidy", replacement: r("./packages/organizer/src/gone-letter-tidy.ts") },
       { find: "@ohmail/sidecar", replacement: r("./apps/sidecar/src/index.ts") },
       // The shared mail-domain half. Above `@trafficflow/db` for the same reason core's
       // subpaths are above core: the table is scanned in order.

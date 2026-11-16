@@ -59,7 +59,7 @@ const p = (...parts: string[]): string => join(ROOT, ...parts);
 const rel = (abs: string): string => relative(ROOT, abs).split(sep).join("/");
 
 /** Where a pass may be DEFINED. Recursive; `apps/worker/src` is flat today and must not have to be. */
-const DISCOVERY_ROOTS = ["apps/worker/src", "packages/core/src"];
+const DISCOVERY_ROOTS = ["apps/worker/src", "packages/organizer/src", "packages/core/src"];
 
 /**
  * Where a CALLER may live. Recursive, and every one of these is a real directory on disk —
@@ -331,6 +331,7 @@ describe("every exported pass has a producer", () => {
     const roots = callerRoots().map(rel);
     // Named, not counted: a rename that empties the index must fail here and not silently.
     expect(roots).toContain("apps/worker/src");
+    expect(roots).toContain("packages/organizer/src");
     expect(roots).toContain("packages/core/src");
     expect(roots).toContain("packages/services/src");
     expect(roots).toContain("packages/api/src");

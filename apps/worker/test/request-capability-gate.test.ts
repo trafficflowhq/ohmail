@@ -13,7 +13,7 @@ import {
   REQUEST_KINDS, capabilityForKind,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
-import { ORGANIZER_CAPABILITIES, organizerCapabilitiesFor } from "../src/lease.js";
+import { ORGANIZER_CAPABILITIES, organizerCapabilitiesFor } from "@ohmail/organizer/lease";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════

@@ -33,50 +33,11 @@ const marks = [
 ];
 
 describe("webapp wordmarks", () => {
-  it("finds all nineteen of them", () => {
-    // Email verification adds `VerifyEmailScreen`, which paints the mark in its own `Shell` for the same
-    // reason `JoinScreen` does: neither `Shell` is exported, so no mount reaches either — and
-    // the surfaces a rename breaks are exactly the ones no mount reaches.
+  it("finds all six of them", () => {
     expect(marks.map((m) => m.file).sort()).toEqual([
-      // The one-confirm desktop sign-in: the desktop sends a person here, `/link-desktop`'s audience.
-      "apps/webapp/app/(product)/approve/ApproveScreen.tsx",
-      // The confirmation in front of the native sign-in. Fifth of the unexported-`Shell` family,
-      // and it shares `/link-desktop`'s audience for the same reason: the desktop app sends a
-      // person here, so this screen can be a stranger's first sight of the brand on the web.
-      "apps/webapp/app/(product)/authorize-desktop/AuthorizeDesktopScreen.tsx",
-      "apps/webapp/app/(product)/join/JoinScreen.tsx",
-      // The invite landing — the page an invite link from Settings → Invites opens. Fourth of
-      // the unexported-`Shell` family: no mount reaches it, and it is many an invited person's
-      // very first sight of the brand.
-      "apps/webapp/app/(product)/join/invite/InviteScreen.tsx",
-      // The desktop sign-in handoff page. Third of the unexported-`Shell` family, and the one
-      // with the widest audience for a broken mark: it is the page the DESKTOP APP opens, so a
-      // stranger's first sight of the brand on the web can be this screen rather than the
-      // landing.
-      "apps/webapp/app/(product)/link-desktop/LinkDesktopScreen.tsx",
-      "apps/webapp/app/(product)/login/LoginScreen.tsx",
-      // THE ACCESS LOCK — what an account the service has refused sees instead of its mail. It
-      // gained the mark when it came off Tailwind utilities onto `.gate-card`, the shell every
-      // other full-screen sentence here already stood in. Somebody can arrive here cold, from a
-      // mail about a payment, and no mount reaches it — the family's usual reason.
-      "apps/webapp/app/(product)/mailbox/AccessLock.tsx",
       // The card a signed-in browser waits behind while the account's standing is asked, before
       // any mail paints. No mount of this list reaches it: it stands for at most three seconds.
       "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
-      // THE ERASED-ACCOUNT WALL — the whole page for an account deleted from another browser, in
-      // the same `.gate-card` shell as the lock beside it; reached by the erased door, never a mount.
-      "apps/webapp/app/(product)/mailbox/ErasedWall.tsx",
-      "apps/webapp/app/(product)/mailbox/page.tsx",
-      // The session-resume splash paints the mark in every state, its wait included, for the same
-      // reason the others do: no mount reaches it, so a rename would break it silently.
-      "apps/webapp/app/(product)/resume/ResumeScreen.tsx",
-      // The self-host FIRST-RUN ceremony — an operator's very first sight of the brand on
-      // their own box, which makes a broken mark here a first impression rather than a typo.
-      "apps/webapp/app/(product)/setup/SetupScreen.tsx",
-      // The return from the payment page — public, and often a person's first ohmail screen in a
-      // browser that is not the one they read mail in.
-      "apps/webapp/app/(product)/subscribed/SubscribedScreen.tsx",
-      "apps/webapp/app/(product)/verify-email/VerifyEmailScreen.tsx",
       // THE FIRST-RUN STAGE. The mark sits at the top of the setup card, which on the standalone
       // door is the very first ohmail screen anybody sees — there is no login page in front of
       // it. Unreached by any mount for the family's usual reason: the stage renders only behind

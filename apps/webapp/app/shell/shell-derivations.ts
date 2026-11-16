@@ -47,6 +47,7 @@ import {
   type TagDTO,
 } from "@ohmail/client-engine";
 import { readBootCache, writeBootCache } from "@ohmail/app-logic/session/boot-cache";
+import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
 import { firstImportsKey, firstImportsOf, shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
 import { hideMessages } from "@ohmail/app-logic/press/delete-undo";
@@ -56,7 +57,6 @@ import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
 import { ownAddressesOf, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useOlderMail } from "@ohmail/app-logic/lists/older-mail";
 import { ohboxSurfaceMessages } from "@ohmail/app-logic/reading/ohbox-surface";
-import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { ViewId } from "./routing";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useTrashPage } from "@ohmail/app-logic/lists/trash-page";
@@ -180,7 +180,7 @@ export function useShellDerivations({
        render, and this one carries a PREVIOUS account's remembered addresses into the fixtures
        world rather than issuing a request. */
     if (resolvedDemo) return;
-    const owner = readOwner();
+    const owner = mirrorOwnerOf(engine);
     if (owner === null) return;
     if (facts) {
       writeBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, ownAddressesOf(facts));
@@ -188,7 +188,7 @@ export function useShellDerivations({
     }
     const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
     if (cached !== null) setRememberedOwn(cached);
-  }, [resolvedDemo, facts]);
+  }, [engine, resolvedDemo, facts]);
   /**
    * Keyed on the addresses, not the facts row. `consentView` depends on nothing else about a
    * mailbox, and keyed on `facts` it rebuilt the whole-mirror partition whenever ANY field

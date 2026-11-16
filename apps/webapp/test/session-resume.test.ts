@@ -732,7 +732,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
   it("the splash cannot bounce for ever", () => {
     // Guard 2 (guard 1 is the server clearing the jar). Without it, a refresh that neither
     // succeeds nor cleanly fails — a 5xx, an offline tab — loops `/` → resume → `/`.
-    const src = read("../app/(product)/resume/ResumeScreen.tsx");
+    const src = read("../app/(product)/resume/use-resume-door.ts");
     expect(src).toMatch(/sessionStorage\.getItem\(resumeOnceKey\(storageOwner\(\)\)\)/);
     // A TIMESTAMP, not a boolean. Cleared-on-success cannot see a loop at all (each pass
     // erases the evidence of the last); left-set breaks the honest case of a long-open tab
@@ -764,7 +764,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
     // sat there for ever with no second `GET /`. The browser is ALREADY at the right URL;
     // only the server's answer needs to change, which is exactly what `reload()` does, and it
     // preserves the fragment by definition.
-    const src = read("../app/(product)/resume/ResumeScreen.tsx");
+    const src = read("../app/(product)/resume/use-resume-door.ts");
     expect(src).toMatch(/window\.location\.reload\(\)/);
     expect(src).not.toMatch(/location\.replace\(`\/\$\{window\.location\.hash\}`\)/);
     expect(src).not.toMatch(/window\.location\.replace\("\/"\)/);
@@ -773,7 +773,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
   it("a resume that CANNOT recover goes to /login, never to the marketing page", () => {
     // This browser was signed in a moment ago. Answering "let me back in" with the product
     // pitch is the same class of wrong as the original lockout.
-    const src = read("../app/(product)/resume/ResumeScreen.tsx");
+    const src = read("../app/(product)/resume/use-resume-door.ts");
     expect(src).toMatch(/window\.location\.replace\("\/login"\)/);
     // …and no redirect parameter: single origin + fragment routing means there is nothing to
     // pass, and a `next` parameter would be an open-redirect surface for no gain. Matched
@@ -786,7 +786,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
     // /login is not gated by middleware, so a visitor with a live session was shown a form and
     // had to sign in again to reach a mailbox they were already signed in to. Because `api()`
     // refreshes on 401, this also silently recovers a lapsed-but-resumable browser.
-    const src = read("../app/(product)/login/LoginScreen.tsx");
+    const src = read("../app/(product)/login/use-sign-in-door.ts");
     // It asks through the SHARED classifier rather than calling `auth.session()` itself. The
     // two screens that answer "is there a session?" gave contradictory answers inside one
     // burst while each held its own `catch` — see `app/(product)/session-outcome.ts`.

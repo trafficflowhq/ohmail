@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import { junkSweepPass, SWEEP_GONE_REASON, SWEEP_UNMAPPED_REASON } from "../src/junk-sweep.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ARM 2, PRODUCER HALF — **THE SWEEP MUST DISTINGUISH "THE SERVER REFUSED THIS"

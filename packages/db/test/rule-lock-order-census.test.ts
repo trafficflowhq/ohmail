@@ -534,7 +534,7 @@ function openerReading(file: string, fnName: string): { opened: number; out: str
 
 /** Where writers live. `apps/sidecar/src` is the device door's composition over these packages. */
 const SCANNED_ROOTS = [
-  "packages/db/src", "packages/services/src", "packages/api/src", "packages/core/src", "apps/worker/src", "apps/sidecar/src",
+  "packages/db/src", "packages/services/src", "packages/api/src", "packages/core/src", "apps/worker/src", "packages/organizer/src", "apps/sidecar/src",
 ] as const;
 
 function sourcesUnder(root: string): string[] {
@@ -618,22 +618,22 @@ function closureReading(file: string, within: string): { opened: number; out: st
  */
 const EXPECTED: ReadonlyArray<{ file: string; fn?: string; closure?: string; takes: readonly number[] }> = [
   { file: "packages/api/src/junk-window.ts", fn: "rescueJunk", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, CONTACTS, COUNTER] },
-  { file: "apps/worker/src/screener-auto-act.ts", fn: "screenerAutoActPass", takes: [ACCOUNT, SETTINGS, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
-  { file: "apps/worker/src/screener-correspondent-retro.ts", fn: "screenerCorrespondentRetroPass", takes: [ACCOUNT, CONTACTS] },
-  { file: "apps/worker/src/screener-correspondent-retro.ts", fn: "release", takes: [ACCOUNT, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
-  { file: "apps/worker/src/screener-correspondent-retro.ts", fn: "retireAutoActRules", takes: [ACCOUNT, RULE_KEY, COUNTER] },
+  { file: "packages/organizer/src/screener-auto-act.ts", fn: "screenerAutoActPass", takes: [ACCOUNT, SETTINGS, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
+  { file: "packages/organizer/src/screener-correspondent-retro.ts", fn: "screenerCorrespondentRetroPass", takes: [ACCOUNT, CONTACTS] },
+  { file: "packages/organizer/src/screener-correspondent-retro.ts", fn: "release", takes: [ACCOUNT, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
+  { file: "packages/organizer/src/screener-correspondent-retro.ts", fn: "retireAutoActRules", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/learning-service.ts", fn: "promoteOrDemote", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/consent-seed.ts", fn: "confirmSeed", takes: [ACCOUNT, SETTINGS, RULE_KEY, CONTACTS, COUNTER] },
   { file: "packages/services/src/consent-reset.ts", fn: "resetScreeningState", takes: [ACCOUNT, SETTINGS, RULE_KEY, CONTACTS, COUNTER] },
   // The decision at its own door, inside the held-mail release, and in the organizer's drain.
   { file: "packages/services/src/screener-service.ts", fn: "applyAsOrganizer", takes: [ACCOUNT, SETTINGS, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
   { file: "packages/services/src/held-release-service.ts", fn: "releaseHeld", takes: [ACCOUNT, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
-  { file: "apps/worker/src/request-drain.ts", closure: "screener.decide", takes: [ACCOUNT, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
+  { file: "packages/organizer/src/request-drain.ts", closure: "screener.decide", takes: [ACCOUNT, RULE_KEY, CONTACTS, FOLDER_STATE, COUNTER] },
   // A rule press, on its own install and applied by the organizer.
   { file: "packages/services/src/rules-service.ts", fn: "create", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/rules-service.ts", fn: "update", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/rules-service.ts", fn: "remove", takes: [ACCOUNT, RULE_KEY, COUNTER] },
-  { file: "apps/worker/src/request-drain.ts", closure: "ruleHandler", takes: [ACCOUNT, RULE_KEY, COUNTER] },
+  { file: "packages/organizer/src/request-drain.ts", closure: "ruleHandler", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   // A mailbox leaving (removed or switched off) asks the belt for the presses its legs held back.
   { file: "packages/services/src/mailbox-service.ts", fn: "delete", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
   { file: "packages/services/src/mailbox-service.ts", fn: "update", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
@@ -642,7 +642,7 @@ const EXPECTED: ReadonlyArray<{ file: string; fn?: string; closure?: string; tak
   { file: "packages/services/src/mailbox-service.ts", fn: "organizeHere", takes: [ACCOUNT, SETTINGS, MAILBOX_X, COUNTER] },
   // The profile import at both doors, and the HEY import.
   { file: "packages/services/src/profile-import-service.ts", fn: "apply", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
-  { file: "apps/worker/src/profile.ts", fn: "answerImportAsk", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
+  { file: "packages/organizer/src/profile.ts", fn: "answerImportAsk", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
   { file: "packages/services/src/hey-migration.ts", fn: "migrateFromObservations", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/hey-migration.ts", fn: "undoMigration", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   // The demotions' one door, an approval, a move and the ingest's override: the graduation row last.
@@ -691,9 +691,9 @@ const KNOWN_READINGS: ReadonlySet<string> = new Set<string>([
   // The device's organize claim: the mailbox row before the account fence (DEVICE-MIRROR-ORDER-UNMEASURED).
   "apps/sidecar/src/engine.ts#mayOrganize: the account row (fenceErased) taken after a mailbox row FOR UPDATE",
   // The backlog walks lock their own rule row, without the rule-key lock (BACKLOG-WALKS-SKIP-THE-RULE-KEY-LOCK).
-  "apps/worker/src/rule-retro.ts#ruleRetroPass: a rules write (.update(rulesTbl)) before the rule-key lock",
-  "apps/worker/src/rule-retro.ts#ruleRetroPass: a rules write (forUpdate(rulesTbl)) before the rule-key lock",
-  "apps/worker/src/rule-retro.ts#stampRetroDone: a rules write (.update(rulesTbl)) before the rule-key lock",
+  "packages/organizer/src/rule-retro.ts#ruleRetroPass: a rules write (.update(rulesTbl)) before the rule-key lock",
+  "packages/organizer/src/rule-retro.ts#ruleRetroPass: a rules write (forUpdate(rulesTbl)) before the rule-key lock",
+  "packages/organizer/src/rule-retro.ts#stampRetroDone: a rules write (.update(rulesTbl)) before the rule-key lock",
   // The backlog walks lock their own rule row, without the rule-key lock (BACKLOG-WALKS-SKIP-THE-RULE-KEY-LOCK).
   "apps/worker/src/gate-release.ts#gateReleasePass: a rules write (.update(rulesTbl)) before the rule-key lock",
   "apps/worker/src/gate-release.ts#gateReleasePass: held folder_state rows (.for(folderState)) taken after the change-log counter",
@@ -749,7 +749,7 @@ describe("every writer under a sender's key takes one lock order", () => {
   });
 
   it("the drain hands a request its transaction after the fence", () => {
-    const src = sourceOf("apps/worker/src/request-drain.ts").getFullText();
+    const src = sourceOf("packages/organizer/src/request-drain.ts").getFullText();
     const fence = src.indexOf("readAccountErasedAt(tx, dialect(tx), rt.accountId)");
     expect(fence, "the drain's fence is gone").toBeGreaterThan(0);
     expect(src.indexOf("runApply(tx)"), "the drain runs a request before its fence").toBeGreaterThan(fence);
@@ -954,10 +954,10 @@ const RULES_WRITES_OUTSIDE: Readonly<Record<string, string>> = {
   "packages/services/src/consent-reset.ts#resetScreeningState": "resetting screening removes the account's rules",
   "packages/services/src/hey-migration.ts#undoMigration": "the import's undo of the rows it still owns",
   "packages/api/src/junk-window.ts#allowSender": "the spam rules a Not junk press switches off",
-  "apps/worker/src/rule-retro.ts#ruleRetroPass": "the backlog walk's cursor and counter",
-  "apps/worker/src/rule-retro.ts#stampRetroDone": "the backlog walk's finished stamp",
+  "packages/organizer/src/rule-retro.ts#ruleRetroPass": "the backlog walk's cursor and counter",
+  "packages/organizer/src/rule-retro.ts#stampRetroDone": "the backlog walk's finished stamp",
   "apps/worker/src/mailboxes.ts#clearOwedRetroFences": "an owed walk's cursor, cleared at a promotion",
-  "apps/worker/src/screener-correspondent-retro.ts#retireAutoActRules": "the act's own spam rule retired over a correspondent",
+  "packages/organizer/src/screener-correspondent-retro.ts#retireAutoActRules": "the act's own spam rule retired over a correspondent",
   "apps/worker/src/gate-release.ts#gateReleasePass": "the gate release's stamp on its rule",
   "packages/core/src/adapters/organizer-profile-store.ts#applyOrganizerProfile": "the profile import's merge by natural key",
   "apps/sidecar/src/cloud-mirror.ts#applyAccountUpsert": "the device mirror applying a rule the Cloud already wrote",

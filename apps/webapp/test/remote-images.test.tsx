@@ -8,7 +8,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { COPY, MessageBody, sanitizeMailHtml } from "../app/letter-body/MessageBody";
 import { AppShell } from "./_todays-shell.js";
-import type { ConsentTransport } from "../app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, PROXIED_IMAGES_IN_FLIGHT,
@@ -498,7 +498,7 @@ describe("mail 0048 — images by default, and the pixel that is still never fet
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const src = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/consent-state.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/consent/consent-state.ts"), "utf8",
     );
     // The resting value, read out of the module rather than restated: `RESTING` is what a failed
     // fetch leaves in place (the catch is empty, by design — see the module header).
@@ -610,7 +610,7 @@ describe("mail 0072 — the pixel switch", () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const src = readFileSync(
-      resolve(process.cwd(), "apps/webapp/app/shell/consent-state.ts"), "utf8",
+      resolve(process.cwd(), "packages/app-logic/src/consent/consent-state.ts"), "utf8",
     );
     const resting = /const RESTING: ConsentState = \{([\s\S]*?)\n\};/.exec(src)?.[1] ?? "";
     expect(resting, "RESTING no longer names the pixel flag at all").toContain(

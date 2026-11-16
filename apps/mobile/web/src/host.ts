@@ -63,6 +63,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE, consent: NONE,
       images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
       screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
+      calendar: NONE,
     },
     capabilities: {
       service: SERVICE[setting],
@@ -80,6 +81,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: "install",
+      products: CANNOT.products,
     },
     features: {
       account: NONE, mailboxes: NONE, ai: NONE, subscription: NONE, storage: NONE, storageCard: NONE, accountStrip: NONE,
@@ -87,6 +89,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       screener: NONE, help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      calendar: has.frame.calendar,
     },
     device: {
       build: { surface: "phone", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: true },

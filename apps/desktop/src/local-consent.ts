@@ -10,7 +10,7 @@
 
 import { bridgeFetch } from "./bridge-fetch.js";
 import { consentVia } from "./consent-wire.js";
-import type { ConsentReadFailure, ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentReadFailure, ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 
 export { CONSENT_PATH, CONSENT_SETTINGS_PATH, consentVia } from "./consent-wire.js";
 

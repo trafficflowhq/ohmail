@@ -5,7 +5,7 @@ import {
   type LeaseSelf,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { shrinkMetaOnRefusal } from "../src/request-drain.js";
+import { shrinkMetaOnRefusal } from "@ohmail/organizer/request-drain";
 
 /**
  * A FOLDER ALREADY TOO FULL TO READ, ON A SERVER THAT TAKES NO DELETE (META-FULL-AND-UNDELETABLE-READS-

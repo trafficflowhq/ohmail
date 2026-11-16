@@ -2,7 +2,7 @@
  * The blank repair leaves the phone's engine. It runs on the desktop app, the hosted worker and the
  * self-host organizer; the phone keeps the fix that stops new blanks and gets the repair in a later
  * version. Two `WORKSPACE_MODULE_SUBSTITUTES` rows in `apps/sidecar/src/phone/aliases.js` take its
- * pass (`apps/worker/src/blank-repair.ts`, where the cycle imports it) and its one store read
+ * pass (`packages/organizer/src/blank-repair.ts`, where the cycle imports it) and its one store read
  * (`packages/core/src/adapters/blank-rows.ts`, where the repository imports it) out, each for a twin
  * that refuses by name, and the phone's composition passes `blankRepair: "off"`, so the cycle never
  * calls the twin. A phone runs no repair, whole or in part.
@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import { REPO, buildPhoneEngine } from "../scripts/bundle-engine.mjs";
 
 const TWINS = ["apps/sidecar/src/phone/blank-repair.ts", "apps/sidecar/src/phone/blank-rows.ts"];
-const LEFT_OUT = /^(?:apps\/worker\/(?:src|dist)\/blank-repair|packages\/core\/(?:src|dist)\/adapters\/blank-rows)\.[jt]s$/;
+const LEFT_OUT = /^(?:packages\/organizer\/(?:src|dist)\/blank-repair|packages\/core\/(?:src|dist)\/adapters\/blank-rows)\.[jt]s$/;
 /* Strings only the real modules carry: the pass's two failure events, and the blank's dedup key,
    which the store read is the one phone-reachable user of. */
 const MARKERS = [
@@ -34,7 +34,7 @@ describe("the phone engine carries no blank repair", () => {
     const rows = applied.filter(([, to]: [string, string]) => TWINS.some((t) => to.endsWith(t)));
     expect(rows.map(([from]: [string, string]) => from).sort()).toEqual(["./blank-repair.js", "./blank-rows.js"]);
     // The importers are still in, so each twin answers a real importer.
-    for (const importer of [/^apps\/worker\/(dist|src)\/sync\.[jt]s$/, /^packages\/core\/(dist|src)\/adapters\/drizzle-repo\.[jt]s$/]) {
+    for (const importer of [/^packages\/organizer\/(dist|src)\/sync\.[jt]s$/, /^packages\/core\/(dist|src)\/adapters\/drizzle-repo\.[jt]s$/]) {
       expect(inputs.some((p: string) => importer.test(p)), String(importer)).toBe(true);
     }
     expect(MARKERS.filter((m) => text.includes(m))).toEqual([]);

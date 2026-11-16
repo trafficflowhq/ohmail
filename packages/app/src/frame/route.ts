@@ -3,7 +3,14 @@
  * the old shell's parser reads the same fragment until the last old view goes, and a test holds the two
  * equal on a corpus. Only the shell's address door reads and writes the fragment; the frame keeps no copy.
  */
-import type { PlaceId, Route } from "./contract.js";
+import {
+  CALENDAR_PANEL_IDS,
+  type AnyPlaceId,
+  type CalendarPlaceId,
+  type PlaceId,
+  type Route,
+} from "./contract.js";
+import { CALENDAR_HOME, isCalendarPlace } from "./product.js";
 
 /** Each place's address, the way it is written today. */
 export const ADDRESS: Readonly<Record<PlaceId, string>> = {
@@ -26,7 +33,7 @@ export const ADDRESS: Readonly<Record<PlaceId, string>> = {
 };
 
 /** The places that list letters, where an address may carry the open one. */
-const LISTS_LETTERS: ReadonlySet<PlaceId> = new Set([
+const LISTS_LETTERS: ReadonlySet<string> = new Set<PlaceId>([
   "ohbox",
   "news",
   "receipts",
@@ -84,7 +91,7 @@ const BY_ID: ReadonlyMap<string, PlaceId> = new Map([
   ["address", "address"],
 ]);
 
-const route = (place: PlaceId, more: Partial<Omit<Route, "place">> = {}): Route => ({
+const route = (place: AnyPlaceId, more: Partial<Omit<Route, "place">> = {}): Route => ({
   place,
   sub: null,
   open: null,
@@ -139,6 +146,8 @@ function placeOf(path: string, query: string): Route {
 
 export function routeOf(fragment: string): Route {
   const whole = fragment.replace(/^#\/?/, "");
+  const calendar = calendarRouteOf(whole);
+  if (calendar !== null) return calendar;
   const at = whole.indexOf("?");
   const query = at === -1 ? "" : whole.slice(at + 1);
   const { path, open } = cutTail(at === -1 ? whole : whole.slice(0, at));
@@ -150,6 +159,8 @@ const named = (mailbox: string | undefined) =>
   mailbox === undefined ? "" : `?mailbox=${encodeURIComponent(mailbox)}`;
 
 export function fragmentOf(to: Route): string {
+  if (to.stage?.id === "calSetup") return `#/cal/${CALENDAR_STAGE_HEAD}${queryOf(to.stage.words)}`;
+  if (isCalendarPlace(to.place)) return calendarFragmentOf(to.place, to);
   if (to.stage?.id === "firstRun") {
     const how = to.stage.words.how;
     return `#/first-run${how === "again" || how === "add" ? `/${how}` : ""}${named(to.stage.words.mailbox)}`;
@@ -170,4 +181,99 @@ export function fragmentOf(to: Route): string {
     default:
       return `#/${head}${tail}`;
   }
+}
+
+/*
+ * THE CALENDAR'S ADDRESSES. Canonical on every host: `#/cal/<head>[/<day>][/e/<event>][?panel=…&q=…]`; `#/cal` is
+ * the week of today. A fragment whose first segment is a calendar head (`#/week/…`) reads the same, so the web's door
+ * can tell the product from the fragment alone: no head here is one of mail's.
+ */
+export const CALENDAR_ADDRESS: Readonly<Record<CalendarPlaceId, string>> = {
+  week: "week",
+  day: "day",
+  month: "month",
+  year: "year",
+  agenda: "agenda",
+  calsearch: "find",
+  frommail: "from-mail",
+  calsettings: "calendars",
+};
+/** The head of the calendar's stage (its setup). */
+export const CALENDAR_STAGE_HEAD = "cal-setup";
+const CALENDAR_PRODUCT_HEAD = "cal";
+const CALENDAR_BY_HEAD: ReadonlyMap<string, CalendarPlaceId> = new Map(
+  (Object.entries(CALENDAR_ADDRESS) as [CalendarPlaceId, string][]).map(([place, head]) => [head, place]),
+);
+const CALENDAR_PANELS: ReadonlySet<string> = new Set(CALENDAR_PANEL_IDS);
+const DAY_SHAPE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** The tail segment before an open event. */
+const EVENT_MARK = "e";
+
+/** A civil date that exists (`2026-02-30` does not); a pure check that reads no zone. */
+export function isRealDay(text: string): boolean {
+  const m = DAY_SHAPE.exec(text);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (mo < 1 || mo > 12 || d < 1) return false;
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1]!;
+  return d <= days;
+}
+
+function firstSegment(whole: string): string {
+  const cut = whole.search(/[/?]/);
+  return cut === -1 ? whole : whole.slice(0, cut);
+}
+
+/** Whether a fragment names the calendar: `#/cal`, `#/cal/…`, `#/cal?…`, or a calendar head first. */
+export function isCalendarFragment(fragment: string): boolean {
+  const head = firstSegment(fragment.replace(/^#\/?/, ""));
+  return head === CALENDAR_PRODUCT_HEAD || head === CALENDAR_STAGE_HEAD || CALENDAR_BY_HEAD.has(head);
+}
+
+function calendarRouteOf(whole: string): Route | null {
+  if (!isCalendarFragment(`#/${whole}`)) return null;
+  const at = whole.indexOf("?");
+  const query = new URLSearchParams(at === -1 ? "" : whole.slice(at + 1));
+  const segments = (at === -1 ? whole : whole.slice(0, at)).split("/").filter((p) => p !== "");
+  if (segments[0] === CALENDAR_PRODUCT_HEAD) segments.shift();
+  const [head = "", ...rest] = segments;
+  if (head === CALENDAR_STAGE_HEAD)
+    return route(CALENDAR_HOME, { stage: { id: "calSetup", words: Object.fromEntries(query) } });
+  const place = CALENDAR_BY_HEAD.get(head) ?? CALENDAR_HOME;
+  const mark = rest.indexOf(EVENT_MARK);
+  const subPart = mark === 0 ? undefined : rest[0];
+  const openPart = mark === -1 ? undefined : rest[mark + 1];
+  const sub =
+    subPart === undefined
+      ? null
+      : place === "calsettings"
+        ? decoded(subPart)
+        : isRealDay(subPart)
+          ? subPart
+          : null;
+  const open = openPart === undefined || openPart === "" ? null : decoded(openPart);
+  const words: Record<string, string> = {};
+  const panel = query.get("panel");
+  if (panel !== null && CALENDAR_PANELS.has(panel)) words.panel = panel;
+  const q = query.get("q");
+  if (place === "calsearch" && q !== null && q.trim() !== "") words.q = q;
+  return route(place, { sub, open: place === "calsettings" ? null : open, words });
+}
+
+function queryOf(words: Readonly<Record<string, string>>): string {
+  const pairs = Object.entries(words).filter(([, v]) => v !== "");
+  return pairs.length === 0 ? "" : `?${new URLSearchParams(pairs).toString()}`;
+}
+
+function calendarFragmentOf(place: CalendarPlaceId, to: Route): string {
+  const head = `#/${CALENDAR_PRODUCT_HEAD}/${CALENDAR_ADDRESS[place]}`;
+  if (place === "calsettings") return to.sub === null ? head : `${head}/${encodeURIComponent(to.sub)}`;
+  const day = to.sub !== null && isRealDay(to.sub) ? `/${to.sub}` : "";
+  const open = to.open !== null && to.open !== "" ? `/${EVENT_MARK}/${encodeURIComponent(to.open)}` : "";
+  const words: Record<string, string> = {};
+  const panel = to.words.panel;
+  if (panel !== undefined && CALENDAR_PANELS.has(panel)) words.panel = panel;
+  if (place === "calsearch" && to.words.q !== undefined && to.words.q.trim() !== "") words.q = to.words.q;
+  return `${head}${day}${open}${queryOf(words)}`;
 }

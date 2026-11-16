@@ -11,8 +11,8 @@ import { leaderLockKeyFor } from "../src/leader-lock.js";
 import { ALLOW_ANY_DIAL_HOST } from "../src/dial-host-guard.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT, byMessageId } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT, byMessageId } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════

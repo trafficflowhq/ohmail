@@ -272,7 +272,7 @@ const QUIET: MailState = {
 };
 
 let railState: MailState = QUIET;
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: railState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 

@@ -3,9 +3,9 @@ import { screenerAttemptKey } from "@trafficflow/db";
 import {
   SensitivePayloadRefusal, type ClassifierInput, type ClassifierPort, type ClassifierResult,
 } from "@trafficflow/core";
-import { fakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { DECLINE_COOLDOWN_MS, makeDeclineMemory, screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { DECLINE_COOLDOWN_MS, makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { NOW, attemptFor, gateInto, held, obligationsInto, recording, world } from "./_auto-suggest-world.js";
 
 /**

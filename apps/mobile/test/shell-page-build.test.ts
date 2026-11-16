@@ -4,12 +4,13 @@
  * manifest names every file it may be served with that file's own digest.
  */
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import type { ShellConfig } from "../src/shell/bridge-kinds";
 import { BENCH_MARKER, buildShell, policyOf } from "../scripts/build-shell.mjs";
@@ -69,6 +70,34 @@ describe("the shell's page", () => {
     }
   }, 60_000);
 
+  it("is built for one app, with that app's places, and the other app's build refuses it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "shell-app-"));
+    try {
+      const page = join(root, "generated", "shell");
+      const { shellPageOf } = require_("./apps/mobile/plugins/shell-assets.js") as {
+        shellPageOf: (root: string, env: object, app: string) => string;
+      };
+      const ohcal = await buildShell({ out: page, app: "ohcal" });
+      expect(ohcal.app).toBe("ohcal");
+      expect(ohcal.inputs).toContain("apps/mobile/web/src/mounted.ohcal.ts");
+      expect(ohcal.inputs).not.toContain("apps/mobile/web/src/mounted.ohmail.ts");
+      expect(shellPageOf(root, {}, "ohcal")).toBe(page);
+      expect(() => shellPageOf(root, {}, "ohmail")).toThrow(/built for "ohcal".*--app ohmail/);
+      const ohmail = await buildShell({ out: page });
+      expect(ohmail.app).toBe("ohmail");
+      expect(ohmail.inputs).toContain("apps/mobile/web/src/mounted.ohmail.ts");
+      expect(() => shellPageOf(root, {}, "ohcal")).toThrow(/built for "ohmail"/);
+      // A page left from before the build named its app is a stale page: refused, never guessed.
+      const file = join(page, "shell.manifest.json");
+      const { app: _named, ...unnamed } = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+      writeFileSync(file, JSON.stringify(unnamed));
+      expect(() => shellPageOf(root, {}, "ohmail")).toThrow(/no named app/);
+      await expect(buildShell({ out: page, app: "ohcalendar" })).rejects.toThrow(/--app is "ohcalendar"/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("refuses a page whose policy would let it reach out, run inline script or say it twice", () => {
     const page = (policy: string) => `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
     expect(policyOf(page(POLICY))).toBe(POLICY);
@@ -81,12 +110,124 @@ describe("the shell's page", () => {
 });
 
 /**
+ * One file of the template `expo prebuild` makes the native projects from (`expo/template.tgz`, carried by this tree's
+ * Expo), named for an app as prebuild names it: `HelloWorld` becomes the app's project name.
+ */
+function templateFile(name: string, app: string): string {
+  const tar = gunzipSync(readFileSync(require_.resolve("expo/template.tgz")));
+  for (let at = 0; at + 512 <= tar.length && tar[at] !== 0;) {
+    const text = (from: number, to: number) => tar.subarray(at + from, at + to).toString("utf8").replace(/\0[\s\S]*$/, "");
+    const size = Number.parseInt(text(124, 136).trim(), 8);
+    if ([text(345, 500), text(0, 100)].filter(Boolean).join("/") === `package/${name}`) {
+      return tar.subarray(at + 512, at + 512 + size).toString("utf8").replace(/HelloWorld/g, app).replace(/helloworld/g, app);
+    }
+    at += 512 + Math.ceil(size / 512) * 512;
+  }
+  throw new Error(`${name} is not in Expo's template`);
+}
+
+/**
+ * THE PAGE IN THE iOS APP: the plugin's iOS mods run as `expo prebuild` runs them, over the project Expo's template makes.
+ * The page's folder is copied beside the app's sources and referenced whole, as a folder, from the app's own group and
+ * the app's resources, so the app carries it as `shell/`. A prebuild run again over the same project adds nothing twice.
+ */
+describe("the shell's page in the iOS app", () => {
+  type Ref = { value: string; comment: string };
+  type Pbx = {
+    pbxGroupByName(name: string): { children: Ref[] };
+    getPBXGroupByKey(key: string): { children: Ref[] } | undefined;
+    getFirstProject(): { firstProject: { mainGroup: string } };
+    pbxFileReferenceSection(): Record<string, { lastKnownFileType?: string; path?: string }>;
+    pbxBuildFileSection(): Record<string, { fileRef?: string }>;
+    pbxResourcesBuildPhaseObj(target: string): { files: Ref[] };
+    getTarget(type: string): { uuid: string };
+  };
+  const plugins = require_("expo/config-plugins") as {
+    compileModsAsync: (config: object, props: object) => Promise<object>;
+    IOSConfig: { XcodeUtils: { getPbxproj(root: string): Pbx; unquote(value: string): string } };
+  };
+  const withShellAssets = require_("./apps/mobile/plugins/shell-assets.js") as (config: object) => object;
+
+  for (const [app, id] of [["ohmail", "app.ohmail"], ["ohcal", "app.ohcal"]] as const) {
+    it(`goes into ${app}'s own group and its resources, in the project Expo's template makes, once`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "shell-ios-"));
+      try {
+        mkdirSync(join(root, "ios", `${app}.xcodeproj`), { recursive: true });
+        writeFileSync(join(root, "ios", `${app}.xcodeproj`, "project.pbxproj"), templateFile("ios/HelloWorld.xcodeproj/project.pbxproj", app));
+        mkdirSync(join(root, "generated", "shell"), { recursive: true });
+        writeFileSync(join(root, "generated", "shell", "shell.manifest.json"), JSON.stringify({ app, bench: false, files: {} }));
+        for (let run = 0; run < 2; run += 1) {
+          const config = withShellAssets({ name: app, slug: app, ios: { bundleIdentifier: id } });
+          await plugins.compileModsAsync(config, { projectRoot: root, platforms: ["ios"] });
+        }
+        const { getPbxproj, unquote } = plugins.IOSConfig.XcodeUtils;
+        const project = getPbxproj(root);
+        const shell = project.pbxGroupByName(app).children.filter((child) => child.comment === "shell");
+        expect(shell).toHaveLength(1);
+        const ref = project.pbxFileReferenceSection()[shell[0]!.value]!;
+        expect([ref.lastKnownFileType, unquote(ref.path!)]).toEqual(["folder", `${app}/shell`]);
+        const resources = project.pbxResourcesBuildPhaseObj(project.getTarget("com.apple.product-type.application").uuid).files
+          .map((file) => project.pbxBuildFileSection()[file.value]?.fileRef);
+        expect(resources.filter((fileRef) => fileRef === shell[0]!.value)).toHaveLength(1);
+        expect(existsSync(join(root, "ios", app, "shell", "shell.manifest.json"))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
+
+  // `pod install` adds the group ExpoModulesProviders/<app> to the main group. In an ios folder made before the plugin,
+  // and listed before the app's own group, it is the first group of the app's name, and no `shell` reference exists yet.
+  for (const [app, id] of [["ohmail", "app.ohmail"], ["ohcal", "app.ohcal"]] as const) {
+    it(`goes into ${app}'s own group when the group pod install adds, of the same name, is listed first`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "shell-ios-"));
+      try {
+        let pbx = templateFile("ios/HelloWorld.xcodeproj/project.pbxproj", app);
+        const mainGroup = /mainGroup = ([0-9A-F]{24});/.exec(pbx)![1]!;
+        const providers = [
+          "\t\t0A0000000000000000000001 /* ExpoModulesProviders */ = {", "\t\t\tisa = PBXGroup;", "\t\t\tchildren = (",
+          `\t\t\t\t0A0000000000000000000002 /* ${app} */,`, "\t\t\t);", "\t\t\tname = ExpoModulesProviders;",
+          "\t\t\tsourceTree = \"<group>\";", "\t\t};",
+          `\t\t0A0000000000000000000002 /* ${app} */ = {`, "\t\t\tisa = PBXGroup;", "\t\t\tchildren = (", "\t\t\t);",
+          `\t\t\tname = ${app};`, "\t\t\tsourceTree = \"<group>\";", "\t\t};",
+        ].join("\n");
+        pbx = pbx.replace("/* Begin PBXGroup section */\n", `/* Begin PBXGroup section */\n${providers}\n`);
+        pbx = pbx.replace(`\t\t${mainGroup} = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n`, (head) => `${head}\t\t\t\t0A0000000000000000000001 /* ExpoModulesProviders */,\n`);
+        mkdirSync(join(root, "ios", `${app}.xcodeproj`), { recursive: true });
+        writeFileSync(join(root, "ios", `${app}.xcodeproj`, "project.pbxproj"), pbx);
+        mkdirSync(join(root, "generated", "shell"), { recursive: true });
+        writeFileSync(join(root, "generated", "shell", "shell.manifest.json"), JSON.stringify({ app, bench: false, files: {} }));
+        const { getPbxproj, unquote } = plugins.IOSConfig.XcodeUtils;
+        const before = getPbxproj(root);
+        const top = before.getPBXGroupByKey(before.getFirstProject().firstProject.mainGroup)!.children;
+        expect(top.filter((child) => child.comment === "ExpoModulesProviders")).toHaveLength(1);
+        expect(before.pbxGroupByName(app)).toBe(before.getPBXGroupByKey("0A0000000000000000000002"));
+        for (let run = 0; run < 2; run += 1) {
+          const config = withShellAssets({ name: app, slug: app, ios: { bundleIdentifier: id } });
+          await plugins.compileModsAsync(config, { projectRoot: root, platforms: ["ios"] });
+        }
+        const project = getPbxproj(root);
+        const own = top.find((child) => child.comment === app)!;
+        const shell = project.getPBXGroupByKey(own.value)!.children.filter((child) => child.comment === "shell");
+        expect(shell).toHaveLength(1);
+        const ref = project.pbxFileReferenceSection()[shell[0]!.value]!;
+        expect([ref.lastKnownFileType, unquote(ref.path!)]).toEqual(["folder", `${app}/shell`]);
+        expect(project.getPBXGroupByKey("0A0000000000000000000002")!.children).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 60_000);
+  }
+});
+
+/**
  * THE BUILT PAGE IN A REAL BROWSER, over a double of the native side: served as the native door serves it (the listed
  * files under `/shell/`, the policy as a header, 403 for anything else), with the bridge object the platform injects.
  * The page reads its words and its setting, mounts the frame, says it has drawn, and asks nothing of any address.
  */
 describe("the built page in a browser", () => {
   const CONFIG: Omit<ShellConfig, "language"> = {
+    app: "ohmail", other: "here",
     scope: "p0123456789abcdef0123456789abcdef", accountId: "acct-1", setting: "managed", serverName: "mail.example",
     build: { version: "2.0.0", commit: "abc" }, place: null, oldCopy: "absent", notifications: "default",
     facts: { posture: { folds: [], hasFold: false }, insets: { top: 0, right: 0, bottom: 0, left: 0 }, keyboard: { height: 0 }, online: true },

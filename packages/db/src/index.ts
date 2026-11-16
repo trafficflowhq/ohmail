@@ -124,6 +124,11 @@ export {
   bindDb, rebindTx, carryBinding, bindingOf, poolKeyOf, BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
   type AccountBound, type NothingBound, type BindTo, type Binding,
 } from "./bound.js";
+// The relations an account's index-driven reads name, as a shape, and the tables' answer: all a store
+// without the row lock reads (`account-rows.ts`). The views' answer and the catalog read that picks
+// between the two are the hosted database's, on `@trafficflow/db/cloud`: never exported here, where
+// a device's engine would load a statement only Postgres accepts.
+export { ACCOUNT_TABLES, type AccountRelations } from "./account-rows.js";
 
 // THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
 // single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the

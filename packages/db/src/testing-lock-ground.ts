@@ -60,6 +60,8 @@ export interface LockGround {
   runRolesScript(database: string, role?: string): Promise<string[]>;
   /** A database of its own, cloned from `template` (nobody may be connected to it). */
   clone(template: string, name: string): Promise<string>;
+  /** Give `role`, one a case made or renamed, the password this ground draws for its name, so the case may sign in as it. */
+  password(role: string): Promise<void>;
   stop(): void;
 }
 
@@ -115,6 +117,10 @@ export async function startLockGround(major: PgMajor, label: string, database: s
     async clone(template, name) {
       await asSuper("postgres", `create database "${name}" template "${template}" owner ${MIGRATOR_ROLE}`);
       return name;
+    },
+    async password(role) {
+      if (!/^[a-z_][a-z0-9_]*$/.test(role)) throw new Error(`not a plain role name: ${role}`);
+      await asSuper("postgres", `alter role ${role} password '${passwordOf(role)}'`);
     },
     stop: () => server.stop(),
   };

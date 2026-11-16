@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { screenerAttemptKey } from "@trafficflow/db";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { makeDeclineMemory, screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { NOW, attemptFor, declining, gateInto, held, obligationsInto, recording, world } from "./_auto-suggest-world.js";
 
 /**
@@ -134,7 +134,7 @@ describe("one door: the pass's gate calls sit in its `releaseClaim`", () => {
   });
 
   it("the pass: one plain release and one `reverseCharge` inside the door, and no debt written beside it", () => {
-    const src = readFileSync(fileURLToPath(new URL("../src/screener-auto-suggest.ts", import.meta.url)), "utf8");
+    const src = readFileSync(fileURLToPath(new URL("../../../packages/organizer/src/screener-auto-suggest.ts", import.meta.url)), "utf8");
     expect(readTheGateCalls(src, GATE_VERBS)).toEqual({ inDoor: 2, outside: [] });
     expect(readTheGateCalls(src, ["reverseCharge"])).toEqual({ inDoor: 1, outside: [] });
     expect(readTheGateCalls(src, ["owe", "settle"]), "the pass writes a debt beside `reverseCharge`")

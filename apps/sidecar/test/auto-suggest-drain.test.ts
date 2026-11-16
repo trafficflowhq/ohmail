@@ -14,7 +14,7 @@ import {
   accountSettings, folderState, messageInstances, messages, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
-import { AUTO_SUGGEST_BATCH } from "@trafficflow/worker/screener-auto-suggest";
+import { AUTO_SUGGEST_BATCH } from "@ohmail/organizer/screener-auto-suggest";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 

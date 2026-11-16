@@ -67,6 +67,7 @@ export {
   isUnscreenedPile, unscreenedGroups, unscreenedSourceFolder, unscreenedWalk, writeScreenerIntents, type AgreeSweepCursor, type AgreeSweepInput, type AgreeSweepOutcome,
   type AgreeSweepRun, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedPile, type UnscreenedRow,
   type UnscreenedScope, type UnscreenedSenderGroup, type UnscreenedWalk,
+  UNSCREENED_CURSOR_MAX_CHARS, UNSCREENED_FIRST_CURSOR, unscreenedCursorOf, unscreenedCursorText, type UnscreenedCursor,
 } from "../unscreened-set.js";
 
 export interface PersistedFolderCursor {
@@ -278,7 +279,7 @@ export interface MessageFailureInput {
    * Deterministic failures are born `null`: `mime_too_large` and `mime_unparseable` are
    * deterministic in the raw bytes by the contract on `mime.ts`'s two typed errors, so a clock can
    * never change their answer and every timed attempt would re-download the body it is about to
-   * refuse. See `apps/worker/src/dead-letter.ts#nextAttemptAfter`.
+   * refuse. See `packages/organizer/src/dead-letter.ts#nextAttemptAfter`.
    */
   nextAttemptAt: Date | null;
 }
@@ -556,7 +557,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   setMailboxBudgetStop(mailboxId: string, stop: BudgetStop | null): Promise<void>;
   /* ── USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074; FOLDERS-SPEC.md stage 2) ─────
-   * The worker's repo half (apps/worker/src/folder-ops.ts drives these, fenced). The API
+   * The worker's repo half (packages/organizer/src/folder-ops.ts drives these, fenced). The API
    * records commands; these apply their database consequences beside the IMAP writes. */
   /** Pending commands of one mailbox, FIFO by request time — failed rows wait for dismissal. */
   listFolderOps(mailboxId: string): Promise<FolderOpRow[]>;
@@ -634,7 +635,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /* ── THE JUNK RESCUE'S DESIRED STATE (`junk_rescues`, mail 0117) ─────────────────────────────
    * `folder_ops`' shape at this seam too, and REQUIRED on this port rather than optional: an
    * optional method lets a fake repo skip the pass in silence, which is how a queued command
-   * comes to be drained on one composition and not another. `apps/worker/src/junk-rescue.ts`
+   * comes to be drained on one composition and not another. `packages/organizer/src/junk-rescue.ts`
    * drives these; the API records the press and never opens IMAP. */
   /**
    * The mailbox's DUE pending rescues, oldest press first — the same due predicate every other
@@ -3512,7 +3513,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /**
    * User-commanded folder operations (`folder_ops`, mail 0074) — the folder-op pass's repo half,
-   * driven by `apps/worker/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
+   * driven by `packages/organizer/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
    * string-prefix idioms recur below, both deliberate: subtree membership is `col = path OR
    * substr(col, 1, len+1) = path || '/'` — exact string functions, never LIKE, since a folder
    * name may contain `_` and an unescaped pattern would let `a_b` claim `axb/...`; the swap is

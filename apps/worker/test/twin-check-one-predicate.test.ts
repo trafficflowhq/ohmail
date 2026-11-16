@@ -4,7 +4,7 @@ import {
   CLAIM_PROTOCOL, DEFAULT_STALE_AFTER_MS, clockSkewBoundMs, decideLease, formatClaim, parseClaim,
   type ClaimRecord, type RawClaimMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
-import { DEFAULT_PERMIT_TTL_MS, OrganizerStandDownError, assertNoLiveTwin } from "../src/lease.js";
+import { DEFAULT_PERMIT_TTL_MS, OrganizerStandDownError, assertNoLiveTwin } from "@ohmail/organizer/lease";
 import { DEFAULT_POLL_INTERVAL_MS } from "../src/config.js";
 
 /**

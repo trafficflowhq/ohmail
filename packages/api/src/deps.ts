@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService, ScheduledFilesKeeping,
-  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarFeedPort,
+  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarConnectPort, CalendarFeedPort,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -22,7 +22,7 @@ import type {
  * every host may compile: no ceremony, no Cloud schema, no barrel side effects. The hosted
  * `AuthService` extends this class, so a hosted bag's member IS one. */
 import type { SessionLifecycle } from "@trafficflow/services/auth";
-import type { StagedUploadGrantWire } from "@ohmail/wire";
+import type { PlaceLanguage, PlaceSuggestAnswer, StagedUploadGrantWire } from "@ohmail/wire";
 import type {
   DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider, StorageCap,
 } from "@trafficflow/core/mail";
@@ -152,6 +152,29 @@ export interface StorageNoticeInput {
 }
 
 /**
+ * A PLACE QUESTION as the place route hands it on: judged, its text made plain (NFC, controls as
+ * spaces, trimmed, spaces folded, lower case), its region rounded to one decimal, the person's own
+ * country as two capital letters or null.
+ */
+export interface PlaceQuestion {
+  readonly text: string;
+  readonly lang: PlaceLanguage | null;
+  readonly limit: number;
+  readonly near: { readonly lat: number; readonly lon: number } | null;
+  readonly home: string | null;
+}
+
+/**
+ * THE SERVER'S PLACE SUGGESTER, as a port: `@trafficflow/api/calendar` builds one, beside the
+ * calendar's routes, and no route table here names it. Never throws for the geocoder's troubles.
+ */
+export interface PlaceSuggester {
+  suggest(
+    accountId: string, question: PlaceQuestion, opts?: { readonly signal?: AbortSignal; readonly logger?: Logger },
+  ): Promise<PlaceSuggestAnswer>;
+}
+
+/**
  * The typed service bag on `ApiDeps`. The test helper and each host construct these once and
  * expose them here so handlers never new-up a service.
  * `sync` is optional — the handler falls back to the `syncService` singleton.
@@ -164,6 +187,17 @@ export interface ApiServices {
    * then sends no calendar record and turns none into a deletion.
    */
   calendar?: CalendarFeedPort;
+  /**
+   * Place suggestions for the calendar's place field, built beside the calendar where a geocoder is
+   * set. ABSENT, `POST /calendar/places/suggest` answers `off` and `/hello` does not offer them.
+   */
+  places?: PlaceSuggester;
+  /**
+   * What the calendar's connect door is composed with (`CalendarConnectPort`): the address policy
+   * and the switches of the ways that sign in at their provider. Handed beside `calendar` by a
+   * composition that keeps one. ABSENT refuses: no way is listed and none is taken.
+   */
+  calendarConnect?: CalendarConnectPort;
   /**
    * The session lifecycle — refresh rotation with reuse detection, logout, the device list
    * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence
@@ -559,6 +593,10 @@ export interface LockHealthLine {
   forced: number;
   census: "equal" | "drift";
   policies: "equal" | "differ" | "not-judged";
+  /** The account's views of the row lock standing as listed: 3 where the lock stands whole. */
+  views: number;
+  /** Which relations this instance's index-driven reads go through: the views, the tables, or not asked yet. */
+  reads: "views" | "tables" | "unasked";
   since?: string;
   by?: string;
   why?: string;
@@ -798,6 +836,8 @@ export interface HelloConfig {
      * routes. Optional, and absent is off: `/hello` then says nothing of a calendar, as it never did.
      */
     calendar?: boolean;
+    /** `ApiServices.places` is in the bag: the place field may ask. Absent: not offered. */
+    placeSuggestions?: boolean;
   };
 }
 

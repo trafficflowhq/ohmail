@@ -24,7 +24,7 @@ const MIN = 60_000;
 
 let facts: MailboxFacts[] = [];
 const refresh = vi.fn(async () => {});
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailboxFacts: () => facts,
   useMailState: () => ({ state: null, refresh }),
 }));

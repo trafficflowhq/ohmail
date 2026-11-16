@@ -153,7 +153,7 @@ export const mailboxes = pgTable("mailboxes", {
   organizedByName: text("organized_by_name"),
   /* WHICH INSTALL, not which kind. `organized_by_kind` is one word about a CATEGORY and answers "what
      sort of thing holds this", which is only the same question as "is this us" when there is one
-     install per kind — and `apps/worker/src/lease.ts` scopes the Cloud id by environment precisely
+     install per kind — and `packages/organizer/src/lease.ts` scopes the Cloud id by environment precisely
      so that two Cloud deployments over one mailbox is a designed-for state. NULL means "we cannot
      say it is ours", and every caller must read it as NOT ours: the release matches on this id
      (`lease.ts`), so a category comparison cleared rows over claims it could not remove. */
@@ -247,7 +247,7 @@ export const mailboxes = pgTable("mailboxes", {
    * WHEN THIS INSTALL, READING, FIRST SAW NOBODY ORGANIZING THE MAILBOX — the start of the gap it
    * is looking at now, on the store's own clock (`coalesce`, so the earliest instant stands). A
    * look that finds a live holder clears it and so does a stand-down: the window is only ever the
-   * current gap. `apps/worker/src/gap-catchup.ts` counts it and files it only on a press.
+   * current gap. `packages/organizer/src/gap-catchup.ts` counts it and files it only on a press.
    */
   gapSince: timestamp("gap_since", { withTimezone: true }),
   /** The letters in that window the person's rules would file, counted once; shown, never acted on alone. */
@@ -863,7 +863,7 @@ export const folderState = pgTable("folder_state", {
   /**
    * WHY the last attempt was refused — one of `refused | no_such_folder | read_only |
    * over_quota`, NULL while no refusal stands. A CLASS, not the free text the block above
-   * forbids; {@link RECONCILE_REFUSAL_CLASSES} in `apps/worker/src/sync.ts` holds the mapping and
+   * forbids; {@link RECONCILE_REFUSAL_CLASSES} in `packages/organizer/src/sync.ts` holds the mapping and
    * the CHECK's membership. Written by the deferral and cleared by a fresh intent (mail 0163's
    * trigger, on any change of `desired_folder`), alongside the schedule pair — one group, because a class without its schedule is a reason for nothing and a
    * schedule without its class is the sentence this column exists to end. A TRANSPORT failure
@@ -1515,6 +1515,9 @@ export const devices = pgTable("devices", {
   // NULL = never completed a drain. Stamped by the API's sync route alone, throttled in the
   // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  // mail 0209 — the device whose session handed this one its sign-in on the same phone, or NULL. A reuse sweep and a
+  // take-back of that device end this one too. No foreign key; never projected into a DTO.
+  handedOffFrom: uuid("handed_off_from"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("devices_id_account_uq").on(t.id, t.accountId),
   ixUser: index("devices_user_idx").on(t.userId) }));
@@ -1606,7 +1609,7 @@ export const refreshTokens = pgTable("refresh_tokens", {
 export const pairingTokens = pgTable("pairing_tokens", {
   id: uuid("id").defaultRandom().primaryKey(),
   createdByUserId: uuid("created_by_user_id").references(() => users.id),
-  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' (CHECK in 0059)
+  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' | 'app-handoff' (CHECK in 0059, 0209)
   tokenHash: text("token_hash").notNull(),         // sha256(raw); the raw value is never at rest
   label: text("label").notNull().default(""),      // device-pair: becomes the device row's label
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -1618,6 +1621,13 @@ export const pairingTokens = pgTable("pairing_tokens", {
    * token), which a CHECK holds on a server.
    */
   accountId: uuid("account_id"),
+  /**
+   * mail 0209 — an `app-handoff` code's binding: the receiver's SHA-256 challenge (the redeem must present its
+   * verifier), and the device of the session that minted it (the code is spent only while that session lives). A
+   * CHECK holds both present exactly for that grant.
+   */
+  challengeHash: text("challenge_hash"),
+  handoffFromDeviceId: uuid("handoff_from_device_id"),
 }, (t) => ({
   uqToken: unique().on(t.tokenHash),
 }));

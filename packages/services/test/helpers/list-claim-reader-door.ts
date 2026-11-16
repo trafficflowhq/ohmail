@@ -11,8 +11,8 @@ import {
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { ScreenerService } from "../../src/screener-service.js";
 import type { ServiceContext } from "../../src/context.js";
-import { applyMetaRequests, driveOutstandingRequests } from "../../../../apps/worker/src/request-drain.js";
-import { ruleRetroPass } from "../../../../apps/worker/src/rule-retro.js";
+import { applyMetaRequests, driveOutstandingRequests } from "../../../organizer/src/request-drain.js";
+import { ruleRetroPass } from "../../../organizer/src/rule-retro.js";
 
 export type Db = Awaited<ReturnType<typeof makeTestDb>>;
 

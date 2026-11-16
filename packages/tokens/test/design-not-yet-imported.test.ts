@@ -13,6 +13,8 @@
  *    entries that mount today's views in the frame, and the adapter between the two, by name. The
  *    list only falls: a rebuilt view leaves it, nothing joins it.
  *  - every page or window among them reaches both seam sheets.
+ *  - the doors on the web, by name: a door's route reaches the old stylesheets through its ceremony alone, and
+ *    every door's page reaches the frame's seam sheet.
  *
  * And until the workspace has a tool for import borders: what the new folders may import.
  */
@@ -42,7 +44,7 @@ const SEAM_ROOTS = [
   "apps/webapp/app/(product)/mailbox/page.tsx",
 ];
 /** Who reaches the old stylesheets and the new: the roots, the shells they mount, and the adapter that feeds the frame. */
-const MAY_MEET = [
+const FRAME_MEETS = [
   ...SEAM_ROOTS,
   "apps/desktop/src/DesktopFrame.tsx",
   "apps/desktop/src/DesktopGate.tsx",
@@ -56,7 +58,61 @@ const MAY_MEET = [
   "apps/webapp/app/shell/todays-places.ts",
   "apps/webapp/app/shell/todays-reasons.ts",
   "apps/webapp/app/shell/todays-supplies.ts",
-].sort();
+];
+
+/**
+ * THE DOORS ON THE WEB (ruled 2026-11-16 with task `doors`). A door's page is the new design. Its route stands the
+ * page over the door's ceremony, which is today's code and reaches the old component package's entry through today's
+ * session helpers. The product's layout loads today's sheets on every document whatever a route imports, so a door
+ * stands on a stage of its own: an `.oh-root` that loads the frame's seam sheet. Held below: a route reaches the old
+ * stylesheets through its ceremony alone, so nothing of today's design is drawn in a door but the parts DRAWN names;
+ * and every door's page reaches the frame's seam sheet. A route and its page leave when the old package's entry no
+ * longer loads the old sheets (task `removals`); a drawn part leaves with the task that rebuilds it. Nothing joins but
+ * a new door, by name.
+ */
+const PRODUCT = "apps/webapp/app/(product)";
+const DOOR_ROUTES = [
+  "account/delete/DeleteAccountRoute.tsx",
+  "approve/ApproveClosed.tsx",
+  "approve/ApproveRoute.tsx",
+  "authorize-desktop/AuthorizeDesktopRoute.tsx",
+  "join/JoinRoute.tsx",
+  "join/invite/InviteRoute.tsx",
+  "link-desktop/LinkDesktopRoute.tsx",
+  "login/SignInRoute.tsx",
+  "mailbox/StepUp.tsx",
+  "mailbox/WallRoute.tsx",
+  "resume/ResumeRoute.tsx",
+  "setup/SetupRoute.tsx",
+  "subscribed/SubscribedRoute.tsx",
+  "verify-email/VerifyRoute.tsx",
+].map((file) => `${PRODUCT}/${file}`);
+/** The doors' pages that reach both through their route. The wall's page is the mailbox's, a root above. */
+const DOOR_PAGES = ["account/delete", "approve", "authorize-desktop", "join", "join/invite", "link-desktop", "login", "resume", "setup", "subscribed", "verify-email"]
+  .map((door) => `${PRODUCT}/${door}/page.tsx`);
+/** A door's ceremony: its own hook, the web's step-up door, and the step-up dialog's mount over it. */
+const CEREMONY = /\/use-[a-z-]+-door\.ts$|\/mailbox\/(web-step-up\.ts|StepUp\.tsx)$/;
+/** The parts of today's design a door's route draws, each with the task that rebuilds it. */
+const DRAWN: Record<string, string[]> = {
+  // `mailboxes`: the join's mailbox step is today's form, stood in the stage behind `.today` and today's seam sheet.
+  [`${PRODUCT}/join/JoinRoute.tsx`]: [`${PRODUCT}/join/MailboxStep.tsx`],
+  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button and date.
+  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "apps/webapp/app/shell/format.ts", "packages/ui/src/index.ts"],
+};
+/**
+ * The doors' modules that still reach both designs. Every door's route and page stays in the lists above, which the
+ * two guards below walk; of them only these still reach the old stylesheets since the sending module left the old
+ * shell. This list only falls, nothing joins it: a name leaves with the task that ends its reach, the ones DRAWN names
+ * (`mailboxes`, `account`) and `removals`.
+ */
+const DOOR_MEETS = [
+  `${PRODUCT}/account/delete/DeleteAccountRoute.tsx`,
+  `${PRODUCT}/account/delete/page.tsx`,
+  `${PRODUCT}/join/JoinRoute.tsx`,
+  `${PRODUCT}/join/page.tsx`,
+  `${PRODUCT}/mailbox/WallRoute.tsx`,
+];
+const MAY_MEET = [...FRAME_MEETS, ...DOOR_MEETS].sort();
 /** The two seam sheets: the frame's meanings under `.oh-root`, today's under `.today`. */
 const SEAM_SHEETS = [/^packages\/app\/src\/frame\/seam\.generated\.css$/, /^apps\/webapp\/app\/shell\/today-tokens\.generated\.css$/];
 
@@ -98,6 +154,16 @@ function reaching(files: Files, sheet: RegExp): Set<string> {
 function reachBoth(files: Files): string[] {
   const old = reaching(files, OLD_SHEET);
   return [...reaching(files, NEW_SHEET)].filter((file) => old.has(file)).sort();
+}
+
+/** What a door's route imports, beyond its ceremony, that leads to an old stylesheet: empty for a route that draws nothing of today's. */
+function drawnBy(files: Files): Record<string, string[]> {
+  const old = reaching(files, OLD_SHEET);
+  const drawn = (route: string) =>
+    [...new Set(importsOf(files.get(route)!).filter(({ typeOnly }) => !typeOnly).map(({ specifier }) => target(files, route, specifier)))]
+      .filter((to) => old.has(to) && !CEREMONY.test(to))
+      .sort();
+  return Object.fromEntries(DOOR_ROUTES.map((route) => [route, drawn(route)] as const).filter(([, parts]) => parts.length));
 }
 
 /** `[file, how]` for every import of a design subpath outside the tokens package. */
@@ -185,10 +251,40 @@ describe("where they meet, the seam is loaded", () => {
     expect(without(files)).toEqual([[], SEAM_ROOTS]);
   });
 
-  it("a frame that stops loading its own is found on every root", () => {
+  it("a frame that stops loading its own is found on every root but the mailbox's, where the wall's stage loads it too", () => {
     const frame = "packages/app/src/frame/Frame.tsx";
     const files = planted({ [frame]: tree.get(frame)!.replace('import "./seam.generated.css";', "") });
-    expect(without(files)).toEqual([SEAM_ROOTS, []]);
+    expect(without(files)).toEqual([SEAM_ROOTS.filter((root) => root !== `${PRODUCT}/mailbox/page.tsx`), []]);
+  });
+});
+
+describe("a door on the web", () => {
+  const STAGE = "packages/app/src/doors/stage/DoorStage.tsx";
+  const stands = [...DOOR_PAGES, `${PRODUCT}/not-found.tsx`];
+  const unseamed = (files: Files) => {
+    const reached = reaching(files, SEAM_SHEETS[0]);
+    return stands.filter((page) => !reached.has(page));
+  };
+
+  it("reaches the old stylesheets through its ceremony alone, but for the parts of today's design it is listed to draw", () => {
+    expect(drawnBy(tree)).toEqual(DRAWN);
+  });
+
+  it("a part of today's design drawn in a door is found", () => {
+    const route = `${PRODUCT}/login/SignInRoute.tsx`;
+    const files = planted({ [route]: `${tree.get(route)!}\nimport { Button } from "@ohmail/ui";\n` });
+    expect(drawnBy(files)).toEqual({ ...DRAWN, [route]: ["packages/ui/src/index.ts"] });
+  });
+
+  it("every door's page stands on a stage that loads the frame's seam sheet, and the join's, which draws today's form, today's too", () => {
+    expect(unseamed(tree)).toEqual([]);
+    expect(reaching(tree, SEAM_SHEETS[1]).has(`${PRODUCT}/join/page.tsx`)).toBe(true);
+  });
+
+  it("a stage that stops loading the frame's seam sheet is found on every door's page", () => {
+    const files = planted({ [STAGE]: tree.get(STAGE)!.replace('import "../../frame/seam.generated.css";', "") });
+    expect(tree.get(STAGE)).not.toBe(files.get(STAGE));
+    expect(unseamed(files)).toEqual(stands);
   });
 });
 

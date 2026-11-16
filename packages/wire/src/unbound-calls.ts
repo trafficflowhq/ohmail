@@ -128,6 +128,8 @@ export type UnboundCall =
   | "POST /pair"
   | "DELETE /pair/:id"
   | "POST /pair/redeem"
+  // apps/mobile/src/net/bearer.ts
+  | "POST /pair/handoff"
   // apps/sidecar/src/cloud-probe.ts
   | "POST /pair/state"
   // apps/webapp/app/api-client.ts

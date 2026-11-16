@@ -11,7 +11,7 @@ import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 /**
  * A REQUEST FOR EVERYONE AT A SHARED PROVIDER IS REFUSED BY THE ORGANIZER (mail 0148, acceptance 11).

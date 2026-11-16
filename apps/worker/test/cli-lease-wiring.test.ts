@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { acquireLeasePermit, assertNoLiveTwin } from "../src/lease.js";
-import { FakeMetaFolder } from "./_fakeadapter.js";
+import { acquireLeasePermit, assertNoLiveTwin } from "@ohmail/organizer/lease";
+import { FakeMetaFolder } from "../../../packages/organizer/test/_fakeadapter.js";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { PermitClock } from "./_permit-clock.js";
+import { PermitClock } from "../../../packages/organizer/test/_permit-clock.js";
 
 /**
  * THE TWO OPERATOR CLIs' LEASE WIRING — the seam the pg suite could not see.

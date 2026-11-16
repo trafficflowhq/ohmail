@@ -10,7 +10,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import { bubbleUpPass, runBubbleUpCron } from "../src/bubble-up-cron.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE NEW CONCURRENCY PAIR, AGAINST REAL POSTGRES ON :5433.

@@ -1,0 +1,887 @@
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
+import {
+  approvals, auditAction, auditLog, automaticAiAdmits, drafts, folderState, isRefileRun, mailboxes, messageBodies,
+  heldUnconfirmedOnlySql, messageStates, messages, OwnAddressesPerPass, PARKED_FENCE_PREFIX, pendingRefileFrom, personSkipSql, recordChange,
+  recordRuleDelta, rules as rulesTbl, rulesTheActWrote, weAnsweredThisSenderWhere,
+  type LedgerTx, type RefileState, type Tx,
+} from "@trafficflow/db";
+import {
+  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, REFILE_HOLD_MS, SCREENING_AUTH_VERDICTS, authVerdictFromHeaders,
+  canonicalDestination, evaluateRules, identityOfRow, ROWS_PER_TURN, silentLogger, turnsEvery, WRITES_PER_TURN,
+  type Destination, type KnownSenders, type Logger, type LoopTurn, type NormalizedMessage, type Rule,
+  /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
+     the barrel carries the model half into them (the engine census refuses the build). */
+} from "@trafficflow/core/mail";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { ruleMatchKey } from "@trafficflow/core/rule-order";
+import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
+import { perMailboxAuthservTrust, ruleInputOf, upsertDesired } from "./rule-pass.js";
+
+/* APPLYING A NEW RULE TO MAIL ALREADY FILED — writes desired-state intent, never opens IMAP.
+   The set is every message the mirror holds (`/sync` replays `change_log` from seq 0 in
+   `sync-service.ts`; `Engine.drain` loops until `hasMore`), but instead of one
+   `POST /messages/:id/move` per match from the browser (`sender-screening.ts#planScreeningChange`) —
+   which serializes `account_sync_state` and strands the tail on tab close — this worker pass writes
+   `desired_folder` + a `move` and stops. `reconcileFolders` (`packages/organizer/src/sync.ts`) is the only
+   crash-safe mover and holds the lease (a second mover = two organizers; `rule-retro.no-imap.test.ts`
+   fails on an IMAP client). `RULE_RETRO_WRITES_PER_CYCLE` caps creation/cycle because `reconcileFolders`
+   walks an unbounded `listPendingFolderStates` and can miss `beat()`/`leaderStaleMs`; the DECISION is
+   `evaluateRules` (re-evaluate, never invert, as `sensitive-rescreen.ts`), narrowed by indexes 0034. */
+
+/**
+ * Rows examined per transaction.
+ *
+ * The same 100 as `KICKSTART_BATCH` and `SENSITIVE_RESCREEN_BATCH`, and for the same reason:
+ * {@link recordChange} takes the account's `account_sync_state` row lock for the length of its
+ * transaction, so a whole-backlog transaction would stall every API write for that account
+ * while the pass drained. 100 rows is a few milliseconds of lock.
+ */
+export const RULE_RETRO_BATCH = 100;
+
+/**
+ * The screening gate, named once. Spelled here rather than imported from the screener service,
+ * which this pass may not reach: a bulk mover that can pull a service's import graph in is how an
+ * IMAP dialer arrives (`rule-retro.no-imap.test.ts`). The `Destination` annotation is what keeps
+ * the spelling honest — a folder outside the organized six does not compile.
+ */
+const SCREENER_GATE: Destination = "ohmail/Screener";
+
+/**
+ * IS THIS WALK THE RELEASE PRESS, OR AN ORDINARY RETRO?
+ *
+ * The press ("N held messages from senders you already decided") writes `release_held_at` and
+ * `retro_requested_at` in ONE statement at ONE instant, so equal values mean the last thing asked
+ * of this rule was that press and nothing has asked since. A rule edited afterwards with *apply to
+ * existing mail* moves `retro_requested_at` forward and the two part company.
+ *
+ * It decides TWO things at once in {@link selectCandidates}, and they belong together:
+ *
+ *  · the WIDENING — `'external'` joins the candidates, because a placement recorded as a hand file
+ *    is exactly what the person pressed to reconsider;
+ *  · the NARROWING — the walk touches ONLY mail still settled AT THE GATE.
+ *
+ * The narrowing is what makes the press honest, and it was added after measuring the opposite: a
+ * bare re-arm re-opened the rule's WHOLE backlog, so pressing "release 1 held message" also re-filed
+ * a `'peer'` message sitting in Reads that the screen had never counted. The number a person is
+ * shown is the number that moves.
+ */
+function isReleaseRun(rule: OwedRule): boolean {
+  return rule.releaseHeldAt !== null
+    && rule.retroRequestedAt !== null
+    && rule.releaseHeldAt.getTime() === rule.retroRequestedAt.getTime();
+}
+
+/**
+ * Desired-state rows this pass may create for ONE ACCOUNT in ONE worker cycle.
+ *
+ * The bound is the RECONCILER, not this pass: `reconcileFolders` walks an unbounded
+ * `listPendingFolderStates` serially (one IMAP move/row) inside the cycle, and `beat()` is its last
+ * statement while `leaderStaleMs` is 120000 ms (`packages/db/src/alerts.ts`) — a few hundred queued
+ * moves miss the heartbeat, and one non-`MessageGoneError` failure aborts reconcile every cycle.
+ * MEASURE and tune. Separate from {@link RULE_RETRO_BATCH} (a database lock) — this is how much
+ * physical mail movement one poll interval can absorb.
+ */
+export const RULE_RETRO_WRITES_PER_CYCLE = 100;
+
+/**
+ * Pages one rule may walk in one cycle before the pass gives up and says so.
+ *
+ * A bound and not a `while (true)`. Termination here is the CURSOR and not an empty page — a
+ * candidate the router declines to move STAYS a candidate — so a paging bug would otherwise be
+ * an unbounded loop against the live database rather than one warning line.
+ */
+export const RULE_RETRO_MAX_PAGES = 500;
+
+export interface RuleRetroDeps {
+  /** Scope to ONE account — the worker loops its served accounts. Omitted ⇒ every account. */
+  accountId?: string;
+  log?: Logger;
+  /** Test seam. Default {@link RULE_RETRO_BATCH}. */
+  batch?: number;
+  /** Test seam. Default {@link RULE_RETRO_WRITES_PER_CYCLE}. */
+  writesPerCycle?: number;
+  /** Test seam. Default {@link RULE_RETRO_MAX_PAGES}. */
+  maxPages?: number;
+  /**
+   * Re-run a rule whose `retro_done_at` is already stamped — EVIDENCE, not a repair.
+   *
+   * The pass is idempotent WITHOUT the marker (a message it has moved is desired into the
+   * destination and is no longer a candidate), and this flag exists so that claim can be
+   * exercised rather than asserted: `rule-retro.pg.test.ts` re-runs a finished rule with `force`
+   * and requires ZERO writes. It is deliberately not a "re-apply everything" switch — the
+   * candidate query is unchanged by it, and neither is the cursor.
+   */
+  force?: boolean;
+  /**
+   * The authserv-ids a MAILBOX's provider signs `Authentication-Results` with — per mailbox, since
+   * one account's mailboxes can sit at different providers (production:
+   * `adapters/drizzle-repo.ts#mailboxProviderAuthservIds`, resolved once per run and cached).
+   * REQUIRED, not `trustedAuthservIds?: ReadonlySet<string>` defaulting to empty: for this input the
+   * absent-config default IS the dangerous branch (empty ⇒ every verdict `"unavailable"` ⇒ the
+   * sender's own `From` claim decides, leaving the forged-`From` demotion inert). A caller that has
+   * decided to trust nothing types `async () => NO_TRUSTED_AUTHSERV_IDS`.
+   */
+  trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
+  /** The desktop engine's loop turn: per rows checked and written, before each page, after its read, and at the end. */
+  turn?: LoopTurn;
+}
+
+export interface RuleRetroResult {
+  /** Owed rules this pass touched. */
+  rules: number;
+  /** Candidate rows examined. */
+  examined: number;
+  /** Rows whose desired folder changed. */
+  moved: number;
+  /** Rows re-evaluation left where they were — a deny rule, or already there. */
+  kept: number;
+  /** Rules whose backlog was finished and stamped `retro_done_at`. */
+  completed: number;
+  /** True ⇒ the per-cycle write budget ran out; the rest resumes next cycle. */
+  capped: boolean;
+}
+
+/** One candidate, carrying everything `evaluateRules` reads — all of it from disk. */
+interface RetroRow {
+  messageId: string;
+  /** Which mailbox holds it — the key the per-mailbox authserv trust is resolved under. */
+  mailboxId: string;
+  fromAddress: string;
+  subject: string;
+  /**
+   * `message_bodies.text`, or `""` where no body row exists (mail 0052). The haystack a rule's
+   * `body_contains` term is matched against — the byte-identical string ingest matched, because
+   * the pipeline stores `NormalizedMessage.textBody` into that column. `""` satisfies no term,
+   * so a body rule declines to fire on a body-less row and the mail stays put: fail-closed for
+   * a narrowing conjunct, and the honest answer for a body this pass cannot read.
+   */
+  bodyText: string;
+  headers: Record<string, string[]>;
+  observedFolder: string;
+  desiredFolder: string;
+  /** The identity fact's inputs and column — see `rule-pass.ts#RuleInputRow`. */
+  fromName: string | null;
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
+}
+
+/** The owed rule, as read under its own row lock. */
+interface OwedRule {
+  id: string;
+  accountId: string;
+  kind: string;
+  match: string;
+  destination: string;
+  cursor: string | null;
+  /**
+   * WHEN THE OWNER PRESSED TO RELEASE MAIL THIS RULE NEVER REACHED — `rules.release_held_at`.
+   *
+   * NULL for every rule nobody has pressed, which is almost all of them. Read in exactly one
+   * place ({@link selectCandidates}), for one widening and one narrowing. It is read fresh under
+   * the rule's own lock per page, so a press mid-walk takes effect at the next page and a rule is
+   * never walked against a stale licence.
+   */
+  releaseHeldAt: Date | null;
+  /**
+   * `rules.retro_requested_at` — carried ONLY to tell a RELEASE run from an ordinary one.
+   *
+   * The press writes this and {@link releaseHeldAt} in one statement at one instant, so the two
+   * being EQUAL means "the last thing asked of this rule was the release press, and nothing has
+   * asked since". Any ordinary re-arm — a rule edited with *apply to existing mail* — moves this
+   * forward and leaves the licence behind, which is exactly when the narrowing must lift.
+   */
+  retroRequestedAt: Date | null;
+  /**
+   * `rules.provenance` and `rules.person_decided_at`, for `rulesTheActWrote`: the act on
+   * suggestions' rule is an automatic decision, whose walk leaves a message the person put back from
+   * automatic filing where they put it (mail 0138).
+   */
+  provenance: string;
+  personDecidedAt: Date | null;
+  /** `rules.refile_from` / `refile_at`: a Rules-page Change's re-filing while `isRefileRun`. */
+  refileFrom: string | null;
+  refileAt: Date | null;
+  /** Read with the cursor for `pendingRefileFrom`, which the page's first move can end. */
+  retroDoneAt: Date | null;
+  retroMoved: number;
+}
+
+/** A refile walk waits out the Change's Undo window before it moves anything. */
+function refileHeld(rule: Pick<OwedRule, "refileAt" | "retroRequestedAt">, now: Date): boolean {
+  return isRefileRun(rule) && now.getTime() - rule.retroRequestedAt!.getTime() < REFILE_HOLD_MS;
+}
+
+/** The rule's re-filing state as {@link pendingRefileFrom} reads it, at a cursor and a count. */
+function refileState(rule: OwedRule, retroCursor: string | null, retroMoved: number): RefileState {
+  return {
+    refileFrom: rule.refileFrom, refileAt: rule.refileAt, retroRequestedAt: rule.retroRequestedAt,
+    retroDoneAt: rule.retroDoneAt, retroMoved, retroCursor,
+  };
+}
+
+/**
+ * THE PASS. Per account: find the rules whose retroactive apply is owed, and walk each one's
+ * backlog until the cycle's write budget is spent.
+ *
+ * Pure and hermetic — a db/tx handle, a clock and a logger — so a test drives it against
+ * PGlite with no worker, no lease and no network. The transactional claims that PGlite cannot
+ * see (`FOR UPDATE`, two concurrent drivers, the gap-free seq) live in `rule-retro.pg.test.ts`
+ * against real Postgres, because an embedded database cannot exercise them.
+ */
+export async function ruleRetroPass(
+  db: Tx, deps: RuleRetroDeps, now: Date = new Date(),
+): Promise<RuleRetroResult> {
+  const log = deps.log ?? silentLogger;
+  const batch = deps.batch ?? RULE_RETRO_BATCH;
+  const budget = deps.writesPerCycle ?? RULE_RETRO_WRITES_PER_CYCLE;
+  const maxPages = deps.maxPages ?? RULE_RETRO_MAX_PAGES;
+  // Per-mailbox authserv trust, resolved once per mailbox — {@link perMailboxAuthservTrust}'s rule.
+  const trustFor = perMailboxAuthservTrust(db, deps.trustedAuthservIdsFor);
+
+  // The owed set. `retro_requested_at IS NOT NULL AND retro_done_at IS NULL` is the ONE
+  // definition of owed work — there is no queue and no second source of truth — and
+  // `rules_retro_owed_idx` is the partial index that makes this probe free in the steady state.
+  // `enabled` is re-checked inside every page transaction as well: a user may revoke mid-run.
+  const owedFilters = [
+    isNotNull(rulesTbl.retroRequestedAt),
+    eq(rulesTbl.enabled, true),
+    ...(deps.force ? [] : [isNull(rulesTbl.retroDoneAt)]),
+    ...(deps.accountId ? [eq(rulesTbl.accountId, deps.accountId)] : []),
+    /* A RULE THIS INSTALL CANNOT ACT ON STAYS OWED — it is not "done".
+     *
+     * The owed probe is per ACCOUNT; the candidate query is per MAILBOX. Without this clause an
+     * account whose mailbox this install does not organize selected the rule, walked zero candidates
+     * (the `organizer_role` gate excluded every one), and stamped `retro_done_at` — swallowing the
+     * press a person made via `retro_requested_at`, which for `'peer'` rows (mail a READER adopted)
+     * is the only route back. The rule stays owed by never being SELECTED, the one state a later
+     * promotion can still honour. EXISTS over the account's mailboxes (one organized mailbox makes
+     * the walk meaningful); the per-mailbox gate below still decides row by row.
+     */
+    sql`exists (
+      select 1 from ${mailboxes} mb
+       where mb.account_id = ${rulesTbl.accountId}
+         and mb.status <> 'disabled'
+         and mb.organizer_role = 'organizer'
+    )`,
+    // A Change's re-filing younger than the hold is not owed yet: its Undo may still come.
+    sql`not (${rulesTbl.refileAt} is not null and ${rulesTbl.refileAt} = ${rulesTbl.retroRequestedAt}
+      and ${rulesTbl.retroRequestedAt} > ${dialect(db).ts(new Date(now.getTime() - REFILE_HOLD_MS))})`,
+  ];
+  const owed = await db.select({ id: rulesTbl.id, accountId: rulesTbl.accountId })
+    .from(rulesTbl).where(and(...owedFilters))
+    .orderBy(asc(rulesTbl.createdAt), asc(rulesTbl.id));
+
+  const result: RuleRetroResult = {
+    rules: 0, examined: 0, moved: 0, kept: 0, completed: 0, capped: false,
+  };
+  if (owed.length === 0) return result;
+
+  // THE ACCOUNT'S OWN ADDRESSES — cached per ACCOUNT deliberately. They shape the candidate query
+  // (`ownAddresses` = what "not from myself" excludes) and change only on connect/remove; per account
+  // because `deps.accountId` may be omitted (CLI/test), so one run can walk several accounts and one
+  // account's set must never decide another's. `rules` and `knownSenders` are NOT cached here: they
+  // have six writers — the API rule editor (`routes/rules.ts`), the Screener decide path
+  // (`screener-service.ts`), the Junk window (`junk-window.ts`), the profile import, the consent seed
+  // and the ingest pipeline's contact learning — so their reads moved INTO the page transaction.
+  const ownFor = (() => {
+    const cache = new Map<string, string[]>();
+    return async (accountId: string): Promise<string[]> => {
+      const hit = cache.get(accountId);
+      if (hit) return hit;
+      const ownRows = await db.select({ address: mailboxes.address }).from(mailboxes)
+        .where(eq(mailboxes.accountId, accountId));
+      const fresh = ownRows.map((r) => r.address.toLowerCase());
+      cache.set(accountId, fresh);
+      return fresh;
+    };
+  })();
+
+  // The router's one set, read once per account for this pass (`OwnAddressesPerPass`).
+  const ownPerPass = new OwnAddressesPerPass();
+  const checked = turnsEvery(ROWS_PER_TURN, deps.turn);
+  const written = turnsEvery(WRITES_PER_TURN, deps.turn);
+  for (const row of owed) {
+    if (result.moved >= budget) { result.capped = true; break; }
+    result.rules++;
+    // `own` is every address the account has a mailbox for, and it feeds the we-answered shield only:
+    // a reply sent from a mailbox the person later removed is still their reply. The router reads the
+    // one set (`readOwnAddresses`), where a removed mailbox's address is a stranger's.
+    const own = await ownFor(row.accountId);
+    const ownSet: ReadonlySet<string> = await ownPerPass.ownAddresses(db, row.accountId);
+
+    let pages = 0;
+    let exhausted = false;
+    /**
+     * The fence as this pass last left it — `null` until a page commits one.
+     *
+     * Read from the rule row INSIDE each page transaction rather than remembered from the owed
+     * probe, so it is the value the walk actually resumed from even when another driver moved it
+     * between the probe and the page. The completion decision compares against it; see there.
+     */
+    let walkedTo: string | null = null;
+    /** The last page found the walk parked and did not walk; see {@link stampRetroDone}. */
+    let stillParked = false;
+    for (; pages < maxPages; pages++) {
+      if (result.moved >= budget) { result.capped = true; break; }
+      // Each page transaction starts on a turn of its own, apart from the pass or page before it.
+      if (deps.turn) await deps.turn();
+
+      const page = await db.transaction(async (txRaw) => {
+        /* THE DEVICE STORE RUNS THIS PASS TOO (the phone's and the desktop's local door), so every
+           Postgres-only spelling goes through the seam; on the server the SQL is the same. */
+        const tx = carryDialect(db, txRaw as object) as typeof txRaw;
+        const d = dialect(tx);
+        // THE RULE ROW IS THE SERIALIZATION POINT, TAKEN FIRST. Re-reading the rule `FOR UPDATE`
+        // inside the page transaction makes a second driver (worker cycle vs failover) block, wake
+        // with the winner's committed cursor and page forward — so `change_log` gains one `move`, not
+        // two. It is also the revoke check (a disabled/deleted rule stops at the next page boundary).
+        // Lock order is consistent: `rules` before `folder_state`, both before the
+        // `account_sync_state` counter `recordChange` takes — the order every other writer uses.
+        const [live] = await d.forUpdate(tx.select({
+          id: rulesTbl.id, accountId: rulesTbl.accountId, kind: rulesTbl.kind,
+          match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
+          releaseHeldAt: rulesTbl.releaseHeldAt, retroRequestedAt: rulesTbl.retroRequestedAt,
+          provenance: rulesTbl.provenance, personDecidedAt: rulesTbl.personDecidedAt,
+          refileFrom: rulesTbl.refileFrom, refileAt: rulesTbl.refileAt,
+          retroDoneAt: rulesTbl.retroDoneAt, retroMoved: rulesTbl.retroMoved,
+        }).from(rulesTbl)
+          .where(and(
+            eq(rulesTbl.id, row.id),
+            eq(rulesTbl.enabled, true),
+            isNotNull(rulesTbl.retroRequestedAt),
+            ...(deps.force ? [] : [isNull(rulesTbl.retroDoneAt)]),
+          ))
+          .limit(1));
+        if (!live) {
+          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false, parked: false };
+        }
+
+        const rule = live as OwedRule;
+        // A Change made since the probe: leave it to a later cycle, unstamped.
+        if (refileHeld(rule, now)) {
+          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false, parked: false };
+        }
+
+        // A WALK PARKED at the end of the mailboxes this install organizes ({@link parkedFence})
+        // stays finished until a mailbox comes under this install: none left outside, or one
+        // flipped to organizer after the park. Then it pages again from the beginning; the cursor
+        // write below replaces the parked value by its compare-and-set.
+        let afterId = rule.cursor;
+        const parkedAt = parkedSince(rule.cursor);
+        if (parkedAt !== null) {
+          const boxes = await tx.select({ role: mailboxes.organizerRole, eventAt: mailboxes.organizerEventAt })
+            .from(mailboxes)
+            .where(and(eq(mailboxes.accountId, rule.accountId), ne(mailboxes.status, "disabled")));
+          const rearm = boxes.every((m) => m.role === "organizer")
+            || boxes.some((m) => m.role === "organizer" && m.eventAt != null && m.eventAt.getTime() > parkedAt.getTime());
+          if (!rearm) {
+            return {
+              gone: false, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: rule.cursor, done: true, parked: true,
+            };
+          }
+          afterId = null;
+        }
+
+        // THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE. `evaluateRules` below reads the
+        // account's WHOLE rule set and known senders; these were once cached for the run (see the
+        // six writers above), so a user deleting a different rule or screening a sender in mid-walk
+        // had later pages decided under a stale set. Bound to `tx`, taken after the owned-rule lock
+        // and before `folder_state` (plain reads of `rules`/`contacts`, no row lock). Use
+        // `carryDialect`, not the bare handle: a `tx` object lacks the connection's dialect brand, so
+        // a repo built straight from `tx` refuses its first locking statement.
+        const pageRepo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
+        const rules: Rule[] = await pageRepo.listRules(rule.accountId);
+        const known: KnownSenders = await pageRepo.knownSenders(rule.accountId);
+
+        // The act on suggestions' own rule, read exactly (`rulesTheActWrote`: its decision, and none
+        // from anybody else) — a "Not junk" rescue and a promotion also leave `person_decided_at` NULL.
+        const byTheAct = rule.provenance === "promoted" && rule.personDecidedAt === null
+          && (await rulesTheActWrote(tx, rule.accountId, [rule])).has(rule.id);
+        const candidates = await selectCandidates(tx, {
+          rule, ownAddresses: own, limit: batch, afterId, byTheAct,
+        });
+        if (deps.turn) await deps.turn();
+
+        const releaseRun = isReleaseRun(rule);
+        let moved = 0;
+        let kept = 0;
+        let lastId: string | null = null;
+        let capped = false;
+
+        for (const c of candidates) {
+          // The budget is enforced PER ROW, not per page, so the cap is exact and the cursor
+          // resumes at the last row this pass actually decided about — never past one it skipped.
+          if (result.moved + moved >= budget) { capped = true; break; }
+
+          const decision = evaluateRules({
+            msg: ruleInputOf(c), rules, knownSenders: known, ownAddresses: ownSet,
+            // The fact from the row's column, or computed when it was never checked — never the
+            // rebuilt message, whose name is null (`rule-pass.ts`). A held claim stays held.
+            identity: identityOfRow(c),
+            auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
+            // LENIENT here, and deliberately: this pass acts ONLY on `source === "rule"` (below),
+            // so the `people_only` demotion — which answers `source: "policy"` — could never change
+            // an outcome it does not read. The automated-mail axis is the ohbox-tidy pass's job,
+            // not this one, and threading a per-account posture through a MULTI-account run would be
+            // a value with no consumer. See the `evaluateRules` filter at the `source !== "rule"`
+            // guard below.
+            ohboxPolicy: DEFAULT_OHBOX_POLICY,
+          });
+          lastId = c.messageId;
+          await checked();
+
+          // ONLY a rule answer moves already-filed mail. `screener` means the gate has not been
+          // passed and re-screening old mail is not this pass's business; `header` and `unclear`
+          // are placement refinements for a sender already past the gate, and relocating years of
+          // mail on a heuristic is exactly the over-reach `sensitive-rescreen` refuses.
+          // And only THIS rule's answer: the candidates are the sender's mail, and a letter another
+          // rule decides (a deny above it, or a sender rule whose past mail the person left where it
+          // was) stays put. A walk carries out its own rule, never another rule's backlog. The
+          // release press is the exception: its rows are held at the gate, counted and shown before
+          // the press, and leave by the router's answer.
+          // `destination` is `Destination | null` on the DTO — `null` is the `unclear` answer —
+          // and the null check is kept EXPLICIT rather than leaned on `source === "rule"`,
+          // which happens to imply it today. The two are separate fields and a narrowing that
+          // depends on their agreeing is one refactor away from filing mail into `null`.
+          const to = decision.destination;
+          // In either News spelling a message already at the router's place stays: no move.
+          if (decision.source !== "rule" || (decision.matchedRuleId !== rule.id && !releaseRun) || to === null
+            || canonicalDestination(to) === canonicalDestination(c.desiredFolder)) {
+            kept++;
+            continue;
+          }
+
+          await upsertDesired(tx, c, to, now);
+          // `meta` carries the TRUE previous desired folder, exactly as `sensitive-rescreen`
+          // does. That single field is what makes a later undo possible without this pass
+          // writing anything extra: the origin is durably recorded per message, in the journal
+          // the client already reads. The physical move's own inverse is written by
+          // `reconcileFolders` (`recordAudit("reconcile.move", …)`) one layer down.
+          await recordChange(tx, {
+            accountId: rule.accountId, entityType: "message", entityId: c.messageId, op: "move",
+            meta: { from: c.desiredFolder, to },
+          });
+          // The undo the account is owed, in the record a person can be shown — the same row
+          // `ohbox-tidy` and `screener-auto` write, because this is the same act: a machine moved
+          // mail nobody placed message by message. `ruleId` is the CAUSE, so "which press moved
+          // this?" is answerable; the change row above is cause-less and indistinguishable from a
+          // hand move. The physical move's own inverse stays `reconcileFolders`' to write.
+          await tx.insert(auditLog).values({
+            accountId: rule.accountId, action: auditAction("rule_retro_move"),
+            payload: {
+              mailboxId: c.mailboxId, messageId: c.messageId,
+              from: c.desiredFolder, to, ruleId: rule.id,
+            },
+            inverse: { messageId: c.messageId, from: to, to: c.desiredFolder },
+          });
+          moved++;
+          await written();
+        }
+
+        // Cursor and counter advance in the SAME transaction as the writes, so a crash can
+        // neither lose a page's work nor replay it. `retro_moved` is `+=` rather than a computed
+        // total: the pass is resumable, and a total would need a second scan to be honest.
+        if (lastId !== null) {
+          /* THE CURSOR ADVANCE IS A COMPARE-AND-SET; THE COUNTER IS NOT.
+           * A promotion clears `retro_cursor` for every owed rule in the role-flip transaction
+           * (`mailboxes.ts#clearOwedRetroFences`); this page must not put a stale fence back, so it
+           * advances only while the value is still the one it READ under the rule's `FOR UPDATE`
+           * (`is not distinct from`, not `=`, since the resting value is NULL). It cannot fire today
+           * (deleting the `case` leaves all 42 cases of `rule-retro.test.ts` green: the rule-row lock
+           * orders a reset after this commit) — kept because that ordering is an accident of where the
+           * lock sits. `retro_moved` advances UNCONDITIONALLY in the same statement (it counts written
+           * rows; a reset re-opens the WALK, not the history), so the two cannot disagree.
+           */
+          const [after] = await tx.update(rulesTbl)
+            .set({
+              retroCursor: sql`case when ${rulesTbl.retroCursor} is not distinct from ${rule.cursor}
+                               then ${d.castUuid(lastId)} else ${rulesTbl.retroCursor} end`,
+              retroMoved: sql`${rulesTbl.retroMoved} + ${moved}`,
+            })
+            .where(eq(rulesTbl.id, rule.id))
+            .returning({ cursor: rulesTbl.retroCursor, moved: rulesTbl.retroMoved });
+          // A re-filing's first move ends its origin (`pendingRefileFrom`), which `RuleDTO.retro.from`
+          // reads: announced in this transaction, as the stamp announces its own.
+          if (after && pendingRefileFrom(refileState(rule, rule.cursor, rule.retroMoved))
+            !== pendingRefileFrom(refileState(rule, after.cursor, after.moved))) {
+            await recordRuleDelta(tx as unknown as LedgerTx, rule.accountId, [rule.id], "update");
+          }
+        }
+
+        return {
+          gone: false, rows: candidates.length, moved, kept, cursor: lastId,
+          // The fence this page RESUMED from, read under the rule's own lock — the honest
+          // starting point for the decision's compare-and-set when this page advanced nothing.
+          resumedFrom: rule.cursor,
+          // A short page that was not cut short by the budget is the end of the backlog.
+          done: !capped && candidates.length < batch,
+          parked: false,
+        };
+      });
+
+      if (page.gone) { exhausted = false; break; }
+      // What the decision below compares the fence against: the value the pass resumed from when
+      // no page advanced it, and the last committed page's own cursor when one did.
+      walkedTo = page.cursor ?? page.resumedFrom;
+      stillParked = page.parked;
+      result.examined += page.rows;
+      result.moved += page.moved;
+      result.kept += page.kept;
+      if (page.done) { exhausted = true; break; }
+      if (page.rows === 0) { exhausted = true; break; }
+    }
+
+    if (pages >= maxPages) {
+      log.warn("rule_retro_truncated", {
+        ruleId: row.id, accountId: row.accountId, maxPages,
+        reason: "one rule's backlog exceeded a cycle's page bound — `retro_done_at` is NOT " +
+          "written, so the next cycle resumes from `retro_cursor`",
+      });
+      continue;
+    }
+    if (!exhausted) continue;   // the budget ran out mid-rule; resume next cycle.
+
+    // THE MARKER IS WRITTEN LAST, `WHERE retro_done_at IS NULL` — the database's answer when two
+    // drivers finish at once (same construction as `markKickstarted`, `sensitive_rescreen_at`);
+    // claiming it first would make a crash permanent, and re-running is safe because the candidate
+    // query is the idempotency. ONE stamp for an account that can hold several mailboxes: the owed
+    // probe is per ACCOUNT (`organizer_role = 'organizer'`) and the candidate query per MAILBOX
+    // (`organizer_role <> 'organizer'`), so completion is the COMPLEMENT of the candidate gate over
+    // the account's LIVE mailboxes — a predicate, in the `WHERE`, not a second flag. `status =
+    // 'disabled'` is not "live" (nothing reconciles it); `error` IS live (still ours to organize).
+    /* ONE STATEMENT, BECAUSE TWO COULD DISAGREE ABOUT THE SAME MAILBOX.
+     * The stamp and the cursor reset are one decision — is this backlog finished? As two `UPDATE`s a
+     * promotion landing between them answered them differently (stamp withholds on live mailbox B, B
+     * is promoted, reset then keeps the cursor), leaving the rule owed with a fence across the
+     * `messages.id` uuid space so B's older mail is never filed. Both fields now move in ONE statement
+     * under ONE row evaluation: finished ⇒ stamp and keep the spent cursor; not finished ⇒ leave
+     * `retro_done_at` NULL and park the walk ({@link parkedFence}): no per-cycle re-walk, and the
+     * next page re-arms it from the start once a mailbox comes under this install. Completion is the
+     * COMPLEMENT of the candidate gate over LIVE mailboxes (`status='disabled'` not live, `error` live).
+     */
+    /* THE STAMP ALSO YIELDS TO A RESET — the half the page CAS cannot cover.
+     * The page write holds the rule row `FOR UPDATE`, so a concurrent reset lands after it; this
+     * stamp runs after the loop, outside every transaction. If a promotion's reset lands between the
+     * last page and here, the walk that just ended is the fenced walk the reset discards, and
+     * stamping would write "finished" over a mailbox this pass never offered a row of. So the stamp
+     * arm requires the fence still be the one this pass left: a compare-and-set on the reset's column,
+     * `walkedTo` (the last committed page's cursor, or the start value). A reset makes it distinct, the
+     * rule stays owed with the NULL cursor, and the next cycle walks the whole account and stamps that.
+     */
+    const outside = aLiveMailboxIsOutsideTheWalk(row.accountId);
+    /* THE STAMP IS BOUND AS AN ISO STRING WITH A CAST, NOT COSMETIC.
+     * `${now}` inside a raw `sql` fragment binds a JS `Date` with no column to type it;
+     * drizzle's column-aware path (`set({ retroDoneAt: now })`) knows the column is `timestamptz`
+     * and serializes it, a fragment does not, and `postgres@3`'s `bytes.js` then refuses a `Date`.
+     * PGlite accepted it, so the PGlite suite was green while 7 pg files failed
+     * (`rule-retro-body.pg`, `rule-retro-subject.pg`) — the two backends disagree on PARAMETER
+     * SERIALIZATION, and a fragment is where that becomes reachable.
+     */
+    const decided = await stampRetroDone(db, row.accountId, { ruleId: row.id, outside, walkedTo, stillParked, now });
+
+    if (decided?.doneAt != null) {
+      // Counted from the stamp the database actually wrote, not from reaching this line: a rule
+      // re-run with `force` is already done and stamps nothing, and two drivers finishing at once
+      // produce one stamp between them. `RuleRetroResult.completed` says "finished and stamped".
+      result.completed++;
+      continue;
+    }
+    if (decided !== undefined && !stillParked) {
+      log.info("rule_retro_owed_pending_mailbox", {
+        ruleId: row.id, accountId: row.accountId,
+        reason: "the backlog is finished for the mailboxes this install organizes, and a live " +
+          "mailbox of the account is not one of them — `retro_done_at` is NOT written and " +
+          "the walk is parked, so a promotion re-walks the account's mail from the start",
+      });
+    }
+  }
+
+  if (result.moved > 0 || result.completed > 0) {
+    log.info("rule_retro_applied", {
+      accountId: deps.accountId ?? null, rules: result.rules, examined: result.examined,
+      moved: result.moved, kept: result.kept, completed: result.completed, capped: result.capped,
+    });
+  }
+  // The completion stamp ends on a turn of its own, apart from the pass after it.
+  if (deps.turn) await deps.turn();
+  return result;
+}
+
+/** The columns `pendingRefileFrom` reads, as the stamp returns them. */
+const REFILE_STATE = {
+  refileFrom: rulesTbl.refileFrom, refileAt: rulesTbl.refileAt, retroRequestedAt: rulesTbl.retroRequestedAt,
+  retroDoneAt: rulesTbl.retroDoneAt, retroMoved: rulesTbl.retroMoved, retroCursor: rulesTbl.retroCursor,
+};
+
+/**
+ * THE FINISHED STAMP, one statement deciding it (the block above says why), and the rule delta
+ * announcing it in the SAME transaction — the stamp is on `RuleDTO`, so a client learns the pass
+ * finished only from a change row. The UPDATE takes the rule row before `recordRuleDelta` takes
+ * `account_sync_state`, the page transaction's order. `WHERE retro_done_at IS NULL` is the answer
+ * when two drivers finish at once: one writes the stamp and its delta, the other writes nothing.
+ * A park that ends a re-filing still waiting (`pendingRefileFrom`, which `RuleDTO.retro.from`
+ * reads) files the delta too: a parked walk is never stamped, and its origin ends there.
+ */
+async function stampRetroDone(
+  db: Tx, accountId: string,
+  a: { ruleId: string; outside: SQL; walkedTo: string | null; stillParked: boolean; now: Date },
+): Promise<{ doneAt: Date | null; cursor: string | null } | undefined> {
+  return db.transaction(async (tx) => {
+    const d = dialect(tx);
+    const walked = a.walkedTo === null ? sql`null` : d.castUuid(a.walkedTo);
+    // A page that found the walk parked walked nothing, so it never stamps (a promotion since that
+    // page re-arms the next one), and it keeps the instant it was parked at.
+    const parked = a.stillParked;
+    const park = parked && a.walkedTo !== null ? a.walkedTo : parkedFence(a.now);
+    const [decided] = await tx.update(rulesTbl)
+      .set({
+        retroDoneAt: parked ? sql`${rulesTbl.retroDoneAt}` : sql`case
+          when ${a.outside} then ${rulesTbl.retroDoneAt}
+          when ${rulesTbl.retroCursor} is distinct from ${walked}
+            then ${rulesTbl.retroDoneAt}
+          else ${d.ts(a.now)} end`,
+        // Parked only over the fence this pass left; a reset since then keeps its NULL.
+        retroCursor: sql`case when ${a.outside} and ${rulesTbl.retroCursor} is not distinct from ${walked}
+          then ${d.castUuid(park)} else ${rulesTbl.retroCursor} end`,
+      })
+      .where(and(eq(rulesTbl.id, a.ruleId), isNull(rulesTbl.retroDoneAt)))
+      .returning(REFILE_STATE);
+    if (decided === undefined) return undefined;
+    // The row as it stood: owed, and the fence this pass left wherever the park replaced it.
+    const parkedNow = decided.retroCursor !== null && decided.retroCursor.toLowerCase() === park.toLowerCase();
+    const was: RefileState = { ...decided, retroDoneAt: null, retroCursor: parkedNow ? a.walkedTo : decided.retroCursor };
+    const told = decided.retroDoneAt != null || pendingRefileFrom(was) !== pendingRefileFrom(decided);
+    if (told) await recordRuleDelta(tx as unknown as LedgerTx, accountId, [a.ruleId], "update");
+    return { doneAt: decided.retroDoneAt, cursor: decided.retroCursor };
+  });
+}
+
+/**
+ * THE PARKED FENCE: a walk finished for the mailboxes this install organizes while another live
+ * mailbox of the account is outside it. The rule stays owed (the press still holds for that
+ * mailbox), and `retro_cursor` holds this value instead of NULL, so the next cycles do not walk the
+ * whole backlog again. It sorts above every v4 and v7 uuid (version nibble `f`), and its last 64
+ * bits are the instant it was parked, which the re-arm compares against `organizer_event_at`. The
+ * prefix is `rule-key.ts`'s, which `pendingRefileFrom` reads.
+ */
+function parkedFence(at: Date): string {
+  const hex = Math.max(0, Math.trunc(at.getTime())).toString(16).padStart(16, "0");
+  return `${PARKED_FENCE_PREFIX}${hex.slice(0, 4)}-${hex.slice(4)}`;
+}
+
+function parkedSince(cursor: string | null): Date | null {
+  if (cursor === null || !cursor.toLowerCase().startsWith(PARKED_FENCE_PREFIX)) return null;
+  const ms = Number.parseInt(cursor.slice(PARKED_FENCE_PREFIX.length).replace("-", ""), 16);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+/**
+ * A LIVE MAILBOX OF THIS ACCOUNT THAT THIS INSTALL DOES NOT ORGANIZE — the exact complement of
+ * {@link selectCandidates}' mailbox gate, written once because it is asked twice.
+ *
+ * The candidate query drops a message whose mailbox is `disabled` OR not `organizer`; this asks
+ * whether such a mailbox EXISTS while still being live. `true` therefore means "this pass cannot
+ * see all of the account's mail", which is the one fact that decides whether a finished walk is a
+ * finished BACKLOG. Written as the negation of the other predicate rather than as its own
+ * sentence so an edit to one cannot silently disagree with the other.
+ */
+function aLiveMailboxIsOutsideTheWalk(accountId: string) {
+  return sql`exists (
+    select 1 from ${mailboxes} mb
+     where mb.account_id = ${accountId}
+       and mb.status <> 'disabled'
+       and mb.organizer_role <> 'organizer'
+  )`;
+}
+
+/**
+ * ONE page of mail a rule may reconsider — LOCKED FOR UPDATE, oldest id first; written fresh, not
+ * copied from `sensitive-rescreen.ts#selectCandidates`. Candidates: the rule's {@link matchPredicate}
+ * (the router decides), `folder_state.desired_folder <> rule.destination`, mailbox not `disabled`.
+ * User-intent exclusions: `last_set_by` in `'us'`/`'peer'` only (`reconcileFolders` skips `!== "us"`);
+ * no non-`none` `message_states`; no `drafts` reply; no DECIDED `approvals`; no same-thread
+ * own-address reply; outside a release run, no placement somebody decided away from the gate
+ * (`folder_state.decided_at`). READ is NOT excluded. `FOR UPDATE OF folder_state`; `rule-retro.pg.test.ts`.
+ */
+async function selectCandidates(
+  t: Tx,
+  opts: { rule: OwedRule; ownAddresses: readonly string[]; limit: number; afterId: string | null; byTheAct: boolean },
+): Promise<RetroRow[]> {
+  const { rule } = opts;
+  const d = dialect(t);
+  const refile = isRefileRun(rule) && rule.refileFrom !== null;
+  const pile = rule.refileFrom === null ? []
+    : ORGANIZED_FOLDERS.filter((f) => canonicalDestination(f) === canonicalDestination(rule.refileFrom!));
+  const filters = [
+    eq(messages.accountId, rule.accountId),
+    matchPredicate(rule, d),
+    sql`${folderState.desiredFolder} <> ${rule.destination}`,
+    // A RULE MAY ONLY MOVE MAIL OUT OF A FOLDER ohmail ORGANIZES — an ALLOW-LIST over the six and the
+    // legacy News spelling, never `desired_folder <> rule.destination` alone, which would empty a
+    // customer's `Archive` or Sent folder into a rule's destination. `ORGANIZED_FOLDERS` is
+    // `types.ts#isOrganizedFolder`'s own set, from `@trafficflow/core` and NOT the IMAP adapter
+    // (`rule-retro.no-imap.test.ts`). The `last_set_by` line below is the second, independent gate.
+    sql`${folderState.desiredFolder} in ${sql`(${sql.join(
+      ORGANIZED_FOLDERS.map((f) => sql`${f}`), sql`, `,
+    )})`}`,
+    /* ONE OF TWO PASSES THAT ADMIT `'peer'`, BOTH ONLY ON A PRESS (own mail: the release).
+     * `'peer'` is a placement by ANOTHER install of this account in a folder ohmail organizes,
+     * recorded by a READER (`pipeline.ts#readerAdoption`). It was once `'external'` ("hands off, for
+     * ever"), which stranded mail behind a decision already made. Safe because it is gated on a
+     * PRESS (`retro_requested_at`), as `gap-catchup` is on the person's File after its count:
+     * `ohbox-tidy` and `screener-auto` run unbidden and stay `'us'`-only, or a promotion would
+     * re-file another install's placements in bulk.
+     * `'external'` is still excluded — a person dragging a message into INBOX in Apple Mail arrives
+     * looking identical, and their hand still wins. The five user-intent exclusions below still apply.
+     */
+    /* THE PRESS THAT RELEASES MAIL STUCK AT THE GATE — `rules.release_held_at`, and nothing else.
+     * Without it this is `'us'`/`'peer'` as above. With it, ONE more shape joins: a row recorded
+     * as a hand file that is STILL AT THE GATE and settled there. That is the set a person is
+     * shown by name and count before they press ("N held messages from senders you already
+     * decided"), and the press is the consent that a placement recorded as theirs may be
+     * reconsidered. THREE terms keep the widening narrow, and each excludes a shape that must not
+     * move: the folder is the gate, so a hand file anywhere else — an INBOX drag, a customer's own
+     * folder — is untouched; OBSERVED is the gate too, so the row is settled there and nothing
+     * already in flight is re-decided (spelled as a second equality against the gate rather than
+     * `desired = observed`, which says the same thing about these rows and reads to
+     * `mover-candidate-allowlist.census.ts` as a folder constraint naming a COLUMN);
+     * and the licence is per RULE, so it reaches only the senders that rule claims. The five
+     * user-intent exclusions below still apply to every one of them. */
+    isReleaseRun(opts.rule)
+      ? sql`(${folderState.lastSetBy} in ('us', 'peer', 'external')
+             and ${folderState.desiredFolder} = ${SCREENER_GATE}
+             and ${folderState.observedFolder} = ${SCREENER_GATE})`
+      : inArray(folderState.lastSetBy, ["us", "peer"]),
+    /* A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE: only the letters in the place it filed into,
+       in either News spelling. Everything outside it stays where the person was told it would. */
+    ...(refile ? [pile.length === 0 ? sql`false` : sql`${folderState.desiredFolder} in ${sql`(${sql.join(
+      pile.map((f) => sql`${f}`), sql`, `,
+    )})`}`] : []),
+    /* THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083).
+     * `status = 'disabled'` alone stopped being sufficient once the loser of an organizer lease
+     * became a READER (which is `connected`) rather than a disabled row: without the second clause
+     * this pass wrote `desired_folder`/`last_set_by: 'us'` on a mailbox another install arranges. The
+     * rows are reachable — a demoted organizer keeps every `'us'` row it filed, and a reader's ingest
+     * writes `'peer'` (now admitted). `reconcileFolders` is skipped for a reader, so the intent SITS
+     * in `folder_state` and fires in full the instant the install is promoted. ONE `NOT EXISTS`, not
+     * two, because the two facts are one question about one row.
+     */
+    sql`not exists (
+      select 1 from ${mailboxes} mb
+       where mb.id = ${messages.mailboxId}
+         and (mb.status = 'disabled' or mb.organizer_role <> 'organizer')
+    )`,
+    // 2 — the user has triaged this message.
+    sql`not exists (
+      select 1 from ${messageStates} ms
+       where ms.message_id = ${messages.id} and ms.state <> 'none'
+    )`,
+    // 3 — the user is replying, or has replied, through ohmail.
+    sql`not exists (
+      select 1 from ${drafts} d where d.in_reply_to_message_id = ${messages.id}
+    )`,
+    // 4 — the user decided on an AI proposal about this message.
+    sql`not exists (
+      select 1 from ${approvals} a
+       where a.message_id = ${messages.id} and a.status <> 'pending'
+    )`,
+  ];
+  /* 5 — THE USER ANSWERED THIS SENDER, through the one question its two siblings ask.
+   * A machine's reply is not the person's, and neither is a reply they wrote to somebody else on
+   * the thread — `weAnsweredThisSenderWhere` carries both narrowings and the reasoning.
+   * NOT ON A RELEASE RUN: those candidates are all gate-settled rows a person was shown by name
+   * and count before pressing "Release N" — the press outranks a reply somewhere in the thread
+   * (measured: this exclusion kept ALL 57 offered rows on a live account, 101 presses moved zero;
+   * `heldReleaseSummary` never applies it, so skipping it here is what makes the number offered
+   * the number that moves). The message-level exclusions above bind a release run unchanged.
+   */
+  if (!isReleaseRun(rule)) {
+    filters.push(sql`not ${weAnsweredThisSenderWhere(d, {
+      accountId: messages.accountId as unknown as SQL,
+      threadId: messages.threadId as unknown as SQL,
+      fromAddress: messages.fromAddress as unknown as SQL,
+      ownAddresses: opts.ownAddresses,
+    })}`);
+    /* 7 — A PLACE SOMEBODY DECIDED (`decided_at`): the person's own filing, here or adopted from
+       another client, and an answer the gate admitted for itself alone. A rule about the sender never
+       moves it. A letter put back at the gate waits for a decision about its sender, and a rule the
+       person made is that decision (the act's own rule leaves it: 6 below). */
+    // A refile walk takes a placement made in the pile before the Change with it; a later one stays.
+    filters.push(refile
+      ? sql`(${folderState.decidedAt} is null or ${folderState.decidedAt} <= ${rule.retroRequestedAt === null ? sql`null` : d.ts(rule.retroRequestedAt)})`
+      : sql`(${folderState.decidedAt} is null or ${folderState.desiredFolder} = ${SCREENER_GATE})`);
+  }
+  /* A LETTER HELD FOR WANT OF CONFIRMATION (mail 0176) leaves the gate only on a person's word:
+     a press on its own address, or the person skip (a person consented to the address, or wrote a rule
+     for its domain, and the gate would not hold it now). The walk re-evaluates without the arrival
+     door's fact, so it asks here. */
+  filters.push(sql`not (${folderState.desiredFolder} = ${SCREENER_GATE} and ${messages.unconfirmedHold} is true
+    and not ${personSkipSql(d, rule.accountId, {
+      sender: sql`lower(${messages.fromAddress})`, auth: sql`${messages.authVerdict}`, brand: sql`${messages.senderCheckBrand}`,
+      unconfirmedOnly: heldUnconfirmedOnlySql({ senderCheck: messages.senderCheck, unconfirmed: messages.unconfirmedHold }),
+    }, SCREENING_AUTH_VERDICTS)})`);
+  // 6 — THE ACT ON SUGGESTIONS' RULE LEAVES WHAT THE PERSON PUT BACK (mail 0138): it re-walks the
+  // sender's backlog, and a filing the person undid is not an automatic decision's to make again.
+  // Nor a letter no automatic path may read (a code, a reset), held or filed; a person's release
+  // press still moves what it offered.
+  if (opts.byTheAct) {
+    filters.push(isNull(folderState.autoFilingUndoneAt));
+    if (!isReleaseRun(rule)) filters.push(automaticAiAdmits(messages));
+  }
+  if (opts.afterId) filters.push(gt(messages.id, d.castUuid(opts.afterId)));
+
+  const rows = await d.forUpdate(t.select({
+    messageId: messages.id,
+    mailboxId: messages.mailboxId,
+    fromAddress: messages.fromAddress,
+    subject: messages.subject,
+    fromName: messages.fromName,
+    senderCheck: messages.senderCheck,
+    senderCheckBrand: messages.senderCheckBrand,
+    observedFolder: folderState.observedFolder,
+    desiredFolder: folderState.desiredFolder,
+    headers: messageBodies.headers,
+    // The body text rides the join `headers` already pays for (mail 0052). NULL on the LEFT
+    // JOIN's empty side, `""` downstream — see `RetroRow.bodyText`.
+    bodyText: messageBodies.text,
+  }).from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+    .where(and(...filters))
+    .orderBy(asc(messages.id))
+    .limit(opts.limit), { of: folderState });
+
+  return rows.map((r) => ({
+    messageId: r.messageId,
+    mailboxId: r.mailboxId,
+    fromAddress: r.fromAddress,
+    subject: r.subject,
+    fromName: r.fromName,
+    senderCheck: r.senderCheck,
+    senderCheckBrand: r.senderCheckBrand,
+    bodyText: r.bodyText ?? "",
+    headers: (r.headers as Record<string, string[]> | null) ?? {},
+    observedFolder: r.observedFolder,
+    desiredFolder: r.desiredFolder,
+  }));
+}
+
+/**
+ * Whose mail this rule is about, in SQL, written to hit the indexes 0034 adds.
+ * `sender` is an equality on `lower(from_address)` — `messages_account_from_addr_idx`.
+ * `domain` is an equality on the FIRST-`@` domain — `messages_account_from_domain_idx` — never
+ * `like '%@corp.com'` (no index, and matches `evil-corp.com`) and never `split_part(…, '@', 2)`
+ * (differs on a two-`@` address); the same expression `screener-service#heldRowsForDomain` uses, so
+ * the set a rule MOVES and the set it COVERS match. A `header` rule reaches here as a predicate that
+ * matches NOTHING (no surface composes one — `rule_create` has no `header` member), completing
+ * immediately having moved nothing rather than matching every message.
+ */
+function matchPredicate(rule: OwedRule, d: Dialect) {
+  const match = ruleMatchKey(rule.match);
+  if (match === "") return sql`false`;
+  if (rule.kind === "sender") return sql`lower(${messages.fromAddress}) = ${match}`;
+  // The seam's spelling is the server's own expression, so the domain index still serves it.
+  if (rule.kind === "domain") return sql`${d.domainOf(messages.fromAddress)} = ${match}`;
+  return sql`false`;
+}
+

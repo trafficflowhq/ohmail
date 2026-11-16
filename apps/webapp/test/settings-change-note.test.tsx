@@ -134,9 +134,10 @@ describe("the consent hook carries both", () => {
       };
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
-    const { useConsentState } = await import("../app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
+    const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api");
     let hook: ReturnType<typeof useConsentState> | null = null;
-    function Harness() { hook = useConsentState(true); return null; }
+    function Harness() { hook = useConsentState(true, null, CLOUD_CONSENT); return null; }
     await mount(h(Harness));
     expect(hook!.dormancyChange, "the read's refusal was dropped").toEqual(REFUSED);
     expect(hook!.signatureChanges).toEqual({ "m-1": REFUSED });
@@ -176,9 +177,10 @@ describe("the signature editors on a reader", () => {
       return new Response(JSON.stringify({ seedConfirmedAt: null, screeningResetAt: null, dormancyDays: 60, signatures: {} }),
         { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
-    const { useConsentState } = await import("../app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
+    const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api");
     let hook: ReturnType<typeof useConsentState> | null = null;
-    function Harness() { hook = useConsentState(true); return null; }
+    function Harness() { hook = useConsentState(true, null, CLOUD_CONSENT); return null; }
     await mount(h(Harness));
     await act(async () => { await hook!.setMailboxSignature("m-1", null, "<p><strong>Anna</strong></p>"); });
     expect(bodies, "a formatted signature was sent as a clear").toEqual([

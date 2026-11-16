@@ -11,8 +11,8 @@
 
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
-import type { SyncDeps } from "@trafficflow/worker/sync";
-import type { OrganizerProfileSync, SettingsLeft } from "@trafficflow/worker/profile";
+import type { SyncDeps } from "@ohmail/organizer/sync";
+import type { OrganizerProfileSync, SettingsLeft } from "@ohmail/organizer/profile";
 import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
 /* The name only — see {@link FirstSyncState}'s own header for why it is declared over there. */
 import type { FirstSyncState } from "./first-sync.js";

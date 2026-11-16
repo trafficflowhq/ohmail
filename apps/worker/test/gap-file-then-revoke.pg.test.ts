@@ -9,7 +9,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, auditLog, folderState, mailboxes, messages, routingDecisions, rules, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ScreenerService, rulesService, type ServiceContext } from "@trafficflow/services";
-import { gapCatchupPass } from "../src/gap-catchup.js";
+import { gapCatchupPass } from "@ohmail/organizer/gap-catchup";
 
 /**
  * A SCREENER RULE THAT FILED A GAP BATCH IS REVOKED, on real Postgres: the rule is

@@ -650,7 +650,7 @@ export interface ApplyScreenerDecisionInput {
    * passes `false`. `screening_baseline_at` gates which of an account's ALREADY-HELD mail counts
    * as pre-existing versus newly screened (see this function's own comment on the `setWhere`
    * above); it is account-wide with no per-mailbox fence to fall back on. Request signatures are
-   * still owed — see `apps/worker/src/request-drain.ts`'s own header — so until it lands, the
+   * still owed — see `packages/organizer/src/request-drain.ts`'s own header — so until it lands, the
    * drain path must not be the one thing that can move this account-wide cutoff.
    */
   stampBaseline?: boolean;

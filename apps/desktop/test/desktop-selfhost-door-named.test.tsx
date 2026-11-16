@@ -245,7 +245,11 @@ describe("the window's sync strip says when its server is not fetching new mail"
     setActiveFormatZone("UTC");
     const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
     const { EngineProvider } = await import("../../webapp/app/shell/engine");
-    const { MailStateProvider, FACTS_POLL_MS } = await import("../../webapp/app/shell/MailStateProvider");
+    const { MailStateContext, useMailStateBinding, FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
+    /* The mail state's mount, made here from the binding's own two exports: the provider's component stands in a
+       file of its own, and this file names the web app's folder no more often than it did. */
+    const MailStateProvider = ({ children, ...input }: { children: React.ReactNode }): React.ReactElement =>
+      h(MailStateContext.Provider, { value: useMailStateBinding(input as never) }, children);
     // The strip's state, said in the frame's one notice slot.
     const { TodaysNotice } = await import("../../webapp/test/_todays-notice");
     const store = new MemoryMirrorStore();
@@ -277,7 +281,7 @@ describe("the window's sync strip says when its server is not fetching new mail"
           value: isManagedDoor(status),
           children: h(EngineProvider as never, {
             demo: false, engine,
-            children: h(MailStateProvider as never, { probe, mirrored: 12, children: h(TodaysNotice, null) } as never),
+            children: h(MailStateProvider as never, { scope: null, probe, mirrored: 12, children: h(TodaysNotice, null) } as never),
           } as never),
         }),
       } as never));

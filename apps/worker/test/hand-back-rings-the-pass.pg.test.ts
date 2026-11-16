@@ -9,7 +9,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { SYNC_KICK_EVERY_MS, startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * "HAND THE MAILBOX BACK" RINGS THE PASS (RULING-026 lane E). The release stamped only

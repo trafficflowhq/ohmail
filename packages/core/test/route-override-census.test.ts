@@ -27,7 +27,7 @@ import ts from "typescript";
 const HERE = resolve(import.meta.dirname ?? ".");
 const REPO = resolve(HERE, "../../..");
 const ROOTS = [
-  "packages/core/src", "packages/services/src", "apps/worker/src", "packages/db/src",
+  "packages/core/src", "packages/services/src", "apps/worker/src", "packages/organizer/src", "packages/db/src",
 ] as const;
 
 /**

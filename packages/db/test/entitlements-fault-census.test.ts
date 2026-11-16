@@ -60,6 +60,8 @@ describe("every host entitlements client records its failed calls", () => {
     const src = join(ROOT, "apps", app, "src");
     try { return statSync(src).isDirectory() ? sources(src) : []; } catch { return []; }
   });
+  // The worker's passes that moved to the organizer's package (ruling:organizer-cut), read as before.
+  files.push(...sources(join(ROOT, "packages", "organizer", "src")));
   const read = files.map((f) => ({ file: relative(ROOT, f), ...clientCalls(f, readSource(f)) }))
     .filter((r) => r.calls > 0);
 

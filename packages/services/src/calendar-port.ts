@@ -74,3 +74,23 @@ export interface CalendarFeedPort {
   /** One page of the first load's calendar phase, built by the same builders as the feed. */
   snapshotPage(db: Db, accountId: string, q: CalendarSnapshotQuery): Promise<CalendarSnapshotSlice>;
 }
+
+/**
+ * WHAT A COMPOSITION THAT KEEPS A CALENDAR HANDS ITS CONNECT DOOR, as a type and nothing else.
+ * No member has a default, and the port itself is optional: a composition that hands none offers
+ * no way to connect and takes none.
+ *
+ * The port holds no resolver and no way out, by construction: the door reads a typed address by
+ * its shape and dials nothing. Where a name leads is decided where it is dialled, by the worker's
+ * request port, under the same policy.
+ */
+export interface CalendarConnectPort {
+  /** What a typed address may name here: `cloud` on a managed server, whatever any variable says. */
+  readonly policy: "cloud" | "own-network";
+  /**
+   * The two ways whose sign-in is a ceremony at their provider. `on` is the operator's switch, read
+   * exactly; `configured` says the provider's client is set up. Both, and a built ceremony, make a
+   * way offered; any one missing and it is neither listed nor taken.
+   */
+  readonly ceremonies: Readonly<Record<"google" | "microsoft", { readonly on: boolean; readonly configured: boolean }>>;
+}

@@ -11,7 +11,7 @@ import {
   readSelfCheck, selfCheckSaid, type SelfCheck, type SelfCheckDiffer, type SelfCheckUnreadable,
 } from "@trafficflow/core/diagnostics";
 
-import { useMailboxFacts } from "./MailStateProvider";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /** What one press answered. `failed` is the request itself — nothing was read. */

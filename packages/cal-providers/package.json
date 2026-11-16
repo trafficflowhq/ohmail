@@ -34,6 +34,12 @@
       "node": "./dist/request/index.js",
       "default": "./src/request/index.ts"
     },
+    "./connect": {
+      "types": "./src/connect.ts",
+      "ohmail-source": "./src/connect.ts",
+      "node": "./dist/connect.js",
+      "default": "./src/connect.ts"
+    },
     "./google": {
       "types": "./src/google/index.ts",
       "ohmail-source": "./src/google/index.ts",

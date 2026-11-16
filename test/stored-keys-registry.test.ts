@@ -44,9 +44,9 @@ const TREES = [
   "apps/webapp/app", "apps/webapp/public", "apps/webapp/middleware.ts",
   "apps/desktop/src", "apps/paired-page/src", "apps/desktop/src-tauri/src", "apps/desktop/src-tauri/tauri.conf.json",
   "apps/mobile/src", "apps/mobile/app", "apps/mobile/app.json", "apps/mobile/plugins", "apps/mobile/modules",
-  "apps/sidecar/src", "apps/server/src", "apps/worker/src", "apps/api-vercel/src",
+  "apps/sidecar/src", "apps/server/src", "apps/worker/src", "packages/organizer/src", "apps/api-vercel/src",
   "packages/client-engine/src", "packages/ui/src", "packages/api/src", "packages/core/src",
-  "packages/services/src", "packages/db/src", "packages/app-logic/src",
+  "packages/services/src", "packages/db/src", "packages/app/src", "packages/app-logic/src",
 ];
 const KINDS = /\.(?:ts|tsx|js|mjs|rs|json|kt|swift)$/;
 const SKIPPED = /(^|\/)(node_modules|generated|target|dist|build|\.next|test|__tests__)(\/|$)|_tests\.rs$|\.test\.tsx?$|\.d\.ts$|stored-keys\.ts$|(^|\/)testing[\w-]*\.ts$/;
@@ -125,6 +125,7 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "secret-service": "the name of a platform's keystore in a log line",
   "ohmail-ImageProxy/1.0": "a user-agent word",
   "ohmail-Unsubscribe/1.0": "a user-agent word",
+  "ohmail-Places/1.0": "a user-agent word",
   "ohmail/scheduled-file/1\\n": "the label a scheduled file's seal is taken under",
   "ohmail_admin": "a database role's name and the brand word of its handle",
   "ohmail_worker": "a database role's name and the brand word of its handle",
@@ -160,6 +161,8 @@ const NOT_STORED: Readonly<Record<string, string>> = {
   "app.ohmail.hostpinning.HostPinningModule": "a class name in the phone's configuration",
   "app.ohmail.posture.OhmailPostureModule": "a class name in the phone's configuration",
   "app.ohmail.organizer.OrganizerServiceModule": "a class name in the phone's configuration",
+  "app.ohmail.appswitch.OhmailSwitchModule": "a class name in the phone's configuration",
+  "app.ohmail.appswitch.SwitchProvider": "a class name in the phone's configuration",
   "app.ohmail.organizer.STOP": "an intent's action word inside the phone app",
   "ohmail.engine": "a log tag on the phone",
   "app.ohmail.engine": "a log subsystem's name on the phone",

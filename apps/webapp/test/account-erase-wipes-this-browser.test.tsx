@@ -171,7 +171,7 @@ async function plantPreferences(owner: string): Promise<string[]> {
   const { writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
   const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
   const { dismissKey } = await import("../app/(product)/mailbox/LifecycleBanner.js");
-  const { resumeOnceKey } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { resumeOnceKey } = await import("../app/(product)/resume/use-resume-door.js");
   localStorage.setItem(searchSortKey(owner), "oldest");
   localStorage.setItem(seedNotNowKey(owner), "1");
   writeAfterVerb("stay", owner);

@@ -5,9 +5,9 @@ import { mailboxes, mailboxCredentials, messages, folderState, accounts, rules, 
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type ClassifierPort, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
 import type { WorkerConfig } from "../src/config.js";
 
 /**

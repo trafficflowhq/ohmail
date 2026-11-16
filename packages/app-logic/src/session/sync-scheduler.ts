@@ -15,6 +15,7 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { readOwnerMarker, type OwnerMarker } from "../storage/owner-cookie.js";
+import { storageOwner } from "../storage/storage-owner.js";
 import { refusalIsStale } from "./access-window.js";
 import { subscribeSessionRevival } from "./session-truth.js";
 import type { ResumeLane } from "./resume-lane.js";
@@ -1256,7 +1257,7 @@ function isAccountRefusal(err: unknown): boolean {
  * stands down (no wall would revive it) nor counts it: the account is open.
  */
 function isAccessRefusal(err: unknown): boolean {
-  return isAccountRefusal(err) && !refusalIsStale();
+  return isAccountRefusal(err) && !refusalIsStale(storageOwner());
 }
 
 /** Every live loop's revive, so the shell can restart the ones a refusal stood down. */

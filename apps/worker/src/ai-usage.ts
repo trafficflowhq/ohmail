@@ -1,8 +1,8 @@
 import type { ClassifierPort, DraftPort, Logger, WorkflowPort } from "@trafficflow/core";
 import { AI_USAGE_LINES_PER_POST, type AiUsageLine, type UsageReceipt } from "@trafficflow/db";
-import { usageLineOf, type UsageHook } from "./ai-usage-line.js";
+import { usageLineOf, type UsageHook } from "@ohmail/organizer/ai-usage-line";
 
-export { screenerUsageHook, type UsageHook } from "./ai-usage-line.js";
+export { screenerUsageHook, type UsageHook } from "@ohmail/organizer/ai-usage-line";
 
 /** How long lines wait before the timer flushes them. */
 export const AI_USAGE_FLUSH_MS = 30_000;

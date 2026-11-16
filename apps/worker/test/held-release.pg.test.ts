@@ -15,7 +15,7 @@ import {
   HELD_RELEASE_AUDIT_ACTION,
 } from "@trafficflow/services/mail";
 import type { Db, ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * "N HELD MESSAGES FROM SENDERS YOU ALREADY DECIDED" — THE COUNT, THE PRESS AND WHAT MOVES.

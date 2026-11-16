@@ -12,7 +12,7 @@ import {
   readComposeDraft,
   writeComposeDraft,
 } from "@ohmail/app-logic/writing/compose";
-import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
+import { bootCacheKey, dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_SEND_KEY, clearLaneScratch, composeBufferFingerprint, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
   sentCopyNotesKey, writeReplyDraft, writeReplyMeta,
@@ -341,12 +341,20 @@ describe("a stored key's name does not change with the scope being handed in", (
     const { composerId, composeSessionKey, composeRowKey } = await import("@ohmail/app-logic/writing/compose");
     const { sentCopyNotesKey } = await import("@ohmail/app-logic/writing/mail-send");
     const { impersonationSeenKey } = await import("@ohmail/app-logic/screener/impersonation-filed");
+    const { CONSENT_BOOT_SCOPE } = await import("@ohmail/app-logic/consent/consent-state");
     const c = composerId();
+    /* The two remembered answers are kept for somebody or not at all: under no scope none is kept. */
+    const kept = (s: string | null, cache: string): string => {
+      if (s !== null) return bootCacheKey(cache, s);
+      expect(() => bootCacheKey(cache, s as unknown as string), `${cache}: kept under no scope`).toThrow(/no owner/);
+      return "none is kept";
+    };
     const table = (s: string | null): Record<string, string> => ({
       compose: composeDraftKey(s), session: composeSessionKey(s), row: composeRowKey(s),
       reply: replyDraftKey("m-1", s), replyMeta: replyMetaKey("m-1", s),
       locks: sendLocksKey(s), notes: sentCopyNotesKey(s),
       intents: screenerIntentsKey(s), impersonationSeen: impersonationSeenKey(s),
+      consentCache: kept(s, CONSENT_BOOT_SCOPE), ownAddresses: kept(s, "own-addresses"),
       ...viewsTable(s),
     });
     expect(table("acc-1")).toEqual({
@@ -354,6 +362,7 @@ describe("a stored key's name does not change with the scope being handed in", (
       reply: "ohmail.ui.reply.acc-1:m-1", replyMeta: "ohmail.ui.replymeta.acc-1:m-1",
       locks: "ohmail.send.locks.acc-1", notes: "ohmail.send.notes.acc-1",
       intents: "ohmail.screener.intents.acc-1", impersonationSeen: "ohmail.screener.impersonationSeen.acc-1",
+      consentCache: "ohmail.boot.consent.acc-1", ownAddresses: "ohmail.boot.own-addresses.acc-1",
       deleteIntents: "ohmail.delete.intents.acc-1", routingIntents: "ohmail.routing.intents.acc-1",
       undoWindows: "ohmail.intent-windows.acc-1", readingAlong: "ohmail.ui.readingAlong.acc-1",
       searchOrder: "ohmail.ui.search.sort.acc-1", foldersOpened: "ohmail.ui.rail.foldersOpened.acc-1",
@@ -365,6 +374,7 @@ describe("a stored key's name does not change with the scope being handed in", (
       reply: "ohmail.ui.reply:m-1", replyMeta: "ohmail.ui.replymeta:m-1",
       locks: "ohmail.send.locks.local", notes: "ohmail.send.notes.local",
       intents: "ohmail.screener.intents.local", impersonationSeen: "ohmail.screener.impersonationSeen.local",
+      consentCache: "none is kept", ownAddresses: "none is kept",
       deleteIntents: "ohmail.delete.intents.anon", routingIntents: "ohmail.routing.intents.local",
       undoWindows: "ohmail.intent-windows.local", readingAlong: "ohmail.ui.readingAlong.local",
       searchOrder: "ohmail.ui.search.sort.local", foldersOpened: "ohmail.ui.rail.foldersOpened.local",

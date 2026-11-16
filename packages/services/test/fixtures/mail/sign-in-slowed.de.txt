@@ -1,0 +1,21 @@
+Subject: Fehlgeschlagene Anmeldeversuche bei deinem ohmail-Konto
+
+ohmail.
+
+Viele Anmeldeversuche sind fehlgeschlagen.
+
+In den letzten Minuten sind viele Versuche fehlgeschlagen, dich bei deinem ohmail-Konto anzumelden. Sie kamen von Geräten, die noch nie angemeldet waren, und keines davon hatte dein Passwort.
+
+ohmail hat die Anmeldung von neuen Geräten für eine Weile verlangsamt. Die Geräte, die du schon benutzt, melden sich an wie bisher.
+
+Meldest du dich gerade von einem neuen Gerät an, warte ein paar Minuten und versuch es noch einmal.
+
+Unter Einstellungen › Geräte stehen die Geräte, die bei deinem Konto angemeldet sind (https://ohmail.app/settings/devices).
+
+Zeit: 26. September 2026, 12:00 UTC
+
+Wir fragen dich nie per Mail nach einem Code, einem Passwort oder einem Wiederherstellungscode.
+
+--
+Schreib an support@ohmail.app, und ein Mensch antwortet.
+TrafficFlow GmbH, Zürich, Schweiz

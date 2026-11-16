@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -10,7 +10,8 @@ import de from "../../webapp/messages/de.json";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { ACCOUNT_ACCESS_PATH } from "../src/DesktopSubscription.js";
-import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
+/* One declaration from the session's door: the links' two functions, and the access window's reading of a lift. */
+import { enableExternalLinks, interceptLinkClicks, liftedAt } from "@ohmail/app-logic/session";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import type { SuggestBatchControl } from "../../webapp/app/shell/screener-suggest";
 
@@ -456,5 +457,32 @@ describe("the window's Screener refusal clears when access returns", () => {
     expect(await cloudSuggestWire.aiAvailable!()).toBeNull();
     access = { status: 503, body: JSON.stringify({ error: { code: "db_busy" } }) };
     expect(await cloudSuggestWire.aiAvailable!()).toBeNull();
+  });
+});
+
+/**
+ * THE LIFT IS THE MOUNTED MAILBOX'S. The gate hands its lock the mailbox it mounts, and the lock records the
+ * reopening for that mailbox: the mail state reads it there (a days-old copy says it is catching up, without the date
+ * the closure made old). Last in this file: an open answer leaves this document's access window set for a minute.
+ */
+describe("the window's lift is recorded for the mailbox the gate mounts", () => {
+  it("the account opens: the lock comes down, and the lift is the mounted mailbox's and no other's", async () => {
+    mailboxAnswer = { status: 402, body: refusal("payment_required", MANAGE_URL) };
+    await open(CLOUD_SERVING);
+    expect(lockCard(), "a refused account got no lock screen: the case shows nothing").not.toBeNull();
+    expect(liftedAt("mbx-1"), "a lift was recorded before the account opened").toBeNull();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // The account is open again; the person comes back to the window, and the lock asks the account.
+      access = { status: 200, body: JSON.stringify({ metered: true, access: "open", canAddMailbox: true, mailboxes: 1 }) };
+      mailboxAnswer = { status: 200, body: MAILBOXES };
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await settle();
+      expect(lockCard(), "the lock stayed after the account opened").toBeNull();
+      expect(liftedAt("mbx-1"), "the lift was not recorded for the mailbox the gate mounts").toBe(Date.now());
+      expect(liftedAt(null), "the lift was recorded for a window that mounts no mailbox").toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

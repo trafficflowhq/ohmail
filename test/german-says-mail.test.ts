@@ -17,8 +17,12 @@ import ts from "typescript";
  *  - every value of `apps/webapp/messages/de.json` (web, desktop window);
  *  - every string literal and template text in `apps/mobile/src/copy.de.ts` (the phone's deck),
  *    found through the TypeScript parser so comments are not read as copy;
- *  - the German side of the lifecycle mails in `packages/services/src/mail/templates.ts`
- *    (literals under a `de:` property);
+ *  - the German side of the mails in `packages/services/src/mail/templates.ts` (literals under a
+ *    `de:` property), for Post only: the mails say Konto, as the brand's voice has it. Most German mail
+ *    words sit in `de ? … : …` branches this reader does not see; the mails' own gate
+ *    (`mail-templates.test.ts`, "German says Mail and Konto") holds the mails' Post rule over every
+ *    German render (every word holding "post" is a Postfach word), and that they never say Account,
+ *    E-Mail or Nachricht;
  *  - the German paragraph of the last-resort error page (`lang="de"`).
  *
  * Admitted, each with its reason:
@@ -135,10 +139,7 @@ const readDe = (): Array<[string, string]> =>
 
 const phoneDeck = (): Array<[string, string]> => literals("apps/mobile/src/copy.de.ts");
 
-const mailsAndLastResort = (): Array<[string, string]> => [
-  ...literals("packages/services/src/mail/templates.ts", (n) => under(n, isDeProperty)),
-  ...literals("apps/webapp/app/last-resort.tsx", (n) => under(n, isLangDe)),
-];
+const lastResortDe = (): Array<[string, string]> => literals("apps/webapp/app/last-resort.tsx", (n) => under(n, isLangDe));
 
 describe("German says Mail, not Post", () => {
   it("the web catalogue (de.json): no Post for mail outside Postfach", () => {
@@ -187,8 +188,8 @@ describe("German says Account for the ohmail account, not Konto", () => {
     expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);
   });
 
-  it("the phone's deck, the lifecycle mails and the last-resort page: Konto only for somebody else's", () => {
-    const found = [...phoneDeck(), ...mailsAndLastResort()]
+  it("the phone's deck and the last-resort page: Konto only for somebody else's", () => {
+    const found = [...phoneDeck(), ...lastResortDe()]
       .filter(([, text]) => !THIRD_PARTY_KONTO_PHONE.includes(text))
       .flatMap(([at, text]) => kontoWords(text).map((w) => `${at}: ${w}`));
     expect(found, `the ohmail account is an Account in German:\n  ${found.join("\n  ")}`).toEqual([]);

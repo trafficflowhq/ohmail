@@ -24,6 +24,7 @@ const SCANNED_ROOTS = [
   "packages/api/src",
   "packages/client-engine/src",
   "apps/worker/src",
+  "packages/organizer/src",
   "apps/sidecar/src",
 ];
 

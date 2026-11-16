@@ -64,6 +64,7 @@ import {
   writePassProgress,
   listAddresses,
   calConnections,
+  calCredentials,
   calCalendars,
   calEvents,
   calAttendees,
@@ -680,7 +681,7 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // value comes FROM A MAIL SERVER'S RESPONSE and is still closed, because what a mail server
   // supplies is which MEMBER is chosen and never what the members ARE.
   //
-  // `classifyMoveRefusal` in `apps/worker/src/sync.ts` reads the server's bracketed IMAP response
+  // `classifyMoveRefusal` in `packages/organizer/src/sync.ts` reads the server's bracketed IMAP response
   // code through a closed switch whose default is `refused` — never its message text, which is
   // where a provider puts free prose and, on some hosts, echoes the folder path back. The
   // migration's own header states the same rule from the schema's side: `folder_state` forbids a
@@ -701,11 +702,12 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
  * Columns the sweep cannot UPDATE because the ROW is immutable, and which {@link seedWorld}
  * therefore writes the marker into at INSERT.
  *
- * EMPTY today: the one append-only table in this schema left with the money. Kept as a named,
- * empty set rather than deleted, because the mechanism is what a future immutable table needs
- * and the sweep would otherwise throw on the first UPDATE against one.
+ * No immutable table today (the one append-only table left with the money); the mechanism stays for a future one.
+ * `pairing_tokens.challenge_hash` (mail 0209) is here for another reason: `pairing_tokens_handoff_bound` lets it stand
+ * only on an `app-handoff` row, where it is free text held to 43 base64url characters by its writer alone, so the
+ * seeded invitation refuses the sweep's UPDATE and the marker goes in at INSERT on a seeded handoff row.
  */
-const INSERT_TAINTED: ReadonlySet<string> = new Set<string>();
+const INSERT_TAINTED: ReadonlySet<string> = new Set<string>(["pairing_tokens.challenge_hash"]);
 
 /**
  * Tables this file plants no row in, so nothing in them can be tainted.
@@ -1718,6 +1720,9 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     accountId, provider: "caldav", label: `Diary ${tag}`, serverUrl: `https://dav-${tag}.example/cal/`,
     principal: `/principals/${tag}/`, sourceHost: `dav-${tag}.example`, mailboxId,
   }).returning();
+  // Its sealed sign-in, the connect door's row. No staff role reads the table, and the sweep
+  // taints its two text columns.
+  await db.insert(calCredentials).values({ accountId, connectionId: calConn!.id, kind: "basic", secretEnc: `sealed-${tag}`, keyVersion: 1 });
   const [calCal] = await db.insert(calCalendars).values({
     accountId, connectionId: calConn!.id, providerId: `/cal/${tag}/`, name: `Clinic ${tag}`, timeZone: "Europe/Zurich",
   }).returning();
@@ -1916,6 +1921,12 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(pairingTokens).values({
     createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "invite", tokenHash: `pt-${tag}`,
     label: `pairing-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
+  });
+  // mail 0209 — a handoff code, whose challenge column stands on this grant alone: tainted at INSERT (INSERT_TAINTED).
+  await db.insert(pairingTokens).values({
+    createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "app-handoff", tokenHash: `ph-${tag}`,
+    label: `handoff-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 60_000),
+    challengeHash: `${markerFor("pairing_tokens", "challenge_hash")}-${tag}`, handoffFromDeviceId: crypto.randomUUID(),
   });
   await db.insert(invites).values({
     codeHash: `inv-${tag}`, email: `invited-${tag}@example.com`,

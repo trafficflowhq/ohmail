@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
 import { AutoSuggestRow } from "../../webapp/app/shell/AutoSuggestRow";
-import { useConsentState } from "../../webapp/app/shell/consent-state";
+import { useConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { useScreenerSuggestions } from "../../webapp/app/shell/screener-suggest";
 import { accountDoorFor } from "../src/doors.js";
 import {
@@ -182,7 +182,8 @@ function OptInHarness({ transport, standaloneDoor = false }: {
   const toast = useToast();
   const consent = useConsentState(
     true,
-    transport ? (standaloneDoor ? consentOverBridgeStandalone : consentOverBridge) : undefined,
+    null,
+    transport ? (standaloneDoor ? consentOverBridgeStandalone : consentOverBridge) : "none",
   );
   const suggestions = useScreenerSuggestions({
     active: false,

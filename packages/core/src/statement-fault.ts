@@ -2,7 +2,7 @@ import { storeFaultOf, StoreStatementFaultError, type StoreFaultName } from "./l
 
 /**
  * WHOSE FAULT A STORE'S REFUSAL OF ONE STATEMENT IS — the value the statement carried, or the
- * store's own. The worker's ingest classifier (`apps/worker/src/dead-letter.ts`) reads its database
+ * store's own. The worker's ingest classifier (`packages/organizer/src/dead-letter.ts`) reads its database
  * classes here, and so does a writer that keeps a letter without one of its rows: one list of the
  * classes, read by both. Imports nothing but the log leaf's store-class reading.
  */

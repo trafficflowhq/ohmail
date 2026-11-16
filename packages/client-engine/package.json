@@ -34,6 +34,18 @@
       "node": "./dist/html-tree-budget.js",
       "default": "./src/html-tree-budget.ts"
     },
+    "./calendar-acts": {
+      "types": "./src/calendar-acts.ts",
+      "ohmail-source": "./src/calendar-acts.ts",
+      "node": "./dist/calendar-acts.js",
+      "default": "./src/calendar-acts.ts"
+    },
+    "./calendar-writes": {
+      "types": "./src/calendar-writes.ts",
+      "ohmail-source": "./src/calendar-writes.ts",
+      "node": "./dist/calendar-writes.js",
+      "default": "./src/calendar-writes.ts"
+    },
     "./calendar-span": {
       "types": "./src/engine/calendar-span.ts",
       "ohmail-source": "./src/engine/calendar-span.ts",

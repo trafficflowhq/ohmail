@@ -4,6 +4,12 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "ohmail-source": "./src/host/index.ts",
@@ -15,6 +21,12 @@
       "ohmail-source": "./src/keys/index.ts",
       "node": "./dist/keys/index.js",
       "default": "./src/keys/index.ts"
+    },
+    "./mail-state": {
+      "types": "./src/mail-state/index.ts",
+      "ohmail-source": "./src/mail-state/index.ts",
+      "node": "./dist/mail-state/index.js",
+      "default": "./src/mail-state/index.ts"
     },
     "./frame": {
       "types": "./src/frame/index.ts",
@@ -63,6 +75,108 @@
       "ohmail-source": "./src/text/index.ts",
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
+    },
+    "./doors": {
+      "types": "./src/doors/index.ts",
+      "ohmail-source": "./src/doors/index.ts",
+      "node": "./dist/doors/index.js",
+      "default": "./src/doors/index.ts"
+    },
+    "./doors/stage": {
+      "types": "./src/doors/stage/index.ts",
+      "ohmail-source": "./src/doors/stage/index.ts",
+      "node": "./dist/doors/stage/index.js",
+      "default": "./src/doors/stage/index.ts"
+    },
+    "./doors/signed-out": {
+      "types": "./src/doors/signed-out/index.ts",
+      "ohmail-source": "./src/doors/signed-out/index.ts",
+      "node": "./dist/doors/signed-out/index.js",
+      "default": "./src/doors/signed-out/index.ts"
+    },
+    "./doors/sign-in": {
+      "types": "./src/doors/sign-in/index.ts",
+      "ohmail-source": "./src/doors/sign-in/index.ts",
+      "node": "./dist/doors/sign-in/index.js",
+      "default": "./src/doors/sign-in/index.ts"
+    },
+    "./doors/verify": {
+      "types": "./src/doors/verify/index.ts",
+      "ohmail-source": "./src/doors/verify/index.ts",
+      "node": "./dist/doors/verify/index.js",
+      "default": "./src/doors/verify/index.ts"
+    },
+    "./doors/no-page": {
+      "types": "./src/doors/no-page/index.ts",
+      "ohmail-source": "./src/doors/no-page/index.ts",
+      "node": "./dist/doors/no-page/index.js",
+      "default": "./src/doors/no-page/index.ts"
+    },
+    "./doors/setup": {
+      "types": "./src/doors/setup/index.ts",
+      "ohmail-source": "./src/doors/setup/index.ts",
+      "node": "./dist/doors/setup/index.js",
+      "default": "./src/doors/setup/index.ts"
+    },
+    "./doors/invite": {
+      "types": "./src/doors/invite/index.ts",
+      "ohmail-source": "./src/doors/invite/index.ts",
+      "node": "./dist/doors/invite/index.js",
+      "default": "./src/doors/invite/index.ts"
+    },
+    "./doors/subscribed": {
+      "types": "./src/doors/subscribed/index.ts",
+      "ohmail-source": "./src/doors/subscribed/index.ts",
+      "node": "./dist/doors/subscribed/index.js",
+      "default": "./src/doors/subscribed/index.ts"
+    },
+    "./doors/join": {
+      "types": "./src/doors/join/index.ts",
+      "ohmail-source": "./src/doors/join/index.ts",
+      "node": "./dist/doors/join/index.js",
+      "default": "./src/doors/join/index.ts"
+    },
+    "./doors/step-up": {
+      "types": "./src/doors/step-up/index.ts",
+      "ohmail-source": "./src/doors/step-up/index.ts",
+      "node": "./dist/doors/step-up/index.js",
+      "default": "./src/doors/step-up/index.ts"
+    },
+    "./doors/step-up/ceremony-generation": {
+      "types": "./src/doors/step-up/ceremony-generation.ts",
+      "ohmail-source": "./src/doors/step-up/ceremony-generation.ts",
+      "node": "./dist/doors/step-up/ceremony-generation.js",
+      "default": "./src/doors/step-up/ceremony-generation.ts"
+    },
+    "./doors/approve": {
+      "types": "./src/doors/approve/index.ts",
+      "ohmail-source": "./src/doors/approve/index.ts",
+      "node": "./dist/doors/approve/index.js",
+      "default": "./src/doors/approve/index.ts"
+    },
+    "./doors/authorize-desktop": {
+      "types": "./src/doors/authorize-desktop/index.ts",
+      "ohmail-source": "./src/doors/authorize-desktop/index.ts",
+      "node": "./dist/doors/authorize-desktop/index.js",
+      "default": "./src/doors/authorize-desktop/index.ts"
+    },
+    "./doors/link-desktop": {
+      "types": "./src/doors/link-desktop/index.ts",
+      "ohmail-source": "./src/doors/link-desktop/index.ts",
+      "node": "./dist/doors/link-desktop/index.js",
+      "default": "./src/doors/link-desktop/index.ts"
+    },
+    "./doors/delete-account": {
+      "types": "./src/doors/delete-account/index.ts",
+      "ohmail-source": "./src/doors/delete-account/index.ts",
+      "node": "./dist/doors/delete-account/index.js",
+      "default": "./src/doors/delete-account/index.ts"
+    },
+    "./doors/wall": {
+      "types": "./src/doors/wall/index.ts",
+      "ohmail-source": "./src/doors/wall/index.ts",
+      "node": "./dist/doors/wall/index.js",
+      "default": "./src/doors/wall/index.ts"
     },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",

@@ -234,6 +234,11 @@ export interface UnscreenedWire {
   max: number;
   /** The pile the answer is about, said back; absent from the Ohbox's offer and from a server before piles. */
   pile?: UnscreenedPileWire;
+  /**
+   * This answer is one part: the server read for as long as one request may and stopped here. Asked
+   * again with it (`after`), the read goes on; the parts add up. Absent: nothing to go on to.
+   */
+  next?: string;
 }
 
 /** One waiting sender as `GET /screener` lists it: the representative held message and its author. */

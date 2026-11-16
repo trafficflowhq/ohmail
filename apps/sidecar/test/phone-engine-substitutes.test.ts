@@ -144,7 +144,7 @@ describe("the workspace rows name real modules, and the desktop keeps them", () 
     for (const real of [/^packages\/api\/(dist|src)\/routes\/health-markers\.(js|ts)$/,
       /^packages\/api\/(dist|src)\/routes\/events\.(js|ts)$/, /^packages\/db\/(dist|src)\/dialect\/pg\.(js|ts)$/,
       // The blank repair runs on the desktop: its pass and its store read are the real modules there.
-      /^apps\/worker\/(dist|src)\/blank-repair\.(js|ts)$/, /^packages\/core\/(dist|src)\/adapters\/blank-rows\.(js|ts)$/]) {
+      /^packages\/organizer\/(dist|src)\/blank-repair\.(js|ts)$/, /^packages\/core\/(dist|src)\/adapters\/blank-rows\.(js|ts)$/]) {
       expect(inputs.filter((p) => real.test(p)), String(real)).toHaveLength(1);
     }
     expect(inputs.filter((p) => p.startsWith("apps/sidecar/src/phone/"))).toEqual([]);

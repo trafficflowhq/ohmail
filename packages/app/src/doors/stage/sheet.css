@@ -1,0 +1,150 @@
+/* A sheet of the doors' own beside a page's sentence, as the reference draws its sheets: white on the stage, ringed
+   where the face rings a sheet, and what stands on it on the sheet's soft ground. Own classes: `way-`. */
+.way-sheet {
+  --oh-tag-ground: var(--soft-sheet);
+  border-radius: var(--r-sheet);
+  background-color: var(--sheet);
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+
+.way-sheet + .way-sheet {
+  margin-top: var(--gap);
+}
+
+/* Facts: a small title, each fact after its dot, a plain line under them; never wider than the page's material, also
+   where the page stacks it under its buttons. */
+.way-sheet[data-kind="facts"] {
+  max-width: var(--oh-page-material);
+  padding: var(--s5) var(--sheet-pad);
+}
+
+.way-sheet[data-kind="facts"][data-tight] {
+  padding-top: var(--s4);
+  padding-bottom: var(--s4);
+}
+
+.way-sheet-title {
+  margin: 0 0 var(--s3);
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+  text-wrap: wrap;
+}
+
+.way-fact-list {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.way-fact {
+  display: grid;
+  grid-template-columns: var(--s4) minmax(0, 1fr);
+  align-items: baseline;
+}
+
+/* The dot stands at the first line's height, a small one. */
+.way-fact-dot {
+  --dot-size: 6px;
+  --way-dot-drop: 0.55em;
+  --way-dot-back: -0.08em;
+  position: relative;
+  top: var(--way-dot-drop);
+  left: var(--way-dot-back);
+  display: flex;
+  align-self: start;
+}
+
+.way-fine {
+  margin: var(--s3) 0 0;
+  color: var(--ink2);
+}
+
+/* The ways out: a row each, its icon, its name and the line that says what it does. */
+.way-rows {
+  display: grid;
+  padding: var(--s2);
+}
+
+.way-row {
+  --way-row-gap: 2px;
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, 1fr);
+  align-content: start;
+  row-gap: var(--way-row-gap);
+  width: 100%;
+  min-height: var(--row);
+  margin: 0;
+  padding: var(--s3) var(--s3) var(--s3) var(--s1);
+  border: 0;
+  border-radius: var(--r-row);
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-rendering: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--d-hover) var(--e-std),
+    transform var(--d-press) var(--e-press);
+}
+
+/* Under the pointer a row takes the hover wash, as the reference's rows do; a press gives, as a button's does. */
+.way-row:hover {
+  background-color: var(--hover);
+}
+
+.way-row:active {
+  transform: var(--x-press);
+}
+
+/* A way that is off for now stands on the off ground in its ink, as an off button does, and takes no pointer. */
+.way-row:disabled,
+.way-row:disabled:hover {
+  background-color: var(--off);
+  color: var(--on-off);
+  cursor: default;
+  transform: none;
+}
+
+.way-row:disabled .way-row-icon,
+.way-row:disabled .way-row-hint {
+  color: var(--on-off);
+}
+
+.way-row-icon {
+  display: flex;
+  grid-row: 1;
+  grid-column: 1;
+  align-self: center;
+  justify-self: center;
+  color: var(--ink2);
+}
+
+.way-row-label {
+  display: flex;
+  grid-column: 2;
+  align-items: center;
+  min-height: var(--row-l1);
+  overflow: hidden;
+  font-weight: var(--w-bold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.way-row-hint {
+  grid-column: 2;
+  color: var(--ink2);
+}
+
+/* Ohmarchy's rows: the face's own measure, and the line under the name in its small type. */
+:root[data-face="ohmarchy"][data-device="desktop"] .way-row {
+  --way-row-pad: 0 14px 0 var(--s2);
+  padding: var(--way-row-pad);
+}
+
+:root[data-face="ohmarchy"] .way-row-hint {
+  color: var(--ink3);
+  font-size: var(--t-meta);
+}

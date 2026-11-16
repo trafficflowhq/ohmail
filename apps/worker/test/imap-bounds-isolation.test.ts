@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ImapBoundExceeded, isImapBoundExceeded } from "@trafficflow/core/adapters/imap";
-import { isDatabaseFault, isSharedDatabaseFault, classifyIngestFault } from "../src/dead-letter.js";
+import { isDatabaseFault, isSharedDatabaseFault, classifyIngestFault } from "@ohmail/organizer/dead-letter";
 import { readSource } from "./_start-function.js";
 
 /**

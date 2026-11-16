@@ -356,13 +356,13 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.resume.passes", store: "sessionStorage", owner: "web",
-    at: ["apps/webapp/app/(product)/resume/ResumeScreen.tsx"],
+    at: ["apps/webapp/app/(product)/resume/use-resume-door.ts"],
     holds: "how often this tab passed the resume splash",
     words: false, erased: "never", mark: "kept",
   },
   {
     key: "ohmail.resume-attempted.", family: true, store: "sessionStorage", owner: "web",
-    at: ["apps/webapp/app/(product)/resume/ResumeScreen.tsx"],
+    at: ["apps/webapp/app/(product)/resume/use-resume-door.ts"],
     holds: "that this tab tried to resume a session, per account",
     words: false, erased: "account-erase", mark: "kept",
   },
@@ -1058,6 +1058,21 @@ export const STORED_KEYS = [
     at: ["apps/mobile/modules/ohmail-shell/expo-module.config.json"],
     holds: "the class the phone loads the shell's module by. The module stores: the `ohmail-keeper-` family (its keeper) and the web view's data of the shell's page under its origin (`ohmail-shell` on the iPhone, the asset loader's on Android): the page's copy of the mail and the words it keeps",
     words: true, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "ohmail-switch-pairings", store: "file", owner: "phone",
+    at: ["apps/mobile/modules/ohmail-switch/android/src/main/java/app/ohmail/appswitch/SwitchStore.kt"],
+    holds: "the digests of the Android app's live pairings (SHA-256 of a server's origin and the account), from which its switch provider answers the sibling app; rewritten at each launch and change of pairings, in the no-backup folder",
+    words: false, erased: "sign-out", mark: "kept",
+  },
+  {
+    key: "ohmail-switch-ask", store: "file", owner: "phone",
+    at: [
+      "apps/mobile/modules/ohmail-switch/android/src/main/java/app/ohmail/appswitch/SwitchStore.kt",
+      "apps/mobile/modules/ohmail-switch/ios/OhmailSwitchModule.swift",
+    ],
+    holds: "the one pending challenge's verifier of a handoff between the two apps (on the iPhone with the digest and the place it was asked for), for at most two minutes, taken once, kept out of backups",
+    words: false, erased: "never", mark: "kept",
   },
   {
     key: "ohmail-shell", store: "identifier", owner: "phone",

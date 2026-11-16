@@ -4,7 +4,7 @@ import {
   ISO, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { consentVia } from "../../desktop/src/consent-wire";
-import type { ConsentReadFailure, ConsentTransport } from "../app/shell/consent-state";
+import type { ConsentReadFailure, ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 
 /**
  * THE PAIRED DESKTOP'S OHBOX FILES MAIL BY RULE WHILE ITS CONSENT READ FAILS (FIX-025).

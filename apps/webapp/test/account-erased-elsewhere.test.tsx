@@ -337,10 +337,10 @@ describe("every tab, and the wall", () => {
   it("the wall renders the sentence, and a new session lifts it", async () => {
     const { erased, door } = await signedIn(X);
     await holdCopyOf(X);
-    const { ErasedWall } = await import("../app/(product)/mailbox/ErasedWall.js");
+    const { ErasedRoute } = await import("../app/(product)/mailbox/ErasedRoute.js");
     function Harness() {
       const wall = door.useErasedWall();
-      return wall ? h(ErasedWall, { blocked: false }) : h("p", null, "the mailbox");
+      return wall ? h(ErasedRoute, { blocked: false }) : h("p", null, "the mailbox");
     }
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -351,8 +351,10 @@ describe("every tab, and the wall", () => {
     });
     expect(container.textContent).toBe("the mailbox");
     await act(async () => { void door.eraseHere(X, true); });
-    expect(container.textContent).toContain(en.accessLock.erasedTitle);
-    expect(container.textContent).toContain(en.accessLock.erasedBody);
+    // The page's sentence: its closing full stop is the page's dot.
+    expect(container.textContent).toContain(en.accessLock.erasedTitle.replace(/\.$/, ""));
+    expect(container.textContent).toContain(en.accessLock.erasedUntouched);
+    expect(container.textContent).toContain(en.accessLock.erasedGone);
     await act(async () => { erased.clearAccountErased(); });
     expect(container.textContent).toBe("the mailbox");
     expect(localStorage.getItem(erased.ERASED_KEY)).toBeNull();

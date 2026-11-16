@@ -8,7 +8,7 @@ import {
   recordChange, rerouteAdvisedLetter, rerouteUnconfirmedHeld, rules, type Tx,
 } from "@trafficflow/db";
 import { autoFiledSummary, undoAutoFiled, type ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * PUT BACK IS NEVER FILED AGAIN (row 140). An automatic filing that writes no rule — the act on

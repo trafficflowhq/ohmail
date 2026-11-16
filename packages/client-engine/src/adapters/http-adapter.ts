@@ -45,9 +45,12 @@ import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import type {
-  AddressSearchResult, AnswerOf, CalendarEventAct, CalendarWriteAnswer, MessageDTO, RequestOf, RouteName, SearchResult, Untrusted,
+  AddressSearchResult, AnswerOf, CalendarConnectBody, CalendarConnectionRecord, CalendarEventAct, CalendarPatchBody, CalendarRecord,
+  CalendarSignInBody, CalendarWay, CalendarWriteAnswer, MessageDTO, PlaceSuggestAnswer, PlaceSuggestBody,
+  RequestOf, RouteName, SearchResult, Untrusted,
 } from "@ohmail/wire";
 import { routePath, type CallOf, type WireCall } from "./route-path.js";
+import { calendarWaysOf } from "../calendar-connect.js";
 import { calendarWindowOf } from "../calendar-window.js";
 import type { SnapshotParams } from "../engine/server-wire.js";
 
@@ -113,6 +116,11 @@ export interface HttpAdapterOptions {
    * through it. Production leaves it unset and the wrapper uses `setTimeout`.
    */
   readWaitFor?: (ms: number) => Promise<void>;
+  /**
+   * The wait a send's save takes when the server put it off ({@link SAVE_PUT_OFF_WAIT_MAX_MS}), for
+   * a guard that must assert the interval. Production leaves it unset and `setTimeout` waits.
+   */
+  saveWaitFor?: (ms: number) => Promise<void>;
   /**
    * The reader's IANA zone, asked at each History rail read so its months are the ones the rows
    * are dated in. Defaults to the platform's zone, the one every stamp renders in.
@@ -290,6 +298,13 @@ export const BODY_FETCH_TIMEOUT_MS = 12_000;
  */
 export const PULL_RING_TIMEOUT_MS = 8_000;
 
+/**
+ * The longest a send waits for a save the server put off (a 503 or a 429 naming its wait) before it
+ * saves once more. The API names 5 s when its database is busy; a longer wait named by anything in
+ * front of it is not sat through inside a press.
+ */
+export const SAVE_PUT_OFF_WAIT_MAX_MS = 10_000;
+
 /** How long a Cancel's question to the server may take before it is `unreachable` (asked again later). */
 export const WITHDRAW_SEND_TIMEOUT_MS = 12_000;
 
@@ -420,6 +435,8 @@ export class HttpAdapter implements EngineAdapter {
    * kept beside `fetchImpl` rather than replacing it because the wrapper REFUSES a write.
    */
   private readonly readImpl: FetchLike;
+  /** {@link HttpAdapterOptions.saveWaitFor}, resolved once. */
+  private readonly saveWaitFor: (ms: number) => Promise<void>;
   private readonly getCookie: (name: string) => string | null;
   private readonly readerZone: () => string | null;
   private readonly csrfCookieName: string;
@@ -548,6 +565,7 @@ export class HttpAdapter implements EngineAdapter {
     this.readImpl = retryingRead(this.fetchImpl, {
       ...(opts.readWaitFor ? { waitFor: opts.readWaitFor } : {}),
     });
+    this.saveWaitFor = opts.saveWaitFor ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
     this.readerZone = opts.readerZone ?? platformZone;
     this.getCookie = opts.getCookie ?? defaultGetCookie;
     this.csrfCookieName = opts.csrfCookieName ?? "tf_csrf";
@@ -887,6 +905,68 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"DELETE /calendar/writes/:id">(res), seq: this.noteSeq(res) };
+  }
+
+  /**
+   * PLACE SUGGESTIONS for the place field (`place-suggest.ts`, its `PlaceSuggestTransport`): what the
+   * person typed travels in the body, never in the address. Asked once, under the caller's signal; a
+   * refusal throws as every call's does.
+   */
+  async suggestPlaces(question: PlaceSuggestBody, signal: AbortSignal | undefined): Promise<PlaceSuggestAnswer> {
+    const res = await this.call("POST /calendar/places/suggest", { body: question, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res, "read");
+    return this.readAnswer<"POST /calendar/places/suggest">(res);
+  }
+
+  /**
+   * THE CALENDAR'S CONNECT DOOR (`calendar-connect.ts`, its `CalendarConnectTransport`). Sent as it
+   * is asked, once: none of these is queued or kept, because what a person types to connect a
+   * calendar is never a stored record. Asked of our server's own door alone; a door that does not
+   * carry a route answers 404, and `calendarWays` then names no way.
+   */
+  async calendarWays(): Promise<CalendarWay[]> {
+    try {
+      const res = await this.call("GET /calendar/connect", {});
+      if (!res.ok) return [];
+      return calendarWaysOf((await this.readUntrusted<"GET /calendar/connect">(res)).ways);
+    } catch {
+      // No answer is no way: the setup then draws none, and holds no list of its own.
+      return [];
+    }
+  }
+
+  async connectCalendar(ask: CalendarConnectBody, key: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // The call's check of a body's names reads one member of a union at a time; the ask is the wire's own type whole.
+    const body = ask as Extract<CalendarConnectBody, { way: "caldav" }>;
+    const res = await this.call("POST /calendar/connections", { body, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections">(res), seq: this.noteSeq(res) };
+  }
+
+  async removeCalendarConnection(connectionId: string): Promise<{ removed: boolean; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/connections/:id", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { removed: (await this.readAnswer<"DELETE /calendar/connections/:id">(res)).removed === true, seq: this.noteSeq(res) };
+  }
+
+  async checkCalendarConnection(connectionId: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    const res = await this.call("POST /calendar/connections/:id/check", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/check">(res), seq: this.noteSeq(res) };
+  }
+
+  async signInCalendarAgain(connectionId: string, signIn: CalendarSignInBody): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // One member of the union at a time, as above.
+    const body = signIn as Extract<CalendarSignInBody, { user: string }>;
+    const res = await this.call("POST /calendar/connections/:id/sign-in", { params: { id: connectionId }, body });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/sign-in">(res), seq: this.noteSeq(res) };
+  }
+
+  async setCalendar(calendarId: string, patch: CalendarPatchBody): Promise<{ calendar: CalendarRecord; seq: number | null }> {
+    const res = await this.call("PATCH /calendar/calendars/:id", { params: { id: calendarId }, body: patch });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { calendar: await this.readAnswer<"PATCH /calendar/calendars/:id">(res), seq: this.noteSeq(res) };
   }
 
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {
@@ -1454,8 +1534,12 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async unscreened(pile?: UnscreenedPileWire): Promise<UnscreenedWire> {
-    const res = await this.call("GET /screener/unscreened", pile === undefined ? {} : { query: `pile=${pile}` });
+  async unscreened(pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedWire> {
+    const q = new URLSearchParams();
+    if (pile !== undefined) q.set("pile", pile);
+    if (after !== undefined) q.set("after", after);
+    const query = q.toString();
+    const res = await this.call("GET /screener/unscreened", query === "" ? {} : { query });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = await this.readUntrusted<"GET /screener/unscreened">(res);
     const groups = Array.isArray(wire.groups)
@@ -1469,6 +1553,7 @@ export class HttpAdapter implements EngineAdapter {
       complete: wire.complete !== false,
       max: typeof wire.max === "number" && Number.isFinite(wire.max) ? Math.trunc(wire.max) : 0,
       ...(wire.pile === "news" || wire.pile === "receipts" ? { pile: wire.pile } : {}),
+      ...(typeof wire.next === "string" && wire.next !== "" ? { next: wire.next } : {}),
     };
   }
 
@@ -2640,6 +2725,18 @@ export class HttpAdapter implements EngineAdapter {
         return null;
       };
       let echoed = await writeTheRow();
+      /**
+       * A SAVE THE SERVER PUT OFF (a 503 or a 429 that names its wait: its database was busy) SAYS
+       * NOTHING OF THE ROW, THE BCC OR THE FROM EITHER, and the guards below would word it as theirs
+       * and end the press. It waits as the answer says and saves once more; they read that answer.
+       * An update answer names a wait too and keeps its own road, just below.
+       */
+      const putOff = refusal as MutationRejectedError | null;
+      if (ended === "unanswered" && putOff !== null && (putOff.status === 503 || putOff.status === 429)
+          && putOff.retryAfterMs !== null && !UPDATE_ANSWER_CODES.has(putOff.code as UpdateAnswerCode)) {
+        await this.saveWaitFor(Math.min(putOff.retryAfterMs, SAVE_PUT_OFF_WAIT_MAX_MS));
+        echoed = await writeTheRow();
+      }
       /**
        * A SAVE THAT MET AN UPDATE ANSWER (this app is too old for the server, or the server is being
        * updated) SAYS NOTHING OF THE ROW, THE BCC OR THE FROM. The guards below would word it as

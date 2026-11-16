@@ -8,7 +8,7 @@ import { StaticKeyProvider, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * AN OUTAGE MET BY THE LIST-ADDRESS BACKFILL IS THE SHARD'S. Its tail stage swallowed every throw as
@@ -20,8 +20,8 @@ import { FakeAdapterFleet } from "./_fakeadapter.js";
 
 const fault = vi.hoisted(() => ({ db: null as unknown, err: null as unknown, calls: 0 }));
 
-vi.mock("../src/list-address-backfill.js", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../src/list-address-backfill.js")>();
+vi.mock("@ohmail/organizer/list-address-backfill", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/organizer/list-address-backfill")>();
   return {
     ...real,
     listAddressBackfillPass: async (db: Tx, deps: Parameters<typeof real.listAddressBackfillPass>[1]) => {

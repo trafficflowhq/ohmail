@@ -13,12 +13,25 @@ name: ci
 #
 # What runs. The nightly, dispatch (the second line's nightly is a dispatch on `next`: a schedule fires on the default
 # branch alone), a batch branch (pr/batch-*), a fork's or a bot's pull request, a pull request into any branch but
-# `main` and `next`, and a pull request that touches the harness (dependencies, patches, tsconfigs, vitest.config.ts, test/setup,
-# the shard maps, this file, migrations; into `next` a change that only adds a package's lines to those lists does not count) run the whole suite. Any other maintainer's pull request runs the
-# test files its diff can reach: vitest's module graph, the files that read the changed paths, root
-# test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed into as few
-# jobs as their measured time needs. Every job keeps its services and checks; the plan's summary says
-# which run it is and why. A selected run is partial: main is proven whole by the batch and the nightly.
+# `main` and `next`, and a pull request into `main` that touches the harness (dependencies, patches, tsconfigs,
+# vitest.config.ts, a vitest workspace file, test/setup, the shard maps, this file, migrations, a deleted module) run the
+# whole suite. Any other
+# maintainer's pull request into `main` runs the test files its diff can reach: vitest's module graph, the files that
+# read the changed paths, root test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed
+# into as few jobs as their measured time needs; main is proven whole by the batch and the nightly. main merged across
+# into `next` (pr/merge-main-*) is planned as a pull request into `main` is. Into `next` only what decides which files
+# run and under what (this file, the selector, the shard walker, the service reader, vitest.config.ts beyond an alias
+# line for a new package or for a new entry that no file of the base names, a root vitest workspace or projects file,
+# test/setup and what it loads) runs the whole suite. Every other maintainer's pull request into `next` runs the floor
+# (every root test, the git spawners, the bundle readers, the censuses of the whole tree; with a migration every test
+# of packages/db and packages/db-mail) and its direct set, held to one pass of the test machines (six jobs' measured
+# time, one job of the second store); a changed module outside apps/ and packages/ widens that set only by the tests
+# the graph relates to it (all it reaches when that reading fails). A dependency, a patch, a tsconfig, a shard map
+# beyond its own test files' entries, the lane database script, a migration or a deleted module is capped there, not
+# whole, and a change that only adds lines is deferred. Its plan's log says FAST
+# when nothing was cut and CAPPED when something was, and names each file that waits for the whole run on `next` at
+# night. Every job keeps its services and checks; the plan's summary says which run it is and why. On a pull request
+# the plan job says which merge it tested before it decides.
 #
 # A draft's push starts no job: plan and typecheck read `github.event.pull_request.draft != true`, and every other
 # job needs plan and is skipped with it, so a draft's run ends skipped and takes no runner. Marking the pull request
@@ -126,6 +139,13 @@ jobs:
             fi
             [ "$rc" = 0 ] || { echo "::error::gitleaks exited $rc with no finding"; exit 1; }
           done
+
+      # Which merge this run tests: the pull request's head on the base's tip as GitHub merged them. Landing it
+      # reads this line, so the tree that lands is the tree that ran.
+      - name: The merge this run tests
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "TESTED: merge of $(git rev-parse HEAD^2) onto $(git rev-parse HEAD^1)"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -253,6 +273,10 @@ jobs:
           node apps/mobile/scripts/bundle-engine.mjs
           node scripts/bundle-host.mjs server
           node scripts/bundle-host.mjs worker
+          test -s build/engine.meta.json
+          test -s build/phone-engine/phone-engine.meta.json
+          test -s build/host-server.meta.json
+          test -s build/host-worker.meta.json
 
       # A service container cannot publish a port on loopback only, so RustFS starts by `docker run`.
       - name: Start RustFS

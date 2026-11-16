@@ -81,7 +81,7 @@ describe("no published file names the plane's staff surface", () => {
   it("the walk is every tracked source outside the console: the migrations, the scripts and the tests too", () => {
     const rels = files.map((f) => relative(ROOT, f).split("\\").join("/"));
     expect(rels.length).toBeGreaterThanOrEqual(2000);
-    for (const dir of ["packages/db-mail/drizzle/", "packages/db/drizzle/", "packages/api/src/", "apps/worker/src/"]) {
+    for (const dir of ["packages/db-mail/drizzle/", "packages/db/drizzle/", "packages/api/src/", "apps/worker/src/", "packages/organizer/src/"]) {
       expect(rels.some((r) => r.startsWith(dir) && r.endsWith(dir.includes("drizzle") ? ".sql" : ".ts")), dir).toBe(true);
     }
     expect(rels.some(inPrivateApp)).toBe(false);

@@ -61,11 +61,22 @@ function appSources(dir = APP): string[] {
   });
 }
 
+interface Source { file: string; text: string }
+
+/**
+ * The files that name `next/link` and in which the census read no link: a use it cannot see (the component handed on
+ * as a value). The rebuilt pages draw plain links through the kit, so the count of `next/link` only falls and is no
+ * measure of what was read; this is.
+ */
+const unread = (sources: Source[]): string[] =>
+  sources.filter(({ file, text }) => /["']next\/link["']/.test(text) && nextLinkHrefs(file, text).length === 0).map(({ file }) => file);
+
 describe("no next/link in the app crosses into the landing zone", () => {
   it("every next/link href is readable and none names a zone path", () => {
-    const files = appSources();
-    const links = files.flatMap((f) => nextLinkHrefs(f.slice(APP.length + 1), readFileSync(f, "utf8")));
-    expect(links.length, "the census found no next/link at all").toBeGreaterThan(10);
+    const sources = appSources().map((f) => ({ file: f.slice(APP.length + 1), text: readFileSync(f, "utf8") }));
+    expect(sources.map(({ file }) => file), "the census did not read the product's pages").toContain("(product)/layout.tsx");
+    expect(unread(sources), "a file names next/link and the census read no link in it").toEqual([]);
+    const links = sources.flatMap(({ file, text }) => nextLinkHrefs(file, text));
     const where = (l: Finding) => `${l.file}:${l.line} ${l.href ?? "<not a literal>"}`;
     expect(links.filter((l) => l.href === null).map(where), "an href this census cannot read").toEqual([]);
     expect(links.filter((l) => crossesIntoZone(l.href!)).map(where), "use a plain <a> for a zone path").toEqual([]);
@@ -83,5 +94,12 @@ describe("no next/link in the app crosses into the landing zone", () => {
       ["/privacy", "/%70rivacy", "/#pricing", "/#/first-run", "/?demo=1", "/login", "/landing/a.webp", null]);
     expect(found.filter((l) => l.href !== null && crossesIntoZone(l.href)).map((l) => l.href))
       .toEqual(["/privacy", "/%70rivacy", "/#pricing", "/landing/a.webp"]);
+  });
+
+  it("CONTROL: a file that hands next/link on as a value, where no link can be read, is found", () => {
+    const handed = 'import Go from "next/link";\nexport const A = () => <Tab as={Go} href="/privacy" />;';
+    const drawn = 'import Go from "next/link";\nexport const A = () => <Go href="/login">l</Go>;';
+    expect(unread([{ file: "handed.tsx", text: handed }, { file: "drawn.tsx", text: drawn }, { file: "none.tsx", text: "export {};" }]))
+      .toEqual(["handed.tsx"]);
   });
 });

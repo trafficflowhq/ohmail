@@ -7,7 +7,7 @@ import type { HostResolver } from "@trafficflow/core/net";
 import { startWorkerWithLock } from "../src/index.js";
 import { acquireLeaderLock } from "../src/leader-lock.js";
 import { makeDialHostGuard } from "../src/dial-host-guard.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**

@@ -9,7 +9,7 @@
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core";
-import { threadJoinHealPass } from "./thread-join-heal.js";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
 
 const apply = process.argv.slice(2).includes("--apply");
 const dbUrl = process.env.TF_DB_URL ?? process.env.DATABASE_URL;
@@ -22,7 +22,7 @@ const log = createLogger({ service: "thread-join-heal" });
 // not the budget — is what ends the walk. Without the cursor a group whose verdict is "no"
 // would be rescanned by every iteration, and this loop would never terminate.
 let merged = 0, moved = 0, groups = 0, skipped = 0, failed = 0;
-let cursor: import("./thread-join-heal.js").ThreadJoinHealCursor | undefined;
+let cursor: import("@ohmail/organizer/thread-join-heal").ThreadJoinHealCursor | undefined;
 for (;;) {
   const r = await threadJoinHealPass({ db: owned.db as unknown as Tx, apply, log, cursor });
   merged += r.merged; moved += r.messagesMoved; groups += r.groupsScanned;

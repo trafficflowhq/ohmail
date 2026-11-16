@@ -11,7 +11,7 @@ import { PgTable } from "drizzle-orm/pg-core";
 import * as mailSchema from "../src/schema-mail.js";
 import * as cloudSchema from "../src/schema-cloud.js";
 import { CALENDAR_TABLES, type CalendarTableName } from "../src/calendar/classes.js";
-import { TABLE_CLASSES } from "../src/row-classes.js";
+import { WORKER_WIDE_READ, tableClass } from "../src/row-security/policies.js";
 import { STAFF_SELECT_GRANTS } from "../src/staff-grants.js";
 
 /** One statement with positional parameters, answered as rows. */
@@ -115,20 +115,27 @@ export const CHILD_ROWS: Record<string, (own: Family, parent: Family, n: number)
     values ($1, $2, 'create', '{}'::jsonb, $3)`, [o.accountId, p.calendarId, `w${n}-${randomUUID()}`]],
 };
 
-/** The family's classes, read from the declarations: every assertion the catalog cases share. */
+/**
+ * The family's classes, read from the lock's list (`row-security/policies.ts`, the one list of a
+ * table's class): every assertion the catalog cases share.
+ */
 export function assertClassesCover(catalogTables: readonly string[]): void {
   const declared = declaredTableNames();
   const calendarDeclared = [...declared].filter((t) => t.startsWith("cal_"));
   for (const t of [...catalogTables, ...calendarDeclared]) {
-    expect(TABLE_CLASSES[t], `${t} has no class for row security`).toBeDefined();
+    expect(tableClass(t), `${t} has no class for row security`).not.toBeNull();
   }
-  for (const t of Object.keys(TABLE_CLASSES)) {
-    expect(declared.has(t), `${t} has a class and no schema declares it`).toBe(true);
-  }
+  // The family's ten are the account's; the providers' notice channels, where the Cloud's journal
+  // declares them, are read by their key before the account is known.
+  expect(Object.fromEntries(FAMILY.map((t) => [t, tableClass(t)]))).toEqual(Object.fromEntries(FAMILY.map((t) => [t, "account"])));
+  if (declared.has("cal_push_channels")) expect(tableClass("cal_push_channels"), "cal_push_channels").toBe("keyed");
   // The worker reads two of them before it binds an account: the roster of connections, and the
   // providers' notice channels where the Cloud's journal declares them.
-  expect(Object.entries(TABLE_CLASSES).filter(([, c]) => c.workerReadsUnbound).map(([t]) => t).sort())
+  expect(WORKER_WIDE_READ.filter((t) => t.startsWith("cal_")).sort())
     .toEqual(["cal_connections", "cal_push_channels"].filter((t) => declared.has(t)));
+  // The family's own word for that read is `roster`, exactly where the lock reads the table wide.
+  expect(Object.fromEntries(FAMILY.map((t) => [t, CALENDAR_TABLES[t].worker === "roster"])))
+    .toEqual(Object.fromEntries(FAMILY.map((t) => [t, (WORKER_WIDE_READ as readonly string[]).includes(t)])));
   const staff = Object.keys(STAFF_SELECT_GRANTS).filter((t) => t.startsWith("public.cal_"));
   expect(staff).toEqual(["public.cal_connections"]);
   expect([...STAFF_SELECT_GRANTS["public.cal_connections"]!].sort())

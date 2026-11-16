@@ -120,8 +120,8 @@ async function tab(which: "join" | "verify") {
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
   const screen = which === "join"
-    ? React.createElement((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok" });
+    ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true })
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -130,19 +130,28 @@ async function tab(which: "join" | "verify") {
   });
   for (let i = 0; i < 10; i += 1) await tick(0);
   unmounts.push(async () => { await act(async () => root.unmount()); host.remove(); });
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
+  /** A blank by its id (the join's card), or by the name its label gives it (a door's page). */
+  const blank = (key: string | { label: string }): HTMLInputElement | null => {
+    if (typeof key === "string") return host.querySelector<HTMLInputElement>(`#${key}`);
+    const label = [...host.querySelectorAll("label")].find((l) => l.textContent === key.label);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  };
+  const type = async (key: string | { label: string }, value: string) => {
+    const input = blank(key);
+    expect(input, `${JSON.stringify(key)} is not on screen`).toBeTruthy();
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     for (let i = 0; i < 10; i += 1) await tick(0);
   };
-  const title = () => host.querySelector("h1")?.textContent ?? null;
+  /** The step's title: the join card's heading; a door's page says it as its sentence, the first line of its main. */
+  const title = () => (which === "join" ? host.querySelector("h1") : host.querySelector("main p"))?.textContent ?? null;
   return { host, type, press, title };
 }
 
@@ -160,7 +169,7 @@ async function waiting() {
 /** The confirming page, its password typed and confirmed. */
 async function confirm() {
   const v = await tab("verify");
-  await v.type("verify-pw", "a-long-signup-password");
+  await v.type({ label: en.verify.passwordLabel }, "a-long-signup-password");
   await v.press(en.verify.confirm);
   return v;
 }
@@ -290,6 +299,9 @@ describe("only an account sent on to its setup is offered", () => {
       verifyAnswer = () => refusal(400, "invalid_token");
       const dead = await confirm();
       expect(dead.host.textContent).toContain(en.verify.refusedLink);
+      // A dead link's code is dropped: Confirm stays off, and the sign-in for a fresh link is the way on.
+      const again = [...dead.host.querySelectorAll("button")].find((b) => b.textContent?.startsWith(en.verify.confirm));
+      expect(again?.disabled, "Confirm pressed again over a dead link").toBe(true);
       verifyAnswer = () => json({ status: "verified" });
       const factor = await confirm();
       expect(factor.title()).toBe(en.verify.doneTitle);
@@ -351,7 +363,7 @@ describe("one set of recovery codes across the tab that took over and a second /
     await b.press(en.join.useTotp);
     await b.type("join-totp", "123456");
     await b.press(en.join.activate);
-    expect(await until(() => b.host.querySelectorAll(".join-codes li").length > 0)).toBe(true);
+    expect(await until(() => b.host.querySelectorAll("ul li").length > 0)).toBe(true);
     expect(codeSets).toBe(1);
     const enrolments = calls.filter((p) => p === "/auth/2fa/totp/enroll").length;
     // Back in the first tab, the factor step is still on screen; the person does what it asks.

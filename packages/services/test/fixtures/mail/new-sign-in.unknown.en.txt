@@ -1,0 +1,21 @@
+Subject: New sign-in to your ohmail account
+
+ohmail.
+
+A new device signed in.
+
+It had not signed in to your ohmail account before.
+
+Device: Unknown device
+IP address: unknown
+Time: 1 August 2026, 09:05 UTC
+
+If that was you, there is nothing to do.
+
+If it was not, open ohmail yourself and go to Settings › Devices (https://app.ohmail.app/settings/devices). Sign that device out there, and replace your second factor.
+
+We never ask you for a code, a password or a recovery code by mail.
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

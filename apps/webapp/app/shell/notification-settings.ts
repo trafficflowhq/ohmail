@@ -141,14 +141,13 @@ export const browserNotificationHost: NotificationHost = {
   /**
    * Registration is attempted only where there is a server to register WITH. `apiConfigured()`
    * is false in every desktop build — its Cloud adapter is aliased out of the bundle — so this
-   * is a no-op there even though the module is compiled in, the same guard `consent-state.ts`
-   * uses for the same reason.
+   * is a no-op there even though the module is compiled in.
    */
   syncSubscription: async (wanted: boolean, opts?: { forceAnnounce?: boolean; signingOutOf?: string }) => {
     /* `null` means "there was nothing to reconcile here", which is not the same as a failure and
        must not be rendered as one. `apiConfigured()` is false in every desktop build — its Cloud
        adapter is aliased out of the bundle — so this is a no-op there even though the module is
-       compiled in, the same guard `consent-state.ts` uses for the same reason. */
+       compiled in. */
     if (!apiConfigured()) return null;
     try {
       return await syncWebPush(wanted, pushApi, opts);

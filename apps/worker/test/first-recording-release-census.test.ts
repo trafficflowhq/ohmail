@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { readFragments, releasesFrom } from "../../../scripts/changelog-fold.mjs";
 import { ROOT, publicPath } from "../../../test/support/public-root.mjs";
-import { writtenByABuildThatRecordsNothing } from "../src/profile.js";
+import { writtenByABuildThatRecordsNothing } from "@ohmail/organizer/profile";
 
 /**
  * THE FIRST RELEASE THAT RECORDS IS THE RELEASE THAT SHIPS THE RECORD. A settings copy whose label names a

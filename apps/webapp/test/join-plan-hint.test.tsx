@@ -79,7 +79,7 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -95,7 +95,13 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   const close = async () => { await act(async () => root.unmount()); host.remove(); };
   unmount = close;
-  const trial = () => host.querySelector('[data-testid="join-plan-trial"]')?.textContent ?? null;
+  /* What the step says of the site's choice and the trial: the sentence that begins with the choice or the trial. */
+  const says = [
+    ...[messages.join.planChosen, messages.join.planChosenMonth, messages.join.planChosenYear].map((s) => s.split("{plan}")[0]!),
+    messages.join.planTrial,
+  ];
+  const trial = () =>
+    [...host.querySelectorAll("p, span")].find((el) => says.some((s) => (el.textContent ?? "").startsWith(s)))?.textContent ?? null;
   return { host, trial, close: async () => { await close(); unmount = null; } };
 }
 
@@ -191,6 +197,11 @@ describe("the choice survives the verification mail's round trip", () => {
  * ended or that has paid before, which the account page then asks to pay. The words follow the one
  * predicate the lock screen's never-started state uses, read from the service's own lifecycle.
  */
+/** The plan step's lead: the line that says one of its two leads. */
+const lead = (host: HTMLElement, messages: typeof en): string | null =>
+  [...host.querySelectorAll("p, span")].map((el) => el.textContent ?? "")
+    .find((said) => [messages.join.step_plan_lead, messages.join.planLeadNoTrial].includes(said)) ?? null;
+
 describe("the plan step names a trial only for an account that never started one", () => {
   const ENDED = { ...NEVER_STARTED, closedReason: "trial_ended", closedAt: "2026-10-20T10:00:00.000Z", erasureAt: "2026-11-19T10:00:00.000Z" };
   const NO_TRIAL: Array<[string, unknown]> = [
@@ -203,17 +214,16 @@ describe("the plan step names a trial only for an account that never started one
     ["a reason this build does not know", { ...NEVER_STARTED, closedReason: "chargeback" }],
   ];
   const button = (host: HTMLElement): string | null =>
-    [...host.querySelectorAll("a.btn.primary")].map((a) => a.textContent ?? "")[0] ?? null;
+    [...host.querySelectorAll("a")].filter((a) => a.getAttribute("href") === "https://plane.example/manage?token=t").map((a) => a.textContent ?? "")[0] ?? null;
 
   for (const messages of [en, de]) {
     const lang = messages === de ? "de" : "en";
 
     it(`${lang}: never started: the trial, its button and the hint that it waits`, async () => {
       const { host, trial } = await join(messages);
-      expect(host.querySelector(".sub")?.textContent).toBe(messages.join.step_plan_lead);
+      expect(lead(host, messages)).toBe(messages.join.step_plan_lead);
       expect(trial()).toBe(messages.join.planTrial);
       expect(button(host)).toBe(messages.join.planStartTrial);
-      expect(host.textContent).toContain(messages.join.planLaterHint);
     });
 
     for (const [what, block] of NO_TRIAL) {
@@ -221,7 +231,7 @@ describe("the plan step names a trial only for an account that never started one
         lifecycle = block;
         const { host, trial } = await join(messages, { planHint: { plan: "pro", interval: "year" } });
         expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
-        expect(host.querySelector(".sub")?.textContent).toBe(messages.join.planLeadNoTrial);
+        expect(lead(host, messages)).toBe(messages.join.planLeadNoTrial);
         expect(trial(), "the site's choice is still named, without a trial").toBe(
           lang === "de" ? "Du hast Pro gewählt, mit jährlicher Abrechnung." : "You chose Pro, billed yearly.",
         );

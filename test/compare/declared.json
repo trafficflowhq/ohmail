@@ -1,4 +1,1628 @@
 [
+  {
+    "key": "device=fold&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=deleteaccount",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "device=fold&screen=wall",
+    "reason": "At the phone's and the unfolded phone's sizes the reference draws the phone app's wall (its Servers), which is the phone screens' task; the web's wall at these sizes is compared there.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "device=foldl&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=deleteaccount",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "device=foldl&screen=wall",
+    "reason": "At the phone's and the unfolded phone's sizes the reference draws the phone app's wall (its Servers), which is the phone screens' task; the web's wall at these sizes is compared there.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "device=phone&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=deleteaccount",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=deleteaccount&state=facts",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "device=phone&screen=wall",
+    "reason": "At the phone's and the unfolded phone's sizes the reference draws the phone app's wall (its Servers), which is the phone screens' task; the web's wall at these sizes is compared there.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Confirm ↵"
+      },
+      {
+        "role": "button",
+        "name": "Confirm"
+      },
+      {
+        "role": "button",
+        "name": "Not me"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=authorize",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Yes, sign it in ↵"
+      },
+      {
+        "role": "button",
+        "name": "Yes, sign it in"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=deleteaccount",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left. The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Delete my account ↵"
+      },
+      {
+        "role": "button",
+        "name": "Delete my account"
+      },
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=linkdesktop",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Show me a code ↵"
+      },
+      {
+        "role": "button",
+        "name": "Show me a code"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=nopage",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Back to ohmail ↵"
+      },
+      {
+        "role": "button",
+        "name": "Back to ohmail"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Sign in ↵"
+      },
+      {
+        "role": "button",
+        "name": "Sign in"
+      },
+      {
+        "role": "button",
+        "name": "Open the demo"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&scheme=dark&screen=wall",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left. The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Subscribe ↵"
+      },
+      {
+        "role": "button",
+        "name": "Subscribe"
+      },
+      {
+        "role": "button",
+        "name": "Sign out"
+      },
+      {
+        "role": "button",
+        "name": "Change password"
+      },
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Confirm ↵"
+      },
+      {
+        "role": "button",
+        "name": "Confirm"
+      },
+      {
+        "role": "button",
+        "name": "Not me"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=authorize",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Yes, sign it in ↵"
+      },
+      {
+        "role": "button",
+        "name": "Yes, sign it in"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=deleteaccount",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left. The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Delete my account ↵"
+      },
+      {
+        "role": "button",
+        "name": "Delete my account"
+      },
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=linkdesktop",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Show me a code ↵"
+      },
+      {
+        "role": "button",
+        "name": "Show me a code"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=nopage",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Back to ohmail ↵"
+      },
+      {
+        "role": "button",
+        "name": "Back to ohmail"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Sign in ↵"
+      },
+      {
+        "role": "button",
+        "name": "Sign in"
+      },
+      {
+        "role": "button",
+        "name": "Open the demo"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "face=ohmarchy&screen=wall",
+    "reason": "No key hint on a page without a field: Enter presses only the button that has the keys there, so the page prints no Enter on its one act (ohmarchy prints the keys); the buttons after it stand a hint's width further left. The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Subscribe ↵"
+      },
+      {
+        "role": "button",
+        "name": "Subscribe"
+      },
+      {
+        "role": "button",
+        "name": "Sign out"
+      },
+      {
+        "role": "button",
+        "name": "Change password"
+      },
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=deleteaccount",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "scheme=dark&screen=wall",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=approve",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=bare",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=busy",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. Not me is off while a confirm is on its way, as the shipped page keeps it, so a deny cannot race the confirm. A wait is also said to a screen reader as it counts, by a status of its own the page draws for nobody, as the shipped page announced it; the reference has no such status.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Not me"
+      },
+      {
+        "role": "status",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=closed",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=denied",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=discarded",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=done",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=expired",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=factor",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The second factor's dialog is the kit's Dialog: it is named by its sentence, its other ways stand above its answers, and its words are the catalogue's; the dialog's own looks are compared on its rows over the settings panes, the account task's.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "screen=approve&state=none",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=othernet",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=stillbusy",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=unchecked",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=approve&state=used",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=authorize&state=factor",
+    "reason": "The second factor's dialog is the kit's Dialog: it is named by its sentence, its other ways stand above its answers, and its words are the catalogue's; the dialog's own looks are compared on its rows over the settings panes, the account task's.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "screen=deleteaccount",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=cancelled",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=donepay",
+    "reason": "A subscription that could not be cancelled names the support address to write to, as the shipped page does; the reference leaves the real address out of its demo.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "alert",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=erasing",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=factor",
+    "reason": "The second factor's dialog is the kit's Dialog: it is named by its sentence, its other ways stand above its answers, and its words are the catalogue's; the dialog's own looks are compared on its rows over the settings panes, the account task's.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "screen=deleteaccount&state=refused",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=refusedsub",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim. The refusal is the Settings pane's own sentence (account.eraseRefusedSubCancelled), said by the shared ceremony; its wording is the account task's.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      },
+      {
+        "role": "alert",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=typed",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=unconfirmed",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=deleteaccount&state=window",
+    "reason": "The privacy policy is a button that opens the policy's page; the reference stubs it as a slot that opens a menu, which a page must not claim.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "button",
+        "name": "Privacy policy"
+      }
+    ]
+  },
+  {
+    "key": "screen=invite",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=invite&state=dead",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=invite&state=incomplete",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=invite&state=opening",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=invite&state=unavailable",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=invite&state=used",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The invite's tag keeps the catalogue's straight apostrophe in \"You're\", which the invite's kept test reads word for word (apps/webapp/test/join-invite-screen.test.tsx); the reference sets a typographic one. It is the only difference of the page's words (read before this row was written); declared on them, its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=linkdesktop&state=busy",
+    "reason": "A wait is also said to a screen reader as it counts, by a status of its own the page draws for nobody, as the shipped page announced it; the reference has no such status.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "status",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=linkdesktop&state=factor",
+    "reason": "The second factor's dialog is the kit's Dialog: it is named by its sentence, its other ways stand above its answers, and its words are the catalogue's; the dialog's own looks are compared on its rows over the settings panes, the account task's.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "screen=serversetup",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=serversetup&state=badtoken",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=serversetup&state=spent",
+    "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=absent",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=busy",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=checking",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The waiting line keeps the shipped ellipsis (resume.workingBody, \"Checking your sign-in…\"), which the resume's own kept test pins word for word (apps/webapp/test/resume-no-blank.test.tsx); the reference ends it in the waiting dot.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=expired",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=pending",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=reused",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The sentence is the old sign-in card's too (resume.reusedBody), and /login still draws that card: its mount stopped on the kept sign-out run, which probes the card. A key an old screen still reads keeps its text until that route's switch (the security ruling); the reference's wording waits for it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "alert",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=revoked",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=signedout&state=unchecked",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=verify",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=badlink",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. Over a dead link the product keeps Confirm, off, and its quiet sign-in for a new link (the reference's own note says the product keeps Confirm; the kept tests hold Confirm off there and the sign-in named by the catalogue's verify.signIn); the reference draws the sign-in alone as its ink. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Sign in"
+      },
+      {
+        "role": "button",
+        "name": "Confirm my email"
+      },
+      {
+        "role": "button",
+        "name": "Sign in for a new link"
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=badpw",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=code",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=done",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=handed",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The sentence that the setup goes on in the other tab is also said to a screen reader as it appears, by a status of its own the page draws for nobody, as the shipped page announced it; the reference has no such status.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "status",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=locked",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\".",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=slowed",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it. The page says, as its note, why a mailed link asks for the password (verify.passwordHint: only you can confirm the address, the link on its own is not enough): without it the page reads as a phishing page, and the confirmation's kept test holds the sentence (apps/webapp/test/email-verification.test.ts); the reference has no note. Declared on the page's words; its blanks, buttons and refusals are compared. The password blank keeps its shipped name, \"Your password\" (verify.passwordLabel), said to a screen reader only: the kept sign-up run finds the blank by it, exactly (apps/webapp/test/signup-journey.e2e.test.ts); the reference names it \"Password\". The sentence is the old sign-in card's too (login.signInSlowed), and /login still draws that card: its mount stopped on the kept sign-out run, which probes the card. A key an old screen still reads keeps its text until that route's switch (the security ruling); the reference's wording waits for it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      },
+      {
+        "role": "main",
+        "name": ""
+      },
+      {
+        "role": "textbox",
+        "name": "Your password"
+      },
+      {
+        "role": "textbox",
+        "name": "Password"
+      },
+      {
+        "role": "alert",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=verify&state=unavailable",
+    "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "banner",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=wall",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=canceled",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=checking",
+    "reason": "A wait is also said to a screen reader as it counts, by a status of its own the page draws for nobody, as the shipped page announced it; the reference has no such status. The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "status",
+        "name": ""
+      },
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=erasedtab",
+    "reason": "The sentence is the desktop's wall's too (accessLock.erasedBlocked) and keeps the catalogue's straight apostrophe.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "alert",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=never",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none. The fresh wall's line keeps the shipped \"14 days free, no card.\" (accessLock.neverLine): the kept sign-up run reads it word for word on the front door a Cloud account that never started its trial meets (apps/webapp/test/signup-journey.e2e.test.ts); the reference spells \"Fourteen days free, no card.\". Declared on the page's words; its buttons and ways out are compared.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      },
+      {
+        "role": "main",
+        "name": ""
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=nofile",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=nolink",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=pending",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=plain",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=suspended",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none. An operator's hold names the support address to write to, as the shipped wall does; the reference leaves the real address out of its demo (screens/doors.js, its header). The address stands in the page's line.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "screen=wall&state=undated",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=unpaid",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
+  {
+    "key": "screen=wall&state=unverified",
+    "reason": "The wall's ways out are a list whose items each hold their press, as a list must; the reference's list holds its buttons with no item. The self-host guide stands under the ways, as the shipped wall offers it; the reference has none.",
+    "since": "2026-11-15",
+    "nodes": [
+      {
+        "role": "listitem",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "Read the self-host guide"
+      }
+    ]
+  },
  {
   "key": "open=none&screen=ohbox",
   "reason": "a row is an option in a named listbox, named 'Sender: Subject' and saying its state in its description (what the shipped row says to a screen reader), where the simulator draws a list of buttons; the states page's people keep their first names where the reference's full names meet the push gate's guard list; the head's doorbell and Mark all read keep the shipped accessible names, the count in the name; the list's menu is named 'Ohbox actions'; the rail, the landmarks, the mail/calendar switch, the palette and the scheme control are the frame's and cal-views' (today's fed rail names its landmark Main and a counted entry 'Ohbox 5'); the reading column, its blank and the agenda under it are the reader's and cal-views'; the column handle ('List width') is today's columns' and says its width, which the reference's draws none of",

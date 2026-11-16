@@ -374,6 +374,8 @@ describe("the suite workflow", () => {
 });
 
 type PlanStep = Step & { id?: string; if?: string; "continue-on-error"?: boolean; "timeout-minutes"?: number; with?: Record<string, unknown> };
+/** The plan job's line naming the merge it checked out: its head (HEAD^2) onto the base's tip (HEAD^1). */
+const TESTED_RUN = 'echo "TESTED: merge of $(git rev-parse HEAD^2) onto $(git rev-parse HEAD^1)"';
 type FullJob = Omit<Job, "steps"> & { if?: string; strategy?: { matrix?: Record<string, unknown> }; steps: PlanStep[]; "timeout-minutes"?: number };
 
 /**
@@ -390,6 +392,11 @@ function selectionProblems(text: string): string[] {
   const checkout = plan.find((s) => (s.uses ?? "").startsWith("actions/checkout@"));
   if (checkout?.with?.["fetch-depth"] !== 2 || checkout?.with?.["persist-credentials"] !== false) problems.push("PLAN_CHECKOUT the plan does not check out the merge commit's parents without credentials");
   const scope = at(/node \.github\/scripts\/ci-select\.mjs scope\b/);
+  // The merge this run tested, on a pull request alone and before it decides (a landing reads it).
+  const tested = plan.findIndex((s) => (s.run ?? "").trim() === TESTED_RUN);
+  if (tested < 0 || plan[tested]!.if !== "github.event_name == 'pull_request'" || !(plan.indexOf(checkout!) < tested && tested < scope)) {
+    problems.push("PLAN_TESTED the plan does not say which merge it tested, on a pull request alone, before it decides");
+  }
   const install = at(/npm ci\b/);
   const sel = at(/node \.github\/scripts\/ci-select\.mjs select\b/);
   const out = at(/node \.github\/scripts\/ci-select\.mjs outputs\b/);
@@ -479,6 +486,46 @@ describe("a pull request's selected run", () => {
       const costs = costsFrom(ROOT, [{ path: "a/ci-suite-3.json", report: suite }, { path: "b/ci-sqlite-1.json", report: sqlite }], "123");
       expect(costs).toEqual({ measuredAt: "123", suite: { [files[0]!]: 2000, [files[1]!]: 1000 }, sqlite: { [files[2]!]: 700 } });
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("the plan job says which merge it tested, on a pull request alone", () => {
+    const wf = yaml.load(workflowText) as { jobs: Record<string, FullJob> };
+    const step = wf.jobs.plan!.steps.find((s) => (s.run ?? "").trim() === TESTED_RUN);
+    expect(step?.if).toBe("github.event_name == 'pull_request'");
+    // Run on a merge commit as the job checks one out, it names the head and the base's tip.
+    const dir = mkdtempSync(join(tmpdir(), "ci-shards-tested-"));
+    try {
+      const g = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: dir, encoding: "utf8" }).trim();
+      g("init", "-q", "-b", "next");
+      writeFileSync(join(dir, "a.txt"), "a\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "base");
+      g("checkout", "-q", "-b", "pr/x");
+      writeFileSync(join(dir, "b.txt"), "b\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "head");
+      const head = g("rev-parse", "HEAD");
+      g("checkout", "-q", "next");
+      writeFileSync(join(dir, "c.txt"), "c\n");
+      g("add", "-A");
+      g("commit", "-q", "-m", "next moved");
+      const base = g("rev-parse", "HEAD");
+      g("merge", "-q", "--no-ff", "-m", "merge", "pr/x");
+      writeFileSync(join(dir, "step.sh"), `set -euo pipefail\n${step!.run}`);
+      expect(execFileSync("bash", [join(dir, "step.sh")], { cwd: dir, encoding: "utf8" })).toBe(`TESTED: merge of ${head} onto ${base}\n`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+    // The admission names it: gone, on every event, or after the scope is decided.
+    const at = workflowText.indexOf(TESTED_RUN);
+    const block = workflowText.slice(workflowText.lastIndexOf("\n      - ", at) + 1, workflowText.indexOf("\n", at) + 1);
+    const planted: Array<[string, string]> = [
+      ["no line", workflowText.replace(TESTED_RUN, 'echo "a merge"')],
+      ["every event", workflowText.replace(block, block.replace("        if: github.event_name == 'pull_request'\n", ""))],
+      ["after the scope", workflowText.replace(block, "").replace("      - name: Install the locked dependency tree\n", `${block}      - name: Install the locked dependency tree\n`)],
+    ];
+    for (const [what, text] of planted) {
+      expect(text, what).not.toBe(workflowText);
+      expect(selectionProblems(text), what).toEqual([expect.stringMatching(/^PLAN_TESTED /)]);
+    }
   });
 });
 

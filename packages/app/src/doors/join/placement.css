@@ -1,0 +1,59 @@
+/* The join's own placement. Own classes: `way-`. */
+
+/* How far the setup is: a row of dots, each said by its station's name. */
+.way-join-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A line that says what is going on, beside the material: a wait, a copy that did not work. */
+.way-join-status {
+  margin: 0;
+  color: var(--ink2);
+}
+
+/* A row of small buttons under what they act on. */
+.way-join-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* The authenticator's picture, on the sheet's ground, and its key read off under it. */
+.way-join-qr {
+  max-width: 232px;
+  padding: var(--s4);
+  border-radius: var(--r-row);
+  background-color: var(--soft-sheet);
+  color: var(--ink);
+}
+
+.way-join-key {
+  margin: 0;
+  color: var(--ink2);
+  font-weight: var(--w-mid);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* The ten codes in two columns, set apart in the text face as the reference sets them. */
+.way-join-codes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2) var(--s6);
+  max-width: 420px;
+  margin: 0;
+  padding: var(--s5);
+  border-radius: var(--r-row);
+  background-color: var(--soft-sheet);
+  font-size: var(--t-read);
+  font-weight: var(--w-mid);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  list-style: none;
+}

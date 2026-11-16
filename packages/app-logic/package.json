@@ -4,6 +4,42 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
+    "./calendar/port": {
+      "types": "./src/calendar/port.ts",
+      "ohmail-source": "./src/calendar/port.ts",
+      "node": "./dist/calendar/port.js",
+      "default": "./src/calendar/port.ts"
+    },
+    "./consent": {
+      "types": "./src/consent/index.ts",
+      "ohmail-source": "./src/consent/index.ts",
+      "node": "./dist/consent/index.js",
+      "default": "./src/consent/index.ts"
+    },
+    "./consent/consent-state": {
+      "types": "./src/consent/consent-state.ts",
+      "ohmail-source": "./src/consent/consent-state.ts",
+      "node": "./dist/consent/consent-state.js",
+      "default": "./src/consent/consent-state.ts"
+    },
+    "./consent/consent-wire": {
+      "types": "./src/consent/consent-wire.ts",
+      "ohmail-source": "./src/consent/consent-wire.ts",
+      "node": "./dist/consent/consent-wire.js",
+      "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/travelled-change": {
+      "types": "./src/consent/travelled-change.ts",
+      "ohmail-source": "./src/consent/travelled-change.ts",
+      "node": "./dist/consent/travelled-change.js",
+      "default": "./src/consent/travelled-change.ts"
+    },
     "./doors": {
       "types": "./src/doors/index.ts",
       "ohmail-source": "./src/doors/index.ts",
@@ -279,6 +315,12 @@
       "ohmail-source": "./src/mail-state/mail-state.ts",
       "node": "./dist/mail-state/mail-state.js",
       "default": "./src/mail-state/mail-state.ts"
+    },
+    "./mail-state/mail-state-binding": {
+      "types": "./src/mail-state/mail-state-binding.ts",
+      "ohmail-source": "./src/mail-state/mail-state-binding.ts",
+      "node": "./dist/mail-state/mail-state-binding.js",
+      "default": "./src/mail-state/mail-state-binding.ts"
     },
     "./mail-state/mailbox-error-key": {
       "types": "./src/mail-state/mailbox-error-key.ts",
@@ -748,6 +790,12 @@
       "node": "./dist/text/idn.js",
       "default": "./src/text/idn.ts"
     },
+    "./text/locale": {
+      "types": "./src/text/locale.ts",
+      "ohmail-source": "./src/text/locale.ts",
+      "node": "./dist/text/locale.js",
+      "default": "./src/text/locale.ts"
+    },
     "./text/translator": {
       "types": "./src/text/translator.ts",
       "ohmail-source": "./src/text/translator.ts",
@@ -805,7 +853,9 @@
   },
   "dependencies": {
     "react": "19.2.3",
+    "@ohmail/cal-core": "*",
     "@ohmail/client-engine": "*",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*"
   },
   "devDependencies": {

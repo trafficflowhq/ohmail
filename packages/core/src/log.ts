@@ -205,7 +205,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // The Cloud mirror's refusals counted by key past its held cap (`cloud_row_quarantine_full`):
   // an integer the mirror counts itself, never a key or a table name.
   "overflow",
-  // The legacy News repair (`legacy_news_repaired`, apps/worker/src/news-repair.ts): four counts
+  // The legacy News repair (`legacy_news_repaired`, packages/organizer/src/news-repair.ts): four counts
   // of rows it re-pointed, forgot, found missing on the server and re-spelt. No folder, no uid.
   "repointed", "forgotten", "missing", "spellings",
   // ── THE STAND-DOWN'S HANDOVER, three counts of OUR OWN bookkeeping ──
@@ -223,7 +223,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // refused as malformed or unhandled, how many outstanding ones aged out. Same class as
   // `examined` / `pruned` / `dropped` above and kept for the same reason — a line that says a
   // drain ran and strips the numbers says nothing about whether it did anything. None of the
-  // three can carry mail: each is produced by `apps/worker/src/request-drain.ts` as a counter it
+  // three can carry mail: each is produced by `packages/organizer/src/request-drain.ts` as a counter it
   // incremented itself, never read off a record.
   "applied", "refused", "expired",
   "offered", // gap_catchup_pass
@@ -379,7 +379,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // license an unbounded list of uuids on one line.
   "undecided", "walk", "maxWalks",
   // `tripped` is the inbound-quiet pass's half of a pair whose other half (`cleared`) is already
-  // above: how many mailboxes ENTERED a quiet episode this pass (`apps/worker/src/inbound-quiet.ts`,
+  // above: how many mailboxes ENTERED a quiet episode this pass (`packages/organizer/src/inbound-quiet.ts`,
   // mail 0078) versus how many episodes ended because genuine inbound resumed. A `+= 1` counter
   // over the account's own mailbox rows, never derived from an address, a subject or a sender —
   // the pass's log lines carry ids and these two counters and nothing else. Named rather than
@@ -649,7 +649,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // address — named so, because a bare `endpoint` here would admit a push URL anywhere; `metered` is
   // the organizer's boolean, ENTITLEMENTS_URL set. `kind` is admitted above.
   "aiEndpoint", "metered",
-  // THE BLANK REPAIR (`blank_repair`, apps/worker/src/blank-repair.ts), added WITH its call site:
+  // THE BLANK REPAIR (`blank_repair`, packages/organizer/src/blank-repair.ts), added WITH its call site:
   // `mode` is the closed word off | dry | apply, the other three counts of rows and places. `kept`,
   // `released`, `owed` and `unreadable` are admitted above. No folder, UID or message on the line.
   "mode", "blanks", "places", "returned",

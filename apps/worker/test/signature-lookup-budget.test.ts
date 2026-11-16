@@ -5,9 +5,9 @@ import { makeSignatureCheck, type DkimKeyLookup } from "@trafficflow/core/adapte
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { mailboxes, messages, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import { letter, nodemailerSign, rsaKey } from "../../../packages/core/test/fixtures/dkim-signed.js";
 
 /**

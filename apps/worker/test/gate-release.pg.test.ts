@@ -14,7 +14,7 @@ import {
 import { schema } from "@trafficflow/db/cloud";
 import { heldReleaseSummary } from "@trafficflow/services/mail";
 import { gateReleasePass } from "../src/gate-release.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * ═══ THE SWEEP AND THE RELEASE SCREEN ARE ONE SET ═════════════════════════════════════════

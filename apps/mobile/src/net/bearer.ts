@@ -127,9 +127,28 @@ async function envelopeCode(res: Response): Promise<string | null> {
  */
 const NEVER_RENEW = [
   "/auth/login", "/auth/register", "/auth/refresh", "/auth/verify-email", "/auth/2fa/", "/auth/step-up/",
-  "/pair/redeem", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
+  "/pair/redeem", "/pair/handoff", "/admin/staff/", "/auth/desktop-claim", "/auth/desktop-approval/claim", "/oauth/token",
   "/auth/password",
 ];
+
+/** What a handoff's rotation asks beside the refresh token: the receiving app's challenge and its word. */
+export interface HandoffAsk {
+  readonly challenge: string;
+  readonly target: "ohmail" | "ohcal";
+}
+/** The single-use code the server minted for the sibling, and its life in seconds. */
+export interface HandedOff {
+  readonly token: string;
+  readonly expiresIn: number;
+}
+
+/** The answer's `handoff`, read strictly: a 43-character code and a positive life, or nothing. */
+function handoffOf(body: unknown): HandedOff | null {
+  const h = (body as { handoff?: unknown } | null)?.handoff as { token?: unknown; expiresIn?: unknown } | null | undefined;
+  if (typeof h !== "object" || h === null) return null;
+  return typeof h.token === "string" && /^[A-Za-z0-9_-]{43}$/.test(h.token) && typeof h.expiresIn === "number" && h.expiresIn > 0
+    ? { token: h.token, expiresIn: h.expiresIn } : null;
+}
 
 /** A stated window this close to its end counts as lapsed: the answer's transit, on this clock. */
 const WINDOW_LEAD_MS = 30_000;
@@ -287,6 +306,24 @@ export class BearerManagerRN implements SessionRenewalDoor {
     void this.rotate();
   }
 
+  /** The code the last handoff's rotation answered, taken once by {@link renewForHandoff}. */
+  private handedOff: HandedOff | null = null;
+
+  /**
+   * A ROTATION THAT ALSO ASKS FOR A HANDOFF to the sibling app (`POST /pair/handoff`): a flight already in the air is
+   * waited out, then one rotation flies with the same attempt discipline and the same reading of its answer, and the
+   * code it answered is handed back. A server without the door (404) or any answer that is not a verdict keeps the
+   * pair and the attempt's name, and hands back nothing; a refusal ends the session as a rotation's refusal does.
+   */
+  async renewForHandoff(ask: HandoffAsk): Promise<HandedOff | null> {
+    while (this.rotating !== null) await this.rotating.catch(() => false);
+    this.handedOff = null;
+    await this.rotate(ask);
+    const code = this.handedOff;
+    this.handedOff = null;
+    return code;
+  }
+
   /** Hear every adopted pair. Returns the unsubscribe. */
   onRenewed(cb: () => void): () => void {
     this.renewedListeners.add(cb);
@@ -358,7 +395,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * No lock and no storage re-read around the critical section: the registry holds one
    * manager per slot for the process, so this flight is the slot's only presenter.
    */
-  private rotate(): Promise<boolean> {
+  private rotate(handoff?: HandoffAsk): Promise<boolean> {
     return (this.rotating ??= (async (): Promise<boolean> => {
       const presented = this.refresh;
       if (presented === null) return false;
@@ -377,19 +414,22 @@ export class BearerManagerRN implements SessionRenewalDoor {
       });
       let res: Response;
       try {
-        res = await this.fetchImpl(`${this.origin}/auth/refresh`, {
+        // A handoff's rotation is the same rotation at the handoff's door, the sibling's challenge beside it.
+        res = await this.fetchImpl(`${this.origin}${handoff ? "/pair/handoff" : "/auth/refresh"}`, {
           method: "POST",
           headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED, ...this.clientPair },
-          body: JSON.stringify({ refreshToken: presented, attemptId }),
+          body: JSON.stringify({ refreshToken: presented, attemptId, ...(handoff ? { challenge: handoff.challenge, target: handoff.target } : {}) }),
         });
       } catch {
         // Never CONFIRMED presented — usually never sent at all. Nothing to conclude, nothing
         // cleared; the lost-response case is the documented residual in the header.
         return false;
       }
+      const copy = handoff ? res.clone() : null;
       const answer = await readRefreshAnswer(res);
       if (answer.kind === "minted") {
         await this.adopt(answer.tokens);
+        if (copy !== null) this.handedOff = handoffOf(await copy.json().catch(() => null));
         return true;
       }
       if (answer.kind === "erased") {

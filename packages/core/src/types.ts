@@ -26,7 +26,7 @@ export interface CanonicalId {
  * pass reads), strictly larger than what is FILED INTO, so the two questions are different.
  * `isOrganizedFolder` is the predicate every path that WRITES to a mailbox asks, and several
  * callers must never pull the IMAP adapter into their import graph —
- * `apps/worker/src/rule-retro.ts` proved it: `rule-retro.no-imap.test.ts` fails on an
+ * `packages/organizer/src/rule-retro.ts` proved it: `rule-retro.no-imap.test.ts` fails on an
  * `adapters/imap` import, because a bulk mover that could dial would be a second organizer for
  * one mailbox. This module imports nothing that runs (its one import is types, erased at build),
  * which is what makes it reachable from anywhere.

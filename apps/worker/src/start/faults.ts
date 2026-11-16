@@ -1,4 +1,4 @@
-import { isSharedDatabaseFault } from "../dead-letter.js";
+import { isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
 import { tailStageRunner } from "../tail-stage.js";
 import type { MailboxSyncBlockReason } from "../mailboxes.js";
 import type { SyncBlock, WorkerScope } from "./scope.js";

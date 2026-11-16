@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
+import { MAIL_MIGRATIONS_DIR } from "@ohmail/db-mail";
+import { getTableConfig, PgDialect, PgTable } from "drizzle-orm/pg-core";
 import * as mailTables from "../src/schema-mail.js";
 import * as cloudTables from "../src/schema-cloud.js";
 import { MAP_2_0 } from "../src/transition/expected-counts.js";
@@ -12,11 +15,16 @@ import {
 } from "../src/row-security/names.js";
 import {
   KEYED_TABLES, OPERATIONS_TABLES, PLANE_APPENDS, PLANE_READS, STAFF_TABLES, UNOWNED_TABLES, WORKER_WIDE_READ,
-  accountColumnOf, adminReadTables, lockedTables, policiesFor, policiesNaming, policyList, serverTables, tableClass,
+  accountColumnOf, adminReadTables, lockedTables, policiesFor, policiesNaming, policiesOfTable, policyList, serverTables, tableClass,
 } from "../src/row-security/policies.js";
 import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
 import { lockVerdict } from "../src/row-security/check.js";
-import { lockDrift, policyComment, type LockFacts, type ReaderFacts } from "../src/row-security/census.js";
+import { lockDrift, policyComment, viewComment, type LockFacts, type ReaderFacts, type Right, type ViewFacts } from "../src/row-security/census.js";
+import { ACCOUNT_VIEWS, INDEX_READS, VIEW_CHECK_OPTION, readerCondition, viewName, viewStatement } from "../src/row-security/views.js";
+import { CLOUD_MIGRATIONS_DIR } from "../src/journal-specs.js";
+import { RUNTIME_LOGINS } from "../src/row-security/logins.js";
+import { WORD_INDEX_SPEC } from "../src/search-setup.js";
+import { pgDialect } from "../src/dialect/pg.js";
 import { HORIZONS, intervalOf } from "../src/horizons.js";
 import { AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS, SIGN_IN_RECORD_RETENTION_MS } from "../src/retention.js";
 import { AUDIT_LOG_RETENTION_MS } from "../src/change-log-retention.js";
@@ -240,6 +248,260 @@ describe("each locked table's policies", () => {
   });
 });
 
+describe("the account's views of the lock", () => {
+  const render = (q: Parameters<PgDialect["sqlToQuery"]>[0]): string => new PgDialect().sqlToQuery(q).sql;
+
+  /**
+   * THE COLUMNS A STORE MAY ALREADY HOLD, in each view's order. A view an earlier release made answers these:
+   * the step makes it again over itself only where the list keeps them, in order and type, and adds columns at its end
+   * (`create or replace view` takes no other change of a view's columns). So a list grows at its end only: a column put in the
+   * middle, a removal or a reorder is red here before it reaches a store. A release whose grown list has run on a store adds
+   * its new columns to the end of this pin.
+   */
+  const HELD: Readonly<Record<string, readonly string[]>> = {
+    messages: [
+      "id", "account_id", "mailbox_id", "message_id_header", "body_hash", "dedup_key", "subject", "from_address", "from_name",
+      "date", "native_locator", "no_ai", "no_forward", "no_kb", "priority", "created_at", "thread_id", "unread", "last_read_at",
+      "deleted_at", "snippet", "to_addresses", "cc_addresses", "has_attachments", "attachment_count", "sensitivity_category",
+      "auth_verdict", "updated_at", "arrived_at", "open_read_at", "sender_check", "sender_check_brand", "sender_check_by",
+      "server_missing_at", "unconfirmed_hold",
+    ],
+    message_search: ["message_id", "account_id", "head_tsv", "text_tsv", "terms", "source", "built_at"],
+  };
+
+  it("each view's list begins with the columns a store may already hold, in their order: a list grows at its end only", () => {
+    expect({ messages: HELD.messages!.length, message_search: HELD.message_search!.length }).toEqual({ messages: 35, message_search: 7 });
+    for (const v of ACCOUNT_VIEWS) expect(v.columns.slice(0, HELD[v.table]!.length), v.name).toEqual(HELD[v.table]);
+  });
+
+  it("three views, of messages and the search documents, each answering columns its table declares, one by one", () => {
+    expect(ACCOUNT_VIEWS.map((v) => `${viewName(v)} of ${v.table}`)).toEqual([
+      "ohmail.messages of messages", "ohmail.message_search of message_search", "ohmail.message_search_words of message_search",
+    ]);
+    for (const v of ACCOUNT_VIEWS) {
+      expect(v.columns.length, v.name).toBeGreaterThan(0);
+      expect(new Set(v.columns).size, `${v.name}: a column named twice`).toBe(v.columns.length);
+      for (const c of v.columns) expect(COLUMNS.get(v.table)?.has(c), `${v.name}.${c} is a column of ${v.table}`).toBe(true);
+      expect(v.columns.includes("account_id"), v.name).toBe(true);
+    }
+  });
+
+  it("each view's text names exactly the two runtime logins, by current_user, as literals, once each", () => {
+    expect(readerCondition()).toBe(`current_user in (${RUNTIME_LOGINS.map((l) => `'${l}'`).join(", ")})`);
+    for (const v of ACCOUNT_VIEWS) {
+      const text = viewStatement(v);
+      // The only quoted literals of a view's text are the logins' names, each once.
+      expect([...text.matchAll(/'([^']*)'/g)].map((m) => m[1]), v.name).toEqual([...RUNTIME_LOGINS]);
+      expect(text.split(readerCondition()).length - 1, v.name).toBe(1);
+      expect(text, v.name).not.toMatch(/session_user/);
+    }
+  });
+
+  it("each view's text: its columns, its table, the account's condition, the reader's, and the check option alone", () => {
+    for (const v of ACCOUNT_VIEWS) {
+      expect(viewStatement(v), v.name).toBe(`create view ${viewName(v)} as select ${v.columns.map((c) => `"${c}"`).join(", ")} from public."${v.table}"`
+        + ` where ${v.key} and ${readerCondition()} with check option`);
+      expect(viewStatement(v, true), v.name).toBe(viewStatement(v).replace(/^create view /, "create or replace view "));
+      expect(viewStatement(v), v.name).not.toMatch(/security_barrier|security_invoker|\*/);
+    }
+    expect(VIEW_CHECK_OPTION).toBe("check_option=cascaded");
+  });
+
+  it("the two views of a table's own key compare the account as the lock's policy does; the words view keys it as the word index and the word key do", () => {
+    const own = (table: string): string => policiesOfTable(table).find((r) => r.name === "lock_account")!.using!;
+    const byName = new Map(ACCOUNT_VIEWS.map((v) => [v.name, v]));
+    expect(byName.get("messages")!.key).toBe(own("messages"));
+    expect(byName.get("message_search")!.key).toBe(own("message_search"));
+    // The word index's first key, and the left side of the dialect's word key with its alias taken off.
+    const indexKey = /using gin \(\((\(account_id\)::text)\),/.exec(render(WORD_INDEX_SPEC.ddl))?.[1];
+    const wordKey = /^\((.+?) = /.exec(render(pgDialect().search.wordKey("00000000-0000-4000-8000-000000000001")!))?.[1]?.replace(/\bs\./g, "");
+    const viewKey = byName.get("message_search_words")!.key.split(" = ")[0];
+    expect({ indexKey, wordKey }).toEqual({ indexKey: viewKey, wordKey: viewKey });
+    expect(byName.get("message_search_words")!.key).toBe(`${viewKey} = (ohmail.current_account())::text`);
+  });
+});
+
+describe("how each index the lock could take from a read is read", () => {
+  it("43 rows, each on a locked table: a view over that table, a bound named, or a reason; the catalog's own list is the lock's ground's case", () => {
+    const locked = new Set(lockedTables());
+    const rows = Object.entries(INDEX_READS);
+    expect(rows).toHaveLength(43);
+    expect(rows.filter(([, r]) => r.read === "view").map(([n]) => n).sort()).toEqual([
+      "message_search_head_terms_trgm_idx", "message_search_head_tsv_idx", "message_search_names_trgm_idx", "message_search_terms_trgm_idx",
+      "message_search_text_tsv_idx", "message_search_words_idx", "messages_account_arrival_key_idx", "messages_account_from_addr_idx",
+      "messages_account_from_domain_idx", "messages_account_sender_date_idx", "messages_recipient_keys_idx",
+    ]);
+    for (const [name, r] of rows) {
+      expect(locked.has(r.table), `${name} is on ${r.table}, a locked table`).toBe(true);
+      if (r.read === "view") expect(ACCOUNT_VIEWS.find((v) => v.name === r.through)?.table, `${name} reads through a view over ${r.table}`).toBe(r.table);
+      if (r.read === "small") expect(r.bound.length, `${name} names its bound`).toBeGreaterThan(20);
+      if (r.read === "kept") expect(r.why.length, `${name} says why`).toBeGreaterThan(20);
+    }
+  });
+});
+
+/**
+ * A JOURNAL ENTRY OVER A STANDING VIEW (the search ruling's "a view and a later journal"). Postgres
+ * refuses to drop or retype a column a view names, and takes a rename, which leaves the view reading the renamed column under
+ * its old name; a table dropped or renamed takes its views with it, or leaves them over the other name. So an entry of a
+ * journal that runs on a server (the mail journal and the Cloud's) that drops, renames or retypes a column a listed view
+ * names, or drops or renames that view's table, starts with `DROP VIEW IF EXISTS` of each listed view over that table (IF
+ * EXISTS: a store without the lock has none), and the setup's lock step makes them again in the same run. No test database
+ * holds the views (the step acts only where the runtime logins exist), so only this reading holds it before a store does.
+ */
+const SERVER_JOURNALS = [["mail", MAIL_MIGRATIONS_DIR], ["cloud", CLOUD_MIGRATIONS_DIR]] as const;
+const entriesOf = (dir: string): Array<{ name: string; sql: string }> => readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()
+  .map((f) => ({ name: f, sql: readFileSync(join(dir, f), "utf8") }));
+
+/**
+ * An entry's SQL as statements: comments and string literals blanked, dollar quotes taken away so a DO block's statements read
+ * as statements, double-quoted names kept bare, lower case, one space; split on `;`. One left-to-right pass.
+ */
+function statementsOf(sql: string): string[] {
+  let out = "";
+  for (let i = 0; i < sql.length;) {
+    if (sql.startsWith("--", i)) { while (i < sql.length && sql[i] !== "\n") i += 1; continue; }
+    if (sql.startsWith("/*", i)) { const end = sql.indexOf("*/", i + 2); i = end < 0 ? sql.length : end + 2; out += " "; continue; }
+    if (sql[i] === "'") {
+      i += 1;
+      while (i < sql.length) { if (sql[i] === "'" && sql[i + 1] === "'") { i += 2; continue; } if (sql[i] === "'") { i += 1; break; } i += 1; }
+      out += " ''";
+      continue;
+    }
+    if (sql[i] === "$") {
+      const tag = /^\$[A-Za-z_]*\$/.exec(sql.slice(i, i + 40));
+      if (tag !== null) { i += tag[0].length; out += " "; continue; }
+    }
+    out += sql[i] === '"' ? "" : sql[i];
+    i += 1;
+  }
+  return out.split(";").map((t) => t.replace(/\s+/g, " ").trim().toLowerCase()).filter((t) => t !== "");
+}
+
+/** The parts of a list at its top-level commas (a type's `(10,2)` stays whole). */
+function partsOf(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === "(") depth += 1;
+    else if (text[i] === ")") depth -= 1;
+    else if (text[i] === "," && depth === 0) { parts.push(text.slice(from, i).trim()); from = i + 1; }
+  }
+  parts.push(text.slice(from).trim());
+  return parts;
+}
+
+/** A relation's name, its schema taken off: `public.messages` and `messages` are one table. */
+const bareName = (qualified: string): string => qualified.split(".").pop()!;
+
+/**
+ * Each statement of an entry that a listed view cannot stand, and the listed views it needs dropped before it that the entry
+ * has not dropped by then. A DO block or a function that composes its SQL at run time is refused by its own case below.
+ */
+export function viewBreaks(entry: { name: string; sql: string }): string[] {
+  const dropped = new Set<string>();
+  const found: string[] = [];
+  const over = (table: string): typeof ACCOUNT_VIEWS[number][] => ACCOUNT_VIEWS.filter((v) => v.table === table);
+  const need = (statement: string, views: readonly typeof ACCOUNT_VIEWS[number][]): void => {
+    const missing = views.map(viewName).filter((v) => !dropped.has(v));
+    if (missing.length > 0) found.push(`${entry.name}: ${statement} (first: DROP VIEW IF EXISTS ${missing.join(", ")})`);
+  };
+  for (const piece of statementsOf(entry.sql)) {
+    // A DO block's or a branch's statement reads from its keyword on (`do begin alter table …`, `if … then drop table …`).
+    const at = piece.search(/\b(alter table|drop table|drop view) /);
+    if (at < 0) continue;
+    const s = piece.slice(at);
+    const dropView = /^drop view if exists (.+?)(?: cascade| restrict)?$/.exec(s);
+    if (dropView !== null) { for (const n of partsOf(dropView[1]!)) dropped.add(n.includes(".") ? n : `public.${n}`); continue; }
+    const dropTable = /^drop table (?:if exists )?(.+?)(?: cascade| restrict)?$/.exec(s);
+    if (dropTable !== null) { for (const n of partsOf(dropTable[1]!)) need(s, over(bareName(n))); continue; }
+    const alter = /^alter table (?:if exists )?(?:only )?(\S+) (.+)$/.exec(s);
+    if (alter === null || over(bareName(alter[1]!)).length === 0) continue;
+    const views = over(bareName(alter[1]!));
+    const naming = (column: string): typeof views => views.filter((v) => (v.columns as readonly string[]).includes(column));
+    for (const action of partsOf(alter[2]!)) {
+      const words = action.split(" ");
+      if (/^(rename to|set schema) /.test(action)) need(s, views);
+      else if (words[0] === "rename" && words[1] !== "constraint") need(s, naming(words[1] === "column" ? words[2]! : words[1]!));
+      else if (words[0] === "drop" && words[1] !== "constraint") {
+        const rest = words[1] === "column" ? words.slice(2) : words.slice(1);
+        need(s, naming(rest[0] === "if" && rest[1] === "exists" ? rest[2]! : rest[0]!));
+      } else if (words[0] === "alter") {
+        const rest = words[1] === "column" ? words.slice(2) : words.slice(1);
+        if (rest[1] === "type" || (rest[1] === "set" && rest[2] === "data" && rest[3] === "type")) need(s, naming(rest[0]!));
+      }
+    }
+  }
+  return found;
+}
+
+/** Each dollar-quoted body of an entry that runs SQL it composes (EXECUTE) and names a listed view's table: unreadable here. */
+export function composedOverViews(entry: { name: string; sql: string }): string[] {
+  const tables = new Set<string>(ACCOUNT_VIEWS.map((v) => v.table));
+  const bodies: string[] = [];
+  const re = /\$[A-Za-z_]*\$/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(entry.sql)) !== null) {
+    const end = entry.sql.indexOf(m[0], m.index + m[0].length);
+    if (end < 0) break;
+    bodies.push(entry.sql.slice(m.index + m[0].length, end));
+    re.lastIndex = end + m[0].length;
+  }
+  return bodies.some((b) => /\bexecute\b/i.test(b) && [...tables].some((t) => new RegExp(`\\b${t}\\b`).test(b))) ? [entry.name] : [];
+}
+
+describe("the server journals keep the account's views standing", () => {
+  it("no entry of the mail or the Cloud's journal drops, renames or retypes a column a listed view names, or drops or renames its table, without DROP VIEW IF EXISTS of each view over it first", () => {
+    for (const [name, dir] of SERVER_JOURNALS) {
+      const entries = entriesOf(dir);
+      expect(entries.length, name).toBeGreaterThan(10);
+      expect(entries.flatMap(viewBreaks), name).toEqual([]);
+    }
+  });
+
+  it("no entry composes at run time SQL it names a listed view's table in: this reading would not see it", () => {
+    for (const [name, dir] of SERVER_JOURNALS) expect(entriesOf(dir).flatMap(composedOverViews), name).toEqual([]);
+  });
+
+  it("the reading itself: each planted entry that would break a view is named with the views it owes, and one that drops them first is not", () => {
+    const planted = (sql: string): string[] => viewBreaks({ name: "0999_planted.sql", sql });
+    expect({
+      dropColumn: planted(`ALTER TABLE "message_search" DROP COLUMN "source";`),
+      dropColumnBare: planted(`alter table public.messages drop snippet;`),
+      retype: planted(`ALTER TABLE "messages" ALTER COLUMN "snippet" SET DATA TYPE varchar(4000);`),
+      retypeShort: planted(`alter table messages alter snippet type varchar(4000);`),
+      renameColumn: planted(`ALTER TABLE "messages" RENAME COLUMN "snippet" TO "preview";`),
+      renameTable: planted(`ALTER TABLE "message_search" RENAME TO "message_documents";`),
+      dropTable: planted(`DROP TABLE IF EXISTS "drafts", "message_search" CASCADE;`),
+      inADoBlock: planted(`DO $$ BEGIN ALTER TABLE "messages" DROP COLUMN IF EXISTS "subject"; END $$;`),
+      oneOfTwo: planted(`DROP VIEW IF EXISTS ohmail.message_search;\nALTER TABLE "message_search" DROP COLUMN "source";`),
+    }).toEqual({
+      dropColumn: [`0999_planted.sql: alter table message_search drop column source (first: DROP VIEW IF EXISTS ohmail.message_search, ohmail.message_search_words)`],
+      dropColumnBare: [`0999_planted.sql: alter table public.messages drop snippet (first: DROP VIEW IF EXISTS ohmail.messages)`],
+      retype: [`0999_planted.sql: alter table messages alter column snippet set data type varchar(4000) (first: DROP VIEW IF EXISTS ohmail.messages)`],
+      retypeShort: [`0999_planted.sql: alter table messages alter snippet type varchar(4000) (first: DROP VIEW IF EXISTS ohmail.messages)`],
+      renameColumn: [`0999_planted.sql: alter table messages rename column snippet to preview (first: DROP VIEW IF EXISTS ohmail.messages)`],
+      renameTable: [`0999_planted.sql: alter table message_search rename to message_documents (first: DROP VIEW IF EXISTS ohmail.message_search, ohmail.message_search_words)`],
+      dropTable: [`0999_planted.sql: drop table if exists drafts, message_search cascade (first: DROP VIEW IF EXISTS ohmail.message_search, ohmail.message_search_words)`],
+      inADoBlock: [`0999_planted.sql: alter table messages drop column if exists subject (first: DROP VIEW IF EXISTS ohmail.messages)`],
+      oneOfTwo: [`0999_planted.sql: alter table message_search drop column source (first: DROP VIEW IF EXISTS ohmail.message_search_words)`],
+    });
+    // What a listed view stands: the views dropped first; a column no view names; a constraint; a column added; a comment.
+    expect([
+      `DROP VIEW IF EXISTS ohmail.message_search, ohmail.message_search_words;\nALTER TABLE "message_search" DROP COLUMN "source";`,
+      `DROP VIEW IF EXISTS "ohmail"."messages";\nALTER TABLE "messages" ALTER COLUMN "snippet" TYPE varchar(4000);`,
+      `ALTER TABLE "messages" DROP COLUMN IF EXISTS "subject_tsv";`,
+      `ALTER TABLE "messages" DROP CONSTRAINT IF EXISTS "messages_thread_id_threads_id_fk";`,
+      `ALTER TABLE "messages" ADD COLUMN IF NOT EXISTS "recipient_note" text;`,
+      `-- ALTER TABLE messages DROP COLUMN snippet;\nSELECT 'ALTER TABLE messages DROP COLUMN snippet';`,
+    ].flatMap((sql) => planted(sql))).toEqual([]);
+    // A plain DROP VIEW is not enough: on a store without the lock there is no view to drop, and the entry would fail there.
+    expect(planted(`DROP VIEW ohmail.messages;\nALTER TABLE "messages" DROP COLUMN "snippet";`)).toHaveLength(1);
+    expect(composedOverViews({ name: "0999_planted.sql", sql: `DO $$ BEGIN EXECUTE format('ALTER TABLE messages DROP COLUMN %I', 'snippet'); END $$;` }))
+      .toEqual(["0999_planted.sql"]);
+  });
+});
+
 describe("the horizons", () => {
   /**
    * Each pruned table's constants as the product's own modules export them, by name. The session
@@ -314,10 +576,22 @@ describe("the check's verdict over the catalog's facts", () => {
     });
     return {
       version: 170006, user: API_ROLE, session: API_ROLE, roles, tables, policies,
-      schema: { owner: "ohmail_migrator", comment: o.marker ?? null, usage: [] }, readers: READERS, others: [], bindingSettings: [], code: [],
-      grants: {}, connected: { name: API_ROLE, bypass: false, super: false, owns: 0, member: 0, views: 0, definers: 0 }, ...o.extra,
+      schema: { owner: "ohmail_migrator", comment: o.marker ?? null, usage: [API_ROLE, WORKER_ROLE] }, readers: READERS, others: [],
+      views: VIEWS, viewTables: VIEW_TABLES, bindingSettings: [], code: [],
+      grants: {}, connected: { name: API_ROLE, bypass: false, super: false, owns: 0, member: 0, views: 0, definers: 0, ohmail: 0 }, ...o.extra,
     };
   };
+  /** The two tables' columns, as the catalog types them: every column `text`, which is all the fixture needs. */
+  const VIEW_TABLES = Object.fromEntries([...new Set(ACCOUNT_VIEWS.map((v) => v.table))]
+    .map((table) => [table, Object.fromEntries([...COLUMNS.get(table)!].map((c) => [c, "text"]))]));
+  /** One right as the catalog's facts carry it: who (`null`: PUBLIC), the privilege, and the grant option. */
+  const right = (grantee: string | null, privilege: string, grantable = false): Right => ({ grantee, privilege, grantable });
+  /** The three views as the step leaves them and the roles' rule grants them: its record on each, SELECT to the two logins. */
+  const VIEWS: ViewFacts[] = ACCOUNT_VIEWS.map((v) => ({
+    name: v.name, kind: "v", owner: "ohmail_migrator", options: [VIEW_CHECK_OPTION], text: `printed ${v.name}`,
+    columns: v.columns.map((c) => `${c} text`), comment: viewComment(v, `printed ${v.name}`),
+    acl: RUNTIME_LOGINS.map((l) => right(l, "SELECT")), columnAcl: [], code: [], labels: 0,
+  }));
   /** How the catalog spells a policy's verb (`pg_policy.polcmd`). */
   const VERB_LETTER = { ALL: "*", SELECT: "r", INSERT: "a", UPDATE: "w", DELETE: "d" } as const;
   /** The two readers as the setup makes them. */
@@ -410,6 +684,46 @@ describe("the check's verdict over the catalog's facts", () => {
     expect(lockDrift(withCode)).toEqual(what.map(([table, w]) => `LOCK_DRIFT tables.code ${table}: ${w}`));
   });
 
+  it("the account's views: one not as listed (code on it among them), or any right on one beyond the two logins' SELECT, is broken whoever reads; one missing is the census's line", () => {
+    const f = factsOf();
+    const withView = (name: string, over: Partial<ViewFacts>): LockFacts => ({ ...f, views: f.views.map((v) => (v.name === name ? { ...v, ...over } : v)) });
+    expect(lockVerdict(withView("messages", { text: "printed by hand" }))).toMatchObject({ verdict: "broken", why: ["the view ohmail.messages differs: text"], views: 2 });
+    expect(lockVerdict(withView("messages", { options: [] })).why).toEqual(["the view ohmail.messages differs: options"]);
+    // Code on a listed view: a rule beside _RETURN, a trigger, a default on a column each voids the check
+    // option or runs past it, and `create or replace view` keeps each: the view differs, whoever reads.
+    const coded = withView("messages", { code: [{ kind: "rule", name: "riso_ins", on: "INSERT" }, { kind: "trigger", name: "riso_tr", on: null },
+      { kind: "default", name: "snippet", on: null }] });
+    expect(lockVerdict(coded)).toMatchObject({ verdict: "broken", views: 2,
+      why: ["the view ohmail.messages differs: code (the rule riso_ins on INSERT, the trigger riso_tr, the default of snippet)"] });
+    expect(lockDrift(coded)).toEqual(["LOCK_DRIFT views.differ ohmail.messages: code (the rule riso_ins on INSERT, the trigger riso_tr, the default of snippet)"]);
+    // A security label is its provider's word: read, so a provider that acts on one is never past the census.
+    expect(lockVerdict(withView("message_search_words", { labels: 1 })).why).toEqual(["the view ohmail.message_search_words differs: label"]);
+    expect(lockVerdict(withView("message_search", { acl: [...RUNTIME_LOGINS.map((l) => right(l, "SELECT")), right("ohmail_admin", "SELECT")] })).why)
+      .toEqual(["the view ohmail.message_search is granted beyond the two logins' SELECT: ohmail_admin holds SELECT"]);
+    // A login's other verb, its grant option and a column grant to it are rights beyond the rule's too: an insert
+    // ... on conflict do update through a view takes another account's row, and a holder of the grant option hands the view on.
+    const extraVerb = withView("message_search", { acl: [...RUNTIME_LOGINS.map((l) => right(l, "SELECT")), right("ohmail_api", "UPDATE")] });
+    expect(lockVerdict(extraVerb)).toMatchObject({ verdict: "broken", census: 1,
+      why: ["the view ohmail.message_search is granted beyond the two logins' SELECT: ohmail_api holds UPDATE"] });
+    expect(lockDrift(extraVerb)).toEqual(["LOCK_DRIFT views.grants ohmail.message_search: ohmail_api holds UPDATE"]);
+    const option = withView("messages", { acl: [right("ohmail_api", "SELECT", true), right("ohmail_worker", "SELECT")] });
+    expect(lockVerdict(option)).toMatchObject({ verdict: "broken", census: 1,
+      why: ["the view ohmail.messages is granted beyond the two logins' SELECT: ohmail_api holds SELECT with the grant option"] });
+    expect(lockDrift(option)).toEqual(["LOCK_DRIFT views.grants ohmail.messages: ohmail_api holds SELECT with the grant option"]);
+    const column = withView("messages", { columnAcl: [{ ...right("ohmail_worker", "UPDATE"), column: "subject" }] });
+    // Each right by its fields: a role named like a login's right is another role, named quoted; PUBLIC is no name.
+    const colon = withView("messages", { acl: [...RUNTIME_LOGINS.map((l) => right(l, "SELECT")), right("ohmail_api:SELECT", "SELECT"), right(null, "SELECT")] });
+    expect(lockDrift(colon)).toEqual(["LOCK_DRIFT views.grants ohmail.messages: \"ohmail_api:SELECT\" holds SELECT", "LOCK_DRIFT views.grants ohmail.messages: public holds SELECT"]);
+    expect(lockVerdict(colon).verdict).toBe("broken");
+    expect(lockVerdict(column).why).toEqual(["the view ohmail.messages is granted beyond the two logins' SELECT: ohmail_worker holds UPDATE on its column subject"]);
+    const missing = { ...f, views: f.views.filter((v) => v.name !== "message_search_words") };
+    expect(lockVerdict(missing)).toMatchObject({ verdict: "locked", views: 2 });
+    expect(lockDrift(missing)).toEqual(["LOCK_DRIFT views.missing ohmail.message_search_words"]);
+    // Asked for a role, a relation of the readers' schema it may reach beside the views is broken for it.
+    expect(lockVerdict({ ...f, connected: { ...f.connected, ohmail: 1 } }, { role: API_ROLE }).why)
+      .toEqual(["ohmail_api may reach a relation of the schema ohmail beside the account's views, or run a SECURITY DEFINER routine there"]);
+  });
+
   it("asked to serve as a role: the connected role must be it, may not bypass, owns nothing, and its policies are the list's", () => {
     expect(lockVerdict(factsOf(), { role: API_ROLE })).toMatchObject({ verdict: "locked", role: { policies: "equal" } });
     const owner = { name: "ohmail_migrator", bypass: true, super: false, owns: 300, member: 0, views: 0, definers: 0 };
@@ -446,7 +760,10 @@ describe("the check's verdict over the catalog's facts", () => {
     // A routine of the same name that takes an argument is not the reader.
     expect(lockVerdict({ ...f, readers: [{ ...READERS[0]!, args: 1, identity: "x integer" }, READERS[1]!] }).why)
       .toEqual(["the reader ohmail.current_account is missing"]);
-    expect(lockVerdict({ ...f, schema: { ...f.schema!, usage: [API_ROLE] } }).why).toEqual(["ohmail_api holds USAGE on the schema ohmail"]);
+    // A login's USAGE is the rule's while one of the account's views stands there; another role's never is.
+    expect(lockVerdict({ ...f, schema: { ...f.schema!, usage: [API_ROLE, WORKER_ROLE] } }).why).toEqual([]);
+    expect(lockVerdict({ ...f, schema: { ...f.schema!, usage: [API_ROLE, STAFF_ROLE] } }).why).toEqual(["ohmail_admin holds USAGE on the schema ohmail"]);
+    expect(lockVerdict({ ...f, views: [], schema: { ...f.schema!, usage: [API_ROLE] } }).why).toEqual(["ohmail_api holds USAGE on the schema ohmail"]);
     expect(lockVerdict({ ...f, schema: null }).why).toEqual(["the readers' schema ohmail is missing"]);
     // No runtime login: no lock to read, so the readers are not judged.
     expect(lockVerdict({ ...factsOf({ logins: [], on: false }), readers: [] }).verdict).toBe("absent");

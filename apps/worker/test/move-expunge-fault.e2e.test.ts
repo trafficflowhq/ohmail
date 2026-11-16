@@ -8,9 +8,9 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { makeDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
-import { runSyncCycle } from "../src/sync.js";
-import { dbUrlFor, byMessageId, refuseDriftedSharedDb } from "./_workerdb.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { dbUrlFor, byMessageId, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 import {
   CONDSTORE_HOST, CONDSTORE_PORT, probeCondstore,
 } from "../../../packages/core/test/adapters/_imapenv.js";

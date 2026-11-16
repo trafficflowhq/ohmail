@@ -16,8 +16,8 @@ import {
 } from "@trafficflow/services";
 import {
   screenerImpersonationPass, type ScreenerImpersonationDeps, type ScreenerImpersonationResult,
-} from "../src/screener-impersonation.js";
-import { repoWithFailingMethod } from "./_fault.js";
+} from "@ohmail/organizer/screener-impersonation";
+import { repoWithFailingMethod } from "../../../packages/organizer/test/_fault.js";
 
 /**
  * A HELD LETTER THAT IMPERSONATES A COMPANY IS FILED TO SPAM ON ITS OWN (2026-11-09). The pass files

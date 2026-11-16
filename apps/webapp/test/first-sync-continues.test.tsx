@@ -35,7 +35,7 @@ const QUIET: MailState = {
 };
 
 let current: MailState = QUIET;
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
@@ -134,6 +134,7 @@ function importing(mailboxes: MailboxFacts[]): MailState {
     engineFreshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
     now: NOW,
     demo: false,
+    scope: null,
   });
 }
 
@@ -172,6 +173,7 @@ describe("which mailbox may name the folder", () => {
       engineFreshness: { state: "current", asOf: new Date(NOW - 30_000).toISOString() },
       now: NOW,
       demo: false,
+      scope: null,
     });
     expect(settled.key).not.toBe("importing");
     expect(settled.continuesAtFolder).toBeNull();

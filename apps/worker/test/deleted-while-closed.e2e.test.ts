@@ -12,9 +12,9 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { MessageService, SearchService, SyncService, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * A LETTER DELETED WHILE THE APP WAS CLOSED LEAVES ON THE FIRST DRAIN AFTER LAUNCH.

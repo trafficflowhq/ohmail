@@ -257,6 +257,7 @@ describe("the first sync's progress is the import, not the window", () => {
       growth,
       now: at,
       demo: false,
+      scope: null,
     });
 
     it("says nothing through the EPISODE — the state a relaunch leaves behind is unlatched", () => {

@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { startWorker } from "../src/index.js";
 import { loadEnabledMailboxes } from "../src/mailboxes.js";
 import { LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
-import { imapCfg, rawClient, emlOf } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 type Db = ReturnType<typeof makeDb>;

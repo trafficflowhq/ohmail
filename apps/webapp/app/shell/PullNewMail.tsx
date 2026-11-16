@@ -38,7 +38,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon, useToast } from "@ohmail/ui";
 import { useDemoMode, useEngine } from "./engine";
-import type { MailboxProbe } from "./MailStateProvider";
+import type { MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { serverUnreachable } from "@ohmail/app-logic/mail-state/mail-state";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 

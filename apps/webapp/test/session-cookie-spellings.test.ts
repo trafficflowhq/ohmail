@@ -54,7 +54,10 @@ describe("the one reader", () => {
 
 /* ── THE CENSUS: no web code reads a session cookie by hand ─────────────────────────────────── */
 
-const ROOTS = [path.join(HERE, "../app"), path.join(HERE, "../middleware.ts"), path.join(HERE, "../../../packages/app-logic/src")];
+const ROOTS = [
+  path.join(HERE, "../app"), path.join(HERE, "../middleware.ts"), path.join(HERE, "../../../packages/app/src"),
+  path.join(HERE, "../../../packages/app-logic/src"),
+];
 const NAME = String.raw`(?:"tf_(?:session|refresh|csrf|resume|owner)"|SESSION_COOKIE|RESUME_COOKIE|OWNER_COOKIE)`;
 const HAND_READ = new RegExp(String.raw`[!=]==\s*${NAME}|${NAME}\s*[!=]==|\bcookies(?:\(\))?\.(?:get|has)\(`, "g");
 

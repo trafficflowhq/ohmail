@@ -25,6 +25,7 @@ const SCANNED_ROOTS = [
   "packages/core/src",
   "packages/services/src",
   "apps/worker/src",
+  "packages/organizer/src",
   "packages/client-engine/src",
 ];
 
@@ -165,23 +166,23 @@ const CLASSIFIED: Record<string, Row> = {
     classes: ["threading-corroborated"],
     why: "a sender is a correspondent only against a copy in the mailbox's own Sent folder — the server's locator: its To/Cc (our writing), or its id named by their references, for that message, and taught only when its To/Cc names them; never their From",
   },
-  "apps/worker/src/screener-auto-act.ts": {
+  "packages/organizer/src/screener-auto-act.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate over the held mail's references before filing anybody",
   },
-  "apps/worker/src/screener-auto-suggest.ts": {
+  "packages/organizer/src/screener-auto-suggest.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate over the held mail's references before buying advice",
   },
-  "apps/worker/src/screener-impersonation.ts": {
+  "packages/organizer/src/screener-impersonation.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate over the held mail's references, and whether held mail answers the account's own, before filing a claim; an answer keeps the letter",
   },
-  "apps/worker/src/act-admission-retire.ts": {
+  "packages/organizer/src/act-admission-retire.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate, with no references of its own, before retiring what the act wrote for a sender",
   },
-  "apps/worker/src/screener-correspondent-retro.ts": {
+  "packages/organizer/src/screener-correspondent-retro.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "the retro releases a held sender only on the correspondent predicate's answer, and for an answer the cited copy does not name only the messages that themselves cite it",
   },
@@ -218,16 +219,16 @@ const CLASSIFIED: Record<string, Row> = {
   },
 
   // ── the worker ────────────────────────────────────────────────────────────────────────
-  "apps/worker/src/gap-catchup.ts": {
+  "packages/organizer/src/gap-catchup.ts": {
     terms: ["messageIdHeader"], classes: ["threading-corroborated"],
     why: "the gap's stranger class asks `gateHoldsSender` with the letter's own id for the gate's reply arm "
       + "(`pipeline.ts#correspondentAtGate`), so an answer to the person's own writing is never screened",
   },
-  "apps/worker/src/thread-join-heal.ts": {
+  "packages/organizer/src/thread-join-heal.ts": {
     terms: ["ccAddresses", "toAddresses"], classes: ["threading-corroborated"],
     why: "`counterpartyEvidence` says WHO put each address on the thread; a To/Cc a sender wrote is not evidence",
   },
-  "apps/worker/src/known-set.ts": {
+  "packages/organizer/src/known-set.ts": {
     terms: ["messageIdHeader"], classes: ["display"],
     why: "the known-set memo carries the column `listKnownLocators` projects, so what it holds equals a fresh read — the value is copied, never compared, keyed on or ranked by",
   },
@@ -239,7 +240,7 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["thread-key-at-ingest"],
     why: "the ingest's batched commit threads a run of new letters by `resolveThread`'s rules (`foldThreads`): the same chain, the same account-scoped parent read and the same root, read once for the run",
   },
-  "apps/worker/src/sync.ts": {
+  "packages/organizer/src/sync.ts": {
     terms: ["messageIdHeader"], classes: ["display"],
     why: "a run of new letters is committed before a letter whose Message-ID or cited ids name one of its letters, so each plan reads what one commit per letter leaves; it decides when a batch commits, never what a letter is or joins",
   },
@@ -247,7 +248,7 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["display"],
     why: "selects the column into the away-reply projection",
   },
-  "apps/worker/src/junk-restore.ts": {
+  "packages/organizer/src/junk-restore.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a junk husk is restored only by bytes whose id and dedup key match the stored husk",
   },
@@ -255,15 +256,15 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "the stored id is compared with the re-read message's before a body is rewritten",
   },
-  "apps/worker/src/trash-gone.ts": {
+  "packages/organizer/src/trash-gone.ts": {
     terms: ["messageIdHeader"], classes: ["presence-keeps"],
     why: "a letter parked at a copy the server already dropped leaves Trash only when no letter in Trash carries its id; a forged id keeps it",
   },
-  "apps/worker/src/storage-refill.ts": {
+  "packages/organizer/src/storage-refill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a letter emptied for space gets its text back only from bytes whose id and dedup key match the stored row",
   },
-  "apps/worker/src/invitation-backfill.ts": {
+  "packages/organizer/src/invitation-backfill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a stored letter gets its invitation row only from bytes whose id and dedup key match the stored row",
   },
@@ -281,12 +282,12 @@ const CLASSIFIED: Record<string, Row> = {
   },
   // `ohbox-tidy.ts` and `rule-retro.ts` had a row each for the own-sent engagement read. Both
   // copies collapsed into `packages/db/src/we-answered.ts`, classified below.
-  "apps/worker/src/rule-pass.ts": {
+  "packages/organizer/src/rule-pass.ts": {
     terms: ["messageIdHeader"], classes: ["threading-corroborated"],
     why: "the same own-sent engagement read, in the projection the three passes now share — it "
       + "moved here from `screener-auto.ts` with the rest of the shared row shape",
   },
-  "apps/worker/src/sender-name-backfill.ts": {
+  "packages/organizer/src/sender-name-backfill.ts": {
     terms: ["ccAddresses", "toAddresses"], classes: ["display"],
     why: "fills the recipient columns on rows ingested before they were written",
   },
@@ -348,7 +349,7 @@ const CLASSIFIED_DB: Record<string, { terms: string[]; classes: string[]; why: s
 
 const MUST_CONSULT = [
   "packages/core/src/threading.ts",
-  "apps/worker/src/thread-join-heal.ts",
+  "packages/organizer/src/thread-join-heal.ts",
   "packages/client-engine/src/selectors.ts",
   "packages/client-engine/src/address-book.ts",
   "packages/client-engine/src/consent-cutline.ts",
@@ -384,14 +385,14 @@ const CALL_SITES: Record<string, Record<string, number>> = {
   findByMessageIdHeader: { "packages/core/src/pipeline.ts#resolveExisting": 1 },
   citesOwnWriting: { "packages/core/src/pipeline.ts#planFromRaw": 1 },
   messagesCitingOwnWriting: {
-    "apps/worker/src/screener-correspondent-retro.ts#release": 1,
+    "packages/organizer/src/screener-correspondent-retro.ts#release": 1,
     "packages/core/src/correspondent.ts#sendersAnsweringOwnWriting": 1,
   },
   sendersAnsweringOwnWriting: {
-    "apps/worker/src/screener-auto-act.ts#screenerAutoActPass": 1,
-    "apps/worker/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
+    "packages/organizer/src/screener-auto-act.ts#screenerAutoActPass": 1,
+    "packages/organizer/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
     // The impersonation filing's ties, read once per page: an answer to the account's mail keeps a claim held.
-    "apps/worker/src/screener-impersonation.ts#readTies": 1,
+    "packages/organizer/src/screener-impersonation.ts#readTies": 1,
   },
   ownSentCopies: {
     "packages/core/src/adapters/drizzle-repo.ts#citesOwnWriting": 1,
@@ -402,24 +403,24 @@ const CALL_SITES: Record<string, Record<string, number>> = {
   // only ever takes consent away.
   listPostAddresses: {
     "packages/core/src/pipeline.ts#listAddressesOf": 1,
-    "apps/worker/src/list-address-backfill.ts#listAddressBackfillPass": 1,
+    "packages/organizer/src/list-address-backfill.ts#listAddressBackfillPass": 1,
   },
   recordListAddresses: {
     "packages/core/src/pipeline.ts#commitChange": 2,
-    "apps/worker/src/list-address-backfill.ts#listAddressBackfillPass": 1,
+    "packages/organizer/src/list-address-backfill.ts#listAddressBackfillPass": 1,
     // The batched commit of new letters: the last letter's, as `commitChange` writes it.
     "apps/worker/src/ingest-run.ts#persistNewRun": 1,
   },
   correspondentsAmong: {
     "packages/core/src/adapters/drizzle-repo.ts#isCorrespondent": 1,
-    "apps/worker/src/screener-auto-act.ts#screenerAutoActPass": 1,
-    "apps/worker/src/screener-auto-suggest.ts#screenerAutoSuggestPass": 1,
-    "apps/worker/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
-    "apps/worker/src/screener-correspondent-retro.ts#retireAutoActRules": 1,
-    "apps/worker/src/act-admission-retire.ts#retireActAdmissionsPass": 1,
+    "packages/organizer/src/screener-auto-act.ts#screenerAutoActPass": 1,
+    "packages/organizer/src/screener-auto-suggest.ts#screenerAutoSuggestPass": 1,
+    "packages/organizer/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
+    "packages/organizer/src/screener-correspondent-retro.ts#retireAutoActRules": 1,
+    "packages/organizer/src/act-admission-retire.ts#retireActAdmissionsPass": 1,
     "packages/services/src/screener-service.ts#markCorrespondents": 1,
     // The impersonation filing's ties, read once per page: a sender the account wrote to keeps its claims held.
-    "apps/worker/src/screener-impersonation.ts#readTies": 1,
+    "packages/organizer/src/screener-impersonation.ts#readTies": 1,
   },
 };
 

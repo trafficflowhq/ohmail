@@ -58,7 +58,7 @@ export interface SidecarLogOptions {
  * The hardened logger itself, `service: sidecar`, on stderr. Exposed separately from {@link
  * createSidecarLog} because the two-argument {@link Diagnostic} (forced by `readMailboxLease`) is the
  * right seam for this package's own call sites, whose severity is a naming convention, and the WRONG
- * seam for code it merely HOSTS: `@trafficflow/worker/sync` is written against `Logger` and states
+ * seam for code it merely HOSTS: `@ohmail/organizer/sync` is written against `Logger` and states
  * severity per line, which a `Diagnostic` would re-derive from the event name and flatten to `info`
  * (the worker's vocabulary was never written to this convention). So the sync loop gets the `Logger`
  * and this package keeps the `Diagnostic`, both the same object underneath — `createSidecarLog` is

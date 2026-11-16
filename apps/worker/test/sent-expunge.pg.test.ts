@@ -8,9 +8,9 @@ import { recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { makeHarness, rawClient, uidInFolder, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, uidInFolder, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A SENT MESSAGE DELETED BY ANOTHER CLIENT, AGAINST A REAL SERVER.

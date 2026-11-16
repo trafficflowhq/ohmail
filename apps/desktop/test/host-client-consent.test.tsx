@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -8,8 +8,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
-import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { consentOverBridge } from "../src/local-consent.js";
+import type { ConsentStateWire as StandInConsentRead } from "../src/no-api-client.js";
 import { BearerManager } from "../../paired-page/src/bearer.js";
 import { HostGate } from "../../paired-page/src/HostGate.js";
 
@@ -173,5 +174,11 @@ describe("the consent wire a paired device's gate hands the shared shell", () =>
     const consentSrc = read("packages/api/src/routes/consent.ts");
     expect(consentSrc).toContain('pattern: "/consent"');
     expect(consentSrc).toContain('pattern: "/consent/settings"');
+  });
+
+  /* The desktop's stand-in for the server client restates the consent read, and the shared hook declares the read it
+     takes. Held here by the compiler, beside the stand-in: no file of the web app may import this app to say it. */
+  it("the read the client's stand-in declares is one the consent row takes", () => {
+    expectTypeOf<StandInConsentRead>().toMatchTypeOf<Awaited<ReturnType<ConsentTransport["state"]>>>();
   });
 });

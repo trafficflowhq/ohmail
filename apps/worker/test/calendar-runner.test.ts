@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { silentLogger } from "@trafficflow/core";
 import { startCalendarRunner, type CalendarRunner, type CalendarRunnerDeps } from "../src/start/calendar.js";
-import type { CalendarSyncOutcome, DueConnection } from "../src/calendar/index.js";
+import type { CalendarSyncOutcome, DueConnection } from "@ohmail/organizer/calendar-sync";
 
 const due = (id: string, accountId = `acct-${id}`): DueConnection => ({ id, accountId, provider: "caldav", status: "active" });
 const synced = (more: boolean): CalendarSyncOutcome => ({ kind: "synced", calendars: 1, pages: 1, changed: 0, dropped: 0, more });

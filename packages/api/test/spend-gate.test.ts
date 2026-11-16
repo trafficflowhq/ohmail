@@ -422,6 +422,10 @@ const CEREMONY = [
   // A pairing link's state by its token's HASH — `DELETE /pair/:id`'s class: the credential
   // lifecycle, one read, no write, nothing a caller can spend. Public: the asker holds a link, not
   // a session. Sorted after `POST /pair` (`/pair` < `/pair/state`).
+  // A phone app's handoff of its sign-in to its sibling app: the native rotation, then a single-use code bound to the
+  // sibling's challenge, at most six an hour per person. The credential lifecycle, as the refresh door; public, its
+  // credential the refresh token in the body. Sorted before the state read (`/pair/handoff` < `/pair/state`).
+  "POST /pair/handoff",
   "POST /pair/state",
 ];
 
@@ -979,7 +983,9 @@ describe("the route table declares what every handler causes", () => {
     // 265 -> 266 with a draft from the person's own words, `paid` like Draft reply: gated.
     // 266 -> 267: `POST /messages/:id/invitation/answer` (mail 0204), a `connection` like the send
     // it makes, so it joins the gated remainder and no exempt list moves.
-    expect(apiRoutes).toHaveLength(267);
+    // 267 -> 268: `POST /pair/handoff` (mail 0209), a phone app's handoff of its sign-in to its sibling. `ceremony`,
+    // so it joins `CEREMONY` and this total together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(268);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1221,7 +1227,9 @@ describe("the route table declares what every handler causes", () => {
     // it now, the storage choices and the change door grow the remainder by three.
     // 265 -> 266 with a draft from the person's own words, `paid`: the remainder grows by one.
     // 266 -> 267 with an invitation's answer by mail, a `connection`: the remainder grows by one.
-    expect(gated.length).toBe(267 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 267 -> 268 with a phone app's handoff, a `ceremony`: the total and `CEREMONY` grow by one each, the remainder
+    // does not move.
+    expect(gated.length).toBe(268 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

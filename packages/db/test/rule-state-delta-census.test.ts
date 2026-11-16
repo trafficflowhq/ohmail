@@ -30,7 +30,7 @@ const HERE = resolve(import.meta.dirname ?? ".");
 const REPO = resolve(HERE, "../../..");
 const ROOTS = [
   "packages/db/src", "packages/services/src", "packages/api/src", "packages/core/src",
-  "apps/worker/src", "apps/sidecar/src",
+  "apps/worker/src", "packages/organizer/src", "apps/sidecar/src",
 ] as const;
 
 /** The door, and the row-shaped half of it. */
@@ -64,7 +64,7 @@ const EXEMPT_WRITE_SITES: Record<string, string> = {
   "packages/services/src/account-deletion-service.ts#deleteAccount":
     "account erasure. The account's whole change_log goes with it, so a delta would name a rule "
     + "for a client that no longer exists.",
-  "apps/worker/src/rule-retro.ts#ruleRetroPass":
+  "packages/organizer/src/rule-retro.ts#ruleRetroPass":
     "the retro walk's own cursor and counter — `retro_cursor`/`retro_moved`, which are not on "
     + "`RuleDTO`. The mail the walk MOVES is announced as `message` deltas by the same transaction; "
     + "a page whose first move ends a re-filing's wait files a rule delta itself; "
@@ -293,8 +293,8 @@ describe("rule 1 — every rule-state write site files a delta", () => {
     // `RuleDTO` and files a delta.
     expect(WRITES.filter((w) => !w.visible).map(key).sort()).toEqual([
       "apps/worker/src/mailboxes.ts#clearOwedRetroFences",
-      "apps/worker/src/rule-retro.ts#ruleRetroPass",
       "packages/db/src/request-apply.ts#settleReaderRuleRows",
+      "packages/organizer/src/rule-retro.ts#ruleRetroPass",
     ]);
   });
 

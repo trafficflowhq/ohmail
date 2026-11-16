@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>[production] ohmail: 2 alerts firing</title>
+</head>
+<body style="margin:0;padding:24px 16px;background:#ffffff;color:#1e1a16;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<h1 style="margin:0 0 16px;font-size:18px;">[production] ohmail: 2 alerts firing</h1>
+<p style="margin:0 0 12px;">Observed by the api alert pass.</p>
+<p style="margin:0 0 12px;"><strong>[critical] Sync worker (shard 0) is not running</strong><br><span>Last leader heartbeat from wkr-7c41 was 6m ago (threshold 2m). No mailbox is syncing.</span></p>
+<p style="margin:0 0 12px;"><strong>[critical] 2 Stripe webhook events failed to apply</strong><br><span>the oldest arrived 19h ago; a paid invoice whose apply failed grants no credits</span></p>
+<p style="margin:0 0 12px;"><a href="https://admin.ohmail.app/">Open the admin console</a></p>
+<p style="margin:24px 0 0;color:#5c534b;font-size:13px;">Sent when an alert starts. Another mail about the same kind of alert waits at least 6 h unless its severity rises. Nothing is mailed when an alert clears, and lesser alerts wait for the daily summary.</p>
+</body>
+</html>

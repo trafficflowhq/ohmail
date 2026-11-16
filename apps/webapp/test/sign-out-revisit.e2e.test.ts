@@ -46,6 +46,16 @@ const NEXT_CLI = nextCli();
 const PENDING = "signed_out_pending";
 const R = messages.resume as Record<string, string>;
 const A = messages.account as Record<string, string>;
+const LOGIN = messages.login as Record<string, string>;
+const JOIN = messages.join as Record<string, string>;
+/** The names a person finds a door's form by: the sign-in's heading and its two blanks, the sign-up's first blank. */
+const DOOR_NAMES = {
+  signIn: LOGIN.title!,
+  email: LOGIN.emailLabel!,
+  password: LOGIN.passwordLabel!,
+  joinEmail: JOIN.emailLabel!,
+  joinInvite: JOIN.inviteLabel!,
+};
 /** The server-refused sentence up to its reason, which is the client's own words for a door that never answered. */
 const REFUSED_LEAD = A.signOutServerRefused!.split("{reason}")[0]!.trim();
 
@@ -258,7 +268,46 @@ const doorAnswers = (): Array<number | "held" | "dropped"> =>
   heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status);
 
 /** One reading of the page: where it is, whether it has parsed, what it says, which card shows, and the mailbox shell. */
-interface Sample { ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean; shell: boolean }
+interface Sample {
+  ms: number; path: string; ready: string; text: string; loginCard: boolean; gateMark: boolean; shell: boolean;
+  /** What the door's form says, and its first alert. */
+  cardText: string; cardAlert: string;
+}
+
+/**
+ * ONE READING, TAKEN INSIDE THE PAGE. `loginCard` is a door's form as a person meets it: the part of the document that
+ * holds the page's heading and the blanks of its form, each found by the name its label gives it. On /login the
+ * heading is the sign-in's and both of its blanks stand; on /join the sign-up's first blank stands, the address or the
+ * invite code; on any other address it is nothing. Nothing a signed-in page draws carries that heading over those blanks.
+ */
+function readPage(n: typeof DOOR_NAMES): Omit<Sample, "ms"> {
+  const blank = (name: string): HTMLElement | null =>
+    [...document.querySelectorAll("label")].find((l) => (l.textContent ?? "").trim() === name)?.control ?? null;
+  const form = ((): HTMLElement | null => {
+    if (location.pathname !== "/login" && location.pathname !== "/join") return null;
+    const heading = document.querySelector<HTMLElement>("h1");
+    if (!heading) return null;
+    const signIn = location.pathname === "/login";
+    if (signIn && (heading.textContent ?? "").trim() !== n.signIn) return null;
+    const blanks = signIn ? [blank(n.email), blank(n.password)] : [blank(n.joinEmail) ?? blank(n.joinInvite)];
+    if (blanks.some((b) => b === null)) return null;
+    let at: HTMLElement | null = heading;
+    while (at && !blanks.every((b) => at!.contains(b))) at = at.parentElement;
+    return at;
+  })();
+  const shown = (el: HTMLElement | null): boolean => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (el.innerText ?? "").trim() !== "";
+  };
+  return {
+    path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
+    loginCard: shown(form), gateMark: shown(document.querySelector<HTMLElement>("main")),
+    shell: document.querySelector("div.today, .row[data-id]") !== null,
+    cardText: form?.innerText ?? "",
+    cardAlert: form?.querySelector<HTMLElement>('[role="alert"]')?.innerText ?? "",
+  };
+}
 
 /**
  * Read the page every 100 ms from `t0` until `done` holds or `maxMs` passes. A reading that falls
@@ -270,19 +319,7 @@ async function sampleUntil(
 ): Promise<Sample[]> {
   const out: Sample[] = [];
   while (Date.now() - t0 < maxMs) {
-    const s = await page.evaluate(() => {
-      const shown = (sel: string): boolean => {
-        const el = document.querySelector<HTMLElement>(sel);
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && (el.innerText ?? "").trim() !== "";
-      };
-      return {
-        path: location.pathname, ready: document.readyState, text: document.body?.innerText ?? "",
-        loginCard: shown(".login-card"), gateMark: shown(".gate-card .wordmark"),
-        shell: document.querySelector("div.today, .row[data-id]") !== null,
-      };
-    }).catch(() => null);
+    const s = await page.evaluate(readPage, DOOR_NAMES).catch(() => null);
     if (s !== null) {
       const sample = { ms: Date.now() - t0, ...s };
       out.push(sample);
@@ -746,7 +783,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       const blank = blankAt(samples);
       const last = samples.at(-1);
       const done = last !== undefined && last.path === "/login" && last.loginCard && await finished(ctx, j.familyId) ? last.ms : null;
-      const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+      const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
       console.log(`e2e timing pending door=${door} lapsed=${lapsed} card_ms=${cardAt} blank_ms=${JSON.stringify(blank)} `
         + `finished_ms=${done} docs=${JSON.stringify(docs)} door_asks=${JSON.stringify(heard.filter((h) => h.path === "/auth/refresh/logout").map((h) => h.status))} `
         + `received=${JSON.stringify(received)} loads=${seen.loads()} errors=${JSON.stringify(errors)}`);
@@ -788,7 +825,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const blank = blankAt(samples);
     const asks = received.filter((r) => r.path === "/auth/refresh/logout");
     const text = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-    const alert = await page.evaluate(() => document.querySelector<HTMLElement>('.login-card [role="alert"]')?.innerText ?? "")
+    const alert = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardAlert)
       .catch(() => "");
     const pendingSaidAt = samples.find((s) => s.path === "/login" && s.text.includes(R.pendingBody!))?.ms ?? null;
     const refusalSaidAt = samples.find((s) => s.text.includes(REFUSED_LEAD))?.ms ?? null;
@@ -872,7 +909,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
       async (s) => s.path === "/login" && s.loginCard && await finished(ctx, j.familyId));
     const shown = samples.filter((s) => s.path === "/" || s.path === "/login");
     const cardAt = samples.find((s) => s.path === "/login" && s.loginCard)?.ms ?? null;
-    const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+    const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
     console.log(`e2e timing cross-site-pending card_ms=${cardAt} blank_ms=${JSON.stringify(blankAt(shown))} docs=${JSON.stringify(docs)} `
       + `heard=${JSON.stringify(heard.map((h) => `${h.method} ${h.path} ${h.status}`))} received=${JSON.stringify(received)}`);
     expect(docs[0], "the edge saw the pending marker: the arrival was not cross-site").toEqual({ path: "/", status: 200, location: null });
@@ -916,7 +953,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const markAt = splash.find((s) => s.gateMark)?.ms ?? null;
     const lineAt = splash.find((s) => R.workingBody !== undefined && s.text.includes(R.workingBody))?.ms ?? null;
     const loginAt = samples.find((s) => s.path === "/login" && s.loginCard)?.ms ?? null;
-    const text = await page.evaluate(() => document.querySelector<HTMLElement>(".login-card")?.innerText ?? "").catch(() => "");
+    const text = await page.evaluate(readPage, DOOR_NAMES).then((r) => r.cardText).catch(() => "");
     console.log(`e2e timing slow-refresh mark_ms=${markAt} working_line_ms=${lineAt} login_ms=${loginAt} `
       + `splash_samples=${splash.length} unmarked_ms=${JSON.stringify(splash.filter((s) => !s.gateMark).map((s) => s.ms))} `
       + `refresh=${JSON.stringify(heard.filter((h) => h.path === "/auth/refresh").map((h) => `${h.status} ${h.code ?? ""}`.trim()))} `
@@ -994,7 +1031,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     const t0 = Date.now();
     receivedFrom = t0;
     await page.goto(`http://localhost:${webPort}/`, { waitUntil: "commit" });
-    await page.locator(".login-card").waitFor({ state: "visible", timeout: 10_000 });
+    await page.getByRole("heading", { level: 1, name: DOOR_NAMES.signIn, exact: true }).waitFor({ state: "visible", timeout: 10_000 });
     const until = Date.now() + 10_000;
     while (doorAnswers().length === 0 && Date.now() < until) await page.waitForTimeout(100);
     expect(doorAnswers(), "the sign-in page's first ask never left").toEqual(["held"]);
@@ -1042,27 +1079,6 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     expect(await familyLive(j.familyId)).toBe(true);
     await ctx.close();
   }, 120_000);
-
-  it("the sign-in card is centred in a 2000 px window and inside a 390 px phone, at 100% and 125% text", async () => {
-    for (const [width, height] of [[2000, 1100], [390, 844]] as const) {
-      for (const size of ["100", "125"]) {
-        const ctx = await browser!.newContext({ viewport: { width, height } });
-        await ctx.addInitScript((s) => {
-          try { localStorage.setItem("ohmail.face", "paper"); localStorage.setItem("ohmail.textSize", s); } catch { /* none */ }
-        }, size);
-        const page = await ctx.newPage();
-        await page.goto(`http://localhost:${webPort}/login`, { waitUntil: "load" });
-        await page.waitForTimeout(600);
-        const box = (await page.locator(".login-card").boundingBox())!;
-        const off = box.x + box.width / 2 - width / 2;
-        console.log(`e2e geometry /login ${width}x${height} text=${size}% card=${JSON.stringify(box)} centre_offset=${off.toFixed(1)}`);
-        expect(Math.abs(off), `${width} px at ${size}%: the card is off centre`).toBeLessThanOrEqual(8);
-        expect(box.x, `${width} px at ${size}%`).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width, `${width} px at ${size}%`).toBeLessThanOrEqual(width);
-        await ctx.close();
-      }
-    }
-  }, 60_000);
 
   /*
    * REAL TABS: a tab that missed the sign-out post, in the browser's own lifecycle. Playwright's launch

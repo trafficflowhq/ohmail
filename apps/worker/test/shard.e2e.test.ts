@@ -12,7 +12,7 @@ import { runBubbleUpCron } from "../src/bubble-up-cron.js";
 import { runReconcileCron } from "../src/reconcile-cron.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 type Db = ReturnType<typeof makeDb>;
 

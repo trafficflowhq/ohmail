@@ -5,12 +5,12 @@ import { UNMETERED_STORAGE_CAP, type ClassifierPort, type Logger, type StorageCa
 import { contacts, mailboxes, messageInstances, messages, rules, threads, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { newCycleCensus, runSyncCycle, type SyncDeps } from "../src/sync.js";
+import { newCycleCensus, runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
-import { KnownSetCache } from "../src/known-set.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { KnownSetCache } from "@ohmail/organizer/known-set";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A RUN STORES EXACTLY WHAT ONE TRANSACTION PER LETTER STORES. The worker's import commits runs of new

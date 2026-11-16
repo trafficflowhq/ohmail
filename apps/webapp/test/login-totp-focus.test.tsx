@@ -79,7 +79,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 
 describe("STA-F7 — the TOTP step focuses its input", () => {
   it("after the password submit, the code field is the active element", async () => {
-    const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+    const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);

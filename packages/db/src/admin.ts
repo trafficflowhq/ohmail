@@ -70,9 +70,13 @@ export {
 } from "./row-security/apply.js";
 export {
   lockCensus, lockDrift, readLockFacts, expectedPolicies, listDigest, catalogDigest,
-  type LockFacts, type TableFacts, type PolicyFacts, type ReaderFacts,
+  viewListDigest, viewCatalogDigest, viewComment, viewDifferences, viewGrants,
+  type LockFacts, type TableFacts, type PolicyFacts, type ReaderFacts, type ViewFacts, type ViewCode, type Right, type ColumnRight,
 } from "./row-security/census.js";
-export { rolesCheckStream, runRolesCheck, RUNTIME_ROLES_SCRIPT, ROLES_CHECK_CUT, type RolesCheck } from "./row-security/roles-check.js";
+export {
+  rolesCheckStream, rolesPostconditionStream, rolesVerdict, runRolesCheck, runRolesPostcondition, RUNTIME_ROLES_SCRIPT, ROLES_CHECK_CUT,
+  ROLES_CHECK_PIN, type RolesCheck, type HearNotices,
+} from "./row-security/roles-check.js";
 export {
   switchLock, LockSwitchRefused, SWITCH_LOCK_TIMEOUT_MS, SWITCH_TRIES, type SwitchReport,
 } from "./row-security/switch.js";

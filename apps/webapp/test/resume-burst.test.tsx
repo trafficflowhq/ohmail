@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as shell from "./fixtures/cloud-confirm-shell";
+import en from "../messages/en.json";
 
 /**
  * WEB-RESUME-BURST, THROUGH THE REAL `CloudShell`: every answer takes {@link LATENCY} ms and the
@@ -54,6 +55,10 @@ class FakeEventSource {
 }
 
 const OPEN = { metered: true, access: "open", canAddMailbox: true, mailboxes: 1, aiEnabled: true };
+/** The wall stands: its sentence, which names the closure it says (`accessLock.trialEnded`, its date as a reader reads it). */
+const wallStands = (): boolean =>
+  [...document.body.querySelectorAll("main p")].some((p) => p.textContent?.startsWith(en.accessLock.trialEnded.split("{date}")[0]!));
+
 const CLOSED = {
   metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false,
   lifecycle: {
@@ -379,7 +384,7 @@ describe("a web tab's mount and its return, on the wire", () => {
     syncWall = true;
     accessAnswer = () => jsonOf(CLOSED);
     await shell.tick(75_000);
-    expect(document.body.querySelector(".wall-card"), "the premise: the wall stands").not.toBeNull();
+    expect(wallStands(), "the premise: the wall stands").toBe(true);
     const back = await pauseAndReturn(Math.max(2 * 60_000, RETURN_DEBOUNCE_MS));
     await shell.tick(3_000);
     const rows = since(back);

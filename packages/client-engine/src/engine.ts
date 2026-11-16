@@ -24,7 +24,7 @@ export class OhmailEngine extends EngineCalendar {}
 
 export {
   type AppliedRuleRequest, type KeptAsNewDraft, type MutationResult, type MutationStatus, type OrganizerRequestView,
-  OUTBOX_WITHDRAWN_CODE, type QueuedRuleWrite, STALE_PRESS_CODE, UNSCREENED_REASK_MS, type UnsettledRulePress,
+  OUTBOX_WITHDRAWN_CODE, type QueuedRuleWrite, STALE_PRESS_CODE, UNSCREENED_PARTS_MAX, UNSCREENED_REASK_MS, type UnsettledRulePress,
   type WaitingOnOrganizerView, WHY_STAYED_PAGE, type WithdrawOutcome,
 } from "./engine/mutation-views.js";
 export {

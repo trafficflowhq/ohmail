@@ -126,9 +126,11 @@ describe.skipIf(!PG_UP)("the first-run setup token mint", () => {
 
   it("the raw token appears ONCE, in the print block, and never in a log-shaped line", () => {
     const lines: string[] = [];
-    const minted = { id: "x", token: "RAW-TOKEN-VALUE", grant: "invite" as const, label: SETUP_TOKEN_LABEL, expiresAt: new Date() };
+    // A stand-in of the real shape, 43 base64url characters, put together here so it reads as no literal token.
+    const token = ["k3TqZ8mWv1RbX5n-c7LpD0HsJf2GaE9uQ4oViN6x", "rA"].join("_");
+    const minted = { id: "x", token, grant: "invite" as const, label: SETUP_TOKEN_LABEL, expiresAt: new Date() };
     printSetupToken(minted, (l) => lines.push(l));
-    expect(lines.filter((l) => l.includes("RAW-TOKEN-VALUE"))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes(token))).toHaveLength(1);
   });
 
   it("the advisory-lock key collides with neither the migrator's nor the leader band", () => {

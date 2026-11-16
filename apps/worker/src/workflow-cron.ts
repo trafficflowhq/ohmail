@@ -9,7 +9,7 @@ import { WorkflowExecutor, silentLogger, type DraftPort, type Logger, type Workf
 import { selectionOf, type WorkerConfig } from "./config.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "./leader-lock.js";
 import { loadServedAccounts } from "./mailboxes.js";
-import { isCliEntry } from "./entry.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
 import { cronEvent, runCronCli } from "./cron-log.js";
 import { attributedWorkflowDrafter, makeAiUsageBuffer } from "./ai-usage.js";
 

@@ -3,12 +3,12 @@ import { mailboxes, messageInvitations, messages, type Tx } from "@trafficflow/d
 import { makeTestDb } from "@trafficflow/db/testing";
 import { readLetterInvitation, UNMETERED_STORAGE_CAP, type Logger } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../apps/worker/src/sync";
+import { runSyncCycle } from "../packages/organizer/src/sync";
 import { ingestRunRepository } from "../apps/worker/src/ingest-run";
 import { INGEST_RUN_BOUNDS } from "../apps/worker/src/config";
-import { FakeAdapterFleet } from "../apps/worker/test/_fakeadapter";
-import { FIXTURE_LEASE } from "../apps/worker/test/_door";
-import { invitationLetter, ME } from "../apps/worker/test/_invitations";
+import { FakeAdapterFleet } from "../packages/organizer/test/_fakeadapter";
+import { FIXTURE_LEASE } from "../packages/organizer/test/_door";
+import { invitationLetter, ME } from "../packages/organizer/test/_invitations";
 import { CORPUS } from "../packages/cal-core/test/corpus/index";
 import { text } from "../packages/cal-core/test/support";
 

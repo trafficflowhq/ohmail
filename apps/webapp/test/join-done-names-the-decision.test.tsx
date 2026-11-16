@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 async function mountJoin(publicSignup = false, catalog: typeof messages = messages): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -114,7 +114,9 @@ describe("the join wizard's last screen and the organize decision", () => {
       answers["/api/auth/session"] = { status: 200, body: sessionUser() };
       answers["/api/mailboxes"] = { status: 200, body: { items: [box()] } };
       const c = await mountJoin(false, catalog);
-      const lead = c.querySelector(".sub")?.textContent ?? "";
+      /* The lead: the line that says one of the last screen's two leads. */
+      const lead = [...c.querySelectorAll("p, span")].map((el) => el.textContent ?? "")
+        .find((said) => [catalog.join.step_connected_lead, catalog.join.step_done_lead].includes(said)) ?? "";
       expect(lead).toBe(catalog.join.step_connected_lead);
       expect(lead).not.toMatch(/\b(one|two|three|\d+)\s+steps?\b|\b(ein|zwei|drei|\d+)\s+schritte?\b/i);
     });

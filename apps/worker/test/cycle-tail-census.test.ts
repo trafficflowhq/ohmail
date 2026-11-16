@@ -15,6 +15,12 @@ import { readSource } from "./_start-function.js";
  */
 
 const REPO = fileURLToPath(new URL("../../../", import.meta.url));
+/**
+ * Where the registry's cycle-tail modules stand: the worker's program in its two folders, and the one module of the
+ * shared library a tail row names. Named here so a change of any of them selects this census.
+ */
+const PROGRAM_ROOTS = ["apps/worker/src/", "packages/organizer/src/"] as const;
+const LIBRARY_MODULES = ["packages/core/src/message-search.ts"] as const;
 const FORBIDDEN: ReadonlyArray<readonly [string, RegExp]> = [
   ["adapterFactory", /\badapterFactory\b/],
   ["runtimes", /\bruntimes\b/],
@@ -57,6 +63,7 @@ describe("the cycle tail census", () => {
     expect(tailRows.length, "no cycle-tail rows were read").toBeGreaterThan(10);
     const modules = [...new Set(tailRows.map((r) => r.module))];
     for (const module of modules) {
+      expect([...PROGRAM_ROOTS, ...LIBRARY_MODULES].some((at) => module.startsWith(at)), `${module} stands nowhere this census names`).toBe(true);
       const text = readSource(join(REPO, module));
       const scope = module.endsWith("/index.ts") ? tailImplSlice(text) : text;
       expect(imapReachIn(scope), `${module} reaches a mailbox connection from the cycle tail`).toEqual([]);

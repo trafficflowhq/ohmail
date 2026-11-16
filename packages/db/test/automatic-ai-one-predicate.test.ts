@@ -19,7 +19,7 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 const read = (p: string): string => withoutComments(readFileSync(`${REPO}/${p}`, "utf8"));
 
 const BUYERS: ReadonlyArray<[string, string]> = [
-  ["apps/worker/src/screener-auto-suggest.ts", "the always-on pass (screenerAutoSuggestPass)"],
+  ["packages/organizer/src/screener-auto-suggest.ts", "the always-on pass (screenerAutoSuggestPass)"],
   ["packages/services/src/screener-service.ts", "the suggest route's automatic batch (ScreenerService.suggest)"],
 ];
 

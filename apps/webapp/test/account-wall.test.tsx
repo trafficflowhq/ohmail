@@ -63,8 +63,13 @@ async function mount(node: React.ReactNode, locale: "en" | "de" = "en"): Promise
 }
 
 const text = (): string => host.textContent ?? "";
-const links = (): HTMLAnchorElement[] => [...host.querySelectorAll("a")];
 const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
+/** The page's sentence: its line, as the design draws it, not a heading. */
+const sentence = (): string => host.querySelector("main p")?.textContent ?? "";
+/** A press by its words. */
+const named = (name: string): HTMLButtonElement | undefined => buttons().find((b) => b.textContent === name);
+/** The wall's ways out on their sheet, as a person reads them: each row's press, its name first, in order. */
+const ways = (): string[] => [...host.querySelectorAll('[role="list"] button')].map((b) => b.textContent ?? "");
 
 /** A closure the server has attributed and dated. */
 const closed = (
@@ -87,14 +92,14 @@ const WALL = {
 
 describe("the wall names the closure and its date", () => {
   it("each attributed reason gets its own sentence, and none of them is another's", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     const seen: string[] = [];
     for (const reason of ["trial_ended", "canceled", "unpaid"] as const) {
-      await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed(reason) } }));
+      await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed(reason) } }));
       // The date the SERVER stated, rendered in the reader's own zone by the one formatter.
       expect(text(), reason).toContain("Aug");
       expect(text(), reason).toContain("2026");
-      const headline = host.querySelector("h1")?.textContent ?? "";
+      const headline = sentence();
       expect(headline, reason).not.toBe("");
       seen.push(headline);
     }
@@ -106,15 +111,15 @@ describe("the wall names the closure and its date", () => {
   });
 
   it("a suspension says nothing about an erasure date, because there is not one", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, {
       facts: {
         reason: "suspended" as const,
         manageUrl: WALL.manageUrl,
         lifecycle: closed("suspended", { erasureAt: null }),
       },
     }));
-    expect(host.querySelector("h1")?.textContent).toBe("This account is suspended.");
+    expect(sentence()).toBe("This account is suspended");
     // An operator hold is not a departure (ruling §1(a)): no clock, and somewhere to ask.
     expect(text()).toContain("operator");
     expect(text()).toContain("support@ohmail.app");
@@ -122,39 +127,39 @@ describe("the wall names the closure and its date", () => {
   });
 
   it("the delete hint points at the date above only where a date IS above", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     // Dated erasure sentence on screen: the hint may reference it.
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("trial_ended") } }));
-    expect(text()).toContain("rather than on the date above");
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("trial_ended") } }));
+    expect(text()).toMatch(/today, not on Sep 2[23], 2026/);
     // A held account renders no date, so the hint stops pointing at one.
-    await mount(h(AccessLock, {
+    await mount(h(WallRoute, {
       facts: {
         reason: "suspended" as const,
         manageUrl: WALL.manageUrl,
         lifecycle: closed("suspended", { erasureAt: null }),
       },
     }));
-    expect(text()).not.toContain("on the date above");
+    expect(text()).not.toContain("today, not on");
     expect(text()).toContain("Erases everything ohmail keeps, today.");
     // An older server says nothing about dates at all — same undated hint.
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: undefined } }));
-    expect(text()).not.toContain("on the date above");
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: undefined } }));
+    expect(text()).not.toContain("today, not on");
     expect(text()).toContain("Erases everything ohmail keeps, today.");
   });
 
   it("a closure the server could not attribute gets the undated sentence, not a guessed date", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, {
       facts: { ...WALL, lifecycle: { ...closed("canceled"), closedReason: null, closedAt: null } },
     }));
-    expect(host.querySelector("h1")?.textContent).toBe("This account is not active.");
+    expect(sentence()).toBe("This account is not active");
     // …and it still carries the erasure date it DOES have.
     expect(text()).toMatch(/are erased on/);
   });
 
   it("ERASED renders no date and no erasure sentence — nobody can sign in to read one", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, {
       facts: {
         ...WALL,
         lifecycle: {
@@ -164,7 +169,7 @@ describe("the wall names the closure and its date", () => {
         },
       },
     }));
-    expect(host.querySelector("h1")?.textContent).toBe("This account is not active.");
+    expect(sentence()).toBe("This account is not active");
     expect(text()).not.toMatch(/erased on/i);
     expect(text()).not.toContain("Sep");
     /* AND NO ERASURE SENTENCE AT ALL. "Nothing has been erased" is what this state used to
@@ -173,21 +178,20 @@ describe("the wall names the closure and its date", () => {
     expect(text()).not.toMatch(/Nothing has been erased/);
     expect(text()).not.toMatch(/are erased on/);
     // The two true sentences stay: the organizer stopped, and the mailbox is untouched.
-    expect(text()).toContain("Your mailbox is untouched.");
+    expect(text()).toContain(en.accessLock.stoppedUntouched);
   });
 
   it("a staff hold is not offered SUBSCRIBE — the account may be fully paid", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, {
       facts: {
         reason: "suspended" as const,
         manageUrl: WALL.manageUrl,
         lifecycle: closed("suspended", { erasureAt: null }),
       },
     }));
-    // The primary is a BUTTON now (it mints at the press); the label is what this case is about.
-    expect(buttons().filter((b) => b.classList.contains("primary")).map((b) => b.textContent))
-      .toEqual(["Open your ohmail account"]);
+    // The way back is a BUTTON (it mints at the press); its label is what this case is about.
+    expect(named("Open your ohmail account")).toBeTruthy();
     expect(text()).not.toContain("Subscribe");
   });
 
@@ -195,56 +199,59 @@ describe("the wall names the closure and its date", () => {
     /* Measured rather than assumed. The trial keeps data 30 days and a formerly paid account 90
        (the ruled numbers), but that difference reaches this screen ALREADY APPLIED, as one
        `erasureAt`. If a sentence ever starts differing on the flag, this case says so. */
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("canceled", { formerlyPaid: false }) } }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("canceled", { formerlyPaid: false }) } }));
     const cold = text();
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("canceled", { formerlyPaid: true }) } }));
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("canceled", { formerlyPaid: true }) } }));
     expect(text()).toBe(cold);
   });
 
   it("the open states never reach this screen with a dated headline", async () => {
     /* `grace`, `past_due`, `trialing` and `active` are `ok: true` at the gate and raise no 402.
        If one ever arrives here it must not be dressed as a closure. */
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     for (const state of ["trialing", "grace", "past_due", "active"] as const) {
-      await mount(h(AccessLock, {
+      await mount(h(WallRoute, {
         facts: { ...WALL, lifecycle: { ...closed("canceled"), state } },
       }));
-      expect(host.querySelector("h1")?.textContent, state).toBe("This account is not active.");
+      expect(sentence(), state).toBe("This account is not active");
     }
   });
 });
 
 describe("the wall's three actions", () => {
   it("are the three chosen ones, in the chosen order, and each says what it does", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("trial_ended") } }));
-    /* `.wall-act` is what the three ACTIONS wear. The guide link lives in the sentence under the
-       export button and is deliberately not one of them — it explains, it does not act. */
-    const labels = [...host.querySelectorAll(".wall-act")].map((el) => el.textContent ?? "");
-    expect(labels).toEqual(["Subscribe", "Move to self-hosted", "Delete my account now"]);
-    // …and the guide is there, inside the sentence, reachable by keyboard like everything else.
-    expect(links().map((a) => a.textContent)).toContain("Read the self-host guide");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("trial_ended") } }));
+    /* The way back is the page's one act; the two ways out stand beside it on a sheet, each with the line that says
+       what it does. The guide stands under them and is deliberately not one of them: it explains, it does not act. */
+    expect(named("Subscribe")).toBeTruthy();
+    expect(ways()).toEqual([
+      expect.stringMatching(/^Move to self-hosted.+your own server reads/),
+      expect.stringMatching(/^Delete my account now.+Your mailbox is not touched/),
+    ]);
+    // …and the guide is there, reachable by keyboard like everything else.
+    expect(buttons().map((b) => b.textContent)).toContain("Read the self-host guide");
     // The way back out of this browser is never inside the action column, and never absent.
     expect(buttons().map((b) => b.textContent)).toContain("Sign out");
   });
 
   it("withholds Subscribe when the service named no page, and the export when it serves none", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, {
       facts: { reason: "payment_required" as const, lifecycle: closed("canceled") },
     }));
-    const labels = [...host.querySelectorAll(".wall-act")].map((el) => el.textContent ?? "");
     // A control that goes nowhere is the one a person on this screen will press.
-    expect(labels).toEqual(["Delete my account now"]);
+    expect(named("Subscribe")).toBeUndefined();
+    expect(ways()).toEqual([expect.stringMatching(/^Delete my account now/)]);
     expect(text()).not.toContain("Move to self-hosted");
   });
 
   it("names no price, no plan and no currency in either language", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     for (const locale of ["en", "de"] as const) {
       await mount(
-        h(AccessLock, { facts: { ...WALL, lifecycle: closed("unpaid", { formerlyPaid: true }) } }),
+        h(WallRoute, { facts: { ...WALL, lifecycle: closed("unpaid", { formerlyPaid: true }) } }),
         locale,
       );
       expect(text(), locale).not.toMatch(/CHF|EUR|USD|€|\$[0-9]|\/month|\/Monat|pro Monat|per month/);
@@ -252,15 +259,15 @@ describe("the wall's three actions", () => {
   });
 
   it("says the mailbox is untouched — in both languages, on the closed arm", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("trial_ended") } }), "en");
-    expect(text()).toContain("Your mailbox is untouched.");
-    await mount(h(AccessLock, { facts: { ...WALL, lifecycle: closed("trial_ended") } }), "de");
-    expect(text()).toContain("Dein Postfach ist unberührt.");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("trial_ended") } }), "en");
+    expect(text()).toContain(en.accessLock.stoppedUntouched);
+    await mount(h(WallRoute, { facts: { ...WALL, lifecycle: closed("trial_ended") } }), "de");
+    expect(text()).toContain(de.accessLock.stoppedUntouched);
   });
 
   it("the export's filename carries the day it was taken", async () => {
-    const { exportFilename } = await import("../app/(product)/mailbox/AccessLock");
+    const { exportFilename } = await import("../app/(product)/mailbox/use-wall-door");
     expect(exportFilename(new Date(2026, 8, 5))).toBe("ohmail-settings-2026-09-05.json");
     expect(exportFilename(new Date(2026, 11, 31))).toBe("ohmail-settings-2026-12-31.json");
   });
@@ -305,7 +312,7 @@ describe("the 402 sink carries the lifecycle, and an older server still locks", 
 
   it("A BODY WITHOUT A LIFECYCLE STILL LOCKS, with the sentence this screen has always shown", async () => {
     const { onAccessRefused, mailboxes, forgetAccess } = await import("../app/api-client");
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     forgetAccess();
     stop = onAccessRefused((f) => seen.push(f));
     refuseWith({ reason: "payment_required", manageUrl: "https://manage.example/t" });
@@ -313,12 +320,11 @@ describe("the 402 sink carries the lifecycle, and an older server still locks", 
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).not.toHaveProperty("lifecycle");
-    await mount(h(AccessLock, { facts: seen[0] as never }));
-    expect(host.querySelector("h1")?.textContent).toBe("This account is not active.");
+    await mount(h(WallRoute, { facts: seen[0] as never }));
+    expect(sentence()).toBe("This account is not active");
     expect(text()).toContain("Nothing has been deleted");
     // …and the old label, because there is no lifecycle to call it a resubscription.
-    expect(buttons().filter((b) => b.classList.contains("primary")).map((b) => b.textContent))
-      .toEqual(["Manage subscription"]);
+    expect(named("Manage subscription")).toBeTruthy();
   });
 
   it("an unknown state is DROPPED, not rendered — a drift must not invent a screen", async () => {
@@ -549,7 +555,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
       const t = document.body.textContent ?? "";
       if (frames[frames.length - 1] !== t) frames.push(t);
       if (document.querySelector("main.gate[aria-busy=true] .gate-card .mbx-spin")) sawGateCard = true;
-      if (!document.querySelector(".wall-card") && document.querySelector(".today")) sawShellBeforeWall = true;
+      if (!(document.body.textContent ?? "").includes(wallTitle) && document.querySelector(".today")) sawShellBeforeWall = true;
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   });
@@ -560,6 +566,8 @@ describe("the first paint after sign-in waits for the verdict", async () => {
 
   const ohbox = [en.ohbox.emptyPlain, en.ohbox.emptyScreenerTitle, en.ohbox.emptyFiledTitle];
   const wallTitle = "Your trial ended on";
+  /** The wall stands: its sentence names the closure. */
+  const wallStands = (): boolean => [...document.body.querySelectorAll("main p")].some((p) => p.textContent?.startsWith(wallTitle));
 
   it("a closed account's first frame with anything in it is the wall, never an empty Ohbox", async () => {
     await shell.mountCloudShell();
@@ -644,7 +652,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
-    expect(document.body.querySelector(".wall-card"), "the wall stood over an open verdict").toBeNull();
+    expect(wallStands(), "the wall stood over an open verdict").toBe(false);
     expect(document.body.querySelector(".today")).not.toBeNull();
     // Said in the frame's one notice slot now, where the account's note said it: in front, or behind
     // its "more" line when a notice of a higher rank stands (here, no mailbox is connected).
@@ -657,7 +665,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     // Another API instance still holds the old refusal for up to a minute: its 402 is disbelieved.
     walled = true;
     await shell.tick(35_000);
-    expect(document.body.querySelector(".wall-card"), "a stale 402 re-raised the wall").toBeNull();
+    expect(wallStands(), "a stale 402 re-raised the wall").toBe(false);
   });
 
   it("THE REOPENING IS RECORDED: an open answer over a stored refusal, the return from paying (mail 0135)", async () => {
@@ -668,7 +676,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.mountCloudShell();
     await shell.tick(1_000);
     expect(document.body.querySelector(".today")).not.toBeNull();
-    expect(liftedAt(), "the first open answer after the wall was not read as the reopening").not.toBeNull();
+    expect(liftedAt(OWNER), "the first open answer after the wall was not read as the reopening").not.toBeNull();
   });
 
   it("THE LIFT RE-ANNOUNCES THIS BROWSER'S PUSH REGISTRATION, ONCE (mail 0135)", async () => {
@@ -722,7 +730,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(liftedAt()).toBeNull();
+    expect(liftedAt(OWNER)).toBeNull();
   });
 
   it("the wall's own lift is the reopening even when another tab already stored `open`", async () => {
@@ -737,8 +745,8 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     walled = false;
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(1_000);
-    expect(document.body.querySelector(".wall-card")).toBeNull();
-    expect(liftedAt(), "this window's lift left no reopening").not.toBeNull();
+    expect(wallStands()).toBe(false);
+    expect(liftedAt(OWNER), "this window's lift left no reopening").not.toBeNull();
   });
 
   it("an older API that names no verdict decides nothing: the mirror paints and nothing is stored", async () => {
@@ -747,7 +755,7 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.mountCloudShell();
     await shell.tick(1_000);
     expect(document.body.querySelector(".today")).not.toBeNull();
-    expect(document.body.querySelector(".wall-card")).toBeNull();
+    expect(wallStands()).toBe(false);
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBeNull();
   });
 });

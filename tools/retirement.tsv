@@ -290,6 +290,8 @@ apps/mobile/test/unified-push.test.ts	source-text	reads source as text (js, ts, 
 apps/mobile/test/unsaved-changes.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/update-verbs.test.ts	data	reads data files (json): the app's manifest and the message catalogue	none	phone-shell	
 apps/mobile/test/use-lists-clock.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/variant-config.test.ts	data	reads data files (json): the app's configuration, which the variants resolve	none	phone-apps	
+apps/mobile/test/variant-table.test.ts	data	reads data files (json): today's identifiers in the app's configuration	none	phone-apps	
 apps/mobile/test/verbs-announce.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/waiting-on-the-organizer.test.ts	data	reads data files (json): the message catalogue	none	phone-shell	
 apps/mobile/test/world-memo-owner.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
@@ -684,7 +686,7 @@ apps/webapp/test/loaders-do-not-rotate.test.ts	source-text	reads source as text 
 apps/webapp/test/locale-account.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	account	
 apps/webapp/test/locale-catalog.test.ts	data	reads data files (json, reads, threadMeta)	none	removals	
 apps/webapp/test/locale-shim-parity.test.ts	source-text	reads source as text (ts)	layer 2	removals	
-apps/webapp/test/login-card-centred-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	doors	
+apps/webapp/test/login-card-centred-geometry.test.tsx	source-text	the sign-in card centred in its window under the shipped sheets, at two widths and two text sizes	none	doors	gone:apps/webapp/app/(product)/login/LoginScreen.tsx
 apps/webapp/test/mail-render-rules-parity.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	removals	
 apps/webapp/test/mail-send-states.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
 apps/webapp/test/mail-state.test.ts	source-text	reads source as text (ts)	layer 2	removals	
@@ -1041,11 +1043,15 @@ packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text 
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/doors/own-classes.test.tsx	source-text	reads source as text (css): the classes today's sheets style, against every class the doors draw	layer 2	removals	
+packages/app/test/doors/under-todays-sheets.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium against the doors' own	layer 2	removals	
 packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	
 packages/app/test/frame/own-classes.test.tsx	source-text	reads source as text (css): the classes the kit's and today's sheets style	stylelint:selector-disallowed-list	frame	
 packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	frame	
 packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
+packages/app/test/month/range-fit-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts and the views' own sheets: laid out in Chromium	layer 2	cal-views	
 packages/app/test/states/ohbox-window-in-a-browser.test.ts	artifact	builds the Ohbox's states page (the feature bundled, the tokens' sheets) and reads its list window in a real browser	none	ohbox	
+packages/app/test/week/time-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	cal-views	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	
 packages/cal-core/test/pure.test.ts	artifact	reads what was built: the bundle of its own source; and its manifest	layer 5	cal-core	
 packages/cal-providers/test/bundle.test.ts	artifact	reads what was built: the bundle of its own source, its source folder's list and its manifest	layer 5	cal-read	
@@ -1194,6 +1200,7 @@ packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (j
 packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/reverse-charge.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/row-security-list.test.ts	data	reads data files (sql): the mail and the Cloud's journals, for an entry a listed view of the lock cannot stand	none	lock	
 packages/db/test/rule-lock-order-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rule-state-delta-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/rules-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
@@ -1222,6 +1229,7 @@ packages/db/test/transition-window.test.ts	data	reads data files (json): a journ
 packages/db/test/transition.pg.test.ts	data	reads data files (json, sql): a journal and its migrations copied to its own folder	none	services-proof	
 packages/db/test/tx-dialect-carry-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/worker-timeouts.pg.test.ts	source-text	reads source as text (ts): the database client and the worker's leader lock	layer 1	services-proof	
+packages/organizer/test/manifest-entries.test.ts	data	reads data files (json): its own manifest	none	worker	
 packages/services/test/admin-freetext-projection.test.ts	source-text	reads source as text (ts): the admin service	layer 1	services-proof	
 packages/services/test/ai-refusal-contradiction.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
 packages/services/test/attachment-part-id-not-synced.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
@@ -1413,6 +1421,7 @@ test/journeys/journeys/trash.journeys.test.ts	data	through test/journeys/bench/w
 test/journeys/journeys/triage.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/landing-pricing-matches-plan-card.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/macos-update-signing.test.ts	data	reads data files (plist, yml)	none	unassigned	
+test/mail-colours-are-the-tokens.test.ts	data	reads data files (json): the paper face's colours and measures	none	around	
 test/mail-stamp-census.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
 test/mailboxes-handback-copy.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
 test/message-files-census.test.ts	source-text	reads source as text (tsx)	layer 5	unassigned	
@@ -1476,6 +1485,8 @@ test/selfhost-images-are-ours.test.ts	data	reads data files (lock, sh, yml)	none
 test/selfhost-images-name-their-commit.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/selfhost-organizer-display-name.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/selfhost-proxy-reload.test.ts	data	reads data files (caddy, env, sh)	none	unassigned	
+test/selfhost-server-pages.test.ts	data	reads data files (caddy): the proxy's own pages	none	around	
+test/selfhost-setup-token-block.test.ts	source-text	reads the boot smoke's token reader as text (mjs)	layer 5	around	
 test/selfhost-smoke.test.ts	data	reads data files (env, example, json, sh, yml)	none	unassigned	
 test/selfhost-store-upgrade.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
 test/selfhost-trusted-proxies-compose.test.ts	data	reads data files (caddy, sh, yml)	none	unassigned	

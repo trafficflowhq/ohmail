@@ -26,7 +26,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { useConsentState, type ConsentTransport } from "../app/shell/consent-state";
+import { useConsentState, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { ConsentStateWire } from "../app/api-client";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,13 +65,16 @@ const hostedStub: ConsentTransport = {
 let seen: { known: boolean; foldersEnabled: boolean } | null = null;
 /** EVERY render's answer, in order — frame zero after a switch is the one the review cared about. */
 let frames: Array<{ known: boolean; foldersEnabled: boolean }> = [];
+/** Every render's answer to "do pictures wait for a press", in the same order. */
+let pictureFrames: boolean[] = [];
 /** The hook's setters, reachable from the test — the in-flight-write case presses one. */
 let api: ReturnType<typeof useConsentState> | null = null;
 
-function Probe(props: { transport?: ConsentTransport }) {
-  const consent = useConsentState(true, props.transport);
+function Probe(props: { transport: ConsentTransport | "none" }) {
+  const consent = useConsentState(true, null, props.transport);
   seen = { known: consent.known, foldersEnabled: consent.foldersEnabled };
   frames.push(seen);
+  pictureFrames.push(consent.blockRemoteImages);
   api = consent;
   return null;
 }
@@ -91,6 +94,7 @@ afterEach(() => {
   host = null;
   seen = null;
   frames = [];
+  pictureFrames = [];
   api = null;
 });
 
@@ -108,7 +112,7 @@ describe("useConsentState when the wire disappears (the overlay door switch)", (
     });
 
     // The overlay switch: same mounted tree, the transport prop is simply no longer handed in.
-    await act(async () => { root!.render(<Probe />); });
+    await act(async () => { root!.render(<Probe transport="none" />); });
     await flush();
     expect(seen).toEqual({ known: false, foldersEnabled: false });
   });
@@ -132,7 +136,7 @@ describe("useConsentState when the wire disappears (the overlay door switch)", (
     await flush();
     expect(seen).toEqual({ known: false, foldersEnabled: false });
 
-    await act(async () => { root!.render(<Probe />); });
+    await act(async () => { root!.render(<Probe transport="none" />); });
     await flush();
 
     await act(async () => { release!(); });
@@ -151,12 +155,15 @@ describe("useConsentState when the wire disappears (the overlay door switch)", (
     await flush();
     expect(seen).toEqual({ known: true, foldersEnabled: true });
 
+    expect(pictureFrames.at(-1), "the hosted account lets pictures load: the frame below would prove nothing").toBe(false);
     frames = [];
-    await act(async () => { root!.render(<Probe />); });
+    pictureFrames = [];
+    await act(async () => { root!.render(<Probe transport="none" />); });
     expect(frames[0], "the switch's first committed frame carried the departed account").toEqual({
       known: false,
       foldersEnabled: false,
     });
+    expect(pictureFrames[0], "the switch's first committed frame let pictures load by the departed account's row").toBe(true);
   });
 
   it("a consent WRITE resolving after the switch cannot resurrect the departed account", async () => {
@@ -182,7 +189,7 @@ describe("useConsentState when the wire disappears (the overlay door switch)", (
 
     let pressed: Promise<boolean> | null = null;
     await act(async () => { pressed = api!.setFoldersEnabled(true); });
-    await act(async () => { root!.render(<Probe />); });
+    await act(async () => { root!.render(<Probe transport="none" />); });
     await flush();
 
     await act(async () => { release!(); await pressed; });

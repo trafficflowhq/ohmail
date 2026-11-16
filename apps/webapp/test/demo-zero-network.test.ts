@@ -331,7 +331,10 @@ describe("no fixture content can reach a live account", () => {
   }
 
   it("NO module under apps/webapp/app imports @ohmail/testing", () => {
-    const files = [...sources(APP_DIR), ...sources(fileURLToPath(new URL("../../../packages/app-logic/src", import.meta.url)))];
+    const files = [
+      ...sources(APP_DIR), ...sources(fileURLToPath(new URL("../../../packages/app/src", import.meta.url))),
+      ...sources(fileURLToPath(new URL("../../../packages/app-logic/src", import.meta.url))),
+    ];
     // The control: if this walk finds nothing, the assertion below passes for the wrong reason.
     expect(files.length, "the source walk found no modules under app/").toBeGreaterThan(30);
 

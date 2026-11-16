@@ -8,9 +8,9 @@ import { realPgAvailable } from "@trafficflow/db/testing";
 import { WATCHED_FOLDERS } from "@trafficflow/core/adapters/imap";
 import { SendService, type ServiceContext } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { buildCursor, runSyncCycle } from "../src/sync.js";
-import { makeHarness, rawClient, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { buildCursor, runSyncCycle } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * THE USER'S OWN MAIL, END TO END — slice against real IMAP and real Postgres.

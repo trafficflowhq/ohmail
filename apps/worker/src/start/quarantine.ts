@@ -1,5 +1,5 @@
 import { isImapBoundExceeded, type MailboxAdapter, ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
-import { breachSetAside } from "../dead-letter.js";
+import { breachSetAside } from "@ohmail/organizer/dead-letter";
 import {
   type MailboxErrorPhase, classifyMailboxError, isProviderRefusal, markMailboxReadLimited,
   markMailboxProviderUnavailable, markMailboxFailed, mailboxErrorDetail, markMailboxConnected,

@@ -39,7 +39,7 @@ import { agoStamp, dayStamp, waterlineStamp } from "../../webapp/app/shell/forma
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { storeRefusalsFigure } from "../../webapp/app/shell/store-refusals-figure";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
-import { useMailState } from "../../webapp/app/shell/MailStateProvider";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { goFirstRun } from "../../webapp/app/shell/routing";
 import {
   type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,

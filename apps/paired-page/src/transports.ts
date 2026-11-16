@@ -17,7 +17,7 @@ import type { GapLettersTransport } from "../../webapp/app/shell/GapLettersNotic
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
-import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { OlderBodyWire } from "../../webapp/app/shell/older-body";
 import type { TrashWire } from "../../webapp/app/shell/trash-window";
 import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";

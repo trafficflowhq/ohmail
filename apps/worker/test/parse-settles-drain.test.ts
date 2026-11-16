@@ -9,10 +9,10 @@ import { MimeParseError, UNMETERED_STORAGE_CAP, normalizeMime } from "@trafficfl
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   DeadLetterLedger, ESCALATE_AFTER_ATTEMPTS, classifyIngestFault, nextAttemptAfter,
-} from "../src/dead-letter.js";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+} from "@ohmail/organizer/dead-letter";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A PARSE THAT CANNOT FINISH COSTS ONE MESSAGE, NEVER THE DRAIN. mailparser's header processing

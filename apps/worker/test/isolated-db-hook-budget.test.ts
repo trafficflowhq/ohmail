@@ -32,6 +32,8 @@ import * as scan from "../../../scripts/lib/source-scan.mjs";
  */
 
 const TEST_DIR = join(import.meta.dirname, ".");
+/** The organizer's package's tests, which moved out of this folder with their passes (ruling:organizer-cut). */
+const ORG_TEST_DIR = join(import.meta.dirname, "../../../packages/organizer/test");
 const FIXTURE = "_isolateddb.ts";
 const BUDGET = "ISOLATED_DB_RESET_BUDGET_MS";
 
@@ -67,12 +69,13 @@ const lineOf = (src: string, index: number): number => src.slice(0, index).split
 interface Hook { file: string; line: number; hook: string; hasBudget: boolean }
 
 function census(): Hook[] {
-  const files = readdirSync(TEST_DIR)
+  const files = [TEST_DIR, ORG_TEST_DIR].flatMap((d) => readdirSync(d)
     .filter((f) => f.endsWith(".ts") && f !== FIXTURE)
-    .sort();
+    .sort()
+    .map((f) => [d, f] as const));
   const found: Hook[] = [];
-  for (const f of files) {
-    const src = readFileSync(join(TEST_DIR, f), "utf8");
+  for (const [d, f] of files) {
+    const src = readFileSync(join(d, f), "utf8");
     if (!src.includes("truncateAll")) continue;
     for (const hook of ["beforeEach", "afterEach"]) {
       for (const { start, end } of hookCalls(src, hook)) {

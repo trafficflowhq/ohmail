@@ -5,7 +5,7 @@ import { mailboxes, mailboxCredentials, contacts, messages } from "@trafficflow/
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
-import { imapCfg, rawClient, emlOf } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { randomUUID } from "node:crypto";
 

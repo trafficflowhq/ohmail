@@ -8,8 +8,8 @@ import { startWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { isProviderRefusal } from "../src/mailboxes.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * a mail server's "not now" is not a broken mailbox (mail 0130).

@@ -101,5 +101,15 @@
   "subscribed",
   "appError",
   "mailboxFilings",
-  "frame"
+  "frame",
+  "stepUp",
+  "deleteAccount",
+  "week",
+  "day",
+  "month",
+  "year",
+  "agenda",
+  "calsearch",
+  "calendar",
+  "event"
 ]

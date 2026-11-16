@@ -55,8 +55,10 @@ async function accountOpens(): Promise<boolean> {
 }
 
 export function DesktopAccessLock(
-  { facts, press = null, onSignedOut, onLifted }: {
+  { facts, scope, press = null, onSignedOut, onLifted }: {
     facts: AccessRefusedFacts;
+    /** The mailbox the gate mounts, or `null` while it names none: whose wall this is, and whose lift is recorded. */
+    scope: string | null;
     /** The door and session the gate reads, so the sign-out can end that session at its server. */
     press?: SignOutPress | null;
     onSignedOut: (status: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
@@ -64,7 +66,7 @@ export function DesktopAccessLock(
   },
 ) {
   const t = useTranslations("accessLock");
-  const { check, armPoll, checkAgain } = useWallLift({ lifts: accountOpens, onLifted, owner: null });
+  const { check, armPoll, checkAgain } = useWallLift({ lifts: accountOpens, onLifted, scope, owner: null });
   const [signingOut, setSigningOut] = useState(false);
   /** The shell's reason when the last sign-out was refused, said under the button. */
   const [signOutRefused, setSignOutRefused] = useState<string | null>(null);

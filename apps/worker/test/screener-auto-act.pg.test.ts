@@ -16,8 +16,8 @@ import {
 } from "@trafficflow/services";
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerActConsent,
-} from "../src/screener-auto-act.js";
-import { repoWithFailingMethod } from "./_fault.js";
+} from "@ohmail/organizer/screener-auto-act";
+import { repoWithFailingMethod } from "../../../packages/organizer/test/_fault.js";
 
 /**
  * ═══ THE ACT FILES A SENDER AS THE PRESS FILES THEM, BUT FOR TWO NAMED DIVERGENCES, AND ONLY ON ITS

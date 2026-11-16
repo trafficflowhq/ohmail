@@ -16,7 +16,7 @@ const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", ".."
 /* The roots that hold an `audit_log` writer. The staff console is deliberately absent — it is the
    console's own client code, it issues no INSERT, and it is not a published root. */
 const WRITER_ROOTS = [
-  "apps/worker/src", "packages/core/src", "packages/services/src", "packages/db/src",
+  "apps/worker/src", "packages/organizer/src", "packages/core/src", "packages/services/src", "packages/db/src",
   "packages/api/src",
 ];
 

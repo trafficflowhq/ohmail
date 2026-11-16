@@ -275,7 +275,7 @@ describe.runIf(ON_DEVICE_STORE)("a resume that did not finish starting, on the d
        the next cycle carries it. That is what the second press proves, and it is the only thing
        this fixture can settle; whether the gate RECOGNISES the claim it wrote across the lost
        answer is item B's question, measured against a real server in
-       `apps/worker/test/lease-lost-renewal-response.imap.test.ts`. */
+       `packages/organizer/test/lease-lost-renewal-response.imap.test.ts`. */
     expect(p.organizer().claimed, "a lost answer cost this install its entitlement").toBe(true);
     await p.engine.resume();
     expect(p.organizer().organizing, "the install never recovered from a lost answer").toBe(true);

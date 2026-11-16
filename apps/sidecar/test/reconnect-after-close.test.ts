@@ -407,7 +407,7 @@ function dialLog(
     /* THE FIVE ACCESSORS THIS DOUBLE OFFERS BESIDE `MailboxAdapter`, each named with the
        interface the real `ImapAdapter` returns from it. They are not on `MailboxAdapter` —
        production reaches them by duck-typing (`apps/sidecar/src/engine.ts` for the lease peek,
-       `apps/worker/src/request-drain.ts` for the two request surfaces) — so an annotation that
+       `packages/organizer/src/request-drain.ts` for the two request surfaces) — so an annotation that
        omits one lets the double drift from the shape that code probes for. */
     const adapter: MailboxAdapter & {
       leaseIo(): LeaseIo;

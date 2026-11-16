@@ -114,6 +114,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -331,7 +332,7 @@ vi.mock("../app/api-client", () => ({
   },
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: mockMailState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
@@ -442,7 +443,7 @@ describe("the row says WHY, and never claims mail is on its way", () => {
     /**
      * The distinction the COLUMN cannot make, and the reason the wording is what it is.
      *
-     * `standDownReason` (`apps/worker/src/lease.ts:167`) maps BOTH verdicts onto the same three
+     * `standDownReason` (`packages/organizer/src/lease.ts:167`) maps BOTH verdicts onto the same three
      * values: `stand_down` (a FRESH foreign claim — somebody is organizing it right now) and
      * `available` (a STALE one — nobody is, and we refuse to self-promote). the observed case
      * was the second: a local worker three hours dead. So "another install IS ORGANIZING this

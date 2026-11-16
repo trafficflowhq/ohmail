@@ -2,7 +2,7 @@ import postgres from "postgres";
 import { runMigrations } from "@trafficflow/db/admin";
 import { journalDrift } from "@trafficflow/db/testing";
 import { checkoutKeyOf, checkoutRoot, databaseOf, isolatedDbName } from "./_isolateddb-name.js";
-import { DB_URL } from "./_workerdb.js";
+import { DB_URL } from "../../../packages/organizer/test/_workerdb.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A DEDICATED database per multi-account test file.

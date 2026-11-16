@@ -206,6 +206,7 @@ describe("THE SYNC RAIL GETS NO READER ARM — a ruling, not an omission", () =>
     engineFreshness: { state: "current", asOf: stamp },
     now: NOW,
     demo: false,
+    scope: null,
   } as never);
 
   it("a reader whose mirror is growing is NOT `blocked`", () => {
@@ -263,7 +264,7 @@ describe("THE SYNC RAIL GETS NO READER ARM — a ruling, not an omission", () =>
  * The first version of this slice rewrote the six sentences to say the other install
  * "organizes" the mailbox. `mailbox-stand-down.test.tsx`'s "THE COPY IS TRUE OF A DEAD CLAIM AS
  * WELL AS A LIVE ONE" went red, and its objection is older than this slice and load-bearing:
- * `standDownReason` (`apps/worker/src/lease.ts`) maps BOTH lease verdicts onto one token —
+ * `standDownReason` (`packages/organizer/src/lease.ts`) maps BOTH lease verdicts onto one token —
  * `stand_down` (a FRESH foreign claim, somebody is organizing right now) and `available` (a
  * STALE one, nobody is and we refuse to self-promote). The case that produced the original gap
  * was the second, a local worker three hours dead, and "organizes" is false there.

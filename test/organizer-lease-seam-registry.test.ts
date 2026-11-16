@@ -83,7 +83,7 @@ type Verb = (typeof VERBS)[number];
 /** Which roots are scanned for an UNREGISTERED seam — the four files the lease is spread over. */
 const SCANNED = [
   "packages/core/src/adapters/organizer-lease.ts",
-  "apps/worker/src/lease.ts",
+  "packages/organizer/src/lease.ts",
   "apps/worker/src/index.ts",
   "apps/sidecar/src/engine.ts",
 ] as const;
@@ -117,7 +117,7 @@ const REGISTRY: Record<string, Partial<Record<Verb, Seam>>> = {
         + "admitted, so a takeover landing around them cannot be inside the baseline",
     },
   },
-  "apps/worker/src/lease.ts": {
+  "packages/organizer/src/lease.ts": {
     runLeaseGate: {
       calls: 1,
       upholds: "permit-threaded",

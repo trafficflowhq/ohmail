@@ -5,11 +5,11 @@ import { mailboxes, messageInstances, messages, type Tx } from "@trafficflow/db"
 import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * AN ERASURE THAT LANDS BETWEEN TWO MESSAGES OF ONE CYCLE TAKES EVERYTHING AFTER IT. The cycle

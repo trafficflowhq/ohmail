@@ -1330,6 +1330,8 @@ export const devices = sqliteTable("devices", {
   // NULL = never completed a drain. Stamped by the API's sync route alone, throttled in the
   // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
+  // mail 0209 — the device whose session handed this one its sign-in; see the Postgres twin.
+  handedOffFrom: text("handed_off_from"),
 }, (t) => ({
   ixUser: index("devices_user_idx").on(t.userId) }));
 
@@ -1419,7 +1421,7 @@ export const refreshTokens = sqliteTable("refresh_tokens", {
 export const pairingTokens = sqliteTable("pairing_tokens", {
   id: text("id").default(UUID_V4).primaryKey(),
   createdByUserId: text("created_by_user_id").references(() => users.id),
-  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' (CHECK in 0059)
+  grant: text("grant").notNull(),                  // 'invite' | 'device-pair' | 'app-handoff' (CHECK in 0059, 0209)
   tokenHash: text("token_hash").notNull(),         // sha256(raw); the raw value is never at rest
   label: text("label").notNull().default(""),      // device-pair: becomes the device row's label
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
@@ -1431,6 +1433,9 @@ export const pairingTokens = sqliteTable("pairing_tokens", {
    * token), which a CHECK holds on a server.
    */
   accountId: text("account_id"),
+  /** mail 0209 — an `app-handoff` code's binding; see the Postgres twin. */
+  challengeHash: text("challenge_hash"),
+  handoffFromDeviceId: text("handoff_from_device_id"),
 }, (t) => ({
   uqToken: unique().on(t.tokenHash),
 }));

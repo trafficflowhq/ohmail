@@ -46,7 +46,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {}, replace: () => {} }),
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({
     state: { mailboxes: null, mirrored: 0, freshness: { state: "unknown", asOf: null } } as unknown as MailState,
     refresh: () => {},
@@ -288,22 +288,31 @@ describe("MailboxSection: a factor landing after Cancel removes no mailbox", () 
 
 // ── 2. The desktop-link screen: a cancelled step-up mints nothing ───────────────────────────
 
-describe("LinkDesktopScreen: a factor landing after Cancel mints no code", () => {
+describe("LinkDesktopRoute: a factor landing after Cancel mints no code", () => {
+  /** The one step-up dialog's code field, and one of its buttons by its label (its key hint aside). */
+  const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
+  const dialogButton = (el: HTMLElement, label: string): HTMLElement => {
+    const found = [...el.querySelectorAll<HTMLElement>('[role="dialog"] button')].filter((b) =>
+      [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === label);
+    expect(found, `exactly one "${label}" button in the dialog`).toHaveLength(1);
+    return found[0]!;
+  };
+
   async function toTheFactorInFlight(): Promise<HTMLElement> {
-    const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
-    const el = await render(h(LinkDesktopScreen, {}));
-    // The first mint is refused for a closed step-up window, which is what opens the prompt.
+    const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
+    const el = await render(h(LinkDesktopRoute, {}));
+    // The first mint is refused for a closed step-up window, which is what opens the dialog.
     await click(byText(el, link.mint!)!);
-    await waitFor(() => el.querySelector("#stepup-code") != null, "the step-up prompt");
-    await typeInto(el.querySelector("#stepup-code"), "123456");
-    await submit(el.querySelector("#stepup-code")!.closest("form"));
+    await waitFor(() => codeField(el) != null, "the step-up dialog");
+    await typeInto(codeField(el), "123456");
+    await submit(codeField(el)!.closest("form"));
     await waitFor(() => rig.settle != null, "the factor to be in flight");
     return el;
   }
 
   it("Cancel, then the factor lands — no pairing code is minted, and the screen says so", async () => {
     const el = await toTheFactorInFlight();
-    await click(only(el, "button", dev.cancel!));
+    await click(dialogButton(el, en.stepUp.cancel));
     await landTheVerify();
 
     expect(rig.calls, "a cancelled step-up must mint nothing")

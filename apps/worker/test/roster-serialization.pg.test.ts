@@ -8,8 +8,8 @@ import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import { MAX_CYCLE_LANES, DEFAULT_CYCLE_LANES, CYCLE_FAST_LANES, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { byMessageId } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { byMessageId } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════

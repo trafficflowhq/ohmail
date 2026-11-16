@@ -162,6 +162,8 @@ No name an operator has in a file changed. A refusal names the variable and neve
 | `TF_VAPID_PUBLIC_KEY` | none | its generated public key |
 | `TF_API_CLOCKS` | off | nothing (see Clocks) |
 | `OHMAIL_CALENDAR` | off: no calendar routes, and `/hello` says nothing of one | nothing yet |
+| `PLACES_SUGGEST_URL`, `PLACES_SUGGEST_TOKEN` | none: the calendar's place field suggests nothing, and `/hello` does not offer it | a geocoder of its own, if any: its address (https, or plain http to a private service name) and its bearer if it takes one; checked at every start, used only beside `OHMAIL_CALENDAR`, the token never without the address |
+| `OHCAL_CONNECT_GOOGLE`, `OHCAL_CONNECT_MICROSOFT` | off: the way is neither listed nor taken. `1` offers it once the provider's client is configured and its sign-in is built (neither is built yet); any other value but `0` refuses the start | nothing |
 
 Mail to customers is one setting: the transport is whichever of `SMTP_URL` and `RESEND_API_KEY` is set.
 Both refuse; so does either without `MAIL_FROM`, or `MAIL_FROM` alone. `TF_ALERT_EMAIL` without a mailer
@@ -176,6 +178,7 @@ rest refuse.
 | `OHMAIL_ORIGIN` | required | the one browser origin; the passkey id and the only cookie host (plus loopback) |
 | `DATABASE_URL` | required | its own Postgres, session-capable; the server migrates it |
 | `TF_PROBE_ALLOW_PRIVATE`, `TF_PUSH_ALLOW_PRIVATE` | off | `1` lets the mail probe, or a wake, dial a private address |
+| `OHCAL_ALLOW_PRIVATE` | off | exactly `1` lets a calendar be connected at an address of the server's own network, and without TLS there. Set it on the worker too: the worker is what dials, and it refuses on its own reading. With it on, EVERY account of this server can make the worker ask this machine itself and the server's network: a GET for a subscription, and a CalDAV server's requests with the sign-in that was typed |
 | `TF_AI_PROVIDER` and its block, `TF_AI_TIMEOUT_MS` | no AI | the operator's model |
 | `MS_DEVICE_CLIENT_ID`, `MS_DEVICE_TENANT` | none | the public client of the device-code sign-in |
 | `S3_PUBLIC_ENDPOINT` | `OHMAIL_ORIGIN` | where a browser uploads |

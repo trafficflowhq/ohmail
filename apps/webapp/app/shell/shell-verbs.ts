@@ -45,7 +45,7 @@ import {
 import { type ToastFn } from "@ohmail/ui";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import { replyAllRecipients } from "./compose-from";
-import type { ConsentState } from "./consent-state";
+import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
 import { readerMoveRefusal } from "@ohmail/app-logic/mail-state/mail-state";

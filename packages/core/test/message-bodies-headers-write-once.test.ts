@@ -21,7 +21,7 @@ const HEADER_DOOR = "packages/db/src/gone-letter-headers.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO = join(HERE, "..", "..", "..");
-const ROOTS = ["packages/core/src", "packages/services/src", "packages/db/src", "apps/worker/src", "apps/server/src"];
+const ROOTS = ["packages/core/src", "packages/services/src", "packages/db/src", "apps/worker/src", "packages/organizer/src", "apps/server/src"];
 
 interface Finding { at: string; why: string }
 

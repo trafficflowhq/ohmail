@@ -43,7 +43,7 @@ import { HELD_RELEASE_GROUPS_MAX } from "../../services/src/held-release-service
 import { AUTO_FILED_PAGE_MAX } from "../../services/src/auto-filed-service.js";
 import { FILINGS_FOLDER_MAX_CHARS, FILINGS_PRESS_MAX } from "../../services/src/mailbox-filings.js";
 import {
-  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX,
+  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX, UNSCREENED_CURSOR_MAX_CHARS,
 } from "../../services/src/ohbox-unscreened-service.js";
 import { MAX_TAG_NAME_CHARS } from "../../services/src/tags-service.js";
 import { OAUTH_STATE_MAX_CHARS, PASSWORD_MAX_LENGTH, REUSE_SWEEPS_MAX } from "../../services/src/auth/auth-service.js";
@@ -580,6 +580,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /pair/redeem": { scalarsOnly: true },
   // A link's state by its hash: one string, refused unless it is sha256's 43 base64url characters.
   "POST /pair/state": { scalarsOnly: true },
+  // A phone app's handoff: a refresh token, an attempt's name, a 43-character challenge and a closed-set target.
+  "POST /pair/handoff": { scalarsOnly: true },
 
   // ── sync ────────────────────────────────────────────────────────────────────────────────
   // `?types=` is validated against a closed set of nine entity names (`VALID_TYPES`), so its
@@ -700,9 +702,11 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // "Not now" carries ONE caller-chosen string, the offer's fingerprint, and the service refuses
   // anything over 128 characters before it writes (the migration's CHECK is the belt).
   "POST /screener/held-releases/dismiss": { scalarsOnly: true },
-  // The undecided-sender summary: its one input is `?pile=`, News or Receipts or a 400, and the
-  // answer's own row count is bounded by `OHBOX_UNSCREENED_GROUPS_MAX` on the server's side.
-  "GET /screener/unscreened": { scalarsOnly: true },
+  // The undecided-sender summary: `?pile=`, News or Receipts or a 400, and `?after=`, an earlier
+  // answer's `next`: refused over UNSCREENED_CURSOR_MAX_CHARS, then unless it is an address and an
+  // id, before a row is read. The answer's own row count is bounded by `OHBOX_UNSCREENED_GROUPS_MAX`
+  // on the server's side, and its walk by a time budget.
+  "GET /screener/unscreened": { bounds: [UNSCREENED_CURSOR_MAX_CHARS] },
   // The press names the sender groups it screens. The count of addresses is the only
   // caller-chosen size on the route, and the service refuses more than this many — and any
   // address over 320 characters — before it reads a row.
@@ -1293,6 +1297,9 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/screener.ts#scope": "closed-set",
   // A pile's note: `news` or `receipts`, anything else a 400 before a row is read.
   "routes/screener.ts#pile": "closed-set",
+  // Where the offer's read goes on: an earlier answer's `next`, refused over
+  // UNSCREENED_CURSOR_MAX_CHARS at the route and unless it is an address and an id in the service.
+  "routes/screener.ts#after": "length-capped",
   "routes/screener.ts#q": "length-capped",
   "routes/screener.ts#uid": "identifier",
   "routes/screener.ts#uidValidity": "identifier",
@@ -1707,8 +1714,14 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // the swept sessions of the at most REUSE_SWEEPS_MAX it keeps.
   "auth/auth-service.ts :: ackDevices": { origin: { bounded: "one per sweep row the listing read, `limit`ed by REUSE_SWEEPS_SCAN" }, count: 1 },
   "auth/auth-service.ts :: sweptSessions": { origin: { bounded: "the swept sessions of the at most REUSE_SWEEPS_MAX sweeps the listing keeps" }, count: 1 },
-  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 1 },
+  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 2 },
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
+  // The handoff's lineage (`revokeHandedOff`): each step's devices and the families it ended, in 500-row slices.
+  "auth/session-lifecycle.ts :: frontier.slice(i, i + 500)": { origin: { bounded: "sliced into 500-device chunks by the caller, explicitly" }, count: 2 },
+  // The two grants that mint a session, voided together: a literal pair.
+  "auth/session-lifecycle.ts :: [\"device-pair\", \"app-handoff\"]": { origin: "constant", count: 1 },
+  // The pairings a person lists: the two public grants, a literal pair.
+  "pairing.ts :: [\"invite\", \"device-pair\"]": { origin: "constant", count: 1 },
   "auth/session-reaper.ts :: [...new Set(rows.map((c) => c.familyId))]": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "auth/session-reaper.ts :: ids": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "push-service.ts :: chunk": { origin: { bounded: "PRUNE_FAMILIES (500) of the families a revoke ended, sliced before the two reads of each chunk" }, count: 2 },

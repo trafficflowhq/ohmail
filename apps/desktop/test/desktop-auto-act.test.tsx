@@ -15,9 +15,9 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
  */
 
 let FACTS: MailboxFacts[] | null = null;
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return { ...real, useMailboxFacts: () => FACTS };
 });
@@ -230,12 +230,12 @@ describe("filing a held impersonation to Spam, on both desktop doors", () => {
 
 describe("the hosted door: the shared shell's row over the bridge", () => {
   it("reads the act off the account's consent and writes it through the engine's forward", async () => {
-    const { useConsentState } = await import("../../webapp/app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
     const { AutoActRow } = await import("../../webapp/app/shell/AutoActRow");
     const { consentOverBridge } = await import("../src/local-consent.js");
     /* `AppShell`'s own composition of the row, and nothing else of it. */
     function Harness() {
-      const consent = useConsentState(true, consentOverBridge);
+      const consent = useConsentState(true, null, consentOverBridge);
       return consent.autoActStorable && consent.setAutoAct
         ? h(AutoActRow, { on: consent.autoAct, suggestOn: consent.autoSuggest, reader: false, setAutoAct: consent.setAutoAct })
         : null;
@@ -256,11 +256,11 @@ describe("the hosted door: the shared shell's row over the bridge", () => {
 
   it("turning automatic suggestions off withdraws the act in the shell's own state", async () => {
     actAt = AT;
-    const { useConsentState } = await import("../../webapp/app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
     const { AutoActRow } = await import("../../webapp/app/shell/AutoActRow");
     const { consentOverBridge } = await import("../src/local-consent.js");
     function Harness() {
-      const consent = useConsentState(true, consentOverBridge);
+      const consent = useConsentState(true, null, consentOverBridge);
       return h("div", null,
         h("button", { className: "suggest-off", onClick: () => { void consent.setAutoSuggest(false); } }, "off"),
         consent.autoActStorable && consent.setAutoAct

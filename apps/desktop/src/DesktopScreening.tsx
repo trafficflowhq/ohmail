@@ -17,7 +17,7 @@ import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
    `mail-state.ts#screenerReadOnly`. `useMailboxFacts` is the NON-throwing accessor: a surface
    mounted without the provider reads `null`, which answers "this install organizes" and leaves
    every sentence here exactly as it was. */
-import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { TravelledChangeNote, useTravelledChange } from "../../webapp/app/shell/travelled-change";

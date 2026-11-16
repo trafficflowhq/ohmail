@@ -267,6 +267,7 @@ describe("the composition census — every table mounts /hello, and self-host ho
       "DELETE /pair/:id",
       "GET /pair",
       "POST /pair",
+      "POST /pair/handoff",
       "POST /pair/redeem",
       "POST /pair/state",
     ]);
@@ -289,6 +290,7 @@ describe("the composition census — every table mounts /hello, and self-host ho
       "DELETE /pair/:id",
       "GET /pair",
       "POST /pair",
+      "POST /pair/handoff",
       "POST /pair/redeem",
       "POST /pair/state",
     ]);

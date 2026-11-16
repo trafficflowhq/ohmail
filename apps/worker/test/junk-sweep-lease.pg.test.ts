@@ -16,10 +16,10 @@ import type { NativeLocator } from "@trafficflow/core";
 import { junkSweepPass } from "../src/junk-sweep.js";
 import {
   MIN_PERMIT_TTL_MS, OrganizerStandDownError, acquireLeasePermit,
-} from "../src/lease.js";
-import { FakeMetaFolder } from "./_fakeadapter.js";
-import { PermitClock } from "./_permit-clock.js";
-import { FIXTURE_LEASE } from "./_door.js";
+} from "@ohmail/organizer/lease";
+import { FakeMetaFolder } from "../../../packages/organizer/test/_fakeadapter.js";
+import { PermitClock } from "../../../packages/organizer/test/_permit-clock.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ═══ A DECISION READ EARLIER MAY NOT BECOME A WRITE TO SOMEBODY'S REAL MAIL SERVER ═══════════

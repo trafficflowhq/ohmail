@@ -22,7 +22,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
  *
  * Reading a message in ohmail has to be reading it in the mailbox: open the same account in Apple
  * Mail or on a phone and the message must not be bold again. On a hosted account the always-on
- * worker is what keeps that true — `reconcileFlags` in `apps/worker/src/sync.ts` is the ONE code
+ * worker is what keeps that true — `reconcileFlags` in `packages/organizer/src/sync.ts` is the ONE code
  * path that adds the flag on a real server. A standalone install has no worker anywhere, so the
  * same promise is kept only if this process runs the same pass over its own mailbox.
  *

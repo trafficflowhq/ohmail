@@ -3,7 +3,7 @@ import { apiRoutes, createApp, csrfTokenFor, type ApiDeps } from "@trafficflow/a
 // THE REAL PASS, not a stand-in for it. The claim below is that what the worker's cycle and the
 // desktop engine's drain actually run reaches a live client, so a hand-rolled UPDATE here would
 // assert nothing about production.
-import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
+import { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 import type { Tx } from "@trafficflow/db";
 import {
   FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedScreenerHeld, seedSession,

@@ -24,7 +24,7 @@ import { readSource } from "../apps/worker/test/_start-function.js";
  */
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const ROOTS = ["apps/worker/src", "apps/sidecar/src"];
+const ROOTS = ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"];
 
 function sources(): { file: string; src: string }[] {
   const out: { file: string; src: string }[] = [];
@@ -66,7 +66,7 @@ describe("the hosts of the bubble-up pass", () => {
     // The declaration proves the scan reaches the module it is about; the callers are the subject.
     expect(SITES.filter((s) => s.declaration).map((s) => s.file),
       "`bubbleUpPass` was not declared under the scanned roots — it was renamed or moved, and " +
-      "this census now measures nothing").toEqual(["apps/worker/src/bubble-up-pass.ts"]);
+      "this census now measures nothing").toEqual(["packages/organizer/src/bubble-up-pass.ts"]);
     const callers = SITES.filter((s) => !s.declaration);
     expect(callers.length,
       "no production caller of `bubbleUpPass` was found under " + ROOTS.join(", ")).toBeGreaterThan(2);

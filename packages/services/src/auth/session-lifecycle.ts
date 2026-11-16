@@ -384,11 +384,13 @@ export class SessionLifecycle {
    * tail: the device row carries the TOKEN's mint-time label, which makes revocation aimable;
    * `kind` is the REDEEMER's declaration and names the DEVICE ROW only (closed set) — never the
    * TTL surface: the mint pins `surface: "native"`, the bearer reality; and `twofaAt: null` — a
-   * pairing token lives up to fifteen minutes, past what a step-up argument proves. NULL fails
-   * step-up closed, so pairing cannot beget pairing.
+   * pairing token lives up to five minutes, past what a step-up argument proves. NULL fails
+   * step-up closed, so pairing cannot beget pairing. The one bounded exception is a phone app's handoff to its
+   * sibling on the same phone (`mintAppHandoff`): it costs the minter its refresh token, and the device it makes
+   * records its parent (`handedOffFrom`), so a sweep or a take-back of the parent ends it too.
    */
   async establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null },
   ): Promise<{ tokens: OAuthTokens }> {
     // The runtime whitelist behind the type, for JavaScript callers and wire input — the same
     // division `mintPairingToken` establishes for its grant.
@@ -400,7 +402,7 @@ export class SessionLifecycle {
     const user = await this.loadUser(db, b.userId);
     const [dev] = await db.insert(devices).values({
       accountId: user.accountId, userId: user.id, kind: b.kind,
-      label: b.label, ip: ctx.ip ?? "",
+      label: b.label, ip: ctx.ip ?? "", handedOffFrom: b.handedOffFrom ?? null,
     }).returning();
     const established = await this.establish(ctx, user, {
       // The declared kind rides on the DEVICE ROW above; the lifetime surface is pinned to the
@@ -487,7 +489,8 @@ export class SessionLifecycle {
       or(eq(sessions.deviceId, deviceId), and(eq(sessions.id, deviceId), isNull(sessions.deviceId)))!,
     ];
     // The shared core: fenced, in id order, the pending grants voided around the claim.
-    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now());
+    // A take-back in Devices ends what this device handed its sign-in to, transitively.
+    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now(), { handedOffFrom: deviceId });
     if (revoked > 0) return;
     // The core audits a claim; a revoke that matched nothing is still written down, as it always was.
     const db = asTx(ctx);
@@ -556,7 +559,7 @@ export class SessionLifecycle {
    * is `revokeFamily`'s exact reach.
    */
   protected async revokeClaimedSessions(
-    ctx: ServiceContext, userId: string, preds: SQL[], now: Date,
+    ctx: ServiceContext, userId: string, preds: SQL[], now: Date, cascade?: { handedOffFrom: string },
   ): Promise<{ revoked: number; familyIds: string[] }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
@@ -577,6 +580,9 @@ export class SessionLifecycle {
             inArray(refreshTokens.familyId, families.slice(i, i + 500)),
             isNull(refreshTokens.revokedAt),
           ));
+      }
+      if (cascade && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cascade.handedOffFrom)) {
+        families.push(...await this.revokeHandedOff(tx, userId, [cascade.handedOffFrom], now));
       }
       await this.pruneWakeRegistrations(tx, families);
       await this.voidPendingGrants(tx, userId, now);
@@ -624,7 +630,8 @@ export class SessionLifecycle {
   protected async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
     await db.update(pairingTokens).set({ revokedAt: now }).where(and(
       eq(pairingTokens.createdByUserId, userId),
-      eq(pairingTokens.grant, "device-pair"),
+      // Both grants that mint a session: a pairing's code and a phone app's handoff.
+      inArray(pairingTokens.grant, ["device-pair", "app-handoff"]),
       isNull(pairingTokens.consumedAt),
       isNull(pairingTokens.revokedAt),
       gt(pairingTokens.expiresAt, now),
@@ -1093,14 +1100,20 @@ export class SessionLifecycle {
     event: "refresh_reuse_revoked" | "refresh_attempt_revoked", cause?: "attempt_mismatch",
   ): Promise<ServiceError> {
     const db = asTx(ctx);
+    // The families of the apps this family's device signed in, whichever arm below revoked them: pruned with it.
+    let handedOff: string[] = [];
     try {
       await this.inTransaction(ctx, async (txCtx) => {
         const tx = asTx(txCtx);
         await this.revokeFamily(tx, existing.familyId, now);
+        // What this family's device handed its sign-in to goes with it: a stolen token's children end with the theft.
+        handedOff = await this.revokeHandedOff(tx, existing.userId, await this.deviceOfSession(tx, existing.sessionId), now);
         const [reuseUser] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
+        // ` handed_off=<n>` closes the line only where the sweep ended apps this family's device had signed in.
         const detail = `family=${existing.familyId} session=${existing.sessionId}`
-          + `${await this.sweepDepth(tx, existing, now)}${cause ? ` cause=${cause}` : ""}`;
+          + `${await this.sweepDepth(tx, existing, now)}${cause ? ` cause=${cause}` : ""}`
+          + `${handedOff.length > 0 ? ` handed_off=${handedOff.length}` : ""}`;
         await this.audit(tx, reuseUser ?? null, event, undefined, txCtx, detail);
       }, { fence: { accountId: existing.accountId } });
     } catch (err) {
@@ -1108,10 +1121,11 @@ export class SessionLifecycle {
       if (isAccountErased(err)) return erasedRefusal();
       // The audit write must not block the security action: reuse still revokes the family.
       await this.revokeFamily(db, existing.familyId, now);
+      handedOff = await this.revokeHandedOff(db, existing.userId, await this.deviceOfSession(db, existing.sessionId), now);
     }
     // After the revoke, and never in its way: the refusal and its record stand without the prune.
     try {
-      await this.pruneWakeRegistrations(db, [existing.familyId]);
+      await this.pruneWakeRegistrations(db, [existing.familyId, ...handedOff]);
     } catch {
       /* the row stays until its endpoint dies */
     }
@@ -1470,6 +1484,54 @@ export class SessionLifecycle {
       if (classifyRefreshFailure(err) === "session_refused") return null;
       throw err;
     }
+  }
+
+  /** The device a session belongs to, as a frontier for {@link revokeHandedOff}: none for a device-less session. */
+  private async deviceOfSession(db: Tx, sessionId: string): Promise<string[]> {
+    const [row] = await db.select({ deviceId: sessions.deviceId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    return row?.deviceId ? [row.deviceId] : [];
+  }
+
+  /**
+   * EVERY LIVE SESSION HANDED OFF FROM THESE DEVICES, AND FROM THEIRS, revoked with their refresh rows: a phone app's
+   * sibling (`mintAppHandoff`) is ended by a reuse sweep or a take-back of the device that handed it its sign-in.
+   * Breadth first, in id order within each step, with a visited set and no depth cap; answers the families it
+   * revoked. Signing out inside an app, a re-pair and a take-back of the child leave the parent alone.
+   */
+  protected async revokeHandedOff(tx: Tx, userId: string, from: readonly string[], now: Date): Promise<string[]> {
+    const visited = new Set(from);
+    let frontier = [...from];
+    const families: string[] = [];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (let i = 0; i < frontier.length; i += 500) {
+        const children = await tx.select({ id: devices.id }).from(devices)
+          .where(and(eq(devices.userId, userId), inArray(devices.handedOffFrom, frontier.slice(i, i + 500))))
+          .orderBy(asc(devices.id));
+        for (const { id } of children) if (!visited.has(id)) (visited.add(id), next.push(id));
+      }
+      frontier = next;
+      for (let i = 0; i < frontier.length; i += 500) {
+        const claimed = await tx.update(sessions).set({ revokedAt: now })
+          .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt), inArray(sessions.deviceId, frontier.slice(i, i + 500))))
+          .returning({ familyId: sessions.familyId });
+        families.push(...new Set(claimed.map((r) => r.familyId)));
+      }
+    }
+    for (let i = 0; i < families.length; i += 500) {
+      await tx.update(refreshTokens).set({ revokedAt: now })
+        .where(and(inArray(refreshTokens.familyId, families.slice(i, i + 500)), isNull(refreshTokens.revokedAt)));
+    }
+    return families;
+  }
+
+  /** {@link AppHandoffAuditor}: a handoff's mint, written to the trail with the minting device and the target's word. */
+  async noteAppHandoffIssued(
+    ctx: ServiceContext, o: { userId: string; deviceId: string; target: "ohmail" | "ohcal" },
+  ): Promise<void> {
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, o.userId);
+    await this.audit(db, user, "app_handoff_issued", undefined, ctx, `device=${o.deviceId} target=${o.target}`);
   }
 
   /**

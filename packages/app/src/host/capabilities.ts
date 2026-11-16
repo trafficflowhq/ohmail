@@ -36,6 +36,11 @@ export interface HostCapabilities {
   readonly mailboxes: "here" | "resyncAndOut" | "resyncOnly" | None;
   /** How far a choice of language reaches. */
   readonly language: "account" | "install" | None;
+  /**
+   * Whether this shell offers the calendar beside mail: the switch between the two is drawn exactly where this is
+   * `both` and the calendar's entry is handed in. A shell answers it from its server's word at seating.
+   */
+  readonly products: "both" | None;
 }
 
 /**
@@ -56,4 +61,5 @@ export const CANNOT = {
   firstRunDoor: "none",
   mailboxes: "none",
   language: "none",
+  products: "none",
 } as const satisfies Omit<HostCapabilities, "service">;

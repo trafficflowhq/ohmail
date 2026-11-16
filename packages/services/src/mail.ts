@@ -33,7 +33,7 @@ export {
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
 // The calendar's door into the feed: a type alone, so this leaf carries none of its code.
-export type { CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
+export type { CalendarConnectPort, CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
 /* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
  * phase. Exported because the transport arm measures them against the codec's own cap. */
 export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
@@ -67,9 +67,9 @@ export {
 } from "./auto-filed-service.js";
 export {
   unscreenedSummary, screenUnscreened, organizeDecisionCount, isUnscreenedPile,
-  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION,
+  OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_AUDIT_ACTION, UNSCREENED_CURSOR_MAX_CHARS,
   type UnscreenedSenderGroup, type UnscreenedSummary, type UnscreenedResult, type OrganizeDecisionCount,
-  type UnscreenedPile,
+  type UnscreenedPile, type UnscreenedRead,
 } from "./ohbox-unscreened-service.js";
 export {
   TriageService, triageService,

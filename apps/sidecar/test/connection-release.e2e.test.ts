@@ -8,7 +8,7 @@ import { ImapAdapter, type MailboxAdapter } from "@trafficflow/core/adapters/ima
 import { formatClaim, META_FOLDER } from "@trafficflow/core/adapters/organizer-lease";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
-import { FIXTURE_DOOR } from "../../worker/test/_door.js";
+import { FIXTURE_DOOR } from "../../../packages/organizer/test/_door.js";
 
 /** The probe's door: this throwaway user is the test's own, so the fixture arm of the one door. */
 

@@ -189,6 +189,16 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     why: "The picker's own month and weekday NAMES for a calendar grid — a date being chosen, "
       + "never a date being reported.",
   },
+  "packages/app-logic/src/calendar/grid/words.ts": {
+    calls: 2,
+    why: "The calendar's weekday heads, short and full, for the Week and Day grid: a calendar day's name, "
+      + "never a mail stamp.",
+  },
+  "packages/app-logic/src/calendar/spans/format.ts": {
+    calls: 1,
+    why: "The calendar's span and day labels (Month, Year, Agenda, Search): a calendar day being shown, "
+      + "never a mail stamp.",
+  },
 
   /* `toLocaleString` ON A NUMBER. It cannot be told from the date form without types, and it is
      kept in the detector rather than excluded BECAUSE of that: pinning the count here means the

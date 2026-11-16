@@ -1,0 +1,30 @@
+/* The calendar's body: the head over the view, and the Agenda's panel beside it. Placement only. */
+.cal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-body-views {
+  display: flex;
+  flex: 1;
+  gap: var(--s2);
+  min-height: 0;
+  min-width: 0;
+}
+.cal-body-view {
+  display: flex;
+  flex-direction: column;
+  flex: 2;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-body-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}

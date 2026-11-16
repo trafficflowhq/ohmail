@@ -11,7 +11,7 @@
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core";
-import { runSenderNameBackfill } from "./sender-name-backfill.js";
+import { runSenderNameBackfill } from "@ohmail/organizer/sender-name-backfill";
 
 const argv = process.argv.slice(2);
 const apply = argv.includes("--apply");

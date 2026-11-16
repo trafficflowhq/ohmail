@@ -11,7 +11,7 @@ import { browserWindowFacts, fragmentAddress } from "@ohmail/app/host/browser";
 import { Frame, PLACE_IDS, type FramePlaces, type PaneProps } from "@ohmail/app/frame";
 import { TextProvider } from "@ohmail/app/text";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { useMailState } from "../app/shell/MailStateProvider";
+import { useMailState } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { useTodaysConnection } from "../app/shell/todays-reasons";
 import { demoHost } from "../app/(product)/demo/host";
 

@@ -91,7 +91,7 @@ describe("what the package's bundle is made from", () => {
 
   it("has a module behind every door, and names the calendar core, the mail core and the parser as its only dependencies", () => {
     const manifest = JSON.parse(readFileSync(join(PKG, "package.json"), "utf8")) as { dependencies: Record<string, string>; exports: Record<string, Record<string, string>> };
-    expect(Object.keys(manifest.exports)).toEqual([".", "./port", "./refusals", "./limits", "./request", "./google", "./caldav", "./microsoft", "./ics"]);
+    expect(Object.keys(manifest.exports)).toEqual([".", "./port", "./refusals", "./limits", "./request", "./connect", "./google", "./caldav", "./microsoft", "./ics"]);
     expect(Object.values(manifest.exports).map((to) => to["ohmail-source"]!).filter((source) => !existsSync(join(PKG, source)))).toEqual([]);
     expect(manifest.dependencies).toEqual({ "@ohmail/cal-core": "0.0.0", "@trafficflow/core": "*", htmlparser2: "12.0.0" });
   });

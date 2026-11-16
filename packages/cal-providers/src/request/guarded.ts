@@ -10,15 +10,16 @@
  * may also reach this machine and private addresses, and those alone without encryption.
  */
 import {
-  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHostShape, assertPublicHttpUrl, canonicalHost, isBlockedAddress,
+  MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHttpUrl, canonicalHost, isBlockedAddress,
   isPrivateNetworkAddress, resolvePinUnchecked, type HostResolver, type PinnedRequestOptions, type PinnedResponse,
 } from "@trafficflow/core/net";
-import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS, MIN_EXPLICIT_PORT } from "../limits.js";
+import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { readCapped } from "./capped-body.js";
 import { sendableTag, type HttpAnswer, type HttpPort, type HttpRequest } from "./index.js";
+import { shapeRefusal, type AddressPolicy } from "./shape.js";
 
-export type AddressPolicy = { readonly kind: "cloud" } | { readonly kind: "own-network" };
+export type { AddressPolicy } from "./shape.js";
 
 export interface GuardLimits {
   /** From a hop's start to its answer's head, the name's lookup included. */
@@ -51,8 +52,6 @@ const ADAPTER_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", 
 const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
 /** The methods that change something at the provider. Each needs a sign-in and a precondition, and none follows a redirect. */
 const WRITING: ReadonlySet<string> = new Set(["PUT", "PATCH", "DELETE"]);
-/** Names of a person's own network. The gate refuses them; the own-network policy admits these and no other name it refuses. */
-const OWN_NETWORK_SUFFIXES = [".local", ".localhost", ".home.arpa"];
 const PRINTABLE = /^[\x20-\x7e]*$/;
 const TOKEN = /^[\x21-\x7e]+$/;
 
@@ -85,14 +84,14 @@ function parse(text: string, against?: string): URL | null {
 
 type Cleared = { readonly pin: readonly string[] } | { readonly refused: ProviderRefusal };
 
-/** The address rules, in order, each before any lookup that a later one needs. The answer is the pin. */
+/**
+ * The address rules, in order, each before any lookup that a later one needs. The answer is the pin.
+ * What the shape alone decides comes first, by the one rule a door that dials nothing asks too
+ * (`shape.ts`); what follows is the lookup, which only this port makes.
+ */
 async function clear(url: URL, deps: GuardDeps): Promise<Cleared> {
-  if (url.protocol !== "https:" && url.protocol !== "http:") return { refused: "address_invalid" };
-  if (url.username !== "" || url.password !== "") return { refused: "address_invalid" };
-  const host = canonicalHost(url.hostname);
-  if (deps.hosts !== null && !deps.hosts.has(host)) return { refused: "address_not_allowed" };
-  // `port` is empty for the scheme's own; below 1024 nothing else is dialled.
-  if (url.port !== "" && Number(url.port) < MIN_EXPLICIT_PORT) return { refused: "port_not_allowed" };
+  const shape = shapeRefusal(url, deps.policy, deps.hosts);
+  if (shape !== null) return { refused: shape };
   const https = url.protocol === "https:";
 
   // Whether the gate refused a name for what it resolved to, or for resolving to nothing, is read
@@ -112,8 +111,6 @@ async function clear(url: URL, deps: GuardDeps): Promise<Cleared> {
       const pin = await assertPublicHttpUrl(url.href, resolver, { httpsOnly: true, allowExplicitPort: true });
       return { pin: pin.slice(0, MAX_PINNED_ADDRESSES) };
     }
-    const own = host === "localhost" || OWN_NETWORK_SUFFIXES.some((s) => host.endsWith(s)) || isPrivateNetworkAddress(host);
-    if (!own) assertPublicHostShape(url.hostname);
     const pin = await resolvePinUnchecked(url.href, resolver);
     // Public or private, each of them: a link-local, a shared or a reserved address is neither.
     if (!pin.every((a) => isPrivateNetworkAddress(a) || !isBlockedAddress(a))) return { refused: "address_not_allowed" };

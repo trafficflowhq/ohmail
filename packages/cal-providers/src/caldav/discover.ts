@@ -14,63 +14,20 @@
  * typed host and its sibling hosts and to no other.
  */
 import { mailAddressOf } from "@ohmail/cal-core";
-import { MAX_PAGES_PER_CALL, MAX_URL_CHARS } from "../limits.js";
+import type { Typed } from "../address.js";
+import { MAX_PAGES_PER_CALL } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { addressOf, ask, propfindOf, refuse, type Refused, type Session } from "./ask.js";
 import { CALDAV, DAV, childOf, childrenOf, propOf, type Multistatus } from "./multistatus.js";
+
+/* What a person typed, read, is the package's one reading of a typed address (`../address.ts`): the door that takes it asks the same. */
+export { typedAddress, type Typed } from "../address.js";
 
 /** Calendar homes one principal may name. One is the rule; a few where calendars of others are kept apart. Each is one request of a listing. */
 export const MAX_HOMES = MAX_PAGES_PER_CALL;
 
 /** Calendar addresses of the signed-in person that are kept: their mail addresses, a handful at the most. */
 export const MAX_OWN_ADDRESSES = 32;
-
-/** What a person typed, read: the host the sign-in belongs to, and the addresses to start at, in order. */
-export interface Typed {
-  readonly host: string;
-  readonly starts: readonly string[];
-  /** The same starts over TLS, for an address typed without it: asked only when the request port does not allow the plain ones. */
-  readonly secured: readonly string[] | null;
-}
-
-const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
-/** A mail address and nothing else: its domain is the host to ask. */
-const MAIL_ADDRESS = /^[^\s@/:?#]+@([^\s@/:?#]+)$/;
-const WELL_KNOWN = "/.well-known/caldav";
-
-function parse(text: string): URL | null {
-  try {
-    return new URL(text);
-  } catch {
-    // No address: answered as one that is invalid.
-    return null;
-  }
-}
-
-function startsOf(url: URL): string[] {
-  const typed = url.pathname === "/" ? [] : [`${url.origin}${url.pathname}${url.search}`];
-  return [...new Set([...typed, `${url.origin}${WELL_KNOWN}`, `${url.origin}/`])];
-}
-
-/**
- * The typed address as the starts to ask. A host alone is asked over TLS; a mail address gives its
- * domain; an address with a user or a password in it, or of another scheme, is none (`null`).
- */
-export function typedAddress(typed: string): Typed | null {
-  const text = typed.trim();
-  if (text === "" || text.length > MAX_URL_CHARS) return null;
-  const written = SCHEME.test(text);
-  const mail = written ? null : MAIL_ADDRESS.exec(text);
-  const url = parse(mail !== null ? `https://${mail[1]}/` : written ? text : `https://${text}`);
-  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:") || url.username !== "" || url.password !== "") return null;
-  let secured: string[] | null = null;
-  if (url.protocol === "http:") {
-    const over = new URL(url.href);
-    over.protocol = "https:";
-    secured = startsOf(over);
-  }
-  return { host: url.hostname, starts: startsOf(url), secured };
-}
 
 const NOBODY = Symbol("unauthenticated");
 

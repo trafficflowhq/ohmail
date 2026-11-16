@@ -87,7 +87,8 @@ import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
 import { askAnew, conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 import { useRemoteImages, type ImageDoor } from "./remote-images";
-import { useConsentState, windowOwnersOf, type ConsentTransport } from "./consent-state";
+import { NONE } from "@ohmail/app/host";
+import { useConsentState, windowOwnersOf, type ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
@@ -171,7 +172,8 @@ import { ShortcutSheet } from "./ShortcutSheet";
 import { useMayHandOffFor } from "./send-handoff";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import { SendWaitsRelay } from "./UpdateLine";
-import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
+import { MailStateProvider } from "@ohmail/app/mail-state";
+import { useMailState, type FreshnessProbe, type MailboxProbe } from "@ohmail/app-logic/mail-state/mail-state-binding";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
@@ -439,9 +441,10 @@ function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version"
  */
 export function TodaysViews(_: PaneProps) {
   const { managedService: _managed, mirrorFreshness, ...fixed } = useTodaysFixed();
-  const live = useTodaysSignals(useFrame().host.signals);
+  const { host } = useFrame();
+  const live = useTodaysSignals(host.signals);
   return (
-    <MailStateHost probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
+    <MailStateHost scope={host.session.scope} probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
       <ShellInner {...fixed} {...live} />
     </MailStateHost>
   );
@@ -455,9 +458,9 @@ export function TodaysViews(_: PaneProps) {
  * plan are built in `ShellInner`, and a fact the shell cannot see is one
  * the mutation cannot carry. `mirrored` moved up because the provider
  * needs it. Nothing else moved; the existing consumers read a context,
- * not a position.
+ * not a position. `scope` is the host's, as the frame hands it: whose mail state this is.
  */
-function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
+function MailStateHost({ scope, probe, freshnessProbe, children }: { scope: string | null; probe?: MailboxProbe; freshnessProbe?: FreshnessProbe; children: ReactNode }) {
   const engine = useEngine();
   /* THE DERIVED STAMP, not the global version: the one thing this host computes is a count of
      messages, and a body landing moves neither the count nor anything under it. `children` is a
@@ -482,7 +485,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
    */
   const received = useMemo(() => engine.receivedMessages(), [engine, derived]);
   return (
-    <MailStateProvider probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored} received={received}>
+    <MailStateProvider scope={scope} probe={probe} freshnessProbe={freshnessProbe} mirrored={mirrored} received={received}>
       {children}
     </MailStateProvider>
   );
@@ -690,7 +693,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      a prerendered `?demo=1` page hydrates with `serverDemo === false`, so this issued
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
   const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
-  const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp, windowOwners);
+  const consent = useConsentState(!resolvedDemo, scope, consentTransport ?? NONE, settingsStamp, windowOwners);
   const setupHref = useShellSetup(firstRun, resolvedDemo, facts, consent); // setup resumes once per tab (`setup-resume.ts`)
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
@@ -791,15 +794,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      what the Ohbox contains. When it is owed, what "Not now" keeps and what nobody-to-decide does are
      `seed-offer.ts`'s. Settings reopens it; `confirmSeed` writes only who is new. */
   /**
-   * The review needs the browser's Cloud client; no injected wire substitutes. `consent.known`
+   * The review is offered where the host's own wire for it stands (`wires.seedReview`). `consent.known`
    * was the whole gate while "the server answered" and "this bundle can call the server" were
    * one fact; a host transport splits them — `known` goes true on the desktop's hosted door
    * while `SeedReviewView` still imports `app/api-client` DIRECTLY, so the review would have
-   * taken the whole stage there, unable to load or complete. Offered where the client that runs
-   * it exists: the browser. The same fact gates `seedSection` below, and it is why {@link
-   * ConsentState.cloudClient} is published separately from `standalone`.
+   * taken the whole stage there, unable to load or complete. The web's host hands the wire where
+   * its page has the client that runs it: the browser. The same word gates `seedSection` below.
    */
-  const seedSupported = consent.cloudClient;
+  const seedSupported = useFrame().host.wires.seedReview !== NONE;
   const seedOffer = useSeedOffer({ demo, known: consent.known, supported: seedSupported,
     seedConfirmedAt: consent.seedConfirmedAt, hasMailbox: hasLiveMailbox(facts), scope });
   const seedOwed = seedOffer.owed;
@@ -2618,10 +2620,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                  * address away from the sender, and the same-origin url is what carries the session cookie and
                  * satisfies the frame's `img-src 'self'`. The desktop window (its CSP admits no address off the machine) has no such origin and
                  * `useRemoteImages` hands back nothing at all there (`remote-images.ts`), so the switch would store a
-                 * preference and change no picture. `cloudClient` is exactly that build fact, and it is checked
-                 * rather than `remoteImages !== undefined` only because it names WHY.
+                 * preference and change no picture.
                  */
-                /* GATED ON THE CAPABILITY, not on `cloudClient`. The old test asked "is this a
+                /* GATED ON THE CAPABILITY, not on a build fact. The old test asked "is this a
                    Cloud build", which answered the right question only for as long as the hosted
                    door was the only one that could fetch a picture. A desktop whose local door
                    now serves the proxy would have been refused its own switch by a build fact. */

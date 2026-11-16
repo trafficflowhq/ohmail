@@ -2,9 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { mailboxes, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   makeDrizzleRepo, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
-  OHBOX_UNSCREENED_MESSAGES_MAX, agreeWindowCutoff, isUnscreenedPile, unscreenedGroups, unscreenedSourceFolder,
-  unscreenedWalk, writeScreenerIntents, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedPile,
-  type UnscreenedScope, type UnscreenedSenderGroup,
+  OHBOX_UNSCREENED_MESSAGES_MAX, UNSCREENED_CURSOR_MAX_CHARS, UNSCREENED_FIRST_CURSOR, agreeWindowCutoff, isUnscreenedPile, unscreenedCursorOf,
+  unscreenedCursorText, unscreenedGroups, unscreenedSourceFolder,
+  unscreenedWalk, writeScreenerIntents, type ScreeningAnswer, type UnscreenedCursor, type UnscreenedKnowledge,
+  type UnscreenedPile, type UnscreenedScope, type UnscreenedSenderGroup,
 } from "@trafficflow/core/adapters/drizzle-repo";
 import { ServiceError } from "./errors.js";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
@@ -13,10 +14,76 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
    named once in core (`unscreened-set.ts`): the Screener's offer counts and moves it here, and the
    organize decision counts the one mailbox and window here before the press, which the organizer
    then moves after it. Asked of a pile (News, Receipts) with no window, it is that pile's note.
-   The number shown and the number moved come from the same walk. */
+   The number shown and the number moved come from the same walk.
 
-export { OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX, isUnscreenedPile };
+   ONE REQUEST DOES BOUNDED WORK, AND THE READS NEVER TAKE THE POOL. Every door here hands the walk
+   the same time budget; a read it stopped says where (`next`) and the client's next call goes on
+   from there. And at most {@link READS_AT_ONCE} reads walk at a time in one process, whoever asks:
+   a walk holds a pooled connection for each of its statements, and four of them held all four. */
+
+export {
+  OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX,
+  UNSCREENED_CURSOR_MAX_CHARS, isUnscreenedPile,
+};
 export type { UnscreenedPile, UnscreenedSenderGroup };
+
+/**
+ * How long one read of the offer or of a pile's note may walk, read before each of the walk's
+ * statements. A request answers in about this plus one statement and its wait for a connection:
+ * well inside the hosted API's limit. What it did not reach, the next call reads.
+ */
+export const UNSCREENED_WALK_BUDGET_MS = 4_000;
+
+/**
+ * The same for the two doors nothing goes on from: the first-run count and the press. Inside the
+ * limit too, and long enough that a slow store (a phone's) still counts and moves the whole set.
+ */
+export const UNSCREENED_ONE_CALL_BUDGET_MS = 20_000;
+
+/** Reads of this set one process walks at a time: half the hosted instance's pooled connections. */
+export const READS_AT_ONCE = 2;
+
+const turns: { free: number; waiting: Array<() => void> } = { free: READS_AT_ONCE, waiting: [] };
+
+/**
+ * A TURN TO WALK, or false when `ms` ran out first. The wait holds no connection and no statement,
+ * so a read that gives up leaves nothing behind. {@link endTurn} hands the turn on.
+ */
+function takeTurn(ms: number): Promise<boolean> {
+  if (turns.free > 0) {
+    turns.free--;
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    const mine = (): void => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => {
+      turns.waiting.splice(turns.waiting.indexOf(mine), 1);
+      resolve(false);
+    }, ms);
+    turns.waiting.push(mine);
+  });
+}
+
+function endTurn(): void {
+  const next = turns.waiting.shift();
+  if (next) next(); else turns.free++;
+}
+
+/** What a read brings beside its scope: where to go on, and the budget's own dials. */
+export interface UnscreenedRead {
+  /** The `next` an earlier answer carried: this read goes on from there. */
+  after?: string;
+  /** {@link UNSCREENED_WALK_BUDGET_MS} unless a caller says otherwise. */
+  budgetMs?: number;
+  /** The clock the budget is read on. */
+  clock?: () => number;
+}
+
+/** A budget as the walk takes it, less what the wait for a turn used. */
+function walkBudget(ms: number, waitedFrom: number, clock?: () => number): { budgetMs: number; clock?: () => number } {
+  const left = ms - ((clock ?? Date.now)() - waitedFrom);
+  return { budgetMs: Math.max(0, left), ...(clock ? { clock } : {}) };
+}
 
 /** The screen: the groups and how many messages they hold. */
 export interface UnscreenedSummary {
@@ -24,6 +91,11 @@ export interface UnscreenedSummary {
   total: number;
   /** False when the walk or the group list stopped at its bound: `total` is then a floor. */
   complete: boolean;
+  /**
+   * Where the next call goes on ({@link UnscreenedRead.after}): present only when this one's budget
+   * or page bound stopped it with senders unread. A full offer carries none.
+   */
+  next?: string;
 }
 
 /** What a press did. A second press over the same set is empty — the moved rows leave the set. */
@@ -36,10 +108,12 @@ export interface UnscreenedResult {
 const knowledgeOf = (t: Tx): UnscreenedKnowledge =>
   makeDrizzleRepo(t as unknown as Parameters<typeof makeDrizzleRepo>[0]);
 
-/** The offer's scope inside the account's window, or a pile's with none. */
-async function scopeFor(db: Tx, accountId: string, now: Date, pile: UnscreenedPile | undefined): Promise<UnscreenedScope> {
-  if (pile !== undefined) return { kind: "pile", pile };
-  return { kind: "offer", cutoff: await agreeWindowCutoff(db, accountId, now) };
+/** The offer's scope inside the account's window, or a pile's with none; `from` is where it goes on. */
+async function scopeFor(
+  db: Tx, accountId: string, now: Date, pile: UnscreenedPile | undefined, from: UnscreenedCursor | null = null,
+): Promise<UnscreenedScope> {
+  if (pile !== undefined) return { kind: "pile", pile, from };
+  return { kind: "offer", cutoff: await agreeWindowCutoff(db, accountId, now), from };
 }
 
 /**
@@ -49,16 +123,34 @@ async function scopeFor(db: Tx, accountId: string, now: Date, pile: UnscreenedPi
  * behind the cut.
  */
 export async function unscreenedSummary(
-  db: Tx, accountId: string, now: Date, pile?: UnscreenedPile, turn?: () => Promise<void>,
+  db: Tx, accountId: string, now: Date, pile?: UnscreenedPile, turn?: () => Promise<void>, read: UnscreenedRead = {},
 ): Promise<UnscreenedSummary> {
-  const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, {
-    lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: await scopeFor(db, accountId, now, pile),
-    ...(turn ? { turn } : {}),
-  });
-  const groups = unscreenedGroups(walk.rows);
-  // Either bound makes `total` a floor: the walk's message bound or the shown groups' sender bound.
-  const complete = walk.complete && walk.senders <= OHBOX_UNSCREENED_GROUPS_MAX;
-  return { groups, total: groups.reduce((n, g) => n + g.count, 0), complete };
+  const from = read.after === undefined ? null : unscreenedCursorOf(read.after);
+  if (read.after !== undefined && from === null) {
+    throw new ServiceError("validation_failed", 400, "after must be the next of an earlier answer");
+  }
+  const budget = read.budgetMs ?? UNSCREENED_WALK_BUDGET_MS;
+  const asked = (read.clock ?? Date.now)();
+  // No turn inside the budget: nothing was read, and the same place is where the next call goes on.
+  if (!await takeTurn(budget)) {
+    return { groups: [], total: 0, complete: false, next: unscreenedCursorText(from ?? UNSCREENED_FIRST_CURSOR) };
+  }
+  try {
+    const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, {
+      lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: await scopeFor(db, accountId, now, pile, from),
+      ...(turn ? { turn } : {}), ...walkBudget(budget, asked, read.clock),
+    });
+    const groups = unscreenedGroups(walk.rows);
+    // Either bound makes `total` a floor: the walk's message bound or the shown groups' sender bound.
+    const shown = walk.senders <= OHBOX_UNSCREENED_GROUPS_MAX;
+    return {
+      groups, total: groups.reduce((n, g) => n + g.count, 0), complete: walk.complete && shown,
+      // A part that had to leave groups out is a full offer: going on would pass them by unshown.
+      ...(walk.next === null || !shown ? {} : { next: unscreenedCursorText(walk.next) }),
+    };
+  } finally {
+    endTurn();
+  }
 }
 
 /**
@@ -92,8 +184,9 @@ export async function screenUnscreened(
     const tx = bridgeTx(t);
     const now = ctx.now();
     const scope = await scopeFor(tx, ctx.accountId, now, pile);
+    // A person's press is not queued behind the reads; out of time it moves what it reached.
     const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, {
-      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope,
+      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope, budgetMs: UNSCREENED_ONE_CALL_BUDGET_MS,
       ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
     });
     const rows = walk.rows.filter((r) => named === null || named.has(r.fromAddress.toLowerCase()));
@@ -142,11 +235,19 @@ export async function organizeDecisionCount(
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
   if (!mb || mb.status === "disabled") throw new ServiceError("not_found", 404, "mailbox not found");
   const cutoff = await agreeWindowCutoff(db, ctx.accountId, ctx.now(), answer);
-  const walk = await unscreenedWalk(db, knowledgeOf(db), ctx.accountId, {
-    lock: false, scope: { kind: "agree", mailboxId, cutoff }, ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
+  const asked = Date.now();
+  const counted = (letters: number, senders: number, complete: boolean): OrganizeDecisionCount => ({
+    letters, senders, total: letters, complete, max: OHBOX_UNSCREENED_MESSAGES_MAX, mirrored: mb.importedAt !== null,
   });
-  return {
-    letters: walk.matched, senders: walk.senders, total: walk.matched, complete: walk.complete,
-    max: OHBOX_UNSCREENED_MESSAGES_MAX, mirrored: mb.importedAt !== null,
-  };
+  // No turn inside the budget: nothing counted yet, which is a floor of none.
+  if (!await takeTurn(UNSCREENED_ONE_CALL_BUDGET_MS)) return counted(0, 0, false);
+  try {
+    const walk = await unscreenedWalk(db, knowledgeOf(db), ctx.accountId, {
+      lock: false, scope: { kind: "agree", mailboxId, cutoff }, ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
+      ...walkBudget(UNSCREENED_ONE_CALL_BUDGET_MS, asked),
+    });
+    return counted(walk.matched, walk.senders, walk.complete);
+  } finally {
+    endTurn();
+  }
 }

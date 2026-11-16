@@ -14,10 +14,10 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { SyncService, TriageService, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore, triagePiles, type MessageStateDTO } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
-import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
+import { DB_URL, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * A LETTER DELETED ON THE MAIL SERVER LEAVES ANSWER LATER, the Cloud door's shape:

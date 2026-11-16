@@ -41,6 +41,7 @@ export interface WorkerPass {
 }
 
 const W = "apps/worker/src";
+const O = "packages/organizer/src";
 const DB = "packages/db/src";
 const CORE = "packages/core/src";
 
@@ -48,7 +49,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   /* ── IN-VISIT (the mailbox's own connection, inside the sync write fence) ────────────── */
   {
     name: "folder_ops",
-    module: `${W}/folder-ops.ts`, entry: "folderOpsPass",
+    module: `${O}/folder-ops.ts`, entry: "folderOpsPass",
     triggers: ["visit"],
     cadence: "every visit, before the change scan — pending user folder create/rename/delete ops",
     budget: "FOLDER_OP_MAX_ATTEMPTS per op; deletes tombstone FOLDER_DELETE_TOMBSTONE_CHUNK rows × FOLDER_DELETE_CHUNKS_PER_CYCLE",
@@ -57,9 +58,9 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "junk_rescue",
-    module: `${W}/junk-rescue.ts`, entry: "junkRescuePass",
+    module: `${O}/junk-rescue.ts`, entry: "junkRescuePass",
     // "visit" alone, and that IS the dual-mode claim rather than a narrowing of it: the pass runs
-    // inside `runSyncCycle`, which the desktop engine imports as `@trafficflow/worker/sync` — one
+    // inside `runSyncCycle`, which the desktop engine imports as `@ohmail/organizer/sync` — one
     // implementation per invariant, reached by every composition that syncs. `sidecar-drain` names
     // a pass the engine calls SEPARATELY, and this is not one.
     triggers: ["visit"],
@@ -70,7 +71,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "news_fold",
-    module: `${W}/news-fold.ts`, entry: "newsFoldPass",
+    module: `${O}/news-fold.ts`, entry: "newsFoldPass",
     // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
     triggers: ["visit"],
     cadence: "every organizer visit whose last LIST named the legacy Reads folder beside ohmail/News, before the change scan; "
@@ -81,7 +82,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "news_repair",
-    module: `${W}/news-repair.ts`, entry: "legacyNewsRepairPass",
+    module: `${O}/news-repair.ts`, entry: "legacyNewsRepairPass",
     // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
     triggers: ["visit"],
     cadence: "every organizer visit, before the filing and the cursor, until the store holds no pre-0.22 News spelling; "
@@ -93,7 +94,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "junk_restore",
-    module: `${W}/junk-restore.ts`, entry: "junkRestorePass",
+    module: `${O}/junk-restore.ts`, entry: "junkRestorePass",
     triggers: ["visit"],
     cadence: "at the visit's tail, only when the cycle deferred nothing",
     budget: "JUNK_RESTORE_MAX_PAGES / JUNK_RESTORE_FETCHES_PER_CYCLE / JUNK_RESTORE_MAX_BYTES per visit",
@@ -102,7 +103,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "junk_gone",
-    module: `${W}/junk-gone.ts`, entry: "junkGonePass",
+    module: `${O}/junk-gone.ts`, entry: "junkGonePass",
     triggers: ["visit"],
     cadence: "at the visit's tail beside junk_restore, only when the cycle deferred nothing; skipped while the Junk folder's keys equal the last proof",
     budget: "one STATUS (or the pass's LIST-STATUS) and bounded UID SEARCHes over one page of JUNK_GONE_PAGE rows per visit",
@@ -111,7 +112,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "trash_gone",
-    module: `${W}/trash-gone.ts`, entry: "trashGonePass",
+    module: `${O}/trash-gone.ts`, entry: "trashGonePass",
     triggers: ["visit"],
     cadence: "at the visit's tail after junk_gone, only when the cycle deferred nothing; skipped while the Trash folder's keys equal the last proof",
     budget: "one STATUS (or the pass's LIST-STATUS) and bounded UID SEARCHes over one page of TRASH_GONE_PAGE rows per visit; "
@@ -122,7 +123,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "storage_refill",
-    module: `${W}/storage-refill.ts`, entry: "storageRefillPass",
+    module: `${O}/storage-refill.ts`, entry: "storageRefillPass",
     triggers: ["visit"],
     cadence: "at the visit's tail after trash_gone, only when the cycle deferred nothing; a mailbox at most every REFILL_EVERY_MS, "
       + "on a numeric cap with room under the trim's mark, while no mailbox of the account is erasing or on its first import",
@@ -135,7 +136,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "invitation_backfill",
-    module: `${W}/invitation-backfill.ts`, entry: "invitationBackfillPass",
+    module: `${O}/invitation-backfill.ts`, entry: "invitationBackfillPass",
     // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
     triggers: ["visit"],
     cadence: "at the visit's tail after storage_refill, only when the cycle deferred nothing, until the mailbox's "
@@ -150,9 +151,9 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "blank_repair",
-    module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
+    module: `${O}/blank-repair.ts`, entry: "blankRepairPass",
     // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the
-    // desktop and phone engines, which import it as `@trafficflow/worker/sync` (junk_rescue's
+    // desktop and phone engines, which import it as `@ohmail/organizer/sync` (junk_rescue's
     // reasoning). Each composition hands the cycle its one OHMAIL_BLANK_REPAIR mode
     // (`sync-role-census.test.ts`).
     triggers: ["visit", "cli"], cli: ["run-blank-repair.ts"],
@@ -218,7 +219,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "html_words_backfill",
-    module: `${W}/html-words-backfill.ts`, entry: "htmlWordsBackfillPass",
+    module: `${O}/html-words-backfill.ts`, entry: "htmlWordsBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, for this shard's accounts with living mail and no done mark of this pass in pass_progress; on a device, an idle round on power",
     budget: "HTML_WORDS_ACCOUNTS_PER_TAIL accounts × one page of HTML_WORDS_SCAN_ROWS rows under the tail slice; a device round HTML_WORDS_LOCAL_SCAN_ROWS rows / HTML_WORDS_LOCAL_BUDGET_MS",
@@ -239,7 +240,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
         `cycle-tail-plan.ts` sections with one cursor, yielding between slices to a wake) ── */
   {
     name: "bubble_up",
-    module: `${W}/bubble-up-pass.ts`, entry: "bubbleUpPass",
+    module: `${O}/bubble-up-pass.ts`, entry: "bubbleUpPass",
     triggers: ["cycle-tail", "cron-backstop", "sidecar-drain"],
     cadence: "time-gated BUBBLE_UP_EVERY_MS (60 s) in the tail; bubble-up-cron.ts is the dead-worker backstop",
     budget: "one query per account per gate; flips only rows whose bubble_up_at is due",
@@ -276,7 +277,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "rule_retro",
-    module: `${W}/rule-retro.ts`, entry: "ruleRetroPass",
+    module: `${O}/rule-retro.ts`, entry: "ruleRetroPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account, while retro-apply commands are pending; on a standalone install at the head of every organizer drain",
     budget: "RULE_RETRO_BATCH / RULE_RETRO_WRITES_PER_CYCLE / RULE_RETRO_MAX_PAGES",
@@ -285,7 +286,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "gap_catchup",
-    module: `${W}/gap-catchup.ts`, entry: "gapCatchupPass",
+    module: `${O}/gap-catchup.ts`, entry: "gapCatchupPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account, while a mailbox this install organizes has its gap window open (mailboxes.gap_since) and its rules are settled; on a standalone install at the head of an organizer drain, after a quiet one",
     budget: "GAP_CATCHUP_BATCH / GAP_CATCHUP_WRITES_PER_CYCLE / GAP_CATCHUP_MAX_PAGES",
@@ -303,7 +304,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "sender_check_backfill",
-    module: `${W}/sender-check-backfill.ts`, entry: "senderCheckBackfillPass",
+    module: `${O}/sender-check-backfill.ts`, entry: "senderCheckBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account, until both its sets answer empty; then one read per tail re-arms an account a row re-entered (mail 0148); on a standalone install once per drain until empty",
     budget: "SENDER_CHECK_BACKFILL_BATCH rows x SENDER_CHECK_BACKFILL_PAGES pages per account per call",
@@ -312,7 +313,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "list_address_backfill",
-    module: `${W}/list-address-backfill.ts`, entry: "listAddressBackfillPass",
+    module: `${O}/list-address-backfill.ts`, entry: "listAddressBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account, until this pass's done mark is written in pass_progress, then one indexed read; on a standalone install once per launch, before the correspondent retro",
     budget: "one DISTINCT read of the account's stored List-Post values, then LIST_ADDRESS_CHUNK addresses per write",
@@ -321,7 +322,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "screener_impersonation",
-    module: `${W}/screener-impersonation.ts`, entry: "screenerImpersonationPass",
+    module: `${O}/screener-impersonation.ts`, entry: "screenerImpersonationPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "when owed, per account whose impersonation filing is on (`account_settings.impersonation_filing_off_at` NULL, "
       + "the default): the first tail or drain after start, after ingest held a sender or took mail in, after the switch "
@@ -337,7 +338,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "act_admission_retire",
-    module: `${W}/act-admission-retire.ts`, entry: "retireActAdmissionsPass",
+    module: `${O}/act-admission-retire.ts`, entry: "retireActAdmissionsPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "once per worker process per account, a page per cycle tail until the walk ends; on a standalone install once per launch behind the organizer gate, paged to the end",
     budget: "ACT_ADMISSION_RETIRE_SENDERS senders per page; one candidate read, the correspondent read and one transaction each",
@@ -355,7 +356,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "thread_join_heal",
-    module: `${W}/thread-join-heal.ts`, entry: "threadJoinHealPass",
+    module: `${O}/thread-join-heal.ts`, entry: "threadJoinHealPass",
     triggers: ["cycle-tail", "cli", "sidecar-drain"], cli: ["run-thread-join-heal.ts"],
     cadence: "time-gated THREAD_JOIN_HEAL_EVERY_MS (6 h) in the tail; a slice cut by its clock resumes in the next tail walks",
     budget: "THREAD_JOIN_HEAL_MAX_GROUPS and THREAD_JOIN_HEAL_WALK_MS per account per walk / _MAX_THREADS_PER_GROUP / _MAX_MESSAGES_PER_THREAD / witness spread cap, read once per account per walk; TAIL_SLICE_BUDGET_MS per slice, checked between groups",
@@ -378,7 +379,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "inbound_quiet",
-    module: `${W}/inbound-quiet.ts`, entry: "inboundQuietPass",
+    module: `${O}/inbound-quiet.ts`, entry: "inboundQuietPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "time-gated INBOUND_QUIET_EVERY_MS (6 h) in the tail",
     budget: "one aggregate read per mailbox per gate",
@@ -396,7 +397,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "storage_evict",
-    module: `${W}/storage-evict.ts`, entry: "storageEvictPass",
+    module: `${O}/storage-evict.ts`, entry: "storageEvictPass",
     triggers: ["cycle-tail"],
     cadence: "every cycle tail, per account over its cap",
     budget: "EVICT_ROUNDS_PER_CYCLE",
@@ -420,7 +421,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "screener_auto_act",
-    module: `${W}/screener-auto-act.ts`, entry: "screenerAutoActPass",
+    module: `${O}/screener-auto-act.ts`, entry: "screenerAutoActPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     // Its own consent is `screener_auto_act_at`, read with `accounts.ai_enabled` by `screenerActConsentFrom`.
     cadence: "every cycle tail and every local drain tail, per account that turned on acting on confident suggestions",
@@ -430,7 +431,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "screener_correspondent_retro",
-    module: `${W}/screener-correspondent-retro.ts`, entry: "screenerCorrespondentRetroPass",
+    module: `${O}/screener-correspondent-retro.ts`, entry: "screenerCorrespondentRetroPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "CORRESPONDENT_RETRO_EVERY_MS (hourly) per served account, due at a new leader's first cycle; on a standalone install at a drain tail behind the organizer gate, the first drain of a launch included",
     budget: "CORRESPONDENT_RETRO_SENDERS held senders and auto-act rules per run; CORRESPONDENT_SCAN_ROWS Sent copies; one transaction per sender",
@@ -439,7 +440,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "gone_letter_tidy",
-    module: `${W}/gone-letter-tidy.ts`, entry: "goneLetterTidyPass",
+    module: `${O}/gone-letter-tidy.ts`, entry: "goneLetterTidyPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail per account of this shard with a mailbox not erased (synced or not, parked or not), and at every local "
       + "drain tail, until a run ends on a short page; then not again in this process (a restart asks once more)",
@@ -451,7 +452,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "screener_auto_suggest",
-    module: `${W}/screener-auto-suggest.ts`, entry: "screenerAutoSuggestPass",
+    module: `${O}/screener-auto-suggest.ts`, entry: "screenerAutoSuggestPass",
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account with suggestions on, watermark-resumed",
     budget: "AUTO_SUGGEST_BATCH per run; spend-gated through the caller-supplied credits gate; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
@@ -492,7 +493,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "calendar_sync",
-    module: `${W}/calendar/sync-pass.ts`, entry: "calendarSyncPass",
+    module: `${O}/calendar/sync-pass.ts`, entry: "calendarSyncPass",
     triggers: ["wake-driven", "interval"],
     cadence: "with OHMAIL_CALENDAR=1 only: a bell of its own (`start/calendar.ts`) on the change log's signal, at most one "
       + "roster read per CALENDAR_RING_GAP_MS, and every CALENDAR_TICK_MS as the floor; a connection is due by its "
@@ -506,7 +507,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "calendar_writes",
-    module: `${W}/calendar/write-drain.ts`, entry: "calendarWriteDrain",
+    module: `${O}/calendar/write-drain.ts`, entry: "calendarWriteDrain",
     triggers: ["wake-driven", "interval"],
     cadence: "inside each calendar turn (`calendar_sync`), after the sign-in and before the reading; a recorded write pulls its "
       + "connection's `next_poll_at` to now, so it runs at the next roster read",
@@ -689,7 +690,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "sender_name_backfill",
-    module: `${W}/sender-name-backfill.ts`, entry: "runSenderNameBackfill",
+    module: `${O}/sender-name-backfill.ts`, entry: "runSenderNameBackfill",
     triggers: ["cli", "sidecar-drain"], cli: ["run-sender-name-backfill.ts"],
     cadence: "operator-run (hosted) / bounded visits at the sidecar's drain tail (local)",
     budget: "SENDER_NAME_BACKFILL_BATCH per run",

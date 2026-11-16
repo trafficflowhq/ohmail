@@ -30,6 +30,13 @@ const OHBOX_FOLDER = "INBOX";
 export const UNSCREENED_REASK_MS = 30_000;
 
 /**
+ * Parts one read of the undecided-sender offer asks for. The server reads for a bounded time per
+ * request and says where it stopped; this many requests go on from there, then what is held stands
+ * as a floor until the next ask.
+ */
+export const UNSCREENED_PARTS_MAX = 8;
+
+/**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
  * cancellation: nothing was on the wire and nothing will be. `on_the_wire` withdraws nothing —
  * the request has gone and only the server knows what it did with it. `gone` is neither: the

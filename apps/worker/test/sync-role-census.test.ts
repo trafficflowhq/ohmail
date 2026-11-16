@@ -47,12 +47,12 @@ const CYCLE_NEEDLES = [/runSyncCycle\(/, /reconcileMailbox\(/, /planChange\(/];
  *                  themselves. Naming them here is what stops the list being read as "these
  *                  files are unchecked".
  *
- * `apps/worker/src/dead-letter.ts` is deliberately ABSENT: it names `planChange` in a comment
+ * `packages/organizer/src/dead-letter.ts` is deliberately ABSENT: it names `planChange` in a comment
  * (its header explains what a throw out of one costs) and calls nothing. It was on this list
  * until the walk started stripping comments, and its removal is the change working.
  */
 const CYCLE_SITES: Record<string, "role" | "readerMode" | "passes-through" | "defines"> = {
-  [["apps", "worker", "src", "sync.ts"].join(sep)]: "defines",
+  [["packages", "organizer", "src", "sync.ts"].join(sep)]: "defines",
   // `planChange` and `commitChange` themselves. Named so the list is the whole answer to "which
   // files run the pipeline" rather than "which files call it".
   [["packages", "core", "src", "pipeline.ts"].join(sep)]: "defines",
@@ -208,7 +208,7 @@ describe("every composition that runs the pipeline names the role", () => {
       // as a second derivation of it, which is the opposite of what the property says.
       if (/\breaderMode\s*=(?!=)/.test(src)) derivations.push(file);
     }
-    expect(derivations).toEqual([["apps", "worker", "src", "sync.ts"].join(sep)]);
+    expect(derivations).toEqual([["packages", "organizer", "src", "sync.ts"].join(sep)]);
   });
 
   it("the direct `planChange` caller types `readerMode`", () => {

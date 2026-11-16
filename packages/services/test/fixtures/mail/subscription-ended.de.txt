@@ -1,0 +1,18 @@
+Subject: Dein ohmail-Abo ist beendet
+
+ohmail.
+
+Dein Abo ist beendet.
+
+Dein Abo endete am 16. September 2026, 00:00 UTC, deshalb organisiert und synchronisiert ohmail nicht mehr. Dein Postfach bleibt deins. ohmail fasst darin nichts an, und deine Mails behält dein eigener Mailserver.
+
+Melde dich an, um wieder zu abonnieren, deine Einstellungen zu exportieren oder dein Konto zu löschen.
+
+Tust du nichts, löschen wir deine ohmail-Kontodaten am 16. Oktober 2026, 00:00 UTC: deine Regeln, deine Screener-Entscheidungen und deine Einstellungen.
+
+ohmail-Konto öffnen:
+https://app.ohmail.app/#/settings/account
+
+--
+Schreib an support@ohmail.app, und ein Mensch antwortet.
+TrafficFlow GmbH, Zürich, Schweiz

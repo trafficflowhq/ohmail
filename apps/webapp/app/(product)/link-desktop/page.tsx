@@ -1,4 +1,4 @@
-import { LinkDesktopScreen } from "./LinkDesktopScreen";
+import { LinkDesktopRoute } from "./LinkDesktopRoute";
 import type { SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -42,5 +42,5 @@ export default async function LinkDesktopPage(props: { searchParams?: Promise<Se
   const raw = searchParams?.challenge;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const challenge = typeof first === "string" ? first.trim() : "";
-  return <LinkDesktopScreen challenge={CHALLENGE_RE.test(challenge) ? challenge : ""} />;
+  return <LinkDesktopRoute challenge={CHALLENGE_RE.test(challenge) ? challenge : ""} />;
 }

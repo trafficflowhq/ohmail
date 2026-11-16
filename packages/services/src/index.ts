@@ -27,7 +27,7 @@ export {
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
-export type { CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
+export type { CalendarConnectPort, CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
 /* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
  * phase. Exported because the transport arm measures them against the codec's own cap. */
 export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";
@@ -395,6 +395,8 @@ export {
   PAIRING_TTL_BOUNDS, PAIRING_LABEL_MAX, PAIRING_LIVE_TOKENS_MAX,
   type PairingGrant, type PairingTokenMinted, type PairingTokenListed, type PairingTokenStatus,
   type PairingConsumed, type PairedDeviceSessionMinter, type PairLinkState,
+  mintAppHandoff, redeemAppHandoff, APP_HANDOFF_GRANT, APP_HANDOFF_TTL_MS, APP_HANDOFF_PER_HOUR, APP_HANDOFF_LIVE_MAX,
+  type AppHandoffAuditor, type AppHandoffTarget, type HandoffConsumed,
 } from "./pairing.js";
 export {
   redeemInviteGrant, PAIRING_INVITE_TTL_MS, type InviteGrantRedeemed,

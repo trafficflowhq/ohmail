@@ -92,9 +92,9 @@ describe("the storage mails", () => {
     const mail = w.spy.only("storage_near");
     expect(mail.rendered.subject).toBe("Your ohmail storage is 90% full");
     expect(mail.rendered.text).toContain("3.6 GB of 4 GB used, your trial room.");
-    expect(mail.rendered.text).toContain("Plus + 10 GB storage keeps all your mail: 15 GB for $25/month.");
+    expect(mail.rendered.text).toContain("Plus + 10 GB storage keeps all your mail: 15 GB for $25 a month.");
     expect(mail.rendered.text).toContain("http://localhost:3001/#/settings/storage");
-    expect(mail.rendered.text).toContain("To stop storage mails, turn them off in Settings → Storage.");
+    expect(mail.rendered.text).toContain("To stop storage mails, turn them off in Settings › Storage.");
     expect(mail.rendered.html).not.toMatch(/token=|manage\?/);
     // The offer was asked with the mail's need, on a read of its own.
     expect(w.plane.asked.filter((o) => o.storageNeed)).toHaveLength(1);
@@ -160,6 +160,6 @@ describe("the storage mails", () => {
     const de = w.spy.ofTemplate("storage_near").at(-1)!;
     expect(de.rendered.subject).toBe("Dein ohmail-Speicher ist zu 90 % voll");
     expect(de.rendered.text).toContain("3,6 GB von 4 GB belegt, der Speicher deiner Testphase.");
-    expect(de.rendered.text).toContain("Plus + 10 GB Speicher behält alle deine Mails: 15 GB für $25 pro Monat.");
+    expect(de.rendered.text).toContain("Plus + 10 GB Speicher behält alle deine Mails: 15 GB für 25 $ im Monat.");
   });
 });

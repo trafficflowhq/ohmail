@@ -29,8 +29,12 @@ import { durableSet } from "../storage/durable.js";
 
 const PREFIX = "ohmail.boot.";
 
-/** The storage key for one scope of one account's cache. Exported for tests and sign-out. */
+/**
+ * The storage key for one scope of one account's cache. Exported for tests and sign-out. A cache is kept for
+ * somebody or not at all: a missing or empty owner is refused, never spelled as a shared word.
+ */
 export function bootCacheKey(scope: string, owner: string): string {
+  if (typeof owner !== "string" || owner === "") throw new Error("ohmail: a boot cache was asked for with no owner");
   return `${PREFIX}${scope}.${owner}`;
 }
 

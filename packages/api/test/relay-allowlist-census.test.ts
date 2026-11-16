@@ -123,7 +123,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // 199 -> 200 with an invitation's answer by mail: a send, relayed like `POST /drafts/:id/send`.
     // 200 -> 203 with the calendar's three write routes (record, send again, let go): a Cloud-mode
     // install drains nothing of its own, so a write it is asked for is the account's server's.
-    expect(RELAY_ALLOWLIST.length).toBe(203);
+    // 203 -> 204 with the place field's question: the account's server holds the geocoder, and a
+    // Cloud-mode install asks it there, as the window would itself.
+    expect(RELAY_ALLOWLIST.length).toBe(204);
   });
 
   it("every pattern in the projection is a real route", () => {

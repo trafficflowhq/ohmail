@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
-import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
+import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, routedPath, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
 import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
@@ -264,33 +264,37 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
       canonical.pathname = variant;
       return NextResponse.redirect(canonical, 308);
     }
+    // Decided on the path the router serves, so `/%6cogin` or `/x/../approve` meets the same three headers.
+    const routed = routedPath(pathname) ?? pathname;
     if (
-      pathname === "/login" || pathname === "/join" || pathname === "/verify-email" ||
+      routed === "/login" || routed === "/join" || routed === "/verify-email" ||
       // `/link-desktop` receives no credential and PRINTS one, which needs the same three
       // headers for the same three reasons: the page must not carry a `Referer` off itself
       // (under one origin `strict-origin-when-cross-origin` would send the full URL to our own
       // API), no cache may hold a document with a live handoff code rendered into it, and the
       // strict nonce policy is what stops an injected inline script from reading the code out
       // of the DOM the moment it appears.
-      pathname === "/link-desktop" ||
+      routed === "/link-desktop" ||
       // `/authorize-desktop` carries a REQUEST HANDLE in its query string and its press hands out
       // a long-lived native credential. `no-referrer` is the one that matters: under the
       // single-origin merge the default policy would put the full URL, handle and all, in the
       // `Referer` of the page's own API calls. `no-store` and the nonce policy come with it for
       // `/link-desktop`'s reasons — no cache may hold this document and no injected inline script
       // may read the handle out of the URL.
-      pathname === "/authorize-desktop" ||
+      routed === "/authorize-desktop" ||
       // `/approve` carries a desktop's request id and its press lets a computer in: the same
       // three headers for `/authorize-desktop`'s reasons.
-      pathname === "/approve" ||
+      routed === "/approve" ||
       // `/setup` takes the self-host first-run token in a FORM — a credential page exactly as
       // `/login` is, so it gets the strict nonce policy plus no-referrer/no-store.
-      pathname === "/setup" ||
+      routed === "/setup" ||
       // `/join/invite` carries an invite's pairing token in its FRAGMENT. A fragment
       // never reaches this middleware, a log or a `Referer` on its own — the nonce CSP is the
       // header that matters here, because injected inline script reading `location.hash` is
       // the exposure that remains; the other two cost nothing and keep the class uniform.
-      pathname === "/join/invite"
+      routed === "/join/invite" ||
+      // `/account/delete` takes the address typed back and a second factor before an erasure.
+      routed === "/account/delete"
     ) {
       return credentialPage(request);
     }
@@ -418,7 +422,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
  *     a shared or disk cache holding one is a credential at rest that nobody chose to store.
  *
  * The remaining three mitigations are elsewhere and are not headers: `history.replaceState` in the
- * page component (`VerifyEmailScreen`, `JoinScreen`), and no edge access-log retention of query
+ * page's ceremony (`use-verify-door.ts`, `use-join-door.ts`), and no edge access-log retention of query
  * strings, which is a platform setting rather than code.
  *
  * `/login` gains both too. It takes no credential in its URL, but it takes one in a FORM, and
@@ -535,7 +539,7 @@ function withPathname(request: NextRequest, pathname: string): URL {
 export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
-    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
+    "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/account/delete", "/de", "/privacy", "/imprint",
     "/subprocessors", "/support", "/delete-account", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
     "/api/waitlist",
     "/site-assets/:path*", "/landing/:path*",

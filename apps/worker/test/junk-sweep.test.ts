@@ -10,8 +10,8 @@ import {
   adoptSweepWindow, junkSweepPass, sweepStateForPress, SWEEP_SCAN_START,
   SWEEP_MAX_DEFERRED_SCANS,
 } from "../src/junk-sweep.js";
-import type { MailboxWriteAuthority } from "../src/lease.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import type { MailboxWriteAuthority } from "@ohmail/organizer/lease";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * THE SWEEP IS EXPLICIT, DRY-RUN BY DEFAULT, AND CLAIMS NOTHING THE SERVER DID NOT DO.

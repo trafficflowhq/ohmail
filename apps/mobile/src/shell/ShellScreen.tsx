@@ -10,7 +10,7 @@ import * as Crypto from "expo-crypto";
 import { router } from "expo-router";
 import * as SQLite from "expo-sqlite";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, BackHandler, Keyboard, Platform, StyleSheet, View } from "react-native";
+import { AppState, BackHandler, Keyboard, Linking, Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Copy } from "../copy";
@@ -36,14 +36,29 @@ import { KEPT_FAMILIES } from "./kept-families";
 import { scopeOf } from "./scope";
 import { shellNative, shellView } from "./shell-native";
 import type { ShellRefusal, ShellViewHandle } from "./shell-port";
-import type { ShellSession } from "../net/pairing";
+import { handoffMinter, type ShellSession } from "../net/pairing";
 import { webViewVerdict } from "./webview-check";
+import { downloadPageOf } from "../net/account";
+import { pairingDigest } from "../switch/digest";
+import { switchPlaces } from "../switch/receive";
+import { switchSender } from "../switch/sender";
+import { switchNative } from "../switch/switch-native";
+import type { SwitchNative } from "../switch/switch-port";
+import { siblingOf } from "../variant";
+import { APP } from "../variant-native";
 
 const sha256Hex = (text: string) =>
   Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, text, { encoding: Crypto.CryptoEncoding.HEX });
+const sha256Base64 = (text: string) =>
+  Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, text, { encoding: Crypto.CryptoEncoding.BASE64 });
+
+/** Whether the other app is here, as native reads it now; a build without the switch module offers none. */
+const otherOf = (native: SwitchNative | null) => (native === null ? "absent" : native.otherState());
 
 export function ShellScreen({ session }: { session: ShellSession }) {
   const native = shellNative();
+  const switcher = useMemo(() => switchNative(), []);
+  const drawnRef = useRef(false);
   const [scope, setScope] = useState<string | null>(null);
   const [drawn, setDrawn] = useState(false);
   const [refused, setRefused] = useState<ShellRefusal | null>(null);
@@ -90,6 +105,8 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       ready: () => scope !== null,
     });
     const config = (): ShellConfig | null => scope === null ? null : {
+      app: APP.app,
+      other: otherOf(switcher),
       scope,
       accountId: session.profile.accountId,
       setting: session.standalone ? "standalone"
@@ -108,9 +125,29 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         online: networkNow() !== "offline",
       },
     };
-    return new BridgeHost({
+    /* THE SWITCH: this app's pairing named by its digest only, a code minted only for a signed-out sibling from a
+       paired door; the store verb falls back to the other app's own page. */
+    const digest = () => session.standalone
+      ? Promise.resolve(null) : pairingDigest(sha256Base64, session.profile.origin, session.profile.accountId);
+    const sender = switchSender({
+      app: APP.app, native: switcher, inFront: () => AppState.currentState === "active", now: Date.now, digest,
+      mint: handoffMinter(session, siblingOf(APP).app),
+    });
+    const page = siblingOf(APP).links.host;
+    const bridge: BridgeHost = new BridgeHost({
       post: (epoch, text) => void view.current?.post(epoch, text),
       config,
+      app: APP.app,
+      switch: {
+        read: async () => ({ other: otherOf(switcher) }),
+        open: async (to) => {
+          const went = await sender.open(to);
+          return typeof went === "string" ? { went } : went;
+        },
+        store: async () => ({
+          opened: (await sender.store()) || (await Linking.openURL(downloadPageOf(page)).then(() => true, () => false)),
+        }),
+      },
       http,
       act: async (a) => {
         switch (a.act) {
@@ -134,7 +171,14 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         }
       },
       openHeld: async (token) => (await view.current?.openHeld(token)) ?? false,
-      ready: (place) => { lastPlace.current = place; setDrawn(true); },
+      ready: (place) => {
+        lastPlace.current = place;
+        drawnRef.current = true;
+        setDrawn(true);
+        // A place the other app opened this one at, held by the connection layer until the page could take it.
+        const arrived = switchPlaces.take(session.profile.id);
+        if (arrived !== null) bridge.send({ type: "linkIn", target: arrived });
+      },
       place: (fragment) => { lastPlace.current = fragment; },
       note: () => {},
       /* The live scope's old copy only, and its removal only under the verdict that stamped this install. */
@@ -156,6 +200,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         },
       },
     });
+    return bridge;
     // The host is one per session and scope: a new scope is a new page.
   }, [session, scope]);
 
@@ -176,7 +221,18 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       host.send({ type: "keyboard", reading: { height: 0 } });
     });
     const net = onNetworkChange((s) => host.send({ type: "network", online: s !== "offline" }));
-    const app = AppState.addEventListener("change", (s) => { if (s === "active") host.send({ type: "wake", why: "foreground" }); });
+    const app = AppState.addEventListener("change", (s) => {
+      if (s !== "active") return;
+      host.send({ type: "wake", why: "foreground" });
+      // The other app may have come or gone while this one was away.
+      host.send({ type: "other", state: otherOf(switcher) });
+    });
+    /* A place the other app opens this one at while it runs: handed to the page once it has drawn, as the launch's is. */
+    const arrivals = switchPlaces.onHeld(() => {
+      if (!drawnRef.current) return;
+      const arrived = switchPlaces.take(session.profile.id);
+      if (arrived !== null) host.send({ type: "linkIn", target: arrived });
+    });
     /* A push for this pairing, from the root's wake provider: the page drains now. */
     const pushed = onShellWake((why) => host.send({ type: "wake", why }));
     /* BACK ASKS THE PAGE, which answers within its deadline or not at all; not taken, the app leaves. */
@@ -184,8 +240,8 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       void host.ask("back").then((took) => { if (!took) BackHandler.exitApp(); });
       return true;
     });
-    return () => { shown.remove(); hidden.remove(); net(); app.remove(); back.remove(); pushed(); };
-  }, [host]);
+    return () => { shown.remove(); hidden.remove(); net(); app.remove(); back.remove(); pushed(); arrivals(); };
+  }, [host, switcher, session]);
 
   if (!usable || refused?.why === "webview") {
     return <Sentence words={Copy.shellWebViewMissing} />;

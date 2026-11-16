@@ -17,7 +17,7 @@ import net from "node:net";
 import { createRequire } from "node:module";
 import postgresEsm from "postgres";
 import { createLogger } from "@trafficflow/core";
-import { installCrashHandlers } from "../src/entry.js";
+import { installCrashHandlers } from "../../../packages/organizer/src/entry.js";
 import { withPgSocket } from "../../../packages/db/src/pg-socket.js";
 
 type Postgres = typeof postgresEsm;

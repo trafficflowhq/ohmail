@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createLogger, type Logger } from "@trafficflow/core";
-import { installCrashHandlers, type CrashHost } from "../src/entry.js";
+import { installCrashHandlers, type CrashHost } from "@ohmail/organizer/entry";
 import { driverWriteRaceReason, isDriverWriteRace } from "../src/driver-write-race.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 

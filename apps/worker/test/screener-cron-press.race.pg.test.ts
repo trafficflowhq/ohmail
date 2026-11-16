@@ -9,12 +9,12 @@ import {
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { fakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import { ledgerSources } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import type { ClassifierPort } from "@trafficflow/core";
 import { ScreenerService, type ServiceContext } from "@trafficflow/services";
-import { screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { PLANE_PRICES, PLANE_PRICING } from "../../../packages/services/test/helpers/plane-pricing.js";
 

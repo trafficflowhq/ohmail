@@ -225,7 +225,7 @@ describe("only the live organizer's pass calls the tidy", () => {
       }
     }
     expect(scanned, "the census scanned nothing").toBeGreaterThan(200);
-    expect(calls).toEqual(["apps/worker/src/profile.ts onOrganize"]);
+    expect(calls).toEqual(["packages/organizer/src/profile.ts onOrganize"]);
   });
 });
 

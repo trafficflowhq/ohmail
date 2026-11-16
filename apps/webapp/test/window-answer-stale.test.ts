@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { windowAnswerStale, windowOwnersOf } from "../app/shell/consent-state";
+import { windowAnswerStale, windowOwnersOf } from "@ohmail/app-logic/consent/consent-state";
 
 /**
  * IS THE WINDOW ANSWER OLDER THAN THE ROLES (R20-02). `GET /consent` answers each mailbox's window

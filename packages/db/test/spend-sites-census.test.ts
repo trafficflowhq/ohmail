@@ -34,7 +34,7 @@ const WORKFLOW_RUNTIME = "packages/core/src/ai/workflows/exec" + "utor.ts";
 /** The packages whose `src` may contain a spend. Everything published, plus the hosts. */
 const ROOTS = [
   "packages/db/src", "packages/core/src", "packages/services/src", "packages/api/src",
-  "apps/worker/src", "apps/api-vercel/src", "apps/server/src", "apps/sidecar/src",
+  "apps/worker/src", "packages/organizer/src", "apps/api-vercel/src", "apps/server/src", "apps/sidecar/src",
 ];
 
 /** NO module may construct a gate — there is none in this tree. Kept as a name so the two
@@ -137,7 +137,7 @@ describe("one composer joins a namespace to a key", () => {
       WORKFLOW_RUNTIME,
       "packages/services/src/screener-service.ts",
       "packages/services/src/drafting-service.ts",
-      "apps/worker/src/screener-auto-suggest.ts",
+      "packages/organizer/src/screener-auto-suggest.ts",
     ];
     for (const site of SITES) {
       expect(FILES, `${site} is in the census`).toContain(site);
@@ -161,7 +161,7 @@ describe("every metered call site asks the port", () => {
     [WORKFLOW_RUNTIME, "workflow"],
     ["packages/services/src/screener-service.ts", "screener"],
     ["packages/services/src/drafting-service.ts", "draft"],
-    ["apps/worker/src/screener-auto-suggest.ts", "screener"],
+    ["packages/organizer/src/screener-auto-suggest.ts", "screener"],
     ["apps/worker/src/proposal-cron.ts", "propose"],
     ["apps/worker/src/ai-circuit.ts", "classify_ingest"],
   ];

@@ -78,7 +78,7 @@ function code(rel: string): string {
 
 const ENGINE = "../app/shell/engine.tsx";
 const CLOUD_SHELL = "../app/(product)/mailbox/CloudShell.tsx";
-const LOGIN = "../app/(product)/login/LoginScreen.tsx";
+const LOGIN = "../app/(product)/login/use-sign-in-door.ts";
 
 /**
  * The bodies of every `.catch(` in a source file, by brace matching from the first `{` after

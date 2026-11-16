@@ -585,7 +585,7 @@ describe.skipIf(!AVAILABLE)("the sensitive re-screen pass", () => {
 
   it("refuses the marker when a row behind the walk became a candidate again, and re-walks", async () => {
     // THE WORKER'S COMPLETION, EXACTLY. `completeFiling` writes back the `desiredFolder` it read
-    // BEFORE its IMAP move (`apps/worker/src/junk-filing.ts`), so a row this pass moved to the
+    // BEFORE its IMAP move (`packages/organizer/src/junk-filing.ts`), so a row this pass moved to the
     // Screener mid-move is restored to the Ohbox afterwards — a candidate again, and now behind
     // the cursor. Reaching an empty page after that is NOT "every candidate examined", and
     // stamping there would certify the mailbox as corrected over mail nothing looked at.

@@ -13,7 +13,7 @@ import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 import { makeOwnedDb, workerHeartbeats, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -24,12 +24,12 @@ import {
 } from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { makeSyncWriteFence, stampMailboxSyncNow, type LeaderFence } from "../src/mailboxes.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { screenerAutoActPass, type ScreenerActConsent } from "../src/screener-auto-act.js";
-import { screenerCorrespondentRetroPass } from "../src/screener-correspondent-retro.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { screenerAutoActPass, type ScreenerActConsent } from "@ohmail/organizer/screener-auto-act";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 
 /**
  * ONE LOCK ORDER UNDER A SENDER'S KEY, DRIVEN AS TWO TRANSACTIONS ON REAL POSTGRES: accounts fence,

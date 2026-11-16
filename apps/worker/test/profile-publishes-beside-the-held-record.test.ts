@@ -16,8 +16,8 @@ import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-prof
 import {
   DEFAULT_PROFILE_FLUSH_INTERVAL_MS, OrganizerProfileSync, PROFILE_VERSION, serializeOrganizerProfile, writtenByABuildThatRecordsNothing,
   type SettingsLeft,
-} from "../src/profile.js";
-import type { OrganizerWriteAuthority } from "../src/lease.js";
+} from "@ohmail/organizer/profile";
+import type { OrganizerWriteAuthority } from "@ohmail/organizer/lease";
 /* The phone's removal end, read through this store (`apps/mobile`): what Stop and remove deletes. */
 import {
   endStandaloneForRemoval, forgetOrganizerSessionForTests, holdStandaloneDoor,

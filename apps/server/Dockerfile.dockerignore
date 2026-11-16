@@ -6,7 +6,7 @@
 # allow-lists.
 #
 # Same discipline as the root file: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This host's
-# closure is core, db, db-mail (via db), services, api and cal-core (via services) — an import
+# closure is core, db, db-mail (via db), services, api, cal-core and cal-providers (via services) — an import
 # reaching outside it resolves to a workspace link whose target holds only a manifest, and the
 # bundle FAILS to build. test/dockerignore-carries-patches.test.ts walks the closure and holds
 # this list to it.
@@ -36,6 +36,8 @@
 !packages/api
 # The calendar's core: services' calendar range and time modules read it.
 !packages/cal-core
+# The calendar's providers: the connect door reads a typed address and seals a sign-in by them.
+!packages/cal-providers
 
 # …minus anything inside them that must never be copied in: no test trees, no stale local
 # compile output, no previous bundle run.

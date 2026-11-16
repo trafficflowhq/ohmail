@@ -7,7 +7,7 @@ import { writeInvitation, type InvitationWrite } from "./message-invitations.js"
 /**
  * THE PASS OVER STORED MAIL that gives every letter with an invitation its row (mail 0204), its
  * reads and writes on the store. The walk itself, and the re-read of each letter from the mail
- * server, are the worker's (`apps/worker/src/invitation-backfill.ts`). Per mailbox, in message-id
+ * server, are the worker's (`packages/organizer/src/invitation-backfill.ts`). Per mailbox, in message-id
  * order from a cursor in `pass_progress`; the done mark is written last, so a crash walks again.
  */
 const JOB = "invitation_backfill" as const;

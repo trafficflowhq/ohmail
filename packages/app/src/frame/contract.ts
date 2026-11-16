@@ -46,12 +46,12 @@ export type RailGroupId = (typeof RAIL_GROUPS)[number];
 
 /** The place a person is in: one object. The shell's address door carries it; a feature never reads the address. */
 export interface Route {
-  readonly place: PlaceId;
+  readonly place: AnyPlaceId;
   /** The place's own word: a Screener segment, a tag's, folder's or correspondent's id, a Settings pane. */
   readonly sub: string | null;
   /** The letter open in it. */
   readonly open: string | null;
-  readonly stage: { readonly id: StageId; readonly words: Readonly<Record<string, string>> } | null;
+  readonly stage: { readonly id: AnyStageId; readonly words: Readonly<Record<string, string>> } | null;
   readonly words: Readonly<Record<string, string>>;
 }
 export type RouteTarget = Pick<Route, "place"> & Partial<Omit<Route, "place">>;
@@ -95,13 +95,13 @@ export type PlacePanes =
   | { readonly kind: "wide"; readonly Wide: ComponentType<PaneProps> };
 /** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */
 export interface PlaceEntry {
-  readonly id: PlaceId;
+  readonly id: AnyPlaceId;
   readonly body: string;
   readonly rail: PlaceRail | null;
   readonly panes: PlacePanes;
 }
 export interface StageEntry {
-  readonly id: StageId;
+  readonly id: AnyStageId;
   readonly Body: ComponentType<PaneProps>;
 }
 export type FramePlaces = Readonly<Record<PlaceId, PlaceEntry | None>>;
@@ -283,3 +283,79 @@ export interface FrameApi {
  * - The frame's namespace is `frame`. Reason words are `reason.<list>.<word>` in `reasons.*.json`, which
  *   counts as the core's side.
  */
+
+/*
+ * THE CALENDAR'S PART of the contract. A second list of places beside mail's sixteen (which stay as they are), the
+ * stage and panels the calendar's root registers, and the one command that opens an event from any view. The
+ * calendar's root export (`@ohmail/app/calendar`) is one `CalendarEntry`; a shell hands it in as
+ * `FrameSupplies.calendar`, or `none`, and a shell that hands in `none` downloads none of it.
+ *
+ * In a calendar place the route's fields read: `sub` the anchor day `YYYY-MM-DD` (null: today), or the section in
+ * `calsettings`; `open` the event's id, or `eventId@occurrenceKey` for one day of a series; `words.panel` a
+ * `CalendarPanelId`; `words.q` the search's words.
+ *
+ * The calendar reads the namespaces `calendar`, each place's own id, and `event`.
+ */
+export const CALENDAR_PLACE_IDS = [
+  "week",
+  "day",
+  "month",
+  "year",
+  "agenda",
+  "calsearch",
+  "frommail",
+  "calsettings",
+] as const;
+export type CalendarPlaceId = (typeof CALENDAR_PLACE_IDS)[number];
+export type AnyPlaceId = PlaceId | CalendarPlaceId;
+export const CALENDAR_STAGE_IDS = ["calSetup"] as const;
+export type CalendarStageId = (typeof CALENDAR_STAGE_IDS)[number];
+export type AnyStageId = StageId | CalendarStageId;
+export const CALENDAR_PANEL_IDS = ["agenda", "invitations"] as const;
+export type CalendarPanelId = (typeof CALENDAR_PANEL_IDS)[number];
+export const PRODUCTS = ["mail", "cal"] as const;
+export type Product = (typeof PRODUCTS)[number];
+
+/** One event as a view names it: the event, the day of a series it stands for (null: not a series), and its day. */
+export interface EventRef {
+  readonly event: string;
+  readonly occurrence: string | null;
+  /** `YYYY-MM-DD`: the day the view goes to when it opens the event. */
+  readonly day: string;
+}
+/** What the calendar's rail takes, in the plan's form; the switch and the notice slot are the frame's. */
+export interface CalendarRailProps {
+  readonly plan: LayoutPlan;
+  readonly form: "words" | "icons" | "dock";
+  readonly route: Route;
+  readonly commands: FrameCommands;
+  readonly switcher: ReactNode;
+  readonly notice: ReactNode;
+}
+export interface CalendarPanelProps extends PaneProps {
+  readonly onClose: () => void;
+}
+/** The calendar's registration: the root export is one of these. Each slot is the entry or `none`. */
+export interface CalendarEntry {
+  readonly places: Readonly<Record<CalendarPlaceId, PlaceEntry | None>>;
+  readonly stage: StageEntry | None;
+  readonly panels: Readonly<Record<CalendarPanelId, ComponentType<CalendarPanelProps> | None>>;
+  readonly Rail: ComponentType<CalendarRailProps>;
+  /** What stands above the columns while the switch is shown (the calendar's port and keys). */
+  readonly Above: ComponentType<{ readonly children: ReactNode }>;
+  /** Whether the calendar side has something waiting for the person (the switch's dot). */
+  readonly useWants: () => boolean;
+}
+
+/* Declaration merging keeps the calendar's two members in this block of their own. */
+export interface FrameCommands {
+  /**
+   * Opens an event, or closes the open one (`null`). In a calendar place it writes the open event into the route; in
+   * a mail place it goes to the calendar's place with the event's day. It does nothing where the switch is absent.
+   */
+  event(ref: EventRef | null): void;
+}
+export interface FrameApi {
+  /** The product the route stands in. */
+  readonly product: Product;
+}

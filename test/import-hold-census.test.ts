@@ -14,7 +14,7 @@ import ts from "typescript";
  */
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PRODUCER = "apps/worker/src/profile.ts";
+const PRODUCER = "packages/organizer/src/profile.ts";
 
 function sourceFiles(): string[] {
   const out: string[] = [];

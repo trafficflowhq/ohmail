@@ -13,7 +13,9 @@ import { AccountMismatch, accountGuarded } from "../web/src/account-guard";
 import { BENCH_MARKER, benchDoor } from "../web/src/bench";
 import { createBridge } from "../web/src/bridge";
 import { bridgeFetch } from "../web/src/bridge-fetch";
-import { PHONE_PLACES, PHONE_STAGES, phoneFrameSupplies } from "../web/src/frame-supplies";
+import { phoneFrameSupplies } from "../web/src/frame-supplies";
+import ohcalMounted from "../web/src/mounted.ohcal";
+import ohmailMounted from "../web/src/mounted.ohmail";
 import { phoneHost, type PhoneSupplies } from "../web/src/host";
 import { ownStorage, StorageNotOwned } from "../web/src/owner";
 import type { PagePort } from "../web/src/port";
@@ -96,7 +98,7 @@ describe("the phone shell's answers, per setting", () => {
     notifications: named<DeviceNotifications>("notifications"),
     frame: {
       places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-      appearance: named("appearance"), recover: named("recover"),
+      appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
     },
     signals: {
       linkIn: named("linkIn"), posture: named("posture"), insets: named("insets"), keyboard: named("keyboard"),
@@ -111,6 +113,7 @@ describe("the phone shell's answers, per setting", () => {
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk", "trash",
     "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "mailboxes",
+    "calendar",
   ].map((w) => [w, NONE]));
   const NO_FEATURE = {
     ...Object.fromEntries([
@@ -119,6 +122,7 @@ describe("the phone shell's answers, per setting", () => {
     ].map((f) => [f, NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    calendar: has.frame.calendar,
   };
   const DEVICE = {
     build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true },
@@ -181,7 +185,7 @@ describe("what the page hands the frame", () => {
   it("puts the address back where native kept it, then tells native each place it moves to, once", () => {
     const told: string[] = [];
     const win = windowWith("");
-    const frame = phoneFrameSupplies("#/news", (f) => told.push(f), win);
+    const frame = phoneFrameSupplies(ohmailMounted, "#/news", (f) => told.push(f), win);
     expect(frame.address.read()).toBe("#/news");
     expect(told).toEqual([]);
     frame.address.write("#/ohbox", "push");
@@ -190,13 +194,17 @@ describe("what the page hands the frame", () => {
     expect(told).toEqual(["#/ohbox", "#/ohbox/m/42"]);
   });
 
-  it("mounts no place and no stage, and offers no way back of its own", () => {
-    const frame = phoneFrameSupplies(null, () => {}, windowWith(""));
-    expect(Object.values(PHONE_PLACES).every((p) => p === NONE)).toBe(true);
-    expect(Object.values(PHONE_STAGES).every((s) => s === NONE)).toBe(true);
-    expect(frame.places).toBe(PHONE_PLACES);
-    expect(frame.recover).toBe(NONE);
-    expect(frame.address.read()).toBe("");
+  it("mounts no place and no stage in either app, and offers no way back of its own", () => {
+    for (const mounted of [ohmailMounted, ohcalMounted]) {
+      const frame = phoneFrameSupplies(mounted, null, () => {}, windowWith(""));
+      expect(Object.values(mounted.places).every((p) => p === NONE)).toBe(true);
+      expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
+      expect(frame.places).toBe(mounted.places);
+      expect(frame.stages).toBe(mounted.stages);
+      expect(frame.calendar).toBe(NONE);
+      expect(frame.recover).toBe(NONE);
+      expect(frame.address.read()).toBe("");
+    }
   });
 
   it("tells the sync loop only of a return to the network", () => {
@@ -242,7 +250,7 @@ describe("the page's storage", () => {
 });
 
 describe("the bench's door", () => {
-  it("types into kept families only, queues a send as Send does, and reads counts", async () => {
+  it("types into kept families only, queues a send as Send does, reads counts, and presses the switch", async () => {
     const storage = new Map<string, string>();
     const kv = {
       get length() { return storage.size; },
@@ -252,7 +260,12 @@ describe("the bench's door", () => {
     const sent: unknown[] = [];
     const engine = { mutate: async (m: unknown) => (sent.push(m), { status: "queued" }) } as unknown as Parameters<typeof benchDoor>[0];
     const store = { entries: (type: string) => (type === "outbox_entry" ? [{ id: "o1" }, { id: "o2" }] : []) } as unknown as Parameters<typeof benchDoor>[1];
-    const door = benchDoor(engine, store, kv);
+    const pressed: unknown[] = [];
+    const other = { open: async (place: unknown) => (pressed.push(place), "opened" as const) } as unknown as Parameters<typeof benchDoor>[3]["door"];
+    const door = benchDoor(engine, store, kv, { door: other, arrival: () => ({ to: "event", id: "e-1" }) });
+    expect(await door.switchTo({ to: "last" })).toBe("opened");
+    expect(pressed).toEqual([{ to: "last" }]);
+    expect(door.arrival()).toEqual({ to: "event", id: "e-1" });
     door.words("ohmail.ui.compose.p0", "half a letter");
     expect(() => door.words("ohmail.ui.theme", "dark")).toThrow(/kept family/);
     storage.set("ohmail.ui.theme", "dark");
