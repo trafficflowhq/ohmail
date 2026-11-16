@@ -30,6 +30,10 @@
     cursor: text;
     field-sizing: content;
   }
+  /* Refused: its line turns hot until the answer is taken. */
+  .oh-blank[aria-invalid="true"] {
+    border-bottom-color: var(--hot);
+  }
   .oh-blank::placeholder {
     color: var(--ink2);
     opacity: 1;

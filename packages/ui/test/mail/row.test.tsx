@@ -193,6 +193,43 @@ describe("Row", () => {
     fireEvent.keyDown(entry, { key: "Enter" });
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
+
+  it("as an entry is named by its section alone, its value and detail said as its description", () => {
+    render(
+      <Row
+        entry
+        who="Mailboxes"
+        people={[]}
+        sign="mail"
+        when="2"
+        subject="1 full"
+        preview="lichtgrat.example"
+        unread
+      />,
+    );
+    const entry = screen.getByRole("button", { name: "Mailboxes" });
+    const said = (entry.getAttribute("aria-describedby") ?? "")
+      .split(" ")
+      .map((id) => document.getElementById(id)?.textContent ?? "")
+      .join(" ");
+    expect(said.replace(/\s+/g, " ").trim()).toBe("1 full · lichtgrat.example");
+    expect(entry.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("as an entry says it is the current page while it is open, and only then", () => {
+    const { rerender } = render(
+      <Row entry who="General" people={[]} sign="settings" subject="oh · Light" open />,
+    );
+    expect(screen.getByRole("button", { name: "General", current: "page" })).toBeTruthy();
+    rerender(<Row entry who="General" people={[]} sign="settings" subject="oh · Light" />);
+    expect(screen.getByRole("button", { name: "General" }).hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("as a letter's row says no page and keeps the name its words give it", () => {
+    render(<Row {...base} open />);
+    expect(row().hasAttribute("aria-current")).toBe(false);
+    expect(row().hasAttribute("aria-label")).toBe(false);
+  });
 });
 
 describe("Row, in a listbox", () => {

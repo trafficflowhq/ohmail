@@ -208,6 +208,70 @@
     color: var(--ink);
   }
 
+  /* A low room (one column under 480 high: a phone held on its side, the Duo folded on its side): where the frame
+     asks for it (`upright`), the dock stands upright beside the column, as beside two columns, Write first, then
+     every place that fits, Search last. It floats on nothing there: in ohmarchy too it wears no ring. The window's
+     height alone never turns it: the room is the frame's to read. */
+  :root[data-device="phone"] .oh-dock[data-upright] {
+    --oh-dock-badge-edge: 0 0 0 2px var(--ground);
+    --oh-dock-between: 2px;
+
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s2);
+    overflow: visible;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-end {
+    display: contents;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-places {
+    flex: none;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: var(--oh-dock-between);
+    height: auto;
+    border-radius: var(--oh-dock-upright-r);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry {
+    flex: none;
+    align-self: center;
+    width: var(--h-l);
+    max-width: none;
+    height: var(--h-l);
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry[data-search] {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* On Search its disc is the open place, filled as beside two columns: its sign is set for that fill. */
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-entry[data-search][aria-current="page"] {
+    background: var(--nav-on);
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-count {
+    top: 0;
+    right: -2px;
+    left: auto;
+    margin: 0;
+  }
+
+  :root[data-device="phone"] .oh-dock[data-upright] .oh-dock-write {
+    --oh-dock-write-ring: inset 0 0 0 1px var(--btn-ring);
+
+    order: -1;
+    align-self: center;
+    background: var(--soft);
+    box-shadow: var(--oh-dock-write-ring);
+    color: var(--ink);
+  }
+
   /* A rail of words: each place by its name, its count at the line's end. */
   :root[data-device="fold"][data-icons="0"] .oh-dock {
     --oh-dock-in: 0;

@@ -53,3 +53,7 @@ export const columnRun = (n: number, current: number, room: number): SquaresRun 
   ...squaresWindow({ n, current, room, pitch: 18, count: 16 }),
   room,
 });
+
+/** What a person says belongs in their Ohbox, in their own words. */
+export const OHBOX_WORDS =
+  "Keep my Ohbox for real people writing to me and the service mail I actually act on: a delivery, a security alert, something that needs a reply. File the newsletters and promotions in News, the receipts and confirmations in Receipts, and hold first-time strangers in the Screener.";

@@ -29,6 +29,11 @@ export interface DockProps {
   write: { label: string; onPress?: () => void };
   /** The way to the other product, where the rail stands upright: the round button, first. */
   switcher?: ReactNode;
+  /**
+   * One column in a low room: the dock stands upright beside the column, as it does beside two. The frame says so
+   * from the room it laid out; the window's height alone never turns it.
+   */
+  upright?: boolean;
   /** How many places stand before the rail has measured its height. Left out: all of them. */
   shown?: number;
   /** The places that stand, whenever that changes: the app puts the others behind More. */
@@ -36,7 +41,18 @@ export interface DockProps {
 }
 
 /** The rail on touch: the app's tabs, More, Search and Write. Upright on an unfolded phone, with every place that fits. */
-export function Dock({ label, places, floor, more, search, write, switcher, shown, onFit }: DockProps) {
+export function Dock({
+  label,
+  places,
+  floor,
+  more,
+  search,
+  write,
+  switcher,
+  upright,
+  shown,
+  onFit,
+}: DockProps) {
   const rail = useRef<HTMLElement>(null);
   const told = useRef("");
   const tell = useRef(onFit);
@@ -61,10 +77,10 @@ export function Dock({ label, places, floor, more, search, write, switcher, show
     const watch = new ResizeObserver(fit);
     watch.observe(el);
     return () => watch.disconnect();
-  }, [places, floor]);
+  }, [places, floor, upright]);
 
   return (
-    <nav ref={rail} className="oh-dock" aria-label={label}>
+    <nav ref={rail} className="oh-dock" aria-label={label} data-upright={upright ? "" : undefined}>
       {switcher}
       <div className="oh-dock-places">
         {places.map((place, index) => (

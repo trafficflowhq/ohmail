@@ -11,6 +11,11 @@
     border-radius: inherit;
   }
 
+  /* A field standing on the sheet by itself (a list's search) keeps a step from what is above and below it. */
+  .oh-settingssheet > .oh-field {
+    padding: var(--s2) 0;
+  }
+
   .oh-settingssheet[data-wants] {
     --oh-under: var(--sheet-new);
     --oh-soft: var(--sheet);

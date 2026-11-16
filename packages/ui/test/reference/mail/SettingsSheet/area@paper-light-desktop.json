@@ -1,0 +1,185 @@
+{
+  "component": "SettingsSheet",
+  "state": "area",
+  "look": "paper-light-desktop",
+  "place": "block",
+  "target": [688, 88, 740, 336.1875],
+  "clip": [688, 88, 740, 337],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "24px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "999px" },
+    { "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1px inset", "borderRadius": "12px" },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [32, 16, 676, 40],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Ohbox", "type": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "Keep my Ohbox for what’s relevant",
+      "box": [664, 67, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [{ "box": [686, 71, 18, 18], "paint": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "File impersonations to Spam",
+      "box": [664, 115, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [{ "box": [686, 119, 18, 18], "paint": 0 }]
+    },
+    {
+      "role": "textbox",
+      "name": "What belongs in your Ohbox",
+      "box": [32, 192.2, 676, 120],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(240, 235, 227)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "24px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "12px",
+        "paddingRight": "16px",
+        "paddingBottom": "12px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        {
+          "said": "Keep my Ohbox for real people writing to me and the service mail I actually act on: a delivery, a security alert, something that needs a reply. File the newsletters and promotions in News, the receipts and confirmations in Receipts, and hold first-time strangers in the Screener.",
+          "type": 1,
+          "shown": true
+        }
+      ],
+      "surfaces": [{ "box": [32, 192.2, 676, 120], "paint": 1 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Keep my Ohbox for what’s relevant File impersonations to Spam", "type": 2 },
+      { "said": "In your words, what belongs in your Ohbox", "type": 3 }
+    ],
+    "surfaces": [{ "box": [0, 0, 740, 336.2], "paint": 2 }]
+  }
+}

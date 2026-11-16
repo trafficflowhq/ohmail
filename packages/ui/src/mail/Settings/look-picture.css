@@ -1,0 +1,171 @@
+/* A look shown in itself. Its root carries every value of its face (LookPicture), so this sheet reads tokens only:
+   it names no root and no other part, and a face's own rules hang on the picture's own face. */
+@layer oh {
+  .oh-lookpic {
+    --oh-lookpic-h: 156px;
+    --oh-lookpic-title-lh: 1.2;
+    --oh-lookpic-dot: 10px;
+    --oh-lookpic-dot-at: -3px;
+    --oh-lookpic-dot-ring: 2px;
+    --oh-lookpic-hot-gap: 0.08em;
+    --oh-lookpic-time: var(--ink2);
+
+    position: relative;
+    display: block;
+    overflow: hidden;
+    height: var(--oh-lookpic-h);
+    padding: var(--s3) var(--s3) 0;
+    border-radius: var(--r-row);
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    line-height: var(--oh-lh);
+    letter-spacing: normal;
+    text-align: left;
+    pointer-events: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .oh-lookpic-sheet {
+    display: block;
+    height: 100%;
+    padding: var(--s3) var(--s2) 0;
+    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  .oh-lookpic-title {
+    --oh-lookpic-title-in: 0 0 var(--s2) calc(var(--s1) + var(--gutter));
+
+    display: block;
+    padding: var(--oh-lookpic-title-in);
+    font-family: var(--f-display);
+    font-size: var(--t-title);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz);
+    line-height: var(--oh-lookpic-title-lh);
+    letter-spacing: var(--track);
+  }
+
+  .oh-lookpic-hot {
+    display: inline-block;
+    width: var(--dot-size);
+    height: var(--dot-size);
+    margin-left: var(--oh-lookpic-hot-gap);
+    border-radius: var(--dot-r);
+    background: var(--hot);
+    vertical-align: baseline;
+  }
+
+  .oh-lookpic-row {
+    --oh-lookpic-under: var(--sheet);
+
+    display: grid;
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+    align-content: center;
+    height: var(--h-l);
+    padding: 0 var(--s3) 0 var(--s1);
+    border-radius: var(--r-row);
+  }
+
+  .oh-lookpic-row[data-open] {
+    --oh-lookpic-under: var(--row-open);
+    --oh-lookpic-time: var(--on-row-open2);
+    --oh-lookpic-row-ring: inset 0 0 0 var(--row-ringw) var(--row-ring);
+
+    background: var(--row-open);
+    box-shadow: var(--oh-lookpic-row-ring);
+    color: var(--on-row-open);
+  }
+
+  .oh-lookpic-circle {
+    --oh-lookpic-circle-ring: inset 0 0 0 var(--av-ring) var(--btn-ring);
+
+    position: relative;
+    display: grid;
+    grid-row: 1;
+    grid-column: 1;
+    place-items: center;
+    align-self: var(--row-face);
+    justify-self: start;
+    width: var(--av-s);
+    height: var(--av-s);
+    margin: var(--row-face-y) 0 0 var(--s2);
+    border-radius: var(--av-r);
+    background: var(--oh-hue-bg);
+    box-shadow: var(--oh-lookpic-circle-ring);
+    color: var(--oh-hue-fg);
+    font-family: var(--f-display);
+    font-size: var(--t-meta);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz);
+    line-height: var(--oh-lh-tight);
+    letter-spacing: 0;
+  }
+
+  .oh-lookpic-dot {
+    position: absolute;
+    top: var(--oh-lookpic-dot-at);
+    left: var(--oh-lookpic-dot-at);
+    width: var(--oh-lookpic-dot);
+    height: var(--oh-lookpic-dot);
+    border-radius: var(--dot-r);
+    background: var(--hot);
+    box-shadow: 0 0 0 var(--oh-lookpic-dot-ring) var(--oh-lookpic-under);
+  }
+
+  .oh-lookpic-row[data-open] .oh-lookpic-dot {
+    background: var(--row-open-dot);
+  }
+
+  .oh-lookpic-line {
+    display: flex;
+    grid-row: 1;
+    grid-column: 2;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    min-height: var(--row-l1);
+    white-space: nowrap;
+  }
+
+  .oh-lookpic-who {
+    flex: 0 1 auto;
+    overflow: hidden;
+    min-width: 3em;
+    font-weight: var(--w-bold);
+    text-overflow: ellipsis;
+  }
+
+  .oh-lookpic-room {
+    flex: 1;
+  }
+
+  .oh-lookpic-time {
+    flex: none;
+    color: var(--oh-lookpic-time);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Paper's open row stands its circle on the sheet's own ground. */
+  .oh-lookpic[data-face="paper"] .oh-lookpic-row[data-open] .oh-lookpic-circle {
+    background: var(--av-open-bg);
+    color: var(--av-open-fg);
+  }
+
+  /* Ohmarchy: its circle tinted into the sheet, a smaller square dot, the time in the third ink at rest. */
+  .oh-lookpic[data-face="ohmarchy"] {
+    --oh-lookpic-dot: 8px;
+    --oh-lookpic-dot-at: -4px;
+    --oh-lookpic-time: var(--ink3);
+  }
+
+  .oh-lookpic[data-face="ohmarchy"] .oh-lookpic-circle {
+    background: color-mix(in oklch, var(--oh-hue-tint) 14%, var(--sheet));
+  }
+}

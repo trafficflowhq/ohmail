@@ -57,6 +57,24 @@
     --oh-field-ring: var(--oh-ring-ink);
   }
 
+  /* A sign inside the box, before the words: it stands in the box's own padding, the words a step after it. */
+  .oh-field[data-sign] {
+    --oh-field-sign: 18px;
+    position: relative;
+  }
+  .oh-field[data-sign] > .oh-icon {
+    --oh-field-sign-rise: calc(var(--oh-field-sign) / -2);
+    position: absolute;
+    top: 50%;
+    left: var(--s4);
+    margin-top: var(--oh-field-sign-rise);
+    color: var(--ink2);
+    pointer-events: none;
+  }
+  .oh-field[data-sign] > .oh-field-input {
+    --oh-field-pad: 0 var(--s4) 0 calc(var(--s4) + var(--oh-field-sign) + var(--s2));
+  }
+
   /* In a menu: one line, the label beside the field. */
   .oh-field[data-row] {
     --oh-field-row-pad: var(--s1) var(--s3) var(--s2);

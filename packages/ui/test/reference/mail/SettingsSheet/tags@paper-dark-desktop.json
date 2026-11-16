@@ -1,0 +1,352 @@
+{
+  "component": "SettingsSheet",
+  "state": "tags",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [688, 88, 740, 224],
+  "clip": [688, 88, 740, 224],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "oklch(0.74 0.12 150)", "borderRadius": "999px" },
+    { "backgroundColor": "oklch(0.74 0.12 78)", "borderRadius": "999px" },
+    { "backgroundColor": "oklch(0.74 0.12 25)", "borderRadius": "999px" },
+    {
+      "boxShadow": "rgb(125, 117, 107) 0px 0px 0px 1px inset",
+      "placeholder": "rgb(184, 175, 163)",
+      "borderRadius": "12px"
+    },
+    { "backgroundColor": "rgb(35, 32, 28)", "borderRadius": "20px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Colour of Pottery Project",
+      "box": [24, 24, 32, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "surfaces": [{ "box": [34, 34, 12, 12], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Rename",
+      "box": [575.5, 24, 81.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Rename", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Delete",
+      "box": [649.3, 24, 70.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Delete", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Colour of Paperwork",
+      "box": [24, 72, 32, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "surfaces": [{ "box": [34, 82, 12, 12], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Rename",
+      "box": [575.5, 72, 81.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Rename", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Delete",
+      "box": [649.3, 72, 70.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Delete", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Colour of Adventures",
+      "box": [24, 120, 32, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "surfaces": [{ "box": [34, 130, 12, 12], "paint": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "Rename",
+      "box": [575.5, 120, 81.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Rename", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Delete",
+      "box": [649.3, 120, 70.7, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Delete", "type": 0 }]
+    },
+    {
+      "role": "textbox",
+      "name": "New tag",
+      "box": [64, 164, 574.9, 40],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgb(52, 48, 43)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "Name a new tag", "type": 1, "shown": true }],
+      "surfaces": [{ "box": [64, 164, 574.9, 40], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "Add",
+      "box": [654.9, 168, 53.1, 32],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgb(52, 48, 43)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Add", "type": 2 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Pottery Project", "type": 3 },
+      { "said": "4 messages", "type": 4 },
+      { "said": "Paperwork", "type": 3 },
+      { "said": "3 messages", "type": 4 },
+      { "said": "Adventures", "type": 3 },
+      { "said": "2 messages", "type": 4 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 740, 224], "paint": 4 },
+      { "box": [34, 178, 12, 12], "paint": 0 }
+    ]
+  }
+}

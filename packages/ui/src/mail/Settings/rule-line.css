@@ -1,0 +1,76 @@
+/* A rule is its sentence: the circle, who and where their mail goes, under it where the rule came from, at the end its word. */
+@layer oh {
+  .oh-ruleline {
+    --oh-ruleline-pull: calc(var(--cap-q) * -1);
+    --oh-ruleline-between: 2px 0;
+
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0 var(--s3);
+    align-items: center;
+    min-height: var(--h-xl);
+    padding: var(--s2) 0;
+  }
+
+  .oh-ruleline-who {
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    border-radius: var(--av-r);
+  }
+
+  .oh-ruleline-who:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: var(--oh-focus);
+  }
+
+  /* Under a finger the circle answers 44 round it. */
+  :root[data-touch="1"] .oh-ruleline-who::after {
+    --oh-ruleline-reach: -9px;
+    content: "";
+    position: absolute;
+    inset: var(--oh-ruleline-reach);
+  }
+
+  .oh-ruleline-sentence {
+    min-width: 0;
+    color: var(--ink2);
+    font-weight: var(--w-text);
+    overflow-wrap: break-word;
+  }
+
+  .oh-ruleline-name {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-ruleline-goes,
+  .oh-ruleline-goes .oh-slot {
+    white-space: nowrap;
+  }
+
+  .oh-ruleline-origin {
+    display: block;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-ruleline-act {
+    display: flex;
+    align-items: center;
+    margin-right: var(--oh-ruleline-pull);
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Under a finger three lines, the same in every rule: who, where their mail goes, where it came from. */
+  :root[data-touch="1"] .oh-ruleline-name,
+  :root[data-touch="1"] .oh-ruleline-goes {
+    display: block;
+  }
+
+  :root[data-touch="1"] .oh-ruleline-goes {
+    padding: var(--oh-ruleline-between);
+    white-space: normal;
+  }
+}

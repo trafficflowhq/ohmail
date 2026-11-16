@@ -1,10 +1,10 @@
-import type { MouseEvent, ReactNode } from "react";
+import { useId, type MouseEvent, type ReactNode } from "react";
 import { Switch, Tag } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./setting-line.css";
 
 export interface SettingLineProps {
-  /** The setting's name. With a switch it is the switch's name too. */
+  /** The setting's name: the line is a group of that name. With a switch it is the switch's name too. */
   label: string;
   /** A sign before the name. */
   icon?: IconName;
@@ -36,9 +36,13 @@ export interface SettingLineProps {
 /** What keeps its own press: a control, a field's label, and a card or menu the line holds (it opens in place). */
 const CONTROL = "button, a, input, select, textarea, label, .oh-over";
 
-/** A setting: its name at the left, its value and its one control at the right. No rule between lines; the line's height is the rhythm. */
+/**
+ * A setting: its name at the left, its value and its one control at the right. No rule between lines; the line's
+ * height is the rhythm. To a screen reader it is a group named by its label alone.
+ */
 export function SettingLine(props: SettingLineProps) {
   const { label, icon, lead, tag, info, value, toggle, onPress, off, sub, narrow, children } = props;
+  const labelId = useId();
   const pressable = Boolean(toggle || onPress);
   const press = pressable
     ? (event: MouseEvent<HTMLDivElement>) => {
@@ -52,6 +56,8 @@ export function SettingLine(props: SettingLineProps) {
   return (
     <div
       className="oh-settingline"
+      role="group"
+      aria-labelledby={labelId}
       data-press={pressable ? "" : undefined}
       data-switch={toggle ? "" : undefined}
       data-off={off ? "" : undefined}
@@ -62,7 +68,9 @@ export function SettingLine(props: SettingLineProps) {
       <span className="oh-settingline-name">
         {lead}
         {icon ? <Icon name={icon} size={20} /> : null}
-        <span className="oh-settingline-label">{label}</span>
+        <span className="oh-settingline-label" id={labelId}>
+          {label}
+        </span>
         {tag ? <Tag>{tag}</Tag> : null}
         {info}
       </span>

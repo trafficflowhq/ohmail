@@ -254,7 +254,7 @@ export function cutPicture(png: Uint8Array, clip: Box, scale: number): Buffer {
 
 const STAGE = "[data-stage]";
 /** The room around the stage, in CSS pixels. */
-const PAD = 25;
+export const PAD = 25;
 const fraction = (n: number): number => n - Math.floor(n);
 
 /**

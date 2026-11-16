@@ -1,0 +1,141 @@
+/* A tag on its sheet: its colour as a round button with its dot, its name or the name's field, its words as one group. */
+@layer oh {
+  .oh-tagline-hue {
+    --oh-tagline-hue: var(--h-s);
+    --oh-tagline-dot: 12px;
+    --oh-tagline-out: calc(var(--s2) * -1);
+    position: relative;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--oh-tagline-hue);
+    height: var(--oh-tagline-hue);
+    margin-left: var(--oh-tagline-out);
+    border-radius: var(--r-pill);
+  }
+
+  :root[data-touch="1"] .oh-tagline-hue {
+    --oh-tagline-hue: var(--s6);
+  }
+
+  .oh-tagline-hue > .oh-tagdot {
+    --oh-tagdot-size: var(--oh-tagline-dot);
+    --oh-tagdot-gap: 0;
+  }
+
+  @media (hover: hover) {
+    .oh-tagline-hue[type="button"]:hover {
+      background: var(--hover);
+    }
+  }
+
+  /* Under the keys it stays round: a control's ring would give it a row's corners. */
+  .oh-tagline-hue[type="button"]:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: calc(var(--oh-focus) * -1);
+    border-radius: var(--r-pill);
+  }
+
+  /* Under a finger the round button answers a step further round it. */
+  :root[data-touch="1"] .oh-tagline-hue[type="button"]::after {
+    --oh-tagline-reach: -6px;
+    content: "";
+    position: absolute;
+    inset: var(--oh-tagline-reach);
+  }
+
+  /* The two words that act stand as one group, a step closer than two buttons stand; the last ends on the edge. */
+  .oh-tagline-acts {
+    --oh-tagline-closer: calc(var(--s2) * -1);
+    --oh-tagline-pull: calc(var(--cap-q) * -1);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    color: var(--ink);
+  }
+
+  .oh-tagline-acts > .oh-button[data-kind="quiet"] + .oh-button[data-kind="quiet"] {
+    margin-left: var(--oh-tagline-closer);
+  }
+
+  .oh-tagline-acts:last-child:has(> .oh-button[data-kind="quiet"]:last-child) {
+    margin-right: var(--oh-tagline-pull);
+  }
+
+  .oh-tagline-acts > .oh-button + .oh-button {
+    margin-left: var(--s2);
+  }
+
+  /* At rest under a finger: the count and the words under the name, set in by the colour's width. */
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"]:has(> .oh-settingline-name > .oh-tagline-hue) {
+    gap: 0;
+    padding-top: var(--s1);
+    padding-bottom: var(--s1);
+  }
+
+  :root[data-touch="1"]
+    .oh-settingline[data-narrow="under"]:has(> .oh-settingline-name > .oh-tagline-hue)
+    > .oh-settingline-value {
+    padding-left: var(--s6);
+  }
+
+  /* The words keep the line's end, on the count's row or, where the window is too narrow for both, under it. */
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"] .oh-settingline-text + .oh-tagline-acts {
+    margin-left: auto;
+  }
+
+  /*
+   * Written: the still dot, the field at the line's height, the words; a refusal under the whole line, set in by the
+   * dot, a step under the field and two above what follows. Its second button has the ground a sheet gives one.
+   */
+  .oh-tagline {
+    --oh-soft: var(--soft-sheet);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: var(--s2);
+    align-items: center;
+    min-height: var(--h-l);
+    padding: var(--s1) 0;
+  }
+
+  .oh-tagline[data-refused] {
+    padding-bottom: var(--s4);
+  }
+
+  .oh-tagline > .oh-field {
+    display: contents;
+  }
+
+  .oh-tagline .oh-field-input {
+    grid-column: 2;
+    height: var(--h-m);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-tagline .oh-field-refusal {
+    grid-column: 2 / -1;
+    margin-top: var(--s2);
+  }
+
+  .oh-tagline > .oh-tagline-acts {
+    grid-column: 3;
+    grid-row: 1;
+    margin-left: var(--s2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Under a finger two words leave the field no room beside them: they stand under it, at the line's end. */
+  :root[data-touch="1"] .oh-tagline:has(> .oh-tagline-acts > .oh-button + .oh-button) {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  :root[data-touch="1"] .oh-tagline:has(> .oh-tagline-acts > .oh-button + .oh-button) > .oh-tagline-acts {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+  }
+
+  :root[data-touch="1"] .oh-tagline:has(> .oh-tagline-acts > .oh-button + .oh-button) .oh-field-refusal {
+    grid-row: 3;
+  }
+}
