@@ -85,7 +85,7 @@ afterEach(async () => {
 
 /** Mount the whole shell in demo mode over whatever hash the case installed. */
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   container = document.createElement("div");
   document.body.appendChild(container);

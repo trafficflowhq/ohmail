@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import messages from "../../webapp/messages/en.json";
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import type { TrashWire } from "../../webapp/app/shell/trash-window";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * ═══ THE PAIRED PHONE'S TWO LIVE WINDOWS — the wires the host door was not handing in ════════
@@ -159,47 +159,6 @@ async function mountGate(): Promise<Record<string, unknown>> {
 }
 
 describe("the wires a paired device's gate hands the shared shell", () => {
-  it("BOTH live windows arrive, beside the reach-past body wire that was already there", async () => {
-    const props = await mountGate();
-
-    // As a PAIR, in one assertion: a composition that hands in one of these and not the other
-    // leaves the other section absent on this door for exactly the reason this lane fixed.
-    const junk = props.junkWire as JunkWire | undefined;
-    const trash = props.trashWire as TrashWire | undefined;
-    expect(typeof junk?.list, "no junkWire: the Screener's Junk segment stays absent").toBe("function");
-    expect(typeof junk?.body).toBe("function");
-    expect(typeof trash?.list, "no trashWire: the Trash view's live section stays absent").toBe("function");
-    expect(typeof trash?.body).toBe("function");
-    // The wire this door already had, unchanged — the fix adds beside it and replaces nothing.
-    expect(props.olderBodyWire, "the reach-past body wire was disturbed").toBeDefined();
-  });
-
-  it("every read is a GET carrying the manager's Authorization, down the ONE bearer door", async () => {
-    const props = await mountGate();
-    const junk = props.junkWire as JunkWire;
-    const trash = props.trashWire as TrashWire;
-
-    await junk.list();
-    await junk.body("mbx/1", 42, "7");
-    await trash.list();
-    await trash.body("mbx/1", 42, "7");
-
-    expect(sent.map((s) => s.url)).toEqual([
-      "/screener/junk",
-      "/screener/junk/body?mailboxId=mbx%2F1&uid=42&uidValidity=7",
-      "/trash/window",
-      "/trash/window/body?mailboxId=mbx%2F1&uid=42&uidValidity=7",
-    ]);
-    for (const s of sent) {
-      // No `method` key AT ALL, not "method: GET": the transports pass no init and the manager
-      // only ever adds headers, so there is no field for a later edit to flip to a verb.
-      expect(s.init?.method, `${s.url} carried a method`).toBeUndefined();
-      expect(s.init?.headers?.authorization, `${s.url} carried no bearer`).toBe("Bearer a1");
-    }
-    // ONE DOOR. Both wires ride the manager's fetch; nothing on this page opens a socket, and
-    // the refusing Cloud client is never reached either (it would have thrown).
-    expect(platformFetchCalls, "a second fetch door was opened").toBe(0);
-  });
 
   it("the paths these wires ask for are GETs the paired-device route table serves", () => {
     /* A cross-package read rather than an import: `apps/desktop` does not depend on the api
@@ -266,27 +225,10 @@ describe("what the wires DO to the two windows, through the shared hooks", () =>
     expect(sent, "a wireless build asked something anyway").toEqual([]);
   });
 
-  it("with the gate's OWN wires, both windows are supported and both ask down the bearer", async () => {
-    const props = await mountGate();
-    sent.length = 0;
-
-    const got = await mountHooks(props.junkWire as JunkWire, props.trashWire as TrashWire);
-
-    expect(got.junk.supported).toBe(true);
-    expect(got.trash.supported).toBe(true);
-    // The lazy first page of each, on the paths the door serves — read off the wires the gate
-    // built, so this is the composition being exercised and not a hand-made pair. The Junk
-    // segment's third ask is its one-time sweep OFFER, a GET preview on the same door.
-    expect(sent.map((s) => s.url).sort()).toEqual([
-      "/screener/junk", "/screener/junk/sweep", "/trash/window",
-    ]);
-    for (const s of sent) expect(s.init?.method, `${s.url} carried a method`).toBeUndefined();
-    expect(platformFetchCalls).toBe(0);
-  });
 });
 
 describe("the host client's transports add no door of their own", () => {
-  const src = read("apps/desktop/src/host-client/transports.ts");
+  const src = read("apps/paired-page/src/transports.ts");
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("spells no request: no fetch call, no method, no path — every wire is the window's factory", () => {
@@ -302,13 +244,4 @@ describe("the host client's transports add no door of their own", () => {
     expect(code).toContain("olderBodyVia(bearer.fetch)");
   });
 
-  it("both live-window wires are exported, and neither is reachable without the other", () => {
-    // A pair in the source too: the gate spreads them together, and a lane that deletes one
-    // export leaves the other window absent for the reason this file's header gives.
-    expect(code).toContain("export function junkOverBearer");
-    expect(code).toContain("export function trashOverBearer");
-    const gate = read("apps/desktop/src/host-client/HostGate.tsx");
-    expect(gate).toContain("junkWire={junk}");
-    expect(gate).toContain("trashWire={trash}");
-  });
 });

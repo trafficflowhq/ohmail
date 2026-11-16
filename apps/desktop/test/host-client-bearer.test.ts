@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ATTEMPT_STORE_BUDGET_MS, BearerManager, OWED_ATTEMPT_STORAGE_KEY, OWED_DIAL_MS, OWED_SIGN_OUTS_STORAGE_KEY,
   PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
-} from "../src/host-client/bearer.js";
+} from "../../paired-page/src/bearer.js";
 
 import { currentUpdateOffer, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 

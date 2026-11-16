@@ -24,7 +24,7 @@ interface Door {
   strip: string;
 }
 const WEB: Door = {
-  roots: ["apps/webapp/app", "apps/desktop/src"],
+  roots: ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"],
   tags: new Set(["MessageBody", "MessageBodyView", "BodyText", "StreamCard"]),
   bodyMember: false,
   strip: "MessageFiles",

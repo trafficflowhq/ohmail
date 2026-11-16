@@ -146,7 +146,7 @@ function failureOf(err: unknown, attempt: number): ConsentReadFailure {
 }
 
 /** The hosted transport — the browser talking to the API this app was written against. */
-const CLOUD_CONSENT: ConsentTransport = {
+export const CLOUD_CONSENT: ConsentTransport = {
   /* True for every server this tab may reach, and the READ decides: a self-hosted
      server inherits `withoutFoldersFlag`, whose consent read carries no
      `foldersEnabledAt`, so the hook withholds the pane there. */

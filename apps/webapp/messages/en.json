@@ -543,16 +543,12 @@
     "pileTitle": "{count, plural, one {1 item} other {# items}}",
     "tagTitle": "{count, plural, one {1 message} other {# messages}}",
     "draftsTitle": "{count, plural, one {1 draft} other {# drafts}}",
-    "openNav": "Open navigation",
-    "closeNav": "Close navigation",
     "getDesktop": "Get ohmail for desktop",
-    "getDesktopDismiss": "Dismiss"
+    "getDesktopDismiss": "Dismiss",
+    "getDesktopOpen": "Download"
   },
   "ohbox": {
     "title": "Ohbox",
-    "whereChecked": "Checked <time>{when}</time>",
-    "whereSince": "{lead, select, true {Since you were here:} other {since you were here:}}",
-    "whereTo": "{count, number} to {pile}",
     "meta": "{count, number} unread",
     "metaCounting": "Counting unread…",
     "newForYou": "New",
@@ -1957,16 +1953,6 @@
     "footRun": "run",
     "footClose": "close",
     "ariaLabel": "Command palette"
-  },
-  "dock": {
-    "command": "Command",
-    "theme": "Theme: {state}. Press for {next}",
-    "themeNow": "Theme: {state}",
-    "themeLight": "Light",
-    "themeDark": "Dark",
-    "themeAuto": "Auto ({resolved})",
-    "schemeLight": "light",
-    "schemeDark": "dark"
   },
   "help": {
     "write": "Write to us",
@@ -3627,10 +3613,6 @@
   "cursor": {
     "placed": "First message selected. Press again: {label}"
   },
-  "columns": {
-    "railHandle": "Sidebar width",
-    "listHandle": "List width"
-  },
   "viewError": {
     "updated": "ohmail was updated. Reload to continue.",
     "loadFailed": "This part of ohmail couldn't load. Check the connection and try again.",
@@ -4960,5 +4942,100 @@
     "left": "{count, plural, =0 {Nothing here was left to settle.} one {1 message stays where it is.} other {# messages stay where they are.}}",
     "failed": "That did not go through. Nothing was changed.",
     "elsewhere": "Another install organizes this mailbox now. Nothing was changed."
+  },
+  "frame": {
+    "landmark": {
+      "places": "Places",
+      "fedRail": "Main",
+      "list": "Messages",
+      "reading": "Reading",
+      "stage": "ohmail"
+    },
+    "rail": {
+      "counted": "{place} {count}"
+    },
+    "columns": {
+      "railWidth": "Sidebar width",
+      "listWidth": "List width"
+    },
+    "dock": {
+      "more": "More",
+      "search": "Search",
+      "write": "Write"
+    },
+    "notice": {
+      "more": "{count} more",
+      "moreName": "{count, plural, one {# more notice} other {# more notices}}"
+    },
+    "report": {
+      "undo": "Undo"
+    },
+    "connection": {
+      "act": {
+        "signIn": "Sign in",
+        "reload": "Reload",
+        "connect": "Connect a mailbox",
+        "mailboxes": "Mailboxes",
+        "writeToUs": "Write to us"
+      },
+      "signedOut": {
+        "title": "Signed out",
+        "line": "Sign in again to get new mail.",
+        "restart": "Start ohmail again to sign in."
+      },
+      "ownerLost": {
+        "title": "Nothing syncs here",
+        "line": "This window lost track of its account."
+      },
+      "noMailbox": {
+        "title": "No mailbox connected",
+        "line": "Nothing can arrive until one is."
+      },
+      "offline": {
+        "title": "Offline",
+        "since": "Offline since {time, date, ::HHmm}",
+        "sinceDay": "Offline since {time, date, ::MMMd}"
+      },
+      "mailServerDown": {
+        "title": "Mail server not reached",
+        "named": "{address} not reached"
+      },
+      "mailboxPassword": {
+        "title": "The password was refused",
+        "named": "{address} refused the password"
+      },
+      "mailboxSync": {
+        "title": "A mailbox is not syncing",
+        "named": "{address} is not syncing"
+      },
+      "reconnecting": {
+        "title": "Reconnecting"
+      },
+      "late": {
+        "title": "New mail is late"
+      },
+      "behind": {
+        "title": "Catching up",
+        "asOf": "As of {time, date, ::HHmm}, catching up"
+      },
+      "firstSync": {
+        "title": "First sync",
+        "count": "First sync, {count, number} so far",
+        "of": "First sync, {count, number} of {total, number}"
+      },
+      "filing": {
+        "title": "Filing on your mail server",
+        "count": "Filing {count, number} on your mail server"
+      },
+      "filingElsewhere": {
+        "title": "Filed by another ohmail"
+      },
+      "filingStuck": {
+        "title": "Filing is stuck"
+      },
+      "filingWaits": {
+        "title": "Filing waits for its next try"
+      }
+    }
   }
 }

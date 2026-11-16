@@ -159,21 +159,6 @@ describe("a Resurfaced conversation whose newest member is the account's own out
   });
 
   /**
-   * THE SURFACE IS FOR RESOLVING, NEVER FOR COUNTING. The shell's Ohbox surface unions a
-   * resurfaced conversation's other members in so the column can open them; the rail's tooltip
-   * counts the Ohbox's own unread, and the Sent copy of your own answer is not one of them. It
-   * states no total since 0.25.5: the only one this device had was its window's.
-   */
-  it("the rail's tooltip counts the Ohbox's own unread, not the conversation's Sent member", async () => {
-    const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
-    await settle();
-
-    const rail = host.querySelector<HTMLElement>('[data-rail-id="ohbox"]');
-    expect(rail, "the Ohbox rail entry is not rendered").not.toBeNull();
-    expect(rail!.getAttribute("title")).toBe("0 unread");
-  });
-
-  /**
    * THE WEB REPRO: the reported address bar read `/#/ohbox/m/<the Sent copy's id>` over an empty
    * pane. A route naming ANY member of a conversation the Ohbox shows opens that conversation.
    */
@@ -186,4 +171,18 @@ describe("a Resurfaced conversation whose newest member is the account's own out
     expect(restingSentence(host), "the route arrived on a resting column").toBeNull();
     expect(openSubjects(host).join(" | ")).toContain(ORIGINAL_SUBJECT);
   });
+
+  it("the rail's tooltip counts the Ohbox's own unread, not the conversation's Sent member", async () => {
+    const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
+    await settle();
+
+    const rail = host.querySelector<HTMLElement>('[data-rail-id="ohbox"] button');
+    expect(rail, "the Ohbox rail entry is not rendered").not.toBeNull();
+    expect(rail!.getAttribute("title")).toBe("0 unread");
+  });
+
+  /**
+   * THE WEB REPRO: the reported address bar read `/#/ohbox/m/<the Sent copy's id>` over an empty
+   * pane. A route naming ANY member of a conversation the Ohbox shows opens that conversation.
+   */
 });

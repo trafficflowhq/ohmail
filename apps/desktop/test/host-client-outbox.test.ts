@@ -3,9 +3,9 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 
 import { IDBFactory } from "fake-indexeddb";
 
-import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { createHostClientEngine } from "../src/host-client/host-engine.js";
-import { discardHostOutbox, HOST_OUTBOX_DB, HostOutboxStore } from "../src/host-client/outbox-store.js";
+import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { createHostClientEngine } from "../../paired-page/src/host-engine.js";
+import { discardHostOutbox, HOST_OUTBOX_DB, HostOutboxStore } from "../../paired-page/src/outbox-store.js";
 
 /**
  * A CHANGE MADE ON A PAIRED PAGE WHILE THE HOST IS OUT OF REACH OUTLIVES THE PAGE.

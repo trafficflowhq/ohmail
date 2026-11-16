@@ -1859,11 +1859,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   flex-wrap: wrap;
   gap: 6px;
 }
-/* The pill stacks above the first-sync pill when both float (`--pill-h` is that one's room). It is
-   capped as the rail's slot is and rests on its end (`column-reverse` over one stack, `rail.css`):
+/* The pill floats 18px off the bottom (the first-sync pill it stacked above left with the old
+   chrome; the frame says a first sync in its rail). It is capped as the rail's slot is and rests on its end (`column-reverse` over one stack, `rail.css`):
    what overflows is the oldest note, at the top, and the live rows stay in the window. */
 .sync-bar.busy.sending-pill {
-  bottom: max(18px, calc(var(--pill-h, 0px) + 8px));
+  bottom: 18px;
   flex-direction: column-reverse;
   flex-wrap: nowrap;
   align-items: stretch;
@@ -5680,15 +5680,14 @@ input.set-tag-input {
      `stream.css`) — the card's action pill is sticky against the scrollport, and bottom padding
      would push its resting edge up by exactly that much. So the phone's value goes to the
      variable the spacer is sized from, and the padding here stays 0. */
-  /* `--pill-h` is the first-sync pill's own height while it floats over the bottom-left corner
-     (`.sync-bar.busy`, measured and written by SyncBar, 0 when it is not drawn), so the last row
-     or control rests clear of it at scroll end. */
+  /* The sending pill's height (`--send-pill-h`, 0 when it is not drawn) joins the reservation, so
+     the last row or control rests clear of it at scroll end. */
   .view .stream {
     padding: 0 6px 0;
-    --stream-tail: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    --stream-tail: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
      Confirm / Not now actions sit at the bottom of it. */

@@ -48,7 +48,7 @@ export interface TrashWire {
 }
 
 /** The browser's wire: the Cloud client, verbatim. */
-const cloudWire: TrashWire = {
+export const cloudWire: TrashWire = {
   list: (opts) => trashWindowApi.list(opts),
   body: (m, u, v) => trashWindowApi.body(m, u, v),
 };

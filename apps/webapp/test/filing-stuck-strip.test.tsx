@@ -25,7 +25,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 let current: MailState | null = null;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -66,7 +66,7 @@ async function strip(filing: Partial<FilingFacts>, locale: "en" | "de" = "en"): 
 /** The strip over several mailboxes: its text and the link it offers. */
 async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise<{ text: string; hrefs: string[] }> {
   current = deriveMailState({ ...inputs({}), mailboxes: mbs });
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -76,10 +76,16 @@ async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise
       children: h(SyncBar, null),
     }));
   });
-  return {
-    text: container.textContent ?? "",
-    hrefs: [...container.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? ""),
-  };
+  /* Where the notice's one act leads: the strip's link became the frame's "Mailboxes", pressed here. */
+  const text = container.textContent ?? "";
+  const goes = [...container.querySelectorAll("button")].filter((b) => b.textContent === en.frame.connection.act.mailboxes);
+  const hrefs: string[] = [];
+  for (const press of goes) {
+    window.location.hash = "";
+    await act(async () => { press.click(); });
+    hrefs.push(window.location.hash);
+  }
+  return { text, hrefs };
 }
 
 const named = (id: string, displayName: string | null, filing: Partial<FilingFacts>, address = `${id}@example.invalid`): MailboxFacts =>
@@ -174,7 +180,7 @@ describe("the stuck and waiting sentences name the mailbox and the reason on rec
     expect(r.text).toContain("6 messages have not been filed for 5 hours");
     expect(r.text).toContain("Work · the last try did not go through");
     expect(r.text).not.toContain("refused it");
-    expect(r.text.split("Settings → Mailboxes").length - 1, "the pane was named twice").toBe(1);
+    expect(r.text.split(en.frame.connection.act.mailboxes).length - 1, "the pane was named twice").toBe(1);
     expect(r.hrefs).toEqual(["#/settings/mailboxes?mailbox=mbx1"]);
   });
 

@@ -9,10 +9,65 @@
       "ohmail-source": "./src/host/index.ts",
       "node": "./dist/host/index.js",
       "default": "./src/host/index.ts"
+    },
+    "./frame": {
+      "types": "./src/frame/index.ts",
+      "ohmail-source": "./src/frame/index.ts",
+      "node": "./dist/frame/index.js",
+      "default": "./src/frame/index.ts"
+    },
+    "./frame/contract": {
+      "types": "./src/frame/contract.ts",
+      "ohmail-source": "./src/frame/contract.ts",
+      "node": "./dist/frame/contract.js",
+      "default": "./src/frame/contract.ts"
+    },
+    "./frame/namespaces": {
+      "types": "./src/frame/namespaces.ts",
+      "ohmail-source": "./src/frame/namespaces.ts",
+      "node": "./dist/frame/namespaces.js",
+      "default": "./src/frame/namespaces.ts"
+    },
+    "./frame/boot": {
+      "types": "./src/frame/boot-stamp.ts",
+      "ohmail-source": "./src/frame/boot-stamp.ts",
+      "node": "./dist/frame/boot-stamp.js",
+      "default": "./src/frame/boot-stamp.ts"
+    },
+    "./frame/route": {
+      "types": "./src/frame/route.ts",
+      "ohmail-source": "./src/frame/route.ts",
+      "node": "./dist/frame/route.js",
+      "default": "./src/frame/route.ts"
+    },
+    "./host/browser": {
+      "types": "./src/host/browser/index.ts",
+      "ohmail-source": "./src/host/browser/index.ts",
+      "node": "./dist/host/browser/index.js",
+      "default": "./src/host/browser/index.ts"
+    },
+    "./text/fill": {
+      "types": "./src/text/fill.ts",
+      "ohmail-source": "./src/text/fill.ts",
+      "node": "./dist/text/fill.js",
+      "default": "./src/text/fill.ts"
+    },
+    "./text": {
+      "types": "./src/text/index.ts",
+      "ohmail-source": "./src/text/index.ts",
+      "node": "./dist/text/index.js",
+      "default": "./src/text/index.ts"
     }
   },
   "dependencies": {
     "react": "19.2.3",
-    "@ohmail/client-engine": "*"
+    "@ohmail/client-engine": "*",
+    "@ohmail/app-logic": "*",
+    "@ohmail/tokens": "*",
+    "@ohmail/ui": "*",
+    "use-intl": "3.26.5"
+  },
+  "devDependencies": {
+    "react-dom": "19.2.3"
   }
 }

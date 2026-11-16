@@ -14,7 +14,7 @@ import {
 
 import messages from "../../webapp/messages/en.json";
 import { DurabilityNotice } from "../../webapp/app/shell/DurabilityNotice";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
+import { BearerManager, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 
 /**
  * ═══ A WRITE THIS WINDOW LOST IS SAID IN THIS WINDOW — the desktop's arm of the same door ═════

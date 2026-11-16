@@ -1,5 +1,6 @@
 import type { NoticePermission } from "@ohmail/client-engine";
 import type { None } from "./contract.js";
+import type { Signal } from "./signals.js";
 
 /**
  * Which build this is. Replaces `support`, which today says both "this is the build" and "a Help
@@ -28,10 +29,33 @@ export interface DeviceNotifications {
   osHoldsPermission?: boolean;
 }
 
+export type Pointer = "fine" | "coarse";
+/** One member today. `phone-touch` widens it; the layout plan's switch is exhaustive, so a new member is a compile error. */
+export type Posture = "flat";
+/** The window the app stands in, as the frame lays itself out by it. */
+export interface WindowFacts {
+  readonly width: number;
+  readonly height: number;
+  readonly pointer: Pointer;
+  readonly posture: Posture;
+  readonly reducedMotion: boolean;
+}
+/** The look a shell stands under: the face and the scheme it already chose. */
+export interface Appearance {
+  readonly face: "paper" | "ohmarchy";
+  readonly scheme: "light" | "dark";
+}
+/** The address bar, owned by the shell. The frame reads and writes the fragment through it, never `location`. */
+export interface HostAddress {
+  read(): string;
+  write(next: string, how: "push" | "replace"): void;
+  subscribe(changed: () => void): () => void;
+}
+
 /**
  * The platform's verbs and facts.
  *
- * Nine keys are `none` in every shell for now: no mount hands them in today, each does the thing
+ * Eight keys are `none` in every shell for now: no mount hands them in today, each does the thing
  * by hand beside the shell or inside a pane of its own. A key gets its verb's type in the change
  * that wires it, and every shell answers it then.
  */
@@ -51,8 +75,12 @@ export interface HostDevice {
   readonly saveFile: None;
   /** Asking whether this is the default mail app, and asking to become it. */
   readonly defaultMail: None;
-  /** Where the look is stored, and who answers "light or dark". */
-  readonly appearance: None;
+  /** The fragment of the address bar. Never `none`: every shell has one. */
+  readonly address: HostAddress;
+  /** The window's size, pointer, posture and motion. Never `none`. */
+  readonly window: Signal<WindowFacts>;
+  /** The look the shell stands under, as it changes. Never `none`. */
+  readonly appearance: Signal<Appearance>;
   /** How a text size is applied. */
   readonly textSize: None;
   /** The fold, the insets and the keyboard's height. */

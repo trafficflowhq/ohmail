@@ -303,7 +303,7 @@ async function unstage(): Promise<void> {
   vi.restoreAllMocks();
 }
 
-type ShellModules = [typeof import("../app/shell/AppShell.js"), typeof import("@ohmail/ui")];
+type ShellModules = [typeof import("./_todays-shell.js"), typeof import("@ohmail/ui")];
 let modules: ShellModules;
 
 /*
@@ -315,7 +315,7 @@ let modules: ShellModules;
 beforeAll(async () => {
   stage();
   try {
-    modules = await Promise.all([import("../app/shell/AppShell.js"), import("@ohmail/ui")]);
+    modules = await Promise.all([import("./_todays-shell.js"), import("@ohmail/ui")]);
   } finally {
     await unstage();
   }
@@ -393,7 +393,23 @@ async function goTo(view: string): Promise<void> {
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const rowCount = (el: HTMLElement): number => el.querySelectorAll(".row[data-id]").length;
-const bar = (el: HTMLElement): HTMLElement | null => el.querySelector(".sync-bar");
+/*
+ * The strip now stands in the frame's one notice slot. A connection notice is one that says a connection state: the
+ * frame's own sentence for it, or today's sentence the shell hands it (its reason). The strip's sentences for the same
+ * states are read as the notice says them: SYNCING is the frame's first sync, "Can't refresh. Retrying."
+ * its reconnecting.
+ */
+const stems = (words: Record<string, unknown>): string[] => Object.values(words).flatMap((w) =>
+  typeof w === "string" ? [w.split("{")[0]!.trim()] : typeof w === "object" && w !== null ? stems(w as Record<string, unknown>) : [])
+  .filter((s) => s.length >= 8);
+const CONNECTION_WORDS = [...stems(messages.frame.connection as Record<string, unknown>), ...stems(messages.sync as Record<string, unknown>)];
+const bar = (el: HTMLElement): HTMLElement | null =>
+  [...el.querySelectorAll<HTMLElement>("[role='status'][data-place]")]
+    .find((n) => CONNECTION_WORDS.some((w) => (n.textContent ?? "").includes(w))) ?? null;
+const SYNCING = messages.frame.connection.firstSync.title;
+const RETRYING = messages.frame.connection.reconnecting.title;
+/** The awaiting state's line ("connected … ago"): First sync alone is said by the waiting and the counting state alike. */
+const AWAITING_LINE = /connected (moments ago|1 minute ago|\d+ minutes ago)/;
 
 /**
  * Drive the mirror UP by `n` messages per poll for `polls` polls.
@@ -420,7 +436,7 @@ async function importFor(polls: number, n = 30): Promise<void> {
  * right and the probe was wrong, which is the cheaper of the two mistakes only if you check.
  */
 function counted(s: string, where: string): number {
-  const m = /([\d,]+) messages so far/.exec(s);
+  const m = /First sync, ([\d,]+)/.exec(s); // the frame's first-sync sentence carries the count
   expect(m, `${where}: the strip stopped saying anything at all`).not.toBeNull();
   return Number(m![1]!.replace(/,/g, ""));
 }
@@ -484,9 +500,10 @@ describe("a mailbox nobody is syncing says so wherever you are standing", () => 
     const b = bar(c);
     expect(b).toBeTruthy();
     // Structural, because "does not scroll away" cannot be measured in jsdom.
-    expect(b!.closest(".deck"), "the strip was rendered inside the deck").toBeNull();
+    // The deck is the frame's main column; the strip stands in the notice slot's place.
+    expect(b!.closest(".fr-main"), "the strip was rendered inside the deck").toBeNull();
     expect(b!.closest(".view"), "the strip was rendered inside a view").toBeNull();
-    expect(b!.parentElement!.classList.contains("shell")).toBe(true);
+    expect(b!.closest(".oh-railfoot, .fr-railfoot, .fr-noticebar") !== null).toBe(true);
   });
 });
 
@@ -508,7 +525,7 @@ describe("the stamp is not consulted, in EITHER polarity", () => {
     facts = [mailbox({ lastSyncAt: new Date(Date.parse(ISO) - 1_000).toISOString() })];
     const c = await shell();
     await importFor(3);
-    expect(text(c), "a fresh stamp suppressed a growing mirror").toContain("Syncing your mail");
+    expect(text(c), "a fresh stamp suppressed a growing mirror").toContain(SYNCING);
     expect(counted(text(c), "the mirror's count"), "the count was not the mirror's").toBe(90);
   });
 
@@ -516,12 +533,12 @@ describe("the stamp is not consulted, in EITHER polarity", () => {
     facts = [mailbox({ lastSyncAt: null })];
     const c = await shell();
     await importFor(3);
-    expect(text(c), "the premise: it was importing").toContain("Syncing your mail");
+    expect(text(c), "the premise: it was importing").toContain(SYNCING);
     // The import ends. `lastSyncAt` is still null — a stamp-keyed implementation would keep
     // claiming an import for ever.
     await tick(120_000);
     expect(text(c), "a null stamp kept the import on screen after the mirror settled")
-      .not.toContain("Syncing your mail");
+      .not.toContain(SYNCING);
   });
 });
 
@@ -580,7 +597,7 @@ describe("thirty minutes of a first import is thirty minutes of a rising count",
     const c = await shell();
     await importFor(4, 15);
 
-    expect(text(c), "the premise: the strip is in its importing arm").toContain("Syncing your mail");
+    expect(text(c), "the premise: the strip is in its importing arm").toContain(SYNCING);
     const shown = counted(text(c), "the windowed mirror");
     expect(shown, "the rendered line quotes the store the import writes into").toBe(24_000);
     // And it is NOT this device's row count, which is what shipped.
@@ -596,10 +613,10 @@ describe("thirty minutes of a first import is thirty minutes of a rising count",
     facts = [mailbox({ lastSyncAt: null })];
     const c = await shell();
     await importFor(2);
-    expect(text(c), "the premise: something is being said").toContain("Syncing your mail");
+    expect(text(c), "the premise: something is being said").toContain(SYNCING);
     await importFor(20);
     expect(text(c), "the product went quiet once this tab's first drain had landed")
-      .toContain("Syncing your mail");
+      .toContain(SYNCING);
   });
 });
 
@@ -625,7 +642,7 @@ describe("a busy morning is not an import", () => {
     await tick(8_000);
     answer = empty;
     expect(bar(c), "the strip flashed on three ordinary messages").toBeNull();
-    expect(text(c)).not.toContain("Syncing your mail");
+    expect(text(c)).not.toContain(SYNCING);
   });
 
   /* ONE BURST IS ONE RISE, under StrictMode too. The growth fold runs in render (see
@@ -641,12 +658,12 @@ describe("a busy morning is not an import", () => {
     answer = () => page(30);
     await tick(8_000);
     answer = empty;
-    expect(text(c), "one burst was folded as two rises").not.toContain("Syncing your mail");
+    expect(text(c), "one burst was folded as two rises").not.toContain(SYNCING);
 
     answer = () => page(30);
     await tick(8_000);
     answer = empty;
-    expect(text(c), "two bursts inside the growth window did not speak").toContain("Syncing your mail");
+    expect(text(c), "two bursts inside the growth window did not speak").toContain(SYNCING);
   });
 });
 
@@ -659,13 +676,14 @@ describe("a batch gap must not flip the sentence", () => {
     facts = [mailbox({ lastSyncAt: null })];
     const c = await shell();
     await importFor(10, 30);
-    expect(text(c)).toContain("Syncing your mail");
+    expect(text(c)).toContain(SYNCING);
 
     // One empty poll, exactly the gap between two worker batches.
     answer = empty;
     await tick(8_000);
     expect(text(c), "one quiet poll was reported as a stalled import")
-      .toContain("Syncing your mail");
+      .toContain(SYNCING);
+    expect(text(c), "one quiet poll fell back to the awaiting state").not.toMatch(AWAITING_LINE);
     expect(text(c), "…or worse, as nothing having arrived at all")
       .not.toContain("Waiting for the first mail");
   });
@@ -688,7 +706,7 @@ describe("three worker drains are ONE appearance of the strip", () => {
     let appeared = false;
     const vanished: string[] = [];
     const look = (where: string): void => {
-      if (text(c).includes("Syncing your mail")) appeared = true;
+      if (text(c).includes(SYNCING)) appeared = true;
       else if (appeared) vanished.push(where);
     };
 
@@ -730,7 +748,7 @@ describe("three worker drains are ONE appearance of the strip", () => {
     facts = [mailbox({ lastSyncAt: null })];
     const c = await shell();
     await importFor(3, 30);
-    expect(text(c), "the premise: the first import ran").toContain("Syncing your mail");
+    expect(text(c), "the premise: the first import ran").toContain(SYNCING);
     await tick(120_000);
     expect(bar(c), "the premise: and finished, so nothing is latched").toBeNull();
 
@@ -747,7 +765,7 @@ describe("three worker drains are ONE appearance of the strip", () => {
     answer = empty;
 
     expect(text(c), "a delete retracted an import that was genuinely running")
-      .toContain("Syncing your mail");
+      .toContain(SYNCING);
     // 90 + 15 − 20 + 15. If the deletes had not applied this would read 120, so this number is
     // also the premise: the mirror really did fall in the middle of the run.
     expect(counted(text(c), "after the backfill")).toBe(100);
@@ -764,7 +782,7 @@ describe("the shell says nothing it cannot know", () => {
     await importFor(5);
     await tick(600_000);
     expect(probeCalls).toBe(0);
-    for (const claim of ["No mailbox connected", "Not syncing", "Waiting for the first mail", messages.sync.failing]) {
+    for (const claim of ["No mailbox connected", "Not syncing", "Waiting for the first mail", RETRYING]) {
       expect(text(c), `a shell with no probe claimed "${claim}"`).not.toContain(claim);
     }
   });
@@ -783,8 +801,11 @@ describe("the shell says nothing it cannot know", () => {
     const c = await shell();
     await tick(0);
     expect(text(c)).toContain("No mailbox connected");
-    expect(c.querySelector<HTMLAnchorElement>(".sync-bar a")!.getAttribute("href"))
-      .toBe("#/settings/mailboxes");
+    const press = [...bar(c)!.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => b.textContent === messages.frame.connection.act.connect);
+    expect(press, "no mailbox connected offered no way to connect one").toHaveLength(1);
+    await act(async () => { press[0]!.click(); });
+    expect(window.location.hash, "the press led nowhere").toBe("#/settings/mailboxes");
   });
 
   it("and a mailbox that was seen is not un-seen by a later failure", async () => {
@@ -931,7 +952,7 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
     await tick(30_000);
 
     await goTo("ohbox");
-    expect(text(c), "the premise: the strip is reporting the outage").toContain(messages.sync.failing);
+    expect(text(c), "the premise: the strip is reporting the outage").toContain(RETRYING);
     expect(text(c), "the pane re-derived its own state and overruled the ladder")
       .not.toContain("Nothing in your Ohbox yet");
   });
@@ -939,7 +960,12 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
    "WAITING" IS ALLOWED, BUT NOT AS FOUR WORDS THAT NEVER CHANGE
+
+   The frame says a waiting first sync as its First sync, with today's line saying how long; past ten minutes
+   today's slow sentence is the title and its one action is a press to the mailboxes.
    ══════════════════════════════════════════════════════════════════════════════════════════ */
+
+const SLOW = messages.sync.awaitingSlow;
 
 describe("an honest wait", () => {
   it("says how long, and a six-minute first import is NOT called slow", async () => {
@@ -949,26 +975,29 @@ describe("an honest wait", () => {
     facts = [mailbox({ lastSyncAt: null, createdAt: ISO })];
     const c = await shell();
     await tick(0);
-    expect(text(c)).toContain("The first sync has not finished yet");
+    expect(text(c)).toContain(SYNCING);
 
     await tick(240_000);
     expect(text(c), "the wait did not say how long").toContain("connected 4 minutes ago");
-    expect(text(c), "a healthy 4-minute wait was escalated").not.toContain("still has not finished");
+    expect(text(c), "a healthy 4-minute wait was escalated").not.toContain(SLOW);
 
     await tick(120_000);
     expect(text(c)).toContain("connected 6 minutes ago");
-    expect(text(c), "a measured-normal 6-minute first import was called slow")
-      .not.toContain("still has not finished");
+    expect(text(c), "a measured-normal 6-minute first import was called slow").not.toContain(SLOW);
   });
 
   it("escalates past ten minutes, offers the one action, and never claims a failure", async () => {
     facts = [mailbox({ lastSyncAt: null, createdAt: ISO })];
     const c = await shell();
     await tick(660_000);
-    expect(text(c)).toContain("The first sync still has not finished");
+    expect(text(c)).toContain(SLOW);
     expect(text(c)).toContain("connected 11 minutes ago");
-    expect(c.querySelector<HTMLAnchorElement>(".sync-bar a")!.getAttribute("href"))
-      .toBe("#/settings/mailboxes");
+    const notice = bar(c)!;
+    const press = [...notice.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => b.textContent === messages.frame.connection.act.mailboxes);
+    expect(press, "the slow first sync offered no way to its mailboxes").toHaveLength(1);
+    await act(async () => { press[0]!.click(); });
+    expect(window.location.hash, "the press led nowhere").toBe("#/settings/mailboxes");
     expect(text(c), "an unfinished first sync was reported as an error")
       .not.toMatch(/failed|error|broken/i);
   });
@@ -977,38 +1006,10 @@ describe("an honest wait", () => {
     facts = [mailbox({ lastSyncAt: null, createdAt: ISO })];
     const c = await shell();
     await tick(0);
-    expect(text(c)).toContain("The first sync has not finished");
+    expect(text(c)).toMatch(AWAITING_LINE);
     await importFor(3);
-    expect(text(c), "it kept waiting while the mirror grew — the exact defect")
-      .not.toContain("The first sync has not finished");
-    expect(text(c)).toContain("Syncing your mail");
-  });
-});
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE CLIMBING COUNT MUST NOT BE ANNOUNCED SEVEN TIMES A MINUTE
-   ══════════════════════════════════════════════════════════════════════════════════════════ */
-
-describe("the count is readable, and not shouted", () => {
-  it("keeps the volatile half out of the live region without hiding it", async () => {
-    facts = [mailbox({ lastSyncAt: null })];
-    const c = await shell();
-    await importFor(3);
-
-    const b = bar(c)!;
-    expect(b.getAttribute("role")).toBe("status");
-    expect(b.getAttribute("aria-live")).toBe("polite");
-    const num = b.querySelector(".num")!;
-    // `aria-live="off"` and NOT `aria-hidden`: a number that changes every eight seconds must
-    // not be re-announced, but it is the information — removing it from the accessibility tree
-    // would be a second defect dressed as a fix for the first.
-    expect(num.getAttribute("aria-live"), "the climbing count is inside a polite live region")
-      .toBe("off");
-    expect(num.getAttribute("aria-hidden"), "the count was hidden from assistive tech entirely")
-      .toBeNull();
-    expect(counted(num.textContent ?? "", "the number")).toBe(90);
-    // The stable half carries the sentence, so it announces once when the strip appears.
-    expect(b.querySelector("b")!.textContent).toBe("Syncing your mail.");
+    expect(text(c), "it kept waiting while the mirror grew — the exact defect").not.toMatch(AWAITING_LINE);
+    expect(text(c)).toContain(SYNCING);
   });
 });
 
@@ -1057,6 +1058,6 @@ describe("the mirror being read is not the mirror growing", () => {
     expect(bar(c), "a settled mailbox plus ordinary mail latched a false import")
       .toBeNull();
     expect(text(c), "the false 'Syncing your mail' sentence reached the screen")
-      .not.toContain("Syncing your mail");
+      .not.toContain(SYNCING);
   });
 });

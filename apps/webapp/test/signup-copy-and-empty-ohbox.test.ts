@@ -97,41 +97,20 @@ describe("an empty Ohbox says it is empty", () => {
   afterEach(teardownShellEnv);
 
   it("no rows means no group headings, and one line saying so", async () => {
-    /**
-     * Mounted through the real `AppShell` on a mailbox that has never completed a cycle — the
-     * exact state the walk was in, and the one where `screenerCandidate` is false and
-     * `SyncState` used to render nothing at all.
-     *
-     * Mutations, either of which restores what was walked:
-     *   · make the two `ListGroupLabel`s unconditional again in `OhboxView` → "New"/"Earlier"
-     *     come back over an empty column and the first two assertions fail;
-     *   · restore `if (!state.screenerCandidate) return null;` in `SyncState` → the pane has
-     *     nothing in it and the third fails.
-     */
+    // Mounted through the real shell on a mailbox that has never completed a cycle: no "New"/"Earlier" over an empty
+    // column, no empty listbox to land in, and the pane's own one line.
     const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
     await tick(0);
 
     expect(c.querySelectorAll(".row[data-id]").length, "the premise: no mail").toBe(0);
-    // Asserted on the ELEMENTS rather than on the words: "New" and "Earlier" are short enough
-    // to appear in unrelated chrome, and a text search would then pass or fail for the wrong
-    // reason. `ListGroupLabel` renders `.grouplabel` and nothing else does.
     expect([...c.querySelectorAll(".grouplabel")].map((n) => n.textContent)).toEqual([]);
     expect(c.querySelectorAll(".rows[role=listbox]").length, "an empty listbox to land in").toBe(0);
     expect(textOf(c)).toContain("Nothing in your Ohbox.");
 
-    // The pane says what it owns and no more. WHY the list is empty belongs to the strip above
-    // it — the only surface that derived it — and it is already saying so.
-    expect(textOf(c)).toContain("The first sync has not finished yet");
+    // The pane says what it owns and no more: WHY the list is empty is the frame's notice, which says the first sync.
+    expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
 
-    /* ONE EMPTY STATE, NOT TWO — the Screener's show-once rule, and the reason the Ohbox's
-       resting reading column is gated on the list having rows at all. With nothing in the list
-       the column beside it has nothing to rest FROM, and "Nothing open." printed next to
-       "Nothing in your Ohbox." is the same absence stated twice in two different voices. Drop
-       the `all.length > 0` gate in `OhboxView`'s `ReadColumn` and this goes red.
-
-       This test owns the claim because it is the only place an EMPTY Ohbox is mounted through
-       the real shell — `ohbox-read-state.test.ts`'s harnesses run without a `MailStateProvider`
-       and cannot render the empty pane at all. */
+    // One empty state, not two: no "Nothing open." beside "Nothing in your Ohbox.".
     expect(c.querySelector(".read-col")?.textContent ?? "", "a second empty state").toBe("");
   });
 

@@ -253,7 +253,7 @@ async function shell(ids: string[] = ["m1"], seed?: (s: MirrorStore) => Promise<
 
 /** Mount the shell over `s` — a kept store is the desktop's persisted mirror across a relaunch. */
 async function shellOver(s: MirrorStore): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   store = s;
   engine = engineOver(store);

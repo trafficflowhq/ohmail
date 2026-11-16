@@ -131,7 +131,7 @@ describe("the return of a sign-in the wizard started", () => {
     const gate = host.querySelector('main.gate[aria-busy="true"]');
     expect(gate, "no loading gate").toBeTruthy();
     expect(gate!.textContent).toBe("ohmail");
-    expect(host.querySelector(".app-root"), "the mail client mounted under a sign-in in flight").toBeNull();
+    expect(host.querySelector(".today"), "the mail client mounted under a sign-in in flight").toBeNull();
     expect(replaced, "left before the answer").toBeNull();
 
     await act(async () => { release!(); await settle(); });

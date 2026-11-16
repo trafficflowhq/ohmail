@@ -690,6 +690,10 @@ jobs:
       - name: The desktop window
         run: ./node_modules/.bin/tsc --noEmit -p apps/desktop/tsconfig.src.json
 
+      # The paired page's sources, under the desktop's options (its tsconfig extends the desktop's).
+      - name: The paired page
+        run: ./node_modules/.bin/tsc --noEmit -p apps/paired-page/tsconfig.json
+
       # The phone app's program and its tests' program, the script apps/mobile is checked with.
       - name: The phone app and its tests
         run: npm run typecheck:mobile

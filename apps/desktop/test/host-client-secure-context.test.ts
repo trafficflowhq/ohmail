@@ -41,7 +41,7 @@ describe("the served browser client's secure-context dependencies (the API-only 
   });
 
   it("the bearer manager's cross-tab rotation lock is navigator.locks — absent on an insecure origin, where a two-tab double-present reads as theft and unpairs the phone", () => {
-    const bearer = read("../src/host-client/bearer.ts");
+    const bearer = read("../../paired-page/src/bearer.ts");
     expect(bearer).toContain("navigator.locks");
     // The manager itself documents that the bare fallback cannot close the double-present
     // window; on this door's strict reuse detection that residual is a family revocation.

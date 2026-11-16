@@ -32,7 +32,7 @@ const QUIET: MailState = {
 
 let railState: MailState = QUIET;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: railState, refresh: () => {} }),
+  useMailState: () => ({ state: railState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 const heldByServer = (name: string | null): MailState => ({
@@ -55,19 +55,19 @@ afterEach(async () => {
 
 async function railTitle(state: MailState, locale: "en" | "de", managed?: boolean): Promise<string> {
   railState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
-  const bar = h(SyncBar, { variant: "rail" });
+  const bar = h(SyncBar);
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale, messages: CATS[locale] as never, timeZone: "UTC",
       children: managed === undefined ? bar : h(ManagedServiceContext.Provider, { value: managed, children: bar }),
     }));
   });
-  return (container.querySelector(".rs-line b")?.textContent ?? "").trim();
+  return (container.querySelector("[role='status'] b")?.textContent ?? "").trim();
 }
 
 const CLOUD = /\bCloud\b/;

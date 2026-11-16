@@ -21,6 +21,7 @@ import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
+import { SESSION_TIMEOUT_MS } from "../session-gate";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
 import { cloudLane, cloudPushWakes, cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
@@ -151,6 +152,7 @@ export function EngineProvider({
   engine: provided,
   resolveOwner,
   onConfirmed,
+  drawMail,
   children,
 }: {
   demo: boolean;
@@ -167,6 +169,13 @@ export function EngineProvider({
    * in the desktop program, which has no session client. Absent on the desktop and the demo.
    */
   onConfirmed?: (accountId: string) => void;
+  /**
+   * The page's word for the first frame (`page.tsx`): `wait` when the edge did not ask the API whose session this is,
+   * or when no word arrived. A remembered mirror then opens but is not DRAWN until the check names that account, or
+   * until the check has had the edge's own budget ({@link SESSION_TIMEOUT_MS}) and said nothing — the edge's fault
+   * path, which also draws this device's copy with its sync gate closed. Absent: the warm open draws at once.
+   */
+  drawMail?: "now" | "wait";
   children: ReactNode;
 }) {
   // A mode change after mount (a client-side navigation from `/` to `/?demo=1`, or the
@@ -231,6 +240,14 @@ export function EngineProvider({
   useAfterHydration(() => {
     setBrowserPass(true);
   }, []);
+
+  /** Under `wait`: the check has had the edge's budget and said nothing, so this device's copy may be drawn. */
+  const [waitedOut, setWaitedOut] = useState(false);
+  useEffect(() => {
+    if (drawMail !== "wait" || !browserPass) return;
+    const timer = setTimeout(() => setWaitedOut(true), SESSION_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [drawMail, browserPass]);
 
   /**
    * The warm open, one render after hydration. `readOwner()` is a synchronous cookie read with
@@ -651,6 +668,11 @@ export function EngineProvider({
   /** No mirror and no answer after the whole ladder: the honest card, on its own. */
   if (binding.status === "unconfirmed" && binding.warm === null) {
     return <UnconfirmedGate onRetry={retryConfirm} />;
+  }
+
+  /* A mirror opened from the remembered name, not yet named by the check: under `wait`, nothing of it is drawn. */
+  if (drawMail === "wait" && !waitedOut && binding.status !== "ready") {
+    return <SessionScreen status="resolving" />;
   }
 
   if (engine === null) {

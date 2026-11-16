@@ -31,23 +31,6 @@ const shell = read("../app/shell/AppShell.tsx");
 const persisted = code(read("../../../packages/app-logic/src/storage/persisted-ui.ts"));
 
 describe("the Tags group remembers its collapse state", () => {
-  it("the webapp OWNS the state and persists it", () => {
-    expect(shell).toMatch(/usePersistedFlag\(UI_KEYS\.tagsOpen/);
-    expect(shell).toMatch(/open: tagsOpen/);
-    expect(shell).toMatch(/onOpenChange: setTagsOpen/);
-  });
-
-  it("holds the collapse flag in a rail-only component, never on the top-level shell (#97)", () => {
-    // The performance half of the tag-collapse defect. `tagsOpen` on `AppShell` meant a toggle
-    // re-rendered the exported shell and, with it, the active mailbox view — hundreds of rows to
-    // reconcile for a rail fold, which is the ~5s. It now lives in a dedicated `ShellRail`
-    // component, so a toggle re-renders only the rail; the view beside it is left alone (measured:
-    // a toggle produces zero DOM mutations in the mailbox pane). Guarded positionally: the flag
-    // must appear inside `ShellRail` and must NOT appear in `AppShell`'s own body.
-    expect(shell).toMatch(/function ShellRail\([^)]*\)[\s\S]*?usePersistedFlag\(UI_KEYS\.tagsOpen/);
-    const appShellBody = shell.slice(shell.indexOf("export function AppShell"));
-    expect(appShellBody).not.toMatch(/usePersistedFlag\(UI_KEYS\.tagsOpen/);
-  });
 
   it("the shared UI package never touches browser storage", () => {
     // The whole reason the component is controlled-optional. If this ever fails, the desktop

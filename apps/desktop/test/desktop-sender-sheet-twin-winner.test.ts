@@ -46,10 +46,6 @@ async function sheet(rules: RuleDTO[]) {
 }
 
 describe("the desktop window's sender sheet", () => {
-  it("is the shared shell's sheet — the window mounts AppShell, which plans through the ladder", () => {
-    expect(code("../src/DesktopGate.tsx")).toMatch(/^import \{ AppShell \} from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell";$/m);
-    expect(code("../../webapp/app/shell/AppShell.tsx")).toMatch(/^import \{[^}]*\bplanScreeningChange,[^}]*\} from "@ohmail\/app-logic\/press\/sender-screening";$/m);
-  });
 
   it("pressing Ohbox over an allow twin and an outranking deny twin retargets the deny", async () => {
     const plan = planScreeningChange(await sheet([rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")]), "ohbox");

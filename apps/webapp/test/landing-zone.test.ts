@@ -447,14 +447,27 @@ const headersAt = (rules: Rule[], path: string) =>
 const csps = (rules: Rule[], path: string) =>
   headersAt(rules, path).filter((h) => h.key === "Content-Security-Policy").map((h) => h.value);
 
+/**
+ * The vendored pdf.js worker's path: the product's one constant, which `pdf-worker-version.test.ts`
+ * holds equal to the worker's own content-named file.
+ */
+const workerPath = async (): Promise<string> =>
+  (await import("../app/components/AttachmentPreview")).PDF_WORKER_SRC;
+
 describe("headerRules: unarmed byte for byte, armed with no policy of ours on the zone's paths", () => {
   const rulesOf = async (gaId: string | null, zone: string | null) =>
     (await import("../next.config.mjs")).headerRules(gaId, zone) as Rule[];
   const STATIC = ["X-Content-Type-Options: nosniff", "X-Frame-Options: DENY", "Referrer-Policy: strict-origin-when-cross-origin"];
 
-  it("unarmed equals the fixture", async () => {
+  it("unarmed equals the fixture, and the pdf.js worker's one rule stands beside it with a year's life alone", async () => {
     expect(UNARMED_RULES[1]!.headers[0]!.value).toBe(BASELINE_CSP);
-    expect(JSON.stringify(await rulesOf(null, null))).toBe(JSON.stringify(UNARMED_RULES));
+    const rules = await rulesOf(null, null);
+    const worker = await workerPath();
+    expect(rules).toHaveLength(UNARMED_RULES.length + 1);
+    expect(rules.filter((r) => r.source === worker)).toStrictEqual([
+      { source: worker, headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
+    ]);
+    expect(JSON.stringify(rules.filter((r) => r.source !== worker))).toBe(JSON.stringify(UNARMED_RULES));
   });
 
   it("armed: every zone path carries the three static headers and no policy", async () => {

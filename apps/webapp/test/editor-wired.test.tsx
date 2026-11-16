@@ -116,7 +116,7 @@ afterEach(async () => {
 });
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -258,7 +258,7 @@ async function wireShell(): Promise<{ el: HTMLElement; wire: WireRequest[]; deli
     createdAt: "2026-09-01T00:00:00.000Z", organizerRole: "organizer" as const, organizedBy: null,
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);

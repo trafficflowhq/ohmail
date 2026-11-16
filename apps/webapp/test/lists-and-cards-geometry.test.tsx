@@ -19,8 +19,7 @@ import { AddressText, Chip, MessageRow, StreamCard } from "@ohmail/ui";
  *     delivered-to chip stands on a card head only at a 600px card.
  *   · A COLLAPSED CARD ENDS WITH ITS MAIL: 348 is a ceiling; the fade and the pill mark a cut.
  *   · EDGES AND GUTTERS: a hairline under the head of a scrolled list and over its foot while rows
- *     continue; History's month rail never over a row; a draft row's surface under its Discard;
- *     the first-sync pill's height reserved at the end of a phone scroller.
+ *     continue; History's month rail never over a row; a draft row's surface under its Discard.
  *
  * Every arm has its RED CONTROL: the layout it replaced, re-applied as an override on the same
  * page, read by the same measurement, which must then find the defect.
@@ -390,34 +389,6 @@ describe("edges and gutters", () => {
     const pre = await draftPaint(".draft-row-main:hover{background:none}.draft-open:hover{background:var(--tint)}");
     expect(pre.paint).toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
   }, 60_000);
-
-  const phoneList = (pill: boolean): string => `<div class="shell"><main class="stage"><section class="view col">
-    <div class="list-col" style="height:700px"><div class="scroller">${Array.from({ length: 30 }, (_, i) => `<button class="row" style="display:block;height:56px">Row ${i}</button>`).join("")}</div></div>
-    </section></main>${pill ? `<div class="sync-bar busy" role="status"><b>Syncing your mail.</b></div>` : ""}</div>`;
-  const pillOverLast = (reserve: boolean) => {
-    const bar = document.querySelector(".sync-bar") as HTMLElement;
-    if (reserve) document.documentElement.style.setProperty("--pill-h", `${bar.offsetHeight + 18}px`);
-    const sc = document.querySelector(".scroller") as HTMLElement;
-    sc.scrollTop = sc.scrollHeight;
-    const rows = [...document.querySelectorAll(".row")];
-    const last = rows[rows.length - 1]!.getBoundingClientRect();
-    return last.bottom > bar.getBoundingClientRect().top;
-  };
-
-  for (const width of [360, 800]) {
-    it(`at ${width}px the first-sync pill's height is reserved, so the last row rests clear of it`, async () => {
-      const page = await browser!.newPage({ viewport: { width, height: 700 } });
-      try {
-        await page.setContent(doc(phoneList(true)));
-        expect(await page.evaluate(pillOverLast, true), "the pill covers the last row at scroll end").toBe(false);
-        // RED CONTROL: with nothing reserved the pill stands over the last row.
-        await page.setContent(doc(phoneList(true)));
-        expect(await page.evaluate(pillOverLast, false), "the pill no longer overlaps without the reservation — this arm measures nothing").toBe(true);
-      } finally {
-        await page.close();
-      }
-    }, 60_000);
-  }
 });
 
 describe("in a 300px list column (the two-pane band) the rows keep their text", () => {

@@ -133,7 +133,7 @@ const tryAgain = (): HTMLButtonElement | undefined => Array.from(document.queryS
 
 /** The shipped shell, rendered the way the App Router renders it: React's root IS `document`. */
 async function shellOnDocument(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const root = createRoot(document as unknown as Element);
   roots.push(root);

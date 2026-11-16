@@ -301,7 +301,7 @@ async function shell(
   history: string[] = [],
   consent: ConsentDouble = consentTransport,
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2", "m3"], history));
   const container = document.createElement("div");

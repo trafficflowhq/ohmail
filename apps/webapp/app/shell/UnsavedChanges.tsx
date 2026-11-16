@@ -37,10 +37,12 @@ import "./unsaved-changes.css";
  * replays rather than doing the thing twice; "Discard" throws it away. Deliberately no "retry all": the reasons
  * differ, and a button re-queuing eight verbs on one press has an outcome nobody can predict. One row, one decision.
  */
-export function UnsavedChanges({ variant, mailboxes }: {
+export function UnsavedChanges({ variant, mailboxes, shown = false }: {
   variant: "shell" | "rail";
   /** The shell's `GET /mailboxes`, a prop: many shell harnesses mock the provider without `useMailboxFacts`. */
   mailboxes: readonly MailboxFacts[] | null;
+  /** Opened by a press already (the notice's Show): the list, without the count line and its own Show. */
+  shown?: boolean;
 }) {
   const engine = useEngine();
   const abandoned = useAbandoned();
@@ -48,6 +50,7 @@ export function UnsavedChanges({ variant, mailboxes }: {
   return (
     <UnsavedChangesList
       variant={variant}
+      shown={shown}
       abandoned={abandoned}
       queued={queued}
       mailboxes={mailboxes}
@@ -82,6 +85,7 @@ export function UnsavedChangesList({
   onDiscardQueued,
   mailboxes = null,
   variant = "shell",
+  shown = false,
 }: {
   abandoned: readonly AbandonedMutation[];
   onRetry: (id: string) => Promise<RetryOutcome>;
@@ -100,6 +104,8 @@ export function UnsavedChangesList({
    * one sentence twice, and two `role="status"` regions announcing it in turn.
    */
   variant?: "shell" | "rail";
+  /** The list is what was asked for (the notice's Show opened it under its own sentence): no line, no second Show. */
+  shown?: boolean;
 }) {
   const t = useTranslations("sync");
   const tm = useTranslations("mailboxes");
@@ -184,7 +190,7 @@ export function UnsavedChangesList({
           </button>
         </div>
       ) : null}
-      {listed === 0 ? null : (
+      {listed === 0 || shown ? null : (
       <div className="unsaved-line">
         <span className="unsaved-glyph" aria-hidden="true">!</span>
         {abandoned.length > 0 ? <b>{t("unsavedCount", { count: abandoned.length })}</b> : null}
@@ -200,7 +206,7 @@ export function UnsavedChangesList({
       </div>
       )}
 
-      {open ? (
+      {open || shown ? (
         <ul className="unsaved-list">
           {abandoned.map((m) => (
             <li key={m.id} className="unsaved-row">

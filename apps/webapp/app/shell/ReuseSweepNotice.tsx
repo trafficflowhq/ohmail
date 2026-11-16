@@ -25,30 +25,14 @@ const CLIENT_KEY = new Map<string, ClientKey>([
 ]);
 
 /**
- * THE SIGN-INS OHMAIL ENDED BECAUSE AN OLDER COPY USED THEM AGAIN (`GET /auth/session`'s
- * `reuseSweeps`), in the shell's account slot until OK: one quiet line, the list and the advice
- * under Details. OK acknowledges every listed sweep and hides it at once; the host's
- * `onAcknowledge` (the API, or the desktop's bridge) rejecting puts it back. While shown, the host's
- * `onRecheck` reads the session again on a return to the window and on {@link REUSE_RECHECK_MS}; an
- * answer listing none takes the notice away.
+ * THE SWEEPS' NOTICE, WHILE SHOWN, ASKS THE SESSION AGAIN on a return to the window and on {@link REUSE_RECHECK_MS}:
+ * OK on another device ends it here too. Every shell that says the sweeps calls it, the frame's notice included.
  */
-export function ReuseSweepNotice({ sweeps, onAcknowledge, onRecheck }: {
-  sweeps: readonly ReuseSweepLine[];
-  onAcknowledge: (ids: string[]) => Promise<unknown>;
-  onRecheck?: () => Promise<unknown>;
-}) {
-  const t = useTranslations("settings");
-  const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
-  const [open, setOpen] = useState(false);
-  const panel = useId();
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => { alive.current = false; };
-  }, []);
+export function useRecheckWhileShown(shown: boolean, onRecheck?: () => Promise<unknown>): void {
   const recheck = useRef(onRecheck);
   useEffect(() => { recheck.current = onRecheck; });
   useEffect(() => {
+    if (!shown) return;
     let last = Date.now();
     const ask = (): void => {
       if (document.visibilityState !== "visible" || Date.now() - last < RETURN_DEBOUNCE_MS) return;
@@ -63,18 +47,53 @@ export function ReuseSweepNotice({ sweeps, onAcknowledge, onRecheck }: {
       window.removeEventListener("focus", ask);
       document.removeEventListener("visibilitychange", ask);
     };
+  }, [shown]);
+}
+
+/**
+ * OK ON THE SWEEPS: the ones answered leave at once, and a refusal of the acknowledgement puts them back. Every
+ * shell that says the sweeps answers through it, the frame's notice included.
+ */
+export function useSweepsAnswer(
+  sweeps: readonly ReuseSweepLine[],
+  acknowledge: (ids: string[]) => Promise<unknown>,
+): { shown: readonly ReuseSweepLine[]; ok: () => void } {
+  const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
   }, []);
-
   const shown = sweeps.filter((s) => !pressed.has(s.id));
-  if (shown.length === 0) return null;
-
-  const acknowledge = (): void => {
+  const ok = (): void => {
     const ids = shown.map((s) => s.id);
     setPressed((was) => new Set([...was, ...ids]));
-    void onAcknowledge(ids).catch(() => {
+    void acknowledge(ids).catch(() => {
       if (alive.current) setPressed((was) => new Set([...was].filter((id) => !ids.includes(id))));
     });
   };
+  return { shown, ok };
+}
+
+/**
+ * THE SIGN-INS OHMAIL ENDED BECAUSE AN OLDER COPY USED THEM AGAIN (`GET /auth/session`'s
+ * `reuseSweeps`), in the shell's account slot until OK: one quiet line, the list and the advice
+ * under Details. OK acknowledges every listed sweep and hides it at once; the host's
+ * `onAcknowledge` (the API, or the desktop's bridge) rejecting puts it back. While shown, the host's
+ * `onRecheck` reads the session again on a return to the window and on {@link REUSE_RECHECK_MS}; an
+ * answer listing none takes the notice away.
+ */
+export function ReuseSweepNotice({ sweeps, onAcknowledge, onRecheck }: {
+  sweeps: readonly ReuseSweepLine[];
+  onAcknowledge: (ids: string[]) => Promise<unknown>;
+  onRecheck?: () => Promise<unknown>;
+}) {
+  const t = useTranslations("settings");
+  const [open, setOpen] = useState(false);
+  const panel = useId();
+  useRecheckWhileShown(true, onRecheck);
+  const { shown, ok: acknowledge } = useSweepsAnswer(sweeps, onAcknowledge);
+  if (shown.length === 0) return null;
 
   return (
     <div className="acct-note acct-note-one" role="status">

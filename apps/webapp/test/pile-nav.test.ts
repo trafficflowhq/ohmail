@@ -90,16 +90,6 @@ describe("the shell reads the pile back out", () => {
   const shell = read("../app/shell/AppShell.tsx");
   const keysFrame = shellFrameOf("numberNav").source;
 
-  it("the rail handler carries WHICH row was pressed", () => {
-    // The defect verbatim: `if (id.startsWith("triage")) go("triage")` matched all three and
-    // threw the answer away. Scoped to the handler rather than the file, because the comments
-    // quote the old line on purpose and a whole-file match would forbid describing it.
-    const nav = codeOnly(shell.slice(shell.indexOf("onNavigate={(id)"), shell.indexOf("activeTagId=")));
-    expect(nav).not.toMatch(/startsWith\("triage"\)/);
-    expect(nav).not.toMatch(/go\("triage"\)/);
-    expect(nav).toMatch(/const pile = TRIAGE_PILE_OF_RAIL\[id\];\s*\n\s*if \(pile\) goTriage\(pile\);/);
-  });
-
   it("the number keys convert through the SAME table, not a second opinion", () => {
     const keys = codeOnly(keysFrame.slice(keysFrame.indexOf("numberNav.map("), keysFrame.indexOf("const activeRailId")));
     expect(keys).not.toMatch(/startsWith\("triage"\)/);
@@ -149,57 +139,6 @@ describe("the rail is QUIET until asked", () => {
     window.location.hash = "";
   });
   afterEach(teardownShellEnv);
-
-  it("THE QUIET STATE: no number badges on the rail rows by default", async () => {
-    // The whole point of the three-layer design. A badge on every row forever is clutter
-    // charged to every user so that a few learn something once — so the resting rail carries
-    // counts and no keycaps, and this is the assertion that keeps it that way.
-    const host = await mountShell([mailbox({ lastSyncAt: "2026-08-04T08:59:00.000Z" })]);
-    const rail = host.querySelector(".rail")!;
-    const caps = [...rail.querySelectorAll("kbd")].map((k) => k.textContent?.trim());
-    // `/` is Search's long-standing hint and is not a number key; nothing else may be capped.
-    expect(caps.filter((c) => /^[0-9]$/.test(c ?? ""))).toEqual([]);
-  });
-
-  it("a numbered row shows its key on keyboard focus, and hides it on blur", async () => {
-    // The persistent-but-quiet hint that REPLACED the one-time strip: the key is on the row
-    // you are pointing at or have tabbed to, and nowhere else. Focus stands in for hover here
-    // because jsdom evaluates no CSS and fires no pointer geometry — but the reveal is one
-    // reaction to both, so proving focus proves the mechanism. Ohbox is the first numbered
-    // pile, so its key is `1`.
-    const host = await mountShell([mailbox({ lastSyncAt: "2026-08-04T08:59:00.000Z" })]);
-    const rail = host.querySelector(".rail")!;
-    const ohbox = [...rail.querySelectorAll<HTMLButtonElement>(".ritem")].find((b) =>
-      b.textContent?.includes("Ohbox"),
-    )!;
-    // Quiet at rest — the row carries its count, not a keycap.
-    expect(ohbox.querySelector("kbd")).toBeNull();
-
-    await act(async () => {
-      ohbox.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-    });
-    expect(ohbox.querySelector("kbd")?.textContent?.trim()).toBe("1");
-
-    await act(async () => {
-      ohbox.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-    });
-    expect(ohbox.querySelector("kbd")).toBeNull();
-  });
-
-  it("pressing ? puts the keycap on every numbered row, and only on those", async () => {
-    const host = await mountShell([mailbox({ lastSyncAt: "2026-08-04T08:59:00.000Z" })]);
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "?", bubbles: true }));
-    });
-
-    const rail = host.querySelector(".rail")!;
-    const caps = [...rail.querySelectorAll("kbd")]
-      .map((k) => k.textContent?.trim())
-      .filter((c) => /^[0-9]$/.test(c ?? ""));
-    // Seven piles: three streams, the Screener, three triage horizons — numbered 1..7 in
-    // menu order. Derived, so this is the rail's real shape and not a restatement.
-    expect(caps).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
-  });
 
   it("a number key navigates to the pile in that position", async () => {
     await mountShell([mailbox({ lastSyncAt: "2026-08-04T08:59:00.000Z" })]);

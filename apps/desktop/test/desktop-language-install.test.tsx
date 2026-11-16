@@ -65,7 +65,7 @@ async function advance(rounds = 12): Promise<void> {
 
 async function launch(): Promise<HTMLDivElement> {
   const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store: new MemoryMirrorStore(), storePolicy: { mode: "full" } });
-  const { AppShell } = await import("../../webapp/app/shell/AppShell");
+  const { AppShell } = await import("../../webapp/test/_todays-shell.js");
   window.location.hash = "#/settings/general";
   host = document.createElement("div");
   document.body.appendChild(host);

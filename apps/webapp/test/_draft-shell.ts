@@ -564,7 +564,10 @@ export async function waitFor(predicate: () => boolean, what: string, rounds = 1
 export async function pressRestart<T>(s: DraftShell, seen: () => T): Promise<() => Promise<T>> {
   let at: { v: T } | null = null;
   await act(async () => announceUpdate({ kind: "ready", version: "0.30.9", act: () => { at = { v: seen() }; }, key: "ready:0.30.9" }));
-  await act(async () => { s.el.querySelector<HTMLButtonElement>(".upd-line .ul-do")!.click(); });
+  /* The update line is the frame's update notice: its Restart, pressed. */
+  const restart = [...s.el.querySelectorAll<HTMLButtonElement>("[role='status'][data-place] button")]
+    .find((b) => (b.textContent ?? "").trim() === messages.update.lineRestart) ?? null;
+  await act(async () => { restart!.click(); });
   return async () => {
     await waitFor(() => at !== null, "the restart", 200);
     return at!.v;
@@ -605,7 +608,7 @@ export async function mountShell(
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const versions = options.versions === true ? new Map<string, string>() : null;
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);

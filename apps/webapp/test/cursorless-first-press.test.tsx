@@ -207,7 +207,7 @@ const ORGANIZER_ROSTER: MailboxFacts[] = [{
 }];
 
 async function shell(ids: string[]): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(ids));
   const container = document.createElement("div");

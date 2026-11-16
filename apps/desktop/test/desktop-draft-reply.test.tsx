@@ -81,11 +81,6 @@ async function openDraftReplyOffer(shell: Awaited<ReturnType<typeof mountShell>>
 }
 
 describe("Desktop AI reply drafts", () => {
-  it("hands the shared shell its bridge wire on every Desktop door", () => {
-    const repo = existsSync(resolve("apps/desktop/src")) ? resolve(".") : resolve("../..");
-    const gate = readFileSync(resolve(repo, "apps/desktop/src/DesktopGate.tsx"), "utf8");
-    expect(gate).toContain("draftReplyWire={draftReplyOverBridgeFor(status)}");
-  });
 
   it("picks the no-model sentence by who can choose the model", () => {
     expect(standalone.noModel).toBe("noModelHere");

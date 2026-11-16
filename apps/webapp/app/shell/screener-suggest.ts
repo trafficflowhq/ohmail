@@ -357,7 +357,7 @@ export interface SuggestWire {
  * The default, so every existing caller is unchanged and no host has to name a transport to get the
  * behaviour it already had.
  */
-const CLOUD_WIRE: SuggestWire = {
+export const CLOUD_WIRE: SuggestWire = {
   configured: () => apiConfigured(),
   list: (opts) => screenerApi.list(opts),
   suggest: (senders, opts) => screenerApi.suggest(senders, opts ?? {}),

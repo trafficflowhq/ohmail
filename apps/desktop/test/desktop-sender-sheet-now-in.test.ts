@@ -54,11 +54,6 @@ async function store(folder: Folder, rules: RuleDTO[]): Promise<MemoryMirrorStor
 }
 
 describe("the desktop window's sheet and decide", () => {
-  it("is the shared shell's: the window mounts AppShell, which hands the sheet the list's placement", () => {
-    expect(code("../src/DesktopGate.tsx")).toMatch(/^import \{ AppShell \} from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell";$/m);
-    expect(code("../../webapp/app/shell/AppShell.tsx"))
-      .toMatch(/^ {4}\(\) => \(senderMenu \? senderScreening\(engine\.verbRead\(\), senderMenu\.messageId, senderMenu\.address, consentView\?\.placeOf\) : null\),$/m);
-  });
 
   it("over an allow twin and an outranking deny the sheet says Screened, where the list shows the row", async () => {
     const s = await store("INBOX", [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")]);

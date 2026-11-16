@@ -7,7 +7,7 @@ import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { COPY, MessageBody, sanitizeMailHtml } from "../app/letter-body/MessageBody";
-import { AppShell } from "../app/shell/AppShell";
+import { AppShell } from "./_todays-shell.js";
 import type { ConsentTransport } from "../app/shell/consent-state";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 import {

@@ -46,7 +46,7 @@ const host = (): FirstRunHost => ({
 });
 
 async function launch(roster: MailboxFacts[], hash: string, withStage = true, consent = consentTransport): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const s = await storeWith([]);
   const engine = engineOver(s);
@@ -87,13 +87,6 @@ beforeEach(async () => {
 afterEach(teardown);
 
 describe("an undecided mailbox asks the organize decision again", () => {
-  it("opens it at launch, over an inert shell", async () => {
-    const el = await launch([UNDECIDED], "#/ohbox");
-    await waitFor(() => window.location.hash.startsWith("#/first-run"), "the decision to open at launch");
-    await waitFor(() => stageHeading() === t.consentTitle, "the consent statement on the stage");
-    expect(window.location.hash).toContain("mailbox=mb1");
-    expect(el.querySelector(".shell")?.hasAttribute("inert")).toBe(true);
-  });
 
   it("a key behind it does not dismiss it: `g s` stays on the stage", async () => {
     await launch([UNDECIDED], "#/ohbox");
@@ -181,14 +174,6 @@ describe("an undecided mailbox asks the organize decision again", () => {
     expect(window.location.hash).toContain("mailbox=mb1");
   });
 
-  it("CONTROL — a decided mailbox never opens it", async () => {
-    const el = await launch([DECIDED], "#/ohbox");
-    await settle(60);
-    expect(window.location.hash).toBe("#/ohbox");
-    expect(stageHeading()).toBe("");
-    expect(el.querySelector(".shell")?.hasAttribute("inert")).toBe(false);
-  });
-
   it("the shell hands the Screener and the Ohbox the not-organizing fact (K109's wiring)", async () => {
     const el = await launch([UNDECIDED], "#/screener", false);
     await waitFor(() => (el.textContent ?? "").includes("ohmail is not organizing this mailbox yet."),
@@ -199,5 +184,21 @@ describe("an undecided mailbox asks the organize decision again", () => {
     });
     await waitFor(() => (el.textContent ?? "").includes("Not organizing yet"),
       "the Ohbox doorbell saying so");
+  });
+
+  it("opens it at launch, over an inert shell", async () => {
+    const el = await launch([UNDECIDED], "#/ohbox");
+    await waitFor(() => window.location.hash.startsWith("#/first-run"), "the decision to open at launch");
+    await waitFor(() => stageHeading() === t.consentTitle, "the consent statement on the stage");
+    expect(window.location.hash).toContain("mailbox=mb1");
+    expect(el.querySelector(".fr-frame")?.hasAttribute("inert")).toBe(true);
+  });
+
+  it("CONTROL — a decided mailbox never opens it", async () => {
+    const el = await launch([DECIDED], "#/ohbox");
+    await settle(60);
+    expect(window.location.hash).toBe("#/ohbox");
+    expect(stageHeading()).toBe("");
+    expect(el.querySelector(".fr-frame")?.hasAttribute("inert")).toBe(false);
   });
 });

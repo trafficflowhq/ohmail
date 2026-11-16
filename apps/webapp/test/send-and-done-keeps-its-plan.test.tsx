@@ -356,6 +356,26 @@ describe("Try again on the strip", () => {
     expect(unreadOf(s.engine, src)).toBe(true);
   });
 
+  /* The frame keeps one mount of the list: the dialog a notice's Show opens (`TodaysShown`), which the shell draws as
+     `{todaysShown}` inside its release provider. */
+  it("the list's one mount sits under the shell's release provider, which the compose hook's door feeds", () => {
+    const shell = readFileSync(`${ROOT}/apps/webapp/app/shell/AppShell.tsx`, "utf8");
+    const open = shell.indexOf("<SendReleaseProvider value={releaseConfirmed}>");
+    const close = shell.indexOf("</SendReleaseProvider>");
+    const drawn = [...shell.matchAll(/\{todaysShown\}/g)].map((m) => m.index!);
+    expect(open).toBeGreaterThan(0);
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]! > open && drawn[0]! < close, "the notice's dialog is drawn outside the release provider").toBe(true);
+    expect([...shell.matchAll(/<UnsavedChanges variant=/g)], "the shell mounts the list beside the dialog").toHaveLength(0);
+    const feeds = readFileSync(`${ROOT}/apps/webapp/app/shell/todays-feeds.tsx`, "utf8");
+    const mounts = [...feeds.matchAll(/<UnsavedChanges variant=/g)].map((m) => m.index!);
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0]!).toBeGreaterThan(feeds.indexOf("function TodaysShown("));
+    const compose = withoutComments(readFileSync(`${ROOT}/apps/webapp/app/shell/shell-compose.ts`, "utf8"));
+    expect(compose).toContain("return releaseSendAndDone({");
+    expect(compose).toContain("onSendOutcome(res.key,");
+  });
+
   it("is wired to the engine's retry, with nothing between", () => {
     const src = readFileSync(`${ROOT}/apps/webapp/app/shell/UnsavedChanges.tsx`, "utf8");
     expect(src).toContain("onRetry={(id) => engine.retryAbandoned(id)}");
@@ -374,18 +394,5 @@ describe("one door on the web", () => {
     }
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("app/shell/send-release.tsx");
-  });
-
-  it("both strip mounts sit under the shell's release provider, which the compose hook's door feeds", () => {
-    const shell = readFileSync(`${ROOT}/apps/webapp/app/shell/AppShell.tsx`, "utf8");
-    const open = shell.indexOf("<SendReleaseProvider value={releaseConfirmed}>");
-    const close = shell.indexOf("</SendReleaseProvider>");
-    const mounts = [...shell.matchAll(/<UnsavedChanges variant=/g)].map((m) => m.index!);
-    expect(open).toBeGreaterThan(0);
-    expect(mounts).toHaveLength(2);
-    for (const at of mounts) expect(at > open && at < close, "a strip mount is outside the release provider").toBe(true);
-    const compose = withoutComments(readFileSync(`${ROOT}/apps/webapp/app/shell/shell-compose.ts`, "utf8"));
-    expect(compose).toContain("return releaseSendAndDone({");
-    expect(compose).toContain("onSendOutcome(res.key,");
   });
 });

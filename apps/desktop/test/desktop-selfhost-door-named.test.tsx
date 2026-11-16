@@ -246,7 +246,8 @@ describe("the window's sync strip says when its server is not fetching new mail"
     const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
     const { EngineProvider } = await import("../../webapp/app/shell/engine");
     const { MailStateProvider, FACTS_POLL_MS } = await import("../../webapp/app/shell/MailStateProvider");
-    const { SyncBar } = await import("../../webapp/app/shell/SyncBar");
+    // The strip's state, said in the frame's one notice slot.
+    const { TodaysNotice } = await import("../../webapp/test/_todays-notice");
     const store = new MemoryMirrorStore();
     await store.load();
     const engine = new OhmailEngine({
@@ -276,7 +277,7 @@ describe("the window's sync strip says when its server is not fetching new mail"
           value: isManagedDoor(status),
           children: h(EngineProvider as never, {
             demo: false, engine,
-            children: h(MailStateProvider as never, { probe, mirrored: 12, children: h(SyncBar, { variant: "rail" }) } as never),
+            children: h(MailStateProvider as never, { probe, mirrored: 12, children: h(TodaysNotice, null) } as never),
           } as never),
         }),
       } as never));
@@ -305,7 +306,7 @@ describe("the window's sync strip says when its server is not fetching new mail"
     expect(win.said()).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
     served = [door.runs];
     await win.nextPoll();
-    expect(hostEl!.textContent ?? "").toBe("");
+    expect([...hostEl!.querySelectorAll(".oh-notice")].map((n) => n.textContent).join(""), "the frame's notice slot").toBe("");
   });
 
   it("a self-hosted door names your ohmail server, never ohmail Cloud", async () => {
@@ -325,6 +326,6 @@ describe("the window's sync strip says when its server is not fetching new mail"
     served = [door[word]];
     const win = await strip(status);
     await win.nextPoll();
-    expect(hostEl!.textContent ?? "").toBe("");
+    expect([...hostEl!.querySelectorAll(".oh-notice")].map((n) => n.textContent).join(""), "the frame's notice slot").toBe("");
   });
 });

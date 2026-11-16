@@ -82,7 +82,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
   it("a warm mount dials its stream when the confirm opens the gate, with no tab flip", { timeout: 60_000 }, async () => {
     await shell.mountCloudShell();
     await shell.tick(5_000);
-    expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+    expect(document.body.querySelector(".today"), "the premise: the mail opened").not.toBeNull();
     expect(shell.sessionCalls(), "the premise: the confirm was asked").toBeGreaterThanOrEqual(1);
     expect(FakeEventSource.made, "the warm mount held no stream until a tab flip").toHaveLength(1);
     expect(new URL(FakeEventSource.made[0]!.url, "https://ohmail.test").pathname).toBe("/api/events");
@@ -92,7 +92,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await shell.mountCloudShell();
     await shell.tick(5_000);
-    expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+    expect(document.body.querySelector(".today"), "the premise: the mail opened").not.toBeNull();
     expect(FakeEventSource.made, "the premise: the open shell dialled its stream").toHaveLength(1);
     const first = FakeEventSource.made[0]!;
     await shell.act(async () => { first.open(); });
@@ -114,7 +114,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(5_000);
     expect(document.body.querySelector(".wall-card"), "the wall stood over an open verdict").toBeNull();
-    expect(document.body.querySelector(".app-root")).not.toBeNull();
+    expect(document.body.querySelector(".today")).not.toBeNull();
     expect(FakeEventSource.made, "the lift dialled no new stream").toHaveLength(2);
     expect(FakeEventSource.made[1]!.closed).toBe(false);
   });

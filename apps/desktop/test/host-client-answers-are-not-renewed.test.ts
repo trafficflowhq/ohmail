@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BearerManager, REFRESH_STORAGE_KEY } from "../src/host-client/bearer.js";
+import { BearerManager, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 
 /**
  * A CREDENTIAL ROUTE'S 401 IS AN ANSWER — the paired browser's transport. The door names a wrong code

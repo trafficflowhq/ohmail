@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
 import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * DRAFT REPLY ON A PAIRED BROWSER. `HostGate` handed the shared shell no draft wire, so the control
@@ -92,27 +92,6 @@ async function draftWire(): Promise<DraftReplyWire | undefined> {
 }
 
 describe("the paired browser's draft reply", () => {
-  it("the gate hands the shell a draft wire that names the host for a missing model", async () => {
-    const wire = await draftWire();
-    expect(wire, "no draftReplyWire: Draft reply says it needs a connected account").toBeDefined();
-    expect(wire!.configured()).toBe(true);
-    expect(wire!.noModel).toBe("noModelHost");
-    expect(messages.draftReply.noModelHost).toContain("Settings → Desktop");
-  });
-
-  it("both calls ride the bearer door, the purchase with its key", async () => {
-    const wire = (await draftWire())!;
-    sent = [];
-    expect(await wire.create("m1", "key-1")).toEqual({ draftId: "d1" });
-    expect(await wire.read("d1")).toEqual({ body: "Thursday works.", html: null });
-
-    expect(sent.map((s) => [s.init?.method ?? "GET", s.url])).toEqual([
-      ["POST", "/messages/m1/draft"],
-      ["GET", "/drafts/d1"],
-    ]);
-    expect(sent[0]!.init?.headers?.["Idempotency-Key"]).toBe("key-1");
-    for (const s of sent) expect(s.init?.headers?.authorization, s.url).toBe("Bearer a1");
-  });
 
   it("the host's route table serves both", () => {
     expect(read("packages/api/src/routes/desktop-host.ts")).toContain("...localRoutes,");

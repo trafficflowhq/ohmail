@@ -47,6 +47,7 @@ import { canonicalHash, go, goScreener, goSettings, reflectMessage, type Route, 
 import type { ScreenerState } from "./screener-state";
 import { createSeenBatcher } from "@ohmail/app-logic/reading/seen-batch";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useRailOpen } from "@ohmail/app/frame";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { SenderAuditState } from "./SenderAuditPanel";
 import type { SenderMenuState } from "./SenderMenu";
@@ -403,7 +404,7 @@ export function useShellOpenState({
   });
   useEffect(() => watchNarrow(crossNarrow), [crossNarrow]);
   useEffect(() => { if (readerFor === null) setCrossedFor(null); }, [readerFor]);
-  const [railOpen, setRailOpen] = useState(false);
+  const [railOpen, setRailOpen] = useRailOpen(); // the frame's: its More and today's `h` open one rail
   /**
    * THE QUICK-LOOK PREVIEW — a message id and the attachment on screen, or `null`.
    *

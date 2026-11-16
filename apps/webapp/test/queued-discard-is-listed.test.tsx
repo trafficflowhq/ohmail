@@ -46,7 +46,7 @@ async function goto(hash: string): Promise<void> {
 }
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -95,13 +95,21 @@ async function pressDelete(id: string): Promise<void> {
   await settle(10);
 }
 
-/** The strip the shell mounts above the views, opened. */
+/**
+ * The strip the shell mounts above the views, opened. In the frame the strip is a notice in the one slot, and its
+ * Show opens today's list in a dialog: one press, the rows.
+ */
 async function stripRows(): Promise<HTMLElement[]> {
-  const strip = q<HTMLElement>(".unsaved-shell");
-  if (strip === null) return [];
-  const toggle = strip.querySelector<HTMLButtonElement>(".unsaved-toggle");
-  if (toggle !== null && toggle.getAttribute("aria-expanded") === "false") await press(toggle);
-  return Array.from(q<HTMLElement>(".unsaved-shell")?.querySelectorAll<HTMLElement>(".unsaved-row") ?? []);
+  const rowsNow = (): HTMLElement[] => Array.from(document.querySelectorAll<HTMLElement>("[role='dialog'] .unsaved-row"));
+  if (document.querySelector("[role='dialog'] .unsaved") === null) {
+    const label = (messages.sync as unknown as Record<string, string>).unsavedShow;
+    const show = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.closest("[role='dialog']") === null && (b.textContent ?? "").trim() === label);
+    if (!show) return [];
+    await press(show);
+    await settle(5);
+  }
+  return rowsNow();
 }
 
 const button = (row: HTMLElement, label: string): HTMLButtonElement | null =>
@@ -157,6 +165,7 @@ afterEach(async () => {
 });
 
 describe("a discard that could not reach the account", () => {
+
   it("1 — is one row in the strip, with Try again and Discard", async () => {
     await mountShell();
     const id = await makeADraft();

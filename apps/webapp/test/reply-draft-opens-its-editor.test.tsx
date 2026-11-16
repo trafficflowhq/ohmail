@@ -357,16 +357,6 @@ describe("a reply draft open here while another device changes it", () => {
     expect({ first: replies(s).some((d) => d.body === first), count: replies(s).length }).toEqual({ first: true, count: 3 });
   }, 90_000);
 
-  it("Restart over their version keeps the words as a new draft before it restarts", async () => {
-    const s = await openD1();
-    await changedThere(s);
-    await act(async () => { typeInto(replySurface(s.el)!, " and typed here"); });
-    const restarted = await pressRestart(s, () => ({
-      theirs: s.store.get<EngineDraft>("draft", "d1")?.body, mine: replies(s).some((d) => d.id !== "d1" && d.body?.includes("typed here")),
-    }));
-    expect(await restarted(), "the restart went before the words were kept").toEqual({ theirs: OTHER, mine: true });
-  }, 60_000);
-
   it("its own saves never fork (the control)", async () => {
     const s = await openD1();
     await act(async () => { typeInto(replySurface(s.el)!, " first"); });
@@ -393,6 +383,16 @@ describe("a reply draft open here while another device changes it", () => {
     await rounds(20);
     expect({ stated: saves(s)[0]!.ifContentRevision, rows: replies(s).map((d) => d.id), says: said().includes(messages.reply.changedElsewhere) })
       .toEqual({ stated: "rev-theirs", rows: ["d1"], says: false });
+  }, 60_000);
+
+  it("Restart over their version keeps the words as a new draft before it restarts", async () => {
+    const s = await openD1();
+    await changedThere(s);
+    await act(async () => { typeInto(replySurface(s.el)!, " and typed here"); });
+    const restarted = await pressRestart(s, () => ({
+      theirs: s.store.get<EngineDraft>("draft", "d1")?.body, mine: replies(s).some((d) => d.id !== "d1" && d.body?.includes("typed here")),
+    }));
+    expect(await restarted(), "the restart went before the words were kept").toEqual({ theirs: OTHER, mine: true });
   }, 60_000);
 });
 

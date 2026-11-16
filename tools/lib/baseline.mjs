@@ -96,8 +96,13 @@ const FAMILY = "the import family (ohmail/package-borders:*, ohmail/declared-dep
  * between the rules of the import family in one file: where a file's sum over the family did not grow,
  * its family rows are not judged for growth; where it grew, each rule is judged, and so is the family's
  * sum over the files, against what other files' sums lost.
+ * A row under `ruling:<id>` (a waiver) is not judged, and pays for nothing: neither what it lost,
+ * nor a task's row it took over, nor a ruling's row that passed to a task's name.
  */
-export function compareWithBase(rows, baseRows) {
+export function compareWithBase(headRows, allBaseRows) {
+  const ruled = new Set(headRows.filter((row) => isRuling(row.task)).map(keyOf));
+  const rows = headRows.filter((row) => !isRuling(row.task));
+  const baseRows = allBaseRows.filter((row) => !isRuling(row.task) && !ruled.has(keyOf(row)));
   const base = new Map(baseRows.map((row) => [keyOf(row), row]));
   const head = new Map(rows.map((row) => [keyOf(row), row]));
   const sums = new Map(); // "task\tpath" → the file's sum over the family, before and now
@@ -151,6 +156,22 @@ export function compareWithBase(rows, baseRows) {
           `the baseline grew: ${FAMILY} for the task ${f.task} gained ${f.grew} and lost ${f.lost} in its files' sums: ${f.where.join(", ")}`,
       ),
   ];
+}
+
+export const isRuling = (task) => task.startsWith("ruling:");
+
+/** One line per ruling id, for every run with a base: its findings and rows now, and at the base. */
+export function rulingLines(rows, baseRows) {
+  const ids = [...new Set([...rows, ...baseRows].map((row) => row.task).filter(isRuling))].sort();
+  const of = (list, id) => {
+    const mine = list.filter((row) => row.task === id);
+    return [mine.reduce((sum, row) => sum + row.count, 0), mine.length];
+  };
+  return ids.map((id) => {
+    const [now, nowRows] = of(rows, id);
+    const [before, beforeRows] = of(baseRows, id);
+    return `${id}: ${now} findings in ${nowRows} rows now; ${before} in ${beforeRows} at the base`;
+  });
 }
 
 /** Totals for the run's summary and for a pull request's text. */

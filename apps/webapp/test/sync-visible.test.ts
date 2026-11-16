@@ -243,8 +243,8 @@ async function tick(ms: number): Promise<void> {
 }
 
 /** The shipped shell, live, wrapped in exactly what the Cloud and desktop entries wrap it in. */
-async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+async function shell(recover?: (how: "signIn" | "reload") => void): Promise<HTMLElement> {
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
 
   const container = document.createElement("div");
@@ -264,6 +264,7 @@ async function shell(): Promise<HTMLElement> {
             children: h(AppShell, {
               demo: false,
               resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+              ...(recover ? { recover } : {}),
             }),
           }),
         }),
@@ -286,6 +287,25 @@ async function goTo(view: string): Promise<void> {
 
 const rowCount = (el: HTMLElement): number => el.querySelectorAll(".row[data-id]").length;
 
+/**
+ * What the strip said now stands in the frame's one notice slot, beside notices about other things (the desktop
+ * offer): a connection state is one whose notice says one of the frame's connection sentences.
+ */
+const CONNECTION_TITLES = Object.values(messages.frame.connection as Record<string, { title?: unknown }>)
+  .map((words) => words.title)
+  .filter((title): title is string => typeof title === "string" && !title.includes("{"));
+const connectionSaid = (el: HTMLElement): HTMLElement | null =>
+  [...el.querySelectorAll<HTMLElement>("[role='status'][data-place]")]
+    .find((n) => CONNECTION_TITLES.some((title) => (n.textContent ?? "").includes(title))) ?? null;
+
+/** The connection notice that says the session is gone: the strip's stopped arm. */
+const stoppedSaid = (el: HTMLElement): HTMLElement | null =>
+  [...el.querySelectorAll<HTMLElement>("[role='status'][data-place]")]
+    .find((n) => (n.textContent ?? "").includes(messages.frame.connection.signedOut.title)) ?? null;
+/** The strip's sentences, as the notice says the same states. */
+const FAILING = messages.frame.connection.reconnecting.title;
+const STOPPED = messages.frame.connection.signedOut.title;
+
 describe("a failing sync is visible WITH ROWS PRESENT", () => {
   it("says so in Ohbox, Reads, Receipts and the Screener — not only where the list is empty", async () => {
     const container = await shell();
@@ -294,7 +314,7 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     // the whole file could pass against the empty state it is here to stop relying on.
     expect(rowCount(container), "the fixture never landed — nothing below would prove anything")
       .toBeGreaterThan(0);
-    expect(container.textContent ?? "").not.toContain(messages.sync.failing);
+    expect(container.textContent ?? "").not.toContain(FAILING);
 
     // …and now the drains stop working, exactly as an outage does.
     answer = () => new Response("{}", { status: 503 });
@@ -303,7 +323,7 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     for (const view of ["ohbox", "reads", "receipts", "screener"]) {
       await goTo(view);
       const text = container.textContent ?? "";
-      expect(text, `${view} said nothing about a failing sync`).toContain(messages.sync.failing);
+      expect(text, `${view} said nothing about a failing sync`).toContain(FAILING);
       // No reassurance nobody asked for, and no invented remedy.
       expect(text, `${view} editorialised`).not.toMatch(/try again later|contact|sorry|don't worry/i);
     }
@@ -319,91 +339,57 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    const bar = container.querySelector(".sync-bar");
+    // The strip is the frame's one notice; the deck is the frame's main column.
+    const bar = connectionSaid(container);
     expect(bar).toBeTruthy();
-    // Structural, because "does not scroll away" cannot be measured in jsdom: the strip must
-    // be a sibling of the deck, so no view's overflow container is an ancestor of it.
-    expect(bar!.closest(".deck"), "the strip was rendered inside the deck").toBeNull();
+    expect(bar!.closest(".fr-main"), "the strip was rendered inside the deck").toBeNull();
     expect(bar!.closest(".view"), "the strip was rendered inside a view").toBeNull();
-    expect(bar!.parentElement!.classList.contains("shell")).toBe(true);
+    expect(bar!.closest(".oh-railfoot, .fr-railfoot, .fr-noticebar") !== null).toBe(true);
   });
 
-  /**
-   * ── THE COPY THAT IS ACTUALLY ON SCREEN AT A DESKTOP WIDTH ──────────────────────────────
-   *
-   * The sentence is rendered in two places and the stylesheet shows one of them: the rail's own
-   * line wherever the rail is standing (at 1024px and up), the strip and the corner pill wherever it
-   * is not. Every assertion above this one reads the STRIP — which is the copy the stylesheet
-   * hides at every width a desktop browser is ever at.
-   *
-   * So the coverage had a hole the exact size of the product: deleting the rail's line from
-   * `AppShell` left this whole file green while a failing sync said nothing at all on any screen
-   * wider than 1023px. Found from a real browser at 1440, where a failing drain was reported
-   * correctly in the rail and every DOM query that took the first match in document order got the
-   * hidden strip instead.
-   *
-   * jsdom applies no stylesheet, so "which one is visible" is not a question that can be asked
-   * here — `sync-notice-one-copy.test.ts` answers it against `app.css` itself. What IS assertable
-   * here, and is the half that was missing, is that the rail placement EXISTS and carries the
-   * same sentence: with both halves pinned, neither can be deleted in silence.
-   */
+  /* At a desktop width the frame's one notice stands in the rail's foot: the rail's line and the strip are one node. */
   it("the RAIL carries the same sentence — the copy the stylesheet shows at 1024px and up", async () => {
     const container = await shell();
     expect(rowCount(container), "the fixture never landed").toBeGreaterThan(0);
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    const rail = container.querySelector(".rail-sync");
+    const said = connectionSaid(container);
+    const rail = said?.closest("nav") ? said : null;
     expect(
       rail,
       "the rail has no sync line, so at 1024px and up — every desktop browser — a failing sync is " +
         "reported nowhere: the strip that says it is hidden at exactly those widths",
     ).toBeTruthy();
     expect(rail!.textContent ?? "", "the rail's line said something other than the failure")
-      .toContain(messages.sync.failing);
+      .toContain(FAILING);
 
-    // The two shapes are one derivation, so they cannot disagree about the state. Asserted
-    // rather than assumed: two independent switches over the same states is the drift
-    // `SyncBar.tsx` spends forty lines arguing against, and this is where it would show.
-    expect(container.querySelector(".sync-bar")!.getAttribute("role"))
+    expect(connectionSaid(container)!.getAttribute("role"))
       .toBe(rail!.getAttribute("role"));
 
-    // It is inside the rail and NOT inside any view, so no list's scroller can carry it off —
-    // the same structural claim the strip is held to, made where the rail's copy lives.
-    expect(rail!.closest(".rail"), "the rail's sync line is not in the rail").toBeTruthy();
+    expect(rail!.closest("nav"), "the rail's sync line is not in the rail").toBeTruthy();
     expect(rail!.closest(".view"), "the rail's sync line was rendered inside a view").toBeNull();
   });
 });
 
 describe("terminal is not retrying", () => {
   it("a refusal no retry can fix says the loop has STOPPED, and offers the one remedy", async () => {
-    const container = await shell();
+    /* The web's host hands a way back (CloudShell: Sign in leads to the sign-in page); so does this one. */
+    const recover = vi.fn<(how: "signIn" | "reload") => void>();
+    const container = await shell(recover);
     expect(rowCount(container)).toBeGreaterThan(0);
 
-    // A 401 arrives from `HttpAdapter` as a MutationRejectedError with `retryable: false`
-    // which is what `terminal` means: a revoked session, a deleted account.
-    //
-    // ── THE BODY IS NOW LOAD-BEARING, AND THIS FIXTURE WAS STALE ─────────────────────────
-    // This read `new Response("{}", { status: 401 })` and went red when the auth-latch fix narrowed
-    // `isTerminalRefusal` to `retryable === false && (401||403) && code !== null`. A bare `{}`
-    // carries no envelope, so `code` is null — and under that narrowing a code-less 401 is
-    // deliberately NOT terminal, because it is the shape Vercel's deployment protection and a
-    // mid-alias `DEPLOYMENT_NOT_FOUND` return, which used to stop a signed-in user's sync
-    // permanently. So the OLD fixture was asserting the very defect that fix removed.
-    //
-    // The assertions below are unchanged and the test's claim is unchanged: a genuine refusal
-    // says STOPPED. Only the stimulus is corrected to what our API actually sends — the
-    // `errorResponse` envelope from `packages/api/src/middleware.ts:212`, verified to be the ONLY
-    // 401 the webapp's paths can produce, so `code` is always present on a real one.
+    // A 401 arrives from `HttpAdapter` as a MutationRejectedError with `retryable: false`, which is what
+    // `terminal` means: a revoked session, a deleted account. The body is load-bearing: a code-less 401 is
+    // deliberately NOT terminal (deployment protection and a mid-alias return send it), so the stimulus is
+    // the `errorResponse` envelope our API actually sends.
     answer = () =>
       new Response(JSON.stringify({ error: { code: "unauthorized", message: "authentication required" } }), {
         status: 401,
         headers: { "content-type": "application/json" },
       });
-    /* …AND THE REFRESH DOOR REFUSES TOO, which is what makes it a refusal no retry can fix. The
-       catch-all answered it `200 {}`, a renewal that learned nothing; since a renewal fault answers
-       offline (WEB-PRESS-REFUSED-ON-A-RENEWAL-FAULT-WHERE-THE-DESKTOP-KEEPS-IT, accepted), only a
-       refused renewal leaves the 401 standing, so the stimulus says so. */
+    /* …and the refresh door refuses too, which is what makes it a refusal no retry can fix: a renewal fault
+       answers offline, so only a refused renewal leaves the 401 standing. */
     refreshAnswer = () =>
       new Response(JSON.stringify({ error: { code: "refresh_expired", message: "refresh token expired" } }), {
         status: 401,
@@ -411,77 +397,57 @@ describe("terminal is not retrying", () => {
       });
     await tick(30_000);
 
-    // ── THE INTERMEDIATE STATE, ADDED BY THAT CHANGE — AND IT IS NOT A RETIMING ─────────────────
-    //
-    // This test used to assert "Sync stopped" right here, after 30 s. It now asserts the opposite
-    // first, because the contract changed: it was reported that "Sync stopped — this session is
-    // no longer authorized" appears and clears by itself, so the STRONG claim now waits for the
-    // server to re-make the refusal one `REFUSAL_CONFIRM_MS` later. Simply advancing the clock and
-    // keeping the old assertions would have shipped the whole new state with no coverage at the
-    // one seam that matters — what the user is actually reading while it holds.
-    //
-    // WHAT IT MUST BE, and the three things it must not — the whole confirm seam in one place.
-    //
-    // It must NOT be silence: a refusal answered with nothing on screen is the 32 minutes of
-    // 2026-08-03 in a different costume, so a `.sync-bar` HAS to be present and this assertion
-    // fails the instant the confirm window goes truly empty again. It must NOT be the scary
-    // "Sync failed. Retrying." — that was reported flashing over a healthy transient, and the
-    // confirm window exists to keep it off a refusal that resolves inside it. And it must NOT be
-    // the strong `stopped` claim, which one request has not yet earned. What is LEFT is the calm
-    // true sentence the `catchingUp` arm renders: "Catching up…", a `status` region, no alert.
-    const bar = container.querySelector(".sync-bar");
+    // THE CONFIRM WINDOW. Not silence (a refusal answered with nothing on screen), not the failure sentence
+    // (it flashed over a healthy transient), and not the strong signed-out claim, which one request has not
+    // earned. What is left is the calm true sentence: catching up, a status, no alert.
+    const bar = connectionSaid(container);
     const during = container.textContent ?? "";
     expect(bar, "a coded refusal was answered with silence for a minute").toBeTruthy();
-    expect(during, "the calm confirm-window sentence never appeared").toContain("Catching up");
-    expect(during, "the scary failure banner flashed over an unconfirmed refusal")
-      .not.toContain(messages.sync.failing);
-    expect(during, "the strong stopped claim was made on one request").not.toContain("Sync stopped");
-    expect(
-      bar!.classList.contains("stopped"),
-      "one request told a signed-in user they are no longer authorized",
-    ).toBe(false);
+    expect(during, "the calm confirm-window sentence never appeared")
+      .toContain(messages.frame.connection.behind.title);
+    expect(during, "the failure sentence flashed over an unconfirmed refusal").not.toContain(FAILING);
+    expect(during, "the strong stopped claim was made on one request").not.toContain(STOPPED);
+    expect(stoppedSaid(container), "one request told a signed-in user they are signed out").toBeNull();
     expect(bar!.getAttribute("role")).toBe("status");
+    expect(container.querySelector("[role='alert']")).toBeNull();
 
-    // One confirm is refused the same way — and the claim STILL may not be made: sixty seconds
-    // cannot tell "revoked" from "mid-deploy" (a real subscriber sat behind the quit-and-reopen
-    // banner through a ~6-minute deploy window, ruling 2026-08-21). The calm sentence holds.
+    // One confirm refused the same way, and the claim STILL may not be made: sixty seconds cannot tell
+    // "revoked" from "mid-deploy". The calm sentence holds.
     await tick(61_000);
-    expect(container.textContent ?? "", "one minute of refusal made the strong claim")
-      .not.toContain("Sync stopped");
+    const afterOne = container.textContent ?? "";
+    expect(afterOne, "one minute of refusal made the strong claim").not.toContain(STOPPED);
+    expect(afterOne).toContain(messages.frame.connection.behind.title);
 
-    // Re-made on every confirm across the whole sustain window ⇒ NOW the claim may be made.
+    // Re-made on every confirm across the whole sustain window: NOW the claim may be made.
     await tick(REFUSAL_SUSTAIN_MS);
 
     const text = container.textContent ?? "";
-    expect(text).toContain("Sync stopped");
-    // THE CLAIM UNDER TEST. The loop has disarmed itself; saying "Retrying." here would be
-    // a false statement about what the app is doing.
-    expect(text, "a stopped loop claimed to be retrying").not.toContain("Retrying.");
-    expect(container.querySelector(".sync-bar.stopped")).toBeTruthy();
-    expect(container.querySelector<HTMLAnchorElement>(".sync-bar.stopped a")!.getAttribute("href"))
-      .toBe("/login");
+    expect(text).toContain(STOPPED);
+    // THE CLAIM UNDER TEST. The loop has disarmed itself; saying it reconnects would be false.
+    expect(text, "a stopped loop claimed to be retrying").not.toContain(FAILING);
+    expect(stoppedSaid(container)).toBeTruthy();
+    // The one remedy: the host's own Sign in, which the host is asked for with "signIn".
+    const words = messages.frame.connection;
+    const signIn = [...stoppedSaid(container)!.querySelectorAll("button")].find((b) => b.textContent === words.act.signIn);
+    expect(signIn, "a stopped loop offered no way back").toBeDefined();
+    expect(recover).not.toHaveBeenCalled();
+    await act(async () => { signIn!.click(); });
+    expect(recover.mock.calls).toEqual([["signIn"]]);
     // Terminal is the one sync state worth interrupting for; retrying is not.
-    expect(container.querySelector(".sync-bar")!.getAttribute("role")).toBe("alert");
+    const alert = container.querySelector("[role='alert']");
+    expect(alert?.textContent ?? "").toContain(STOPPED);
   });
 
   it("a PLATFORM 401 with no envelope keeps retrying — it must never say STOPPED", async () => {
-    // at the rendered-shell seam. `sync-liveness.test.ts` asserts this at the
-    // SCHEDULER seam (does the loop keep issuing requests); this asserts what the user is TOLD,
-    // which is the half the report actually complained about: a signed-in user reading
-    // "this session is no longer authorized. Sign in" while every endpoint answered 200.
-    //
-    // It exists because correcting the fixture above would otherwise have deleted the only
-    // coverage of the code-less case from this file. A bare 401 is what deployment protection and
-    // a mid-alias 404 return — transient infrastructure, not a revoked session.
     const container = await shell();
     answer = () => new Response("{}", { status: 401 });
     await tick(30_000);
 
     const text = container.textContent ?? "";
-    expect(text, "a platform 401 told a signed-in user their session was revoked").not.toContain("Sync stopped");
-    expect(container.querySelector(".sync-bar.stopped")).toBeNull();
+    expect(text, "a platform 401 told a signed-in user their session was revoked").not.toContain(STOPPED);
+    expect(stoppedSaid(container)).toBeNull();
     // And it must not silently render nothing either: the honest state is "retrying".
-    expect(container.querySelector(".sync-bar")!.getAttribute("role")).toBe("status");
+    expect(connectionSaid(container)!.getAttribute("role")).toBe("status");
   });
 
   it("a RETRYABLE outage renders the retrying strip, not the stopped one", async () => {
@@ -491,9 +457,9 @@ describe("terminal is not retrying", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    expect(container.querySelector(".sync-bar")).toBeTruthy();
-    expect(container.querySelector(".sync-bar.stopped")).toBeNull();
-    expect(container.querySelector(".sync-bar")!.getAttribute("role")).toBe("status");
+    expect(connectionSaid(container)).toBeTruthy();
+    expect(stoppedSaid(container)).toBeNull();
+    expect(connectionSaid(container)!.getAttribute("role")).toBe("status");
   });
 });
 
@@ -502,7 +468,7 @@ describe("a healthy sync says nothing", () => {
     const container = await shell();
     // Ten minutes of successful eight-second polls.
     await tick(600_000);
-    expect(container.querySelector(".sync-bar"), "the shell shouted at a healthy mailbox").toBeNull();
+    expect(connectionSaid(container), "the shell shouted at a healthy mailbox").toBeNull();
     expect(container.textContent ?? "").not.toContain("Sync");
   });
 
@@ -519,19 +485,20 @@ describe("a healthy sync says nothing", () => {
 
     // 1 s and 2 s ceilings at the mocked draw — both failures have happened by here.
     await tick(11_000);
-    expect(container.querySelector(".sync-bar"), "two failures were reported as an outage").toBeNull();
+    expect(connectionSaid(container), "two failures were reported as an outage").toBeNull();
   });
+
 
   it("and the strip GOES when the mailbox recovers", async () => {
     let failing = true;
     answer = () => (failing ? new Response("{}", { status: 503 }) : populated());
     const container = await shell();
     await tick(30_000);
-    expect(container.querySelector(".sync-bar")).toBeTruthy();
+    expect(connectionSaid(container)).toBeTruthy();
 
     failing = false;
     await tick(120_000);
-    expect(container.querySelector(".sync-bar"), "a recovered mailbox kept the failure on screen")
+    expect(connectionSaid(container), "a recovered mailbox kept the failure on screen")
       .toBeNull();
   });
 });

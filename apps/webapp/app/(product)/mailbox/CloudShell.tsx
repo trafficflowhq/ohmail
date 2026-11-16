@@ -1,45 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
-import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
 import { buildToken } from "@ohmail/app-logic/doors/app-update";
 import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
 import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
-import { useResolvedDemoModeFrom } from "../../shell/engine";
-import { sendSurfaceFor } from "./send-surface";
+import { EngineProvider, useEngine, useResolvedDemoMode, useResolvedDemoModeFrom } from "../../shell/engine";
+import { TodaysFrame } from "../../shell/TodaysFrame";
+import { NO_TODAYS } from "../../shell/todays-inputs";
+import { useTodaysSupplies } from "../../shell/todays-supplies";
+import { DemoFrame, DemoShell } from "../demo/DemoShell";
+import { SEND_SURFACE, useWebHost, webRecover, type WebWords } from "./web-supplies";
 import {
-  ApiError, api, apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
+  apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
-import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
-import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
-import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
-import { AboutSection } from "./AboutSection";
 import { AccessLock } from "./AccessLock";
 import { ErasedWall } from "./ErasedWall";
 import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { useRevokedHere } from "../../revoked-door";
 import { AccountLocale } from "./AccountLocale";
-import { AiSection } from "./AiSection";
-import { LifecycleBanner } from "./LifecycleBanner";
-import { CloudStorageNotice } from "./CloudStorageNotice";
-import { StorageSection } from "./StorageSection";
 import { useCloudStorage } from "./storage-change";
-import { ReuseSweepStrip } from "./ReuseSweepStrip";
-import { DevicesSection, useDevicePairing } from "./DevicesSection";
-import { InvitesSection, useUserInvites } from "./InvitesSection";
-import { SecuritySection } from "./SecuritySection";
-import { AccountSection } from "./AccountSection";
-import { PasswordSection } from "./PasswordSection";
-import { MailboxSection } from "./MailboxSection";
-import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
+import { DevicesSection, useServerWords } from "./DevicesSection";
+import { useUserInvites } from "./InvitesSection";
+import { useManageOffer } from "./SubscriptionSection";
 import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcome } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
@@ -67,22 +57,11 @@ import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
 pendApiOwner(readOwner());
 beginOAuthReturn();
 
-/** The staged ceiling where this page can PUT the files, else none (`send-surface.ts`). Compiled. */
-const SEND_SURFACE = sendSurfaceFor(SELF_HOST_BUILD, process.env.NEXT_PUBLIC_STAGING_ORIGIN);
-
-/** Load it now on the Cloud API: the letter's text for this view, from `GET /messages/:id/live-body`. */
-const liveBodyOverApi: LiveBodyWire = async (messageId) => {
-  try {
-    return liveBodyLoaded(await api<unknown>(liveBodyPath(messageId)));
-  } catch (err) {
-    return liveBodyRefused(err instanceof ApiError ? err.status : 0);
-  }
-};
-
-/** Settings → Mailboxes' waiting filings, on the Cloud API. Module scope: one identity per load. */
-const filingsApi: MailboxFilingsApi = {
-  read: mailboxApi.filings, retry: mailboxApi.retryFilings, leave: mailboxApi.leaveFilings,
-};
+/** What the demo says of itself when `?demo=1` boots through this page: this build's service and send ceiling. */
+const DEMO_SAYS = {
+  service: SELF_HOST_BUILD ? "self" : "managed",
+  sendCeiling: SEND_SURFACE === undefined ? "strict" : SEND_SURFACE === null ? "mailbox" : SEND_SURFACE,
+} as const;
 
 /** The account this tab is for, confirmed or pending: the doors' when the jar names nobody. */
 function tabAccount(): string | null {
@@ -100,7 +79,14 @@ function tabAccount(): string | null {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo }: { demo: boolean }) {
+export function CloudShell({ demo, drawMail }: {
+  demo: boolean;
+  /**
+   * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
+   * named a full session). Absent is the warm open as before, for the harnesses that mount this shell directly.
+   */
+  drawMail?: "now" | "wait";
+}) {
   /**
    * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
    *
@@ -208,7 +194,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * round trip and grows no pane whose every verb mutates real credentials — the hook's own
    * header carries the measured leak this closed.
    */
-  const devicePairing = useDevicePairing(resolvedDemo);
+  const server = useServerWords(resolvedDemo);
+  const devicePairing = server.pairing;
 
   /**
    * The first-run flow's door — the same seam as the panes below, one layer up. `AppShell` renders
@@ -295,89 +282,51 @@ export function CloudShell({ demo }: { demo: boolean }) {
   if (firstPaint === "hydrating") return <FirstFrame />;
   if (firstPaint === "asking") return <WaitGate />;
 
+  /* THE DEMO, booted by `?demo=1`: the invented world's host, never the hosted wires (`demo/host.ts`). */
+  if (resolvedDemo) {
+    return (
+      <AccountLocale>
+        <DemoShell serverDemo={demo} says={DEMO_SAYS} />
+      </AccountLocale>
+    );
+  }
+
+  const words: WebWords = {
+    server, invites: userInvites, subscriptionPage: manageOffered, withdrawManage, storageBlock: storageOffered,
+    account: accountId, firstRun, mailboxFacts, resolve: resolveOwner, confirmed: onConfirmed,
+  };
   return (
     <AccountLocale>
-      <AppShell
-        demo={demo}
-        /* A self-hosted server is not the managed service: it names no Cloud holder and meters no
-           credits (`managed-service.ts`). */
-        managedService={!SELF_HOST_BUILD}
-        resolveOwner={resolveOwner}
-        /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
-           binding cannot live inside `resolveOwnerOutcome`. */
-        onConfirmed={onConfirmed}
-        /* WITHHELD ON THE DEMO, and this is the shared shell's own rule rather than a new one:
-           an absent probe already MEANS "no roster and never will be — the desktop, the demo",
-           and the host is the only thing that knows which it is. Handed over unconditionally,
-           a prerendered `?demo=1` page put `GET /mailboxes` on the wire and polled it. */
-        mailboxFacts={resolvedDemo ? undefined : mailboxFacts}
-        /* ACKNOWLEDGING THE ORGANIZER NOTICE, which the shared shell cannot do for itself: the
-           publish denies it `app/api-client`, so the route is reached from here on this door and
-           from the window's own pipe on the desktop. One route, two transports, one sentence.
-
-           `demo` keeps its own gate inside the shell — a fixture world has no row to stamp — so
-           this is handed over unconditionally. `mailboxFacts` above is NOT: it is a read, and a
-           read is withheld rather than gated downstream. */
-        organizerNoticeTransport={(id) => mailboxApi.dismissOrganizerNotice(id)}
-        gapLettersTransport={(id, answer) => mailboxApi.answerGapLetters(id, answer)}
-        /* What a send from this window rides — the staging bucket's
-           per-object ceiling. Declaring nothing meant the 3 MB constant,
-           true while attachment bytes rode the send request base64;
-           `createEngine` now builds this adapter with
-           `stageAttachments: true`, so oversized files go to storage as
-           references. `null` (explicitly uncapped) went one step too far:
-           the bucket refuses an over-size object in the browser's own PUT,
-           with an unfixable "try again". So the surface is the bucket's
-           ceiling, applied server-side at the mint too. The desktop's cloud
-           door keeps the constant: it forwards verbatim (`DesktopGate.tsx`).
-           Declared only where this page can PUT the files (`send-surface.ts`). */
-        {...(SEND_SURFACE !== undefined ? { sendSurfaceMaxTotalBytes: SEND_SURFACE } : {})}
-        /* The password change sits above the account's own cards, managed and self-hosted alike;
-           the wall (`AccessLock`) opens the same pane. */
-        accountSection={<><PasswordSection /><AccountSection /></>}
-        securitySection={<SecuritySection />}
-        mailboxSection={<><MailboxSection subscriptionPane={manageOffered} /><MailboxFilings api={filingsApi} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
-        /* UNCONDITIONAL, unlike the row below it: every host this shell runs on has an account
-           and mounts `GET/PATCH /account/ai`, including a self-hosted server whose operator pays
-           the model bill themselves. `AppShell` withholds it on the demo. */
-        aiSection={<AiSection />}
-        /* ONE GENERIC ROW, and only where the service supplies a page for it. This app holds no
-           plan, no balance and no payment method, so it states none of them; the row is a door
-           out. Same absence rule as `invitesSection` below — see `manageOffered`. `withdrawManage`
-           is the press's other answer: a mint with nowhere to go takes the entry away. */
-        billingSection={manageOffered ? <SubscriptionSection onNowhere={withdrawManage} /> : undefined}
-        /* SETTINGS → STORAGE, the card atop the Ohbox and Load it now: where a cap meters the text. */
-        storageSection={!resolvedDemo && storageOffered ? <StorageSection /> : undefined}
-        storageCard={resolvedDemo ? undefined : <CloudStorageNotice />}
-        liveBodyWire={resolvedDemo || SELF_HOST_BUILD ? undefined : liveBodyOverApi}
-        /* THE ACCOUNT'S OWN STRIP — a trial running out, a payment that failed, the catch-up
-           after a closure lifts. Cloud-only by the same absence rule as the panes: the shared
-           shell renders the node and cannot read `GET /account/access` itself, and the demo has
-           no account to say anything about.
-
-           `resolvedDemo`, although this gate is RENDERED: the strip is absent from the DOM until
-           its read answers, so both sides of the hydration render draw nothing and the markup
-           cannot disagree. That is what licenses it here and nowhere the node paints at once —
-           measured, not assumed: on a prerendered demo page this was a live `GET /account/access`
-           the row that found the other five never named. */
-        /* …and under it the sign-ins ohmail ended because an older copy used them again (Cloud and self-host). */
-        accountNotice={resolvedDemo ? undefined : <><LifecycleBanner /><ReuseSweepStrip /></>}
-        /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
-           answer still pending) means no nav entry, never an empty pane. */
-        invitesSection={userInvites ? <InvitesSection /> : undefined}
-        /* WHEREVER `/hello` says the server pairs devices — managed and self-host both, since
-           each mounts the device-pair ceremony. Same absence rule as the invites pane. */
-        devicesSection={devicePairing ? <DevicesSection /> : undefined}
-        aboutSection={<AboutSection />}
-        /* Help & contact names ohmail's support, so a self-host build, whose operator runs the server, has none. */
-        support={resolvedDemo || SELF_HOST_BUILD ? undefined : {
-          surface: "web", version: process.env.NEXT_PUBLIC_APP_VERSION, commit: process.env.NEXT_PUBLIC_BUILD, accountId,
-        }}
-        /* THE FIRST-RUN STAGE'S CALLS. Withheld on the demo — see `useCloudFirstRun`. */
-        {...(firstRun ? { firstRun } : {})}
-      />
+      {/* The classifier answers; `onConfirmed` commits (see `EngineProvider.onConfirmed`). The page's word for the
+          first frame goes to the provider alone: under `wait` nothing of the frame mounts before the check. */}
+      <EngineProvider demo={demo} resolveOwner={resolveOwner} onConfirmed={onConfirmed} drawMail={drawMail}>
+        <WebFrame words={words} />
+      </EngineProvider>
     </AccountLocale>
   );
+}
+
+/**
+ * THE WEB'S FRAME, inside its engine: the host built from what the page learned, and today's views in it. Where the
+ * engine it stands on is the demo's (the mode changed after mount), the demo's host, so no hosted wire ever reaches
+ * the invented world.
+ */
+function WebFrame({ words }: { words: WebWords }) {
+  const demoNow = useResolvedDemoMode();
+  if (demoNow) return <DemoFrame says={DEMO_SAYS} />;
+  return <SignedInFrame words={words} />;
+}
+
+function SignedInFrame({ words: given }: { words: WebWords }) {
+  const engine = useEngine();
+  const frame = useTodaysSupplies(webRecover);
+  /* The words are memoized on their parts: an entry render with nothing changed hands the frame the same host. */
+  const words = useMemo(() => given, [
+    given.server, given.invites, given.subscriptionPage, given.withdrawManage, given.storageBlock, given.account,
+    given.firstRun, given.mailboxFacts, given.resolve, given.confirmed,
+  ]);
+  const host = useWebHost(engine, words, frame);
+  return <TodaysFrame host={host} todays={NO_TODAYS} />;
 }
 
 const noSubscription = () => () => {};

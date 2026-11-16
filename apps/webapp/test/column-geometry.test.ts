@@ -51,7 +51,6 @@ import {
 
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const APP = read("apps/webapp/app/app.css");
-const HANDLES = read("apps/webapp/app/shell/column-handles.css");
 const ZERO = read("apps/webapp/app/zero-layout.css");
 
 /** The declarations of the rule whose selector list starts a line with exactly `selector`. */
@@ -99,39 +98,6 @@ describe("app.css — the two properties the columns hang on, and the numbers th
     const foot = blockOf(APP, ".gate-boot > .boot-foot");
     expect(foot).toContain(`width: ${RAIL_TRACK};`);
     expect(foot).toContain("left: var(--gap-edge);");
-  });
-});
-
-describe("column-handles.css — appearance only, tokens only, and no width of its own", () => {
-  it("the visible line is the ring product, floored at a hairline", () => {
-    // The SAME product `zone-cursor.css` builds the focused tile's ring from: 0 × the face's
-    // width under paper (so the floor gives a hairline), 1 × 2px under ohmarchy.
-    expect(blockOf(HANDLES, ".col-handle::before")).toContain(
-      "width: max(1px, calc(var(--focus-w) * var(--teach)));",
-    );
-  });
-
-  it("the strip is exactly one tile gap wide, and the rail's sits where the deck's track ends", () => {
-    expect(blockOf(HANDLES, ".col-handle")).toContain("width: var(--gap-tile);");
-    // `--rail-track` and NOT a second copy of clamp(200,224,360): a handle that drifted from
-    // the track it marks would sit in the mail rather than in the seam.
-    const railHandle = blockOf(HANDLES, ".col-handle-rail");
-    expect(railHandle).toContain("left: calc(var(--gap-edge) + var(--rail-track));");
-    // The deck's containing block is its PADDING box, so an uninset strip runs past the tiles
-    // into the window frame — a resize cursor and a line over nothing.
-    expect(railHandle).toContain("top: var(--gap-edge);");
-    expect(railHandle).toContain("bottom: var(--gap-edge);");
-    expect(blockOf(HANDLES, ".col-handle-list")).toBe("right: calc(-1 * var(--gap-tile));");
-  });
-
-  it("names no face and no layout — paper is quieter because --teach is 0, not by a second rule", () => {
-    expect(HANDLES).not.toMatch(/data-face|data-layout/);
-  });
-
-  it("below the wide breakpoint there is no seam, so there is no handle and no tab stop", () => {
-    expect(HANDLES).toMatch(
-      /@media \(max-width: 1023\.98px\) \{\s*\.col-handle-rail,\s*\.col-handle-list \{\s*display: none;/,
-    );
   });
 });
 

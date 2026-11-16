@@ -72,19 +72,31 @@ const OVERLAYS: Record<Overlay, () => Promise<{ default: unknown }>> = {
  * choice and losing it is not worth a crash.
  */
 export async function loadCatalog(locale: AppLocale): Promise<Messages> {
+  const over = overlayOf(locale);
   const base = await english();
-  if (locale === DEFAULT_LOCALE) return base;
+  if (over === null) return base;
   try {
-    return await filled(locale, base);
+    return await filled(over, base);
   } catch {
     return base;
   }
 }
 
+/**
+ * `locale`'s file, asked at once BESIDE English rather than after it: on a slow line the second file used to start
+ * only when the first had landed, and the German first frame waited for both in a row. Null for English. A failure
+ * is held for the caller to read, never reported unhandled while English is still on its way.
+ */
+function overlayOf(locale: AppLocale): Promise<Messages> | null {
+  if (locale === DEFAULT_LOCALE) return null;
+  const asked = OVERLAYS[locale as Overlay]().then((m) => m.default as Messages);
+  asked.catch(() => undefined);
+  return asked;
+}
+
 /** `locale`'s file filled over English; a file that cannot be loaded rejects. */
-async function filled(locale: AppLocale, base: Messages): Promise<Messages> {
-  const over = (await OVERLAYS[locale as Overlay]()).default as Messages;
-  return fillFrom(base as never, over as never) as Messages;
+async function filled(over: Promise<Messages>, base: Messages): Promise<Messages> {
+  return fillFrom(base as never, (await over) as never) as Messages;
 }
 
 /**
@@ -94,6 +106,7 @@ async function filled(locale: AppLocale, base: Messages): Promise<Messages> {
  * than being switched to English for the session.
  */
 export async function loadWholeCatalog(locale: AppLocale): Promise<Messages> {
+  const over = overlayOf(locale);
   const base = await english();
-  return locale === DEFAULT_LOCALE ? base : filled(locale, base);
+  return over === null ? base : filled(over, base);
 }

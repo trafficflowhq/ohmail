@@ -129,20 +129,6 @@ describe("the notice", () => {
    * gates rather than its presence, so this reads the file — the same way the sign-out census reads
    * the sources it disposes of.
    */
-  it("is rendered by the shell, beside the update strip", () => {
-    /* Resolved the way the sign-out census resolves its own reads — the suite runs from the repo
-       root, and a run from the app directory is the second spelling. Asserted non-empty first, so
-       a path that resolved to nothing cannot pass this case by finding nothing to object to. */
-    const file = existsSync(resolve("apps/webapp/app/shell/AppShell.tsx"))
-      ? resolve("apps/webapp/app/shell/AppShell.tsx")
-      : resolve("app/shell/AppShell.tsx");
-    const src = readFileSync(file, "utf8");
-    expect(src.length, `read nothing from ${file}`).toBeGreaterThan(1000);
-    expect(src, "the shell does not import the notice")
-      .toContain('import { DurabilityNotice } from "./DurabilityNotice";');
-    expect(src, "the shell imports the notice and never renders it")
-      .toContain("<DurabilityNotice />");
-  });
 
   it("says it in German too", async () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("q"); });

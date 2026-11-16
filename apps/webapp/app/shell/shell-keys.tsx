@@ -74,6 +74,10 @@ import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
  */
 export const frKeyOf = (item: TriagePileEntry): string => item.messageId ?? item.title;
 
+/** The keys that write and that search: one spelling for the binding, the palette, the rail and what a screen reader hears. */
+export const COMPOSE_CHORD = "c";
+export const SEARCH_CHORD = "/";
+
 /**
  * THE RAIL ROW ↔ THE TRIAGE PILE, stated once.
  *
@@ -525,7 +529,7 @@ export function useShellKeys({
       run: byKey(() => go("trash")),
     },
     { chord: "g ,", group: "navigate", label: t("shortcuts.goSettings"), run: byKey(() => go("settings")) },
-    { chord: "/", group: "navigate", label: t("shortcuts.search"), run: () => go("search") },
+    { chord: SEARCH_CHORD, group: "navigate", label: t("shortcuts.search"), run: () => go("search") },
     {
       /* Pull new mail — the doorbell's own verb, from the keyboard. The SAME single-flight
          `pull` the two PullNewMail buttons press, so the latch, the settle watch and the
@@ -537,7 +541,7 @@ export function useShellKeys({
       disabled: !pullBinding.available || pullBinding.pulling,
       run: () => pullBinding.pull(),
     },
-    { chord: "c", group: "app", label: t("shortcuts.compose"), run: () => goCompose() },
+    { chord: COMPOSE_CHORD, group: "app", label: t("shortcuts.compose"), run: () => goCompose() },
     {
       chord: "f",
       group: "message",
@@ -953,8 +957,8 @@ export function useShellKeys({
           go("triage");
         },
       },
-      { id: "search", label: t("palette.search"), keys: ["/"], run: () => go("search") },
-      { id: "compose", label: t("palette.newMessage"), keys: ["c"], run: () => goCompose() },
+      { id: "search", label: t("palette.search"), keys: [SEARCH_CHORD], run: () => go("search") },
+      { id: "compose", label: t("palette.newMessage"), keys: [COMPOSE_CHORD], run: () => goCompose() },
       {
         /* THE DESTINATION ROW, reading the registry's own wording (`shortcuts.goTrash`) exactly
            as the four rows above it do — one message per destination, in the namespace the
@@ -1266,7 +1270,7 @@ export function useShellKeys({
            * adding `count: history.length` would look like an improvement.
            */
           { id: "history", label: t("rail.history"), title: t("rail.historySubtitle") },
-          { id: "search", label: t("rail.search"), kbdHint: "/" },
+          { id: "search", label: t("rail.search"), kbdHint: SEARCH_CHORD },
           /* DRAFTS CARRIES A COUNT and History deliberately does not, and the difference is what
              the number would mean. History's count would be the size of the past — always there,
              never a call to act. A draft is an unfinished thing this account started, so the

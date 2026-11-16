@@ -137,7 +137,7 @@ function zeroSetup(px: number): void {
 }
 
 async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
@@ -425,68 +425,46 @@ describe("the §4 walkthrough under the Zero layout, per §12 ladder rung", () =
 });
 
 /**
- * THE SIXTEENTH STEP — the two column separators join the walk.
+ * THE SIXTEENTH STEP — the rail's separator joins the walk. The frame draws the rail's separator on a desktop's width;
+ * the list's comes with a place that registers columns, which today's views do not, so it is not walked here.
  *
- * They are a new pair of tab stops in the middle of the shell, so the walkthrough owes two
- * answers: that a keyboard user can reach and drive them, and that having done so, every chord
- * the previous fifteen steps used still means what it meant. The second half is the one that
- * could quietly break: the handle's ←/→ are stopped before they reach the shell's document
- * listener, and a `stopPropagation` written one line too high would take EVERY key with them.
- *
- * Its own describe, at the split width only, deliberately: below 901 the seams do not exist
- * (`column-handles.css` hides both handles; the Zero ladder re-shows only the list's, from
- * 722) and jsdom applies no stylesheet, so a run at 390 here would drive a handle that a real
- * browser has taken off the screen — a green that claims the opposite of the truth. The widths
- * where they are hidden are covered by the rendered walk, not by this.
- *
- * `focus()` stands in for the Tab that lands on them, exactly as `activate()` does above:
- * jsdom implements no sequential focus navigation. What is asserted is that the element IS a
- * tab stop (`tabIndex` 0 on a `role="separator"`), which is the half jsdom can answer.
+ * A keyboard user can reach and drive it, and having done so every chord the walk used still means what it meant: the
+ * handle's ←/→ are stopped before they reach the shell's document listener, and a `stopPropagation` written one line
+ * too high would take EVERY key with them. `focus()` stands in for the Tab that lands on it.
  */
 describe("the separators are part of the keyboard walk", () => {
   const root = () => document.documentElement;
-  const handle = (c: HTMLElement, kind: "rail" | "list") =>
-    c.querySelector<HTMLElement>(`.col-handle-${kind}`);
+  const handle = () => document.querySelector<HTMLElement>('[role="separator"][aria-label="Sidebar width"]');
 
   const drive = async (container: HTMLElement) => {
     await waitFor(() => listRows(container).length > 0, "the demo Ohbox never grew rows");
-    await waitFor(
-      () => handle(container, "rail") != null && handle(container, "list") != null,
-      "neither separator reached the shell",
-    );
+    await waitFor(() => handle() != null, "the rail's separator never reached the frame");
+    const rail = handle()!;
+    expect(rail.getAttribute("aria-orientation")).toBe("vertical");
+    expect(rail.tabIndex, "the rail's separator must be a tab stop").toBe(0);
 
-    for (const kind of ["rail", "list"] as const) {
-      const el = handle(container, kind)!;
-      expect(el.getAttribute("role"), `the ${kind} separator's role`).toBe("separator");
-      expect(el.getAttribute("aria-orientation")).toBe("vertical");
-      expect(el.tabIndex, `the ${kind} separator must be a tab stop`).toBe(0);
-      expect(el.getAttribute("aria-label"), `the ${kind} separator must say what it is`).toBeTruthy();
-    }
-
-    // 16 · Tab to the rail's separator, → widens it, ⇧→ widens it coarsely, ⌫ puts it back.
-    const rail = handle(container, "rail")!;
+    // 16 · Tab to the rail's separator: → widens it, ← narrows it back. The kit's handle takes the arrows, Home and End
+    //      (no coarse step, no ⌫: a double-click resets it, held by the frame's own test).
     const zoneBefore = root().dataset.zone;
     await act(async () => rail.focus());
     const send = async (k: string, init: KeyboardEventInit = {}) => {
       await act(async () => {
-        rail.dispatchEvent(
-          new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
-        );
+        rail.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
       });
     };
+    const width = (): number => parseFloat(root().style.getPropertyValue("--rail-w"));
     await send("ArrowRight");
     expect(root().style.getPropertyValue("--rail-w"), "step 16: → did not widen the rail").toBe("240px");
     expect(rail.getAttribute("aria-valuenow")).toBeTruthy();
-    await send("ArrowRight", { shiftKey: true });
-    expect(root().style.getPropertyValue("--rail-w"), "step 16: ⇧→ did not take the coarse step").toBe("304px");
+    await send("End");
+    expect(width(), "step 16: End did not widen the rail to its widest").toBeGreaterThan(240);
     // The zone model's own ←/→ must not ALSO have fired: one press, one meaning.
     await send("ArrowLeft");
     expect(root().dataset.zone, "step 16: the arrows walked the zone as well as the rail").toBe(zoneBefore);
-    await send("Backspace");
-    expect(root().style.getPropertyValue("--rail-w"), "step 16: ⌫ did not reset the rail").toBe("");
+    await send("Home");
+    expect(width(), "step 16: Home did not narrow the rail").toBeLessThan(240);
 
-    // …and the registry's own chords are untouched by any of it. `g o` after the handle has
-    // held focus is the whole claim: the handler stopped its six keys, not the keyboard.
+    // …and the registry's own chords are untouched by any of it: `g o` after the handle held focus.
     await act(async () => rail.blur());
     await key("g");
     await key("o");

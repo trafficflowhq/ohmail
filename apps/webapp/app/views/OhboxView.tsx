@@ -109,7 +109,14 @@ export function OhboxView({
   bulk,
   older,
   onMarkAllRead,
+  whilePicking,
 }: {
+  /**
+   * What the shell mounts while the selection's bar stands at the list's foot: the part that tells the frame, which
+   * then draws no dock over the bar on a phone's width (`useSelectionBar`). A node, because this view is also mounted
+   * with no frame above it, by its tests.
+   */
+  whilePicking?: ReactNode;
   /**
    * A reply that just settled, or `null`. The view marks the answered message read; the move to
    * "Earlier" follows from that, through the same slide every other read takes. Optional so
@@ -802,19 +809,22 @@ export function OhboxView({
          */
         foot={
           picked.size > 0 ? (
-            <SelectionPill
-              ids={pickedIds}
-              count={pickedIds.length}
-              rows={pickedRowCount}
-              panel={pickPanel}
-              onPanel={setPickPanel}
-              onRun={runBulk}
-              onMarkSeen={markPicked}
-              onDelete={deletePicked}
-              bulk={bulk}
-              onDone={clearPicked}
-              onClear={clearPicked}
-            />
+            <>
+              {whilePicking}
+              <SelectionPill
+                ids={pickedIds}
+                count={pickedIds.length}
+                rows={pickedRowCount}
+                panel={pickPanel}
+                onPanel={setPickPanel}
+                onRun={runBulk}
+                onMarkSeen={markPicked}
+                onDelete={deletePicked}
+                bulk={bulk}
+                onDone={clearPicked}
+                onClear={clearPicked}
+              />
+            </>
           ) : null
         }
       >

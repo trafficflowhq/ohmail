@@ -36,7 +36,7 @@ const QUIET: MailState = {
 
 let current: MailState = QUIET;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -50,7 +50,7 @@ afterEach(async () => {
 
 async function render(state: MailState, locale: "en" | "de" = "en"): Promise<HTMLElement> {
   current = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -74,18 +74,19 @@ describe("the import strip names the folder a budgeted first sync is continuing 
   it("renders the sentence beside the count, and the same words are spoken", async () => {
     const el = await render({ ...IMPORTING, continuesAtFolder: "Archive/2019" });
     const text = el.textContent ?? "";
-    expect(text).toContain("120 of 4,000" + " messages");
+    expect(text).toContain("120 of 4,000"); // the count, in the frame's first-sync sentence
     expect(text).toContain("first sync continues at Archive/2019");
     // ONE derivation for both faces — the announcer reads the same string, so no wording change
     // can reach the line and miss the sentence a screen reader hears.
-    const spoken = [...el.querySelectorAll("[aria-atomic]")].map((n) => n.textContent ?? "");
+    // The frame's notice is the spoken region: a status, atomic by its role.
+    const spoken = [...el.querySelectorAll("[role='status']")].map((n) => n.textContent ?? "");
     expect(spoken.some((s) => s.includes("first sync continues at Archive/2019"))).toBe(true);
   });
 
   it("says nothing at all when no pass stopped — the count stands alone", async () => {
     const el = await render(IMPORTING);
     const text = el.textContent ?? "";
-    expect(text).toContain("120 of 4,000" + " messages");
+    expect(text).toContain("120 of 4,000"); // the count, in the frame's first-sync sentence
     expect(text).not.toContain("continues at");
     expect(text).not.toContain("·");
   });

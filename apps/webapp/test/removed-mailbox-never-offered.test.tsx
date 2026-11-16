@@ -60,7 +60,7 @@ async function launch(
   roster: MailboxFacts[], hash: string, withStage: boolean,
   trees: SyncChange[] = TWO_TREES, more: Parameters<typeof msg>[] = [],
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const s = await storeWith(
     [msg("m1", { mailboxId: A.id, subject: "Hello there" }), ...more.map((a) => msg(...a))],

@@ -64,45 +64,6 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
   afterEach(teardownShellEnv);
 
   /**
-   * THE MEASURED SHAPE. The drain settles on an empty page — which is what a cold client sees
-   * when the server has not yet handed it the account — while the mailbox facts say the import
-   * is running. `settled` is true, so every guard keyed on `settled` alone lets the pane speak.
-   *
-   * Mutation: `owed: state.key === "importing"` → `owed: false` in `deriveMailState`, or drop
-   * `pending: owed` from `OhboxView`'s `listInput`. Either restores the measured defect and
-   * this case goes red on the first assertion.
-   */
-  it("says nothing about emptiness over a mailbox the account is still importing", async () => {
-    // Mail in the mirror, none of it in the OHBOX — mail from senders nobody has screened sits
-    // in the Screener pile. That is the measured shape: thousands of messages mirrored and an Ohbox
-    // list that is empty for the first seconds, which is the window the pane spoke into. It is
-    // also the import floor's own premise (`mirrored > 0`): a PARTIAL mailbox, not an empty one.
-    answerSyncWith(() => page(3, "ohmail/Screener"));
-    const el = await mountShell([importing()]);
-    await tick(LOADING_GRACE_MS * 4);
-
-    expect(el.querySelectorAll(".row[data-id]").length, "the premise: no OHBOX rows").toBe(0);
-
-    expect(textOf(el), "the pane called a mid-import mailbox empty")
-      .not.toContain(OHBOX.emptyPlain);
-    // All three arms of the empty pane, because a fix that closed one would be the same lie in
-    // the other two — which is how the shipped one survived: `emptyPlain` was gated and the
-    // header count was not.
-    expect(textOf(el), "the pane called a mid-import mailbox empty, in the filed arm's words")
-      .not.toContain(OHBOX.emptyFiledTitle);
-    expect(textOf(el), "the pane called a mid-import mailbox empty, in the Screener's words")
-      .not.toContain(OHBOX.emptyScreenerTitle);
-    expect(textOf(el), "the header counted a mailbox that was still arriving")
-      .not.toMatch(UNREAD_META);
-    // And it is not silent: the pane says what it is doing, past the grace.
-    expect(textOf(el), "a blank column, which is the defect this answers wearing a hat")
-      .toContain(OHBOX.loading);
-    // The rail is the one surface allowed to say WHY — and it is saying it.
-    expect(textOf(el), "no surface explained why the list is withheld")
-      .toContain("Syncing your mail");
-  });
-
-  /**
    * THE SECOND HALF, and the one `metaWhen` cannot see: rows have landed, so the surface is
    * `content` — and the count is STILL a claim about the whole pile. This is the review's
    * "96 unread at 550 replayed", reproduced with rows on screen.
@@ -156,22 +117,18 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     await tick(LOADING_GRACE_MS * 4);
 
     expect(textOf(el), "an in-progress claim with nothing in progress behind it")
-      .not.toContain("Syncing your mail");
+      .not.toContain(messages.frame.connection.firstSync.title); // the strip's importing sentence, as the notice says it
     // …and the pane is free to speak again, which is what makes the two halves one fix. With
     // senders at the gate the honest arm is the Screener's, not the plain one.
     expect(textOf(el), "the list stayed withheld behind a claim that had ended")
       .toContain(OHBOX.emptyScreenerTitle);
   });
 
-  /**
-   * THE POSITIVE CONTROL FOR THE END CONDITION: still behind, still claiming. Without this the
-   * case above passes for a `mirrorCaughtUp` that returns `true` for everything.
-   */
   it("keeps the claim while the device is genuinely behind the account", async () => {
     answerSyncWith(() => page(3, "ohmail/Screener"));
     const el = await mountShell([importing()]);
     await tick(LOADING_GRACE_MS * 4);
-    expect(textOf(el), "a real import stopped being announced").toContain("Syncing your mail");
+    expect(textOf(el), "a real import stopped being announced").toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
   });
 
   /**
@@ -179,6 +136,7 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
    * floor is exactly what it was. `mirrorCaughtUp` is `false` there, never `true` by absence:
    * a missing number is not evidence that the import is done.
    */
+
   it("reads a missing total as no answer, not as caught up", async () => {
     answerSyncWith(() => page(3, "ohmail/Screener"));
     const el = await mountShell([
@@ -186,8 +144,47 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     ]);
     await tick(LOADING_GRACE_MS * 4);
     expect(textOf(el), "an absent count was read as a finished import")
-      .toContain("Syncing your mail");
+      .toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
   });
+
+  it("says nothing about emptiness over a mailbox the account is still importing", async () => {
+    // Mail in the mirror, none of it in the OHBOX — mail from senders nobody has screened sits
+    // in the Screener pile. That is the measured shape: thousands of messages mirrored and an Ohbox
+    // list that is empty for the first seconds, which is the window the pane spoke into. It is
+    // also the import floor's own premise (`mirrored > 0`): a PARTIAL mailbox, not an empty one.
+    answerSyncWith(() => page(3, "ohmail/Screener"));
+    const el = await mountShell([importing()]);
+    await tick(LOADING_GRACE_MS * 4);
+
+    expect(el.querySelectorAll(".row[data-id]").length, "the premise: no OHBOX rows").toBe(0);
+
+    expect(textOf(el), "the pane called a mid-import mailbox empty")
+      .not.toContain(OHBOX.emptyPlain);
+    // All three arms of the empty pane, because a fix that closed one would be the same lie in
+    // the other two — which is how the shipped one survived: `emptyPlain` was gated and the
+    // header count was not.
+    expect(textOf(el), "the pane called a mid-import mailbox empty, in the filed arm's words")
+      .not.toContain(OHBOX.emptyFiledTitle);
+    expect(textOf(el), "the pane called a mid-import mailbox empty, in the Screener's words")
+      .not.toContain(OHBOX.emptyScreenerTitle);
+    expect(textOf(el), "the header counted a mailbox that was still arriving")
+      .not.toMatch(UNREAD_META);
+    // And it is not silent: the pane says what it is doing, past the grace.
+    expect(textOf(el), "a blank column, which is the defect this answers wearing a hat")
+      .toContain(OHBOX.loading);
+    // The rail is the one surface allowed to say WHY — and it is saying it.
+    expect(textOf(el), "no surface explained why the list is withheld")
+      .toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
+  });
+
+  /**
+   * THE SECOND HALF, and the one `metaWhen` cannot see: rows have landed, so the surface is
+   * `content` — and the count is STILL a claim about the whole pile. This is the review's
+   * "96 unread at 550 replayed", reproduced with rows on screen.
+   *
+   * Mutation: replace `countWhen(listInput, …)` in `OhboxView`'s `meta` with the old
+   * `!settled && all.length === 0 ? undefined : …` and this goes red.
+   */
 });
 
 /**

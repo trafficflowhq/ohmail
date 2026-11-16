@@ -210,7 +210,7 @@ describe("a rule made on the organizer is revoked from this page, through the re
       organizedBy: { kind: "local", name: "Studio laptop", since: ISO }, organizerState: "held",
       organizeConsentedAt: ISO, organizerReleasedAt: null, organizerAcceptsRequests: true,
     }] as MailboxFacts[];
-    const { AppShell } = await import("../app/shell/AppShell.js");
+    const { AppShell } = await import("./_todays-shell.js");
     const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
     container = document.createElement("div");
     document.body.appendChild(container);

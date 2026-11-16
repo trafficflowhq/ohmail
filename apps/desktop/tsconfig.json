@@ -59,6 +59,7 @@
       "@tiptap/pm/transform": ["./node_modules/@tiptap/pm/transform"],
       "@tiptap/pm/view": ["./node_modules/@tiptap/pm/view"],
       "@ohmail/tokens/omarchy-rule": ["../../packages/tokens/omarchy/rule.ts"],
+      "@ohmail/tokens/design": ["../../packages/tokens/src/design/tokens.ts"],
       "@ohmail/tokens": ["../../packages/tokens/src/index.ts"],
       "@ohmail/testing/adapter": ["../../packages/testing/src/adapter.ts"],
       "@ohmail/testing": ["../../packages/testing/src/index.ts"],
@@ -73,12 +74,20 @@
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
+      "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
+      "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       /* Behaviour without a screen, and the host contract. Same story as the leaves above: in the
          published tree this map and `vite.config.ts`'s alias table are their only resolvers. A
          folder's door resolves as the folder; a moved file by its own name. */
       "@ohmail/app-logic/*": ["../../packages/app-logic/src/*"],
+      "@ohmail/app/host/browser": ["../../packages/app/src/host/browser/index.ts"],
       "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
+      "@ohmail/app/text/fill": ["../../packages/app/src/text/fill.ts"],
+      "@ohmail/app/frame/boot": ["../../packages/app/src/frame/boot-stamp.ts"],
+      "@ohmail/app/frame": ["../../packages/app/src/frame/index.ts"],
+      "@ohmail/app/text": ["../../packages/app/src/text/index.ts"],
+      "use-intl/core": ["./node_modules/use-intl/core.d.ts"],
       /* The wire's vocabulary: types only, imported by the client engine and erased at build. This
          install links no workspace package, so this line is what resolves it for `tsc --noEmit`. */
       "@ohmail/wire": ["../../packages/wire/src/index.ts"],
@@ -151,5 +160,5 @@
       "@trafficflow/core/diagnostics": ["../../packages/core/src/diagnostics/index.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "../paired-page/src", "vite.config.ts"]
 }

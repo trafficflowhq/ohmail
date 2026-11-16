@@ -390,7 +390,7 @@ class LaterTaskDisk extends MemoryMirrorStore {
 let wire: Array<{ kind: string; ids: string[]; unread?: boolean; via?: string }> = [];
 
 async function mountShell(engine: OhmailEngine): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);

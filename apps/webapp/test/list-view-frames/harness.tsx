@@ -13,7 +13,7 @@ import {
   type EngineMessage, type EngineMutation, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { AppShell } from "../../app/shell/AppShell";
+import { AppShell } from "../_todays-shell.js";
 import { TrashView } from "../../app/views/TrashView";
 import { AddressView } from "../../app/views/AddressView";
 import { KeymapProvider } from "../../app/shell/keymap";

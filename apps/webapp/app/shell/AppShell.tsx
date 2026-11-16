@@ -119,7 +119,6 @@ import { useFolderGoneSays } from "@ohmail/app-logic/lists/folder-gone";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
-import { OhboxWhereLine } from "./OhboxWhereLine";
 import { useOhboxVisitMark } from "@ohmail/app-logic/reading/ohbox-visit";
 import { usePileNote, type PileNoteSaid } from "@ohmail/app-logic/lists/pile-note";
 import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
@@ -160,27 +159,6 @@ import {
 import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
 import { RichEditor, preloadRichEditor } from "./RichEditorLazy";
 import { TagPicker, placePicker } from "./TagPicker";
-/**
- * THE SCHEME CONTROL'S THREE STATES, as LOOKUP TABLES rather than comparisons. Light, dark and
- * auto are appearance vocabulary, and a `preference === "system"` here would be a new
- * appearance branch for the one-UI census to disposition; a table keyed on the preference is
- * the same answer with nothing to argue. `dock.themeAuto` is the only one that takes an
- * argument — "Auto (dark)" — and the other two ignore it.
- */
-const SCHEME_GLYPH: Record<ThemePreference, IconName> = {
-  light: "sun",
-  dark: "moon",
-  system: "auto",
-};
-const SCHEME_STATE_KEY: Record<ThemePreference, string> = {
-  light: "dock.themeLight",
-  dark: "dock.themeDark",
-  system: "dock.themeAuto",
-};
-const SCHEME_WORD_KEY: Record<ResolvedTheme, string> = {
-  light: "dock.schemeLight",
-  dark: "dock.schemeDark",
-};
 
 import { ariaShortcut, KeymapProvider, useModGlyph } from "./keymap";
 /* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
@@ -190,16 +168,10 @@ import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import { ZoneCursor } from "./zone-nav";
 import { FocusFollows } from "./focus-follows";
 import "./zone-cursor.css";
-import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
-import { SyncBar } from "./SyncBar";
-import { SendingLine } from "./SendingLine";
 import { useMayHandOffFor } from "./send-handoff";
-import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
-import { UnsavedChanges } from "./UnsavedChanges";
-import { SendWaitsRelay, UpdateDot, UpdateLine, useUpdateOffer } from "./UpdateLine";
-import { DurabilityNotice } from "./DurabilityNotice";
+import { SendWaitsRelay } from "./UpdateLine";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
@@ -222,8 +194,8 @@ import { useShellVerbs } from "./shell-verbs";
 import { useShellKeys, frKeyOf, TRIAGE_PILE_OF_RAIL } from "./shell-keys";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
-import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
-import { GapLettersNotice, type GapLettersTransport } from "./GapLettersNotice";
+import type { OrganizerNoticeTransport } from "./OrganizerNotice";
+import type { GapLettersTransport } from "./GapLettersNotice";
 /* The organizer notice and the gap offer: their rows, their doors and when each is drawn. */
 import { useOrganizerLines } from "./organizer-lines";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
@@ -299,6 +271,10 @@ import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
+import { useFrame, useSelectionBar, type PaneProps } from "@ohmail/app/frame";
+import { useTodaysFixed } from "./TodaysFrame";
+import { useTodaysSignals } from "./todays-signals";
+import { useTodaysFeeds } from "./todays-feeds";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -428,47 +404,8 @@ function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
   );
 }
 
-/**
- * The rail, and the tag-collapse state that belongs to it. `tagsOpen` as `AppShell` state
- * caused the ~5s tag collapse twice over: the toggle re-rendered the whole shell (hundreds of
- * list rows), and the controlled `open` was baked into a `groups` memo whose deps did not list
- * it, so the group only caught up when something unrelated recomputed the memo. Holding the
- * state here re-renders only this component and `RailNav`, and `open` is injected fresh per
- * render. Persistence stays the shell's job (`RailNav` is shared with the desktop, which has no
- * localStorage); `usePersistedFlag` is SSR-safe and its post-mount read re-renders only the
- * rail.
- */
-/**
- * Where the "Get ohmail for desktop" prompt may appear — the signed-in
- * browser, only. `desktop` is the shell's platform tell: the desktop app
- * injects `desktopSection` (the pane only a native process can have), so
- * its presence IS "this build is the desktop app" — the prompt cannot show
- * inside the app it invites people to install. `demo` is excluded because
- * the demo is a shop window, and the shell renders only for the demo or a
- * validated session, so `!demo` in a browser is a signed-in reader. Pure
- * and exported so a test drives the branch as a value.
- */
-export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boolean {
-  return !opts.demo && !opts.desktop;
-}
-
-/**
- * localStorage key for a one-time dismissal of the desktop prompt.
- *
- * The stored value is `"1"` — `usePersistedFlag`'s own true — and the key predates the flag
- * moving up to `AppShell`, so installs that dismissed under the old in-component read keep
- * their dismissal.
- */
-export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
-
-/**
- * Where the browser's desktop prompt leads: the latest release page, which lists every platform's
- * installer and serves a self-hosted web app the same. `undefined` in the desktop window build
- * (`NEXT_PUBLIC_DESKTOP` is "1" there), which never shows the prompt: the address folds out of the
- * binary, whose inspection in build.yml admits only its named first-party endpoints.
- */
-export const DESKTOP_DOWNLOAD_URL: string | undefined =
-  process.env.NEXT_PUBLIC_DESKTOP === "1" ? undefined : "https://github.com/trafficflowhq/ohmail/releases/latest";
+/* The desktop offer is a notice now (`todays-feeds.tsx`); its branch and its key are read from here as before. */
+export { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, showDesktopCta } from "./todays-feeds";
 
 /**
  * HOW LONG THE CURSOR HINT STANDS — re-exported from the module that owns the placement
@@ -478,36 +415,12 @@ export const DESKTOP_DOWNLOAD_URL: string | undefined =
 export { CURSOR_HINT_MS };
 
 /**
- * A subtle, dismissible line at the foot of the rail: "Get ohmail for
- * desktop", linking to the latest release page in a new tab.
- * CONTROLLED — the dismissal state lives in `AppShell`
- * (`usePersistedFlag`), and that placement is a fix: when this component
- * owned the flag it answered dismissal by rendering `null`, but `AppShell`
- * had already judged the footer slot non-empty for its sake, leaving a
- * dead padded band under the Command row on every dismissed install. The
- * component that decides whether the slot exists must know what is in it.
+ * Mounted while the Ohbox's selection bar stands at the list's foot: on a phone's width the frame then draws no dock
+ * over the bar. A part of its own, so a pick draws it and not the shell.
  */
-export function DesktopCta({ href, label, dismissLabel, onDismiss }: {
-  href: string;
-  label: string;
-  dismissLabel: string;
-  onDismiss: () => void;
-}) {
-  return (
-    <div className="rail-desktop-cta">
-      <a className="rail-desktop-cta-link" href={href} target="_blank" rel="noopener noreferrer">
-        {label}
-      </a>
-      <button
-        type="button"
-        className="rail-desktop-cta-x"
-        aria-label={dismissLabel}
-        onClick={onDismiss}
-      >
-        <span aria-hidden="true">×</span>
-      </button>
-    </div>
-  );
+function SaysSelectionBar(): null {
+  useSelectionBar(true);
+  return null;
 }
 
 /**
@@ -526,556 +439,19 @@ function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version"
   return <SearchView {...props} version={version} indexRev={indexRev} />;
 }
 
-/** The navigation rail's id, which both drawer toggles name in `aria-controls`. */
-const RAIL_ID = "shell-rail";
-
-export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
-  /**
-   * The paired desktop's standing line — the third member of the footer
-   * slot, beside the account address and the desktop prompt. In this slot
-   * and not the sync slot because of what the two mean: the sync slot's
-   * every state clears itself; this one is where the rail says whose mail
-   * this is, and on a paired desktop that is "that computer's copy" —
-   * whether that computer answers belongs to the same line (`rail.css`,
-   * beside `.rail-host`). It also makes the slot non-empty on its own,
-   * which is why `fullFooter` counts three things now.
-   */
-  hostConnection?: HostConnection;
-  /**
-   * Is the "Get ohmail for desktop" prompt on offer at all (the pure platform branch —
-   * `showDesktopCta`)? The DISMISSAL is this component's own state, held HERE for `tagsOpen`'s
-   * exact reason: `usePersistedFlag`'s post-mount read is a state write, and on the shell it
-   * re-rendered the active hundreds-of-rows view once per mount on EVERY install that had
-   * dismissed the prompt — plus once more on the × itself. Down here it re-renders the rail.
-   */
-  offerDesktopCta?: boolean;
-}) {
-  const t = useTranslations();
-  const [tagsOpen, setTagsOpen] = usePersistedFlag(UI_KEYS.tagsOpen, true);
-  const [ctaDismissed, dismissCta] = usePersistedFlag(DESKTOP_CTA_DISMISSED, false);
-  const withTagState = useMemo<RailGroup[]>(
-    () =>
-      groups.map((g) =>
-        g.tags ? { ...g, tags: { ...g.tags, open: tagsOpen, onOpenChange: setTagsOpen } } : g,
-      ),
-    [groups, tagsOpen, setTagsOpen],
-  );
-  /* The footer slot is DECIDED where the last of its contents is known: `RailNav` keeps a
-     padded `.rail-mail` box around any truthy footer, so this must be `undefined` — not an
-     empty fragment — when neither the account line nor a live prompt will render. The old
-     arrangement had `DesktopCta` answer its dismissal with `null` from inside the slot, and
-     the box stood empty under the Command row (measured live at 14px). */
-  const cta = offerDesktopCta && !ctaDismissed && DESKTOP_DOWNLOAD_URL !== undefined ? (
-    <DesktopCta
-      href={DESKTOP_DOWNLOAD_URL}
-      label={t("rail.getDesktop")}
-      dismissLabel={t("rail.getDesktopDismiss")}
-      onDismiss={() => dismissCta(true)}
-    />
-  ) : null;
-  const host = hostConnection ? <HostConnectionLine connection={hostConnection} /> : null;
-  const fullFooter = footer || cta || host ? (
-    <>
-      {footer}
-      {host}
-      {cta}
-    </>
-  ) : undefined;
-  // The update line's slot exists only while there is something to say, as the footer's does.
-  const offer = useUpdateOffer();
-  return <RailNav groups={withTagState} {...rest} update={offer !== null ? <UpdateLine /> : undefined} footer={fullFooter} />;
-}
-
 /**
- * `demo` here is the SERVER's answer, and it is only a floor — `EngineProvider` re-derives
- * the mode from the real URL on the client and publishes what the engine was actually built
- * in. The chrome below reads THAT (`useDemoMode`), so the ribbon and the frozen demo clock
- * can never disagree with the adapter the data is coming from.
+ * TODAY'S VIEWS IN THE FRAME'S WIDE PANE: the one body every place of today's shares, fed the inputs the adapter read
+ * off the host and the two a signal feeds. Their reports still reach the capsule the shells mount (`ToastHost`), whose
+ * Undo `z` takes back: today's views and their tests read it there. A place that registers reports through the
+ * frame's own slot (`useReport`).
  */
-export function AppShell({
-  demo,
-  engine,
-  resolveOwner,
-  onConfirmed,
-  mailboxFacts,
-  organizerNoticeTransport,
-  gapLettersTransport,
-  mirrorFreshness,
-  hostConnection,
-  sessionRefused,
-  sendSurfaceMaxTotalBytes,
-  accountSection,
-  mailboxSection,
-  aiSection,
-  billingSection,
-  storageSection,
-  storageCard,
-  liveBodyWire,
-  accountNotice,
-  invitesSection,
-  securitySection,
-  aboutSection,
-  support,
-  desktopSection,
-  devicesSection,
-  defaultMailSection,
-  stageCard,
-  notificationHost,
-  screeningSection,
-  actRulesUnmarked,
-  screenerSuggest,
-  awayTransport,
-  awayIsLocal,
-  awayOnHost,
-  profileImportTransport,
-  consentTransport,
-  imageWire,
-  imagesFromComputer,
-  olderBodyWire,
-  junkWire,
-  trashWire,
-  suggestWire,
-  draftReplyWire,
-  firstRun,
-  mailtoDraft,
-  onMailtoDraftSeeded,
-  onUnread,
-  managedService,
-}: {
-  demo: boolean;
-  /**
-   * AN ENGINE THE HOST BUILT ITSELF — the desktop app's seam, and nobody else's.
-   *
-   * `EngineProvider` normally decides what engine this shell runs on: fixtures for the demo, a
-   * network client for a signed-in tab. The desktop app's mail comes from a process on the same
-   * machine over a channel that is not `fetch`, and this file is compiled into a browser tab as
-   * well as into that app — so the app builds the engine where the channel is and passes the
-   * finished object through. See {@link ProvidedEngine}; `demo` still wins over it.
-   */
-  engine?: ProvidedEngine;
-  resolveOwner?: OwnerResolver;
-  /**
-   * Threaded to {@link EngineProvider.onConfirmed} — the Cloud client's binding, committed by the
-   * arm that has already believed the answer rather than by the classifier that produced it.
-   * Absent on the desktop and the demo, like `resolveOwner`.
-   */
-  onConfirmed?: (accountId: string) => void;
-  /**
-   * "What state are this account's mailboxes in?", as a function the SHELL does not know how
-   * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
-   * reason: `scripts/publish-desktop.mjs` DENYs `app/api-client`, so this shared shell may not
-   * call `GET /mailboxes`. The Cloud client supplies one from `(product)/mailbox/CloudShell` and
-   * the desktop supplies its own (`DesktopGate`, over the local roster); the demo supplies
-   * nothing, and the sync strip then withholds every mailbox-keyed state rather than guessing
-   * one. See `MailStateProvider` — a probe MUST reject on failure,
-   * because an empty array is a claim about the account.
-   */
-  mailboxFacts?: MailboxProbe;
-  /**
-   * "Acknowledge the organizer notice on this mailbox" — the eighth injected prop, on
-   * `mailboxFacts`'s rule and for its reason: the publish DENYs `app/api-client` here, so this
-   * shell cannot reach `POST /mailboxes/:id/organizer-notice/dismiss` on either door.
-   *
-   * ABSENT WITHHOLDS THE NOTICE ENTIRELY, and that is the design rather than a fallback. A line
-   * saying a mailbox changed hands, with no way to acknowledge it, is a warning that stands for
-   * ever — the one thing this notice may never become. Settings -> Mailboxes keeps the permanent
-   * state line and the controls on every door regardless.
-   */
-  organizerNoticeTransport?: OrganizerNoticeTransport;
-  /**
-   * How the person's answer to a gap offer (mail 0151) reaches the row: the organizer notice's
-   * seam, one route (`POST /mailboxes/:id/gap-letters`) on two transports. Absent withholds the
-   * offer, since an offer nobody can answer would stand for ever; nothing moves without it.
-   */
-  gapLettersTransport?: GapLettersTransport;
-  /**
-   * "How old is the mail this window renders?", answered by the HOST's own mirror — the
-   * desktop's seam and nobody else's, `mailboxFacts`'s shape for `mailboxFacts`'s reason. The
-   * desktop's window engine drains the sidecar's LOCAL feed and is always current relative to
-   * it, so the engine's own freshness cannot say the desktop is behind the hosted account —
-   * the sidecar's `GET /mirror/freshness` can, and this probe is how it reaches the sync
-   * strip's "as of <time> · catching up" arm. Absent everywhere else: the web reads the
-   * engine's own verdict. See `MailStateProvider`'s `FreshnessProbe` for the failure contract.
-   */
-  mirrorFreshness?: FreshnessProbe;
-  /**
-   * "Is the computer this window reads through answering?" — the desktop's seam only; a browser
-   * tab is never paired to anybody's laptop. Present means there is something wrong to say;
-   * absent covers a browser tab, the other desktop doors, AND a healthy paired host — three
-   * situations that must render identically, or the one state worth noticing becomes a change of
-   * wording instead of the arrival of a warning (`host-connection.ts` has the shape and the
-   * sixty-second grace). It also silences the sync strip's `stale` sentence — "catching up" is
-   * an activity claim, and with the other machine off nothing is catching up; the ladder still
-   * derives `stale`, only the sentence is withheld.
-   */
-  hostConnection?: HostConnection;
-  /**
-   * The hosted session behind this window was REFUSED and the host's sign-in card is over the
-   * shell saying why. The sync strip then says nothing: every pull is refused, and its failure
-   * arm would read "Retrying" over a session nothing renews. Absent on every browser tab.
-   */
-  sessionRefused?: boolean;
-  /**
-   * The host's own ceiling on attachment bytes in one send — declared by the host because only
-   * the host knows its transport. The form-side twin of `sendSurfaceMaxTotalBytes`, same three
-   * states (`composeAttachCap` holds the rule): absent = an undeclared host (every browser tab)
-   * and resolves to the strict constant; `null` = the desktop's standalone door, where the only
-   * real ceiling is the mailbox's own SIZE announcement; a number = a host naming its limit. NOT
-   * passed on the desktop's cloud door — it forwards sends verbatim to the hosted API, so an
-   * uncapped declaration would promise what the forward must refuse (`DesktopGate`;
-   * `desktop-attach-cap.test.ts` guards both halves).
-   */
-  sendSurfaceMaxTotalBytes?: number | null;
-  /**
-   * The host's Settings → Account pane, injected rather than imported — the same seam as
-   * `resolveOwner`, and see `views/SettingsView.tsx` for why it has to be one.
-   *
-   * Absent on a STANDALONE desktop install, which has no account. The desktop's HOSTED door does
-   * supply one, and it is a different node rather than the same one: erasure is a step-up
-   * ceremony no desktop session can satisfy, so what it offers is the way to the browser.
-   */
-  accountSection?: ReactNode;
-  /** The host's Settings → Mailboxes pane. Same seam. */
-  mailboxSection?: ReactNode;
-  /**
-   * The host's Settings → Subscription pane (plan, AI switch, and the way to invoices).
-   *
-   * Same seam and the same standalone rule as {@link accountSection}: absent where there is
-   * nothing to bill, supplied on the desktop's hosted door, where the plan and the AI switch are
-   * ordinary forwarded calls and only checkout and the portal are a door out.
-   */
-  aiSection?: ReactNode;
-  billingSection?: ReactNode;
-  /** The host's Settings → Storage pane: what is stored, what the mail needs, the plans. Absent where nothing is metered. */
-  storageSection?: ReactNode;
-  /** The storage card the host draws atop the Ohbox, from the same read as the pane. Absent ⇒ none. */
-  storageCard?: ReactNode;
-  /** Load it now's transport for a letter emptied for space (`live-body.ts`); absent ⇒ no Load it now. */
-  liveBodyWire?: LiveBodyWire;
-  /**
-   * ONE STRIP ABOVE THE APP ABOUT THE ACCOUNT ITSELF — a trial running out, a payment that
-   * failed, a catch-up after the account reopened. Injected for the reason the panes above are:
-   * the sentences come from `GET /account/access`, which this shared shell may not call, and the
-   * desktop window has no hosted account to say any of it about. Absent ⇒ no strip, ever, which
-   * is what keeps billing words structurally out of the desktop bundle.
-   */
-  accountNotice?: ReactNode;
-  /**
-   * The host's Settings → Invites pane — who else may join a self-host server. Same seam as
-   * {@link securitySection}; only the self-host Cloud client supplies one (the mint routes
-   * exist on that composition alone), so managed tabs and every desktop door pass nothing
-   * and the nav entry does not exist there. See `views/SettingsView.tsx`.
-   */
-  invitesSection?: ReactNode;
-  securitySection?: ReactNode;
-  /**
-   * The BODY of the (i) panel for a live account. Same seam again, and it has to be: the
-   * facts worth showing there — which mailbox is connected and when it last synced — come
-   * from `GET /mailboxes`, which this shared shell may not call. Absent ⇒ the demo body.
-   */
-  aboutSection?: ReactNode;
-  /**
-   * Which surface, build and account this is, for Settings › Help & contact. The pane lives in
-   * the shell because Write to us opens the shell's own composer. Absent ⇒ no pane (the demo).
-   */
-  support?: SupportHost;
-  /**
-   * The pane only a shell with a native process behind it can have: which
-   * door this install came in by, which mailbox it opens, and the actions
-   * that change either — every one a call to the desktop shell, which this
-   * file cannot make (it also compiles into a browser tab). Injected like
-   * {@link accountSection} and its mirror image: absent on the web (no
-   * shell), where Account is absent on the desktop (no account). Carries
-   * its own `label` — the words are the desktop's vocabulary. NOT gated on
-   * `demo`: the pane describes the INSTALL, not an account, and is as true of a window showing sample mail.
-   */
-  desktopSection?: { label: string; node: ReactNode };
-  /**
-   * Settings → Devices — pairing this account's mail onto other devices,
-   * injected in whichever shape the host has: the desktop's host mode
-   * (serve this install's mail over the user's own tailnet) or the Cloud
-   * client's server-side ceremony (mint a pairing QR, list and revoke
-   * devices, gated on `/hello` announcing `features.pairing`).
-   * Demo-masked like the other account panes, no longer exempt: the
-   * exemption's premise ended when the Cloud client grew its node, and an
-   * unmasked seam let `?demo=1` grow the one pane whose every verb mints or revokes a real credential.
-   */
-  devicesSection?: ReactNode;
-  /**
-   * ONE ROW AT THE FOOT OF SETTINGS → GENERAL, WHEN THE HOST IS AN APP THE OS CAN PREFER — the
-   * desktop's, and nobody else's. "Which app opens mailto links" is a question about a COMPUTER,
-   * so a browser tab passes nothing and the row does not exist there; the desktop supplies its
-   * detect-and-request row (`DesktopDefaultMail.tsx`), whose every read and verb is a shell
-   * command. On General rather than the Desktop pane because it is where somebody thinking
-   * "mail links open the wrong app" would look — beside language and appearance.
-   */
-  defaultMailSection?: ReactNode;
-  /**
-   * A HOST'S ONE CARD ABOVE THE MAIL (the desktop's one-time default-mail ask), in the stage's notice
-   * slot: in the flow, so it covers no control. It waits behind a found-settings question.
-   */
-  stageCard?: ReactNode;
-  /**
-   * Where the operating system's notification answer comes from, when it
-   * is not this page's. Absent means the browser's own reader
-   * (`Notification.permission` IS the OS answer in a tab). The desktop
-   * window holds no notification permission and cannot acquire one — its
-   * shell asks the platform on first use — so it injects a host that says
-   * so, and the pane grows one sentence about who has the last word.
-   * Measured cost of the gap: a master switch that could not be turned on,
-   * with no sentence anywhere. See `apps/desktop/src/notify-host.ts`.
-   */
-  notificationHost?: NotificationHost;
-  /**
-   * The Screener pane's own controls, when the host has its own — the
-   * desktop's, and nobody else's. This shell's `ScreeningSection` reads and
-   * writes through `app/api-client`, which is not in the desktop build:
-   * there every control asked, was refused, and drew nothing, so the pane
-   * existed in the nav and was blank when opened. A host with its own
-   * transport hands in its own section. Present ⇒ this shell's own section
-   * is not built. Never both.
-   */
-  screeningSection?: ReactNode;
-  /**
-   * THIS HOST'S RULES PANE CANNOT TELL THE ACT'S RULES APART: it reads rules through a copy that
-   * does not carry the mark (the desktop's hosted door). The act's switch then says only that its
-   * rules are listed in Settings → Rules, which is what that pane shows.
-   */
-  actRulesUnmarked?: boolean;
-  /**
-   * The Screener's suggest control, when the host has its own — the desktop's. The control this
-   * shell builds asks a server what a set of senders would cost, because a hosted account
-   * spends an allowance; a standalone install spends nothing and reaches its own model over a
-   * channel this file cannot use — a different control, handed in ({@link desktopSection}'s
-   * seam). `absorb` is what makes an injected control possible: there is exactly one suggestion
-   * overlay and all its consumers read it, so a host lands answers there or nothing can display
-   * them. Present ⇒ this shell's own control is not offered.
-   */
-  screenerSuggest?: (ctx: {
-    /** Waiting senders with no answer yet, in queue order — what a purchase would buy. */
-    senders: string[];
-    /**
-     * Waiting senders that ALREADY have one — what a re-ask would cover.
-     *
-     * Handed over for the same reason this shell's own control takes both: a queue that has been
-     * worked through has an empty buy list and a full re-ask list, and a control given only the
-     * first has nothing to say on exactly the account that has used the feature most. A host that
-     * ignores it is free to; a host that cannot see it has no choice.
-     */
-    resuggestable: string[];
-    /** Waiting senders with no real suggestion (holds included) — the resting sentence's gate. */
-    unanswered: number;
-    absorb: (rows: Array<{ address: string; suggestion: SenderSuggestion }>) => void;
-    /** Where the host control's refusals land, so the rows say why and never "coming". */
-    absorbStanding: (standing: SuggestStanding | null) => void;
-  }) => ReactNode;
-  /**
-   * The away responder's two calls, when the host has its own wire. A transport and not a section: the responder must
-   * not have two implementations — one `PUT /away-responder` whose `updatedAt` IS the enablement episode the worker's
-   * at-most-once record files under; a second copy would be a second definition of when an episode begins, visible as a
-   * correspondent answered twice. The desktop needs it because `apiConfigured()` is false in every desktop build; the
-   * hosted door forwards with the bearer. The standalone door runs the SAME implementation (`runAwayResponderPass` in
-   * `@trafficflow/services`) with its own SMTP dial — replies go out while ohmail is open, the pane says exactly that.
-   * Two-runners safety is structural: the lease, the organizer JOIN, and a UNIQUE reservation on (account, message).
-   * Absent ⇒ the hosted client, gated on `autoOptIn.supported`.
-   */
-  awayTransport?: AwayTransport;
-  /**
-   * IS THE AWAY CONTROL ON THE STANDALONE DOOR? — passed straight through to
-   * `AwayResponderRow.local`, where it decides one sentence: "Replies are sent while ohmail is open
-   * on this computer."
-   *
-   * Separate from {@link awayTransport} being present, because the two answer different questions —
-   * the transport says "this host has its own wire", which is true on BOTH desktop doors, and this
-   * says "the replies leave from this machine", which is true on only one of them. Collapsing them
-   * would put the standalone sentence on the hosted desktop pane, where it is false.
-   */
-  awayIsLocal?: boolean;
-  /**
-   * The other computer this install reads through, when it is a paired
-   * desktop — the away responder's third promise. `awayIsLocal` says which
-   * machine must be awake for a reply to go out, as a boolean; a paired
-   * desktop is a third answer — the row and the drain are the HOST's, so
-   * the machine to leave running is neither ours nor "the service", and
-   * naming it is the content of the sentence. Absent everywhere else;
-   * `AwayResponderRow` prefers it over `awayIsLocal` when both arrive,
-   * which `awayDoorFor` makes unreachable in this app.
-   */
-  awayOnHost?: string | null;
-  /**
-   * The profile import's three calls, when the host has its own wire — the desktop, on BOTH doors
-   * ({@link awayTransport}'s seam; `apiConfigured()` is false in every desktop build, so the shell's
-   * own check never ran there). Live on the standalone door too, a fact about where the routes are
-   * served: the confirm flow's three verbs are mounted on the local engine's own table, so a
-   * standalone install asking is an install asking itself; the hosted door forwards with the bearer
-   * (`profileImportDoorFor` in the desktop's `doors.ts` holds the rule). A transport, not a section:
-   * the card, counts, fingerprint-as-consent and durable dismissal must have ONE implementation.
-   * Absent ⇒ the hosted client, which is what a browser tab has.
-   */
-  profileImportTransport?: ProfileImportTransport;
-  /**
-   * `GET /consent` and its four writes, when the host has its own wire — the desktop's hosted door. Injected for
-   * {@link awayTransport}'s reason with a wider blast radius: with `apiConfigured()` false, `consent.known`
-   * stayed false for the life of the process and FOUR controls were withheld from an install mirroring a real
-   * account — the dormancy dial, auto-suggest, auto-unsubscribe, and the account's interface language. A
-   * transport, not sections, and one reason is sharper: `autoSuggest` is the only flag that authorises SPENDING,
-   * and the spender reads it off this one hook — a host writing the flag its own way would leave that copy stale
-   * in the direction that costs money. The standalone door hands in nothing: no account, no row —
-   * `consent.standalone`, every control withheld structurally rather than offered dead.
-   */
-  consentTransport?: ConsentTransport;
-  /**
-   * FETCH ONE REMOTE PICTURE'S BYTES THROUGH THIS SHELL'S DOOR, as a `data:` URI, or `null`
-   * when the door refused, and store a Show images press there. Supplied by a shell whose engine
-   * is reached over a pipe rather than a port, where no `<img src>` can name the proxy; absent on
-   * the hosted client, which names the proxy directly and is left exactly as it shipped.
-   */
-  imageWire?: ImageDoor;
-  /**
-   * A computer of the reader's own fetches the pictures (the desktop's local or host door). Its
-   * engine also sends the one-click unsubscribe a screen-out asks for, so both unsubscribe notes
-   * read this too.
-   */
-  imagesFromComputer?: boolean;
-  /**
-   * THE REACH-PAST BODY WIRE, when the host has its own — the desktop on its HOSTED door. The
-   * shared shell's default is the browser's Cloud client (decided inside `older-body.ts`, which
-   * owns the api-client import); the desktop aliases that client to a refusing stub, so without
-   * this wire a reach-past row's body there has no door at all. Same transport-not-a-control
-   * rule as {@link consentTransport}: the states and their sentences are decided in
-   * `older-body.ts` and only the bytes' route is injected.
-   */
-  olderBodyWire?: OlderBodyWire;
-  /**
-   * The junk window's wire, when the host has its own — the desktop, both doors. The shared
-   * shell's default is the browser's Cloud client (`junk-window.ts` owns the import); the
-   * desktop aliases that client to a refusing stub, so without this wire the Screener's third
-   * segment stayed the flag-off Spam pile. Same transport-not-a-control rule as {@link
-   * olderBodyWire}: only the bytes' route is injected. The hosted door forwards (Junk is never
-   * mirrored); on the standalone door the flag in front of the segment cannot be STORED — one
-   * field is missing (§17), see {@link ConsentTransport.foldersStorable} — so the control stays
-   * withheld by the same gate as a flag-off browser.
-   */
-  junkWire?: JunkWire;
-  /**
-   * THE LIVE TRASH WINDOW'S WIRE, on the same terms as {@link junkWire}: the desktop aliases the
-   * Cloud client to a refusing stub, so without a wire handed in the section reports "no server"
-   * and is withheld. Both desktop doors serve `/trash/window*` — the standalone one from
-   * `localRoutes`, the hosted one through the relay — so the wire is handed in on both.
-   */
-  trashWire?: TrashWire;
-  /**
-   * The Screener's two spend calls, when the host has its own wire — the
-   * desktop's hosted door. Distinct from {@link screenerSuggest}, which
-   * hands in a whole control: this is the wire the SHELL's machinery runs
-   * on, needed for the part `CloudSuggest` structurally cannot do —
-   * `autoOptIn.supported` gates the Settings opt-in row. Supplying it also
-   * lets the overlay hydrate from `GET /screener` — answers the account
-   * already paid for, which a desktop relaunch used to lose. Absent ⇒ the
-   * hosted client; `false` on standalone: no account, no ledger, no spend.
-   */
-  suggestWire?: SuggestWire;
-  /** The draft reply's request path — absent on web, where the Cloud client remains the default. */
-  draftReplyWire?: DraftReplyWire;
-  /**
-   * THE FIRST-RUN STAGE'S DOOR — the calls setup makes, from the surface that can make them.
-   *
-   * Absent ⇒ THE STAGE DOES NOT EXIST on this surface, structurally, and `#/first-run` renders
-   * the Ohbox behind it and nothing else. That is the honest state for the demo (a fixture world
-   * with no mailbox to connect and no account to stamp) and for any host that has not wired the
-   * calls yet — the alternative, a dialog whose buttons refuse, is the built-tested-unreachable
-   * shape this whole wave is written against.
-   */
-  firstRun?: FirstRunHost;
-  /**
-   * A compose the host was handed from outside — the desktop's mailto seam. The OS delivers a
-   * `mailto:` click to the desktop shell, the parsed fields arrive here, and the shell opens them
-   * by `writeTo`'s door — what the composer holds is saved first, a letter whose send waits gives
-   * way only once a row holds its words — then navigates to compose. `onMailtoDraftSeeded` is
-   * called when the shell takes the link, so the host drops its copy: each link is taken once, and
-   * one refused for unsaved words is not tried again over them. Fields are plain bounded text (the desktop's
-   * `mailto.ts` is the one place a mailto is read); the body seeds as plain text (`html: ""`,
-   * `openDraft`'s rule).
-   */
-  mailtoDraft?: ComposePrefill | null;
-  onMailtoDraftSeeded?: () => void;
-  /**
-   * How many pieces of mail are waiting — published for a surface outside
-   * the page (a dock icon). Deliberately the Ohbox rail number and not a
-   * sum of every rail count: the Screener's waiting senders are people to
-   * decide about rather than mail to read, and a badge counting them would
-   * ask for attention the product spent two years learning not to ask for.
-   * A callback, not a return value — the only consumer is a native shell
-   * outside this tree. Absent in every browser tab.
-   */
-  onUnread?: (unread: number) => void;
-  /**
-   * Is the server behind this shell the managed service? See `managed-service.ts`. Absent reads
-   * as managed; every other host says false.
-   */
-  managedService?: boolean;
-}) {
+export function TodaysViews(_: PaneProps) {
+  const { managedService: _managed, mirrorFreshness, ...fixed } = useTodaysFixed();
+  const live = useTodaysSignals(useFrame().host.signals);
   return (
-    <ManagedServiceContext.Provider value={managedService ?? true}>
-    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
-      {/* ONE keydown listener for the whole client. Outside `ShellInner` so
-          every view mounted under it can declare bindings into the same table, which is
-          also the table the `?` sheet is generated from. */}
-      <KeymapProvider>
-        {/* The derived focus zone, reflected as `:root[data-zone]` for the tile-cursor CSS
-            (`zone-cursor.css`). See `ZoneCursor`. */}
-        <ZoneCursor />
-        {/* Where focus goes when a surface closes or its control is taken away. See `focus-follows.ts`. */}
-        <FocusFollows />
-        <MailStateHost probe={mailboxFacts} freshnessProbe={mirrorFreshness}>
-          <ShellInner
-            mailboxFacts={mailboxFacts}
-            organizerNoticeTransport={organizerNoticeTransport}
-            gapLettersTransport={gapLettersTransport}
-            hostConnection={hostConnection}
-            sessionRefused={sessionRefused === true}
-            sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}
-            accountSection={accountSection}
-            mailboxSection={mailboxSection}
-            aiSection={aiSection}
-            billingSection={billingSection}
-            storageSection={storageSection}
-            storageCard={storageCard}
-            liveBodyWire={liveBodyWire}
-            accountNotice={accountNotice}
-            invitesSection={invitesSection}
-            securitySection={securitySection}
-            aboutSection={aboutSection}
-            support={support}
-            desktopSection={desktopSection}
-            devicesSection={devicesSection}
-            defaultMailSection={defaultMailSection}
-            stageCard={stageCard}
-            {...(notificationHost ? { notificationHost } : {})}
-            screeningSection={screeningSection}
-            actRulesUnmarked={actRulesUnmarked === true}
-            screenerSuggest={screenerSuggest}
-            awayTransport={awayTransport}
-            awayIsLocal={awayIsLocal}
-            awayOnHost={awayOnHost}
-            profileImportTransport={profileImportTransport}
-            consentTransport={consentTransport}
-            imageWire={imageWire}
-            imagesFromComputer={imagesFromComputer}
-            olderBodyWire={olderBodyWire}
-            junkWire={junkWire}
-            trashWire={trashWire}
-            suggestWire={suggestWire}
-            draftReplyWire={draftReplyWire}
-            firstRun={firstRun}
-            mailtoDraft={mailtoDraft}
-            onMailtoDraftSeeded={onMailtoDraftSeeded}
-            onUnread={onUnread}
-          />
-        </MailStateHost>
-      </KeymapProvider>
-    </EngineProvider>
-    </ManagedServiceContext.Provider>
+    <MailStateHost probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
+      <ShellInner {...fixed} {...live} />
+    </MailStateHost>
   );
 }
 
@@ -1120,7 +496,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1129,8 +505,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   gapLettersTransport?: GapLettersTransport;
   /** See `AppShell`'s prop of this name — present only on a paired desktop with something wrong. */
   hostConnection?: HostConnection;
-  /** See `AppShell`'s prop of this name — the strip yields while the host's sign-in card is up. */
-  sessionRefused: boolean;
   /** The host's surface declaration for the attach ceiling — see `AppShell`'s prop of this name. */
   sendSurfaceMaxTotalBytes?: number | null;
   accountSection?: ReactNode;
@@ -1143,8 +517,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   storageCard?: ReactNode;
   /** Load it now's transport for a letter emptied for space (`live-body.ts`); absent ⇒ no Load it now. */
   liveBodyWire?: LiveBodyWire;
-  /** See `AppShell`'s prop of this name — absent withholds the account strip entirely. */
-  accountNotice?: ReactNode;
   invitesSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
@@ -1236,7 +608,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * reaches a component that must be mountable alone.
    */
   const {
-    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled, importOver: importOverById,
+    mailboxes: facts, rosterProbed, state: mailState, refresh: refreshFacts, pulled, importOver: importOverById, freshness,
   } = useMailState();
   /** The roster a chooser or a count may read: `GET /mailboxes` keeps every removed copy. */
   const liveFacts = liveMailboxes(facts);
@@ -2229,62 +1601,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   );
 
   /**
-   * The two app-level controls, at the foot of the rail. They were a fixed capsule floating bottom-centre over every
-   * view, costing a clearance band at the bottom of every scrolling surface (132px, in four stylesheets) and two
-   * controls permanently on top of somebody's mail. Neither acts on mail — one opens the palette, one switches the
-   * theme — so they belong with the app's own chrome, the rail. Written in the RAIL'S vocabulary, not a component of
-   * their own: `.ritem` rows with the keycap in `.cnt`, exactly as the Search row carries "/". One line, not two:
-   * Command keeps the full-width row and its keycap; the theme control is an icon at the right end of that line — two
-   * stacked rows spent a second line on a control worth a single glyph.
+   * WHAT TODAY'S CHROME SAID, SAID BY THE FRAME: the rail as a model, every strip as a notice in the one slot, and the
+   * mailbox's state as the frame's connection reading. `todaysShown` is the dialog a notice's "Show" opens.
    */
-
-  /* What the live region says after a press — empty at mount, so boot announces nothing. */
-  const [schemeSaid, setSchemeSaid] = useState("");
-  /**
-   * The scheme control is the one thing here without visible text, so it carries its name twice:
-   * `aria-label` for assistive tech and the palette-less keyboard path, `title` for the pointer
-   * user identifying a lone glyph. The name states the STATE and the PRESS — "Theme: Auto (dark).
-   * Press for Light" — because one glyph cycling three states is otherwise a button whose only
-   * description is its current picture; the `role="status"` span below says the new state after a
-   * press and nothing at mount. The palette carries all three states by name, so no scheme is
-   * reachable only by icon, and Settings → General keeps the explicit picker. On a phone these
-   * ride the navigation drawer, the same rail; see `touch-keys.css` for the keycap.
-   */
-  const schemeLabel = (preference: ThemePreference, resolved: ResolvedTheme): string =>
-    t(SCHEME_STATE_KEY[preference], { resolved: t(SCHEME_WORD_KEY[resolved]) });
-  const railDock = (
-    <>
-      <button type="button" className="ritem dock-cmd" onClick={palette.openPalette}>
-        {t("dock.command")}
-        <span className="cnt">
-          <Kbd shortcut={ariaShortcut("mod+k", modCap)}>{modCap}K</Kbd>
-        </span>
-      </button>
-      <button
-        type="button"
-        className="ritem dock-theme"
-        onClick={() => {
-          theme.cycle();
-          setSchemeSaid(t("dock.themeNow", { state: schemeLabel(theme.next, theme.nextResolved) }));
-        }}
-        aria-label={t("dock.theme", {
-          state: schemeLabel(theme.preference, theme.resolved),
-          next: schemeLabel(theme.next, theme.nextResolved),
-        })}
-        title={t("dock.theme", {
-          state: schemeLabel(theme.preference, theme.resolved),
-          next: schemeLabel(theme.next, theme.nextResolved),
-        })}
-      >
-        <Icon key={theme.preference} name={SCHEME_GLYPH[theme.preference]} className="scheme-glyph" />
-      </button>
-      {/* Empty at mount, so nothing is announced at boot; `sync-say` is the shell's own
-          visually-hidden live region class. */}
-      <span className="sync-say" role="status" aria-live="polite">
-        {schemeSaid}
-      </span>
-    </>
-  );
+  const firstRunOpen = Boolean(firstRun && route.firstRun && onboardingFacts && consent.known);
+  const todaysShown = useTodaysFeeds({
+    demo, t, facts, mailState, copyAsOf: freshness.asOf, setupHref: setupHref ?? null, mailSend, desktopSection: desktopSection != null,
+    railGroups: railGroupsWithHints, activeRailId, routeView: route.view, activeTagId: route.tagId ?? null,
+    compose: () => goCompose(), pull: pullBinding, account: account?.email ?? null, mailboxes,
+    organizer: { changes: organizerChanges, acknowledge: acknowledgeOrganizerNotice, on: noticeOn },
+    gap: { offers: gapOfferList, answer: answerGapLetters, on: gapOn },
+    openNotSent: (i) => openNotSent(i.key, i.left, i.m, i.state !== "ended"),
+    // INERT while the first-run stage is open: no press, Tab or assistive action reaches the mail behind it.
+    hold: firstRunOpen,
+  });
 
   return (
     // `MailStateProvider` used to open here. It is now ABOVE this component
@@ -2293,9 +1623,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     <MessageChromeProvider value={chrome}>
     <ListGoneProvider value={listGone}>
     <SendReleaseProvider value={releaseConfirmed}>
-    <div className="app-root">
-      {/* INERT while the stage is open: no press, Tab or assistive action reaches the mail behind it. */}
-      <div className="shell" inert={Boolean(firstRun && route.firstRun && onboardingFacts && consent.known)}>
+    <div className="today">
         {demo && !ribbonGone ? (
           <div className="demo-ribbon">
             <span>
@@ -2314,216 +1642,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           </div>
         ) : null}
 
-        {/* A FAILING SYNC, IN EVERY VIEW. Renders nothing while the loop is healthy,
-            and nothing at all in the demo or on the desktop. A sibling of the deck rather
-            than a child of any view, so it is outside every list's scroller and no view can
-            forget it — see `SyncBar.tsx` for why that placement is the fix and the sentence
-            is not.
-
-            THE NARROW-WIDTH COPY. At 1024px and up the rail is standing and carries this line
-            itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
-            1024px the rail is a drawer that is closed most of the time, so the strip and the
-            corner pill are the only way the mailbox can speak, and they keep the job. */}
-        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} setupHref={setupHref} />}
-        {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
-        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
-
-        {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
-            copy, on `SyncBar`'s rule and hidden at 1024px and up by the same single query. It sits
-            BELOW the sync strip deliberately: the strip is chrome about a process, this is a
-            statement about what the window can do, and a standing fact under a transient reads
-            in the right order. Absent from the DOM in every other case. */}
-        {hostConnection ? (
-          <HostConnectionLine connection={hostConnection} variant="shell" />
-        ) : null}
-
-        {/* CHANGES THE SERVER WOULD NOT TAKE. Beside the sync line rather than inside it, because
-            `SyncBar` renders nothing when sync has nothing to say — which is exactly the state an
-            abandoned change is most likely to be in: the mailbox is fine, one verb is not. Absent
-            from the DOM when there are none, like every other strip the shell mounts once. */}
-        <UnsavedChanges variant="shell" mailboxes={facts} />
-
-        {/* A send waiting holds every restart: the update line greys Restart, and the desktop's shell installs
-            nothing meanwhile (`UpdateLine.tsx`). The line itself stands in the rail, above Command. */}
+        {/* A send waiting holds every restart: the update notice greys Restart, and the desktop's shell installs
+            nothing meanwhile (`UpdateLine.tsx`). It draws nothing. */}
         <SendWaitsRelay api={mailSend} />
+        {/* What the notice slot's "Show" opens: today's own lists, unchanged, in a dialog. */}
+        {todaysShown}
 
-        {/* THIS BROWSER IS NOT KEEPING DECISIONS — the same slot and the same argument as the
-            strips above: a fact about the app rather than about a pile. Said once per session and
-            absent from the DOM until a durable write has actually been refused. */}
-        <DurabilityNotice />
-
-        {/* WHO ORGANIZES THESE MAILBOXES CHANGED — the narrow-width copy, beside the other
-            app-level strips and never over the Ohbox rows; hidden at 1024px and up, where the
-            rail carries it under the piles. */}
-        {noticeOn ? (
-          <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="shell" />
-        ) : null}
-        {gapOn ? <GapLettersNotice offers={gapOfferList} onAnswer={answerGapLetters} variant="shell" /> : null}
-
-        {/* WHAT THE SERVICE SAYS ABOUT THIS ACCOUNT — the same slot and the same argument as the
-            two strips above, and the same absence rule: nothing at all where the host supplied
-            nothing, which is every desktop window and the demo. It is a NODE and not a state
-            because the facts come from a door this shell may not knock on. */}
-        {accountNotice}
-
-        <div className="topbar">
+          {/* A SETTINGS SECTION ON A NARROW WINDOW: the way back to the section list, which the old top bar carried. */}
           {settingsSection && narrowNow ? (
-            /* A settings SECTION on a phone (DESIGN-FOLD-WIDTHS §5): the way back is to the section list, where
-               the ≡ would otherwise stand — the list itself keeps the ≡. */
-            <button
-              type="button"
-              className="tb-btn tb-back"
-              aria-label={t("settings.back")}
-              onClick={() => go("settings")}
-            >
+            <button type="button" className="tb-btn tb-back" aria-label={t("settings.back")} onClick={() => go("settings")}>
               <Icon name="chev" className="chev" />
               {t("rail.settings")}
             </button>
-          ) : (
-          <button
-            type="button"
-            className="tb-btn"
-            aria-label={t("rail.openNav")}
-            aria-expanded={railOpen}
-            aria-controls={RAIL_ID}
-            onClick={() => setRailOpen(true)}
-          >
-            <Icon name="menu" />
-            <UpdateDot />
-          </button>
-          )}
-          {/* ONE TITLE BELOW 1024 (DESIGN-FOLD-WIDTHS §5): the topbar owns the page's name,
-              as a real heading — `app.css` hides every view's own `.vhead h1` wherever this bar
-              stands, so the name is on screen once and the h1 outline keeps one entry. */}
-          <h1 className="tb-title">{mobileTitle}</h1>
-          {/* The worker doorbell, under 1024px — the rail (whose foot carries the wide-width
-              copy of this button) is a closed drawer here, and a refresh affordance inside a
-              closed drawer is one nobody is told about. See `PullNewMail.tsx`. */}
-          <PullNewMail variant="topbar" binding={pullBinding} />
-          <button type="button" className="tb-btn" onClick={palette.openPalette}>
-            {modCap}K
-          </button>
-        </div>
-
-        <div className="deck">
-          <ShellRail
-            className={railOpen ? "open" : undefined}
-            id={RAIL_ID}
-            inert={railNow.offCanvas && !railOpen}
-            navRef={railRef}
-            /* The default mark plus the Zero ribbon's ≡ — one hidden button, revealed ONLY
-               by zero-layout.css at ribbon widths (`app.css` hides it everywhere at rest, so
-               classic renders exactly what it rendered). At 722–1023 and 392–721 the rail is
-               a docked 52px ribbon and this is its drawer summon (`h`'s pointer twin); in
-               the open drawer the same button reads as the way back. */
-            wordmark={
-              <>
-                <b>
-                  <em>oh</em>mail
-                </b>
-                <button
-                  type="button"
-                  className="rail-expand"
-                  /* The name follows the action (review finding, round 1): open at rest, close
-                     while the drawer stands — a toggle whose label says the wrong verb
-                     reads backwards to a screen reader. */
-                  aria-label={railOpen ? t("rail.closeNav") : t("rail.openNav")}
-                  aria-expanded={railOpen}
-                  aria-controls={RAIL_ID}
-                  onClick={() => setRailOpen((o) => !o)}
-                >
-                  <Icon name="menu" />
-                  {railOpen ? null : <UpdateDot />}
-                </button>
-              </>
-            }
-            composeLabel={t("rail.compose")}
-            onCompose={() => {
-              setRailOpen(false);
-              goCompose();
-            }}
-            composeActive={route.view === "compose"}
-            groups={railGroupsWithHints}
-            activeId={activeRailId}
-            onNavigate={(id) => {
-              setRailOpen(false);
-              // THE FIX. This was `if (id.startsWith("triage")) go("triage")`, which threw
-              // away which of the three rows had been pressed — so Park and Resurface both
-              // opened Answer Later, and the rail lit Answer Later either way.
-              const pile = TRIAGE_PILE_OF_RAIL[id];
-              if (pile) goTriage(pile);
-              else go(id as "ohbox");
-            }}
-            activeTagId={route.tagId ?? undefined}
-            onNavigateTag={(id) => {
-              setRailOpen(false);
-              goTag(id);
-            }}
-            mailboxesLabel={t("rail.mailboxes")}
-            mailboxes={mailboxes.map((m) => ({
-              name: (m as { name?: string }).name ?? displayAddress(m.address),
-              hint: (m as { railHint?: string }).railHint ?? m.provider,
-            }))}
-            dock={railDock}
-            /* The notices' rail form, drawn under the piles — `undefined` when there is nothing to
-               say, so the rail keeps no empty band; the topbar twin above carries it under 1024px. */
-            notice={noticeOn || gapOn
-              ? (
-                <>
-                  {noticeOn ? <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="rail" /> : null}
-                  {gapOn ? <GapLettersNotice offers={gapOfferList} onAnswer={answerGapLetters} variant="rail" /> : null}
-                </>
-              )
-              : undefined}
-            /* THE MAILBOX'S OWN LINE, at the foot of the rail and above the dock. The same
-               component and the same derivation as the strip below the topbar — one of the two
-               is showing at any width, never both (see `SyncBar.tsx`). */
-            sync={
-              <>
-                {/* The worker doorbell, above the mailbox's own line — an affordance beside the
-                    status it acts on. Renders nothing in the demo and on builds with no Cloud
-                    base; see `PullNewMail.tsx` for the honest-settle contract. */}
-                <PullNewMail variant="rail" binding={pullBinding} />
-                {/* A send that left its editor finishes here, above the mailbox's own line. */}
-                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m, i.state !== "ended")} onOpenMany={() => go("drafts")} />
-                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
-                {/* Same component at rail width — its own layout collapses under 520px, so the
-                    rail does not need a second variant. */}
-                <UnsavedChanges variant="rail" mailboxes={facts} />
-              </>
-            }
-            /**
-             * The account line at the foot of the rail. The "Get ohmail for desktop" prompt shares that slot in the
-             * signed-in BROWSER only, and it travels as the PURE platform branch (`offerDesktopCta` — never the
-             * desktop app, never the demo); its DISMISSAL is `ShellRail`'s own persisted state, held down there so
-             * the post-mount storage read re-renders the rail and not this whole component (see `ShellRail`). The two
-             * contents do not coexist — `account` is a demo-only fixture (`/sync` emits no `view_meta`), and the
-             * prompt shows only when `!demo`.
-             */
-
-            /**
-             * `ShellRail` hands `RailNav` an `undefined` footer when NOTHING will render: `RailNav` keeps a padded
-             * `.rail-mail` box for any truthy footer, so a footer whose every child renders null is a dead band under
-             * the Command row — the exact defect the dismissal used to cause from inside `DesktopCta`.
-             */
-            footer={
-              account?.email ? <span className="rail-mail-addr">{account.email}</span> : undefined
-            }
-            {...(hostConnection ? { hostConnection } : {})}
-            offerDesktopCta={showDesktopCta({ demo, desktop: desktopSection != null })}
-            ariaLabel={t("rail.ariaMain")}
-          />
-
-          {/* THE TWO COLUMN SEPARATORS. Rendered BETWEEN the rail and the stage because that
-              is where they belong in the tab order — rail, the seam that resizes it, then the
-              mail. They are out of flow (`position: absolute` in `column-handles.css`), so the
-              deck's two-track grid is untouched by a third child; the list's own handle is
-              portalled from here into whichever split view's list column is standing, because
-              that column's left edge is a resolved grid track no `calc()` can name. See
-              `ColumnHandles.tsx`. */}
-          <ColumnHandles />
-
-          <main className="stage" onClickCapture={onStageClickCapture}>
+          ) : null}
+          {/* The frame owns the `main` landmark and the rail; today's views stand in its wide pane. */}
+          <div className="stage" onClickCapture={onStageClickCapture}>
             {/* THE STAGE'S ONE CARD, in the flow above whichever view (or the seed review) is up, so
                 it covers no control and never replaces the mail: an offer somebody may answer in a
                 week must not gate today's mail. The found-settings question first — above the seed
@@ -2617,11 +1750,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 }
                 noticeSection={
                   (() => {
-                    /* The header slot's two tenants: the where-line (when mail was last checked and
-                       where it went, `OhboxWhereLine`) and, under it, the Option B ohmarchy offer. The
-                       organizer notice moved to the rail, under the piles (`notice`), so nothing about
-                       who organizes a mailbox stands over the mail. The line renders nothing when it
-                       has nothing to say, so the slot draws nothing then. */
+                    /* The header slot's tenant: the Option B ohmarchy offer. What the mailbox is doing is the
+                       frame's connection notice, and who organizes it the notice slot's, so nothing about either
+                       stands over the mail. The offer renders nothing when it has nothing to say. */
                     /**
                      * ONE ASK AT A TIME ON A FIRST RUN: MEASURED on the released 0.13.7: at +15 s after connecting a
                      * mailbox a person faced THREE asks at once — the setup flow's modal, the OS "Open email links
@@ -2637,16 +1768,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                       : null;
                     return (
                       <>
-                        {/* Withheld where the strip is: a refused session's card says it. */}
-                        {sessionRefused ? null : (
-                          <OhboxWhereLine
-                            filed={ohboxFiled}
-                            hostOffline={hostConnection != null}
-                            demo={demo}
-                            /* The Screener's Junk window stands in for the Spam pile: no spam count. */
-                            junkReadable={junkReadable}
-                          />
-                        )}
                         {offer}
                       </>
                     );
@@ -2715,6 +1836,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAddTag={openTagPicker}
                 onDropTag={dropTag}
                 bulk={bulkVerbs}
+                whilePicking={<SaysSelectionBar />}
                 /* Mail from beyond what this device kept — see `shell/older-mail.ts`. Built in
                    the shell because the hook needs the engine, and this view is mounted without
                    one by several tests. It is inert on a client whose mirror IS the mailbox. */
@@ -3606,17 +2728,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             </ViewBoundary>
             {/* The Screener's first open meets shapes this page has already drawn (`ScreenerWarmup`). */}
             <ScreenerWarmup state={screener} shown={effectiveView === "screener"} />
-          </main>
-        </div>
-      </div>
-
-      {railOpen ? (
-        <div
-          className="rail-bg open"
-          aria-label={t("rail.closeNav")}
-          onClick={() => setRailOpen(false)}
-        />
-      ) : null}
+          </div>
 
       {/* READING — the exhale. Escape is the registry's (see `escapeCascade`): with the
           reader owning it too, closing the inline reply would also close the message it
@@ -4000,7 +3112,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           and it was the only place they were readable. Facts do not need an overlay. They
           are a Settings pane now (`aboutSection`, below), which is where somebody looks for
           them and where they can be linked to; the two controls that act on what is on
-          screen rather than describe it are at the foot of the rail (`railDock`). */}
+          screen rather than describe it are the palette's and Settings'. */}
     </div>
     </SendReleaseProvider>
     </ListGoneProvider>
