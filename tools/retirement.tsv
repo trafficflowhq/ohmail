@@ -1371,6 +1371,7 @@ test/clients-name-themselves.test.ts	source-text	walks source files: every clien
 test/compare/compare.test.ts	data	reads data files (json) through its helpers: the tolerance and the paint lists; the design tokens' stylesheet (css), drawn in a page; and files it wrote itself	none	compare	
 test/compare/count.test.ts	data	reads data files (json, png): the registry, the manifest, the archive's lock and the own subjects' pictures and readings, the folder's file sizes; and files it wrote itself	none	compare	
 test/compare/paint-properties.test.ts	data	reads data files (json) through its helpers: the tolerance and the paint lists	none	compare	
+test/compare/real/real.test.ts	data	reads data files (json): the declared list of the real-app measure	none	compare	
 test/compare/tolerance-pinned.test.ts	data	reads data files (json): the root manifest's pinned Playwright; and, through its helper, the tolerance	none	compare	
 test/compose-db-shm-size.test.ts	data	reads data files (json, yml)	none	unassigned	
 test/consent-stamps-the-baseline-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	

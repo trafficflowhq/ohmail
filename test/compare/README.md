@@ -253,6 +253,9 @@ npx vitest run --config vitest.compare.config.ts      # every subject against it
 
 What a red state drew is written to `build/compare/` (`.actual.png`, `.actual.json`, `.diff.png`).
 
+The states pages are not the shell a person runs. What the REAL web entry draws, place by place, is held against
+the reference by the real-app measure, `real/` (its README has its one command).
+
 ## Adding a screen
 
 Add `subjects/<screen>.ts`, named after the screen's id in `registry.json`, exporting `subjects`: one
