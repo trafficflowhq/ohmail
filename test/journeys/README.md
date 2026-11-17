@@ -6,13 +6,19 @@ What a person does and sees, on the built app, found by role and name.
     TF_JOURNEYS=managed  npx vitest run test/journeys/journeys/   # W-m: the managed build
     TF_JOURNEYS=demo     npx vitest run test/journeys/journeys/   # W-d: the demo, no server
     TF_JOURNEYS=host     npx vitest run apps/desktop/test/journeys-host.test.ts   # H: the page a desktop serves
-    TF_JOURNEYS=stack    ...                                     # W-i: the self-hosted stack from its images
+    TF_JOURNEYS=stack    ...                                     # W-i: the self-hosted stack from its images (below)
     TF_JOURNEYS=desktop  ...                                     # D-s: the Linux desktop's preview AppImage
     TF_JOURNEYS=android  ...                                     # P-p: the phone's web view on an emulator
 
 A vitest path is a filter on every file's path, so the journeys are named by their own folder: a bare
 `test/journeys` also takes `apps/desktop/test/journeys-*`. `stack`, `desktop` and `android` each need their
-rig; a bench that is named and missing fails, never skips. `TF_JOURNEYS_SIZE=medium|compact` runs the window at 719 or 390 wide (expanded, 1440, unless named).
+rig; a bench that is named and missing fails, never skips. `TF_JOURNEYS_SIZE=medium|compact` runs the
+window at 719 or 390 wide (expanded, 1440, unless named).
+
+The stack has one way in: from the repository's root, `.github/scripts/selfhost-smoke.sh --build --dir
+deploy/selfhost --tag <tag> --commit "$(git rev-parse HEAD)" --journeys` builds the three images, boots them,
+runs the first-run ceremony and its checks, hands over the invites (`TF_JOURNEYS_STACK`), runs the journeys of
+W-i and tears the stack down. `journeys.yml`'s `stack` job runs exactly that.
 
 Unset, every journeys file is skipped and only `guards.test.ts` runs. Set, a missing build or browser
 fails. `TF_JOURNEYS_LANG=de` runs the same journeys over the German catalogue. The first file builds the

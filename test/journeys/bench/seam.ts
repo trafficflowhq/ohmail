@@ -73,6 +73,8 @@ export interface Person {
   here(place: PlaceId, ms?: number): Promise<void>;
   /** Go to the install's front door, as a person who types its name does. */
   front(): Promise<void>;
+  /** Open a link someone handed this person (an invite's), as they open it; the answer's status where the window shows it. */
+  follow(link: string): Promise<{ status: number | null }>;
   act(act: ActId, id: ControlId, found?: Found & { value?: string }): Promise<void>;
   /** Wait until the control is on screen. */
   see(id: ControlId, found?: Found, ms?: number): Promise<void>;
@@ -105,8 +107,22 @@ export interface Person {
   problems(tolerated?: RegExp[]): string[];
 }
 
+/** An account made at the API and not yet signed in anywhere: what its person knows, and their authenticator. */
+export interface Registered {
+  email: string;
+  password: string;
+  /** The authenticator's next code: one per time step, never a step the server has already taken. */
+  code(): Promise<string>;
+}
+
 /** What the self-hosted stack gives beyond a window; null on every other bench. */
 export interface Stack {
+  /** The install's origin under a name it was not set up for, resolved to this machine by the bench's browser. */
+  elsewhere: string;
+  /** An account registered at the API, with its second factor, signed in nowhere. */
+  registered(): Promise<Registered>;
+  /** An invite's link, as the person who made it would send it. */
+  invite(): string;
   /** A new container for the service, as a deploy or a move of the host makes one. */
   recreate(service: "api"): Promise<void>;
   /** The API asked inside its container, under a Host of the journey's choosing. */
@@ -134,8 +150,11 @@ export interface Bench {
   ask(a: Account, method: string, path: string): Promise<{ status: number; body: unknown }>;
   /** A new account with a live session. Not on the demo. */
   account(): Promise<Account>;
-  /** A new window for a person; signed in when an account is given. `door` is the demo's second way in. */
-  person(o?: { account?: Account; door?: "/demo" | "/?demo=1"; lang?: Language }): Promise<Person>;
+  /**
+   * A new window for a person; signed in when an account is given. `door` is the demo's second way in; `host` the
+   * name the account's cookies are put under (the stack's foreign name), the install's own when not given.
+   */
+  person(o?: { account?: Account; door?: "/demo" | "/?demo=1"; lang?: Language; host?: string }): Promise<Person>;
   /** Is the account's session still able to renew? (the far end of a sign-out) */
   sessionLive(a: Account): Promise<boolean>;
   stack: Stack | null;
@@ -157,6 +176,8 @@ export const WORDS = {
 } as const satisfies Record<string, { id: BenchId; setting: Setting }>;
 export type Word = keyof typeof WORDS;
 export const HOST = "host";
+/** This machine's loopback, each way an address names it: the only place a bench's browser and its far end may reach. */
+export const LOOPBACK: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /** The bench `TF_JOURNEYS` names; null when unset or `host`. Any other word is refused, never read as a default. */
 export function benchOf(env: NodeJS.ProcessEnv = process.env): { id: BenchId; setting: Setting; word: Word } | null {
