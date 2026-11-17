@@ -178,6 +178,18 @@
       "node": "./dist/text/fill.js",
       "default": "./src/text/fill.ts"
     },
+    "./reader": {
+      "types": "./src/reader/index.ts",
+      "ohmail-source": "./src/reader/index.ts",
+      "node": "./dist/reader/index.js",
+      "default": "./src/reader/index.ts"
+    },
+    "./reader/body": {
+      "types": "./src/reader/body/index.ts",
+      "ohmail-source": "./src/reader/body/index.ts",
+      "node": "./dist/reader/body/index.js",
+      "default": "./src/reader/body/index.ts"
+    },
     "./text": {
       "types": "./src/text/index.ts",
       "ohmail-source": "./src/text/index.ts",
@@ -303,6 +315,7 @@
     "react": "19.2.3",
     "@ohmail/client-engine": "*",
     "@ohmail/app-logic": "*",
+    "@ohmail/letter-body": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
     "use-intl": "3.26.5"

@@ -18,6 +18,7 @@ New code imports a folder's door. A door is the folder's `index.ts` and names wh
 | `@ohmail/app-logic/engine` | the context a shell's provider fills, and the hooks that read an engine |
 | `@ohmail/app-logic/lists` | the list, stream and held windows, columns, older mail, folders |
 | `@ohmail/app-logic/reading` | what turns a letter read, the reader's holder, the conversation on screen |
+| `@ohmail/app-logic/reader` | the reading column's behaviour: its visit, its letters' text and pictures, the squares' walk, its own verbs |
 | `@ohmail/app-logic/press` | the one seam a press leaves the interface through, and Undo |
 | `@ohmail/app-logic/mail-state` | the mailbox state ladder and its keys, and the binding every view reads it through |
 | `@ohmail/app-logic/consent` | the consent row: what the account allows and when it was set, the read it takes, where a change travelled |

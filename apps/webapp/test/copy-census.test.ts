@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -67,6 +68,23 @@ describe("the copy census — the scan itself", () => {
     }
     for (const no of ["scn-bulk", "status", "ohbox", "aria-live", "px", "j k"]) {
       expect(isProse(no), `${no} should not be prose`).toBe(false);
+    }
+  });
+
+  it("a string's own method called with a literal on a key is not a handed reader; a namespace's reader in a record is", () => {
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "copy-census-"));
+    const write = (rel: string, text: string): void => {
+      fs.mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+      fs.writeFileSync(path.join(tree, rel), text);
+    };
+    write("apps/webapp/messages/en.json", JSON.stringify({ search: { title: "Search" } }));
+    const takes = 'import type { Translator } from "./text.js";\n';
+    write("src/route.ts", `${takes}export const route = (key: string): number => key.indexOf(".");\n`);
+    write("src/record.ts", `${takes}export const say = (text: Record<string, Translator>): string => text.search("title");\n`);
+    try {
+      expect(filesHandedAReader(tree, ["src"])).toEqual(["src/record.ts"]);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
     }
   });
 });

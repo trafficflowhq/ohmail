@@ -1,9 +1,12 @@
-/** The door of `reading`. Each file here was moved out of the web app's shell as it stood, but `list-meeting.ts`. */
+/** The door of `reading`. Each file here was moved out of the web app's shell as it stood, but `list-meeting.ts` and
+ * `presented-mirror.ts`. */
+export * from "./body-arrival.js";
 export * from "./conversation-on-screen.js";
 export * from "./list-meeting.js";
 export * from "./live-body.js";
 export * from "./ohbox-surface.js";
 export * from "./ohbox-visit.js";
+export * from "./presented-mirror.js";
 export * from "./read-all.js";
 export * from "./reader-holder.js";
 export * from "./reader-seen.js";

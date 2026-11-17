@@ -153,22 +153,19 @@ export interface World {
   again(next: Partial<OhboxListInput>, side?: Partial<OhboxBeside>): void;
 }
 
-export function ohbox(
-  input: Partial<OhboxListInput>,
-  opts: { side?: Partial<OhboxBeside>; plan?: LayoutPlan; lang?: "en" | "de"; open?: string | null } = {},
-): World {
-  const said: Said = { marked: [], bulk: [], went: [], pulled: 0, markedAll: [] };
-  let props: OhboxListInput = {
+/**
+ * The default input record over plain rows, `over` spread last. Its `onSelect` moves nothing: `ohbox()` hands its own
+ * (the selection redrawn), and a test that stands the model elsewhere hands the one its address writes.
+ */
+export function inputOf(said: Said, over: Partial<OhboxListInput> = {}): OhboxListInput {
+  return {
     demo: false,
     newForYou: [],
     previouslySeen: [],
     tags: [],
     now: new Date(at(12)),
     selectedId: null,
-    onSelect: (id) => {
-      props = { ...props, selectedId: id };
-      draw();
-    },
+    onSelect: () => {},
     onEnterReader: () => {},
     onMarkSeen: (ids, unread) => {
       said.marked.push({ ids, unread });
@@ -204,8 +201,22 @@ export function ohbox(
     readColRef: { current: null },
     senderName: (m) => m.from.name ?? m.from.address,
     sentLabelOf: () => null,
-    ...input,
+    ...over,
   };
+}
+
+export function ohbox(
+  input: Partial<OhboxListInput>,
+  opts: { side?: Partial<OhboxBeside>; plan?: LayoutPlan; lang?: "en" | "de"; open?: string | null } = {},
+): World {
+  const said: Said = { marked: [], bulk: [], went: [], pulled: 0, markedAll: [] };
+  let props: OhboxListInput = inputOf(said, {
+    onSelect: (id) => {
+      props = { ...props, selectedId: id };
+      draw();
+    },
+    ...input,
+  });
   let side = beside(said, opts.side);
   const lang = opts.lang ?? "en";
   const tree = () => (
