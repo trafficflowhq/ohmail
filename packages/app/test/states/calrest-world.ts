@@ -66,7 +66,6 @@ const calendar = (
   color,
   access: "owner",
   shown: true,
-  isDefault: false,
   timeZone: ZONE,
   window: null,
   defaultAlarms: [],
@@ -77,7 +76,7 @@ const calendar = (
 });
 
 const CALENDARS: readonly CalendarRecord[] = [
-  calendar("mila", "google", "Mila", "#039BE5", { isDefault: true }),
+  calendar("mila", "google", "Mila", "#039BE5"),
   calendar("studio", "google", "Lichtgrat studio", "#0B8043"),
   calendar("holidays", "google", "Holidays in Switzerland", "#616161", { access: "reader" }),
   calendar("family", "icloud", "Family", "#FFCC00", { access: "writer" }),
