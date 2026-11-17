@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type {
@@ -12,6 +12,7 @@ import {
 } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -384,7 +385,7 @@ describe("the idle drain cadence rests behind a doorbell", () => {
        mailbox never polls again (REVIEW-026-PHONE-SAYS-EVERY-PRESS-2 HIGH-2, VERIFY LOW-1). Exempt by
        name: `schedule()`'s own re-arm, and the two stops a runtime never comes back from.
        WATCHED FAILING: drop either flag line beside the timer in `quiesce()` or the forgotten login. */
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+    const src = readEngineAsOneText();
     const lines = src.split("\n");
     const sites = lines.flatMap((l, i) => (/^\s*if \(timer\) (\{ )?clearTimeout\(timer\)/.test(l) ? [i] : []));
     const exempt = (i: number): string | null => {
@@ -437,7 +438,7 @@ describe("the idle drain cadence rests behind a doorbell", () => {
 
        WATCHED FAILING: delete either `noteDoorWrite(req, answered);` line in
        `apps/sidecar/src/engine.ts` and this goes red naming the dispatch that went quiet. */
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+    const src = readEngineAsOneText();
     const lines = src.split("\n");
     const dispatches: number[] = [];
     lines.forEach((l, i) => {

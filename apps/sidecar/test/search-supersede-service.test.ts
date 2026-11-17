@@ -8,6 +8,7 @@ import { searchFor } from "../src/composition-passes.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { sqlTextOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -24,7 +25,7 @@ const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[
 let dir = "";
 let o: OpenLocalDb;
 let accountId = "";
-const textOf = (st: SQL): string => (o.db as unknown as { dialect: { sqlToQuery(s: SQL): { sql: string } } }).dialect.sqlToQuery(st).sql;
+const textOf = (st: SQL): string => sqlTextOf(o.db, st);
 
 /** Every statement the service sends, `BEGIN` marking where its transaction opened. */
 function recording(target: any, seen: string[]): any {

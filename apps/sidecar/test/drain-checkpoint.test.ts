@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -142,10 +143,8 @@ function backloggedMailbox(total: number, batch: number): (cfg: ImapConfig) => M
 
 /** Where the last checkpoint's replay would start, off the database's own control file. */
 async function redoLsn(sidecar: Sidecar): Promise<string> {
-  const client = (sidecar.db as unknown as {
-    $client: { query(sql: string): Promise<{ rows: Array<{ redo_lsn: string }> }> };
-  }).$client;
-  const { rows } = await client.query("SELECT redo_lsn::text AS redo_lsn FROM pg_control_checkpoint();");
+  const client = pgliteOf(sidecar.db);
+  const { rows } = await client.query<{ redo_lsn: string }>("SELECT redo_lsn::text AS redo_lsn FROM pg_control_checkpoint();");
   return rows[0]!.redo_lsn;
 }
 
@@ -161,10 +160,8 @@ async function redoLsn(sidecar: Sidecar): Promise<string> {
  * either side of a fold.
  */
 async function logReading(sidecar: Sidecar): Promise<{ unfolded: number; at: number }> {
-  const client = (sidecar.db as unknown as {
-    $client: { query(sql: string): Promise<{ rows: Array<{ unfolded: string; at: string }> }> };
-  }).$client;
-  const { rows } = await client.query(
+  const client = pgliteOf(sidecar.db);
+  const { rows } = await client.query<{ unfolded: string; at: string }>(
     "SELECT (pg_current_wal_insert_lsn() - redo_lsn)::bigint::text AS unfolded, " +
     "(pg_current_wal_insert_lsn() - '0/0'::pg_lsn)::bigint::text AS at FROM pg_control_checkpoint();",
   );

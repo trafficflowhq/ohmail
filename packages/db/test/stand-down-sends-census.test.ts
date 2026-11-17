@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import {
   STAND_DOWN_SEND_SENTENCES, REMOVED_MAILBOX_SEND_SENTENCE,
 } from "../src/stand-down-sends.js";
-import { readSource } from "../../../apps/worker/test/_start-function.js";
+import { readSource as readStartFunction } from "../../../apps/worker/test/_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * EVERY STAND-DOWN CLOSES THE APPOINTMENTS IT ORPHANS — the structural half of
@@ -142,7 +146,7 @@ function* walk(dir: string): Generator<string> {
     const st = statSync(p);
     if (st.isDirectory()) yield* walk(p);
     else if (name.endsWith(".ts") || name.endsWith(".tsx")) {
-      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx")) continue;
+      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx") || isEnginePart(p)) continue;
       yield p;
     }
   }

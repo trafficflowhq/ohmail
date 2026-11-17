@@ -6,9 +6,9 @@ import type {
 import {
   MetaEnumRefusedError, META_ENUM_RECORDS_MAX, type LeaseIo, type MetaEnumCode, type RawClaimMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
-import { readFileSync } from "node:fs";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 
@@ -141,7 +141,7 @@ describe("the local mailbox list says what the runtime knows about the lease", (
   }, 60_000);
 
   it("ONE DERIVATION: the engine spells no lease block reason of its own", () => {
-    const code = withoutComments(readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8"));
+    const code = withoutComments(readEngineAsOneText());
     expect(code.includes("leaseBlockReason("), "the derivation is called").toBe(true);
     // The read's control: a sibling reason the overlay does spell is counted through the same path.
     expect(code.split('"awaiting_credentials"').length - 1).toBeGreaterThan(0);

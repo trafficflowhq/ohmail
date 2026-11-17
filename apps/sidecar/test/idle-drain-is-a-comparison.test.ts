@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isNull } from "drizzle-orm";
 import type {
@@ -9,6 +9,7 @@ import { mailboxes, recordChange } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -274,7 +275,7 @@ describe("an idle drain over a mailbox nobody wrote to", () => {
    * assertion below names the channel that would be skipped over.
    */
   it("THE REQUEST CHANNEL SITS BETWEEN THE DRAIN'S MARK AND THE LADDER'S READ — a source census", () => {
-    const src = readFileSync(new URL("../src/engine.ts", import.meta.url), "utf8");
+    const src = readEngineAsOneText();
     const lines = src.split("\n");
     const at = (re: RegExp): number => {
       const hits = lines.map((l, i) => (re.test(l) ? i : -1)).filter((i) => i >= 0);

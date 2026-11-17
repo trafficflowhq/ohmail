@@ -15,6 +15,7 @@ import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * A WINDOW LEFT OPEN DOES NOT EXPIRE UNDER THE PERSON — both doors, on a fake clock.
@@ -161,7 +162,7 @@ type Client = Record<"query" | "exec" | "transaction", (...a: unknown[]) => Prom
 
 /** Every statement this store handle runs, counted — and, while `down`, refused. */
 function storeSpy(db: LocalDb): { reads: () => number; down: (on: boolean) => void; stop: () => void } {
-  const client = (db as unknown as { $client: Client }).$client;
+  const client = pgliteOf(db) as unknown as Client;
   const originals = { query: client.query, exec: client.exec, transaction: client.transaction };
   let n = 0;
   let refusing = false;

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 import { readSource } from "../../worker/test/_start-function.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -109,10 +110,7 @@ describe("the request key agrees across the doors that share a mailbox", () => {
    * MUTATION WATCHED RED: point the derivation back at `config.imap.auth` and this names the file.
    */
   it("the sidecar derives from the credential it dialled with, never from the process config", () => {
-    const src = readFileSync(
-      fileURLToPath(new URL("../src/engine.ts", import.meta.url)),
-      "utf8",
-    );
+    const src = readEngineAsOneText();
     const calls = src
       .split("\n")
       .filter((line) => !/^\s*(\*|\/\/)/.test(line))

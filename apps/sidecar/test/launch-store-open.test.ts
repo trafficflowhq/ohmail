@@ -13,6 +13,7 @@ import { KnownSetCache, watchKnownSet } from "@ohmail/organizer/known-set";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 2 });
 
@@ -206,7 +207,7 @@ async function locatorStore(archive: number, inbox: number): Promise<{ o: OpenLo
   dirs.push(dir);
   const o = await openLocalDb(dir);
   opened.push(o);
-  const c = (o.db as unknown as { $client: PGlite }).$client;
+  const c = pgliteOf(o.db);
   const one = async (q: string): Promise<string> => (await c.query<{ id: string }>(q)).rows[0]!.id;
   const acc = await one(`insert into accounts (name) values ('pages') returning id`);
   const mb = async (n: string): Promise<string> => one(`insert into mailboxes (account_id, provider, address) values ('${acc}', 'imap', '${n}@mail.example') returning id`);

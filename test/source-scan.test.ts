@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 // The shared scanner, imported the way packages/db's censuses import one.
 import { withoutComments, withoutCommentsAndLiterals, withoutHashComments, bracketSpan, lineOf }
   from "../scripts/lib/source-scan.mjs";
 import { presentRoots } from "./support/public-root.mjs";
+import { engineUnitFiles } from "./support/engine-unit.js";
 
 /**
  * THE COMMENT SCANNER, AND THE LINE THAT BROKE THE TWO-REGEX PAIR.
@@ -312,7 +313,7 @@ describe("0 runaway spans over the sources the censuses read", () => {
     "packages/services/src/mailbox-service.ts",   // the file that produced the first runaway
     "packages/" + "db/src/tx.ts",
     "packages/api/src/router.ts",
-    "apps/sidecar/src/engine.ts",
+    ...engineUnitFiles().map((f) => relative(ROOT, f)),
     "apps/mobile/src/engine/background.ts",
   ].filter((p) => { try { readFileSync(resolve(ROOT, p)); return true; } catch { return false; } });
 

@@ -12,6 +12,7 @@ import { readOrganizerScreening, serializeOrganizerProfile } from "@trafficflow/
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { readSource } from "./_start-function.js";
+import { readingTheUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * A SETTINGS MESSAGE WRITTEN BEFORE THE ESCAPES IS REWRITTEN ONCE BY THE HOLDER.
@@ -124,7 +125,7 @@ describe("the census: onOrganize is called on the organizing arm only", () => {
   it("the worker and the sidecar gate their one call on the role", () => {
     /* Call sites found with comments and literals blanked; the gate read off the same raw line. */
     const calls = (rel: string): string[] => {
-      const raw = readSource(fileURLToPath(new URL(rel, import.meta.url)));
+      const raw = readingTheUnit(readSource)(fileURLToPath(new URL(rel, import.meta.url)));
       const code = withoutCommentsAndLiterals(raw).split("\n");
       const lines = raw.split("\n");
       return code.flatMap((l, i) => (/\.onOrganize\(/.test(l) ? [lines[i]!] : []));
