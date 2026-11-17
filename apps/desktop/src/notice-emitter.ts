@@ -15,9 +15,6 @@ import { type MailNotice, type Notice, type NoticeKind } from "@ohmail/client-en
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import { postOsNotice } from "./native.js";
 
-/** The notice as it crosses to the shell: mail's closed kinds. */
-export type { MailNotice };
-
 /** What the emitter asks of the window and its shell. */
 export interface NoticeShell {
   /** This window is the one being looked at. */

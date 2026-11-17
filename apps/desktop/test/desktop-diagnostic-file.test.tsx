@@ -130,11 +130,14 @@ describe("the desktop's diagnostic file row", () => {
 
   it("About mounts the row, and the hosted web app carries no diagnostic action", () => {
     expect(readFileSync("apps/desktop/src/DesktopAbout.tsx", "utf8")).toContain("<DiagnosticFileRow />");
+    // The catalogue holds every place's words; the phone's own Settings draw on the phone alone.
+    const ownHosts = new Set(["desktopDoor", "phoneSettings"]);
     const webKeys = Object.entries(en as Record<string, Record<string, unknown>>)
-      .filter(([ns]) => ns !== "desktopDoor")
+      .filter(([ns]) => !ownHosts.has(ns))
       .flatMap(([ns, table]) => Object.keys(table ?? {}).filter((k) => /diagnostic/i.test(k)).map((k) => `${ns}.${k}`));
     expect(webKeys).toEqual([]);
-    // Control: the reader does find the desktop's own keys.
+    // Control: the reader does find the desktop's own keys, and the phone's one.
     expect(Object.keys(en.desktopDoor).filter((k) => /diagnostic/i.test(k)).length).toBe(6);
+    expect(Object.keys(en.phoneSettings).filter((k) => /diagnostic/i.test(k))).toEqual(["diagnostics"]);
   });
 });

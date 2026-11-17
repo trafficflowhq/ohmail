@@ -56,6 +56,8 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "onboarding.passwordHint": "the mail provider's account password",
   "reply.forwardAsk.verification": "a mail verifying an account at some other service",
   "reply.forwardAsk.security_alert": "a security alert about an account at some other service",
+  "write.reply.ask.verification": "a mail verifying an account at some other service",
+  "write.reply.ask.security_alert": "a security alert about an account at some other service",
   "providerPicker.note_microsoft": "the Microsoft account's security defaults, and work accounts at Microsoft",
   "join.mailboxMicrosoftAfterSetup": "the Microsoft account an app password is allowed on",
   "providerPicker.note_yahoo": "the Yahoo account's security page and its password",
@@ -64,6 +66,8 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "providerPicker.note_gmail": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_app_password_required": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_imap_disabled": "the Google account IMAP is turned off for",
+  "phoneDoor.form.appOnlyNote": "Google accounts that cannot create App Passwords",
+  "phoneRefusal.standaloneAuthImapDisabled": "the provider's account IMAP is turned off for",
   "mailboxes.probe_auth_microsoft": "work accounts at Microsoft",
   "mailboxes.probe_auth_yahoo": "the name of Yahoo's own account security page",
 };
