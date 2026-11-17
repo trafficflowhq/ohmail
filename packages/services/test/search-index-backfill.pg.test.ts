@@ -79,6 +79,15 @@ describe("the search index backfill (real Postgres)", () => {
     await client.end({ timeout: 5 });
   });
 
+  it("the pass's read answers its letters in the order they were asked, whatever order the store reads them in", async () => {
+    // The pass asks newest first and writes its documents as this read answers them.
+    const newestFirst = [...ids].reverse();
+    const another = [ids[3]!, ids[8]!, ids[0]!, ids[5]!];
+    for (const asked of [newestFirst, another]) {
+      expect((await searchInputsFromStore(db as never, A, asked)).map((r) => r.messageId)).toEqual(asked);
+    }
+  });
+
   it("fills newest first in bounded rounds, then writes the marker once, and only once", async () => {
     expect(await searchIndexProgress(db as never, A)).toEqual({ done: 0, total: 8 });
     const first = await searchIndexBackfillPass({ db: db as never, accountId: A, batch: 2, rounds: 2 });

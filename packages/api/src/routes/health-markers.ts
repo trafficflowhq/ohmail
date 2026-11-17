@@ -870,6 +870,12 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["cal_links", "uid"],
   ["cal_suggestions", "evidence"],
   ["cal_settings", "enabled_at"],
+  // mail 0208_recipient_keys_column — the recipients' key, stored: a column the database generates
+  // from mail 0154's function. LOUD: the schema declares it, so every read of whole letters names it
+  // (the list, the single read, the delta feed, the snapshot, the ingest's insert) and the search's
+  // recipient filter reads it; a host ahead of the migration 42703s on all of them. Deploy order
+  // migration → API → worker, which the 2.0 transition's closed window keeps.
+  ["messages", "recipient_keys"],
   // mail 0209_app_handoff — a phone app's handoff of its sign-in to its sibling. LOUD: the handoff's mint writes
   // both binding columns and every redeem of the grant asks for them, and a device's take-back reads the lineage,
   // so a host ahead of the migration fails at each. Deploy order migration, then the API.
@@ -942,9 +948,10 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // and a second entry for one index is never found.
   ["message_search_head_tsv_idx", "ON public.message_search USING gin (head_tsv) WITH (gin_pending_list_limit='256')"],
   ["message_search_text_tsv_idx", "ON public.message_search USING gin (text_tsv) WITH (gin_pending_list_limit='256')"],
-  // mail 0154_messages_recipient_keys. NOT silent: the address search's `to` and `any` name its
-  // function, so an API ahead of the migration answers them 42883. Deploy order migration → API.
-  ["messages_recipient_keys_idx", "ON public.messages USING gin (messages_recipient_keys(account_id, to_addresses, cc_addresses))"],
+  // mail 0208_recipient_keys_column, which dropped mail 0154's expression index for this one. The
+  // SILENT kind: without it a search by recipient reads every letter of the account, nothing raises
+  // and the page stops answering in milliseconds. The needle carries the bounded pending list.
+  ["messages_recipient_keys_column_idx", "ON public.messages USING gin (recipient_keys) WITH (gin_pending_list_limit='256')"],
   // mail 0018_login_email_identity, listed last because it was found last. The SILENT kind: the
   // registration's check reads before it inserts, so only this index serializes two registrations
   // of one address, and `register` catches its 23505. Absent, both commit and a login opens
@@ -1262,6 +1269,10 @@ export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // Mail 0163_folder_state_fresh_intent — a new filing's schedule reset. Without it a message filed
   // somewhere new keeps the old refusal's sleep and reason.
   ["folder_state_fresh_intent", "NEW.last_error_class := NULL"],
+  // Mail 0154_messages_recipient_keys — the recipients' key function. Since mail 0208 dropped its
+  // expression index this body is the one object 0154 leaves, and `messages.recipient_keys` is
+  // generated from it (0208's own markers probe the column and its index).
+  ["messages_recipient_keys", "account_id::text || ':' || lower(e.addr)"],
 ];
 
 /**

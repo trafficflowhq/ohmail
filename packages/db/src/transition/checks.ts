@@ -202,3 +202,24 @@ export async function checkLedger(tx: Executor, i: CheckInput): Promise<Verdict[
   }
   return out;
 }
+
+/** What mail 0208 generates `messages.recipient_keys` from, as the catalog prints it: mail 0154's frozen function. */
+export const RECIPIENT_KEYS_EXPRESSION = "messages_recipient_keys(account_id, to_addresses, cc_addresses)";
+
+/**
+ * 10. The recipients' key (mail 0208) is a stored column the database generates from mail 0154's
+ * function, and from nothing else. Postgres computed it for every letter as it rewrote the table and
+ * computes it for every letter written after, so the expression decides every row: one of another
+ * expression would answer a search by recipient with keys that are not the letter's own.
+ */
+export async function checkRecipientKeys(tx: Executor): Promise<Verdict[]> {
+  const [r] = rowsOf<{ generated: string; expr: string | null }>(await tx.execute(sql.raw(`
+    select a.attgenerated::text as generated, pg_get_expr(d.adbin, d.adrelid) as expr
+      from pg_attribute a left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+     where a.attrelid = 'public.messages'::regclass and a.attname = 'recipient_keys' and not a.attisdropped`)));
+  const found = r === undefined ? "no such column" : r.generated !== "s" ? "a column no expression generates" : (r.expr ?? "no expression");
+  return [{
+    check: "the recipients' key is mail 0154's function", subject: "messages.recipient_keys",
+    expected: RECIPIENT_KEYS_EXPRESSION, found, ok: found === RECIPIENT_KEYS_EXPRESSION,
+  }];
+}

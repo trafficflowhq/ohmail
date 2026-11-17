@@ -6,8 +6,8 @@ import {
   writeLists,
 } from "./before.js";
 import {
-  checkBorrowers, checkCatalog, checkCounts, checkLedger, checkOldSearch, checkPassMarks, checkPerAccount, checkThrottleKeys,
-  type CheckInput,
+  checkBorrowers, checkCatalog, checkCounts, checkLedger, checkOldSearch, checkPassMarks, checkPerAccount, checkRecipientKeys,
+  checkThrottleKeys, type CheckInput,
 } from "./checks.js";
 import { namesOfWindow } from "./entry-names.js";
 import type { StoreKind } from "./expected-counts.js";
@@ -21,10 +21,11 @@ import { SHIPPED_JOURNALS, oldRoad, readWindow, type TransitionJournals, type Wi
 /**
  * THE 2.0 TRANSITION: one function, one transaction, on every Postgres store.
  *
- * A store at 1.0.11's heads becomes a 2.0 store by twelve entries (six on a desktop). They take
- * columns the 1.0 code reads, fill a column on every row of six tables and re-key seven more, and
- * a store left between the two shapes starts on neither release. So the ordinary migrator, which
- * commits each journal apart and a desktop's entries one by one, does not run them. This does:
+ * A store at 1.0.11's heads becomes a 2.0 store by fourteen entries (eight on a desktop). They take
+ * columns the 1.0 code reads, fill a column on every row of six tables, re-key seven more and
+ * rewrite `messages` for its stored recipients' key, and a store left between the two shapes
+ * starts on neither release. So the ordinary migrator, which commits each journal apart and a
+ * desktop's entries one by one, does not run them. This does:
  *
  *   the kind and the heads · the record of before · the refusal · the mail entries · the Cloud
  *   entries (a server) · the ledger rows · the checks · every sealed value opened · the gate
@@ -79,8 +80,11 @@ function standingOf(journal: ServerJournal, ledger: Ledger, journals: Transition
     return missing === 0 ? "at" : { refused: `the ${journal} journal's head is 1.0.11's and ${missing} of its entries are not recorded` };
   }
   const window = readWindow(journal, journals[journal]);
-  if (window.every((e) => ledger.recorded.get(e.when) === e.hash)) return "moved";
-  return { refused: `the ${journal} journal's head is ${ledger.head}: neither 1.0.11's (${old}) nor a store that took the whole 2.0 window` };
+  const held = window.filter((e) => ledger.recorded.get(e.when) === e.hash).length;
+  if (held === window.length) return "moved";
+  return { refused: held > 0
+    ? `the ${journal} journal records ${held} of the ${window.length} entries of the 2.0 window: a store an unreleased 2.0 build made; no release moves it, so it is made again from empty`
+    : `the ${journal} journal's head is ${ledger.head}: neither 1.0.11's (${old}) nor a store that took the whole 2.0 window` };
 }
 
 /**
@@ -226,6 +230,7 @@ export async function runTransition(input: TransitionInput): Promise<TransitionR
         ...await checkCounts(tx, check), ...await checkBorrowers(tx, check), ...await checkPerAccount(tx),
         ...await checkPassMarks(tx), ...await compareSealed(tx), ...await checkCatalog(tx, check),
         ...await checkOldSearch(tx, check), ...await checkThrottleKeys(tx, check), ...await checkLedger(tx, check),
+        ...await checkRecipientKeys(tx),
       ];
 
       // Every sealed value, opened under the ring.

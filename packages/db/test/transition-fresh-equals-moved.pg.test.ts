@@ -2,6 +2,8 @@
  * and compares their catalogs; nothing it does reaches the lane database. */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { readJournalOf } from "../src/baseline.js";
+import { MAIL_JOURNAL } from "../src/journal-specs.js";
 import { runMigrations } from "../src/migrate.js";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, realPgAvailable, throwawayDb,
@@ -216,5 +218,35 @@ describe.skipIf(!PG_UP)("a store from empty and a store moved", () => {
     expect(refused.triggers.filter((t) => t.table === "staff_audit_events").map((t) => t.name))
       .toEqual(["staff_audit_events_no_change", "staff_audit_events_no_truncate"]);
     expect(Object.keys(TRIGGERS_GONE).filter((name) => !refused.triggers.some((t) => t.name === name))).toEqual([]);
+  });
+
+  /**
+   * MAIL 0208 ON A STORE MADE FROM EMPTY is an ordinary entry: the migrator applies it after 0154 as
+   * it applies every other, the column the database writes stands, and the expression index is gone.
+   */
+  it("the store from empty took mail 0208 as an ordinary entry: the column the database writes, its index, and no expression index", async () => {
+    const entry = readJournalOf(MAIL_JOURNAL).find((e) => e.tag === "0208_recipient_keys_column");
+    expect(entry, "mail 0208 in the journal").toBeDefined();
+    expect((await a`select count(*)::int as n from drizzle_mail.__drizzle_migrations where created_at = ${entry!.when}`)[0]!.n).toBe(1);
+    expect(await a`select a.attgenerated::text as generated, pg_get_expr(d.adbin, d.adrelid) as expr from pg_attribute a
+      join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+      where a.attrelid = 'public.messages'::regclass and a.attname = 'recipient_keys'`)
+      .toEqual([{ generated: "s", expr: "messages_recipient_keys(account_id, to_addresses, cc_addresses)" }]);
+    expect((await a`select to_regclass('public.messages_recipient_keys_idx')::text as old,
+      to_regclass('public.messages_recipient_keys_column_idx')::text as now`)[0]).toEqual({ old: null, now: "messages_recipient_keys_column_idx" });
+    // A letter written as every writer writes it, naming no key: the database writes it. Rolled back.
+    const rolledBack = new Error("rolled back");
+    const keys = await a.begin(async (tx) => {
+      const [acct] = await tx<{ id: string }[]>`insert into accounts (name) values ('fresh-0208') returning id`;
+      const [mb] = await tx<{ id: string }[]>`insert into mailboxes (account_id, provider, address) values (${acct!.id}, 'imap', 'fresh-0208@planted.test') returning id`;
+      const [m] = await tx<{ keys: string[] }[]>`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, to_addresses, cc_addresses)
+        values (${acct!.id}, ${mb!.id}, 'h', 'fresh-0208', 's', ${tx.json([{ address: "To@Fresh.test" }] as never)}, ${tx.json([{ address: "cc@fresh.test" }] as never)})
+        returning recipient_keys as keys`;
+      throw Object.assign(rolledBack, { keys: [...m!.keys].sort(), account: acct!.id });
+    }).catch((e: unknown) => {
+      if (e !== rolledBack) throw e;
+      return e as Error & { keys: string[]; account: string };
+    });
+    expect(keys.keys).toEqual([`${keys.account}:cc@fresh.test`, `${keys.account}:to@fresh.test`]);
   });
 });

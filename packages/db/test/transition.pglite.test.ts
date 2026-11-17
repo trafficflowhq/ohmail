@@ -45,7 +45,7 @@ async function desktopStore() {
 }
 
 describe("a desktop's own store in 1.0.11's shape", () => {
-  it("moves in one transaction: the mail journal's six entries, the engine's own table kept, no Cloud ledger", async () => {
+  it("moves in one transaction: the mail journal's window, the engine's own table kept, no Cloud ledger", async () => {
     const s = await desktopStore();
     expect(await transitionState(drizzle(s.client), { cloud: false })).toBe("at-old-head");
     const before = Object.fromEntries(await Promise.all((await s.tables()).map(async (t) => [t, await s.count(t)] as const)));

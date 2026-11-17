@@ -161,15 +161,10 @@ const NEWEST_WALK = 2_000;
 const FILTERED_SCAN = 20_000;
 /**
  * A SEARCH WITH NO WORDS reads a person's letters off their own index while they are at most this
- * many: what one walk would ask ({@link SearchService.filterRows}). Each person is counted to one past it.
+ * many, whatever else is asked: what one walk would ask ({@link SearchService.filterRows}). Each person
+ * is counted to one past it.
  */
 const PERSON_FEW = FILTERED_SCAN;
-/**
- * A wordless read that asks each letter its recipients (on the server a call a letter: the key
- * function cannot be inlined) asks at most this many letters a page: the mailbox's walk, a person's
- * own read when the other filters name a recipient, and past it that person's letters walked.
- */
-const KEYED_SCAN = 2_500;
 /**
  * UNDER A FOLDER an arm whose words have at most this many cuts of matches (counted off the index, at most one more)
  * reads them there, each asked its folder by key, and walks nothing: in a folder of one letter in 100 a walk reads
@@ -306,8 +301,8 @@ type SearchEstimate = SearchSummary & { facets: Facets };
 /**
  * THE ADDRESS ARM — one address, an EQUALITY, in a direction. Not a filter on `search`, which
  * requires a `q` — an address query has no words. `from` is `lower(from_address) = $1`, an INDEX
- * SCAN of `messages_account_from_addr_idx`; `to` is To and Cc through mail 0154's account-keyed
- * expression index (the device store: its trigger-kept side table); `any` is the two as a UNION
+ * SCAN of `messages_account_from_addr_idx`; `to` is To and Cc through the account-keyed recipients'
+ * key (mail 0208's column and its GIN; the device store: its trigger-kept side table); `any` is the two as a UNION
  * of index-served branches, never an OR in one predicate (an OR loses both indexes).
  */
 export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const satisfies readonly WireAddressSearchDirection[];
@@ -598,27 +593,31 @@ interface SetProbe {
 const PERSON_FILTERS = ["sender", "to", "party"] as const;
 /**
  * A person filter of a wordless search ({@link SearchService.filterParts}): its own predicate, the
- * other filters, the most letters it is read whole at, and `count`, its letters counted off its own
- * indexes to at most one past {@link PERSON_FEW}, a scalar.
+ * other filters, and `count`, its letters counted off its own indexes to at most one past
+ * {@link PERSON_FEW}, a scalar.
  */
-interface FilterPerson { readonly own: SQL; readonly rest: SQL | null; readonly few: number; readonly count: SQL }
+interface FilterPerson { readonly own: SQL; readonly rest: SQL | null; readonly count: SQL }
 /**
  * A wordless search's predicates ({@link SearchService.filterParts}): `base` the account, the
- * deletion and the dates; one entry a person filter present; `asked` every filter but the dates;
- * `scan` the mailbox walk's bound.
+ * deletion and the dates; one entry a person filter present; `asked` every filter but the dates.
  */
 interface FilterParts {
   readonly base: SQL;
   readonly persons: readonly FilterPerson[];
   readonly asked: SQL | null;
-  readonly scan: number;
   /** The device's store: a person's branch is gated by its limit as well ({@link SearchService.filterRows}). */
   readonly limitGates: boolean;
+  /**
+   * The server's planner (the desktop's own store has it too): after a dated cursor the walk starts at the cursor by
+   * an index condition ({@link SearchService.filterRows}). The device's store asks the cursor of the index entry
+   * before it reads the row, and keeps its one read.
+   */
+  readonly seeks: boolean;
 }
 /**
  * A wordless read ({@link SearchService.filterRows}): `rows` its letters with the shape picked, `tail`
- * the picked walk's last letter, `last(pick)` that letter read again for a picked shape, `beyond`
- * whether a letter lies past the walk.
+ * the walk's last letter, `last(pick)` that letter read again for a picked shape, `beyond` whether a
+ * letter lies past the walk.
  */
 interface FilterRead {
   readonly with: SQL | null;
@@ -2109,25 +2108,21 @@ export class SearchService {
   /**
    * A wordless search's predicates, each written by {@link whereSql}. A person (`sender`, `to`,
    * `party`) is read whole off their own index while they have at most {@link PERSON_FEW} letters,
-   * or {@link KEYED_SCAN} where the other filters name a recipient (each letter read is asked them).
-   * The mailbox's walk asks {@link KEYED_SCAN} letters where it asks a recipient, any other {@link FILTERED_SCAN}.
+   * whatever else is asked (each letter read is asked the other filters). The mailbox's walk asks
+   * {@link FILTERED_SCAN} letters a page, a recipient among the filters or not: on the server the
+   * recipients' key is a column in the row read (mail 0208), on the device's store its side table.
    *
    * A PERSON IS COUNTED OFF THEIR OWN INDEXES ONLY, WITHOUT THE DATES: no index of a person carries
    * them, so beside a range the count read every letter of a dense person (35,086 buffers a page at
-   * 300,000 letters); a dense person inside a range is the mailbox's walk inside it. Its two costs:
-   * To own unread beside a short range pages in steps of 2,500 (5,000 letters: three pages, not one);
-   * a dense sender beside a range reads that sender's count (21,793 buffers at 300,000 letters).
-   * From by the account and the
-   * sender's index; To by the recipients' key alone, which carries the account, so no other index can
-   * serve it. The count is index reads while its bitmap fits the server's working memory (`work_mem`):
-   * past it the bitmap is lossy and each letter on a lossy page is asked its recipients again (18,398
-   * calls a count on 300,000 letters laid on 160,012 heap pages). Beside the account or the deletion
-   * (whose indexes are partial on it) the server's planner counts a dense address off an account
-   * index and asks each letter: it prices the bitmap's recheck as a call a letter, so past about
-   * 150,000 letters the limited scan looks the cheaper (20,001 calls). Deleted letters are counted
-   * too, so a count is never under the person's letters. Either side is From's count and To's, each
+   * 300,000 letters); a dense person inside a range is the mailbox's walk inside it, and a dense
+   * sender beside a range reads that sender's count (21,793 buffers at 300,000 letters). From by the
+   * account and the sender's index; To by the recipients' key, which carries the account: on the
+   * server the column's GIN, while its bitmap fits the working memory (`work_mem`), and past that each
+   * letter on a lossy page is compared again with the key it holds. Deleted letters are counted too,
+   * so a count is never under the person's letters. Either side is From's count and To's, each
    * limited, as one set (the address view's count); past {@link PERSON_FEW} To alone says so without
-   * From, whose count reads a letter an entry on the server (an expression index answers no count alone).
+   * From, whose count reads a letter an entry on the server (an expression index answers no count
+   * alone).
    */
   private filterParts(d: Dialect, accountId: string, f: SearchFilters): FilterParts {
     const { dateFrom, dateTo, ...rest } = f;
@@ -2135,7 +2130,6 @@ export class SearchService {
     const base = this.whereSql(d, accountId, dates);
     const any = (x: SearchFilters): boolean => Object.values(x).some((v) => v !== undefined);
     const present = PERSON_FILTERS.filter((k) => rest[k] !== undefined);
-    const keyed = (k: (typeof PERSON_FILTERS)[number]): boolean => k !== "sender";
     const read = (pred: SQL): SQL => sql`select m.id as id from messages m where ${pred} limit ${PERSON_FEW + 1}`;
     const from = (a: string): SQL => read(sql`m.account_id = ${accountId} and lower(m.from_address) = lower(${a})`);
     const to = (a: string): SQL => read(d.search.recipient({ accountId, address: a }));
@@ -2153,29 +2147,26 @@ export class SearchService {
       return {
         own: this.whereSql(d, accountId, { [k]: rest[k] }),
         rest: any(others) ? this.whereSql(d, accountId, others) : null,
-        few: present.some((j) => j !== k && keyed(j)) ? KEYED_SCAN : PERSON_FEW,
         count: counts[k](rest[k]!),
       };
     });
     const asked = any(rest) ? this.whereSql(d, accountId, rest) : null;
-    return { base, persons, asked, scan: present.some(keyed) ? KEYED_SCAN : FILTERED_SCAN, limitGates: d.name !== "pg" };
+    return { base, persons, asked, limitGates: d.name !== "pg", seeks: d.name === "pg" };
   }
 
   /**
    * AT MOST `n` LETTERS THE FILTERS KEEP, newest first after `after`, as `(id, date, pick)`. No person
-   * and nothing asked: a keyset page of History. Something asked: the newest `scan` letters walked,
-   * each asked once. A person: ONE statement whose uncorrelated scalar `fw` picks the shape, by each
-   * person's count (`n<i>`, asked only when the CASE reaches it, once however often it is named):
-   * the first person, in the order sender, to, party, within their `few` is read whole and ordered,
-   * the other filters asked of their letters (pick `i`); else, of those whose `few` is the keyed bound,
-   * the one with fewest letters within {@link PERSON_FEW} has their own letters walked newest first,
-   * {@link KEYED_SCAN} a page, each asked the other filters (pick `-i`); else the mailbox's walk asks every filter of each
-   * letter (pick 0). Exactly one branch answers. Plain `with` (the device's store has no
-   * `materialized`). `tail` is the picked walk's last letter; `last(pick)` reads it for the pick a
-   * page made, counting nothing; the next page starts after it.
+   * and nothing asked: a keyset page of History. Something asked: the newest {@link FILTERED_SCAN}
+   * letters walked, each asked once. A person: ONE statement whose uncorrelated scalar `fw` picks the
+   * shape, by each person's count (`n<i>`, asked only when the CASE reaches it, once however often it
+   * is named): the first person, in the order sender, to, party, within {@link PERSON_FEW} is read
+   * whole and ordered, the other filters asked of their letters (pick `i`); else the mailbox's walk
+   * asks every filter of each letter (pick 0). Exactly one branch answers. Plain `with` (the device's
+   * store has no `materialized`). `tail` is the walk's last letter; `last(pick)` reads it for the pick
+   * a page made, counting nothing; the next page starts after it.
    */
-  private filterRows(p: FilterParts, n: number, after: SQL | null): FilterRead {
-    const at = after === null ? p.base : sql`${p.base} and ${after}`;
+  private filterRows(p: FilterParts, n: number, after: { keyset: SQL; dated: SQL | null } | null): FilterRead {
+    const at = after === null ? p.base : sql`${p.base} and ${after.keyset}`;
     const order = sql`m.date desc nulls last, m.id desc`;
     // No index holds this order, so a person's letters are read off their own index and sorted.
     const own = sql`(m.date is null), m.date desc, m.id desc`;
@@ -2188,52 +2179,46 @@ export class SearchService {
     // branch is gated by its LIMIT too: no store reads a letter for a limit of 0.
     const gate = (v: number): SQL => (named ? sql` and ${pick} = ${sql.raw(String(v))}` : sql``);
     const upTo = (v: number, k: number): SQL => (p.limitGates ? sql`(case when ${pick} = ${sql.raw(String(v))} then ${k} else 0 end)` : sql`${k}`);
-    const walked = p.persons.flatMap((x, i) => (x.few < PERSON_FEW && x.rest !== null ? [{ x, v: -(i + 1), rest: x.rest }] : []));
-    // The k-th letter of a walk (0 the mailbox's, `-i` person i's), under `base`, gated by the pick or not.
-    const nth = (v: number, base: SQL, k: number, gated: boolean): SQL => {
-      if (v === 0) return sql`select m.id as id, m.date as date from messages m where ${base}${gated ? gate(0) : sql``} order by ${order} limit 1 offset ${k}`;
-      const x = p.persons[-v - 1]!;
-      return gated ? sql`select m.id as id, m.date as date from messages m where ${base} and ${x.own}${gate(v)} order by ${own} limit ${upTo(v, 1)} offset ${k}`
-        : sql`select m.id as id, m.date as date from messages m where ${base} and ${x.own} order by ${own} limit 1 offset ${k}`;
-    };
-    const walks = [0, ...walked.map((w) => w.v)];
-    const bound = (v: number): number => (v === 0 ? p.scan : KEYED_SCAN);
-    const each = (f: (v: number) => SQL): SQL => sql.join(walks.map((v, i) => sql`select id, date from (${f(v)}) ${sql.raw(`t${i}`)}`), sql` union all `);
+    // The k-th letter of the mailbox's walk under `base`, gated by the pick or not.
+    const nth = (base: SQL, k: number, gated: boolean): SQL =>
+      sql`select m.id as id, m.date as date from messages m where ${base}${gated ? gate(0) : sql``} order by ${order} limit 1 offset ${k}`;
     // Past the walk's bound: is there a letter it did not ask? Counts are exact only where there is none.
-    const beyond = p.asked === null ? sql`0` : sql`(case when exists (${each((v) => nth(v, p.base, bound(v), true))}) then 1 else 0 end)`;
+    const beyond = p.asked === null ? sql`0` : sql`(case when exists (${nth(p.base, FILTERED_SCAN, true)}) then 1 else 0 end)`;
     if (p.asked === null) {
       return {
         with: null, pick, tail: null, last: () => null, beyond,
         rows: sql`select m.id as id, m.date as date, 0 as pick from messages m where ${at} order by ${order} limit ${n}`,
       };
     }
-    const tail = each((v) => nth(v, at, bound(v) - 1, true));
-    const last = (v: number): SQL | null => (v > 0 ? null : nth(v, at, bound(v) - 1, false));
-    const walk = sql`select w.id as id, w.date as date from (select m.id as id, m.date as date from messages m
-        where ${at}${gate(0)} order by ${order} limit ${p.scan}) w
-      where exists (select 1 from messages m where m.id = w.id and ${p.asked} limit 1 offset 0)
+    const tail = nth(at, FILTERED_SCAN - 1, true);
+    const last = (v: number): SQL | null => (v > 0 ? null : nth(at, FILTERED_SCAN - 1, false));
+    // Each walked letter is asked the filters once, in the row the walk reads. Asked again by its id it
+    // cost a second read of the letter, three index pages and its heap page: 82,571 buffers for a page
+    // of 20,000 letters walked to keep 40.
+    const letters = (cond: SQL): SQL => sql`select m.id as id, m.date as date, (${p.asked}) as hit from messages m
+        where ${cond}${gate(0)} order by ${order} limit ${FILTERED_SCAN}`;
+    // After a dated cursor the walk starts at it: the dated letters by an index condition, then the undated, which
+    // lie after every dated one, merged in History's order. Under the keyset alone, a filter, every letter before
+    // the cursor is read, row and all, to be thrown away.
+    const walked = after === null || after.dated === null || !p.seeks ? letters(at)
+      : sql`select u.id as id, u.date as date, u.hit as hit from (select * from (${letters(sql`${at} and ${after.dated}`)}) wd
+          union all select * from (${letters(sql`${p.base} and m.date is null`)}) wu) u
+        order by u.date desc nulls last, u.id desc limit ${FILTERED_SCAN}`;
+    const walk = sql`select w.id as id, w.date as date from (${walked}) w
+      where w.hit
       order by w.date desc nulls last, w.id desc limit ${n}`;
     const out = (branches: SQL[]): SQL => sql`select x.id as id, x.date as date, ${pick} as pick from (${sql.join(branches, sql` union all `)}) x
         order by x.date desc nulls last, x.id desc limit ${n}`;
     if (!named) return { with: null, rows: out([sql`select id, date from (${walk}) b`]), pick, tail, last, beyond };
     const count = (i: number): SQL => sql`(select n from ${sql.raw(`n${i}`)})`;
-    const whole = p.persons.map((x, i) => sql`when ${count(i)} <= ${x.few} then ${sql.raw(String(i + 1))}`);
-    // Every person is counted by here: of those within PERSON_FEW the one with fewest letters is walked.
-    const walking = walked.map((w) => sql`when ${sql.join([sql`${count(-w.v - 1)} <= ${PERSON_FEW}`,
-      ...walked.filter((o) => o !== w).map((o) => sql`${count(-w.v - 1)} <= ${count(-o.v - 1)}`)], sql` and `)} then ${sql.raw(String(w.v))}`);
+    const whole = p.persons.map((_, i) => sql`when ${count(i)} <= ${PERSON_FEW} then ${sql.raw(String(i + 1))}`);
     const counts = p.persons.map((x, i) => sql`${sql.raw(`n${i}`)} as (select ${x.count} as n)`);
-    const fw = sql.join([...counts, sql`fw as (select case ${sql.join([...whole, ...walking], sql` `)} else 0 end as pick)`], sql`, `);
+    const fw = sql.join([...counts, sql`fw as (select case ${sql.join(whole, sql` `)} else 0 end as pick)`], sql`, `);
     const reads = p.persons.map((x, i) => sql`select id, date from (select m.id as id, m.date as date from messages m
       where ${at} and ${x.own}${x.rest === null ? sql`` : sql` and ${x.rest}`}${gate(i + 1)}
       order by ${own} limit ${upTo(i + 1, n)}) ${sql.raw(`o${i}`)}`);
-    // Its own letters newest first, the order carried out of the walk so the page stops at `n` kept.
-    const people = walked.map(({ x, v, rest }, i) => sql`select id, date from (select w.id as id, w.date as date from (
-        select m.id as id, m.date as date, (m.date is null) as dn from messages m where ${at} and ${x.own}${gate(v)}
-        order by ${own} limit ${upTo(v, KEYED_SCAN)}) w
-      where exists (select 1 from messages m where m.id = w.id and ${rest} limit 1 offset 0)
-      order by w.dn, w.date desc, w.id desc limit ${n}) ${sql.raw(`p${i}`)}`);
     // Ordered and cut once more, so no store flattens the union into the page's join.
-    return { with: fw, rows: out([...reads, ...people, sql`select id, date from (${walk}) b`]), pick, tail, last, beyond };
+    return { with: fw, rows: out([...reads, sql`select id, date from (${walk}) b`]), pick, tail, last, beyond };
   }
 
   /** Only newest first is served without words: any other order is refused, never re-read. */
@@ -2258,7 +2243,10 @@ export class SearchService {
     const limit = SearchService.pageOf(opts.limit);
     const d = dialect(ctx.db);
     const p = this.filterParts(d, ctx.accountId, f);
-    const r = this.filterRows(p, limit + 1, cursor === null ? null : afterDateDesc(d, cursor.d, cursor.i, sql`m.id`));
+    const r = this.filterRows(p, limit + 1, cursor === null ? null : {
+      keyset: afterDateDesc(d, cursor.d, cursor.i, sql`m.id`),
+      dated: cursor.d === null ? null : sql`m.date <= ${d.ts(new Date(cursor.d))}`,
+    });
     // An empty page from a walk brings back the walk's last letter, flagged: its cursor, and the pick, in the page's own statement.
     const rows = r.tail === null ? sql`select id, date, pick, 0 as tail from (${r.rows}) pg`
       : sql`with ${r.with === null ? sql`` : sql`${r.with}, `}pg as (${r.rows})
@@ -2578,9 +2566,8 @@ export class SearchService {
     const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
     const inFolder = (id: SQL): SQL => sql`${SearchService.folderOf(id)} = ${f.folder}`;
     const folder = f.folder === undefined ? undefined : inFolder(sql`m.id`);
-    if (folder !== undefined) preds.push(folder);
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
-    // The recipient keys' index (mail 0154), and for either side the From index beside it.
+    // The recipients' key and its index (mail 0154's key, stored by mail 0208), and for either side the From index beside it.
     if (f.to !== undefined) preds.push(d.search.recipient({ accountId, address: f.to }));
     if (f.party !== undefined) {
       preds.push(sql`(lower(m.from_address) = lower(${f.party}) or ${d.search.recipient({ accountId, address: f.party })})`);
@@ -2589,6 +2576,9 @@ export class SearchService {
     if (f.unread !== undefined) preds.push(sql`m.unread = ${boolLiteral(f.unread)}`);
     if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${boolLiteral(f.hasAttachments)}`);
     preds.push(...SearchService.datesOf(d, f));
+    // LAST: the folder is the one filter that reads another row (the letter's folder state, by its key). A walk asks
+    // its filters in this order, in the row it reads, so a letter another filter refuses is never asked its folder.
+    if (folder !== undefined) preds.push(folder);
     const out = sql.join(preds, sql` and `);
     if (preds.length > 2) filteredWheres.add(out);
     if (folder !== undefined) {

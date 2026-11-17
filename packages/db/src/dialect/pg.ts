@@ -535,9 +535,10 @@ export function pgDialect(): Dialect {
       // so the planner reads the account and the words in one GIN.
       wordKey: (accountId: string): SQL => sql`((s.account_id)::text = (${accountId}::uuid)::text)`,
       letterTerms: (q: string): SQL[] | null => letterTermsOf(q),
-      // Textually the index's expression over `m` (mail 0154), or the planner cannot use it.
+      // The stored key (mail 0208), which the database generates from mail 0154's function: its GIN
+      // answers the containment, and a letter read another way is compared with the key it holds.
       recipient: ({ accountId, address }): SQL =>
-        sql`messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array[${accountId}::text || ':' || lower(${address})]`,
+        sql`m.recipient_keys @> array[${accountId}::text || ':' || lower(${address})]`,
       searchSession: (opts): SQL | null => {
         const sets: SQL[] = [];
         if (opts.typoThreshold !== undefined) {

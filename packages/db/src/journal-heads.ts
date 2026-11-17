@@ -25,12 +25,17 @@ export const LINE_2_0_START = { mail: 200, cloud: 100, device: 200 } as const;
 
 /**
  * The entries the transition applies itself, in one transaction: from each journal's start
- * through `last`, six and six. An entry numbered above `last` is an ordinary migration again.
+ * through `last`, eight and six. An entry numbered above `last` is an ordinary migration again.
+ * `skipped` names the numbers in that span a journal never used: mail 0206 is the phone's own
+ * entry (`drizzle-sqlite/0206_device_unique_indexes.sql`), and the mail journal went on at 0207.
+ * Mail 0207 and 0208 joined the window with 0208, the recipients' stored key, which rewrites
+ * `messages` and so belongs in the closed window; drizzle records a store's head by stamp, so no
+ * entry stamped below a window entry can stay outside it.
  */
-export const TRANSITION_WINDOW = {
-  mail: { last: "0205_calendar" },
-  cloud: { last: "0105_calendar_sign_in" },
-} as const;
+export const TRANSITION_WINDOW: Readonly<Record<"mail" | "cloud", { readonly last: string; readonly skipped: readonly number[] }>> = {
+  mail: { last: "0208_recipient_keys_column", skipped: [206] },
+  cloud: { last: "0105_calendar_sign_in", skipped: [] },
+};
 
 /** The two journals a Postgres store runs. */
 export type ServerJournal = keyof typeof TRANSITION_WINDOW;
@@ -41,11 +46,18 @@ export function entryNumber(tagOrFile: string): number | null {
   return m ? Number.parseInt(m[1]!, 10) : null;
 }
 
+/** The numbers the window's entries carry, in order: the line's start through `last`, less what it skipped. */
+export function windowNumbers(journal: ServerJournal): number[] {
+  const last = entryNumber(TRANSITION_WINDOW[journal].last)!;
+  const out: number[] = [];
+  for (let n = LINE_2_0_START[journal]; n <= last; n++) if (!TRANSITION_WINDOW[journal].skipped.includes(n)) out.push(n);
+  return out;
+}
+
 /** Is `tag` one of the entries the transition applies? By number, so a renamed entry stays inside. */
 export function inTransitionWindow(journal: ServerJournal, tag: string): boolean {
   const n = entryNumber(tag);
-  const last = entryNumber(TRANSITION_WINDOW[journal].last)!;
-  return n !== null && n >= LINE_2_0_START[journal] && n <= last;
+  return n !== null && windowNumbers(journal).includes(n);
 }
 
 /**

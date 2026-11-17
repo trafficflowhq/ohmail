@@ -7,7 +7,7 @@ import { MAIL_MIGRATIONS_DIR, SQLITE_MIGRATIONS_DIR } from "@ohmail/db-mail";
 import { CLOUD_MIGRATIONS_DIR, MAIL_JOURNAL } from "../src/journal-specs.js";
 import { journalThrough } from "../src/testing-journal.js";
 import {
-  LINE_2_0_START, OLD_HEADS, TRANSITION_WINDOW, entryNumber, inTransitionWindow, windowEntries,
+  LINE_2_0_START, OLD_HEADS, TRANSITION_WINDOW, entryNumber, inTransitionWindow, windowEntries, windowNumbers,
   type ServerJournal,
 } from "../src/journal-heads.js";
 
@@ -22,8 +22,9 @@ import {
  * (b) the line: an entry at or above the start is stamped above the old head, strictly rising,
  *     never in the future; an entry below the start is at or below the head; a device file the
  *     lock does not pin sorts at or above the start, or is a `.noop`.
- * (c) the window: the entries the transition applies are contiguous from the start through
- *     `TRANSITION_WINDOW`'s last, six in each journal.
+ * (c) the window: the entries the transition applies run on from the start through
+ *     `TRANSITION_WINDOW`'s last, but for the numbers it names as skipped: eight mail entries
+ *     (0206 is the phone's own number, which the mail journal never used) and six Cloud ones.
  */
 
 interface Entry { idx: number; when: number; tag: string }
@@ -91,19 +92,28 @@ function frozenDeviceFaults(dir: string, pinned: ReadonlySet<string>): string[] 
     .map((f) => `device: ${f} sorts below ${DEVICE_START} and the lock, which pins 2.0's entries, does not pin it`);
 }
 
-/** (c): the window is contiguous from the start; complete, it is six entries ending on `last`. */
+/** The numbers each journal's window carries, written out here: what the transition was written for. */
+const WINDOW_NUMBERS: Record<ServerJournal, readonly number[]> = {
+  mail: [200, 201, 202, 203, 204, 205, 207, 208],
+  cloud: [100, 101, 102, 103, 104, 105],
+};
+
+/** (c): the window runs on from the start, but for its skipped numbers; complete, it is those numbers ending on `last`. */
 function windowFaults(journal: ServerJournal, dir: string): string[] {
   const out: string[] = [];
-  const start = LINE_2_0_START[journal];
+  const want = WINDOW_NUMBERS[journal];
   const last = TRANSITION_WINDOW[journal].last;
   const all = readEntries(dir);
   const window = windowEntries(journal, all);
   window.forEach((e, i) => {
-    if (numbered(e) !== start + i) out.push(`${journal}: the window's entry ${i + 1} is ${e.tag}, not number ${start + i}`);
+    if (numbered(e) !== want[i]) out.push(`${journal}: the window's entry ${i + 1} is ${e.tag}, not number ${String(want[i])}`);
   });
+  for (const e of all) {
+    if (TRANSITION_WINDOW[journal].skipped.includes(numbered(e))) out.push(`${journal}: ${e.tag} carries a number the window skips`);
+  }
   const complete = all.some((e) => numbered(e) >= entryNumber(last)!);
   if (!complete) return out;
-  if (window.length !== 6) out.push(`${journal}: the window holds ${window.length} entries, not six`);
+  if (window.length !== want.length) out.push(`${journal}: the window holds ${window.length} entries, not ${want.length}`);
   if (window.at(-1)?.tag !== last) out.push(`${journal}: the window ends on ${String(window.at(-1)?.tag)}, not ${last}`);
   return out;
 }
@@ -181,17 +191,22 @@ describe("the old heads and the 2.0 line", () => {
     expect(frozenDeviceFaults(dir, PINNED_DEVICE), "before the freeze the head's own test speaks, not this one").toEqual([]);
   });
 
-  it("(c) the window is contiguous from the start and, complete, six entries in each journal", () => {
-    for (const j of JOURNAL_NAMES) expect(windowFaults(j, DIRS[j])).toEqual([]);
+  it("(c) the window runs on from the start but for the numbers it skips and, complete, is eight mail and six Cloud entries", () => {
+    for (const j of JOURNAL_NAMES) {
+      expect(windowFaults(j, DIRS[j])).toEqual([]);
+      expect(windowNumbers(j), j).toEqual(WINDOW_NUMBERS[j]);
+    }
     expect(inTransitionWindow("mail", "0200_search_one_generation")).toBe(true);
+    expect(inTransitionWindow("mail", "0207_request_folder_moves")).toBe(true);
     expect(inTransitionWindow("mail", TRANSITION_WINDOW.mail.last)).toBe(true);
-    expect(inTransitionWindow("mail", "0206_x"), "past the window: an ordinary migration").toBe(false);
+    expect(inTransitionWindow("mail", "0206_x"), "a number the mail journal skipped: no part of the window").toBe(false);
+    expect(inTransitionWindow("mail", "0209_x"), "past the window: an ordinary migration").toBe(false);
     expect(inTransitionWindow("mail", OLD_HEADS.mail.tag), "the old road is not the window").toBe(false);
     expect(inTransitionWindow("cloud", "0100_account_on_sign_in_tables")).toBe(true);
     expect(inTransitionWindow("cloud", "0106_x")).toBe(false);
   });
 
-  it("(c) a gap, a seventh entry or another last entry is red", () => {
+  it("(c) a gap, a skipped number filled, an entry more or another last entry is red", () => {
     const old = (j: ServerJournal): Entry[] => readEntries(DIRS[j]).filter((e) => numbered(e) < LINE_2_0_START[j]);
     let stamp = NOW - 1000;
     const journalOf = (j: ServerJournal, tags: string[]): string => {
@@ -202,13 +217,14 @@ describe("the old heads and the 2.0 line", () => {
       writeFileSync(join(dir, "meta", "_journal.json"), JSON.stringify({ entries }));
       return dir;
     };
-    const six = ["0200_a", "0201_b", "0202_c", "0203_d", "0204_e", TRANSITION_WINDOW.mail.last];
-    expect(windowFaults("mail", journalOf("mail", six)), "the shape the rule admits").toEqual([]);
-    expect(windowFaults("mail", journalOf("mail", [...six, "0206_later"])), "an entry past the window is no part of it").toEqual([]);
-    expect(windowFaults("mail", journalOf("mail", six.slice(0, 3))), "a window still being built").toEqual([]);
+    const eight = ["0200_a", "0201_b", "0202_c", "0203_d", "0204_e", "0205_f", "0207_g", TRANSITION_WINDOW.mail.last];
+    expect(windowFaults("mail", journalOf("mail", eight)), "the shape the rule admits").toEqual([]);
+    expect(windowFaults("mail", journalOf("mail", [...eight, "0209_later"])), "an entry past the window is no part of it").toEqual([]);
+    expect(windowFaults("mail", journalOf("mail", eight.slice(0, 3))), "a window still being built").toEqual([]);
     expect(windowFaults("mail", journalOf("mail", ["0200_a", "0202_c"])), "a gap").not.toEqual([]);
-    expect(windowFaults("mail", journalOf("mail", [...six.slice(0, 5), "0205_other"])), "another last entry").not.toEqual([]);
-    expect(windowFaults("mail", journalOf("mail", [...six.slice(0, 4), TRANSITION_WINDOW.mail.last])), "five").not.toEqual([]);
+    expect(windowFaults("mail", journalOf("mail", [...eight.slice(0, 6), "0206_x", ...eight.slice(6)])), "a skipped number filled").not.toEqual([]);
+    expect(windowFaults("mail", journalOf("mail", [...eight.slice(0, 7), "0208_other"])), "another last entry").not.toEqual([]);
+    expect(windowFaults("mail", journalOf("mail", [...eight.slice(0, 6), TRANSITION_WINDOW.mail.last])), "seven").not.toEqual([]);
     expect(windowFaults("cloud", journalOf("cloud", ["0100_a", "0100_b", "0101_c", "0102_d", "0103_e", "0104_f", TRANSITION_WINDOW.cloud.last])),
       "a seventh").not.toEqual([]);
   });

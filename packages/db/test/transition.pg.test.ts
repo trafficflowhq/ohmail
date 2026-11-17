@@ -160,7 +160,7 @@ describe.skipIf(!PG_UP)("a store in 1.0.11's shape, moved as a server", () => {
     // The row carries its account itself now: no copy and no trigger that kept one is left.
     expect(await copies()).toEqual([]);
 
-    // The ledgers: each gained its six entries with the journal's hash and stamp, and nothing else moved.
+    // The ledgers: each gained its window's entries with the journal's hash and stamp, and nothing else moved.
     for (const [journal, spec] of [["mail", MAIL_JOURNAL], ["cloud", CLOUD_JOURNAL]] as const) {
       const window = readWindow(journal, spec);
       const rows = await sql.unsafe(`select hash, created_at::text as at from "drizzle_${journal}"."__drizzle_migrations" where created_at > ${OLD_HEADS[journal].when} order by created_at`);
@@ -208,6 +208,118 @@ describe.skipIf(!PG_UP)("a store in 1.0.11's shape, moved as a server", () => {
   });
 });
 
+/**
+ * THE RECIPIENTS' KEY, STORED (mail 0208): a column the database writes from mail 0154's frozen
+ * function, added inside the window, where it rewrites `messages` whole. Letters planted in 1.0's
+ * columns in every shape the function reads: To and Cc, one address on both sides in two cases, an
+ * entry with no address and one with an empty one, an address at the 254 characters one may have
+ * and one past them, lists that are not lists, and no recipient at all.
+ */
+const RECIPIENT_KEYS_ENTRY = "0208_recipient_keys_column";
+const RECIPIENT_KEYS_EXPRESSION = "messages_recipient_keys(account_id, to_addresses, cc_addresses)";
+const LONGEST = `${"a".repeat(241)}@example.test`;
+const recipientShapes = (account: string): ReadonlyArray<{ to: unknown; cc: unknown; keys: string[] }> => [
+  { to: [{ name: "Ann", address: "Ann@Example.test" }], cc: [{ name: null, address: "bob@example.test" }], keys: [`${account}:ann@example.test`, `${account}:bob@example.test`] },
+  { to: [{ address: "same@example.test" }, { address: "Same@Example.test" }], cc: [{ address: "SAME@example.test" }], keys: [`${account}:same@example.test`] },
+  { to: [{ name: "no address" }, { address: null }, { address: "" }], cc: [], keys: [] },
+  { to: [{ address: LONGEST }], cc: [{ address: `b${LONGEST}` }], keys: [`${account}:${LONGEST}`] },
+  { to: { address: "not-a-list@example.test" }, cc: "nor-this@example.test", keys: [] },
+  { to: [], cc: [], keys: [] },
+];
+type Sql = ReturnType<typeof postgres>;
+/** The column as the catalog holds it: generated how, and from what. `null` where there is none. */
+const keyColumn = async (sql: Sql): Promise<{ generated: string; expr: string | null } | null> =>
+  (await sql<{ generated: string; expr: string | null }[]>`select a.attgenerated::text as generated, pg_get_expr(d.adbin, d.adrelid) as expr
+     from pg_attribute a left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+    where a.attrelid = 'public.messages'::regclass and a.attname = 'recipient_keys' and not a.attisdropped`)[0] ?? null;
+/** An index of `public` by name: its definition, whether it is valid, its options. `null` where there is none. */
+const indexNamed = async (sql: Sql, name: string): Promise<{ def: string; valid: boolean; options: string[] | null } | null> =>
+  (await sql<{ def: string; valid: boolean; options: string[] | null }[]>`select pg_get_indexdef(i.indexrelid) as def, i.indisvalid as valid,
+     c.reloptions as options from pg_index i join pg_class c on c.oid = i.indexrelid where i.indexrelid = to_regclass(${`public.${name}`})`)[0] ?? null;
+/** The SQLSTATE a statement fails with, or `undefined` where it does not fail. */
+const failsWith = async (q: Promise<unknown>): Promise<string | undefined> =>
+  q.then(() => undefined, (e: { code?: string }) => e.code ?? "no code");
+
+describe.skipIf(!PG_UP)("the recipients' key, stored (mail 0208)", () => {
+  it("moved as a server: every letter holds the key the function gives, and the column's index stands where the expression index stood", async () => {
+    const { sql } = await copy("transition_recipient_keys");
+    const shaped: { id: string; keys: string[] }[] = [];
+    for (const who of [planted.main, planted.other]) {
+      for (const [i, s] of recipientShapes(who.accountId).entries()) {
+        const [m] = await sql<{ id: string }[]>`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, date, to_addresses, cc_addresses)
+          values (${who.accountId}, ${who.mailboxId}, 'h', ${`recipients:${who.accountId}:${i}`}, ${`recipients ${i}`}, now(), ${sql.json(s.to as never)}, ${sql.json(s.cc as never)})
+          returning id`;
+        shaped.push({ id: m!.id, keys: [...s.keys].sort() });
+      }
+    }
+    // At 1.0.11's heads: mail 0154's expression index, and no column.
+    expect(await keyColumn(sql)).toBeNull();
+    expect((await indexNamed(sql, "messages_recipient_keys_idx"))?.def).toContain(`USING gin (${RECIPIENT_KEYS_EXPRESSION})`);
+
+    const { report, error } = await move(sql, "server");
+    expect(error).toBeUndefined();
+    expect(report!.entries.map((e) => e.tag)).toContain(RECIPIENT_KEYS_ENTRY);
+    expect(report!.verdicts.filter((v) => !v.ok)).toEqual([]);
+
+    // Every letter of the store, the planted ones among them: the column is what the function answers.
+    const [all] = await sql<{ letters: number; differ: number; keyed: number }[]>`select count(*)::int as letters,
+      (count(*) filter (where recipient_keys is distinct from messages_recipient_keys(account_id, to_addresses, cc_addresses)))::int as differ,
+      (count(*) filter (where cardinality(recipient_keys) > 0))::int as keyed from messages`;
+    expect(all!.letters).toBe(planted.letters + shaped.length);
+    expect(all!.differ).toBe(0);
+    expect(all!.keyed).toBe(shaped.filter((p) => p.keys.length > 0).length);
+    const stored = new Map((await sql<{ id: string; keys: string[] }[]>`select id, recipient_keys as keys from messages
+      where id = any(${shaped.map((p) => p.id)}::uuid[])`).map((r) => [r.id, [...r.keys].sort()]));
+    expect(shaped.map((p) => stored.get(p.id))).toEqual(shaped.map((p) => p.keys));
+
+    // Written by the database, from the frozen function; its own index under a new name, the expression index gone.
+    expect(await keyColumn(sql)).toEqual({ generated: "s", expr: RECIPIENT_KEYS_EXPRESSION });
+    expect(await indexNamed(sql, "messages_recipient_keys_idx")).toBeNull();
+    expect(await indexNamed(sql, "messages_recipient_keys_column_idx")).toEqual({
+      def: "CREATE INDEX messages_recipient_keys_column_idx ON public.messages USING gin (recipient_keys) WITH (gin_pending_list_limit='256')",
+      valid: true, options: ["gin_pending_list_limit=256"],
+    });
+  });
+
+  it("a writer cannot set the key: the database refuses it, and writes it again when the letter's recipients change", async () => {
+    const { sql } = await copy("transition_recipient_keys_writer");
+    expect((await move(sql, "server")).error).toBeUndefined();
+    const { accountId, mailboxId } = planted.main;
+    /** One recipient list of one address, built by the server. */
+    const one = (address: string) => sql`jsonb_build_array(jsonb_build_object('name', null, 'address', ${address}::text))`;
+    expect(await failsWith(sql`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, to_addresses, recipient_keys)
+      values (${accountId}, ${mailboxId}, 'h', 'sets-its-key', 's', ${one("To@Example.test")}, array[${"forged:a@example.test"}::text])`)).toBe("428C9");
+    const [m] = await sql<{ id: string; keys: string[] }[]>`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, to_addresses)
+      values (${accountId}, ${mailboxId}, 'h', 'its-key-is-written', 's', ${one("To@Example.test")}) returning id, recipient_keys as keys`;
+    expect(m!.keys).toEqual([`${accountId}:to@example.test`]);
+    expect(await failsWith(sql`update messages set recipient_keys = array[${"forged:a@example.test"}::text] where id = ${m!.id}`)).toBe("428C9");
+    await sql`update messages set cc_addresses = ${one("CC@example.test")} where id = ${m!.id}`;
+    const [after] = await sql<{ keys: string[] }[]>`select recipient_keys as keys from messages where id = ${m!.id}`;
+    expect([...after!.keys].sort()).toEqual([`${accountId}:cc@example.test`, `${accountId}:to@example.test`]);
+  });
+
+  it("a column made of another expression is the transition's red check, and nothing commits", async () => {
+    const { sql } = await copy("transition_recipient_keys_plant");
+    const before = await fingerprintOf(sql);
+    // The plant: the entry's column made of To twice, Cc never.
+    const mail = editedJournal(MAIL_JOURNAL, RECIPIENT_KEYS_ENTRY, (text) => {
+      const toTwice = text.replace(`"to_addresses", "cc_addresses")) STORED`, `"to_addresses", "to_addresses")) STORED`);
+      expect(toTwice).not.toBe(text);
+      return toTwice;
+    });
+    const run = await move(sql, "server", { journals: { mail, cloud: CLOUD_JOURNAL } });
+    expect(run.error).toBeInstanceOf(TransitionFailed);
+    expect((run.error as TransitionFailed).at.stage).toBe("check");
+    expect((run.error as TransitionFailed).at.lines).toEqual([{
+      what: `the recipients' key is mail 0154's function / messages.recipient_keys: expected ${RECIPIENT_KEYS_EXPRESSION}, `
+        + "found messages_recipient_keys(account_id, to_addresses, to_addresses)",
+      n: 1,
+    }]);
+    expect(await fingerprintOf(sql)).toEqual(before);
+    expect(await keyColumn(sql)).toBeNull();
+  });
+});
+
 describe.skipIf(!PG_UP)("a store the transition was not written for", () => {
   it("a head between the two (one entry past 1.0.11's) is refused before the first entry", async () => {
     const { sql } = await copy("transition_0186");
@@ -220,6 +332,33 @@ describe.skipIf(!PG_UP)("a store the transition was not written for", () => {
     expect(run.events.some((e) => e.type === "entry")).toBe(false);
     expect(await fingerprintOf(sql)).toEqual(before);
   });
+
+  it("a store an unreleased 2.0 build made is refused in words that say what it is and what becomes of it", async () => {
+    // Made from empty by the journals as they stood one entry before the window's end: such a build's store.
+    const built = throwawayDb("transition_unreleased");
+    copies.push(built);
+    const window = readWindow("mail");
+    const cut = [journalThrough(MAIL_JOURNAL, window.at(-2)!.when), journalThrough(CLOUD_JOURNAL, readJournalOf(CLOUD_JOURNAL).at(-1)!.when)];
+    try {
+      await built.create(async (url) => {
+        const client = postgres(url, { max: 1, onnotice: () => { /* quiet */ } });
+        try {
+          for (const c of cut) await migrate(brandDialect(drizzle(client), "pg"), { migrationsFolder: c.spec.dir, migrationsSchema: c.spec.migrationsSchema });
+        } finally { await client.end({ timeout: 5 }); }
+      });
+    } finally { for (const c of cut) c.dispose(); }
+    const sql = postgres(built.url, { max: 2, onnotice: () => { /* quiet */ } });
+    clients.push(sql);
+    const before = await fingerprintOf(sql);
+    const said = `the mail journal records ${window.length - 1} of the ${window.length} entries of the 2.0 window: `
+      + "a store an unreleased 2.0 build made; no release moves it, so it is made again from empty";
+    expect(await transitionState(brandDialect(drizzle(sql), "pg"), { cloud: true })).toEqual({ refused: said });
+    // The ordinary start says the same and changes nothing.
+    const start = await runMigrations(built.url).then(() => null, (e: unknown) => e);
+    expect(start).toBeInstanceOf(TransitionRefused);
+    expect((start as Error).message).toContain(said);
+    expect(await fingerprintOf(sql)).toEqual(before);
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   it("a ledger that lost an entry of the file is refused, whatever its count", async () => {
     const { sql } = await copy("transition_lost_row");
@@ -508,7 +647,8 @@ describe.skipIf(!PG_UP)("the transition as a deployment reaches it: through the 
     const said: string[] = [];
     await setupProdDatabase(SETUP_AS.urlFor(url), { log: (m) => { said.push(m); }, transition: through });
     expect(said.filter((m) => m.startsWith("transition: committed"))).toHaveLength(1);
-    expect(said.filter((m) => /^transition: (mail|cloud) 0[12]0\d_\w+ applied in \d+ ms$/.test(m))).toHaveLength(12);
+    expect(said.filter((m) => /^transition: (mail|cloud) 0[12]0\d_\w+ applied in \d+ ms$/.test(m))).toHaveLength(readWindow("mail").length + readWindow("cloud").length);
+    expect(readWindow("mail").length + readWindow("cloud").length).toBe(14);
     expect(said.join("\n")).not.toMatch(/@iso\.test|v1:/);
     expect(await transitionState(brandDialect(drizzle(sql), "pg"), { cloud: true })).toBe("moved");
     const once = await fingerprintOf(sql);
