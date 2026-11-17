@@ -93,10 +93,16 @@ export type AccessTokenFetcherFactory = (
  * so it belongs to the auth-assembly seam every host compiles. The Microsoft client that fills it
  * stays next door; a consumer of this module can be handed a provider without being able to
  * construct one.
+ *
+ * `Dial` is what the dialling site hands over beside the mailbox, for the host's own port that
+ * keeps a rotated token: on a host whose store is reached through one handle per caller, the
+ * handle the dial itself reads the mailbox's credential on. A host with one way into its store
+ * hands nothing. A property and not a method, so a source that takes nothing does not pass for
+ * one that is handed something.
  */
-export interface OAuthTokenProvider {
+export interface OAuthTokenProvider<Dial = void> {
   /** The {@link AccessTokenFetcherFactory} `buildImapAuth` calls for one mailbox. */
-  forMailbox(mailboxId: string): AccessTokenFetcherFactory;
+  forMailbox: (mailboxId: string, dial: Dial) => AccessTokenFetcherFactory;
 }
 
 /**

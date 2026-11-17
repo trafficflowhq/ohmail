@@ -3,6 +3,7 @@ import {
   type OrganizerState, capabilitiesColumn, type Tx, type LedgerTx, type OrganizerRole,
   RELEASED_ORGANIZER_SEND_SENTENCE, type StandDownExport, exportPendingMovesOnStandDown, closeStoodDownAppointments,
 } from "@trafficflow/db";
+import type { OwnedDb } from "@trafficflow/db/cloud";
 import { agreeSweepRun, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { gapOpenStart, type TravelledGap } from "@ohmail/organizer/gap-catchup";
@@ -160,7 +161,7 @@ export function leaseGateSection(scope: WorkerScope): void {
             if (left !== null) written = { by: left.by, at: left.at };
             if (left?.gap) travelled = { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) };
           }
-          opensAt = gapOpenStart(dialect(scope.db as unknown as Tx), {
+          opensAt = gapOpenStart(dialect(scope.forAccount(mb.accountId).db as unknown as Tx), {
             occupancy: state === "stopped" ? "stopped" : "none",
             stoppedAt: beats.length === 0 ? null : new Date(Math.max(...beats)),
             travelled, written, self: scope.organizerInstallId,
@@ -169,7 +170,7 @@ export function leaseGateSection(scope: WorkerScope): void {
         if (current.kind === kind && current.name === name && current.state === state
           && current.capabilities === capabilities && current.installId === installId
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) {
-          if (gap !== undefined && await refreshOrganizerHolder(scope.db, mb.mailboxId, {
+          if (gap !== undefined && await refreshOrganizerHolder(scope.forAccount(mb.accountId).db, mb.mailboxId, {
             kind, installId, displayName: name, claimedAt: since, state,
             capabilities: top?.capabilities ?? null,
           }, { fence: scope.fence, stateChanged: false, gap, ...(opensAt === undefined ? {} : { opensAt }) })) current.gapOpen = gap === "open";
@@ -184,7 +185,7 @@ export function leaseGateSection(scope: WorkerScope): void {
          * ARE what the two reader sentences are about: somebody is organizing this, or somebody
          * stopped and you can claim it. */
         const stateChanged = current.state !== state;
-        const landed = await refreshOrganizerHolder(scope.db, mb.mailboxId, {
+        const landed = await refreshOrganizerHolder(scope.forAccount(mb.accountId).db, mb.mailboxId, {
           kind, installId, displayName: name, claimedAt: since, state,
           capabilities: top?.capabilities ?? null,
         }, { fence: scope.fence, stateChanged, ...(gap !== undefined ? { gap } : {}), ...(opensAt === undefined ? {} : { opensAt }) });
@@ -214,7 +215,7 @@ export function leaseGateSection(scope: WorkerScope): void {
      */
     async function leaveSettings(rt: MailboxRuntime): Promise<void> {
       try {
-        const gap = await readTravellingGapSince(scope.db, rt.mailboxId, scope.organizerInstallId);
+        const gap = await readTravellingGapSince(scope.forAccount(rt.accountId).db, rt.mailboxId, scope.organizerInstallId);
         const left = await rt.profile.flushBeforeLeaving(rt.leasePermit, rt.adapter, gap === null ? undefined : { gap });
         scope.log.info("organizer_settings_left", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, outcome: left,
@@ -240,7 +241,7 @@ export function leaseGateSection(scope: WorkerScope): void {
       if (!sweep) return;
       try {
         const clearance = await rt.profile.sweepClearance();
-        const out = await agreeSweepRun(scope.db as unknown as Parameters<typeof agreeSweepRun>[0], {
+        const out = await agreeSweepRun(scope.forAccount(rt.accountId).db as unknown as Parameters<typeof agreeSweepRun>[0], {
           accountId: rt.accountId, mailboxId: rt.mailboxId, stamp: sweep.stamp, held: sweepHeld(clearance), now: new Date(),
           knowledgeFor: (tx) => makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]),
           ledgerOf: (tx) => tx as unknown as LedgerTx,
@@ -440,7 +441,7 @@ export function leaseGateSection(scope: WorkerScope): void {
         }
         let stamped = false;
         if (mayMark || releasedByLapse) try {
-          const written = await markMailboxReleased(scope.db, mb.mailboxId, { fence: scope.fence });
+          const written = await markMailboxReleased(scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence });
           if (written) {
             stamped = true;
             // The in-memory mirror of what the row now holds, on the same discipline the
@@ -612,7 +613,7 @@ export function leaseGateSection(scope: WorkerScope): void {
              * in: an unconditional clear here erased a Stop pressed during it, and the mailbox
              * organized on for ever. See `spendOneShot`. */
             const spent = lease.takeoverAuthorizedAt;
-            const promoted = await clearOrganizerStandDown(scope.db, mb.mailboxId, { fence: scope.fence, asRead: lease });
+            const promoted = await clearOrganizerStandDown(scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence, asRead: lease });
             if (promoted) {
               // The sweep after the hold preflight asks whether this stamp was a person's first agree.
               if (spent !== null) nonce.agreeStamp = spent;
@@ -705,13 +706,13 @@ export function leaseGateSection(scope: WorkerScope): void {
         // The holder columns ride the SAME statement as the role : a row that says
         // `reader` without naming who organizes it is a banner with a blank in it, and the banner
         // reads the row precisely so no client has to dial IMAP to render one.
-        const written = await markMailboxStoodDown(scope.db, mb.mailboxId, outcome.reason, {
+        const written = await markMailboxStoodDown(scope.forAccount(mb.accountId).db, mb.mailboxId, outcome.reason, {
           fence: scope.fence,
           // The one-shots as this gate read them, on the promotion's rule — see `spendOneShot`.
           asRead: lease,
           ...(wasOrganizer
             ? {
-              also: async (tx: typeof scope.db): Promise<void> => {
+              also: async (tx: OwnedDb["db"]): Promise<void> => {
                 handed.r = await exportPendingMovesOnStandDown(tx as unknown as Tx, {
                   accountId: mb.accountId, mailboxId: mb.mailboxId, now: new Date(),
                   mintId: randomUUID,
@@ -802,7 +803,7 @@ export function leaseGateSection(scope: WorkerScope): void {
       sentence?: string,
     ): Promise<void> {
       try {
-        const r = await closeStoodDownAppointments(scope.db as unknown as Tx, {
+        const r = await closeStoodDownAppointments(scope.forAccount(mb.accountId).db as unknown as Tx, {
           accountId: mb.accountId, mailboxId: mb.mailboxId, reason, now: new Date(),
           ...(sentence !== undefined ? { sentence } : {}),
         });

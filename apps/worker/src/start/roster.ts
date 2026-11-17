@@ -36,7 +36,10 @@ export function rosterSection(scope: WorkerScope): void {
         });
       }
 
-      const roster = await loadRosterMailboxes(scope.db, scope.selection, new Date(), scope.parkedAccountsReader ?? undefined);
+      const roster = await loadRosterMailboxes(scope.roster, scope.selection, new Date(), scope.parkedAccountsReader ?? undefined);
+      // A new reading of the roster: each account's handle is made afresh from here on, bound to
+      // the account this reading names. A cycle already under way keeps the pair it took.
+      scope.forgetAccounts();
       const selected = roster.served;
 
       // ── THE CATCH-UP'S DATE, RECORDED BEFORE THIS PASS SPENDS IT (cloud 0040) ──────────────
@@ -56,7 +59,7 @@ export function rosterSection(scope: WorkerScope): void {
       }
       for (const accountId of reopening) {
         try {
-          await plantReopenedCatchUp(scope.db as unknown as Tx, accountId);
+          await plantReopenedCatchUp(scope.forAccount(accountId).db as unknown as Tx, accountId);
         } catch (err) {
           if (err instanceof AccountErasedError) continue;
           plantOwed.add(accountId);
@@ -81,7 +84,7 @@ export function rosterSection(scope: WorkerScope): void {
           || m.releaseRequestedAt !== null || m.takeoverAuthorizedAt !== null) continue;
         const now = new Date();
         try {
-          if (await resumeParkedMailbox(scope.db, m.mailboxId, { fence: scope.fence, now })) {
+          if (await resumeParkedMailbox(scope.forAccount(m.accountId).db, m.mailboxId, { fence: scope.fence, now })) {
             m.takeoverAuthorizedAt = now;
             m.takeoverIntent = "join";
             scope.log.info("organizer_parked_resume", {
@@ -158,7 +161,7 @@ export function rosterSection(scope: WorkerScope): void {
         scope.noteBlock(scope.parkedBlocked, m.mailboxId, "account_closed");
         if (m.organizerRole !== "organizer") continue;
         try {
-          const written = await markMailboxReleased(scope.db, m.mailboxId, { fence: scope.fence, cause: "account_parked" });
+          const written = await markMailboxReleased(scope.forAccount(m.accountId).db, m.mailboxId, { fence: scope.fence, cause: "account_parked" });
           if (written) {
             scope.log.warn("organizer_parked_account_released", {
               mailboxId: m.mailboxId, accountId: m.accountId,
@@ -184,7 +187,7 @@ export function rosterSection(scope: WorkerScope): void {
         if (scope.stopped) return;
         if (scope.closureDropped.has(accountId)) continue;
         try {
-          await dropUntoldCatchUps(scope.db as unknown as Tx, accountId);
+          await dropUntoldCatchUps(scope.forAccount(accountId).db as unknown as Tx, accountId);
           scope.closureDropped.add(accountId);
         } catch (err) {
           if (err instanceof AccountErasedError) { scope.closureDropped.add(accountId); continue; }
@@ -202,6 +205,25 @@ export function rosterSection(scope: WorkerScope): void {
       // syncing a mailbox whose credentials may already have been deleted.
       for (const rt of [...scope.runtimes.values()]) {
         if (scope.stopped) return;
+        // A RUNTIME IS NEVER MOVED TO ANOTHER ACCOUNT. Its handle, its repository and its sync deps
+        // were bound at its attach, to the account of the row it was attached from. A reading of
+        // the roster that names another account for the same mailbox ends it here, and the
+        // scheduling below attaches the mailbox afresh under the account this reading names. No
+        // claim is released: the mailbox is still this shard's.
+        const named = desired.get(rt.mailboxId);
+        if (named !== undefined && named.accountId !== rt.accountId) {
+          const reason = "the roster names another account for this mailbox";
+          scope.log.error("mailbox_account_changed", {
+            mailboxId: rt.mailboxId, accountId: rt.accountId, namedAccountId: named.accountId,
+            reason: "the mailbox's row names another account than the one this connection was " +
+              "attached under; the connection is closed and the mailbox attached again under the " +
+              "account its row names, and nothing is written for it under the old one",
+          });
+          // Not while a lane is inside it, for the reason below: the cycle ends it once its lanes joined.
+          if (scope.laneBusy.has(rt.mailboxId)) scope.deferredLeaves.push({ rt, release: false, reason });
+          else await scope.detach(rt, reason);
+          continue;
+        }
         if (!desired.has(rt.mailboxId)) {
           // Not while a lane is inside it. This is the ONE detach reachable from inside a running
           // cycle — a roster pass served by `yieldToRoster` — and with lanes it can now land on a
@@ -245,6 +267,9 @@ export function rosterSection(scope: WorkerScope): void {
       for (const mb of served) {
         if (scope.stopped) return;
         const attached = scope.runtimes.get(mb.mailboxId);
+        // One still attached under another account waits for its cycle to end it (above): nothing
+        // of this row is written into it.
+        if (attached && attached.accountId !== mb.accountId) continue;
         if (attached) {
           // Refresh the lease-relevant columns from the row we just read, so a takeover
           // authorized by the connect flow while this mailbox was already serving reaches the
@@ -328,7 +353,7 @@ export function rosterSection(scope: WorkerScope): void {
       if (toSchedule.length > 0) {
         // One read of the hosts, only when there is something to schedule.
         const hosts = await asDatabaseFault("roster.attachHosts",
-          () => loadAttachHosts(scope.db, toSchedule.map((m) => m.mailboxId)));
+          () => loadAttachHosts(scope.roster, toSchedule.map((m) => m.mailboxId)));
         if (scope.stopped) return;
         for (const mb of toSchedule) {
           const queued = scope.attachPool.enqueue({
@@ -384,7 +409,8 @@ export function rosterSection(scope: WorkerScope): void {
       // every live mailbox of which says `account_closed` as the delete runs (mail 0135).
       const parkedAccounts = [...new Set(roster.parked.map((m) => m.accountId))];
       try {
-        await deleteParkedPushRows(scope.db, parkedAccounts);
+        // ONE statement over every parked account of the shard: it names none, and runs on the roster's view.
+        await deleteParkedPushRows(scope.roster, parkedAccounts);
       } catch (err) {
         scope.log.error("parked_push_delete_failed", {
           accounts: parkedAccounts.length, err,
@@ -428,7 +454,7 @@ export function rosterSection(scope: WorkerScope): void {
             const reason = block.reason;
             // The wall's block rests on a verdict the reopening door can overturn mid-pass: it
             // lands only on a row not kicked since this roster read it (mail 0135).
-            const written = await markMailboxSyncBlocked(scope.db, mb.mailboxId, reason, {
+            const written = await markMailboxSyncBlocked(scope.forAccount(mb.accountId).db, mb.mailboxId, reason, {
               fence: scope.fence, ...(reason === "account_closed" ? { kickAsRead: mb.kickStamp } : {}),
             });
             if (!written) {
@@ -449,7 +475,7 @@ export function rosterSection(scope: WorkerScope): void {
               });
             }
           } else if (!block?.reason && mb.syncBlockedReason !== null) {
-            if (await clearMailboxSyncBlock(scope.db, mb.mailboxId, { fence: scope.fence })) {
+            if (await clearMailboxSyncBlock(scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence })) {
               scope.log.info("mailbox_sync_block_cleared", {
                 mailboxId: mb.mailboxId, accountId: mb.accountId,
                 reason: "this mailbox is being served again, or is no longer ours to serve",

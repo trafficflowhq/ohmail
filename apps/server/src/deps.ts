@@ -1,5 +1,5 @@
 import {
-  users, providerFamily, UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, pricingOf, parkedAccountsOf,
+  bindDb, users, providerFamily, UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, pricingOf, parkedAccountsOf,
   type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
@@ -51,7 +51,7 @@ import {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS,
   staffSigningKeyOf, nodeMailDns, connectAttemptRecorder,
 } from "@trafficflow/api";
-import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
+import type { ApiDeps, ApiServices, ChangeWakeHub, ConnectAttemptFacts } from "@trafficflow/api";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { schema } from "@trafficflow/db/cloud";
 import { allowCookieAuthForRequest } from "./cookie-auth.js";
@@ -286,7 +286,7 @@ export interface Runtime {
   /** ONE LISTEN for the program, fanned out per account; null where no stream is held. */
   changeWake: () => ChangeWakeHub | null;
   /** One long-lived token provider — see {@link oauthProvider}. */
-  oauth: MicrosoftTokenProvider;
+  oauth: MicrosoftTokenProvider<DialDb>;
   logger: Logger;
   /** The pager's arms ({@link pagerArms}), built once: the routes and the clock share them. */
   alertSinks: AlertSink[];
@@ -810,15 +810,25 @@ export function alertHeartbeat(cfg: Wiring, logger: Logger): AlertHeartbeat {
   return heartbeat;
 }
 
+/** The handle a dial holds and hands its token source: a request's, or a pass's row's (`ApiDeps.db`). */
+export type DialDb = ApiDeps["db"];
+
 /**
  * The Microsoft OAuth2 token source — ONE long-lived provider for the program: its token cache is
  * keyed by mailbox with expiry handled inside it, and `resolveClient` re-reads the config store on
  * every refresh so a rotated client secret takes effect without a restart. The rotation write
  * targets the mailbox's own credential row and is the only write this port makes.
+ *
+ * TWO HANDLES, AND WHICH IS WHOSE. `db` is the pool's own, for the registration's read alone: a
+ * table no account owns. A mailbox's rotated token is written on the handle of the dial that
+ * redeemed the old one (`dialDb`, handed at `forMailbox`): a request's, bound to its session's
+ * account, or a pass's, bound to its row's. The write is one flight there and names what the dial
+ * names. Never on `db`: a write outside a flight names no account, and where the rows are locked
+ * by account it changes none and says nothing, while the token it replaces may already be dead.
  */
-export function oauthProvider(cfg: Wiring, db: () => Db): MicrosoftTokenProvider {
-  const updateSecret: UpdateSecretPort = (mailboxId, ciphertextEnc, keyVersion) =>
-    rotateMailboxOAuthSecret(db(), {
+export function oauthProvider(cfg: Wiring, db: () => Db): MicrosoftTokenProvider<DialDb> {
+  const updateSecret: UpdateSecretPort<DialDb> = (mailboxId, ciphertextEnc, keyVersion, dialDb) =>
+    rotateMailboxOAuthSecret(dialDb, {
       mailboxId, ciphertext: ciphertextEnc, keyVersion, now: new Date(),
     });
   return new MicrosoftTokenProvider({
@@ -955,12 +965,18 @@ function kekRetirementFor(rt: Runtime): () => Promise<{ error: string; detail: s
 export function depsFor(req: Request, rt: Runtime): ApiDeps {
   const { cfg, door } = rt;
   const { chosen } = cfg;
-  const db = rt.db.request();
+  // THE REQUEST'S HANDLE, MINTED HERE: bound to nothing, over the pool's own handle, which never
+  // leaves this module. `withSession` binds it to the session's account, once; a route without a
+  // session keeps it as it is. The session doors' handle is minted the same way, its shorter wait
+  // applied to the pool's handle first: a ceiling is put under a binding, never over one.
+  const db = bindDb(rt.db.request(), { account: null });
   const metered = chosen.metering !== "never";
   const staff = chosen.staffDoor === "blind-role" ? cfg.staff : null;
-  return {
+  /** The request's handle as it stands when a port below is used: bound to the session's account by then. */
+  const requestDb = (): Tx => deps.db as unknown as Tx;
+  const deps: ApiDeps = {
     db,
-    sessionDb: () => rt.db.session(),
+    sessionDb: () => bindDb(rt.db.session(), { account: null }),
     now: () => new Date(),
     requestId: "",                 // `withRequestId` assigns one
     session: null,                 // `withSession` resolves it
@@ -1099,10 +1115,17 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
      * WHERE A SPEND THAT BOUGHT NOTHING IS REMEMBERED (cloud 0036) — composed exactly where the
      * entitlements program is: a host with no meter can owe nothing. THE REQUEST'S OWN HANDLE: this
      * row is the reason a person gets their money back, and it has to be written by the request
-     * that observed the charge buying nothing, outside the drafting transaction that failed.
+     * that observed the charge buying nothing, outside the drafting transaction that failed. Read
+     * when the port is used, not when this container is built: the row is an account's, and the
+     * request's handle names that account only once `withSession` has bound it.
      */
     ...(metered && cfg.entitlements
-      ? { refundObligations: refundObligationsOn(db as unknown as Tx) }
+      ? {
+        refundObligations: {
+          owe: (o) => refundObligationsOn(requestDb()).owe(o),
+          settle: (accountId, attempt) => refundObligationsOn(requestDb()).settle(accountId, attempt),
+        },
+      }
       : {}),
     ...(chosen.funnel
       ? {
@@ -1110,8 +1133,12 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
         connectReminder: cfg.lifecycle.connectReminder,
         connectReminderSince: cfg.lifecycle.connectReminderSince,
         // How connecting a mailbox ended (cloud 0054), composed only on `TF_CONNECT_ATTEMPTS=record`.
+        // On the request's handle as it stands when an ending is recorded: the row is the session's account's.
         ...(cfg.lifecycle.connectAttempts === "record"
-          ? { connectAttempts: connectAttemptRecorder(db as unknown as Tx, () => new Date(), rt.logger) }
+          ? {
+            connectAttempts: (accountId: string, facts: ConnectAttemptFacts) =>
+              connectAttemptRecorder(requestDb(), () => new Date(), rt.logger)(accountId, facts),
+          }
           : {}),
         // The DNS `POST /mailboxes/discover` asks — MX and SRV only, named here and nowhere else.
         mailDns: nodeMailDns,
@@ -1163,6 +1190,7 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
     appOrigin: cfg.origin.appOrigin ?? undefined,
     oauth: rt.oauth,
   };
+  return deps;
 }
 
 /** `apiVersion` only where a release is stated: `/hello` answers `0.0.0` for the rest, never a guess. */
@@ -1196,7 +1224,7 @@ export interface ServerRuntime {
   db: Db;
   services: ApiServices;
   changeWake: ChangeWakeHub | null;
-  oauth: MicrosoftTokenProvider;
+  oauth: MicrosoftTokenProvider<DialDb>;
   /** Where a setup token minted OUTSIDE boot gets printed — see {@link needsSetupFor}. */
   onSetupTokenMinted: (minted: PairingTokenMinted) => void;
   logger: Logger;
@@ -1272,7 +1300,7 @@ export function alertHeartbeatForServer(cfg: ServerConfig, logger: Logger): Aler
   return alertHeartbeat(wiringOf(cfg.settings), logger);
 }
 
-export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvider {
+export function oauthProviderFor(cfg: ServerConfig, db: Db): MicrosoftTokenProvider<DialDb> {
   return oauthProvider(wiringOf(cfg.settings), () => db);
 }
 

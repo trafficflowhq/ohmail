@@ -2,8 +2,9 @@ import { describe, it, expect, beforeAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import {
-  bindDb, bindingOf, carryBinding, poolKeyOf, rebindTx, BindingRefusedError, BINDING_KEY_MAX,
-  type AccountBound, type NothingBound,
+  assertBinding, bindDb, bindingOf, carryBinding, onServerPool, poolKeyOf, rebindTx, refuseBound, registerBindingDoor,
+  BINDER_SQL, BindingRefusedError, BINDING_KEY_MAX,
+  type AccountBound, type NoBinding, type NothingBound,
 } from "../src/bound.js";
 import { BINDING_BRAND, brandDialect } from "../src/dialect/index.js";
 import { readFlightOf, registerReadFlight } from "../src/read-flight.js";
@@ -247,5 +248,165 @@ describe("derived handles keep the binding and the pool", () => {
     expect(bindingOf(viewFlight)).toBe(bindingOf(view));
     expect(readFlightOf(view)).toBe(viewFlight);
     expect(readFlightOf(bindDb(db, { account: A }))).toBeUndefined();
+  });
+});
+
+/** Two types are the same type, in both directions: `never` and `any` equal nothing but themselves. */
+type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+describe("an account bound over a handle bound to nothing is a bound handle, in its type too", () => {
+  type Plain = Handle;
+  type Bound = Plain & AccountBound;
+  type Unbound = Plain & NothingBound;
+
+  it("binds nothing to an account as the handle's own type with the account's brand, never as `never`", () => {
+    const plain: Plain = db;
+    const unbound = bindDb(plain, { account: null });
+    const bound = bindDb(plain, { account: A });
+    const either = (Math.random() < 2 ? bound : unbound) as Bound | Unbound;
+    const fromUnbound = bindDb(unbound, { account: A });
+    const fromEither = bindDb(either, { account: A });
+    const fromBound = bindDb(bound, { account: A });
+    const keyedNothing = bindDb(unbound, { account: null, key: "k" });
+    // Each line is a compile-time reading (`tsc -p packages/db/tsconfig.test-dirs.json`): were the
+    // account's brand intersected with the other, each of these types would be `never`.
+    const t1: Equal<typeof fromUnbound, Bound> = true;
+    const t2: Equal<typeof fromEither, Bound> = true;
+    const t3: Equal<typeof fromBound, Bound> = true;
+    const t4: Equal<typeof bound, Bound> = true;
+    const t5: Equal<typeof keyedNothing, Unbound> = true;
+    const t6: Equal<typeof unbound, Unbound> = true;
+    expect([t1, t2, t3, t4, t5, t6]).toEqual([true, true, true, true, true, true]);
+    // A handle typed `never` would pass both of these; a bound one passes the first alone.
+    const needsBound = (h: Bound): Bound => h;
+    const needsUnbound = (h: Unbound): Unbound => h;
+    expect(bindingOf(needsBound(fromUnbound))?.account).toBe(A);
+    // @ts-expect-error a handle bound to an account is not one bound to nothing
+    needsUnbound(fromUnbound);
+    // @ts-expect-error a plain handle is neither
+    needsBound(plain);
+  });
+
+  it("a session-level function's parameter takes the plain handle and no bound one", () => {
+    const takesSession = (h: { execute: Plain["execute"] } & NoBinding): boolean => bindingOf(h) === undefined;
+    expect(takesSession(db)).toBe(true);
+    // @ts-expect-error a handle bound to an account does not fit
+    expect(takesSession(bindDb(db, { account: A }))).toBe(false);
+    // @ts-expect-error nor one bound to nothing
+    expect(takesSession(bindDb(db, { account: null }))).toBe(false);
+  });
+});
+
+describe("the binder's statement is built from the lock's two names and is the text it always was", () => {
+  it("names both settings, local to the transaction, as bind parameters", () => {
+    expect(BINDER_SQL).toBe(
+      "select set_config('ohmail.account', $1, true) as account, set_config('ohmail.key', $2, true) as key",
+    );
+  });
+});
+
+describe("assertBinding refuses a handle that does not name the account asked", () => {
+  it("passes a handle bound to the account, and one bound to nothing where none is asked, keyed or not", () => {
+    expect(() => assertBinding(bindDb(db, { account: A }), A)).not.toThrow();
+    expect(() => assertBinding(bindDb(db, { account: A, key: "k" }), A)).not.toThrow();
+    expect(() => assertBinding(bindDb(db, { account: null }), null)).not.toThrow();
+    expect(() => assertBinding(bindDb(db, { account: null, key: "k" }), null)).not.toThrow();
+  });
+
+  it("refuses another account, nothing where an account is asked, and an account where none is: fixed words, no id", () => {
+    const wrong = [
+      refusal(() => assertBinding(bindDb(db, { account: B }), A), B),
+      refusal(() => assertBinding(bindDb(db, { account: null }), A), ""),
+      refusal(() => assertBinding(bindDb(db, { account: null, key: "digest-of-a-code" }), A), "digest-of-a-code"),
+      refusal(() => assertBinding(bindDb(db, { account: B }), null), B),
+    ];
+    for (const err of wrong) {
+      expect(err.reason).toBe("the context's account is not the one its handle names");
+      expect(err.message).not.toContain(B);
+    }
+  });
+
+  it("refuses a plain handle: a transaction is asked only on a handle that names its binding", () => {
+    expect(refusal(() => assertBinding(db, A), "").reason).toBe("a transaction was asked on a handle that names no binding");
+    expect(refusal(() => assertBinding(db, null), "").reason).toBe("a transaction was asked on a handle that names no binding");
+  });
+
+  it("refuses a mark it did not mint", () => {
+    const forged = brandDialect(Object.create(db) as object, "pg");
+    Object.defineProperty(forged, BINDING_BRAND, { value: Object.freeze({ account: A, keyed: false }) });
+    refusal(() => assertBinding(forged, A), "");
+    refusal(() => assertBinding(forged, A, "device"), "");
+  });
+
+  it("narrows the handle it was handed to the bound type, so the caller needs no cast", () => {
+    const handed: Handle = bindDb(db, { account: A });
+    assertBinding(handed, A);
+    const bound: Handle & AccountBound = handed;
+    expect(bindingOf(bound)?.account).toBe(A);
+    const nothing: Handle = bindDb(db, { account: null });
+    assertBinding(nothing, null);
+    const unbound: Handle & NothingBound = nothing;
+    expect(bindingOf(unbound)?.account).toBeNull();
+  });
+
+  describe("the fences' rule for a handle with no binding at all", () => {
+    /** A handle as a server pool's factory leaves it: a door is registered for it. */
+    const pooled = (): object => {
+      const pool = brandDialect({ name: "pool" }, "pg");
+      registerBindingDoor(pool, { sessionFor: () => ({}) });
+      return pool;
+    };
+
+    it("passes off a server pool: a device's own store names nobody and holds one person's mail", () => {
+      expect(onServerPool(db)).toBe(false);
+      expect(() => assertBinding(db, A, "device")).not.toThrow();
+      expect(() => assertBinding(db, null, "device")).not.toThrow();
+    });
+
+    it("is refused on a server pool, where a role and its policies stand behind the statement", () => {
+      const pool = pooled();
+      expect(onServerPool(pool)).toBe(true);
+      expect(refusal(() => assertBinding(pool, A, "device"), "").reason)
+        .toBe("a transaction was asked on a handle that names no binding");
+    });
+
+    it("still refuses a handle that names another account, on a device and on a server alike", () => {
+      refusal(() => assertBinding(bindDb(db, { account: B }), A, "device"), B);
+      refusal(() => assertBinding(bindDb(pooled(), { account: B }), A, "device"), B);
+    });
+  });
+});
+
+describe("onServerPool tells a server pool's handle and its views from a device store", () => {
+  it("answers true for a handle a door was registered for and for every view bound over it", () => {
+    const pool = brandDialect({ name: "pool" }, "pg");
+    expect(onServerPool(pool)).toBe(false);
+    registerBindingDoor(pool, { sessionFor: () => ({}) });
+    expect(onServerPool(pool)).toBe(true);
+    expect(onServerPool(bindDb(pool, { account: A }))).toBe(true);
+    expect(onServerPool(bindDb(pool, { account: null, key: "k" }))).toBe(true);
+  });
+
+  it("answers false for a device store, its views, and what is no handle", () => {
+    expect(onServerPool(db)).toBe(false);
+    expect(onServerPool(bindDb(db, { account: A }))).toBe(false);
+    expect(onServerPool(null)).toBe(false);
+    expect(onServerPool("pool")).toBe(false);
+  });
+});
+
+describe("refuseBound keeps a bound handle away from a session-level statement", () => {
+  it("passes the pool's own handle and refuses every view of it, naming the caller and no id", () => {
+    expect(() => refuseBound(db, "the index build")).not.toThrow();
+    const err = refusal(() => refuseBound(bindDb(db, { account: A }), "the index build"), "");
+    expect(err.reason).toContain("the index build");
+    refusal(() => refuseBound(bindDb(db, { account: null }), "the index build"), "");
+    refusal(() => refuseBound(bindDb(db, { account: null, key: "digest-of-a-code" }), "the index build"), "digest-of-a-code");
+  });
+
+  it("refuses a mark it did not mint too: what is not the pool's own handle sends no session statement", () => {
+    const forged = brandDialect(Object.create(db) as object, "pg");
+    Object.defineProperty(forged, BINDING_BRAND, { value: Object.freeze({ account: A, keyed: false }) });
+    refusal(() => refuseBound(forged, "the index build"), "");
   });
 });

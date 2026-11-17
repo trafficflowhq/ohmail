@@ -1,12 +1,11 @@
 import type { KeyProvider, Logger, MicrosoftClientCredentials, MicrosoftClientKind, OAuthTokenProvider } from "@trafficflow/core";
 import type { SignatureCheck } from "@trafficflow/core/adapters/dkim";
-import type { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import type { EntitlementsPort, OrganizerRole, RefundObligationPort } from "@trafficflow/db";
 import type {
   AlertHeartbeat, AlertReaders, AlertSink, AttachmentStagingStorage, ChangeWakeFanout, DeliveryStreak,
-  HeartbeatLogMemory, LastResortState, OwnedDb,
+  HeartbeatLogMemory, LastResortState,
 } from "@trafficflow/db/cloud";
 import type { ClassifierCircuit } from "../ai-circuit.js";
 import type { AiUsageBuffer } from "../ai-usage.js";
@@ -31,6 +30,7 @@ import type { SyncDeps } from "@ohmail/organizer/sync";
 import type { TailOrigin } from "../tail-stage.js";
 import type { ThreadJoinHealWalk } from "../thread-join-heal-walk.js";
 import type { MailboxRuntime, Quarantine } from "../index.js";
+import type { WorkerBinding } from "./bind.js";
 import type { CalendarRunner } from "./calendar.js";
 
 /**
@@ -83,12 +83,16 @@ export interface WorkerScope {
   /* ── The head: the settings as read, the ports, and what the process remembers about itself ── */
   config: WorkerConfig;
   lock: LeaderLock;
-  db: OwnedDb["db"];
+  /** The pool's view that names no account: the roster's reads and what runs for no account (`start/bind.ts`). */
+  roster: WorkerBinding["roster"];
+  /** One account's handle and its repository: everything done for one mailbox or one account (`start/bind.ts`). */
+  forAccount: WorkerBinding["forAccount"];
+  /** Forget every account's pair; the roster's load calls it, so handles last from one reading of the roster to the next. */
+  forgetAccounts: WorkerBinding["forgetAccounts"];
   runtimes: Map<string, MailboxRuntime>;
   gapClearances: Map<string, SweepClearance>;
   attachPoolRef: AttachPool | null;   // changes
   stopTimers: (() => void) | null;   // changes
-  repo: DrizzleRepo;
   keyProvider: KeyProvider;
   oauthTokenProvider: OAuthTokenProvider;
   /** Microsoft's registration for a door, resolved at the moment of a trade: the mail's and the calendar's one reader of it. */

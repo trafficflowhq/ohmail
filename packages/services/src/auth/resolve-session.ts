@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { sessions, users } from "@trafficflow/db";
+import { bindDb, sessions, users } from "@trafficflow/db";
 import { hashToken } from "./crypto.js";
 import type { Db } from "../context.js";
 
@@ -52,9 +52,15 @@ export interface ResolvedSessionCore {
  * session row whose user has been erased resolves to `null` rather than to an identity with no
  * user behind it, so an erased account's live session stops authenticating on the next request.
  * `sessions.user_id` is a FK, so the join can only fail for a row that is genuinely gone.
+ *
+ * THE LOOK-UP BEFORE THE ACCOUNT IS KNOWN. It is bound here and nowhere else: to no account, keyed
+ * by the token's digest, the one thing the request has proven it holds. The account is what the
+ * row answers, never what the request says. One statement, so one flight of its own. A handle that
+ * names an account already is refused by the binder: the door runs before any account is bound.
  */
 export async function resolveSession(db: Db, token: string, now: Date): Promise<ResolvedSessionCore | null> {
-  const rows = await db
+  const digest = hashToken(token);
+  const rows = await bindDb(db, { account: null, key: digest })
     .select({
       id: sessions.id,
       accountId: sessions.accountId,
@@ -67,7 +73,7 @@ export async function resolveSession(db: Db, token: string, now: Date): Promise<
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(
-      eq(sessions.accessTokenHash, hashToken(token)),
+      eq(sessions.accessTokenHash, digest),
       isNull(sessions.revokedAt),
       gt(sessions.accessExpiresAt, now),
     ))

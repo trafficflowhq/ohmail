@@ -1,4 +1,5 @@
 import { SQL, StringChunk, sql } from "drizzle-orm";
+import { refuseBound, type NoBinding } from "./bound.js";
 import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migration-lock.js";
 
 /**
@@ -14,6 +15,14 @@ import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migration-lock.
 export interface SqlExecutor {
   execute(query: SQL): Promise<unknown>;
 }
+
+/**
+ * The pool's own handle, which the builds below take: a concurrent build is refused inside a
+ * transaction (25001) and the migration's lock is the session's, while every statement of a bound
+ * handle rides a transaction of its own. A bound handle does not fit the type, and each entry
+ * refuses one before it writes anything (`refuseBound`).
+ */
+export type SessionExecutor = SqlExecutor & NoBinding;
 
 export interface ConcurrentIndexSpec {
   /** Index name, unqualified; created and probed pinned to `public.<table>`. */
@@ -145,9 +154,10 @@ async function underMigrationLock<T>(db: SqlExecutor, label: string, body: () =>
  * else's. A run that finds none takes no lock. Returns what it dropped.
  */
 export async function dropInvalidLeftovers(
-  db: SqlExecutor, names: readonly string[],
+  db: SessionExecutor, names: readonly string[],
   opts: { label: string; log?: (msg: string) => void; concurrently?: boolean },
 ): Promise<string[]> {
+  refuseBound(db, opts.label);
   const concurrently = opts.concurrently !== false;
   assertLockTimeout();
   if (names.length === 0) return [];
@@ -181,10 +191,11 @@ export async function dropInvalidLeftovers(
  * `label` names the caller in the acquisition-failure message.
  */
 export async function ensureConcurrentIndexes(
-  db: SqlExecutor,
+  db: SessionExecutor,
   specs: readonly ConcurrentIndexSpec[],
   opts: { label: string; log?: (msg: string) => void; concurrently?: boolean },
 ): Promise<void> {
+  refuseBound(db, opts.label);
   const concurrently = opts.concurrently !== false;
   assertLockTimeout();
   const wanted = await admit(db, specs, opts.log);

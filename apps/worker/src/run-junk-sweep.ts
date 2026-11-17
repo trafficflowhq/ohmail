@@ -11,11 +11,12 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";
 import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { junkSweepPass } from "./junk-sweep.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
+import { bindWorker } from "./start/bind.js";
 import { type LeasePermit } from "@ohmail/organizer/lease";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
@@ -31,15 +32,18 @@ const keyProvider = keyProviderFromEnvOptional(process.env);
 if (!keyProvider) { console.error("no KEK ring in the environment — the sweep must decrypt IMAP credentials (see keyProviderFromEnvOptional)"); process.exit(2); }
 
 const owned = makeOwnedDb(dbUrl);
-const db = owned.db as unknown as Tx;
+// The pool's two views (`run-cli.ts`): the mailbox's row on the one that names no account, the sweep on its account's.
+const binding = bindWorker(owned.db);
 
 /* The one-off runner's scaffold: the mailbox, and the refusal a pending release earns. */
-const found = await readRunnerMailbox(db, mailboxId);
+const found = await readRunnerMailbox(binding.roster as unknown as Tx, mailboxId);
 if (found === null) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
 if ("refusal" in found) { console.error(found.refusal); await owned.close(); process.exit(2); }
 const mb = found.mailbox;
+const own = binding.forAccount(mb.accountId);
+const db = own.db as unknown as Tx;
 
-const creds = await loadMailboxCreds(owned.db, mailboxId, keyProvider);
+const creds = await loadMailboxCreds(own.db, mailboxId, keyProvider);
 if (!creds) { console.error("no imap credentials for this mailbox"); await owned.close(); process.exit(2); }
 
 /* This command dials the operator's own deployment, so it asks the deployment's own policy —
@@ -76,7 +80,7 @@ try {
     });
   }
 
-  const repo = makeDrizzleRepo(db) as unknown as WorkerRepo & {
+  const repo = own.repo as unknown as WorkerRepo & {
     transaction: <T>(fn: (r: WorkerRepo) => Promise<T>) => Promise<T>;
   };
   const res = await junkSweepPass({

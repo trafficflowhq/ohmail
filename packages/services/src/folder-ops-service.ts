@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, lockAccountRuleKeys, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, carryBinding, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, lockAccountRuleKeys, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { lockAccountRow } from "./account-lock.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -412,7 +412,7 @@ export class FolderOpsService {
     tx: Tx, ctx: ServiceContext, id: string, seq: bigint | null,
     idem?: MoveIdempotency | null, status = 200,
   ): Promise<{ dto: FolderDTO; seq: number | null }> {
-    const row = await userFolderById(tx as unknown as ServiceContext["db"], ctx.accountId, id);
+    const row = await userFolderById(carryBinding(ctx.db, tx), ctx.accountId, id);
     if (!row) throw new ServiceError("internal", 500, "folder vanished after write");
     const dto = folderRowToDTO(row);
     await claimVerb(tx, ctx, idem, dto, seq, status);

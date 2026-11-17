@@ -44,7 +44,7 @@ import {
   type MicrosoftClientCredentials, type MicrosoftClientKind,
   type ClassifierPort,
 } from "@trafficflow/core";
-import { agreeSweepRun, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
+import { agreeSweepRun, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
 import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import {
@@ -93,7 +93,8 @@ import { makeStorageCapResolver } from "./storage-cap.js";
 import { breachSetAside, DatabaseFaultError, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
 import { KnownSetCache } from "@ohmail/organizer/known-set";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
-import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
+import { asDatabaseFault } from "./db-fault.js";
+import { bindWorker } from "./start/bind.js";
 import { tailStageRunner } from "./tail-stage.js";
 import { runKickstart } from "./kickstart.js";
 import {
@@ -378,7 +379,13 @@ export interface WorkerHooks {
 
 /** A mailbox that connected successfully and is now part of the sync rotation. */
 export interface MailboxRuntime {
-  accountId: string;
+  /**
+   * The account of the roster row this runtime was attached from, for as long as the runtime lives:
+   * everything it reads and writes runs on that account's handle. Never assigned again. A roster
+   * that names another account for the same mailbox ends the runtime (`start/roster.ts`); the
+   * mailbox is then attached afresh, under the account that reading names.
+   */
+  readonly accountId: string;
   mailboxId: string;
   adapter: MailboxAdapter;
   /**
@@ -656,6 +663,10 @@ export async function startWorkerWithLock(
 ): Promise<RunningWorker> {
   const owned: OwnedDb = makeOwnedDb(config.databaseUrl);
   const db = owned.db;
+  // The pool's two views (`start/bind.ts`): `roster` names no account, `forAccount` one. The pool's
+  // own handle stays in this file, for the tables no account owns (the heartbeat, the fault log,
+  // the provider registration).
+  const binding = bindWorker(db);
   // Declared out here so a failure LATER in startup (e.g. a roster pass that rejects) still
   // closes the IMAP connections it already opened — a leaked login is exactly what gets a
   // provider to throttle the user's mailbox.
@@ -672,11 +683,11 @@ export async function startWorkerWithLock(
     // ── EVERY SYNC-LOOP DATABASE CALL NAMES ITS ORIGIN ─────────────────────────────────────
     //
     // `SyncDeps.repo` is the one object through which `runSyncCycle` reaches Postgres, and
-    // wrapping it here is what makes "is this the shared database or this customer's provider"
-    // an answerable question rather than a guess from an error code. Measured shapes and the
-    // full argument: `db-fault.ts`. The other seam — the fence's own transaction — is wrapped in
+    // wrapping it is what makes "is this the shared database or this customer's provider" an
+    // answerable question rather than a guess from an error code. Each account's repository is
+    // made and wrapped where its handle is bound (`start/bind.ts`). Measured shapes and the full
+    // argument: `db-fault.ts`. The other seam — the fence's own transaction — is wrapped in
     // `makeSyncWriteFence`.
-    const repo = markDatabaseFaults(makeDrizzleRepo(db), "repo");
 
     const maybeKeyProvider = config.keyProvider ?? keyProviderFromKekEnv(process.env);
     if (!maybeKeyProvider) {
@@ -692,10 +703,15 @@ export async function startWorkerWithLock(
     // the only write this port makes — ONE WRITER shared with the API host
     // (`rotateMailboxOAuthSecret`), whose `transport = 'imap'` predicate stops a rotation
     // overwriting an unrelated smtp row and is not a thing to state twice.
-    const updateSecret: UpdateSecretPort = (mailboxId, ciphertextEnc, keyVersion) =>
-      rotateMailboxOAuthSecret(db, {
+    const updateSecret: UpdateSecretPort = async (mailboxId, ciphertextEnc, keyVersion) => {
+      // The port is handed a mailbox and no account: the mailbox's own row names the account the
+      // rotated token is written for. A mailbox with no row has no credential to rotate.
+      const row = await loadMailboxById(binding.roster, mailboxId);
+      if (!row) return;
+      await rotateMailboxOAuthSecret(binding.forAccount(row.accountId).db, {
         mailboxId, ciphertext: ciphertextEnc, keyVersion, now: new Date(),
       });
+    };
     /**
      * The registration is resolved AT TOKEN TIME, from the config store, with env as the fallback —
      * not at boot. An Entra client secret expires on Azure's schedule, and when it does every oauth
@@ -769,7 +785,7 @@ export async function startWorkerWithLock(
     // a start that meets a refused or reset dial here waits for the database (`supervisor.ts`).
     if (config.mailboxId && config.imap) {
       const envMailboxId = config.mailboxId;
-      const row = await asDatabaseFault("boot.envMailbox", () => loadMailboxById(db, envMailboxId));
+      const row = await asDatabaseFault("boot.envMailbox", () => loadMailboxById(binding.roster, envMailboxId));
       if (!row) throw new Error(`TF_MAILBOX_ID ${config.mailboxId} does not exist`);
       if (config.accountId && row.accountId !== config.accountId) {
         throw new Error(
@@ -779,7 +795,8 @@ export async function startWorkerWithLock(
       }
       const envCreds = { mailboxId: envMailboxId, imap: config.imap, smtp: config.smtp };
       try {
-        await asDatabaseFault("boot.envCreds", () => bootstrapEnvCreds(db, keyProvider, envCreds));
+        // Sealed under the account of the row just read, never the configured id.
+        await asDatabaseFault("boot.envCreds", () => bootstrapEnvCreds(binding.forAccount(row.accountId).db, keyProvider, envCreds));
       } catch (err) {
         // A REFUSAL IS NOT A FAULT, AND IT IS NOT SILENT EITHER. The mailbox this deployment is
         // configured for has been removed, or its account erased; recreating its sealed
@@ -1031,7 +1048,7 @@ export async function startWorkerWithLock(
       const last = suggestOwedMarkedAt.get(accountId) ?? 0;
       if (Date.now() - last < SUGGEST_OWED_MARK_GAP_MS) return;
       suggestOwedMarkedAt.set(accountId, Date.now());
-      void markScreenerSuggestOwed(db as unknown as Tx, accountId).catch((err: unknown) => {
+      void markScreenerSuggestOwed(binding.forAccount(accountId).db as unknown as Tx, accountId).catch((err: unknown) => {
         log.warn("screener_suggest_owed_mark_failed", {
           accountId, err,
           reason: "the durable suggest-owed mark could not be written; the in-process hint " +
@@ -1128,7 +1145,8 @@ export async function startWorkerWithLock(
      */
     const closureDropped = new Set<string>();
     Object.assign(scope, {
-      config, lock, db, runtimes, gapClearances, repo, keyProvider, oauthTokenProvider, msRegistration, shards, shardIndex,
+      config, lock, roster: binding.roster, forAccount: binding.forAccount, forgetAccounts: binding.forgetAccounts,
+      runtimes, gapClearances, keyProvider, oauthTokenProvider, msRegistration, shards, shardIndex,
       maxMailboxes, cycleLanes, heavyLanes, heavyTurnMs, sharedAccountTurnMs, rosterIntervalMs, retryBaseMs,
       retryMaxMs, maxSyncFailures, syncBlockGraceMs, leaseUnavailableDetachMs, selection, makeAdapter, dialHostGuard,
       environment, startedAt, log, leaderToken, fence, alertSinks, alertDeliveryStreak, alertLastResort,
@@ -1261,7 +1279,7 @@ export async function startWorkerWithLock(
       const hit = screeningCache.get(accountId);
       if (hit && now - hit.at < SCREENING_TTL_MS) return hit.value;
       try {
-        const [row] = await db.select({
+        const [row] = await binding.forAccount(accountId).db.select({
           policy: accountSettings.ohboxPolicy,
           bar: accountSettings.ohboxBar,
           baselineAt: accountSettings.screeningBaselineAt,

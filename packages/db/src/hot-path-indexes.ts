@@ -3,7 +3,7 @@ import {
   ARRIVAL_ORDER_INDEX_DDL, MAILBOXES_ACCOUNT_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC,
 } from "./search-setup.js";
 import {
-  ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
+  ensureConcurrentIndexes, type ConcurrentIndexSpec, type SessionExecutor,
 } from "./concurrent-index.js";
 
 /**
@@ -146,7 +146,7 @@ export const DEFERRED_HOT_PATH_INDEXES: readonly { name: string; table: string; 
  * is for a database nothing else writes to while it builds (a test's); see `ensureSearchExtensions`.
  */
 export async function ensureHotPathIndexes(
-  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
+  db: SessionExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {
   await ensureConcurrentIndexes(db, HOT_PATH_INDEX_SPECS, {
     label: "the hot-path index build",

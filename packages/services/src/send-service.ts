@@ -2,8 +2,8 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from
 import { createHash } from "node:crypto";
 import {
   attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
-  outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
-  threads, type LedgerTx, type Tx, upgradeContactsToPerson,
+  outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, reclaimSpace, recordChange,
+  SERVER_UNAVAILABLE_RESPONSE_CODES, threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
   createLogger, cutFileParts, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime,
@@ -29,7 +29,7 @@ import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type 
 import { requireUuid } from "./ids.js";
 import { htmlToPlainText, sanitizeOutboundHtml, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
-import { carryDialect, dialect, dialectOf } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -2488,14 +2488,12 @@ export class SendService {
   }
 
   /**
-   * Hand the deleted bytes' space back. The desktop's store (PGlite) runs no autovacuum, so without
-   * this every sent attachment stays in its files; SQLite reuses freed pages and needs nothing. Only
-   * a host that keeps owed copies (the local engine) ever deletes one. Outside any transaction.
+   * Hand the deleted bytes' space back (`reclaimSpace`: the desktop's store only; a server is sent
+   * nothing). Only a host that keeps owed copies (the local engine) ever deletes one. Outside any
+   * transaction.
    */
   private async reclaimOwedSpace(ctx: ServiceContext): Promise<void> {
-    if (dialectOf(ctx.db) !== "pg") return;
-    await dialect(ctx.db).exec(ctx.db, sql`VACUUM outbound_sent_copies`)
-      .catch(() => { /* the store's open reclaims it */ });
+    await reclaimSpace(ctx.db, "outbound_sent_copies");
   }
 
   /**

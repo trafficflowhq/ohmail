@@ -81,7 +81,7 @@ describe.skipIf(!AVAILABLE)("the calendar's passes in the worker", () => {
   async function scopeFor(accountId: string, calendar: WorkerCalendarConfig, log = capturedLog().log): Promise<WorkerScope> {
     const [row] = await w.db.execute(sql`select ((hashtext(${accountId}::text) % ${SHARDS}) + ${SHARDS}) % ${SHARDS} as shard`) as unknown as Array<{ shard: number }>;
     const scope = {
-      config: { calendar }, db: w.db, keyProvider: w.keys, log, stopped: false, wakeHub: null, parkedAccountsReader: null,
+      config: { calendar }, db: w.db, roster: w.db, keyProvider: w.keys, log, stopped: false, wakeHub: null, parkedAccountsReader: null,
       selection: { shards: SHARDS, shardIndex: Number(row!.shard) },
       msRegistration: async () => ({ clientId: "", clientSecret: "" }),
     } as unknown as WorkerScope;

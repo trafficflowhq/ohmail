@@ -248,7 +248,8 @@ export function calendarSection(scope: WorkerScope): void {
     // The worker is where a person's writes reach their provider; nothing else composes a writer.
     writes: true,
   });
-  const pool = calendarPool(scope.db as unknown as Tx);
+  // The roster's view: the calendar's roster reads name no account, and each turn binds its own (`passDb`).
+  const pool = calendarPool(scope.roster as unknown as Tx);
   const noticeDeps = { origin: cfg.noticeOrigin, log: scope.log, clock, refused: new Map<string, number>() };
   const syncDeps: CalendarSyncDeps = {
     db: pool,

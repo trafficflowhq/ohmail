@@ -1,15 +1,17 @@
 import { STAFF_ROLE } from "../staff-grants.js";
-import { READER_SCHEMA, RUNTIME_LOGINS, type RuntimeLogin } from "./logins.js";
+import { ACCOUNT_SETTING, KEY_SETTING, READER_SCHEMA, RUNTIME_LOGINS, type RuntimeLogin } from "./logins.js";
 
 /**
  * THE LOCK'S NAMES: the two settings a transaction names its account and its key with, the two
  * readers every policy calls, and the roles the policies name. One home for each spelling: the
  * binder (`bound.ts`) writes the settings, the setup's lock step makes the readers, and the census
  * and the check read them back. No driver import, so every package may load it. The light names
- * (the logins, the readers' schema, the account's reader) are defined in `logins.ts`, which
- * imports nothing, and re-exported here.
+ * (the logins, the readers' schema, the account's reader, the two settings) are defined in
+ * `logins.ts`, which imports nothing, and re-exported here.
  */
-export { API_ROLE, WORKER_ROLE, RUNTIME_LOGINS, READER_SCHEMA, ACCOUNT_READER, type RuntimeLogin } from "./logins.js";
+export {
+  API_ROLE, WORKER_ROLE, RUNTIME_LOGINS, READER_SCHEMA, ACCOUNT_READER, ACCOUNT_SETTING, KEY_SETTING, type RuntimeLogin,
+} from "./logins.js";
 
 /** The billing plane's runtime role: it reads five objects of `public`. */
 export const PLANE_ROLE = "plane_runtime";
@@ -19,11 +21,6 @@ export type OptionalPolicyRole = (typeof OPTIONAL_POLICY_ROLES)[number];
 /** Every role a policy of the lock may name. No policy names PUBLIC. */
 export type PolicyRole = RuntimeLogin | OptionalPolicyRole;
 export const POLICY_ROLES: readonly PolicyRole[] = [...RUNTIME_LOGINS, ...OPTIONAL_POLICY_ROLES];
-
-/** The setting a transaction names its account with, local to it. Written by the binder alone. */
-export const ACCOUNT_SETTING = "ohmail.account";
-/** The setting a look-up made before the account is known names its key with. */
-export const KEY_SETTING = "ohmail.key";
 
 /** How a policy calls the key's reader. */
 export const KEY_READER = `${READER_SCHEMA}.current_key()`;

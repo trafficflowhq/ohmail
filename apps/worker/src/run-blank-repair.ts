@@ -12,12 +12,13 @@ import { makeOwnedDb } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import { keyProviderFromEnvOptional } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { blankRepairPass, BLANK_REPAIR_PLACES_PER_VISIT } from "@ohmail/organizer/blank-repair";
 import { buildVersionOf } from "./build-version.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
+import { bindWorker } from "./start/bind.js";
 import { writeDoorOf } from "@ohmail/organizer/lease";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
@@ -31,13 +32,15 @@ if (!dbUrl) { console.error("set TF_DB_URL to the production session URL"); proc
 if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) { console.error("--limit takes a positive integer"); process.exit(2); }
 
 const owned = makeOwnedDb(dbUrl);
-const db = owned.db as unknown as Tx;
-const repo: WorkerRepo = makeDrizzleRepo(db);
+// The pool's two views (`run-cli.ts`): the mailbox's row on the one that names no account, the repair on its account's.
+const binding = bindWorker(owned.db);
 
-const found = await readRunnerMailbox(db, mailboxId);
+const found = await readRunnerMailbox(binding.roster as unknown as Tx, mailboxId);
 if (found === null) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
 if ("refusal" in found) { console.error(found.refusal); await owned.close(); process.exit(2); }
 const mb = found.mailbox;
+const own = binding.forAccount(mb.accountId);
+const repo: WorkerRepo = own.repo;
 
 const rows = typeof repo.listBlankMessages === "function" ? await repo.listBlankMessages(mailboxId) : [];
 // Every place, counted in the store: the listing is bounded, the count is not. Primaries list first.
@@ -57,7 +60,7 @@ if (!apply) {
 
 const keyProvider = keyProviderFromEnvOptional(process.env);
 if (!keyProvider) { console.error("no KEK ring in the environment — the repair must decrypt IMAP credentials (see keyProviderFromEnvOptional)"); await owned.close(); process.exit(2); }
-const creds = await loadMailboxCreds(owned.db, mailboxId, keyProvider);
+const creds = await loadMailboxCreds(own.db, mailboxId, keyProvider);
 if (!creds) { console.error("no imap credentials for this mailbox"); await owned.close(); process.exit(2); }
 
 /* The operator's own deployment policy on the hosts it may dial, as the organizer and the API read it. */

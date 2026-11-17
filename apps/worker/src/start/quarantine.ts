@@ -63,11 +63,11 @@ export function quarantineSection(scope: WorkerScope): void {
         // until now the only exits from quarantine were the ladder expiring and a redeploy.
         const softOpts = { fence: scope.fence, retryAfter: new Date(retryAt) };
         const written = soft === "read_limited"
-          ? await markMailboxReadLimited(scope.db, mailboxId, softOpts)
+          ? await markMailboxReadLimited(scope.forAccount(accountId).db, mailboxId, softOpts)
           : soft === "provider_unavailable"
-          ? await markMailboxProviderUnavailable(scope.db, mailboxId, softOpts)
+          ? await markMailboxProviderUnavailable(scope.forAccount(accountId).db, mailboxId, softOpts)
           : await markMailboxFailed(
-            scope.db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
+            scope.forAccount(accountId).db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
             { fence: scope.fence, retryAfter: new Date(retryAt) },
           );
         // Only a write that LANDED lets the column govern this mailbox. Re-read from the map
@@ -116,7 +116,7 @@ export function quarantineSection(scope: WorkerScope): void {
      */
     async function markRecovered(mb: { mailboxId: string; accountId: string }): Promise<void> {
       try {
-        const written = await markMailboxConnected(scope.db, mb.mailboxId, { fence: scope.fence });
+        const written = await markMailboxConnected(scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence });
         if (!written) {
           // The disconnect case is the one that matters here: a recovery that began from an
           // `error` snapshot must not resurrect a mailbox the user has since disconnected, and

@@ -17,6 +17,7 @@ import { loadMailboxCreds } from "./mailboxes.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { redactedRestorePass } from "./redacted-restore.js";
 import { cliArgs, readRunnerMailbox, takeRunnerLease } from "./run-cli.js";
+import { bindWorker } from "./start/bind.js";
 import { writeDoorOf } from "@ohmail/organizer/lease";
 
 const { flag, opt } = cliArgs(process.argv.slice(2));
@@ -32,13 +33,16 @@ const keyProvider = keyProviderFromEnvOptional(process.env);
 if (!keyProvider) { console.error("set TF_KEK_V1 — the restore must decrypt IMAP credentials"); process.exit(2); }
 
 const owned = makeOwnedDb(dbUrl);
-const db = owned.db as unknown as Tx;
+// The pool's two views (`run-cli.ts`): the mailbox's row on the one that names no account, the restore on its account's.
+const binding = bindWorker(owned.db);
 
 /* The one-off runner's scaffold: the mailbox, and the refusal a pending release earns. */
-const found = await readRunnerMailbox(db, mailboxId);
+const found = await readRunnerMailbox(binding.roster as unknown as Tx, mailboxId);
 if (found === null) { console.error(`no mailbox ${mailboxId}`); await owned.close(); process.exit(2); }
 if ("refusal" in found) { console.error(found.refusal); await owned.close(); process.exit(2); }
 const mb = found.mailbox;
+const own = binding.forAccount(mb.accountId);
+const db = own.db as unknown as Tx;
 
 const [{ n: candidates }] = await db.select({ n: sql<number>`count(*)::int` })
   .from(messages).innerJoin(messageBodies, eq(messageBodies.messageId, messages.id))
@@ -53,7 +57,7 @@ if (!apply) {
   process.exit(0);
 }
 
-const creds = await loadMailboxCreds(owned.db, mailboxId, keyProvider);
+const creds = await loadMailboxCreds(own.db, mailboxId, keyProvider);
 if (!creds) { console.error("no imap credentials for this mailbox"); await owned.close(); process.exit(2); }
 
 /* This command dials the operator's own deployment, so it asks the deployment's own policy —

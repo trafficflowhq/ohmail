@@ -45,8 +45,6 @@ export {
   BindLimitError, MAX_BIND_PARAMETERS, withBindLimit, FlightClosedError,
   type OwnedDb,
 } from "./client.js";
-/** The two readers a policy calls (`ohmail.current_account()`, `ohmail.current_key()`), for the setup that makes the policies. */
-export { BINDING_READERS_SQL } from "./bound.js";
 
 /**
  * THE LOCK'S CONTRACT: the settings and readers a binding names its account and key through, every

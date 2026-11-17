@@ -11,8 +11,8 @@ import {
   ServiceError, fenceErasedAccount, lockAccountSettingsRow, lockMailboxRows,
 } from "@trafficflow/services/mail";
 import { isSubjectHeading } from "@trafficflow/core/adapters/organizer-profile";
-import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import { lockAccountRuleKeys, type LedgerTx, type Tx } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
+import { carryBinding, lockAccountRuleKeys, type LedgerTx, type Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -555,8 +555,9 @@ async function applyConsentSettings(
   await (ctx.db as unknown as Tx).transaction(async (tx) => {
     // The transaction arrives BRANDED: `brandDialect` wraps a handle's `transaction` so the
     // callback is handed a branded object, to any savepoint depth. This site used to stamp it by
-    // hand, which worked and left every other site to remember.
-    const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
+    // hand, which worked and left every other site to remember. It arrives BOUND too, as the
+    // context's handle is: `carryBinding` checks that before the setters below run on it.
+    const txCtx = { ...ctx, db: carryBinding(ctx.db, tx) };
     /* THE CHAIN AT THE HEAD: the account row, the settings row, then every mailbox row this save
        writes, before a setter takes the change-log counter. Written one by one between change rows,
        the second mailbox row was taken after the counter and deadlocked a press holding it. */

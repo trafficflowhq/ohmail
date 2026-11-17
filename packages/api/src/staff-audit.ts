@@ -1,10 +1,45 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { staffAuditEvents } from "@trafficflow/db/cloud";
+import { eq } from "drizzle-orm";
+import { accounts, bindDb, mailboxes } from "@trafficflow/db";
+import { staffAuditEvents, STAFF_DOOR_KEY } from "@trafficflow/db/cloud";
 import {
-  checkedDetail, isUuid, StaffAuditDetailError,
-  type StaffAuditAction, type StaffAuditOutcome, type StaffReasonCode, type StaffRole,
+  checkedDetail, isUuid, passContext, StaffAuditDetailError,
+  type PassContext, type StaffAuditAction, type StaffAuditOutcome, type StaffReasonCode, type StaffRole, type UnboundDb,
 } from "@trafficflow/services";
+import { doorDb } from "./context.js";
 import type { ApiDeps } from "./deps.js";
+
+/**
+ * THE STAFF DOOR'S HANDLE: bound to no account, with the door's word as its key. What a staff
+ * route reads and writes the operators' own tables through (their sessions, their roles, the two
+ * audit trails), and the only handle that names the word. It reaches those tables and no other:
+ * a customer's row is never read or written through it, and it never names an account.
+ *
+ * Made over the request's handle as its host minted it ({@link doorDb}): a request that was bound
+ * to an account is refused, so the door's word never rides beside a customer's session.
+ */
+export function staffDb(deps: ApiDeps): UnboundDb {
+  return bindDb(doorDb(deps), { account: null, key: STAFF_DOOR_KEY });
+}
+
+/**
+ * THE CONTEXT OF A STAFF ACT ON ONE ACCOUNT, or null where the id the operator named finds no row.
+ *
+ * THE ID NAMED SELECTS A ROW, AND ONLY THE ROW BINDS. The operator names a mailbox or an account;
+ * that id is used once, at the staff door, to read the target's row, and the act then runs on a
+ * handle bound to the account THAT ROW carries ({@link passContext}): never to the id as it was
+ * typed. An id no row answers binds nothing, and the act does not begin.
+ */
+export async function staffActOn(
+  deps: ApiDeps, target: { readonly mailboxId: string } | { readonly accountId: string },
+): Promise<PassContext | null> {
+  const door = staffDb(deps);
+  const [row] = "mailboxId" in target
+    ? await door.select({ accountId: mailboxes.accountId }).from(mailboxes).where(eq(mailboxes.id, target.mailboxId)).limit(1)
+    : await door.select({ accountId: accounts.id }).from(accounts).where(eq(accounts.id, target.accountId)).limit(1);
+  if (!row) return null;
+  return passContext(doorDb(deps), row.accountId, { userId: null, now: deps.now, requestId: deps.requestId });
+}
 
 /**
  * THE STAFF AUDIT'S ONE WRITER (cloud 0047). Every staff read and write the API serves inserts

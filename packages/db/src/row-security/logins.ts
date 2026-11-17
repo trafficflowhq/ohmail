@@ -1,8 +1,9 @@
 /**
  * THE LOCK'S LIGHT NAMES: the two runtime logins, the schema the readers and the account's views
- * live in, and how a policy or a view calls the account's reader. No import, so a module every
- * store loads (`account-rows.ts`) loads nothing of the hosted half. `names.ts` re-exports each:
- * that is still the one home of the lock's names.
+ * live in, how a policy or a view calls the account's reader, and the two settings a transaction
+ * names its account and its key with. No import, so a module every store loads (`account-rows.ts`,
+ * the binder in `bound.ts`) loads nothing of the hosted half. `names.ts` re-exports each: that is
+ * still the one home of the lock's names.
  */
 
 /** The two runtime logins: the API's and the worker's. Neither owns anything or may bypass. */
@@ -19,3 +20,8 @@ export type RuntimeLogin = (typeof RUNTIME_LOGINS)[number];
 export const READER_SCHEMA = "ohmail";
 /** How a policy and a view call the account's reader. */
 export const ACCOUNT_READER = `${READER_SCHEMA}.current_account()`;
+
+/** The setting a transaction names its account with, local to it. Written by the binder alone. */
+export const ACCOUNT_SETTING = "ohmail.account";
+/** The setting a look-up made before the account is known names its key with. */
+export const KEY_SETTING = "ohmail.key";

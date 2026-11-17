@@ -1,6 +1,6 @@
 /**
  * ONE ACCOUNT'S CONNECTION, BY CONSTRUCTION. A pass is handed the pool opaque, turns it into a
- * handle for one account with {@link passDb} (whose first line is where the account's binding goes),
+ * handle for one account with {@link passDb} (which binds the account),
  * and opens every transaction of its turn through {@link inConnection}, which takes the store's
  * calendar writer's fence before the caller's statements run. Nothing else here can reach the pool:
  * a statement written outside these doors does not compile.
@@ -8,7 +8,7 @@
  * The reads made before an account is bound are the roster's (`roster.ts`), of `cal_connections`.
  */
 import { and, eq } from "drizzle-orm";
-import { AccountErasedError, MailboxErasedError, calConnections, type Tx } from "@trafficflow/db";
+import { AccountErasedError, MailboxErasedError, bindDb, bindingOf, calConnections, type Tx } from "@trafficflow/db";
 import { CalendarConnectionGone, fencedConnectionWrite } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 
@@ -58,10 +58,17 @@ export function unboundPool(pool: CalendarPool): Tx {
 
 /**
  * THE BINDER'S LINE. Every pass reaches the database for an account through this function and no
- * other; `db-handle` replaces the body's one statement with the account's binding.
+ * other: over the worker's pool, which is handed here as its view that names no account, the
+ * handle it answers is bound to `accountId`, so every transaction of the turn names that account
+ * first. `accountId` is a connection's own, from one roster row (`ConnectionKey`): never an id a
+ * provider answered or a push carried. An id that is no account id is refused.
+ *
+ * A store nobody bound a view of (a device's own, which has one person and no policy) is left as
+ * it is: its turn runs on the store's handle, as it always has.
  */
 export function passDb(pool: CalendarPool, accountId: string): ConnectionDb {
-  return { [BOUND]: pool[POOL], accountId };
+  const held = pool[POOL];
+  return { [BOUND]: bindingOf(held) === undefined ? held : bindDb(held, { account: accountId }), accountId };
 }
 
 /** A transaction of one turn, with the connection row it holds. */

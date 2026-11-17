@@ -4,7 +4,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, accountOfUser, type Tx,
+  markFenced, accountOfUser, bindDb, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { createLogger } from "@trafficflow/core/mail";
@@ -3186,9 +3186,14 @@ export class AuthService extends SessionLifecycle {
       .where(eq(authThrottle.key, key));
   }
 
-  /** Cloud 0043's read — see the base declaration in `SessionLifecycle`. */
+  /**
+   * Cloud 0043's read — see the base declaration in `SessionLifecycle`. Bound here to no account
+   * and keyed by the token's digest, as the session's own look-up is: the token resolved to
+   * nothing, so no account is known, and the account answered is the row's.
+   */
   override async bearerOfErasedAccount(db: Db, token: string, now: Date): Promise<string | null> {
-    return erasedBearerAccount(bridgeTx(db), hashToken(token), now);
+    const digest = hashToken(token);
+    return erasedBearerAccount(bridgeTx(bindDb(db, { account: null, key: digest })), digest, now);
   }
 
   protected override async throttleReset(db: Tx, key: string): Promise<void> {

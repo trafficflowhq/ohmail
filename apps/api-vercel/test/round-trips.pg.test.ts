@@ -33,8 +33,13 @@ const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const KEK = "ab".repeat(32);
 
-/** The statements each route issues today, begin, the binder and commit included: a ceiling, not a target. */
-const STATEMENTS = { list: 9, body: 9, bodies: 6, search: 14, rules: 9, health: 1, syncHorizon: 5 } as const;
+/**
+ * The statements each route issues today, begin, the binder and commit included: a ceiling, not a
+ * target. Three more than before on six routes, and no burst more: the session's look-up is a
+ * flight of its own, keyed by the token's digest (begin, the binder and commit beside its one
+ * statement, written together), and so is health's probe, on the request's handle bound to nothing.
+ */
+const STATEMENTS = { list: 12, body: 12, bodies: 9, search: 14, rules: 12, health: 4, syncHorizon: 8 } as const;
 /** The bursts each route waits on: the record before the binding, a ceiling that may only fall. */
 const BURSTS = { list: 3, body: 3, bodies: 6, search: 3, rules: 3, health: 1, syncHorizon: 2 } as const;
 /**

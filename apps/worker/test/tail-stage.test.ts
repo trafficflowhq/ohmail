@@ -123,7 +123,8 @@ describe("the in-pass catches hand a dead database to the hook", () => {
   it("the away-reply sweep's per-account catch", async () => {
     const r = recorded();
     const note = r.tailFaultNote("fixture.away");
-    const run = await makeAwayReplySweep().runOnce(await deadDb(), ["acct-1", "acct-2"], {
+    const dead = await deadDb();
+    const run = await makeAwayReplySweep().runOnce(() => dead, ["acct-1", "acct-2"], {
       onError: (_a, err) => { note(err); r.lines.push("away_failed"); },
     });
     expect(run.failed, "the sweep did not go on to the second account").toBe(2);

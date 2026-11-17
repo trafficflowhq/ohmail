@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import { bridgeDb, bridgeTx, type Db } from "./context.js";
+import { bridgeDb, bridgeTx, passContext, type Db } from "./context.js";
 import type { MailContext } from "./mail/index.js";
 
 /**
@@ -112,12 +112,12 @@ export function addonBytesOf(offer: StorageOffer): number {
   return plan === undefined ? 0 : Math.max(0, offer.fit.roomBytes - plan.roomBytes);
 }
 
-export async function runStorageMailPass(db: Db, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
+export async function runStorageMailPass(walk: Db, deps: StorageMailPassDeps): Promise<StorageMailPassResult> {
   const log = deps.log ?? silentLogger;
   const clock = deps.clock ?? Date.now;
   const started = clock();
   const budget = deps.budgetMs ?? STORAGE_MAILS_BUDGET_MS;
-  const tx = bridgeTx(db);
+  const tx = bridgeTx(walk);
   const result: StorageMailPassResult = {
     read: 0, total: 0, due: 0, sent: { near: 0, full: 0 }, already: 0, off: 0, noOffer: 0, skipped: 0,
     unmailable: 0, faults: 0, capped: false,
@@ -149,7 +149,7 @@ export async function runStorageMailPass(db: Db, deps: StorageMailPassDeps): Pro
       break;
     }
     try {
-      await oneAccount(tx, deps, result, log, {
+      await oneAccount(bridgeTx(passContext(walk, row.accountId, { userId: null, now: deps.now, requestId: `storage-mail:${row.accountId}` }).db), deps, result, log, {
         accountId: row.accountId, level, verdict, capBytes: limit.capBytes,
         limitReason: storageLimitReason(verdict.limits.storageBytes, limit), limitDropsAt: limit.dropsAt,
         usedBytes: Number(row.bytes), keptFrom: row.keptFrom === null ? null : String(row.keptFrom).slice(0, 7), now,

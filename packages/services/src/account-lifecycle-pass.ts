@@ -4,7 +4,7 @@ import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
-import { bridgeTx, dbFor, type Db } from "./context.js";
+import { bridgeTx, passContext, type Db } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
@@ -280,7 +280,7 @@ export function erasureDue(lc: AccessLifecycle, now: Date): boolean {
 }
 
 export async function runAccountLifecyclePass(
-  db: Db, deps: AccountLifecyclePassDeps,
+  walk: Db, deps: AccountLifecyclePassDeps,
 ): Promise<AccountLifecyclePassResult> {
   const log = deps.log ?? silentLogger;
   const now = deps.now;
@@ -315,12 +315,12 @@ export async function runAccountLifecyclePass(
   let done: string | null = after;
   let chunks = 0;
   for (;;) {
-    const page: Array<{ id: string }> = await db
+    const page: Array<{ id: string }> = await walk
       .select({ id: accounts.id })
       .from(accounts)
       .where(and(
         isNull(accounts.erasedAt),
-        exists(db.select({ one: sql`1` }).from(users).where(eq(users.accountId, accounts.id))),
+        exists(walk.select({ one: sql`1` }).from(users).where(eq(users.accountId, accounts.id))),
         ...(after !== null ? [gt(accounts.id, after)] : []),
       ))
       .orderBy(asc(accounts.id))
@@ -339,6 +339,7 @@ export async function runAccountLifecyclePass(
       chunks += 1;
       await Promise.all(chunk.map(async ({ id }) => {
         result.accounts += 1;
+        const ofAccount = passContext(walk, id, { userId: null, now, requestId: `lifecycle:${id}` });
         try {
           // AN ANSWER OR NOTHING: a notice sent on a remembered verdict can tell somebody who
           // subscribed again that their account is closing. An unanswered read skips the account
@@ -358,10 +359,10 @@ export async function runAccountLifecyclePass(
           result.withLifecycle += 1;
 
           for (const due of noticesDue(lc, now())) {
-            await claimAndSend(db, deps, id, due, result, log);
+            await claimAndSend(ofAccount.db, deps, id, due, result, log);
           }
           const reminder = connectReminderDue(lc, verdict.trial, now());
-          if (reminder) await remindToConnect(db, deps, id, reminder.anchor, reminderSwitch, result, log);
+          if (reminder) await remindToConnect(ofAccount.db, deps, id, reminder.anchor, reminderSwitch, result, log);
 
           // The refusal above is silent by itself, and a drift nobody sees is a drift nobody
           // fixes. Reported once per pass, never acted on — the hold stays a staff act.
@@ -421,12 +422,22 @@ export type EraseOneOutcome =
  * did not answer, or a verdict that no longer asks for erasure, changes nothing. Neither does an
  * erasure whose week's warning was never delivered, or was delivered late and its week has not
  * passed: the door FAILS CLOSED on the warning as the epoch belt does on the date.
+ *
+ * THE ID ASKED FOR SELECTS A ROW, AND ONLY THE ROW BINDS. `asked` came with the clock's poke: it is
+ * used once, on the walk, to find the account's row. Everything after runs for that row's own id,
+ * on a handle bound to it ({@link passContext}): the two reads here, the program's answer, the
+ * erasure. An id no row answers binds nothing and is `not_due`.
  */
 export async function eraseOneDueAccount(
-  db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, accountId: string,
+  walk: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, asked: string,
 ): Promise<EraseOneOutcome> {
   const log = deps.log ?? silentLogger;
   const now = deps.now;
+  const [named] = await walk.select({ id: accounts.id }).from(accounts)
+    .where(eq(accounts.id, asked)).limit(1);
+  if (!named) return "not_due";
+  const ctx = passContext(walk, named.id, { userId: null, now, requestId: randomUUID() });
+  const { db, accountId } = ctx;
   const [row] = await db.select({ erasedAt: accounts.erasedAt }).from(accounts)
     .where(eq(accounts.id, accountId)).limit(1);
   if (!row) return "not_due";
@@ -477,10 +488,7 @@ export async function eraseOneDueAccount(
   }
   const outcome = await deps.port.releaseAccount(accountId);
   // This pass runs only against an entitlements program, so a refund drain runs beside it.
-  await deleteAccount(
-    { db: dbFor(db, accountId), accountId, userId: null, now, requestId: randomUUID() },
-    { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor },
-  );
+  await deleteAccount(ctx, { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor });
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
     reason: "the retention period ended a day ago or more; the account's data is " +

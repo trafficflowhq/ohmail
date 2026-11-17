@@ -17,7 +17,8 @@ import {
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import { UNSUB_DRAIN_RUN_BUDGET_MS, type SendAdapter } from "@trafficflow/core/mail";
-import { dbFor, isUuid } from "@trafficflow/services/mail";
+import { isUuid, type BoundDb } from "@trafficflow/services/mail";
+import { doorDb } from "../context.js";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -62,6 +63,17 @@ function accountEligibleFrom(deps: ApiDeps): ((accountId: string) => Promise<boo
   const port = accessPortOf(deps);
   if (!port) return undefined;
   return async (accountId) => (await port.access(accountId)).ok;
+}
+
+/**
+ * THE CONTAINER ONE ROW OF A PASS DIALS THROUGH: this request's, with the row's own handle in place
+ * of the door's. A clock's route runs for no account ({@link doorDb}); its pass works on rows of
+ * many, and hands its dial the handle of the row it is working on (`passContext`). What the dial
+ * reads of that row's mailbox (its credential, its Sent folder, its connection slot) is then read
+ * under the row's account, never on the handle the pass walks on.
+ */
+function rowDeps(deps: ApiDeps, db: BoundDb): ApiDeps {
+  return { ...deps, db };
 }
 
 /**
@@ -759,7 +771,7 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
-        const result = await reapStaleWebSessions(deps.db as unknown as Tx, deps.now());
+        const result = await reapStaleWebSessions(doorDb(deps) as unknown as Tx, deps.now());
         if (result.reaped > 0) log.info("sessions_reaped", { reaped: result.reaped });
         return json(200, { now: deps.now().toISOString(), reaped: result.reaped });
       } catch (err) {
@@ -810,7 +822,7 @@ export const internalRoutes: Route[] = [
         return json(503, { error: { code: "unsubscribe_unconfigured" } });
       }
       try {
-        const run = await svc.drainScreenedOut(deps.db, {
+        const run = await svc.drainScreenedOut(doorDb(deps), {
           now: deps.now, requestId: deps.requestId, budget,
         });
         // COUNTS AND NOTHING ELSE — no account, no sender, no URL. A log line naming which lists
@@ -880,7 +892,7 @@ export const internalRoutes: Route[] = [
         return json(401, { error: { code: "unauthorized" } });
       }
       try {
-        const result = await learnMissingSmtpSizes({ ...deps, logger: log });
+        const result = await learnMissingSmtpSizes({ ...deps, db: doorDb(deps), logger: log });
         if (result.learned > 0) log.info("smtp_size_pass", { ...result });
         return json(200, { now: deps.now().toISOString(), ...result });
       } catch (err) {
@@ -931,9 +943,10 @@ export const internalRoutes: Route[] = [
       try {
         const eligible = accountEligibleFrom(deps);
         const kept = deps.services?.scheduledFiles;
-        const result = await runScheduledSendPass(deps.db, {
+        const result = await runScheduledSendPass(doorDb(deps), {
+          // Each appointment dials on its own handle, bound to the account of the row the pass claimed.
           openSendAdapter: deps.services?.sendAdapter
-            ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
+            ?? ((mailboxId, db) => makeSendAdapter(rowDeps(deps, db), mailboxId)),
           // This host's sealed files (mail 0180): opened for the send, tidied before the claim.
           ...(kept?.atRest === "sealed" ? { files: { open: kept.sealer.open.bind(kept.sealer), tidy: true } } : {}),
           ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
@@ -989,9 +1002,9 @@ export const internalRoutes: Route[] = [
       }
       try {
         const eligible = accountEligibleFrom(deps);
-        const result = await runSendReconcilePass(deps.db, {
+        const result = await runSendReconcilePass(doorDb(deps), {
           openSendAdapter: deps.services?.sendAdapter
-            ?? ((mailboxId: string) => admittedSendAdapter(deps, mailboxId)),
+            ?? ((mailboxId, db) => admittedSendAdapter(rowDeps(deps, db), mailboxId)),
           // The wall's gate (mail 0124) — `accountEligibleFrom` for the composition's terms.
           ...(eligible ? { accountEligible: eligible } : {}),
           log,
@@ -1034,16 +1047,16 @@ export const internalRoutes: Route[] = [
       try {
         const eligible = accountEligibleFrom(deps);
         const storageCapOf = deps.services?.storageCapOf;
-        const result = await runOwedSentCopyPass(deps.db, {
+        const result = await runOwedSentCopyPass(doorDb(deps), {
           openSendAdapter: deps.services?.sendAdapter
-            ?? ((mailboxId: string) => admittedFilingAdapter(deps, mailboxId)),
+            ?? ((mailboxId, db) => admittedFilingAdapter(rowDeps(deps, db), mailboxId)),
           // Absent, the projection refuses and the Sent-folder watch writes the row.
           resolveStorageCap: storageCapOf ?? (async () => {
             throw new Error("no storage-cap policy is configured for this host");
           }),
           ...(eligible ? { accountEligible: eligible } : {}),
           // A copy kept without its files is spliced back from its uploads, read under its own account.
-          ...(deps.services?.attachmentStaging ? { stagedAttachments: deps.services.attachmentStaging(deps.db).source } : {}),
+          ...(deps.services?.attachmentStaging ? { stagedAttachments: deps.services.attachmentStaging(doorDb(deps)).source } : {}),
           budgetMs: 60_000,
           log,
           now: deps.now,
@@ -1086,9 +1099,9 @@ export const internalRoutes: Route[] = [
       }
       try {
         const eligible = accountEligibleFrom(deps);
-        const result = await runAwayResponderPass(deps.db, {
+        const result = await runAwayResponderPass(doorDb(deps), {
           openSendAdapter: deps.services?.sendAdapter
-            ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
+            ?? ((mailboxId, db) => makeSendAdapter(rowDeps(deps, db), mailboxId)),
           // THE SUSPENSION GATE, injected here because the fact is the cloud half's
           // (`account_suspensions`) and the pass ships in the desktop engine bundle, which may not
           // name a cloud table. A suspended account's automation must not keep firing — mail
@@ -1148,7 +1161,7 @@ export const internalRoutes: Route[] = [
       // reconciliation's unconfigured answer, not a 5xx.
       if (!port) return json(200, { skipped: "unmetered" });
       try {
-        const result = await runAccountLifecyclePass(deps.db, {
+        const result = await runAccountLifecyclePass(doorDb(deps), {
           port,
           throttleKeys: throttleKeysFor(deps.keyProvider),
           mail: deps.services?.customerMail ?? null,
@@ -1202,8 +1215,9 @@ export const internalRoutes: Route[] = [
       const port = entitlementsPort(deps);
       if (!port) return json(200, { skipped: "unmetered" });
       try {
+        // The id asked for only selects the account's row; the door binds the row's own id.
         const outcome = await eraseOneDueAccount(
-          deps.db, { port, log, now: deps.now, throttleKeys: throttleKeysFor(deps.keyProvider) }, accountId);
+          doorDb(deps), { port, log, now: deps.now, throttleKeys: throttleKeysFor(deps.keyProvider) }, accountId);
         return json(200, outcome === "erased" || outcome === "already_erased"
           ? { outcome } : { skipped: outcome });
       } catch (err) {
@@ -1236,7 +1250,7 @@ export const internalRoutes: Route[] = [
       }
       try {
         const result = await auth(deps).drainSecurityNotices({
-          db: dbFor(deps.db, ""), accountId: "", userId: null, now: deps.now, requestId: deps.requestId,
+          db: doorDb(deps), accountId: "", userId: null, now: deps.now, requestId: deps.requestId,
         });
         if (result.sent + result.failed + result.dropped > 0) log.info("security_notices_drained", { ...result });
         return json(200, { now: deps.now().toISOString(), ...result });
@@ -1273,7 +1287,7 @@ export const internalRoutes: Route[] = [
       const port = entitlementsPort(deps);
       if (!port) return json(200, { skipped: "unmetered" });
       try {
-        const result = await runStorageMailPass(deps.db, {
+        const result = await runStorageMailPass(doorDb(deps), {
           port, mail: deps.services?.customerMail ?? null, log, now: deps.now,
         });
         if (result.sent.near + result.sent.full + result.faults > 0) {

@@ -7,10 +7,10 @@ import {
 import {
   awayEligibility, awayNormalizeAddress, awayTextHash, createLogger, isDeliveryReport,
   mintMessageId, replySubject,
-  type AwayAudience, type AwaySuppression, type Logger, type OpenSendAdapter, type SendAdapter,
+  type AwayAudience, type AwaySuppression, type Logger, type SendAdapter,
 } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
-import { bridgeTx, type Db } from "./context.js";
+import { bridgeTx, passContext, type BoundDb, type Db, type OpenPassSendAdapter } from "./context.js";
 
 /**
  * The away responder's pass — reply-only, throttled per person, on all three hosts. It moved out
@@ -105,7 +105,7 @@ export interface AwayResponderPassDeps {
   cancelled?: () => boolean;
 
   /** The send transport — `makeSendAdapter` on the hosted and self-hosted hosts, the local dial on the desktop. */
-  openSendAdapter: OpenSendAdapter;
+  openSendAdapter: OpenPassSendAdapter;
   /**
    * HAS THIS INSTALL BEEN TOLD IT STILL HOLDS THIS MAILBOX? — asked twice per candidate: before
    * the reservation, and again at the send boundary, after the fence re-read and before the dial.
@@ -257,7 +257,7 @@ interface Candidate {
  * stop the rest, and the caller's own catch is for the probe alone.
  */
 export async function runAwayResponderPass(
-  db: Db, deps: AwayResponderPassDeps,
+  walk: Db, deps: AwayResponderPassDeps,
 ): Promise<AwayResponderPassResult> {
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
@@ -275,9 +275,9 @@ export async function runAwayResponderPass(
   /* Both before the probe. The ORDER between these two is not load-bearing and was measured not to
      be: the sweep's WHERE does not read `enabled_at` and it clears the column anyway, so a heal
      that ran first leaves the same row. Expiry is first because it saves the heal that write. */
-  result.expired = await expireEndedResponders(db, now(), deps.mailboxIds, log);
-  await healMissingEnabledAt(db, now());
-  const live = await liveResponders(db, now(), deps.mailboxIds);
+  result.expired = await expireEndedResponders(walk, now(), deps.mailboxIds, log);
+  await healMissingEnabledAt(walk, now());
+  const live = await liveResponders(walk, now(), deps.mailboxIds);
   /* THE ROTATION'S OTHER HALF — the accounts this invocation actually ENTERED, stamped once after
      the walk so the next tick starts behind them. Entered and not selected: the send budget can
      stop the walk on account five of fifty, and stamping the whole page would hand this defect
@@ -298,7 +298,7 @@ export async function runAwayResponderPass(
     result.accounts += 1;
     walked.push(responder.accountId);
     try {
-      await answerForAccount(db, deps, responder, result, budget, batch, now, log);
+      await answerForAccount(passContext(walk, responder.accountId, { userId: null, now, requestId: `away:${responder.accountId}` }).db, deps, responder, result, budget, batch, now, log);
     } catch (err) {
       // Per-account containment. A responder whose candidate read threw leaves NO ledger rows, so
       // the next run re-examines exactly the same window — nothing is spent and nobody is silenced.
@@ -309,7 +309,7 @@ export async function runAwayResponderPass(
       });
     }
   }
-  await markConsidered(db, walked, now());
+  await markConsidered(walk, walked, now());
   return result;
 }
 
@@ -478,7 +478,7 @@ async function liveResponders(
 
 /** One account: gate, read, group by mailbox, answer. */
 async function answerForAccount(
-  db: Db, deps: AwayResponderPassDeps, responder: LiveResponder,
+  db: BoundDb, deps: AwayResponderPassDeps, responder: LiveResponder,
   result: AwayResponderPassResult, budget: number, batch: number,
   now: () => Date, log: Logger,
 ): Promise<void> {
@@ -549,7 +549,7 @@ async function answerForAccount(
     const transport = async (): Promise<SendAdapter | null> => {
       if (held.adapter || openFailed) return held.adapter;
       try {
-        held.adapter = await deps.openSendAdapter(mailboxId);
+        held.adapter = await deps.openSendAdapter(mailboxId, db);
       } catch (err) {
         openFailed = true;
         log.warn("away_responder_no_send_path", {
