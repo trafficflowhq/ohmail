@@ -784,7 +784,37 @@
   "receipts": {
     "title": "Receipts",
     "tail": "Older receipts live in Search.",
-    "streamAria": "Reading stream"
+    "streamAria": "Reading stream",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "Receipts",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "Receipts stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "search": {
+      "older": "Older in Search"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
   },
   "stream": {
     "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
@@ -1198,7 +1228,10 @@
     "runPlaceholder": "Your reply",
     "runReplyAria": "Reply",
     "runExit": "exit",
-    "pileResurfaces": "resurfaces {when}"
+    "pileResurfaces": "resurfaces {when}",
+    "list": {
+      "menu": "List"
+    }
   },
   "seed": {
     "title": "You've written to {count, plural, one {1 person} other {# people}}.",
@@ -1242,8 +1275,22 @@
     "storeRetry": "Try again",
     "railLabel": "Jump to a month",
     "railUndated": "No date",
+    "month": "Month",
+    "year": "Year",
     "railCount": "{count, plural, one {1 message} other {# messages}}",
-    "placeChip": "History"
+    "placeChip": "History",
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "list": {
+      "menu": "List"
+    }
   },
   "trash": {
     "emptyTitle": "Nothing deleted in ohmail.",
@@ -1276,7 +1323,8 @@
     "liveOlder": "Show older",
     "liveOlderLoading": "Looking further back…",
     "liveBodyLoading": "Reading the message from your mail server…",
-    "liveBodyFailed": "The message couldn’t be read from your mail server."
+    "liveBodyFailed": "The message couldn’t be read from your mail server.",
+    "title": "Trash"
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
@@ -1310,7 +1358,28 @@
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "emptyTitle": "Nothing in this folder",
     "emptyHint": "It holds no mail. The folder list follows your mail server, so a folder deleted there leaves it.",
-    "gone": "“{name}” is no longer on your mail server."
+    "gone": "“{name}” is no longer on your mail server.",
+    "loading": "Loading this folder",
+    "group": {
+      "new": "New",
+      "earlier": "Earlier"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "title": "Folder",
+    "way": {
+      "all": "Folders"
+    },
+    "list": {
+      "menu": "List"
+    }
   },
   "search": {
     "title": "Search",
@@ -4318,7 +4387,14 @@
     "filesNotKeptNote": "{count, plural, one {Its file was not kept. Attach it again before you send.} other {Its # files were not kept. Attach them again before you send.}}",
     "scheduleCancelled": "Scheduled send cancelled. The message is in Drafts.",
     "scheduleCancelTooLate": "Too late to cancel — this message is already being sent.",
-    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does."
+    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does.",
+    "rowTo": "To {name}",
+    "listLoading": "Loading your drafts",
+    "heldActs": "A send not confirmed",
+    "heldItWasSent": "It was sent",
+    "reportDiscarded": "Discarded",
+    "reportUndo": "Undo",
+    "listMenu": "List"
   },
   "mailBody": {
     "blockedOne": "1 remote image blocked.",
@@ -5250,6 +5326,147 @@
         "title": "Filing waits for its next try"
       }
     }
+  },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "News",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "News stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
+  },
+  "later": {
+    "title": "Answer Later",
+    "empty": "Nothing to answer later",
+    "switch": {
+      "label": "Piles",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Reply Run",
+      "label": "Reply run",
+      "progress": "{step} of {total}",
+      "done": "Done → next",
+      "skip": "Skip",
+      "exit": "Exit",
+      "empty": "Nothing to answer later"
+    },
+    "row": {
+      "done": "Done",
+      "resurfaces": "back {when}"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    },
+    "step": {
+      "up": "Previous",
+      "down": "Next"
+    }
+  },
+  "parked": {
+    "title": "Parked",
+    "empty": "Nothing parked"
+  },
+  "resurface": {
+    "title": "Resurface",
+    "empty": "Nothing set to come back"
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Loading your tags",
+    "gone": "This tag is gone",
+    "empty": {
+      "none": "No tags yet",
+      "tag": "Nothing carries this tag"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 tag} other {# tags}}",
+      "letters": "{count, plural, one {1 message} other {# messages}}"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "menu": {
+      "rename": "Rename",
+      "delete": "Delete"
+    },
+    "rename": {
+      "title": "Rename {name}.",
+      "field": "Name",
+      "save": "Save",
+      "cancel": "Cancel",
+      "taken": "You already have a tag called {name}."
+    },
+    "delete": {
+      "title": "Delete {name}.",
+      "stay": "{count, plural, one {1 message carries it and stays where it is.} other {# messages carry it and stay where they are.}}",
+      "nothing": "Nothing carries it.",
+      "confirm": "Delete",
+      "cancel": "Keep"
+    },
+    "list": {
+      "menu": "List"
+    }
+  },
+  "address": {
+    "title": "All mail",
+    "loading": "Loading their mail",
+    "count": "{count, plural, one {1 message} other {# messages}}",
+    "side": {
+      "label": "Direction",
+      "all": "All",
+      "from": "From them",
+      "to": "To them"
+    },
+    "sideCount": {
+      "all": "All {count}",
+      "from": "From them {count}",
+      "to": "To them {count}"
+    },
+    "empty": {
+      "all": "Nothing with them",
+      "from": "Nothing from them",
+      "to": "Nothing to them"
+    },
+    "row": {
+      "to": "To {name}",
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "close": "Close"
   },
   "stepUp": {
     "titlePasskey": "Confirm with my passkey.",

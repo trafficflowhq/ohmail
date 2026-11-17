@@ -3,6 +3,27 @@
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "emptyTitle": "Nothing in this folder",
     "emptyHint": "It holds no mail. The folder list follows your mail server, so a folder deleted there leaves it.",
-    "gone": "“{name}” is no longer on your mail server."
+    "gone": "“{name}” is no longer on your mail server.",
+    "loading": "Loading this folder",
+    "group": {
+      "new": "New",
+      "earlier": "Earlier"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "title": "Folder",
+    "way": {
+      "all": "Folders"
+    },
+    "list": {
+      "menu": "List"
+    }
   }
 }

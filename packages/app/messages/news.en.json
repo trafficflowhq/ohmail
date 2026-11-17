@@ -14,5 +14,35 @@
   },
   "stream": {
     "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
+  },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "News",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "News stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
   }
 }

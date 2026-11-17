@@ -189,10 +189,16 @@ function panesOf(
   };
 }
 
-/** The room's press seam runs only where the reader is drawn: never beside the old shell's own. */
+/**
+ * The room's press seam runs only where the reader is drawn, or a place's own column asks for it and a reader is
+ * handed: never beside the old shell's own.
+ */
 function drawsTheReader(entry: PlaceEntry | null, reader: ReaderEntry | None): boolean {
   return (
-    reader !== NONE && entry !== null && entry.panes.kind === "columns" && entry.panes.Reading === "reader"
+    reader !== NONE &&
+    entry !== null &&
+    entry.panes.kind === "columns" &&
+    (entry.panes.Reading === "reader" || entry.panes.room === true)
   );
 }
 

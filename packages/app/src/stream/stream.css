@@ -1,0 +1,4 @@
+/* A stream place's own layout: where its parts stand. Every look is the kit's; the list stands in `ListColumn`. */
+.st-item {
+  display: block;
+}

@@ -3,6 +3,27 @@
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "emptyTitle": "Nichts in diesem Ordner",
     "emptyHint": "Er enthält keine Mail. Die Ordnerliste folgt deinem Mailserver: Ein dort gelöschter Ordner verschwindet auch hier.",
-    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr."
+    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr.",
+    "loading": "Dieser Ordner wird geladen",
+    "group": {
+      "new": "Neu",
+      "earlier": "Früher"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "title": "Ordner",
+    "way": {
+      "all": "Ordner"
+    },
+    "list": {
+      "menu": "Liste"
+    }
   }
 }
