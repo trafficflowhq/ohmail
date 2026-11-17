@@ -51,6 +51,13 @@ const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession
 // `cost: "unauthenticated"`, and every `unauthenticated` route is `public`.
 const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard];
 
+// `provider` routes: a calendar's provider is the caller (`routes/calendar-notices.ts`). The
+// request guard would refuse it: Microsoft's validation call carries no JSON, and a refusal in the
+// error envelope is an answer that differs by what was sent. So the request id alone, and the
+// handler's own rule that every call is answered alike. No session is resolved and no carried
+// middleware is spliced in: a route that needs either is no provider's route.
+const PROVIDER_PIPELINE: Middleware[] = [withRequestId];
+
 /**
  * The chain a route runs through: its pipeline, plus the middleware the ROUTE carries
  * (`RouteOptions.middleware`), spliced in after `withRequestGuard` — before any session, so a
@@ -62,6 +69,7 @@ const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard];
  * bytes, refused by the census). Carried, it is mounted only where its own routes are.
  */
 export function pipelineFor(route: Route): readonly Middleware[] {
+  if (route.options?.provider) return PROVIDER_PIPELINE;
   const chain = route.options?.anonymous
     ? ANONYMOUS_PIPELINE
     : route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
@@ -239,8 +247,9 @@ async function dispatch(
   // The query string's twin of the line above, and here for the same reason: a caller-chosen
   // count reached a clamp that raised `?limit=` to one row and answered a page of one. Before
   // `withSession`, so it can never reach the database, and on every pipeline — a middleware
-  // would miss the `raw` and `anonymous` routes and the sidecar's own `createApp`.
-  const badQuery = firstMisshapenQuery(url);
+  // would miss the `raw` and `anonymous` routes and the sidecar's own `createApp`. A provider's
+  // route reads no paging number, and a refusal here would be an answer that differs by the query.
+  const badQuery = m.route.options?.provider ? null : firstMisshapenQuery(url);
   if (badQuery) {
     return {
       res: errorResponse("validation_failed", 400, badQuery.message, undefined, false),

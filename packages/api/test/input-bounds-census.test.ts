@@ -1240,6 +1240,9 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // route's accepted shape in a slice about bounds.
   "routes/attachments.ts#q": "request-line",
   "routes/attachments.ts#type": "closed-set",
+  // Microsoft's validation call, read only where the door echoes one: echoed at 1 to
+  // `VALIDATION_TOKEN_MAX_CHARS` (1024) printable characters, else the one answer every call gets.
+  "routes/calendar-notices.ts#validationToken": "length-capped",
   "routes/consent.ts#counts": "closed-set",
   "routes/events.ts#stream": "identifier",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.

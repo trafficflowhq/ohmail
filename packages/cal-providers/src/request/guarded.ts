@@ -164,15 +164,16 @@ function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Rec
   // A write never follows a redirect, so its precondition is only ever the first hop's.
   if (hop === 0 && req.precondition !== undefined) {
     if (req.precondition.kind === "new") headers["if-none-match"] = "*";
-    else headers["if-match"] = req.precondition.tag;
+    else if (req.precondition.kind === "unchanged") headers["if-match"] = req.precondition.tag;
   }
   return headers;
 }
 
 /**
  * A write as the port takes it, or a fault of the program that asked: the port must be one that
- * writes, the write must carry a sign-in and a precondition that is an entity tag or "new", and no
- * reading's validators; a precondition on any other method is a fault too. Asked before any lookup.
+ * writes, the write must carry a sign-in and a precondition that is an entity tag or "new" (or, for
+ * a DELETE alone, that what goes is a notice channel of this program's own), and no reading's
+ * validators; a precondition on any other method is a fault too. Asked before any lookup.
  */
 function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
   const writing = WRITING.has(req.method);
@@ -185,6 +186,8 @@ function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
   if (req.precondition === undefined) throw new TypeError("a calendar write carries no precondition");
   if (req.validators !== null) throw new TypeError("a calendar write carries a reading's validators");
   if (req.precondition.kind === "unchanged" && !sendableTag(req.precondition.tag)) throw new TypeError("a calendar write's version is no entity tag");
+  // Only a notice channel is removed without a version, and only removed: nothing is ever changed or made without one.
+  if (req.precondition.kind === "own-channel" && req.method !== "DELETE") throw new TypeError("only the removal of a notice channel goes without a version");
   return true;
 }
 

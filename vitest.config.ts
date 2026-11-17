@@ -152,6 +152,8 @@ export default defineConfig({
       // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
       { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
+      // The door a calendar's provider rings: an entry of its own, which only a server mounts.
+      { find: "@trafficflow/api/calendar-notices", replacement: r("./packages/api/src/routes/calendar-notices.ts") },
       { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },
       { find: "@trafficflow/api/relay-allowlist", replacement: r("./packages/api/src/relay-allowlist.ts") },

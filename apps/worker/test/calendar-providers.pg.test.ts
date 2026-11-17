@@ -426,7 +426,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync through the real providers", ()
       const made = providersFor("own-network", ["microsoft"], double.base).get("microsoft")!;
       const trade = tokenEndpoint(async () => ({ status: 200, body: { access_token: double.token, expires_in: 3600 } }));
       const http: HttpPort = { request: (url, req) => (new URL(url).hostname === "login.microsoftonline.com" ? trade.request(url, req) : made.http.request(url, req)) };
-      const provider: CalendarProvider = { reader: made.reader, writer: null, http };
+      const provider: CalendarProvider = { reader: made.reader, writer: null, notices: null, http };
       const deps = depsFor(w, providersOf({ microsoft: provider }), {
         clock: { now: () => Date.UTC(2024, 11, 10, 12) },
         oauth: { google: null, microsoft: async () => ({ clientId: "calendar-test-client", clientSecret: ["ms", "fixture"].join("-"), defaultTenant: "common", kind: "confidential" }) },

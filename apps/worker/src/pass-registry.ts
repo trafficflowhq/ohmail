@@ -522,9 +522,10 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "calendar_notices",
     module: `${W}/calendar-notices.ts`, entry: "calendarNoticesPass",
     triggers: ["wake-driven", "interval"],
-    cadence: "after a calendar turn that ended well, where OHCAL_NOTICE_ORIGIN names a public address; opens nothing "
-      + "until the channel table and the notice route are on this line",
-    budget: "one channel request per calendar whose channel is missing or in its last day",
+    cadence: "after a calendar turn that ended well, where OHCAL_NOTICE_ORIGIN names a public address; a provider "
+      + "without notices (CalDAV, a subscription) is left to its poll",
+    budget: "NOTICE_REQUESTS_PER_TURN requests a turn: one for a calendar whose channel is missing or in its last day "
+      + "(NOTICE_RENEW_BEFORE_MS), one to end the channel it replaces; a refused calendar waits NOTICE_REFUSED_WAIT_MS",
     owns: "a provider's notice channel is open before the last one ends, so a change rings instead of waiting for the poll",
     fence: "leader lock; rides the calendar turn's binding and sign-in",
   },

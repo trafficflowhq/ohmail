@@ -58,7 +58,7 @@ function windowOf(startMs: number, endMs: number): { readonly startMs: number; r
 }
 
 /** A moment as Graph's query takes it: to the second, in UTC. */
-function stamp(ms: number): string {
+export function stamp(ms: number): string {
   const w = wallFromSeconds(Math.floor(ms / MS_PER_SECOND));
   const two = (n: number): string => String(n).padStart(2, "0");
   return `${String(w.year).padStart(4, "0")}-${two(w.month)}-${two(w.day)}T${two(w.hour)}:${two(w.minute)}:${two(w.second)}Z`;

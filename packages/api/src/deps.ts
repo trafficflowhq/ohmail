@@ -175,6 +175,16 @@ export interface PlaceSuggester {
 }
 
 /**
+ * THE DOOR A CALENDAR'S PROVIDER RINGS, as a port: `@trafficflow/api/calendar-notices` builds one
+ * for the program, beside the two notice routes, and no route table here names it. It holds what is
+ * in flight, the minute's counts and Microsoft's validation switch. `ring` never throws, and what
+ * it answers says nothing of what it found.
+ */
+export interface CalendarNoticeDoor {
+  ring(provider: "google" | "microsoft", req: Request, db: Db): Promise<Response>;
+}
+
+/**
  * The typed service bag on `ApiDeps`. The test helper and each host construct these once and
  * expose them here so handlers never new-up a service.
  * `sync` is optional — the handler falls back to the `syncService` singleton.
@@ -198,6 +208,12 @@ export interface ApiServices {
    * composition that keeps one. ABSENT refuses: no way is listed and none is taken.
    */
   calendarConnect?: CalendarConnectPort;
+  /**
+   * The door a calendar's provider rings ({@link CalendarNoticeDoor}), handed beside `calendar` by a
+   * server that mounts the notice routes. ABSENT, those routes answer as they always do and read
+   * nothing: no statement is run and nothing is pulled forward.
+   */
+  calendarNotices?: CalendarNoticeDoor;
   /**
    * The session lifecycle — refresh rotation with reuse detection, logout, the device list
    * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence

@@ -31,6 +31,7 @@ id	claim	status	tests	verdict	waits
 9d	The database answers the API's login only the rows of the account its transaction named, and none when it named none.	bitten	packages/services/test/row-security-isolation.pg.test.ts	docs/invariant-verdicts/9d.json	-
 9e	Every table holding an account's rows is under forced row security, and a table left unforced is named.	bitten	packages/db/test/row-security.pg.test.ts	docs/invariant-verdicts/9e.json	-
 9f	No runtime login may bypass row security, and a login that can is named before it serves.	bitten	packages/services/test/row-security-isolation.pg.test.ts packages/db/test/row-security.pg.test.ts packages/db/test/row-security-list.test.ts	docs/invariant-verdicts/9f.json	-
+9g	A calendar provider's notice moves only its own channel's calendar and connection, and every call to the notice routes is answered alike.	not yet run	packages/api/test/calendar-notice-door.pg.test.ts packages/api/test/calendar-notice-door.test.ts	docs/invariant-verdicts/9g.json	-
 10a	A metered action cannot run without the credits for it.	not yet run	packages/db/test/spend-sites-census.test.ts	docs/invariant-verdicts/10a.json	scope
 10b	Free credits are bounded: one trial and one setup grant per account, and trial starts are throttled per origin.	out of tree	-	docs/invariant-verdicts/10b.json	scope
 10c	No plan's allowance costs more than the plan earns.	out of tree	-	docs/invariant-verdicts/10c.json	scope

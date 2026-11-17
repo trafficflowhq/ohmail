@@ -8,6 +8,7 @@ import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
 import { mailboxDeviceOAuthRoutes } from "../src/routes/mailbox-oauth-device.js";
 import { calendarRoutes } from "../src/calendar/index.js";
+import { calendarNoticeRoutes } from "../src/routes/calendar-notices.js";
 import type { Route } from "../src/router.js";
 import { RELAY_ALLOWLIST, mayRelay } from "../src/relay-allowlist.js";
 import { normalizePathname } from "../src/canonical-path.js";
@@ -29,6 +30,7 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["desktopHostRoutes", desktopHostRoutes],
   ["mailboxDeviceOAuthRoutes", mailboxDeviceOAuthRoutes],
   ["calendarRoutes", calendarRoutes],
+  ["calendarNoticeRoutes", calendarNoticeRoutes],
 ];
 
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;

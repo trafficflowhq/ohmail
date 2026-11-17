@@ -126,6 +126,54 @@ export interface CalendarReader {
   readChanges(c: Connection, cal: CalendarRef, since: ChangeToken | null, page: PageRequest, signal: AbortSignal): Promise<Answer<ChangePage>>;
 }
 
+// ── a provider's notices ──────────────────────────────────────────────────────
+
+/**
+ * One channel asked of a provider: where its notices go, and the word each of them must carry.
+ * The address is the composing program's own, never an answer's and never a stored one. The word
+ * leaves through a function, as a credential does, so an ask that is logged by mistake shows nothing.
+ */
+export interface NoticeChannelAsk {
+  /** The channel's id where the caller names it (Google). A provider that names its own (Microsoft) is not sent it. */
+  readonly id: string;
+  readonly address: string;
+  word(): string;
+  /** The latest moment the channel may live to, in epoch milliseconds. A provider's own maximum cuts it shorter. */
+  readonly untilMs: number;
+}
+
+/** A channel as its provider answered it. Nothing of it is an address. */
+export interface NoticeChannel {
+  /** The id its notices name: the one asked for, or the provider's own. */
+  readonly id: string;
+  /** Google's name for what the channel watches: a notice repeats it and a close needs it. `null` at Microsoft. */
+  readonly resourceId: string | null;
+  /** When the provider ends the channel, in epoch milliseconds: never later than was asked. */
+  readonly expiresAtMs: number;
+}
+
+/**
+ * The notice half of a provider that has one: `null` for CalDAV and a subscription. A channel only
+ * shortens a wait. What changed is still read by `readChanges`: no notice is asked to carry any of
+ * it, and no second address is ever named to a provider.
+ */
+export interface CalendarNotices {
+  readonly provider: ProviderWord;
+  /**
+   * Who names a channel's id. `caller`: the id asked is the id answered, so the caller keeps its
+   * record before it asks (Google, whose first notice can arrive before its answer does).
+   * `provider`: the id is known from the answer alone (Microsoft).
+   */
+  readonly names: "caller" | "provider";
+  open(c: Connection, cal: CalendarRef, ask: NoticeChannelAsk, signal: AbortSignal): Promise<Answer<NoticeChannel>>;
+  /** End a channel. One the provider no longer knows is ended. */
+  close(
+    c: Connection,
+    channel: { readonly id: string; readonly resourceId: string | null },
+    signal: AbortSignal,
+  ): Promise<Answer<null>>;
+}
+
 // ── writing ──────────────────────────────────────────────────────────────────
 
 /**

@@ -249,7 +249,7 @@ export function calendarSection(scope: WorkerScope): void {
     writes: true,
   });
   const pool = calendarPool(scope.db as unknown as Tx);
-  const noticeDeps = { origin: cfg.noticeOrigin, log: scope.log };
+  const noticeDeps = { origin: cfg.noticeOrigin, log: scope.log, clock, refused: new Map<string, number>() };
   const syncDeps: CalendarSyncDeps = {
     db: pool,
     providers,
@@ -283,7 +283,7 @@ export function calendarSection(scope: WorkerScope): void {
     log: scope.log,
   });
   scope.log.info("calendar_started", {
-    mode: cfg.policy, kind: [...enabled].sort().join(","), state: cfg.noticeOrigin === null ? "polling" : "notices_unbuilt",
+    mode: cfg.policy, kind: [...enabled].sort().join(","), state: cfg.noticeOrigin === null ? "polling" : "notices",
     phase: syncDeps.drainWrites === undefined ? "reads" : "writes",
   });
 }

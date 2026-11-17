@@ -1176,7 +1176,8 @@ export const accountClosures = pgTable("account_closures", {
  * names it before any account is known, so the row is found by `(provider, channel_id)`, which is
  * unique. The word a notice must carry is kept as a hash. The row carries its account and hangs
  * off its connection under the connection's `(id, account_id)`. Servers only: a desktop reads a
- * calendar itself. Polling stays the floor; a channel only shortens the wait. Nothing writes it yet.
+ * calendar itself. Polling stays the floor; a channel only shortens the wait. Written by the worker's
+ * notice pass and by nothing else; the API's notice door reads it by the channel's id as its key.
  */
 export const calPushChannels = pgTable("cal_push_channels", {
   id: uuid("id").defaultRandom().primaryKey(),

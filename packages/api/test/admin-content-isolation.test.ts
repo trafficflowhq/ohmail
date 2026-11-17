@@ -908,6 +908,12 @@ const UNSEEDED_TABLES: readonly string[] = [
   // `mailbox_storage_stats`, holds no text column and so is no part of this sweep.)
   "account_storage_prefs",
   "storage_mail_sent",
+  // Cloud 0105, a calendar's notice channels, which the worker's notice pass writes. Unseeded: its
+  // text columns are a provider's word the pass writes (`google`, `microsoft`), a channel's id of 36
+  // characters, a SHA-256 the pass computes, and the provider's own opaque name for what a channel
+  // watches. Nothing a person, a sender or a letter wrote reaches any of them. The staff role is
+  // granted nothing on the table, and no staff read selects it.
+  "cal_push_channels",
   // ── Tables nothing writes yet (`packages/db/test/_unwritten-tables.ts`): no account has a row,
   //    so there is nothing a staff surface could show. That list is held to the tree; a table's
   //    first writer takes it off, and it then arrives here unseeded and red.
