@@ -144,6 +144,9 @@ on:
     tags: ["v*"]
   # `next` above is the second long-lived line: pull-request-only like main, never tagged, never released from.
   pull_request:
+    # ready_for_review too: a batch (`pr/batch-*`) builds the platforms only once it is not a draft (`changes`
+    # below), so marking it ready starts that run. Any other pull request marked ready runs what its push runs.
+    types: [opened, synchronize, reopened, ready_for_review]
   # When `main` takes pull requests through a merge queue, its required checks (the engine and the
   # engine-bearing UI) must report on the queue's merge group, or the queue waits until it gives up.
   merge_group:
@@ -190,8 +193,10 @@ jobs:
   # ours. So a maintainer's pull request (a `pr/` branch of this repository,
   # opened by a User who is OWNER, MEMBER or COLLABORATOR, no bot in the run)
   # builds no platform: it skips this job, and every gated job with it. The
-  # FULL-BUILD pull requests run it: the batch (`pr/batch-*`), the release bump
-  # (`pr/release-<NNNN>-bump`), a fork's and a bot's. On those the platform jobs
+  # FULL-BUILD pull requests run it: the batch (`pr/batch-*`) once it is not a
+  # draft, the release bump (`pr/release-<NNNN>-bump`), a fork's and a bot's. A
+  # batch that is a draft runs what every draft runs, the engine pair; marked
+  # ready, it builds the platforms as well. On those the platform jobs
   # run when the pull request changes something a build reads; which paths
   # those are is `.github/scripts/pr-build-scope.sh`'s to say. A `v*` tag, the
   # nightly and a dispatch skip this job and build everything: the release
@@ -210,7 +215,7 @@ jobs:
   # which asks the whole needs chain, this job included.
   changes:
     name: changes · which platform builds this pull request needs
-    if: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
+    if: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !(startsWith(github.head_ref, 'pr/batch-') && github.event.pull_request.draft != true) && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
